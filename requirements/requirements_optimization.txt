@@ -1,0 +1,24 @@
+# Aurik 8.0 Advanced Optimization Requirements
+# Phase 1-6: Neural Architecture Search, Ensemble, Multi-Objective, Uncertainty, Augmentation
+
+# Core Deep Learning — CPU-only (§13.4, §9.5 — kein CUDA erlaubt)
+# Installation via install_aurik.sh oder:
+# pip install torch==2.2.2+cpu torchaudio==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+torchaudio==2.2.2+cpu
+
+# Hyperparameter Optimization
+optuna>=3.5.0
+
+# Neural Architecture Search
+sympy>=1.13.0  # For symbolic expression handling, avoid 1.14.0 (incompatible with PyTorch)
+
+# Performance Testing
+pytest-benchmark>=5.2.3  # For performance benchmarking tests
+
+# Scientific Computing (if not already in main requirements)
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Visualization (optional, graceful fallback in multi_objective.py)
+matplotlib>=3.7.0

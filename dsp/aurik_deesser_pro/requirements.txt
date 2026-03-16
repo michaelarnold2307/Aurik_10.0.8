@@ -1,0 +1,10 @@
+# Empfohlene requirements.txt für aurik_deesser_pro (Python 3.10.12+)
+# Aktualisiert: 13. Februar 2026
+# Validierte Versionen
+
+numpy==2.2.6
+scipy==1.15.3
+librosa==0.11.0
+soundfile==0.13.1
+ffmpeg>=5.0.0  # System-Paket
+sox>=14.4.0    # System-Paket

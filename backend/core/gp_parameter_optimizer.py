@@ -1,0 +1,950 @@
+"""
+Gaussian-Process Parameter Optimizer — Aurik 9.7
+==================================================
+Adaptiver Parameter-Optimierer auf Basis Gaussianischer Prozesse (GP).
+Lernt materialspezifische optimale Restaurierungsparameter aus vergangenen
+Sitzungen und schlägt via Upper-Confidence-Bound (UCB) Akquisitionsfunktion
+neue Parameter-Kandidaten vor.
+
+GP-Formel (posterior predictive):
+    μ(x*) = K(x*,X) · [K(X,X) + σ²_n·I]⁻¹ · y
+    σ²(x*) = K(x*,x*) - K(x*,X) · [K(X,X) + σ²_n·I]⁻¹ · K(X,x*)
+
+Kernel: Squared Exponential (RBF)
+    K(x,x') = σ²_f · exp(−½ · ||x−x'||² / l²)
+
+Akquisition: UCB (Upper Confidence Bound)
+    α(x) = μ(x) + κ · σ(x),  κ = 2.0
+
+Gedächtnis: JSON-Dateien in ~/.aurik/gp_memory/<material>.json
+Jeder Eintrag: {"params": [...], "score": float}
+
+Referenzen:
+    - Rasmussen & Williams, Gaussian Processes for Machine Learning (2006)
+    - Snoek et al., Practical Bayesian Optimization of ML Algorithms (NeurIPS 2012)
+    - Brochu et al., A Tutorial on Bayesian Optimization (2010)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import json
+import logging
+import math
+from pathlib import Path
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import scipy.linalg
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Konfiguration
+# ---------------------------------------------------------------------------
+
+_MEMORY_DIR = Path.home() / ".aurik" / "gp_memory"
+_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+_MAX_MEMORY_ENTRIES = 200  # Maximale Einträge pro Material
+_UCB_KAPPA = 2.0  # Explorations-Gewicht
+_NOISE_VAR = 1e-3  # Beobachtungsrauschen σ²_n
+_KERNEL_LENGTH = 1.0  # GP-Kernel Längenscale l
+_KERNEL_AMPLITUDE = 1.0  # GP-Kernel Amplitude σ_f
+_N_RANDOM_CANDIDATES = 512  # Zufällige Kandidaten für UCB-Suche
+
+# ---------------------------------------------------------------------------
+# Pareto-Objectives (§2.5 Spec 03) — 14 Musical Goals
+# ---------------------------------------------------------------------------
+
+PARETO_OBJECTIVES: List[str] = [
+    "brillanz",
+    "waerme",
+    "natuerlichkeit",
+    "authentizitaet",
+    "emotionalitaet",
+    "transparenz",
+    "bass_kraft",
+    "groove",
+    "spatial_depth",
+    "tonal_center",
+    "micro_dynamics",
+    "timbre_authentizitaet",
+    "separation_fidelity",
+    "artikulation",
+]
+
+
+# ---------------------------------------------------------------------------
+# Parameter-Räume pro Domäne
+# ---------------------------------------------------------------------------
+
+# Format: {name: (low, high, mode)}
+# mode: "float" | "int" | "log" (log-uniform sampling)
+
+PARAMETER_SPACE: Dict[str, Tuple[float, float, str]] = {
+    "noise_reduction_strength": (0.05, 0.95, "float"),
+    "harmonic_boost_db": (0.0, 6.0, "float"),  # §2.5: max +6 dB harmonisch
+    "ola_crossfade_ms": (5.0, 60.0, "float"),
+    "compression_ratio": (1.05, 5.0, "log"),
+    "eq_high_shelf_db": (-6.0, 6.0, "float"),
+    "ar_order": (16.0, 128.0, "int"),
+    "click_threshold_sigma": (3.0, 8.0, "float"),
+    "hpf_cutoff_hz": (10.0, 120.0, "log"),
+    "nr_smoothing_ms": (20.0, 200.0, "log"),
+    "declip_threshold": (0.90, 0.99, "float"),
+}
+
+# Material-spezifische Default-Parameter (Initialstartpunkt)
+MATERIAL_DEFAULTS: Dict[str, Dict[str, float]] = {
+    "tape": {
+        "noise_reduction_strength": 0.60,
+        "harmonic_boost_db": 1.0,
+        "ola_crossfade_ms": 20.0,
+        "ar_order": 64,
+        "nr_smoothing_ms": 80.0,
+    },
+    "vinyl": {
+        "noise_reduction_strength": 0.45,
+        "harmonic_boost_db": 0.5,
+        "click_threshold_sigma": 4.5,
+        "ar_order": 48,
+        "nr_smoothing_ms": 60.0,
+    },
+    "shellac": {
+        "noise_reduction_strength": 0.70,
+        "harmonic_boost_db": 0.0,
+        "click_threshold_sigma": 5.0,
+        "ar_order": 32,
+        "nr_smoothing_ms": 100.0,
+    },
+    "digital": {
+        "noise_reduction_strength": 0.20,
+        "compression_ratio": 1.5,
+        "declip_threshold": 0.97,
+        "eq_high_shelf_db": 0.5,
+    },
+    "unknown": {
+        "noise_reduction_strength": 0.40,
+        "harmonic_boost_db": 0.5,
+        "ola_crossfade_ms": 15.0,
+        "ar_order": 32,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Datenklassen
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ParameterProposal:
+    """Vorschlag des GP-Optimierers."""
+
+    parameters: Dict[str, Any]  # {param_name: wert}
+    expected_quality: float  # GP-Posterior μ(x*)
+    uncertainty: float  # GP-Posterior σ(x*)
+    ucb_value: float  # μ + κ·σ
+    from_memory: bool = False  # Aus Material-Gedächtnis
+    iteration: int = 0  # Optimierungsiteration
+    param_names: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "parameters": self.parameters,
+            "expected_quality": round(self.expected_quality, 4),
+            "uncertainty": round(self.uncertainty, 4),
+            "ucb_value": round(self.ucb_value, 4),
+            "from_memory": self.from_memory,
+            "iteration": self.iteration,
+        }
+
+
+@dataclass
+class MemoryEntry:
+    """Ein Eintrag im GP-Gedächtnis."""
+
+    params_normalized: List[float]  # normierter Parametervektor [0,1]^d
+    score: float  # Qualitätsscore [0,1] oder MOS o.ä.
+    material: str
+    timestamp: float = field(default_factory=time.time)
+    goal_scores: Dict[str, float] = field(default_factory=dict)  # 14 Musical Goals (§2.5)
+
+
+# ---------------------------------------------------------------------------
+# RBF-Kernel
+# ---------------------------------------------------------------------------
+
+
+def _rbf_kernel(
+    X: np.ndarray, Y: np.ndarray, length: float = _KERNEL_LENGTH, amplitude: float = _KERNEL_AMPLITUDE
+) -> np.ndarray:
+    """
+    Squared-Exponential Kernel: K_{ij} = σ²_f · exp(−½ ||x_i − y_j||² / l²)
+
+    Args:
+        X: (n, d)
+        Y: (m, d)
+    Returns:
+        (n, m) Kernel-Matrix
+    """
+    # ||x_i - y_j||^2 via broadcasting
+    X2 = np.sum(X**2, axis=1, keepdims=True)  # (n,1)
+    Y2 = np.sum(Y**2, axis=1, keepdims=True)  # (m,1)
+    XY = X @ Y.T  # (n,m)
+    dist_sq = np.maximum(X2 + Y2.T - 2.0 * XY, 0.0)
+    return (amplitude**2) * np.exp(-0.5 * dist_sq / (length**2 + 1e-12))
+
+
+# ---------------------------------------------------------------------------
+# Gaussian-Process (Posterior)
+# ---------------------------------------------------------------------------
+
+
+class GaussianProcess:
+    """
+    Leichtgewichtiger GP mit RBF-Kernel, geschlossene Lösung.
+    Unterstützt inkrementelles Update und UCB-Akquisition.
+    """
+
+    def __init__(
+        self,
+        noise_var: float = _NOISE_VAR,
+        length: float = _KERNEL_LENGTH,
+        amplitude: float = _KERNEL_AMPLITUDE,
+    ):
+        self.noise_var = noise_var
+        self.length = length
+        self.amplitude = amplitude
+        self._X: Optional[np.ndarray] = None  # (n, d)
+        self._y: Optional[np.ndarray] = None  # (n,)
+        self._L: Optional[np.ndarray] = None  # Cholesky-Faktor
+        self._alpha: Optional[np.ndarray] = None  # L^{-T} L^{-1} y
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        """GP an Beobachtungen (X, y) anpassen."""
+        # NaN/Inf-Bereinigung
+        valid = np.isfinite(y)
+        if not np.any(valid):
+            return
+        X = X[valid]
+        y = y[valid]
+        self._X = X.copy()
+        self._y = y.copy()
+        K = _rbf_kernel(X, X, self.length, self.amplitude)
+        K += self.noise_var * np.eye(len(X))
+        try:
+            L = scipy.linalg.cholesky(K, lower=True)
+        except scipy.linalg.LinAlgError:
+            # Fallback: erhöhe Rauschen
+            K += 1e-4 * np.eye(len(X))
+            L = scipy.linalg.cholesky(K, lower=True)
+        self._L = L
+        self._alpha = scipy.linalg.cho_solve((L, True), y)
+
+    def predict(self, X_star: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Posteriore Vorhersage für X_star.
+
+        Returns:
+            (mu, sigma) — jeweils (m,) Arrays
+        """
+        if self._X is None:
+            return np.zeros(len(X_star)), np.ones(len(X_star))
+
+        K_star = _rbf_kernel(X_star, self._X, self.length, self.amplitude)  # (m,n)
+        mu = K_star @ self._alpha  # (m,)
+
+        # Varianz: k(x*,x*) - k(x*,X)·(K+σ²I)^{-1}·k(X,x*)
+        K_ss = _rbf_kernel(X_star, X_star, self.length, self.amplitude)  # (m,m)
+        V = scipy.linalg.solve_triangular(self._L, K_star.T, lower=True)
+        var = np.diag(K_ss) - np.sum(V**2, axis=0)
+        sigma = np.sqrt(np.maximum(var, 1e-12))
+
+        return mu, sigma
+
+    def ucb(self, X_star: np.ndarray, kappa: float = _UCB_KAPPA) -> np.ndarray:
+        """UCB-Akquisitionswerte für Kandidaten X_star."""
+        mu, sigma = self.predict(X_star)
+        return mu + kappa * sigma
+
+    @property
+    def n_observations(self) -> int:
+        return len(self._y) if self._y is not None else 0
+
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen: Parameter-Normierung
+# ---------------------------------------------------------------------------
+
+
+def _param_names_sorted(space: Dict = PARAMETER_SPACE) -> List[str]:
+    return sorted(space.keys())
+
+
+def _normalize_params(params: Dict[str, float], space: Dict = PARAMETER_SPACE) -> np.ndarray:
+    """Parameter-Dict → normierter Vektor [0,1]^d."""
+    names = _param_names_sorted(space)
+    v = []
+    for name in names:
+        if name in params:
+            lo, hi, mode = space[name]
+            raw = float(params[name])
+            if mode == "log":
+                lo_l, hi_l = math.log(lo + 1e-9), math.log(hi)
+                val_l = math.log(max(raw, lo + 1e-9))
+                v.append((val_l - lo_l) / (hi_l - lo_l + 1e-12))
+            else:
+                v.append((raw - lo) / (hi - lo + 1e-12))
+        else:
+            v.append(0.5)  # Mittelpunkt als Default
+    return np.clip(np.array(v, dtype=np.float64), 0.0, 1.0)
+
+
+def _denormalize_params(vec: np.ndarray, space: Dict = PARAMETER_SPACE) -> Dict[str, Any]:
+    """Normierter Vektor → Parameter-Dict."""
+    names = _param_names_sorted(space)
+    result = {}
+    for i, name in enumerate(names):
+        lo, hi, mode = space[name]
+        x = float(np.clip(vec[i], 0.0, 1.0))
+        if mode == "log":
+            lo_l, hi_l = math.log(lo + 1e-9), math.log(hi)
+            raw = math.exp(lo_l + x * (hi_l - lo_l))
+        else:
+            raw = lo + x * (hi - lo)
+        if mode == "int":
+            result[name] = int(round(raw))
+        else:
+            result[name] = round(raw, 4)
+    return result
+
+
+def _sample_random_candidates(n: int, d: int, rng: np.random.Generator) -> np.ndarray:
+    """n Zufalls-Kandidaten im d-dimensionalen Einheitswürfel."""
+    # Latin-Hypercube-Näherung: besser verteilt als rein zufällig
+    samples = np.zeros((n, d))
+    for j in range(d):
+        perm = rng.permutation(n)
+        samples[:, j] = (perm + rng.uniform(0, 1, size=n)) / n
+    return samples
+
+
+def _safe_normalize_targets(y: np.ndarray) -> tuple[np.ndarray, float, float, np.ndarray]:
+    """Sanitize and normalize objective vectors for stable GP training.
+
+    Returns:
+        (y_clean, y_min, y_range, y_norm)
+    """
+    y_clean = np.asarray(y, dtype=np.float64)
+    y_clean = np.nan_to_num(y_clean, nan=0.0, posinf=1e6, neginf=-1e6)
+    y_clean = np.clip(y_clean, -1e6, 1e6)
+
+    if y_clean.size == 0:
+        return y_clean, 0.0, 1.0, y_clean
+
+    y_min = float(np.min(y_clean))
+    y_max = float(np.max(y_clean))
+    y_range = float(y_max - y_min)
+    if (not math.isfinite(y_range)) or y_range < 1e-6:
+        y_range = 1e-6
+
+    y_norm = np.divide(
+        y_clean - y_min,
+        y_range,
+        out=np.zeros_like(y_clean),
+        where=np.isfinite(y_clean),
+    )
+    y_norm = np.nan_to_num(y_norm, nan=0.0, posinf=1.0, neginf=0.0)
+    return y_clean, y_min, y_range, y_norm
+
+
+# ---------------------------------------------------------------------------
+# Gedächtnis-I/O
+# ---------------------------------------------------------------------------
+
+
+def _memory_path(material: str) -> Path:
+    return _MEMORY_DIR / f"{material}.json"
+
+
+def _load_memory(material: str) -> List[MemoryEntry]:
+    path = _memory_path(material)
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+        # Support both list format (current) and legacy dict formats
+        if isinstance(raw, dict):
+            raw = raw.get("observations", [])
+        if not isinstance(raw, list):
+            return []
+        entries = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            params = item.get("params")
+            # Legacy: params as dict → skip (parameter ordering unknown)
+            if not isinstance(params, list):
+                continue
+            try:
+                entries.append(
+                    MemoryEntry(
+                        params_normalized=params,
+                        score=float(item["score"]),
+                        material=material,
+                        timestamp=float(item.get("ts", 0.0)),
+                        goal_scores=dict(item.get("goal_scores", {})),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return entries
+    except Exception as exc:
+        logger.warning("GP-Gedächtnis konnte nicht geladen werden: %s", exc)
+        return []
+
+
+def _save_memory(material: str, entries: List[MemoryEntry]) -> None:
+    path = _memory_path(material)
+    try:
+        raw = [
+            {
+                "params": e.params_normalized,
+                "score": e.score,
+                "ts": e.timestamp,
+                "goal_scores": e.goal_scores,
+            }
+            for e in entries[-_MAX_MEMORY_ENTRIES:]
+        ]
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(raw, f)
+    except Exception as exc:
+        logger.warning("GP-Gedächtnis konnte nicht gespeichert werden: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Haupt-Klasse
+# ---------------------------------------------------------------------------
+
+
+class GPParameterOptimizer:
+    """
+    Pro-Aufnahme adaptiver Parameter-Optimierer via Gaussianischen Prozessen.
+
+    Workflow::
+
+        opt = GPParameterOptimizer()
+
+        # Vorschlag holen (mit material-spezifischem Gedächtnis)
+        proposal = opt.propose(material="tape")
+
+        # Parameter anwenden und Qualität messen
+        score = apply_and_score(proposal.parameters)
+
+        # GP mit neuem Datenpunkt aktualisieren
+        opt.update(proposal.parameters, score, material="tape")
+
+        # Nächster Vorschlag (informed by previous round)
+        proposal2 = opt.propose(material="tape")
+    """
+
+    def __init__(
+        self,
+        parameter_space: Dict = None,
+        noise_var: float = _NOISE_VAR,
+        kappa: float = _UCB_KAPPA,
+        rng_seed: Optional[int] = None,
+    ):
+        self._space = parameter_space or PARAMETER_SPACE
+        self._gp = GaussianProcess(noise_var=noise_var)
+        self._kappa = kappa
+        self._rng = np.random.default_rng(rng_seed)
+        self._session_X: List[np.ndarray] = []
+        self._session_y: List[float] = []
+        self._dim = len(_param_names_sorted(self._space))
+        self._iterations: Dict[str, int] = {}
+
+    # ------------------------------------------------------------------
+    # Öffentliche API
+    # ------------------------------------------------------------------
+
+    def propose(
+        self,
+        material: str = "unknown",
+        n_init: int = 5,
+        embedding: Optional[np.ndarray] = None,
+        era_warmstart: Optional[Dict[str, float]] = None,
+    ) -> ParameterProposal:
+        """
+        Schlägt die nächsten zu testenden Parameter vor.
+
+        Args:
+            material:      Trägermaterial, bestimmt Prior und Gedächtnis
+            n_init:        Mindestanzahl Beobachtungen bevor GP genutzt wird
+            embedding:     Optionaler 256-dim Perceptual-Embedding-Vektor
+                           (wird derzeit als Kontextmerkmal gelogt, aber
+                           nicht in den GP-Eingaberaum eingebaut — zukünftige
+                           Erweiterung via Input Warping)
+            era_warmstart: Optionaler Ära-Prior aus EraClassifier.get_gp_warmstart()
+                           (§2.14). Beim Cold-Start (n_obs < n_init) überschreibt
+                           dieser Prior die gematerialten Default-Parameter für
+                           epochenspezifische Initialisierung (z.B.
+                           noise_reduction_strength ≈ 0.90 für Aufnahmen vor 1940).
+                           Nur gültige Bounds-Werte werden übernommen.
+        Returns:
+            ParameterProposal
+        """
+        it = self._iterations.get(material, 0)
+
+        # Gedächtnis laden
+        memory = _load_memory(material)
+        all_X: List[np.ndarray] = []
+        all_y: List[float] = []
+
+        for entry in memory:
+            if len(entry.params_normalized) == self._dim:
+                all_X.append(np.array(entry.params_normalized))
+                all_y.append(entry.score)
+
+        # Note: _session_X/_session_y are intentionally NOT merged here.
+        # update() persists every entry immediately via _save_memory(), so
+        # _load_memory() above already contains all session observations.
+        # Merging _session_X/_session_y would double-count every entry that
+        # was added in the current session.
+
+        n_obs = len(all_X)
+
+        if n_obs < n_init:
+            # Zufällige Exploration oder Defaults
+            params, mu, sig = self._random_or_default(material, n_obs)
+            # Era-Warmstart: Ära-Prior überschreibt Default-Parameter beim Cold-Start (§2.14)
+            # Gültige Bounds-geclampte Werte aus EraClassifier.get_gp_warmstart() werden
+            # direkt in den Parametervorschlag eingebracht, bevor GP-Daten vorliegen.
+            if era_warmstart:
+                for _era_k, _era_v in era_warmstart.items():
+                    try:
+                        _era_v_f = float(_era_v)
+                        if _era_k in self._space and math.isfinite(_era_v_f):
+                            _lo, _hi, _mode = self._space[_era_k]
+                            params[_era_k] = float(np.clip(_era_v_f, _lo, _hi))
+                    except (TypeError, ValueError):
+                        pass
+            self._iterations[material] = it + 1
+            return ParameterProposal(
+                parameters=params,
+                expected_quality=mu,
+                uncertainty=sig,
+                ucb_value=mu + self._kappa * sig,
+                from_memory=(n_obs > 0),
+                iteration=it,
+                param_names=_param_names_sorted(self._space),
+            )
+
+        # GP-Vorhersage + UCB-Optimierung
+        X_obs = np.stack(all_X)  # (n, d)
+        y_obs = np.array(all_y)  # (n,)
+
+        # Normierung der Zielwerte auf [0, 1]
+        y_obs, y_min, y_range, y_norm = _safe_normalize_targets(y_obs)
+
+        self._gp.fit(X_obs, y_norm)
+
+        # Kandidaten-Suche: Random + Perturbation der besten Beobachtung
+        candidates = _sample_random_candidates(_N_RANDOM_CANDIDATES, self._dim, self._rng)
+        best_idx = int(np.argmax(y_obs))
+        best_x = X_obs[best_idx]
+        # Perturbation um besten Punkt (Exploitation-Bias)
+        perturbed = best_x + self._rng.normal(0, 0.05, size=(64, self._dim))
+        perturbed = np.clip(perturbed, 0.0, 1.0)
+        candidates = np.vstack([candidates, perturbed])
+
+        ucb_vals = self._gp.ucb(candidates, kappa=self._kappa)
+        best_cand = int(np.argmax(ucb_vals))
+        x_star = candidates[best_cand]
+
+        mu, sigma = self._gp.predict(x_star[None, :])
+        mu_real = float(y_min + mu[0] * y_range)
+        sigma_real = float(sigma[0] * y_range)
+
+        params = _denormalize_params(x_star, self._space)
+        # Material-Defaults überlappen mit GP nur für nicht optimierte Params
+        defaults = MATERIAL_DEFAULTS.get(material, {})
+        for param, val in defaults.items():
+            if param not in params:
+                params[param] = val
+
+        self._iterations[material] = it + 1
+        return ParameterProposal(
+            parameters=params,
+            expected_quality=mu_real,
+            uncertainty=sigma_real,
+            ucb_value=float(ucb_vals[best_cand]),
+            from_memory=True,
+            iteration=it,
+            param_names=_param_names_sorted(self._space),
+        )
+
+    def propose_pareto(
+        self,
+        material: str = "unknown",
+        n_candidates: int = 5,
+        n_init: int = 5,
+        era_warmstart: Optional[Dict[str, float]] = None,
+    ) -> List[ParameterProposal]:
+        """True multi-objective Pareto-front proposals over 14 Musical Goals (§2.5).
+
+        Uses one GP per Musical Goal objective. Samples *_N_RANDOM_CANDIDATES*
+        candidates in the DSP parameter space, predicts all 14 objective
+        posteriors, computes the non-dominated (Pareto) front via dominance
+        check, and selects up to *n_candidates* diverse representatives via
+        crowding-distance selection.
+
+        Falls back to UCB-diversity sampling when goal_scores data are
+        insufficient (< n_init entries with populated goal_scores).
+
+        Args:
+            material:      Trägermaterial (bestimmt Prior und Gedächtnis)
+            n_candidates:  Maximale Anzahl Pareto-Kandidaten (≤ 5)
+            n_init:        Mindestanzahl Beobachtungen mit goal_scores, bevor
+                           MOO genutzt wird (UCB-Fallback unter diesem Wert)
+            era_warmstart: Optionaler Ära-Prior aus EraClassifier (§2.14)
+
+        Returns:
+            Liste von ParameterProposal-Objekten (Pareto-Front, max. n_candidates).
+            Enthält mindestens einen Eintrag (Fallback auf propose()).
+        """
+        n_c = max(1, min(n_candidates, 5))
+        memory = _load_memory(material)
+
+        # ── Einträge mit vollständigen goal_scores ermitteln ──────────────
+        moo_entries = [
+            e for e in memory
+            if len(e.params_normalized) == self._dim
+            and len(e.goal_scores) >= len(PARETO_OBJECTIVES)
+        ]
+
+        if len(moo_entries) < n_init:
+            # ── Fallback: UCB-Diversitätssampling (bisheriges Verhalten) ──
+            logger.debug(
+                "propose_pareto: zu wenig MOO-Daten (%d < %d), UCB-Fallback für '%s'",
+                len(moo_entries), n_init, material,
+            )
+            return self._pareto_ucb_fallback(
+                material=material, n_c=n_c, n_init=n_init,
+                memory=memory, era_warmstart=era_warmstart,
+            )
+
+        # ── 14 separate GPs eine pro Objective ───────────────────────────
+        X_obs = np.array([e.params_normalized for e in moo_entries])  # (n, d)
+
+        # Objective-Matrix: (n, 14)
+        obj_matrix = np.zeros((len(moo_entries), len(PARETO_OBJECTIVES)), dtype=np.float64)
+        for row_i, entry in enumerate(moo_entries):
+            for col_j, obj in enumerate(PARETO_OBJECTIVES):
+                val = entry.goal_scores.get(obj, np.nan)
+                obj_matrix[row_i, col_j] = val if math.isfinite(val) else 0.0
+
+        # Kandidaten im normierten Parameterraum samplen
+        candidates = _sample_random_candidates(_N_RANDOM_CANDIDATES, self._dim, self._rng)
+
+        # Posterior-Means für alle 14 Objectives vorhersagen: (n_cands, 14)
+        pred_means = np.zeros((len(candidates), len(PARETO_OBJECTIVES)), dtype=np.float64)
+        pred_sigma = np.zeros((len(candidates), len(PARETO_OBJECTIVES)), dtype=np.float64)
+        for col_j in range(len(PARETO_OBJECTIVES)):
+            y_obj = obj_matrix[:, col_j]
+            _, y_min, y_range, y_norm = _safe_normalize_targets(y_obj)
+            gp_obj = GaussianProcess(noise_var=_NOISE_VAR)
+            gp_obj.fit(X_obs, y_norm)
+            mu_n, sig_n = gp_obj.predict(candidates)
+            pred_means[:, col_j] = np.nan_to_num(y_min + mu_n * y_range, nan=0.0)
+            pred_sigma[:, col_j] = np.nan_to_num(sig_n * y_range, nan=0.0)
+
+        # ── Pareto-Dominanz-Check ─────────────────────────────────────────
+        # Kandidat i dominiert j wenn: ∀k: f_i[k] ≥ f_j[k] UND ∃k: f_i[k] > f_j[k]
+        n_cands = len(candidates)
+        is_dominated = np.zeros(n_cands, dtype=bool)
+        for i in range(n_cands):
+            if is_dominated[i]:
+                continue
+            for j in range(n_cands):
+                if i == j or is_dominated[j]:
+                    continue
+                # Prüfe ob j durch i dominiert wird
+                if np.all(pred_means[i] >= pred_means[j]) and np.any(pred_means[i] > pred_means[j]):
+                    is_dominated[j] = True
+
+        pareto_indices = np.where(~is_dominated)[0]
+
+        # ── Crowding-Distance-Selektion für diverse Repräsentanten ───────
+        selected_indices = self._crowding_distance_select(
+            pareto_indices, pred_means, n_c
+        )
+
+        proposals: List[ParameterProposal] = []
+        it = self._iterations.get(material, 0)
+        for sel_idx in selected_indices:
+            params = _denormalize_params(candidates[sel_idx], self._space)
+            mean_quality = float(np.mean(pred_means[sel_idx]))
+            mean_uncertainty = float(np.mean(pred_sigma[sel_idx]))
+            proposals.append(
+                ParameterProposal(
+                    parameters=params,
+                    expected_quality=mean_quality,
+                    uncertainty=mean_uncertainty,
+                    ucb_value=mean_quality + _UCB_KAPPA * mean_uncertainty,
+                    from_memory=True,
+                    iteration=it,
+                    param_names=_param_names_sorted(self._space),
+                )
+            )
+
+        if not proposals:
+            proposals.append(self.propose(material=material, n_init=n_init, era_warmstart=era_warmstart))
+
+        self._iterations[material] = it + 1
+        logger.debug(
+            "propose_pareto: %d Pareto-Kandidaten (aus %d nicht-dominierten) für material='%s'",
+            len(proposals), len(pareto_indices), material,
+        )
+        return proposals
+
+    def _pareto_ucb_fallback(
+        self,
+        material: str,
+        n_c: int,
+        n_init: int,
+        memory: List[MemoryEntry],
+        era_warmstart: Optional[Dict[str, float]],
+    ) -> List[ParameterProposal]:
+        """UCB kappa-diversity fallback when insufficient MOO goal_scores data."""
+        proposals: List[ParameterProposal] = []
+        all_X = [np.array(e.params_normalized) for e in memory if len(e.params_normalized) == self._dim]
+        all_y = [e.score for e in memory if len(e.params_normalized) == self._dim]
+        kappa_values = [0.5, 1.0, 2.0, 3.0, 4.5][:n_c]
+
+        if len(all_X) < 2:
+            base = self.propose(material=material, n_init=n_init, era_warmstart=era_warmstart)
+            for k in range(n_c):
+                varied_params = dict(base.parameters)
+                rng_shift = self._rng.uniform(-0.05, 0.05, size=self._dim)
+                for j_idx, pname in enumerate(_param_names_sorted(self._space)):
+                    lo, hi, mode = self._space[pname]
+                    raw = varied_params.get(pname, (lo + hi) / 2)
+                    shifted = float(np.clip(raw + rng_shift[j_idx] * (hi - lo), lo, hi))
+                    if mode == "int":
+                        shifted = float(round(shifted))
+                    varied_params[pname] = shifted
+                proposals.append(
+                    ParameterProposal(
+                        parameters=varied_params,
+                        expected_quality=base.expected_quality,
+                        uncertainty=base.uncertainty + k * 0.02,
+                        ucb_value=base.ucb_value,
+                        from_memory=False,
+                        iteration=self._iterations.get(material, 0),
+                        param_names=base.param_names,
+                    )
+                )
+            return proposals
+
+        X_arr = np.array(all_X)
+        y_arr = np.array(all_y)
+        y_arr, y_min, y_range, y_norm = _safe_normalize_targets(y_arr)
+        gp_fb = GaussianProcess(noise_var=_NOISE_VAR)
+        gp_fb.fit(X_arr, y_norm)
+        cands = _sample_random_candidates(256, self._dim, self._rng)
+        mu_n, sig_n = gp_fb.predict(cands)
+        mu_real = np.nan_to_num(y_min + mu_n * y_range, nan=0.0, posinf=1e6, neginf=-1e6)
+        sig_real = np.nan_to_num(sig_n * y_range, nan=0.0, posinf=1e6, neginf=0.0)
+
+        it = self._iterations.get(material, 0)
+        for kappa in kappa_values:
+            ucb_vals = mu_real + kappa * sig_real
+            best_idx = int(np.argmax(ucb_vals))
+            params = _denormalize_params(cands[best_idx], self._space)
+            proposals.append(
+                ParameterProposal(
+                    parameters=params,
+                    expected_quality=float(mu_real[best_idx]),
+                    uncertainty=float(sig_real[best_idx]),
+                    ucb_value=float(ucb_vals[best_idx]),
+                    from_memory=True,
+                    iteration=it,
+                    param_names=_param_names_sorted(self._space),
+                )
+            )
+        if not proposals:
+            proposals.append(self.propose(material=material, n_init=n_init, era_warmstart=era_warmstart))
+        return proposals
+
+    @staticmethod
+    def _crowding_distance_select(
+        pareto_indices: np.ndarray,
+        pred_means: np.ndarray,
+        n_select: int,
+    ) -> List[int]:
+        """Select n_select diverse representatives from Pareto front via crowding distance.
+
+        Args:
+            pareto_indices: 1-D array of non-dominated candidate indices
+            pred_means:     (n_cands, n_objectives) posterior mean matrix
+            n_select:       number of representatives to return
+
+        Returns:
+            List of selected candidate indices (subset of pareto_indices)
+        """
+        if len(pareto_indices) <= n_select:
+            return pareto_indices.tolist()
+
+        n_obj = pred_means.shape[1]
+        front = pred_means[pareto_indices]  # (|front|, n_obj)
+        distances = np.zeros(len(pareto_indices))
+
+        for m in range(n_obj):
+            sorted_order = np.argsort(front[:, m])
+            f_min = front[sorted_order[0], m]
+            f_max = front[sorted_order[-1], m]
+            f_range = max(f_max - f_min, 1e-12)
+            # Boundary points get infinite distance
+            distances[sorted_order[0]] = np.inf
+            distances[sorted_order[-1]] = np.inf
+            for k in range(1, len(sorted_order) - 1):
+                distances[sorted_order[k]] += (
+                    (front[sorted_order[k + 1], m] - front[sorted_order[k - 1], m]) / f_range
+                )
+
+        # Select n_select with highest crowding distance
+        top_k = np.argsort(distances)[::-1][:n_select]
+        return [int(pareto_indices[i]) for i in top_k]
+
+    def update(
+        self,
+        parameters: Dict[str, Any],
+        score: float,
+        material: str = "unknown",
+        goal_scores: Optional[Dict[str, float]] = None,
+    ) -> None:
+        """
+        Aktualisiert das GP-Gedächtnis mit einem neuen Datenpunkt.
+
+        Args:
+            parameters:  Parameter-Dict (wie von propose() zurückgegeben)
+            score:       Gesamt-Qualitätsscore (z.B. PQS-MOS normiert [0,1])
+            material:    Trägermaterial
+            goal_scores: Optionales Dict der 14 Musical-Goals-Scores
+                         (Keys = PARETO_OBJECTIVES). Wird für echten MOO
+                         in propose_pareto() benötigt. NaN/Inf-Werte werden
+                         gefiltert; fehlende Keys bleiben leer.
+        """
+        x_norm = _normalize_params(parameters, self._space)
+
+        # Validierung Gesamt-Score
+        score_f = float(score)
+        if not math.isfinite(score_f):
+            logger.warning("GP.update: Nicht-finiter Score wird übersprungen")
+            return
+
+        # Validierung goal_scores
+        clean_goals: Dict[str, float] = {}
+        if goal_scores:
+            for obj in PARETO_OBJECTIVES:
+                val = goal_scores.get(obj)
+                if val is not None:
+                    val_f = float(val)
+                    if math.isfinite(val_f):
+                        clean_goals[obj] = val_f
+
+        self._session_X.append(x_norm)
+        self._session_y.append(score_f)
+
+        # Persistenz
+        entry = MemoryEntry(
+            params_normalized=x_norm.tolist(),
+            score=score_f,
+            material=material,
+            goal_scores=clean_goals,
+        )
+        memory = _load_memory(material)
+        memory.append(entry)
+        _save_memory(material, memory)
+
+        logger.debug(
+            "GP-Update: material=%s score=%.4f goals=%d n_memory=%d",
+            material, score, len(clean_goals), len(memory),
+        )
+
+    def best_known_parameters(self, material: str) -> Optional[Dict[str, Any]]:
+        """Gibt die Parameter mit dem bisher höchsten Score zurück."""
+        memory = _load_memory(material)
+        if not memory:
+            return MATERIAL_DEFAULTS.get(material)
+        best = max(memory, key=lambda e: e.score)
+        return _denormalize_params(np.array(best.params_normalized), self._space)
+
+    def forget(self, material: str) -> None:
+        """Löscht das Gedächtnis für ein Material."""
+        path = _memory_path(material)
+        if path.exists():
+            path.unlink()
+        self._session_X.clear()
+        self._session_y.clear()
+
+    # ------------------------------------------------------------------
+    # Intern
+    # ------------------------------------------------------------------
+
+    def _random_or_default(self, material: str, n_obs: int) -> Tuple[Dict[str, Any], float, float]:
+        """Zufälliger oder Default-Parameter-Satz für Exploration."""
+        if n_obs == 0:
+            # Erster Aufruf: Material-Defaults
+            defaults = MATERIAL_DEFAULTS.get(material, {})
+            x_norm = _normalize_params(defaults, self._space)
+        else:
+            # Zufall mit leichtem Default-Bias
+            x_rand = _sample_random_candidates(1, self._dim, self._rng)[0]
+            defaults = MATERIAL_DEFAULTS.get(material, {})
+            x_def = _normalize_params(defaults, self._space)
+            x_norm = 0.6 * x_def + 0.4 * x_rand
+
+        params = _denormalize_params(x_norm, self._space)
+        return params, 0.5, 0.5  # uninformierter Prior
+
+
+# ---------------------------------------------------------------------------
+# Convenience-Funktion
+# ---------------------------------------------------------------------------
+
+_optimizer: Optional[GPParameterOptimizer] = None
+_optimizer_lock = threading.Lock()
+
+
+def get_optimizer() -> GPParameterOptimizer:
+    """Globaler Singleton-Optimierer."""
+    global _optimizer
+    if _optimizer is None:
+        with _optimizer_lock:
+            if _optimizer is None:
+                _optimizer = GPParameterOptimizer()
+    return _optimizer
+
+
+def propose_parameters(
+    material: str = "unknown",
+    n_init: int = 5,
+) -> ParameterProposal:
+    """Convenience: Nächster Parameter-Vorschlag."""
+    return get_optimizer().propose(material=material, n_init=n_init)
+
+
+def record_quality(
+    parameters: Dict[str, Any],
+    score: float,
+    material: str = "unknown",
+) -> None:
+    """Convenience: Qualitätsscore für Parameter-Satz registrieren."""
+    get_optimizer().update(parameters, score, material)

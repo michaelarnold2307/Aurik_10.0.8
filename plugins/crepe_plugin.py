@@ -1,0 +1,405 @@
+"""
+CREPE Plugin — Direkte ONNX-Inferenz (kein Docker)
+===================================================
+
+Pitch-Detection mit CREPE (Convolutional Representation for Pitch Estimation)
+via lokal gebündeltem ONNX-Modell (models/crepe/crepe/model-full.onnx, 89 MB).
+
+Kein Docker, kein Netzwerk — vollständig out-of-the-box nutzbar.
+
+Modell-Spezifikation:
+    Input:  ("input",      [N, 1024]) float32  @ 16 000 Hz, Fenster zentriert
+    Output: ("classifier", [N,  360]) float32  Salience-Werte über 360 Pitch-Bins
+    Pitch-Bins: f_i = 10.0 · 2^(i · 20/1200) · 32.703195 Hz  für i = 0..359
+
+Referenz:
+    Kim et al. (2018) — "CREPE: A Convolutional Representation for Pitch Estimation"
+    https://arxiv.org/abs/1802.06182
+
+DSP-Fallback: librosa.pyin() (Mauch & Dixon 2014) bei fehlender ONNX-Laufzeit.
+
+Invarianten (§3.1, §3.2, §3.7 Aurik-Spec):
+    - Thread-sicherer Singleton mit Double-Checked Locking
+    - NaN/Inf in keiner Ausgabe (nan_to_num)
+    - providers=["CPUExecutionProvider"] — kein GPU (§9.5 Aurik-Spec)
+    - Alle öffentlichen Methoden vollständig typisiert (PEP 484)
+"""
+
+from dataclasses import dataclass, field
+import hashlib
+import logging
+import math
+from pathlib import Path
+import threading
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Modell-Pfad (relativ zur Projektwurzel)
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = Path(__file__).parent.parent
+_CREPE_ONNX_PATH = _PROJECT_ROOT / "models" / "crepe" / "crepe" / "crepe.onnx"
+
+# CREPE Frame-Parameter (trainiert bei 16 kHz)
+_CREPE_SR: int = 16_000
+_FRAME_LENGTH: int = 1024
+_HOP_SAMPLES: int = 160  # 10 ms @ 16 kHz
+
+# 360 Pitch-Bins (CREPE offizielle Formel, Kim et al. 2018):
+#   cents_i = i * 20.0 + 1997.3794084376191  (20 Cent pro Bin, Offset = ~C1)
+#   f_i     = 10 · 2^(cents_i / 1200)
+# Abdeckung: ~31.7 Hz (C1) … ~2005 Hz (B6)
+_CENTS_MAPPING: np.ndarray = (np.linspace(0, 7180, 360) + 1997.3794084376191).astype(np.float64)
+_CREPE_FREQS: np.ndarray = (10.0 * 2.0 ** (_CENTS_MAPPING / 1200.0)).astype(np.float32)
+
+# Voicing-Konfidenz-Schwelle
+_VOICED_THRESHOLD: float = 0.45
+
+# Performance-Budget: CPU-only — Inferenz in Chunks à _CHUNK_FRAMES Frames
+# (≈ 5 s Audio pro Batch @ 10 ms Hop; kein Subsampling — vollständige Abdeckung)
+_CHUNK_FRAMES: int = 512
+
+
+# ---------------------------------------------------------------------------
+# Ergebnis-Datenklasse
+# ---------------------------------------------------------------------------
+@dataclass
+class CrepeResult:
+    """Pitch-Tracking-Ergebnis aus CREPE (F0 pro Frame).
+
+    Alle Arrays haben identische Länge ``n_frames``.
+    """
+
+    f0_hz: np.ndarray  # Grundfrequenz pro Frame [Hz]
+    voiced_prob: np.ndarray  # Voicing-Wahrscheinlichkeit  ∈ [0, 1]
+    salience: np.ndarray  # Maximale Salience pro Frame  ∈ [0, 1]
+    times_s: np.ndarray  # Zeitstempel in Sekunden
+    model_used: str  # "crepe_onnx" | "dsp_pyin"
+    details: dict[str, float] = field(default_factory=dict)
+
+    def voiced_f0(self, threshold: float = _VOICED_THRESHOLD) -> np.ndarray:
+        """Array mit F0 nur für voiced Frames, NaN sonst."""
+        f0 = self.f0_hz.copy()
+        f0[self.voiced_prob < threshold] = np.nan
+        return f0
+
+    def mean_f0(self, threshold: float = _VOICED_THRESHOLD) -> float:
+        """Mittlere F0 über voiced Frames; 0.0 bei Stille."""
+        vf0 = self.voiced_f0(threshold)
+        valid = vf0[np.isfinite(vf0)]
+        return float(np.mean(valid)) if len(valid) > 0 else 0.0
+
+    def voiced_fraction(self, threshold: float = _VOICED_THRESHOLD) -> float:
+        """Anteil voiced Frames ∈ [0, 1]."""
+        return float(np.mean(self.voiced_prob >= threshold))
+
+
+# ---------------------------------------------------------------------------
+# Plugin-Klasse
+# ---------------------------------------------------------------------------
+class CrepePlugin:
+    """Direkte ONNX-Inferenz des CREPE-Modells (kein Docker).
+
+    Algorithmus:
+        1. Resample Audio auf 16 000 Hz (CREPE-Trainings-SR)
+        2. Frame-Extraktion: Hop = 10 ms = 160 Samples; Länge = 1024 Samples
+           Padding: halbe Fensterlänge vorne/hinten (zentrierte Frames)
+        3. Normalisierung: Mean-Subtraction + Amplitude-Normierung pro Frame
+        4. ONNX-Batch-Inferenz → Salience-Matrix (N × 360)
+        5. F0 = Σ(f_i · s_i) / Σ(s_i) — gewichteter Durchschnitt der Pitch-Bins
+        6. Voicing-Wahrscheinlichkeit = max(salience_i) pro Frame
+        7. Zeitstempel: t_i = (i · 160) / 16 000 Sekunden
+
+    Thread-Safety: Double-Checked Locking für Singleton (§3.2 Aurik-Spec).
+    """
+
+    def __init__(self) -> None:
+        self._session: object | None = None
+        self._model_used: str = "dsp_pyin"
+        self._result_cache: dict = {}  # SHA256-Cache (§3.8)
+        self._cache_lock: threading.Lock = threading.Lock()
+        self._load_model()
+
+    def _load_model(self) -> None:
+        """ONNX-Session laden oder stumm auf DSP-Fallback wechseln."""
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+
+            if not _CREPE_ONNX_PATH.exists():
+                logger.debug(
+                    "CREPE-ONNX nicht gefunden (%s) — pYIN-Fallback aktiv",
+                    _CREPE_ONNX_PATH,
+                )
+                return
+
+            try:
+                from backend.core.ml_memory_budget import try_allocate as _try_alloc  # noqa: PLC0415
+                if not _try_alloc("CREPE", size_gb=0.10):
+                    logger.warning("CREPE: ML-Budget erschöpft — pYIN-Fallback.")
+                    return
+            except Exception:
+                pass
+
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 1
+            opts.intra_op_num_threads = 4
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            self._session = ort.InferenceSession(
+                str(_CREPE_ONNX_PATH),
+                sess_options=opts,
+                providers=["CPUExecutionProvider"],  # §9.5: ausschließlich CPU
+            )
+            self._model_used = "crepe_onnx"
+            logger.info(
+                "🎵 CREPE ONNX geladen: %s",
+                _CREPE_ONNX_PATH.name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("CREPE-ONNX nicht verfügbar (%s) — pYIN-Fallback aktiv", exc)
+
+    def analyze(self, audio: np.ndarray, sr: int) -> CrepeResult:
+        """Analysiert den Grundton (F0) eines Audio-Signals.
+
+        Ergebnisse werden SHA256-basiert gecacht (§3.8 Aurik-Spec, max. 128 Einträge).
+
+        Args:
+            audio: 1-D oder 2-D (Stereo) float32/64-Array, beliebige SR.
+            sr:    Sample-Rate in Hz des Eingangssignals.
+
+        Returns:
+            :class:`CrepeResult` mit f0_hz, voiced_prob, salience, times_s.
+
+        Raises:
+            Kein Raise — Fallback auf leer bei totalem Fehler.
+        """
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=-1)
+        audio = np.nan_to_num(np.asarray(audio, dtype=np.float32))
+
+        # SHA256-Cache (§3.8): Identische Audio-Eingaben werden nicht erneut berechnet
+        _h = hashlib.sha256(audio.tobytes())
+        _h.update(sr.to_bytes(4, "little"))
+        _cache_key = "crepe:" + _h.hexdigest()[:16]
+        with self._cache_lock:
+            if _cache_key in self._result_cache:
+                logger.debug("CREPE-Cache-Hit: %s", _cache_key)
+                return self._result_cache[_cache_key]
+
+        result = self._analyze_onnx(audio, sr) if self._session is not None else self._analyze_pyin(audio, sr)
+
+        with self._cache_lock:
+            if len(self._result_cache) >= 128:
+                # LRU-Eviction: ältesten Eintrag entfernen
+                oldest_key = next(iter(self._result_cache))
+                del self._result_cache[oldest_key]
+            self._result_cache[_cache_key] = result
+        return result
+
+    def _analyze_onnx(self, audio: np.ndarray, sr: int) -> CrepeResult:
+        """CREPE-Inferenz via onnxruntime (CPUExecutionProvider)."""
+        try:
+            import scipy.signal as sps  # noqa: PLC0415
+
+            # 1) Resample auf 16 kHz
+            if sr != _CREPE_SR:
+                gcd = math.gcd(sr, _CREPE_SR)
+                up, down = _CREPE_SR // gcd, sr // gcd
+                audio_16k = sps.resample_poly(audio, up, down).astype(np.float32)
+            else:
+                audio_16k = audio.copy()
+
+            audio_16k = np.nan_to_num(audio_16k)
+
+            # 2) Frame-Extraktion (zentriert, konstantes Padding)
+            n_samples = len(audio_16k)
+            hop = _HOP_SAMPLES
+            win = _FRAME_LENGTH
+            pad = win // 2
+            audio_padded = np.pad(audio_16k, pad, mode="constant")
+            n_frames = max(1, (n_samples + hop - 1) // hop)
+            # Strides für Zero-Copy Frame-Erzeugung
+            strides = (
+                audio_padded.strides[0] * hop,
+                audio_padded.strides[0],
+            )
+            frames = np.lib.stride_tricks.as_strided(
+                audio_padded,
+                shape=(n_frames, win),
+                strides=strides,
+            ).copy()
+
+            # 3) Normalisierung pro Frame
+            frames -= np.mean(frames, axis=1, keepdims=True)
+            frame_max = np.max(np.abs(frames), axis=1, keepdims=True)
+            frame_max = np.where(frame_max < 1e-7, 1.0, frame_max)
+            frames = (frames / frame_max).astype(np.float32)
+
+            # 4) Chunk-Streaming: Inferenz in _CHUNK_FRAMES-großen Batches
+            #    → vollständige Abdeckung aller Frames ohne Subsampling-Verlust
+            f0_hz_parts: list = []
+            voiced_parts: list = []
+            sal_parts: list = []
+
+            for _start in range(0, n_frames, _CHUNK_FRAMES):
+                chunk = frames[_start : _start + _CHUNK_FRAMES]  # (C, 1024)
+
+                # 5) ONNX-Batch-Inferenz pro Chunk
+                sal_chunk: np.ndarray = self._session.run(["classifier"], {"input": chunk})[0].astype(
+                    np.float32
+                )  # (C, 360)
+                sal_chunk = np.nan_to_num(sal_chunk).clip(0.0, 1.0)
+
+                # 6) F0-Schätzung: gewichteter Durchschnitt der 360 Pitch-Bins
+                row_sum = sal_chunk.sum(axis=1, keepdims=True)
+                row_sum = np.where(row_sum < 1e-12, 1.0, row_sum)
+                norm = sal_chunk / row_sum
+                f0_hz_parts.append(norm.dot(_CREPE_FREQS))  # (C,)
+                voiced_parts.append(sal_chunk.max(axis=1).clip(0.0, 1.0))
+                sal_parts.append(sal_chunk.max(axis=1))
+
+            # 7) Alle Chunks zusammenführen
+            f0_hz = np.concatenate(f0_hz_parts).astype(np.float32)  # (n_frames,)
+            voiced_prob = np.concatenate(voiced_parts).astype(np.float32)
+            sal_interp = np.concatenate(sal_parts).astype(np.float32)
+
+            # 9) Zeitstempel
+            times_s = np.arange(n_frames, dtype=np.float32) * hop / _CREPE_SR
+
+            f0_hz = np.nan_to_num(f0_hz)
+            voiced_prob = np.nan_to_num(voiced_prob)
+
+            n_voiced = int(np.sum(voiced_prob >= _VOICED_THRESHOLD))
+            logger.debug(
+                "CREPE ONNX: %d Frames, voiced=%.1f%%, F0-Median=%.1f Hz",
+                n_frames,
+                100.0 * n_voiced / max(1, n_frames),
+                float(np.median(f0_hz[voiced_prob >= _VOICED_THRESHOLD])) if n_voiced > 0 else 0.0,
+            )
+
+            return CrepeResult(
+                f0_hz=f0_hz,
+                voiced_prob=voiced_prob,
+                salience=sal_interp,
+                times_s=times_s,
+                model_used="crepe_onnx",
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CREPE-ONNX-Inferenz fehlgeschlagen (%s) — Wechsel zu pYIN", exc)
+            return self._analyze_pyin(audio, sr)
+
+    def _analyze_pyin(self, audio: np.ndarray, sr: int) -> CrepeResult:
+        """pYIN-Fallback (Mauch & Dixon 2014) — O(N²), max. 2 Sekunden.
+
+        Post-2018-Fallback gem. §4.2 (erlaubt).
+        """
+        try:
+            import librosa  # noqa: PLC0415
+
+            # pYIN: max. 30 s (O(N) per Frame mit librosa-Optimierung; Pytest-Budget)
+            seg_len = min(len(audio), int(sr * 30.0))
+            seg = audio[:seg_len]
+
+            f0, _, voiced_probs = librosa.pyin(seg, fmin=20.0, fmax=2_000.0, sr=sr)
+            f0 = np.nan_to_num(f0.astype(np.float32))
+            voiced_probs = np.nan_to_num(voiced_probs.astype(np.float32))
+            n_frames = len(f0)
+            hop_lib = 512
+            times_s = (np.arange(n_frames) * hop_lib / sr).astype(np.float32)
+
+            return CrepeResult(
+                f0_hz=f0,
+                voiced_prob=voiced_probs,
+                salience=voiced_probs,
+                times_s=times_s,
+                model_used="dsp_pyin",
+                details={"segment_len_s": seg_len / sr},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pYIN-Fallback fehlgeschlagen (%s) — leeres Ergebnis", exc)
+            return CrepeResult(
+                f0_hz=np.zeros(1, dtype=np.float32),
+                voiced_prob=np.zeros(1, dtype=np.float32),
+                salience=np.zeros(1, dtype=np.float32),
+                times_s=np.zeros(1, dtype=np.float32),
+                model_used="dsp_pyin_failed",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Thread-sicherer Singleton (Double-Checked Locking §3.2 Aurik-Spec)
+# ---------------------------------------------------------------------------
+_instance: CrepePlugin | None = None
+_lock = threading.Lock()
+
+
+def get_crepe_plugin() -> CrepePlugin:
+    """Thread-sicherer Singleton-Accessor (Double-Checked Locking).
+
+    Returns:
+        Initialisierte :class:`CrepePlugin`-Instanz (lazy init).
+    """
+    global _instance
+    if _instance is None:  # Schnellpfad ohne Lock
+        with _lock:
+            if _instance is None:  # Zweiter Check unter Lock (Race-Condition-sicher)
+                _instance = CrepePlugin()
+    return _instance
+
+
+def unload_crepe() -> None:
+    """Unload CREPE resources and release ML budget slot.
+
+    Safe to call multiple times.
+    """
+    global _instance
+    with _lock:
+        if _instance is not None:
+            try:
+                _instance._session = None
+                with _instance._cache_lock:
+                    _instance._result_cache.clear()
+            except Exception:
+                pass
+            _instance = None
+    try:
+        from backend.core.ml_memory_budget import release as _release  # noqa: PLC0415
+
+        _release("CREPE")
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Convenience-Funktion
+# ---------------------------------------------------------------------------
+def analyze_pitch(
+    audio: np.ndarray,
+    sr: int,
+) -> CrepeResult:
+    """Pitch-Tracking ohne manuelle Plugin-Instantiierung.
+
+    Nutzt CREPE-ONNX wenn verfügbar, andernfalls pYIN-Fallback.
+
+    Args:
+        audio: 1-D oder Stereo Audio-Array (beliebige SR).
+        sr:    Sample-Rate in Hz.
+
+    Returns:
+        :class:`CrepeResult` mit F0-Tracking-Daten.
+
+    Example::
+
+        result = analyze_pitch(audio, sr=48000)
+        logger.debug(f"Mittlere F0: {result.mean_f0():.1f} Hz")
+        logger.debug(f"Modell: {result.model_used}")
+    """
+    return get_crepe_plugin().analyze(audio, sr)
+
+
+# ---------------------------------------------------------------------------
+# Rückwärtskompatible Aliase (alte Klassen-/Funktionsnamen aus Docker-Version)
+# ---------------------------------------------------------------------------
+CREPEPlugin = CrepePlugin  # noqa: N816  (war: class CREPEPlugin in Docker-Version)

@@ -1,0 +1,203 @@
+"""
+UVR_MDXNetPlugin — Instrumentaltrennung via lokale ONNX-Modelle (kein Docker).
+
+Modelle: models/uvr_mdx_net/uvr_mdx_net_inst_hq_{1..4}.onnx
+ONNX-Interface: input[batch,4,3072,256] → output[batch,4,3072,256]
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+_lock = threading.Lock()
+_inst: UVRMDXNetPlugin | None = None
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_MODEL_DIR = os.path.join(_ROOT, "models", "uvr_mdx_net")
+_SR = 44_100
+_N_FFT = 6144
+_HOP = 1024
+_BINS = 3072
+_CHUNK = 256  # Zeitschritte pro Chunk
+
+
+class UVRMDXNetPlugin:
+    """UVR MDX-Net Instrumental-Trennung — 4 HQ-Modelle, ONNX lokal."""
+
+    MODEL_FILES = [
+        "uvr_mdx_net_inst_hq_1.onnx",
+        "uvr_mdx_net_inst_hq_2.onnx",
+        "uvr_mdx_net_inst_hq_3.onnx",
+        "uvr_mdx_net_inst_hq_4.onnx",
+    ]
+
+    def __init__(self, model_dir: str | None = None) -> None:
+        d = model_dir or _MODEL_DIR
+        self._sessions: list = []
+        self._try_load(d)
+
+    def _try_load(self, d: str) -> None:
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+
+            # ML-Budget-Guard: 4 UVR-MDX-Net-Modelle zusammen ~1.2 GB
+            try:
+                from backend.core.ml_memory_budget import try_allocate as _try_alloc  # noqa: PLC0415
+                if not _try_alloc("UVR_MDXNet", size_gb=1.20):
+                    logger.warning("UVR MDX-Net: ML-Budget erschöpft — DSP-Fallback.")
+                    return
+            except Exception:
+                pass
+
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 2
+            prov = ["CPUExecutionProvider"]
+            for mf in self.MODEL_FILES:
+                mp = os.path.join(d, mf)
+                if os.path.exists(mp):
+                    self._sessions.append(ort.InferenceSession(mp, sess_options=opts, providers=prov))
+                    logger.info("UVR MDX-Net geladen: %s", mf)
+            if not self._sessions:
+                logger.warning("Keine UVR-Modelle in: %s — DSP-Fallback.", d)
+                try:
+                    from backend.core.ml_memory_budget import release as _release  # noqa: PLC0415
+                    _release("UVR_MDXNet")
+                except Exception:
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("UVR ONNX-Ladefehler: %s — DSP-Fallback.", exc)
+            try:
+                from backend.core.ml_memory_budget import release as _release  # noqa: PLC0415
+                _release("UVR_MDXNet")
+            except Exception:
+                pass
+
+    # ── Public ──────────────────────────────────────────────────────────────
+
+    def separate(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
+        """(vocals, instrumental) aus Audio trennen."""
+        audio = np.nan_to_num(audio.astype(np.float32))
+        mono = audio if audio.ndim == 1 else audio.mean(axis=1)
+        if self._sessions:
+            inst = self._run_ensemble(mono, sr)
+        else:
+            inst = self._hpss_fallback(mono)
+        voc = np.clip(mono - inst, -1.0, 1.0)
+        return voc.astype(np.float32), inst.astype(np.float32)
+
+    # ── Internal ────────────────────────────────────────────────────────────
+
+    def _stft_mag(self, mono: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        win = np.hanning(_N_FFT).astype(np.float32)
+        n = len(mono)
+        n_frames = max(1, (n + _HOP - 1) // _HOP)
+        padded = np.zeros(n_frames * _HOP + _N_FFT, dtype=np.float32)
+        padded[:n] = mono
+        specs = []
+        for i in range(n_frames):
+            frame = padded[i * _HOP : i * _HOP + _N_FFT] * win
+            specs.append(np.fft.rfft(frame)[:_BINS])
+        spec = np.array(specs, dtype=np.complex64).T  # [3072, frames]
+        return np.abs(spec), spec  # (mag, complex)
+
+    def _istft(self, spec: np.ndarray, n_orig: int) -> np.ndarray:
+        win = np.hanning(_N_FFT).astype(np.float32)
+        n_frames = spec.shape[1]
+        n_out = n_frames * _HOP + _N_FFT
+        out = np.zeros(n_out, dtype=np.float32)
+        ws = np.zeros(n_out, dtype=np.float32)
+        full = np.zeros((_N_FFT // 2 + 1, n_frames), dtype=np.complex64)
+        full[:_BINS] = spec[:_BINS]
+        for i in range(n_frames):
+            frame = np.fft.irfft(full[:, i], n=_N_FFT).real.astype(np.float32)
+            out[i * _HOP : i * _HOP + _N_FFT] += frame * win
+            ws[i * _HOP : i * _HOP + _N_FFT] += win**2
+        ws = np.where(ws < 1e-8, 1.0, ws)
+        return (out / ws)[:n_orig].astype(np.float32)
+
+    def _run_ensemble(self, mono: np.ndarray, sr: int) -> np.ndarray:
+        from scipy.signal import resample_poly  # noqa: PLC0415
+
+        # Resample zu Modell-SR
+        if sr != _SR:
+            from math import gcd  # noqa: PLC0415
+
+            g = gcd(sr, _SR)
+            mono = resample_poly(mono, _SR // g, sr // g).astype(np.float32)
+        n = len(mono)
+        mag, cplx = self._stft_mag(mono)  # [3072, frames]
+        n_frames = mag.shape[1]
+        masks_sum = np.zeros_like(mag)
+
+        for sess in self._sessions:
+            mask_out = np.zeros_like(mag)
+            for s in range(0, n_frames, _CHUNK):
+                e = min(s + _CHUNK, n_frames)
+                T = e - s
+                seg = mag[:, s:e]
+                # Pad zu [batch=1, 4, 3072, 256]
+                inp = np.zeros((1, 4, _BINS, _CHUNK), dtype=np.float32)
+                inp[0, 0, :, :T] = seg
+                inp[0, 1, :, :T] = seg  # 4 Kanäle mit gleicher Magnitude
+                inp[0, 2, :, :T] = seg
+                inp[0, 3, :, :T] = seg
+                try:
+                    out = sess.run(None, {"input": inp})[0]  # [1,4,3072,256]
+                    mask_out[:, s:e] = np.clip(out[0, 0, :, :T], 0, 1)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("UVR chunk-Fehler: %s", exc)
+                    mask_out[:, s:e] = 0.5
+            masks_sum += mask_out
+
+        mask = np.clip(masks_sum / len(self._sessions), 0, 1)
+        inst_spec = mask * np.abs(cplx) * np.exp(1j * np.angle(cplx))
+        inst = self._istft(inst_spec, n)
+        # Zurück auf Eingangs-SR
+        if sr != _SR:
+            from math import gcd  # noqa: PLC0415
+
+            g = gcd(_SR, sr)
+            inst = resample_poly(inst, sr // g, _SR // g).astype(np.float32)
+        mn, mx = len(inst), len(mono)
+        if mx > mn:
+            return np.pad(inst, (0, mx - mn)).astype(np.float32)
+        return inst[:mx].astype(np.float32)
+
+    @staticmethod
+    def _hpss_fallback(mono: np.ndarray) -> np.ndarray:
+        try:
+            import librosa  # noqa: PLC0415
+
+            _H, P = librosa.effects.hpss(mono)
+            return P.astype(np.float32)
+        except Exception:  # noqa: BLE001
+            return (mono * 0.7).astype(np.float32)
+
+
+def get_uvr_mdxnet_plugin() -> UVRMDXNetPlugin:
+    """Thread-sicherer Singleton."""
+    global _inst
+    if _inst is None:
+        with _lock:
+            if _inst is None:
+                _inst = UVRMDXNetPlugin()
+    return _inst
+
+
+def separate_instrumental(audio: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
+    """Convenience: (vocals, instrumental)."""
+    return get_uvr_mdxnet_plugin().separate(audio, sr)
+
+
+# Convenience-Alias
+import numpy as _np
+
+
+def separate_vocals_uvr(audio: _np.ndarray, sr: int = 48000):
+    """Gibt (vocals, instrumental) Tuple zurück."""
+    return separate_instrumental(audio, sr)

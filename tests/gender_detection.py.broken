@@ -1,0 +1,16 @@
+from gender_detection import GenderDetector
+ diarization = self.pipeline(audio_file)
+  speakers = {}
+   for turn, _, speaker in diarization.itertracks(yield_label=True):
+        # pyannote/speaker-diarization-3.1 gibt keine Gender-Labels direkt zurück,
+        # daher hier nur Speaker-IDs. Gender muss ggf. aus Speaker-IDs abgeleitet werden.
+        if speaker not in speakers:
+            speakers[speaker] = 0.0
+        speakers[speaker] += turn.end - turn.start
+    if not speakers:
+        return 'unknown'
+    # Annahme: Der dominante Sprecher ist die Hauptstimme
+    dominant_speaker = max(speakers, key=speakers.get)
+    # Gender-Klassifikation müsste hier ergänzt werden, falls verfügbar
+    # Platzhalter: Immer 'unknown' zurückgeben
+    return 'unknown'

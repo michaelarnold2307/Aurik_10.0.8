@@ -1,0 +1,51 @@
+Liste der zu entfernenden Legacy-/Aurik6/8-Tests (Stand 16.02.2026):
+=== ERLEDIGT (20.02.2026) — bereits vor Bereinigung nicht mehr vorhanden ===
+- test_e2e_complete_pipeline.py         ✓ bereits gelöscht
+- test_unified_restorer.py              ✓ bereits gelöscht
+- test_music_vocal_pipeline.py          ✓ bereits gelöscht
+- test_optimized_dsp.py                 ✓ bereits gelöscht
+- test_core_minimal.py                  ✓ bereits gelöscht
+- test_unified_musical_goals_validation.py ✓ bereits gelöscht
+- test_vocal_enhancement_musical_goals.py  ✓ bereits gelöscht
+- test_optimization_integration_phase2.py  ✓ bereits gelöscht
+- test_nisqa_plugin.py                  ✓ bereits gelöscht
+- test_unified_restorer_modes.py        ✓ bereits gelöscht
+- test_export_gap41_42_44.py            ✓ bereits gelöscht
+- test_phase19_deesser_only.py          ✓ bereits gelöscht
+- test_panns_plugin.py                  ✓ bereits gelöscht
+- test_visqol_plugin.py                 ✓ bereits gelöscht
+- test_48khz_standard.py                ✓ bereits gelöscht
+- test_mdx23c_plugin.py                 ✓ bereits gelöscht
+- test_policy_decision_coverage.py      ✓ bereits gelöscht
+- test_phase19_v4_vocals.py             ✓ bereits gelöscht
+- test_phase42_v2_log.py                ✓ bereits gelöscht
+- test_sgmse_plus_plugin.py             ✓ bereits gelöscht
+- test_psychoacoustic_core.py           ✓ bereits gelöscht
+- test_resampling_simple.py             ✓ bereits gelöscht
+- test_resample_enhance_plugin.py       ✓ bereits gelöscht
+- test_real_world_integration.py        ✓ bereits gelöscht
+- test_conduct_enforcer.py              ✓ bereits gelöscht
+- test_comprehensive_media_types_forensics.py ✓ bereits gelöscht
+- vocal_separation/test_vocal_separation_v8.py          ✓ bereits gelöscht
+- vocal_separation/test_vocal_separation_benchmarks.py  ✓ bereits gelöscht
+
+=== STUFE 1 BEREINIGUNG (20.02.2026) — jetzt gelöscht ===
+- analyze_ml_vs_dsp_for_musical_excellence.py ✓ 0 tests, Analyse-Skript
+- ai_auto_panner_gain_ducker.py               ✓ 0 tests, kein Pytest-File
+- gender_detection.py                         ✓ 0 tests, Utility-Skript
+- quick_mode_check.py                         ✓ 0 tests, Utility-Skript
+- profile_click_removal.py                    ✓ 0 tests, Profiler-Skript
+- test_all_42_phases_interview.py             ✓ 0 pytest-Tests, Analyse-Skript
+- test_42_phases_quick.py                     ✓ 0 pytest-Tests, Analyse-Skript
+- test_gaps_integration_simplified.py         ✓ Duplikat von test_gaps_integration.py
+- test_complete_integration_2026_02_10.py     ✓ 11 Tests, datiert/überholt
+- test_analysis_and_quality_extra.py          ✓ 6 Tests, Überlappung mit Hauptdatei
+
+=== BEWUSST BEHALTEN ===
+- test_utils.py        → von conftest.py importiert, kein Test-File, Hilfsmodul
+- memory_leak_test.py  → 1 Test, Memory-Profiler (nützlich für Performance-Debugging)
+
+=== STUFE 2 (OFFEN — parametrierte Phase-Tests) ===
+Phase-Boilerplate in tests/unit/test_phases_*.py konsolidieren:
+test_initialization (64×), test_mono_returns_phase_result (43×),
+test_stereo_returns_phase_result (32×) → ein parametrierter Test für alle 55 Phasen.

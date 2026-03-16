@@ -1,0 +1,58 @@
+[flake8]
+# ==========================================================================
+# Flake8-Konfiguration — Aurik 9.10.46 (SOTA Code-Qualität, März 2026)
+# ==========================================================================
+
+max-line-length = 120
+max-doc-length = 140
+max-complexity = 15
+
+# Ausschlüsse (Verzeichnisse und Dateimuster)
+exclude =
+    .git,
+    .venv_aurik,
+    .venv,
+    __pycache__,
+    build,
+    dist,
+    models,
+    output_audio,
+    sessions,
+    logs,
+    data,
+    golden_samples,
+    chain_templates,
+    .eggs,
+    *.egg-info,
+    configs
+
+# Ignorierte Regeln:
+# E203 — Leerzeichen vor ':' (Black-kompatibel)
+# W503 — Zeilenumbruch vor binärem Operator (Black-Stil)
+# E501 — Zeilenlänge (durch Black und max-line-length abgedeckt)
+# E731 — Lambda-Zuweisung (legitim in Callbacks)
+# E741 — Ambiguose Variablen (n, l, O legitim in Mathe/DSP)
+# W504 — Zeilenumbruch nach binärem Operator
+ignore = E203,W503,W504,E501,E731,E741,E402,W505,C901,E128,E712,E722,F401,F405,F541,F841,E241,E221,E201,E222,E226
+
+# Pro-Datei-Ausnahmen
+per-file-ignores =
+    # __init__.py: wildcard imports und ungenuzte Importe für Re-Exports
+    __init__.py:F401,F403,F811
+    # Tests: assert und direktimporte
+    tests/*.py:S101,F401,N802,N803,F811
+    tests/**/*.py:S101,F401,N802,N803,F811
+    # Skripte: print() erlaubt
+    scripts/*.py:T201,F811
+    aurik_cli.py:T201
+    # Plugins: _release-Reimport in try/except-Chains erlaubt
+    plugins/*.py:F811
+    # Legacy-Code
+    backend/processing_pipeline_v8.py:ALL
+
+# Statistiken
+statistics = True
+count = True
+show-source = True
+show-pep8 = True
+

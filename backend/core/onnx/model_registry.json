@@ -1,0 +1,224 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AURIK ONNX Model Registry",
+  "description": "Central registry for all ONNX models with metadata, paths, and optimization settings",
+  "version": "1.0.0",
+  "last_updated": "2026-03-15",
+  "models": {
+    "deepfilternet_v3_ii": {
+      "name": "DeepFilterNet v3 II",
+      "type": "denoising",
+      "task": "speech_enhancement",
+      "base_dir": "models/deepfilternet_v3_ii",
+      "onnx_models": [
+        {
+          "name": "encoder",
+          "path": "models/deepfilternet_v3_ii/enc.onnx",
+          "input_shape": [
+            1,
+            96,
+            96
+          ],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
+          "sample_rate": 48000,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/deepfilternet_v3_ii/enc_int8.onnx",
+          "model_size_mb": 12.5,
+          "expected_speedup": 1.8
+        },
+        {
+          "name": "decoder",
+          "path": "models/deepfilternet_v3_ii/dec.onnx",
+          "input_shape": [
+            1,
+            96,
+            96
+          ],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
+          "sample_rate": 48000,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/deepfilternet_v3_ii/dec_int8.onnx",
+          "model_size_mb": 8.3,
+          "expected_speedup": 1.8
+        },
+        {
+          "name": "erb_decoder",
+          "path": "models/deepfilternet_v3_ii/erb_dec.onnx",
+          "input_shape": [
+            1,
+            32,
+            96
+          ],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
+          "sample_rate": 48000,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/deepfilternet_v3_ii/erb_dec_int8.onnx",
+          "model_size_mb": 4.2,
+          "expected_speedup": 1.8
+        }
+      ],
+      "optimization": {
+        "onnx_runtime_enabled": true,
+        "quantization_enabled": false,
+        "quantization_type": "dynamic",
+        "target_speedup": "1.5-2.0x",
+        "cpu_threads": 4
+      },
+      "plugin": "plugins.deepfilternet_v3_ii_plugin.DeepFilterNetV3IIPlugin",
+      "notes": "Three-stage model: encoder, decoder, and ERB decoder. Optimized for real-time speech enhancement."
+    },
+    "demucs_v4": {
+      "name": "Demucs v4 (HTDemucs 6s)",
+      "type": "separation",
+      "task": "source_separation",
+      "base_dir": "models/demucs",
+      "onnx_models": [
+        {
+          "name": "htdemucs_6s",
+          "path": "models/demucs/htdemucs_6s.onnx",
+          "input_shape": [
+            1,
+            2,
+            -1
+          ],
+          "output_shape": [
+            6,
+            2,
+            -1
+          ],
+          "sample_rate": 44100,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/demucs/htdemucs_6s_int8.onnx",
+          "model_size_mb": 195.4,
+          "expected_speedup": 2.2,
+          "external_data": true,
+          "external_data_path": "models/demucs/htdemucs_6s.onnx.data"
+        }
+      ],
+      "optimization": {
+        "onnx_runtime_enabled": true,
+        "quantization_enabled": false,
+        "quantization_type": "dynamic",
+        "target_speedup": "2.0-3.0x",
+        "cpu_threads": 6
+      },
+      "plugin": "plugins.demucs_v4_plugin.DemucsV4Plugin",
+      "notes": "Large model with external data file. 6-stem separation: vocals, drums, bass, other, piano, guitar."
+    },
+    "resemble_enhance": {
+      "name": "Resemble-Enhance",
+      "type": "enhancement",
+      "task": "music_denoising",
+      "base_dir": "models/resemble_enhance",
+      "onnx_models": [
+        {
+          "name": "denoiser",
+          "path": "models/resemble_enhance/denoiser.onnx",
+          "input_shape": [
+            1,
+            1,
+            -1
+          ],
+          "output_shape": [
+            1,
+            1,
+            -1
+          ],
+          "sample_rate": 44100,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/resemble_enhance/denoiser_int8.onnx",
+          "model_size_mb": 45.2,
+          "expected_speedup": 2.1
+        }
+      ],
+      "optimization": {
+        "onnx_runtime_enabled": true,
+        "quantization_enabled": false,
+        "quantization_type": "dynamic",
+        "target_speedup": "2.0-3.0x",
+        "cpu_threads": 4
+      },
+      "plugin": "plugins.resemble_enhance_plugin.ResembleEnhancePlugin",
+      "notes": "High-quality music denoising and speech enhancement. Optimized for music restoration."
+    },
+    "banquet": {
+      "name": "Banquet Vinyl Restoration",
+      "type": "enhancement",
+      "task": "vinyl_restoration",
+      "base_dir": "models/banquet",
+      "onnx_models": [
+        {
+          "name": "banquet",
+          "path": "models/banquet/banquet.onnx",
+          "input_shape": [
+            1,
+            2,
+            -1
+          ],
+          "output_shape": [
+            1,
+            2,
+            -1
+          ],
+          "sample_rate": 48000,
+          "opset_version": 14,
+          "quantized": false,
+          "quantized_path": "models/banquet/banquet_int8.onnx",
+          "model_size_mb": 95.6,
+          "expected_speedup": 2.0
+        }
+      ],
+      "optimization": {
+        "onnx_runtime_enabled": true,
+        "quantization_enabled": false,
+        "quantization_type": "dynamic",
+        "target_speedup": "1.8-2.5x",
+        "cpu_threads": 4
+      },
+      "plugin": "plugins.banquet_vinyl_plugin.BanquetVinylPlugin",
+      "notes": "Specialized for vinyl restoration: click/pop removal, noise reduction. Optimized for 48kHz."
+    }
+  },
+  "statistics": {
+    "total_models": 4,
+    "total_onnx_files": 8,
+    "total_size_mb": 385.0,
+    "quantized_count": 0,
+    "average_expected_speedup": "1.5-2.5x"
+  },
+  "roadmap": {
+    "completed": [
+      "ONNX Runtime infrastructure",
+      "Model converter (PyTorch → ONNX)",
+      "Model quantizer (FP32 → INT8)",
+      "Fallback manager (ONNX → PyTorch)",
+      "Benchmark scripts"
+    ],
+    "in_progress": [
+      "Plugin integration",
+      "Model quantization (batch processing)"
+    ],
+    "pending": [
+      "Production deployment",
+      "Performance monitoring",
+      "Automatic model updates"
+    ]
+  }
+}

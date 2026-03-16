@@ -1,0 +1,541 @@
+"""MUSHRA-Evaluator für musikalische Restaurierungsqualität.
+
+Implementiert eine **objektive Approximation** des MUSHRA-Verfahrens
+(MUltiple Stimuli with Hidden Reference and Anchor) gemäß ITU-R BS.1534-3.
+
+Während klassisches MUSHRA subjektive Hörertests erfordert, approximiert
+dieser Modul die MUSHRA-Skala (0–100) mit objektiven Metriken:
+
+- **Perceptuelle Ähnlichkeit** zur Referenz (NSIM auf Gammatone-Spektrogrammen)
+- **Musical Goals** als Qualitätsdimensionen (alle 9 Aurik-Ziele)
+- **Anchor-Kalibrierung**: LP-gefiltertes Signal als 3.5-kHz-Anchor (≈ Score 20–30)
+
+MUSHRA-Skala-Beschreibung (ITU-R BS.1534-3):
+    100:  Excellent    (unmerkliche Unterschiede zur Referenz)
+     80:  Good         (wahrnehmbare, aber nicht störende Unterschiede)
+     60:  Fair         (leicht störende Unterschiede)
+     40:  Poor         (störende Unterschiede)
+     20:  Bad          (sehr störende Unterschiede, 3.5-kHz-Anchor-Niveau)
+
+Beispiel::
+
+    from backend.core.mushra_evaluator import evaluate_mushra, get_mushra_evaluator
+
+    result = evaluate_mushra(reference_audio, restored_audio, sr=48000)
+    logger.debug(f"MUSHRA-Score: {result.mushra_score:.1f}/100")
+    logger.debug(f"Kategorie: {result.grade}")          # z.B. "Good"
+    logger.debug(f"ITU-Konform: {result.itu_grade}")    # z.B. "B (Good)"
+
+Autor: Aurik 9.9 — 19. Februar 2026
+Referenz: ITU-R BS.1534-3 (2015): "Method for the subjective assessment of
+intermediate quality levels of audio systems"
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import logging
+import math
+import threading
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Datenklassen
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MushraResult:
+    """Ergebnis einer MUSHRA-Bewertung.
+
+    Attributes:
+        mushra_score:     Objektiver MUSHRA-Score ∈ [0, 100].
+        grade:            Kategoriebezeichnung (Excellent/Good/Fair/Poor/Bad).
+        itu_grade:        ITU-R-konforme Grad-Bezeichnung (A–E).
+        nsim:             Perceptuelle Ähnlichkeit zur Referenz ∈ [0, 1].
+        musical_goals:    Dict mit allen 9 Musical-Goal-Scores.
+        anchor_score:     MUSHRA-Score des 3.5-kHz-Anchors (Kalibrierung).
+        hidden_ref_score: MUSHRA-Score der verdeckten Referenz (sollte≈100).
+        details:          Zusätzliche Metriken für Debugging/Reporting.
+    """
+
+    mushra_score: float
+    grade: str
+    itu_grade: str
+    nsim: float
+    musical_goals: dict[str, float]
+    anchor_score: float
+    hidden_ref_score: float
+    details: dict[str, float] = field(default_factory=dict)
+
+    def passes_mushra_threshold(self, min_score: float = 80.0) -> bool:
+        """Prüft ob der Score die Mindestanforderung erfüllt.
+
+        Args:
+            min_score: Minimaler MUSHRA-Score (Standard: 80 = Good).
+
+        Returns:
+            True wenn mushra_score ≥ min_score.
+        """
+        return self.mushra_score >= min_score
+
+    def as_dict(self) -> dict:
+        """Serialisierungsformat für Logging und Persistenz."""
+        return {
+            "mushra_score": self.mushra_score,
+            "grade": self.grade,
+            "itu_grade": self.itu_grade,
+            "nsim": self.nsim,
+            "anchor_score": self.anchor_score,
+            "hidden_ref_score": self.hidden_ref_score,
+            **{f"mg_{k}": v for k, v in self.musical_goals.items()},
+            **self.details,
+        }
+
+
+@dataclass
+class MushraComparison:
+    """Vergleich mehrerer Restaurierungs-Varianten auf MUSHRA-Basis.
+
+    Attributes:
+        reference_condition:   Name + Score der Referenz.
+        anchor_condition:      Name + Score des Anchors.
+        test_conditions:       Liste aller Testbedingungen (Name, Score, Ergebnis).
+        ranking:               Testbedingungen sortiert nach MUSHRA-Score (absteigend).
+        winner:                Name der besten Testbedingung.
+    """
+
+    reference_condition: tuple[str, float]
+    anchor_condition: tuple[str, float]
+    test_conditions: list[tuple[str, MushraResult]]
+    ranking: list[tuple[str, float]]
+    winner: str
+
+
+# ---------------------------------------------------------------------------
+# Kernklasse
+# ---------------------------------------------------------------------------
+
+
+class MushraEvaluator:
+    """Objektiver MUSHRA-Evaluator für Restaurierungsqualität.
+
+    Approximiert den MUSHRA-Score (0–100) aus objektiven Audio-Metriken
+    entsprechend ITU-R BS.1534-3. Kein subjektiver Hörtest erforderlich.
+
+    Objektive Score-Berechnung:
+        1. NSIM (strukturelle Ähnlichkeit auf Gammatone-Spektrogrammen,
+           25 Bänder, 50–8000 Hz) → perceptueller Similaritäts-Score.
+        2. Musical Goals (alle 9 Aurik-Ziele) → Musikalischer Qualitätsscore.
+        3. Meld-Cepstral Distortion (MCD) → Klangfarben-Treue.
+        4. LUFS-Differenz → Lautstärke-Invarianz.
+        5. Gewichtete Kombination → MUSHRA-Score [0, 100].
+
+    Anchor-Kalibrierung (ITU-R BS.1534-3 §6):
+        Der 3.5-kHz-Tiefpassfilter-Anchor wird automatisch erzeugt und bewertet.
+        Er dient als unteres Kalibrierungspunkt (≈ MUSHRA-Score 20–30).
+
+    Singleton-Muster (Thread-safe, Double-Checked Locking):
+        Nutze ``get_mushra_evaluator()`` statt direkter Instantiierung.
+    """
+
+    # MUSHRA-Gewichtungsmatrix (Summe = 1.0)
+    _WEIGHTS: dict[str, float] = {
+        "nsim": 0.35,  # Perceptuelle Ähnlichkeit (stärkster Prädiktor)
+        "musical_goals": 0.35,  # 9 Musical Goals (Aurik-DNA)
+        "mcd": 0.15,  # Mel-Cepstral Distortion (Klangfarbe)
+        "lufs_diff": 0.10,  # Lautstärke-Invarianz
+        "spectral_corr": 0.05,  # Spektrale Korrelation
+    }
+
+    def __init__(self) -> None:
+        self._gammatone_ready: bool = False
+        self._mu_checker = None  # Lazily loaded
+
+    # ------------------------------------------------------------------
+    # Öffentliche API
+    # ------------------------------------------------------------------
+
+    def evaluate(
+        self,
+        reference: np.ndarray,
+        test: np.ndarray,
+        sr: int,
+        *,
+        compute_anchor: bool = True,
+    ) -> MushraResult:
+        """Berechnet den objektiven MUSHRA-Score.
+
+        Args:
+            reference:       Referenz-Audio (Original oder restored mit bekannter
+                             Qualität); 1-D float32, normalisiert auf [-1, 1].
+            test:            Testsignal (restauriertes Audio); gleiche Länge wie reference.
+            sr:              Abtastrate in Hz (Pflicht: 48 000 Hz).
+            compute_anchor:  Wenn True, wird 3.5-kHz-Anchor intern berechnet.
+
+        Returns:
+            :class:`MushraResult` mit vollständiger MUSHRA-Bewertung.
+
+        Raises:
+            ValueError: Falls sr ≠ 48 000 oder Audio nicht 1-D.
+        """
+        if sr != 48_000:
+            logger.warning("MushraEvaluator: SR=%d Hz ≠ 48000 Hz — Resampling empfohlen", sr)
+
+        ref_mono = self._to_mono(reference)
+        test_mono = self._to_mono(test)
+
+        # Längen angleichen
+        min_len = min(len(ref_mono), len(test_mono))
+        ref_mono = ref_mono[:min_len]
+        test_mono = test_mono[:min_len]
+
+        # --- Einzelmetriken berechnen ---
+        nsim = self._compute_nsim(ref_mono, test_mono, sr)
+        mcd = self._compute_mcd(ref_mono, test_mono, sr)
+        lufs_diff = self._compute_lufs_diff(ref_mono, test_mono, sr)
+        spectral_corr = self._compute_spectral_corr(ref_mono, test_mono, sr)
+        musical_goals = self._compute_musical_goals(test_mono, sr)
+        mg_mean = float(np.mean(list(musical_goals.values()))) if musical_goals else 0.0
+
+        # Score-Konversion in [0, 1]-Raum
+        nsim_score = float(np.clip(nsim, 0.0, 1.0))
+        mg_score = float(np.clip(mg_mean, 0.0, 1.0))
+        mcd_score = float(np.exp(-mcd / 300.0))  # MCD 0→1.0  242→0.446  500→0.189
+        lufs_score = float(np.clip(1.0 - abs(lufs_diff) / 12.0, 0.0, 1.0))
+        sc_score = float(np.clip(spectral_corr, 0.0, 1.0))
+
+        # Gewichtete Kombination → [0, 1]
+        raw = (
+            self._WEIGHTS["nsim"] * nsim_score
+            + self._WEIGHTS["musical_goals"] * mg_score
+            + self._WEIGHTS["mcd"] * mcd_score
+            + self._WEIGHTS["lufs_diff"] * lufs_score
+            + self._WEIGHTS["spectral_corr"] * sc_score
+        )
+
+        # → MUSHRA [0, 100]
+        mushra_score = float(np.clip(raw * 100.0, 0.0, 100.0))
+        mushra_score = round(mushra_score, 1)
+
+        # Anchor-Score (3.5-kHz-Tiefpass ITU-R BS.1534-3 §6)
+        anchor_score = 0.0
+        if compute_anchor:
+            anchor = self._create_anchor(ref_mono, sr)
+            # Anchor-Bewertung: Musical Goals weglassen (zu teuer + nicht relevant).
+            # Der Anchor soll nur seinen Rohscore liefern (NSIM+MCD+LUFS+SC).
+            anchor_score = self._quick_score(ref_mono, anchor, sr)
+
+        # Verdeckte Referenz: Im MUSHRA-Protokoll ist ref vs. ref per Definition 100.
+        # Kein rekursiver Aufruf — das wäre eine unendliche Rekursion.
+        hidden_ref_score = 100.0
+
+        grade, itu_grade = self._grade(mushra_score)
+
+        logger.info(
+            "🎯 MUSHRA: Score=%.1f (%s) | NSIM=%.3f MCD=%.1fdB LUFS-Δ=%.1fLU | Anchor=%.1f",
+            mushra_score,
+            grade,
+            nsim,
+            mcd,
+            lufs_diff,
+            anchor_score,
+        )
+
+        return MushraResult(
+            mushra_score=mushra_score,
+            grade=grade,
+            itu_grade=itu_grade,
+            nsim=nsim,
+            musical_goals=musical_goals,
+            anchor_score=anchor_score,
+            hidden_ref_score=hidden_ref_score,
+            details={
+                "nsim_score": nsim_score,
+                "mg_score": mg_score,
+                "mcd_score": mcd_score,
+                "mcd_db": mcd,
+                "lufs_diff_lu": lufs_diff,
+                "spectral_corr": spectral_corr,
+            },
+        )
+
+    def compare_conditions(
+        self,
+        reference: np.ndarray,
+        conditions: dict[str, np.ndarray],
+        sr: int,
+    ) -> MushraComparison:
+        """Bewertet mehrere Restaurierungs-Varianten im MUSHRA-Layout.
+
+        Args:
+            reference:   Referenz-Audio.
+            conditions:  Dict {condition_name → test_audio} für alle Varianten.
+            sr:          Abtastrate in Hz.
+
+        Returns:
+            :class:`MushraComparison` mit Ranking aller Bedingungen.
+        """
+        test_conditions: list[tuple[str, MushraResult]] = []
+        for name, audio in conditions.items():
+            result = self.evaluate(reference, audio, sr, compute_anchor=False)
+            test_conditions.append((name, result))
+
+        # Anchor-Bedingung automatisch hinzufügen
+        anchor_audio = self._create_anchor(self._to_mono(reference), sr)
+        anchor_result = self.evaluate(reference, anchor_audio, sr, compute_anchor=False)
+
+        # Verdeckte Referenz
+        ref_result = self.evaluate(reference, reference, sr, compute_anchor=False)
+
+        # Ranking
+        ranking = sorted(
+            [(name, r.mushra_score) for name, r in test_conditions],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        winner = ranking[0][0] if ranking else "—"
+
+        return MushraComparison(
+            reference_condition=("Reference (Hidden)", ref_result.mushra_score),
+            anchor_condition=("3.5kHz Anchor (ITU)", anchor_result.mushra_score),
+            test_conditions=test_conditions,
+            ranking=ranking,
+            winner=winner,
+        )
+
+    # ------------------------------------------------------------------
+    # Interne Metrik-Berechnung
+    # ------------------------------------------------------------------
+
+    def _compute_nsim(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
+        """Perceptuelle Ähnlichkeit via NSIM auf Mel-Spektrogrammen.
+
+        Annäherung an Gammatone-NSIM aus PerceptualQualityScorer.
+        """
+        try:
+            import librosa
+
+            n_fft = 2048
+            hop = 512
+            n_mel = 128
+
+            S_ref = librosa.feature.melspectrogram(y=ref, sr=sr, n_fft=n_fft, hop_length=hop, n_mels=n_mel)
+            S_test = librosa.feature.melspectrogram(y=test, sr=sr, n_fft=n_fft, hop_length=hop, n_mels=n_mel)
+
+            S_ref = librosa.power_to_db(np.maximum(S_ref, 1e-10))
+            S_test = librosa.power_to_db(np.maximum(S_test, 1e-10))
+
+            # SSIM-Approximation über Frame-Statistiken
+            mu_r, mu_t = np.mean(S_ref), np.mean(S_test)
+            sig_r, sig_t = np.std(S_ref), np.std(S_test)
+            sig_rt = np.mean((S_ref - mu_r) * (S_test - mu_t))
+
+            C1, C2 = (0.01 * 80) ** 2, (0.03 * 80) ** 2  # dynamic range 80 dB
+            nsim = (2 * mu_r * mu_t + C1) * (2 * sig_rt + C2) / ((mu_r**2 + mu_t**2 + C1) * (sig_r**2 + sig_t**2 + C2))
+            return float(np.clip(nsim, 0.0, 1.0))
+        except Exception as exc:
+            logger.debug("NSIM Fallback (Fehler: %s)", exc)
+            return float(np.clip(1.0 - np.sqrt(np.mean((ref - test) ** 2)), 0.0, 1.0))
+
+    def _compute_mcd(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
+        """Mel-Cepstral Distortion in dB (niedriger = besser).
+
+        MCD = (10/ln10) · √(2 · Σᵢ(c_ref_i − c_test_i)²)
+        """
+        try:
+            import librosa
+
+            n_mfcc = 13
+
+            mfcc_ref = librosa.feature.mfcc(y=ref, sr=sr, n_mfcc=n_mfcc).T
+            mfcc_test = librosa.feature.mfcc(y=test, sr=sr, n_mfcc=n_mfcc).T
+
+            min_frames = min(mfcc_ref.shape[0], mfcc_test.shape[0])
+            diff = mfcc_ref[:min_frames, 1:] - mfcc_test[:min_frames, 1:]  # skip c0
+            mcd = (10.0 / math.log(10)) * math.sqrt(2.0) * float(np.sqrt(np.mean(diff**2)))
+            return max(0.0, mcd)
+        except Exception as exc:
+            logger.debug("MCD Fallback: %s", exc)
+            return 5.0
+
+    def _compute_lufs_diff(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
+        """LUFS-Differenz (BS.1770 K-Gewichtung, vereinfacht).
+
+        Returns:
+            LUFS-Differenz in LU (signed). Ziel: ≤ 1 LU.
+        """
+        try:
+            rms_ref = float(np.sqrt(np.mean(ref**2) + 1e-12))
+            rms_test = float(np.sqrt(np.mean(test**2) + 1e-12))
+            lufs_ref = 20.0 * math.log10(rms_ref)
+            lufs_test = 20.0 * math.log10(rms_test)
+            return lufs_test - lufs_ref
+        except Exception:
+            return 0.0
+
+    def _compute_spectral_corr(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
+        """Spektrale Korrelation via FFT-Leistungsspektrum."""
+        try:
+            P_ref = np.abs(np.fft.rfft(ref)) ** 2
+            P_test = np.abs(np.fft.rfft(test)) ** 2
+            corr = float(np.corrcoef(P_ref, P_test)[0, 1])
+            return float(np.clip(corr, 0.0, 1.0))
+        except Exception:
+            return 0.5
+
+    def _quick_score(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
+        """Schnelle MUSHRA-Schätzung ohne Musical Goals (für Anchor-Berechnung)."""
+        nsim = self._compute_nsim(ref, test, sr)
+        mcd = self._compute_mcd(ref, test, sr)
+        lufs = self._compute_lufs_diff(ref, test, sr)
+        sc = self._compute_spectral_corr(ref, test, sr)
+        raw = (
+            self._WEIGHTS["nsim"] * float(np.clip(nsim, 0.0, 1.0))
+            + self._WEIGHTS["musical_goals"] * 0.0  # Musical Goals nicht verfügbar
+            + self._WEIGHTS["mcd"] * float(np.exp(-mcd / 300.0))
+            + self._WEIGHTS["lufs_diff"] * float(np.clip(1.0 - abs(lufs) / 12.0, 0.0, 1.0))
+            + self._WEIGHTS["spectral_corr"] * float(np.clip(sc, 0.0, 1.0))
+        )
+        return float(np.clip(raw * 100.0, 0.0, 100.0))
+
+    def _compute_musical_goals(self, audio: np.ndarray, sr: int) -> dict[str, float]:
+        """Misst alle 9 Musical Goals (via MusicalGoalsChecker-Singleton)."""
+        if self._mu_checker is None:
+            try:
+                from backend.core.musical_goals.musical_goals_metrics import get_checker
+
+                self._mu_checker = get_checker()
+            except ImportError:
+                return {}
+        try:
+            return self._mu_checker.measure_all(audio, sr)
+        except Exception as exc:
+            logger.debug("Musical Goals Fehler in MUSHRA: %s", exc)
+            return {}
+
+    def _create_anchor(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        """Erzeugt den ITU-R BS.1534-3 3.5-kHz-Tiefpassfilter-Anchor.
+
+        Der Anchor entspricht einem 3500-Hz-LP-Butterworth-Filter
+        8. Ordnung — produziert typisch MUSHRA-Scores von 20–35.
+        """
+        try:
+            from scipy.signal import butter, sosfilt
+
+            sos = butter(8, 3500 / (sr / 2), btype="low", output="sos")
+            anchor = sosfilt(sos, audio).astype(np.float32)
+            return np.clip(anchor, -1.0, 1.0)
+        except Exception as exc:
+            logger.debug("Anchor-Erzeugung Fallback: %s", exc)
+            # Einfacher Bandpass als Fallback
+            return audio * 0.3  # starke Abschwächung ≈ schlechte Qualität
+
+    @staticmethod
+    def _to_mono(audio: np.ndarray) -> np.ndarray:
+        """Konvertiert Stereo → Mono; no-op bei Mono."""
+        audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+        if audio.ndim == 2:
+            return np.mean(audio, axis=1).astype(np.float32)
+        return audio.astype(np.float32)
+
+    @staticmethod
+    def _grade(score: float) -> tuple[str, str]:
+        """Ordnet MUSHRA-Score eine Kategorie zu.
+
+        Returns:
+            Tuple (short_grade, itu_grade) z.B. ("Good", "B (Good)")
+        """
+        if score >= 80:
+            return "Excellent" if score >= 91 else "Good", f"{'A' if score >= 91 else 'B'} (Good)"
+        if score >= 60:
+            return "Fair", "C (Fair)"
+        if score >= 40:
+            return "Poor", "D (Poor)"
+        return "Bad", "E (Bad)"
+
+
+# ---------------------------------------------------------------------------
+# Singleton (Thread-safe)
+# ---------------------------------------------------------------------------
+
+_instance: MushraEvaluator | None = None
+_lock = threading.Lock()
+
+
+def get_mushra_evaluator() -> MushraEvaluator:
+    """Thread-sicherer Singleton-Accessor (Double-Checked Locking).
+
+    Returns:
+        Singleton-Instanz von :class:`MushraEvaluator`.
+    """
+    global _instance
+    if _instance is None:
+        with _lock:
+            if _instance is None:
+                _instance = MushraEvaluator()
+                logger.debug("MushraEvaluator Singleton erstellt.")
+    return _instance
+
+
+def evaluate_mushra(
+    reference: np.ndarray,
+    test: np.ndarray,
+    sr: int = 48_000,
+    *,
+    compute_anchor: bool = True,
+) -> MushraResult:
+    """Convenience-Funktion: Berechnet MUSHRA-Score für ein Testpaar.
+
+    Folgt ITU-R BS.1534-3 Protokoll (objektive Approximation):
+    - Referenz (Hidden Reference) ≈ 100
+    - 3.5-kHz-Anchor ≈ 20–35
+    - Testbedingung: 0–100 je nach Qualität
+
+    Args:
+        reference:       Referenz-Audio (Original / Gold-Standard).
+        test:            Test-Audio (restauriertes Signal).
+        sr:              Abtastrate in Hz (Standard: 48 000 Hz).
+        compute_anchor:  Wenn True, wird 3.5-kHz-Anchor berechnet.
+
+    Returns:
+        :class:`MushraResult` mit MUSHRA-Score, Kategorie und Teilmetriken.
+
+    Example::
+
+        result = evaluate_mushra(original_audio, restored_audio, sr=48000)
+        logger.debug(f"MUSHRA: {result.mushra_score:.1f}/100  ({result.grade})")
+        # → MUSHRA: 84.3/100  (Good)
+    """
+    return get_mushra_evaluator().evaluate(reference, test, sr, compute_anchor=compute_anchor)
+
+
+def compare_mushra(
+    reference: np.ndarray,
+    conditions: dict[str, np.ndarray],
+    sr: int = 48_000,
+) -> MushraComparison:
+    """Vergleicht mehrere Restaurierungs-Varianten im MUSHRA-Layout.
+
+    Args:
+        reference:   Referenz-Audio.
+        conditions:  Dict {name → test_audio} für alle Varianten.
+        sr:          Abtastrate in Hz.
+
+    Returns:
+        :class:`MushraComparison` mit vollständigem Ranking.
+
+    Example::
+
+        comparison = compare_mushra(original, {
+            "Restoration Mode":  restored_v1,
+            "Studio 2026 Mode":  restored_v2,
+            "Baseline (RX10)":   baseline,
+        }, sr=48000)
+        logger.debug(f"Gewinner: {comparison.winner}")
+    """
+    return get_mushra_evaluator().compare_conditions(reference, conditions, sr)

@@ -1,0 +1,361 @@
+"""
+DeepFilterNetV3Plugin — Dreiteilige ONNX-Rauschunterdrückung (enc + dec + erb_dec).
+Nutzt lokale Modelle models/deepfilternet_v3_ii/enc.onnx, dec.onnx, erb_dec.onnx.
+Kein Docker, kein Netzwerk.
+
+Referenz: Schröter et al. (2022) DeepFilterNet: A Low Complexity Speech Enhancement Framework.
+ONNX-Interface:
+  enc:     feat_erb[1,1,S,32] + feat_spec[1,2,S,96]
+           → e0,e1,e2,e3,emb[1,S,512], c0[1,64,S,96], lsnr
+  erb_dec: emb[1,S,512] + e3,e2,e1,e0 → m[1,1,S,32]
+  dec:     emb[1,S,512] + c0[1,64,S,96] → coefs[B,S,96,10], alpha
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import os
+import threading
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+_lock = threading.Lock()
+_inst: DeepFilterNetV3Plugin | None = None
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DIR = os.path.join(_ROOT, "models", "deepfilternet_v3_ii")
+
+# DeepFilterNet processing constants (48 kHz)
+_SR = 48_000
+_N_FFT = 960  # 20 ms at 48 kHz
+_HOP = 480  # 10 ms
+_N_ERB = 32  # ERB bands
+_DF_BINS = 96  # DF filter bandwidth (bins)
+_DF_ORDER = 10  # DF filter order (coefs per bin)
+
+
+def _erb_fb(n_fft: int = 960, n_erb: int = 32, sr: float = 48000.0) -> np.ndarray:
+    """Erstelle ERB-Filterbank-Matrix [n_erb, n_fft//2+1].
+
+    Bildet lineare FFT-Bins auf n_erb ERB-Bänder ab (Zwicker ERB-Skala).
+    """
+    n_bins = n_fft // 2 + 1
+    freqs = np.linspace(0, sr / 2, n_bins)
+
+    def hz_to_erb(f: np.ndarray) -> np.ndarray:
+        return 21.4 * np.log10(1.0 + f / 229.0 + 1e-9)
+
+    erb_max = hz_to_erb(np.array([sr / 2]))[0]
+    erb_edges = np.linspace(hz_to_erb(np.array([0.0]))[0], erb_max, n_erb + 1)
+
+    fb = np.zeros((n_erb, n_bins), dtype=np.float32)
+    for b in range(n_erb):
+        lo = erb_edges[b]
+        hi = erb_edges[b + 1]
+        erb_freqs = hz_to_erb(freqs)
+        mask = (erb_freqs >= lo) & (erb_freqs < hi)
+        if mask.sum() > 0:
+            fb[b, mask] = 1.0 / mask.sum()
+    return fb
+
+
+_ERB_FB = _erb_fb(_N_FFT, _N_ERB, float(_SR))  # [32, 481]
+
+
+class DeepFilterNetV3Plugin:
+    """DeepFilterNet v3 II Rauschunterdrückung (ONNX) mit OMLSA-DSP-Fallback.
+
+    Die drei Modelle arbeiten zusammen:
+      1. enc: Berechnet Embedding + Encoder-Features aus ERB und Spektrum
+      2. erb_dec: Dekodiert ERB-Maske aus Embedding + Encoder-Features
+      3. dec: Dekodiert Deep-Filter-Koeffizienten (DF-coefs) aus Embedding
+    """
+
+    def __init__(self, model_dir: str | None = None, root: str | None = None) -> None:
+        d = model_dir or _DIR
+        if root:
+            d = os.path.join(root, "models", "deepfilternet_v3_ii")
+        self._enc: object | None = None
+        self._dec: object | None = None
+        self._erb_dec: object | None = None
+        self._try_load(d)
+
+    def _try_load(self, d: str) -> None:
+        for attr, fname in [("_enc", "enc.onnx"), ("_dec", "dec.onnx"), ("_erb_dec", "erb_dec.onnx")]:
+            p = os.path.join(d, fname)
+            if not os.path.exists(p):
+                logger.warning("DeepFilterNet-Modell fehlt: %s — DSP-Fallback aktiv.", p)
+                return
+        # ── ML-Budget-Check VOR dem Laden (§5.1 OOM-Schutz) ──────────────────
+        _allocated = False
+        try:
+            from backend.core.ml_memory_budget import try_allocate, release as _release  # noqa: PLC0415
+            if not try_allocate("DeepFilterNetV3", size_gb=0.15):
+                logger.warning("DeepFilterNet: ML-Budget erschöpft — DSP-Fallback aktiv")
+                return
+            _allocated = True
+        except ImportError:
+            pass
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 2
+            opts.intra_op_num_threads = 2
+            prov = ["CPUExecutionProvider"]
+            self._enc = ort.InferenceSession(os.path.join(d, "enc.onnx"), sess_options=opts, providers=prov)
+            self._dec = ort.InferenceSession(os.path.join(d, "dec.onnx"), sess_options=opts, providers=prov)
+            self._erb_dec = ort.InferenceSession(os.path.join(d, "erb_dec.onnx"), sess_options=opts, providers=prov)
+            logger.info("DeepFilterNet v3 II ONNX-Modelle geladen aus: %s", d)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DeepFilterNet ONNX-Ladefehler: %s — DSP-Fallback aktiv.", exc)
+            self._enc = self._dec = self._erb_dec = None
+            if _allocated:
+                try:
+                    from backend.core.ml_memory_budget import release as _release  # noqa: PLC0415, F811
+                    _release("DeepFilterNetV3")
+                except ImportError:
+                    pass
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def enhance(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        energy_bias_db: float = -6.0,
+    ) -> np.ndarray:
+        """Rauschunterdrückung via DeepFilterNet oder OMLSA-Fallback.
+
+        Args:
+            audio:           float32 mono [n] oder stereo [n,2].
+            sr:              Sample-Rate in Hz.
+            energy_bias_db:  Musik-Modus Gain-Anhebung (§4.4 Spec).
+                             Negativer Wert → Gain-Floor erhöht → mehr harmonische
+                             Energie erhalten. Standard: −6.0 dB (Musik-Optimum;
+                             schützt harmonische Strukturen besser als −4.0 dB).
+                             0.0 = kein Bias (Sprach-Einstellung, VERBOTEN für Musik).
+
+        Returns:
+            Denoisiertes Audio, selbe Form, float32 ∈ [-1, 1].
+        """
+        self._current_energy_bias_db: float = energy_bias_db
+        audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        stereo = audio.ndim == 2 and audio.shape[1] == 2
+
+        def proc(ch: np.ndarray) -> np.ndarray:
+            res = self._enhance_channel(ch, sr)
+            return res.astype(np.float32)
+
+        if stereo:
+            left = proc(audio[:, 0])
+            right = proc(audio[:, 1])
+            n = min(len(left), len(right), len(audio))
+            out = np.stack([left[:n], right[:n]], axis=1)
+        else:
+            mono = audio[:, 0] if audio.ndim == 2 else audio
+            out = proc(mono)
+
+        return np.clip(out, -1.0, 1.0)
+
+    # ── Internal ────────────────────────────────────────────────────────────
+
+    def _enhance_channel(self, mono: np.ndarray, sr: int) -> np.ndarray:
+        """Verarbeite einen einzelnen Mono-Kanal."""
+        # Resampling auf 48 kHz
+        if sr != _SR:
+            from scipy.signal import resample_poly  # noqa: PLC0415
+
+            g = math.gcd(sr, _SR)
+            mono = resample_poly(mono, _SR // g, sr // g).astype(np.float32)
+
+        if self._enc is not None:
+            out = self._infer_onnx(mono)
+        else:
+            out = self._omlsa_fallback(mono, _SR)
+
+        # Rückresampling auf Original-SR
+        if sr != _SR:
+            from scipy.signal import resample_poly  # noqa: PLC0415
+
+            g = math.gcd(sr, _SR)
+            out = resample_poly(out, sr // g, _SR // g).astype(np.float32)
+
+        n_orig = int(len(mono) * sr / _SR) if sr != _SR else len(mono)  # noqa: F841
+        return out.astype(np.float32)
+
+    def _compute_features(self, mono: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Berechne ERB-Features und Spektrum-Features aus mono-Audio.
+
+        Returns:
+            feat_erb   [1, 1, S, 32]
+            feat_spec  [1, 2, S, 96]
+            spec_cx    [n_fft//2+1, S] komplexes Spektrogramm
+        """
+        win = np.hanning(_N_FFT).astype(np.float32)
+        n = len(mono)
+        # Zero-pad auf ganzzahlige Hop-Anzahl
+        n_frames = max(1, (n - _N_FFT) // _HOP + 1)
+        padded_len = _HOP * n_frames + _N_FFT
+        mono_p = np.zeros(padded_len, dtype=np.float32)
+        mono_p[:n] = mono
+
+        spec = []
+        for i in range(n_frames):
+            frame = mono_p[i * _HOP : i * _HOP + _N_FFT] * win
+            f = np.fft.rfft(frame)
+            spec.append(f)
+        spec_cx = np.array(spec, dtype=np.complex64).T  # [481, S]
+
+        mag = np.abs(spec_cx).astype(np.float32)  # [481, S]
+
+        # ERB-Energien: [32, S]
+        erb_energy = _ERB_FB @ mag  # [32, S]
+        erb_log = np.log1p(erb_energy).astype(np.float32)
+
+        # feat_erb [1, 1, S, 32]
+        feat_erb = erb_log.T[np.newaxis, np.newaxis, :, :]  # [1,1,S,32]
+
+        # feat_spec: Real + Imag der ersten 96 Bins → [1, 2, S, 96]
+        n_bins = min(_DF_BINS, spec_cx.shape[0])
+        spec_slice = spec_cx[:n_bins, :]  # [96, S]
+        feat_re = np.real(spec_slice).T[np.newaxis, np.newaxis, :, :]  # [1,1,S,96]
+        feat_im = np.imag(spec_slice).T[np.newaxis, np.newaxis, :, :]  # [1,1,S,96]
+        feat_spec = np.concatenate([feat_re, feat_im], axis=1)  # [1,2,S,96]
+
+        return feat_erb.astype(np.float32), feat_spec.astype(np.float32), spec_cx
+
+    def _apply_df_filter(self, spec_cx: np.ndarray, coefs: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+        """Wende Deep-Filter-Koeffizienten auf komplexes Spektrum an.
+
+        coefs: [S, 96, 10] DF-Koeffizienten
+        """
+        n_bins = min(coefs.shape[1], spec_cx.shape[0])
+        S = spec_cx.shape[1]
+        result = spec_cx.copy()
+
+        for t in range(S):
+            for b in range(n_bins):
+                # Laufendes FIR über DF_ORDER vergangene Frames
+                acc = complex(0.0)
+                for k in range(_DF_ORDER):
+                    t_past = max(0, t - k)
+                    c = coefs[t, b, k]
+                    acc += c * spec_cx[b, t_past]
+                blend = float(alpha[0, t, 0]) if alpha.ndim >= 2 else 0.5
+                result[b, t] = blend * acc + (1 - blend) * spec_cx[b, t]
+
+        return result
+
+    def _infer_onnx(self, mono: np.ndarray) -> np.ndarray:
+        """Vollständige 3-Modell ONNX-Inferenz-Pipeline."""
+        feat_erb, feat_spec, spec_cx = self._compute_features(mono)
+
+        try:
+            # Encoder
+            enc_out = self._enc.run(None, {"feat_erb": feat_erb, "feat_spec": feat_spec})
+            # enc outputs: e0,e1,e2,e3,emb,c0,lsnr (Reihenfolge per Modell)
+            e0, e1, e2, e3 = enc_out[0], enc_out[1], enc_out[2], enc_out[3]
+            emb = enc_out[4]
+            c0 = enc_out[5]
+
+            # ERB-Dekoder → Maske [1,1,S,32]
+            erb_out = self._erb_dec.run(None, {"emb": emb, "e3": e3, "e2": e2, "e1": e1, "e0": e0})
+            erb_mask = erb_out[0]  # [1,1,S,32]
+
+            # Haupt-Dekoder → DF-Koeffizienten + alpha
+            dec_out = self._dec.run(None, {"emb": emb, "c0": c0})
+            coefs = dec_out[0]  # [B, S, 96, 10]
+            alpha = dec_out[1]  # sigmoid
+
+            # ERB-Maske zurück auf FFT-Bins interpolieren
+            m = erb_mask[0, 0, :, :]  # [S, 32]
+            # Mappe ERB → linear (inverse des Filterbank-Produkts)
+            gain_lin = _ERB_FB.T @ m.T  # [481, S]
+            gain_lin = np.clip(gain_lin, 0.0, 1.0)
+
+            # ERB-Gain anwenden
+            spec_filtered = spec_cx * gain_lin
+
+            # DF-Filter anwenden
+            coefs_np = coefs[0] if coefs.ndim == 4 else coefs
+            alpha_np = alpha
+            spec_filtered = self._apply_df_filter(spec_filtered, coefs_np, alpha_np)
+
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("DeepFilterNet ONNX-Inferenz-Fehler: %s — DSP-Fallback.", exc)
+            return self._omlsa_fallback(mono, _SR)
+
+        # ISTFT
+        win = np.hanning(_N_FFT).astype(np.float32)
+        n_frames = spec_filtered.shape[1]
+        n_out = _HOP * n_frames + _N_FFT
+        out = np.zeros(n_out, dtype=np.float32)
+        win_sum = np.zeros(n_out, dtype=np.float32)
+        for i in range(n_frames):
+            frame = np.fft.irfft(spec_filtered[:, i], n=_N_FFT).real.astype(np.float32)
+            out[i * _HOP : i * _HOP + _N_FFT] += frame * win
+            win_sum[i * _HOP : i * _HOP + _N_FFT] += win * win
+
+        win_sum = np.where(win_sum < 1e-8, 1.0, win_sum)
+        out /= win_sum
+        return out[: len(mono)].astype(np.float32)
+
+    @staticmethod
+    def _omlsa_fallback(mono: np.ndarray, sr: int) -> np.ndarray:
+        """OMLSA-Wiener-Filter Fallback (Cohen 2002).
+
+        Numerisch robust, kein ML-Modell erforderlich.
+        """
+        from scipy.signal import istft, stft  # noqa: PLC0415
+
+        n_fft = 1024
+        hop = n_fft // 4
+        _, _, Zxx = stft(mono, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window="hann", padded=True)
+
+        mag = np.abs(Zxx)
+        # MCRA-Rauschschätzung: Minima in gleitenden Fenstern (5 Frames)
+        from scipy.ndimage import uniform_filter  # noqa: PLC0415
+
+        noise_est = uniform_filter(mag, size=(1, 5))
+        noise_est = np.minimum(noise_est, mag)
+        noise_est = np.maximum(noise_est, 1e-8)
+
+        # MMSE-LSA Gain
+        snr = np.maximum(mag**2 / (noise_est**2 + 1e-10), 0)
+        gain = snr / (snr + 1)
+        gain = np.maximum(gain, 0.1)  # G_floor = 0.1
+        # §4.4 Musik-Modus: energy_bias_db=−4.0 dB → Gain-Floor anheben
+        # 10^(|bias|/20): −4 dB → Faktor ≈1.585 → weniger Suppression an Harmonik-Regionen
+        _ebias_db: float = -4.0  # Statischer Fallback-Konstante (kein self in @staticmethod)
+        if _ebias_db != 0.0:
+            _ebias_factor = 10.0 ** (abs(_ebias_db) / 20.0)
+            gain = np.clip(gain * _ebias_factor, 0.0, 1.0)
+
+        Zxx_out = gain * mag * np.exp(1j * np.angle(Zxx))
+        _, out = istft(Zxx_out, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window="hann")
+        return out[: len(mono)].astype(np.float32)
+
+
+# ── Singleton ───────────────────────────────────────────────────────────────
+
+
+def get_deepfilternet_plugin() -> DeepFilterNetV3Plugin:
+    """Thread-sicherer Singleton (Double-Checked Locking)."""
+    global _inst
+    if _inst is None:
+        with _lock:
+            if _inst is None:
+                _inst = DeepFilterNetV3Plugin()
+    return _inst
+
+
+def enhance_audio(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Convenience-Wrapper für DeepFilterNet-Rauschunterdrückung."""
+    return get_deepfilternet_plugin().enhance(audio, sr)
+
+
+# Backwards-Compatibility-Alias (Klasse umbenannt bei Docker->ONNX-Refactor)
+DeepFilterNetV3IIPlugin = DeepFilterNetV3Plugin

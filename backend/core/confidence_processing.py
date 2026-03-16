@@ -1,0 +1,93 @@
+"""
+ConfidenceBasedProcessing: Dynamische Anpassung und Rollback-Mechanismen.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import logging
+import threading
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+_instance: Optional["ConfidenceBasedProcessing"] = None
+_lock = threading.Lock()
+
+
+def get_confidence_processor(rollback_callback: Callable[[str], None] | None = None) -> "ConfidenceBasedProcessing":
+    """Get or create ConfidenceBasedProcessing singleton.
+
+    Args:
+        rollback_callback: Callback function for rollbacks (only used on first call)
+
+    Returns:
+        ConfidenceBasedProcessing singleton instance
+    """
+    global _instance
+    if _instance is None:
+        with _lock:
+            if _instance is None:
+                _instance = ConfidenceBasedProcessing(rollback_callback or (lambda x: None))
+    return _instance
+
+
+class ConfidenceBasedProcessing:
+    def __init__(self, rollback_callback: Callable[[str], None]) -> None:
+        self.rollback_callback = rollback_callback
+        self.confidence_threshold = 0.5
+        self.max_change = 0.2
+        logger.info("ConfidenceBasedProcessing initialized")
+
+    def adjust_strength(self, base_strength: float, confidence: float) -> float:
+        """Adjust processing strength based on confidence.
+
+        Args:
+            base_strength: Base processing strength (0.0-1.0)
+            confidence: Confidence score (0.0-1.0)
+
+        Returns:
+            Adjusted strength value (0.0-1.0)
+        """
+        import math
+        import numpy as np
+
+        base_strength = float(base_strength)
+        confidence = float(confidence)
+
+        if not math.isfinite(base_strength) or not math.isfinite(confidence):
+            return 0.5  # Safe fallback
+
+        base_strength = float(np.clip(base_strength, 0.0, 1.0))
+        confidence = float(np.clip(confidence, 0.0, 1.0))
+
+        if confidence < self.confidence_threshold:
+            result = base_strength * confidence
+        else:
+            result = min(base_strength, base_strength * (1 + self.max_change))
+
+        result = float(np.clip(result, 0.0, 1.0))
+        if not math.isfinite(result):
+            return 0.5
+
+        return result
+
+    def check_and_rollback(self, module_name: str, confidence: float) -> None:
+        """Check confidence and trigger rollback if needed.
+
+        Args:
+            module_name: Name of the module to potentially rollback
+            confidence: Confidence score (0.0-1.0)
+        """
+        import math
+        import numpy as np
+
+        confidence = float(confidence)
+        if not math.isfinite(confidence):
+            confidence = 0.0
+
+        confidence = float(np.clip(confidence, 0.0, 1.0))
+
+        if confidence < self.confidence_threshold:
+            self.rollback_callback(module_name)

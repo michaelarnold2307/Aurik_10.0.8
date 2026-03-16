@@ -1,0 +1,223 @@
+# =============================================================================
+# .pre-commit-config.yaml — Aurik 9 Code-Qualitäts-Hooks (SOTA, März 2026)
+# Installation: pre-commit install
+# Manuell ausführen: pre-commit run --all-files
+# =============================================================================
+
+default_language_version:
+  python: python3.10
+
+exclude: |
+  (?x)^(
+    models/.*|
+    \.venv_aurik/.*|
+    build/.*|
+    dist/.*|
+    output_audio/.*|
+    sessions/.*|
+    logs/.*|
+    data/.*|
+    golden_samples/.*|
+    chain_templates/.*|
+    configs/.*
+  )$
+
+repos:
+  # ---------------------------------------------------------------------------
+  # 1. Standard pre-commit Hooks (Basisqualität)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+      - id: check-ast              # Python-Syntax vorab prüfen
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: debug-statements       # kein breakpoint() oder pdb in Produktion
+      - id: detect-private-key
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: no-commit-to-branch
+        args: [--branch=main, --branch=release]
+      - id: pretty-format-json
+        args: [--autofix, --indent=2]
+        exclude: ^\.vscode/
+
+  # ---------------------------------------------------------------------------
+  # 2. Black — Code-Formatierung
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/psf/black
+    rev: 26.1.0
+    hooks:
+      - id: black
+        language_version: python3.10
+        args: [--line-length=120]
+
+  # ---------------------------------------------------------------------------
+  # 3. isort — Import-Sortierung (Black-kompatibel)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/PyCQA/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=120]
+
+  # ---------------------------------------------------------------------------
+  # 4. Ruff — Schneller Linter (ersetzt Flake8 + Pylint weitgehend)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.5
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix=false]
+      - id: ruff-format
+        # ruff-format als Black-Alternative (nur für zusätzliche Prüfungen)
+
+  # ---------------------------------------------------------------------------
+  # 5. Autoflake — Unnötige Imports und Variablen entfernen
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/PyCQA/autoflake
+    rev: v2.3.1
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --remove-all-unused-imports
+          - --remove-unused-variables
+          - --expand-star-imports
+          - --ignore-init-module-imports
+
+  # ---------------------------------------------------------------------------
+  # 6. PyUpgrade — Modernisierung auf Python 3.10+
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      - id: pyupgrade
+        args: [--py310-plus]
+
+  # ---------------------------------------------------------------------------
+  # 7. Flake8 — PEP-8 und Stil-Prüfung
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.2.0
+    hooks:
+      - id: flake8
+        additional_dependencies:
+          - flake8-bugbear>=24.0.0
+          - flake8-comprehensions>=3.15.0
+          - flake8-simplify>=0.21.0
+          - flake8-docstrings>=1.7.0
+          - pep8-naming>=0.14.0
+        args: [--config=.flake8]
+
+  # ---------------------------------------------------------------------------
+  # 8. Mypy — Statische Typprüfung
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-requests
+          - types-PyYAML
+          - types-setuptools
+        args:
+          - --ignore-missing-imports
+          - --no-strict-optional
+          - --show-error-codes
+        # Nur Kern-Module prüfen (schnell genug für pre-commit)
+        files: ^(core|dsp|plugins|denker)/
+
+  # ---------------------------------------------------------------------------
+  # 9. Bandit — Sicherheits-Scan (OWASP Top 10)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args:
+          - --recursive
+          - --level=medium
+          - --severity=medium
+          - --exclude=tests,benchmarks,scripts
+          - --skip=B101,B311,B603,B607
+        files: ^(core|dsp|plugins|backend|denker)/
+
+  # ---------------------------------------------------------------------------
+  # 10. Markdownlint — Markdown-Qualität
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.44.0
+    hooks:
+      - id: markdownlint
+        args: [--config=.markdownlint.json, --fix]
+        exclude: |
+          (?x)^(
+            docs/.*|
+            CHANGELOG.md|
+            .github/copilot-instructions.md|
+            benchmarks/competitive/.*
+          )$
+
+  # ---------------------------------------------------------------------------
+  # 11. YAML-Lint — YAML-Qualität
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.0
+    hooks:
+      - id: yamllint
+        args:
+          - --config-data=
+              {extends: default,
+               rules: {
+                 line-length: {max: 120},
+                 comments: {min-spaces-from-content: 1},
+                 document-start: disable}}
+
+  # ---------------------------------------------------------------------------
+  # 12. Prettier — JSON-Formatierung
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        files: '\.json$'
+        exclude: '^(models/|audit/|sessions/|logs/)'
+
+  # ---------------------------------------------------------------------------
+  # 13. Lokale Hooks — Projekt-spezifische Validierungen
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: no-production-stubs
+        name: "⚠️ Keine NotImplementedError-Stubs in Produktion"
+        entry: python -m pytest tests/normative/test_no_production_stubs.py -x -q
+        language: system
+        pass_filenames: false
+        files: ^(core|dsp|plugins|backend|denker)/.*\.py$
+
+      - id: musical-goals-thresholds
+        name: "🎵 Musical-Goals-Schwellwerte unverandert"
+        entry: >-
+          python -c "
+          from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker;
+          c = MusicalGoalsChecker();
+          assert len(c.thresholds) == 14, f'Erwartet 14 Goals, erhalten {len(c.thresholds)}';
+          print('OK: 14 Musical Goals konfiguriert')"
+        language: system
+        pass_filenames: false
+        files: ^backend/core/musical_goals/
+

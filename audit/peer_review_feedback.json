@@ -1,0 +1,25 @@
+{
+  "info": "Hier können Peer-Review- und Community-Feedback-Einträge zu jedem Audit-Log-Schritt ergänzt werden.",
+  "example": [
+    {
+      "step": "spectral_repair",
+      "reviewer": "experte@aurik.com",
+      "feedback": "Natürlichkeit und Authentizität sind erhalten, keine Artefakte hörbar.",
+      "rating": 5
+    }
+  ],
+  "automated_reviews": [
+    {
+      "step": "ab_comparison",
+      "reviewer": "system",
+      "feedback": "Automatisiertes Experten-Review: Musikalitäts-Score und objektive Metriken dokumentiert.",
+      "musicality_score": "<score_wird_automatisch_eingetragen>",
+      "details": {
+        "mos_lqo": "<wert>",
+        "pesq": "<wert>",
+        "nisqa": "<wert>"
+      }
+    }
+  ]
+  ]
+}

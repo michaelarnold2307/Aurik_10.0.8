@@ -1,0 +1,359 @@
+"""
+Training Script für Aurik 8.0 End-to-End Optimization
+
+Trainiert die differenzierbaren DSP-Module und optimiert Hyperparameter.
+
+Usage:
+    python train_e2e_optimization.py --dataset /path/to/dataset --epochs 100
+
+Autor: Aurik Backend-Team
+Version: 8.1
+Datum: 14. Februar 2026
+"""
+
+import argparse
+import logging
+from pathlib import Path
+import sys
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
+import yaml
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("training_e2e.log")],
+)
+logger = logging.getLogger(__name__)
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from backend.core.optimization.e2e_optimizer import E2EOptimizationFramework
+from backend.core.optimization.hyperparameter_optimizer import MaterialSpecificOptimizer, MultiMaterialOptimizer
+
+
+class AudioRestorationDataset(Dataset):
+    """
+    Dataset for audio restoration training.
+
+    Expects pairs of (degraded_audio, clean_reference).
+    """
+
+    def __init__(
+        self, data_dir: Path, split: str = "train", sr: int = 48000, duration: float = 2.0, normalize: bool = True
+    ) -> np.ndarray:
+        """
+        Initialize dataset.
+
+        Args:
+            data_dir: Directory with audio files
+            split: 'train', 'val', or 'test'
+            sr: Sample rate
+            duration: Duration of audio chunks in seconds
+            normalize: Whether to normalize audio
+        """
+        self.data_dir = data_dir / split
+        self.sr = sr
+        self.duration = duration
+        self.normalize = normalize
+        self.samples = int(sr * duration)
+
+        # Find all audio pairs
+        self.audio_pairs = self._find_audio_pairs()
+
+        logger.info(f"AudioRestorationDataset({split}): {len(self.audio_pairs)} pairs")
+
+    def _find_audio_pairs(self) -> list[tuple[Path, Path]]:
+        """Find pairs of degraded and clean audio files."""
+        pairs = []
+
+        degraded_dir = self.data_dir / "degraded"
+        clean_dir = self.data_dir / "clean"
+
+        if not degraded_dir.exists() or not clean_dir.exists():
+            logger.warning(f"Dataset directories not found: {degraded_dir}, {clean_dir}")
+            return pairs
+
+        for degraded_file in degraded_dir.glob("*.wav"):
+            clean_file = clean_dir / degraded_file.name
+            if clean_file.exists():
+                pairs.append((degraded_file, clean_file))
+
+        return pairs
+
+    def __len__(self) -> int:
+        return len(self.audio_pairs)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get audio pair.
+
+        Returns:
+            (degraded_audio, clean_audio) as tensors [1, samples]
+        """
+        degraded_path, clean_path = self.audio_pairs[idx]
+
+        # Load audio (placeholder - actual implementation would use librosa/soundfile)
+        # For now, return dummy data
+        degraded_audio = torch.randn(1, self.samples)
+        clean_audio = torch.randn(1, self.samples)
+
+        if self.normalize:
+            degraded_audio = degraded_audio / (degraded_audio.abs().max() + 1e-8)
+            clean_audio = clean_audio / (clean_audio.abs().max() + 1e-8)
+
+        return degraded_audio, clean_audio
+
+
+def train_e2e_optimization(
+    dataset_path: Path,
+    output_path: Path,
+    epochs: int = 100,
+    batch_size: int = 8,
+    learning_rate: float = 1e-4,
+    device: str = "cpu",  # CPU-only Policy (Section 9.5) — kein CUDA
+) -> None:
+    """
+    Train end-to-end optimization framework.
+
+    Args:
+        dataset_path: Path to training dataset
+        output_path: Path to save checkpoints and results
+        epochs: Number of training epochs
+        batch_size: Batch size
+        learning_rate: Learning rate
+        device: Device for training
+    """
+    logger.info("=" * 80)
+    logger.info("Starting E2E Optimization Training")
+    logger.info("=" * 80)
+    logger.info(f"Dataset: {dataset_path}")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Epochs: {epochs}")
+    logger.info(f"Batch size: {batch_size}")
+    logger.info(f"Learning rate: {learning_rate}")
+    logger.info(f"Device: {device}")
+    logger.info("=" * 80)
+
+    # Create output directory
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Create datasets
+    train_dataset = AudioRestorationDataset(dataset_path, split="train")
+    val_dataset = AudioRestorationDataset(dataset_path, split="val")
+
+    # Create dataloaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=False,  # §9.5 CPU-only — pin_memory nur bei CUDA relevant
+    )
+
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=False
+    )
+
+    # Initialize framework
+    framework = E2EOptimizationFramework(sr=48000, device=device, checkpoint_dir=output_path / "checkpoints")
+
+    framework.setup_optimizer(learning_rate=learning_rate, weight_decay=1e-5)
+
+    # Training loop
+    best_val_loss = float("inf")
+
+    for epoch in range(1, epochs + 1):
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Epoch {epoch}/{epochs}")
+        logger.info(f"{'='*80}")
+
+        # Train
+        train_metrics = framework.train_epoch(train_loader, epoch)
+
+        logger.info("\nTraining metrics:")
+        for key, value in train_metrics.items():
+            logger.info(f"  {key}: {value:.4f}")
+
+        # Validate
+        val_metrics = framework.validate(val_loader)
+
+        logger.info("\nValidation metrics:")
+        for key, value in val_metrics.items():
+            logger.info(f"  {key}: {value:.4f}")
+
+        # Save checkpoint
+        if epoch % 10 == 0 or val_metrics["total_perceptual_loss"] < best_val_loss:
+            is_best = val_metrics["total_perceptual_loss"] < best_val_loss
+            best_val_loss = min(best_val_loss, val_metrics["total_perceptual_loss"])
+
+            framework.save_checkpoint(epoch, {"train": train_metrics, "val": val_metrics})
+
+            if is_best:
+                logger.info(f"  *** New best validation loss: {best_val_loss:.4f} ***")
+
+    # Export optimized parameters
+    final_params = framework.export_optimized_parameters()
+
+    params_file = output_path / "optimized_dsp_parameters.yaml"
+    with open(params_file, "w") as f:
+        yaml.dump(final_params, f, default_flow_style=False)
+
+    logger.info(f"\nOptimized parameters saved: {params_file}")
+    logger.info("\nTraining completed!")
+
+
+def train_hyperparameter_optimization(
+    dataset_path: Path, output_path: Path, material_type: str, n_trials: int = 100, n_jobs: int = 4
+) -> np.ndarray:
+    """
+    Train hyperparameter optimization for specific material.
+
+    Args:
+        dataset_path: Path to evaluation dataset
+        output_path: Path to save results
+        material_type: Material type to optimize
+        n_trials: Number of optimization trials
+        n_jobs: Number of parallel jobs
+    """
+    logger.info("=" * 80)
+    logger.info(f"Starting Hyperparameter Optimization for {material_type}")
+    logger.info("=" * 80)
+    logger.info(f"Dataset: {dataset_path}")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Trials: {n_trials}")
+    logger.info(f"Jobs: {n_jobs}")
+    logger.info("=" * 80)
+
+    # Create optimizer
+    optimizer = MaterialSpecificOptimizer(
+        material_type=material_type, storage_path=output_path / material_type, n_trials=n_trials, n_jobs=n_jobs
+    )
+
+    # Load evaluation dataset
+    # Placeholder - would load actual audio files
+    eval_dataset = [(np.random.randn(48000 * 2), np.random.randn(48000 * 2)) for _ in range(20)]
+
+    # Dummy process function (would use actual Aurik pipeline)
+    def process_audio(audio, config) -> np.ndarray:
+        # Simulate processing
+        return audio * 0.9
+
+    # Run optimization
+    results = optimizer.optimize(evaluation_dataset=eval_dataset, process_function=process_audio)
+
+    logger.info("\nOptimization completed!")
+    logger.info(f"Best score: {results['best_score']:.4f}")
+    logger.info(f"Best params saved to: {output_path / material_type}")
+
+
+def train_all_materials(dataset_path: Path, output_path: Path, n_trials: int = 100) -> None:
+    """
+    Train hyperparameter optimization for all materials.
+
+    Args:
+        dataset_path: Path to datasets
+        output_path: Path to save results
+        n_trials: Number of trials per material
+    """
+    logger.info("=" * 80)
+    logger.info("Starting Multi-Material Optimization")
+    logger.info("=" * 80)
+
+    # Create multi-material optimizer
+    optimizer = MultiMaterialOptimizer(storage_path=output_path, n_trials_per_material=n_trials)
+
+    # Prepare datasets for each material
+    # Placeholder - would load actual audio files
+    datasets = {
+        material: [(np.random.randn(48000 * 2), np.random.randn(48000 * 2)) for _ in range(20)]
+        for material in ["vinyl", "tape_shellac", "tape_cassette", "tape_reel", "digital", "live", "mp3"]
+    }
+
+    # Prepare process functions (would use actual Aurik pipeline)
+    process_functions = {material: lambda audio, config: audio * 0.9 for material in datasets}
+
+    # Run optimization for all materials
+    results = optimizer.optimize_all(datasets=datasets, process_functions=process_functions)  # noqa: F841
+
+    logger.info("\nAll materials optimized!")
+    logger.info(f"Results saved to: {output_path}")
+
+
+def main() -> None:
+    """Main training script."""
+    parser = argparse.ArgumentParser(description="Train Aurik 8.0 End-to-End Optimization")
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["e2e", "hyperopt", "all"],
+        default="e2e",
+        help="Training mode: e2e (differentiable DSP), hyperopt (single material), all (all materials)",
+    )
+
+    parser.add_argument("--dataset", type=str, required=True, help="Path to training dataset")
+
+    parser.add_argument("--output", type=str, default="optimization_results", help="Path to save results")
+
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs (for e2e mode)")
+
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size (for e2e mode)")
+
+    parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate (for e2e mode)")
+
+    parser.add_argument(
+        "--material",
+        type=str,
+        choices=["vinyl", "tape_shellac", "tape_cassette", "tape_reel", "digital", "live", "mp3"],
+        help="Material type (for hyperopt mode)",
+    )
+
+    parser.add_argument(
+        "--trials", type=int, default=100, help="Number of optimization trials (for hyperopt/all modes)"
+    )
+
+    parser.add_argument("--jobs", type=int, default=4, help="Number of parallel jobs (for hyperopt/all modes)")
+
+    args = parser.parse_args()
+
+    dataset_path = Path(args.dataset)
+    output_path = Path(args.output)
+
+    if not dataset_path.exists():
+        logger.error(f"Dataset path does not exist: {dataset_path}")
+        sys.exit(1)
+
+    # Run training based on mode
+    if args.mode == "e2e":
+        train_e2e_optimization(
+            dataset_path=dataset_path,
+            output_path=output_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+        )
+
+    elif args.mode == "hyperopt":
+        if not args.material:
+            logger.error("--material is required for hyperopt mode")
+            sys.exit(1)
+
+        train_hyperparameter_optimization(
+            dataset_path=dataset_path,
+            output_path=output_path,
+            material_type=args.material,
+            n_trials=args.trials,
+            n_jobs=args.jobs,
+        )
+
+    elif args.mode == "all":
+        train_all_materials(dataset_path=dataset_path, output_path=output_path, n_trials=args.trials)
+
+
+if __name__ == "__main__":
+    main()

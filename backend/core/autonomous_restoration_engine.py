@@ -1,0 +1,784 @@
+"""
+core/autonomous_restoration_engine.py
+Autonomous Restoration Engine (ARE)
+=====================================
+
+Vollautomatische Steuerung des gesamten Aurik-Processings.
+Der Nutzer gibt NUR den Modus an: RESTORATION oder STUDIO_2026.
+Alle weiteren Entscheidungen trifft die Engine autonom:
+
+  1. Forensische Materialerkennung  (Vinyl, Shellac, Tape, CD, Streaming …)
+  2. Defekt-Profiling               (11 Defekttypen mit Severity/Confidence)
+  3. Automatische Zielformulierung  (AutoMusicalGoalSetter)
+  4. Ketten-Auswahl & -Optimierung  (AdaptiveChainBuilder)
+  5. Multi-Pass-Verarbeitung        (3–5 Varianten, objektiv bewertet)
+  6. Quality-Gate-Prüfung           (musikalische + technische Schwellwerte)
+  7. Rollback bei Verschlechterung  (Overprocessing-Schutz)
+  8. Self-Learning-Update           (Ergebnis fließt in zukünftige Sessions)
+
+Einzige öffentliche API:
+    engine = AutonomousRestorationEngine(mode=ProcessingMode.RESTORATION)
+    result = engine.process(audio, sample_rate)
+
+Author: Aurik Development Team
+Version: 1.0.0 "Zero-Intervention Excellence"
+Date: 2026-02-17
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import logging
+import time
+from typing import Any
+
+import numpy as np
+
+from backend.core.auto_musical_goal_setter import AutoMusicalGoalSetter, MusicalGoalProfile
+from backend.core.causal_defect_graph import CausalDefectGraph
+from backend.core.defect_phase_mapper import DefectPhaseMapper
+from backend.core.defect_quality_report import DefectQualityReport, DefectQualityReporter
+from backend.core.gap_reconstructor import GapReconstructor
+from backend.core.intrinsic_audio_quality_scorer import IntrinsicAudioQualityScorer
+from backend.core.medium_chain_model import PhysicalMediumChainModel
+from backend.core.multi_pass_strategy import (
+    MultiPassEngine,
+    ObjectiveScorer,
+    ProcessingVariant,
+    VariantStrategy,
+)
+from backend.core.processing_modes import ProcessingMode
+from backend.core.provenance_audit import ProvenanceAudit
+from backend.core.quality_prediction import QualityAnalyzer, QualityEstimate
+from backend.core.self_learning_optimizer import SelfLearningOptimizer
+from backend.core.defect_scanner import DefectAnalysisResult, DefectScanner, DefectType, MaterialType
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Ergebnis-Datenstruktur
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AutonomousRestorationResult:
+    """Vollständiges Ergebnis der autonomen Restaurierung."""
+
+    audio: np.ndarray
+    """Restauriertes Audio (float32, −1…+1)."""
+
+    sample_rate: int
+    """Abtastrate des Ausgangssignals."""
+
+    mode: ProcessingMode
+    """Gewählter Nutzer-Modus."""
+
+    material_type: MaterialType
+    """Automatisch erkanntes Quellmaterial."""
+
+    defect_profile: DefectAnalysisResult
+    """Vollständiges Defekt-Profil des Eingangssignals."""
+
+    goal_profile: MusicalGoalProfile
+    """Automatisch formuliertes musikalisches Zielprofil."""
+
+    winning_variant: str
+    """Name der Best-Performing-Variante."""
+
+    quality_before: float
+    """Geschätzte Qualität vor der Verarbeitung (0–100)."""
+
+    quality_after: float
+    """Gemessene Qualität nach der Verarbeitung (0–100)."""
+
+    improvement_db: float
+    """SNR-Verbesserung in dB."""
+
+    passes_executed: int
+    """Anzahl durchgeführter Processing-Varianten."""
+
+    rollback_triggered: bool
+    """True wenn Overprocessing-Schutz eingriff."""
+
+    processing_time_seconds: float
+    """Gesamte Verarbeitungszeit."""
+
+    audit_trail: list[dict[str, Any]] = field(default_factory=list)
+    """Vollständiges Audit-Log aller Entscheidungen."""
+
+    # --- Weltspitzen-Differenzierer ---
+    causal_order: list[str] = field(default_factory=list)
+    """Kausal geordnete Reparaturreihenfolge (Root causes zuerst)."""
+    causal_explanation: str = ""
+    """Prosaerklärung der kausalen Defektabhängigkeiten."""
+    chain_corrections: list[str] = field(default_factory=list)
+    """Angewendete physikalische Ketteninversions-Korrekturen."""
+    chain_spectral_change_db: float = 0.0
+    """Mittlere spektrale Änderung durch Ketteninversion (dB)."""
+    defect_quality_report: dict[str, Any] | None = None
+    """Defektspezifisches Qualitätsprotokoll (per-Defekt SNR, Konfidenz, Kontext)."""
+    provenance: dict[str, Any] | None = None
+    """Vollständiges Provenanz-Audit (JSONL-exportierbar, archivtauglich)."""
+    gaps_found: int = 0
+    """Anzahl erkannter Dropout-/Stille-Lücken."""
+    gaps_repaired: int = 0
+    """Anzahl erfolgreich reparierter Lücken (semantische Rekonstruktion)."""
+    gap_total_repaired_ms: float = 0.0
+    """Gesamt-Reparaturzeit aller reparierten Lücken (ms)."""
+
+
+# ---------------------------------------------------------------------------
+# Autonomous Restoration Engine
+# ---------------------------------------------------------------------------
+
+
+class AutonomousRestorationEngine:
+    """
+    Vollautomatische Audio-Restaurierungs-Engine.
+
+    Einziger Nutzer-Parameter: `mode` (RESTORATION | STUDIO_2026).
+    Alles andere ist intern und transparent für den Nutzer.
+    """
+
+    # Minimale Qualitätsverbesserung, ab der ein Pass als Gewinner gilt
+    MIN_IMPROVEMENT_THRESHOLD = 0.5  # Punkte (0–100)
+
+    # Maximale akzeptierte Qualitätsverschlechterung vor Rollback
+    ROLLBACK_THRESHOLD = -5.0  # Punkte (0–100) — IAQS-Skala; nur bei echter Verschlechterung
+
+    def __init__(
+        self,
+        mode: ProcessingMode = ProcessingMode.RESTORATION,
+        enable_self_learning: bool = True,
+    ):
+        # Nur RESTORATION und STUDIO_2026 sind gültige Nutzer-Modi
+        if mode not in (ProcessingMode.RESTORATION, ProcessingMode.STUDIO_2026):
+            raise ValueError(
+                f"mode muss ProcessingMode.RESTORATION oder ProcessingMode.STUDIO_2026 sein, " f"erhalten: {mode!r}."
+            )
+
+        self.mode = mode
+        self.enable_self_learning = enable_self_learning
+
+        # Sub-Systeme
+        self._defect_scanner = DefectScanner()
+        self._goal_setter = AutoMusicalGoalSetter(mode=mode)
+        self._phase_mapper = DefectPhaseMapper()
+        self._quality_analyzer = QualityAnalyzer()
+        # IAQS für Rollback-Vergleich (stabiler als QualityAnalyzer bei Vorher/Nachher)
+        self._iaqs = IntrinsicAudioQualityScorer()
+        self._optimizer = SelfLearningOptimizer(mode=mode) if enable_self_learning else None
+        # Weltspitzen-Differenzierer
+        self._causal_graph = CausalDefectGraph()
+        self._chain_model = PhysicalMediumChainModel()
+        self._quality_reporter = DefectQualityReporter()
+        self._gap_reconstructor = GapReconstructor()
+
+        logger.info(
+            "AutonomousRestorationEngine initialisiert | Modus: %s | Self-Learning: %s",
+            mode.value,
+            enable_self_learning,
+        )
+
+    # ------------------------------------------------------------------
+    # Öffentliche API
+    # ------------------------------------------------------------------
+
+    def process(self, audio: np.ndarray, sample_rate: int) -> AutonomousRestorationResult:
+        """
+        Vollautomatische Restaurierung. Einzige Eingabe: Audio + Abtastrate.
+
+        Args:
+            audio: Eingabe-Audio als float32 numpy-Array (mono oder stereo).
+            sample_rate: Abtastrate in Hz.
+
+        Returns:
+            AutonomousRestorationResult mit restauriertem Audio und vollständigem Protokoll.
+        """
+        start_time = time.perf_counter()
+        audit: list[dict[str, Any]] = []
+
+        # ----------------------------------------------------------------
+        # Phase 0: Validierung & Normalisierung
+        # ----------------------------------------------------------------
+        audio = self._validate_and_normalize_input(audio)
+        audit.append({"phase": "input_validation", "shape": audio.shape, "sr": sample_rate})
+
+        # ----------------------------------------------------------------
+        # Phase 1: Qualität des Eingangssignals bestimmen (Baseline)
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Phase 1: QualityAnalyzer …", flush=True)
+        _t1 = time.perf_counter()
+        # Analyse-Clips: max. 30 s (kein Audio-Output, nur Score)
+        _clip30 = sample_rate * 30
+        _audio_clip = audio[:_clip30] if len(audio) > _clip30 else audio
+        quality_before_estimate: QualityEstimate = self._quality_analyzer.analyze_quality(_audio_clip, sample_rate)
+        logger.debug(
+            f"[ENGINE] Phase 1a fertig ({time.perf_counter()-_t1:.1f}s): level={quality_before_estimate.quality_level.value}",
+            flush=True,
+        )
+        # IAQS-Score für Rollback-Vergleich (0–1 × 100 = 0–100)
+        logger.debug("[ENGINE] Phase 1b: IAQS.score_as_float …", flush=True)
+        _t1b = time.perf_counter()
+        quality_before = self._iaqs.score_as_float(_audio_clip, sample_rate) * 100
+        logger.debug(f"[ENGINE] Phase 1b fertig ({time.perf_counter()-_t1b:.1f}s): score={quality_before:.1f}", flush=True)
+        audit.append(
+            {
+                "phase": "baseline_quality",
+                "score": quality_before,
+                "level": quality_before_estimate.quality_level.value,
+            }
+        )
+        logger.info("Eingangsqualität: %.1f/100 (%s)", quality_before, quality_before_estimate.quality_level.value)
+
+        # ----------------------------------------------------------------
+        # Phase 2: Forensische Defekt- und Material-Analyse (vollautomatisch)
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Phase 2: Starte DefectScanner.scan() …", flush=True)
+        defect_result: DefectAnalysisResult = self._defect_scanner.scan(audio, sample_rate)
+        logger.debug(f"[ENGINE] Phase 2 fertig: material={defect_result.material_type.value}", flush=True)
+        material = defect_result.material_type
+        top_defects = defect_result.get_top_defects(n=5)
+        audit.append(
+            {
+                "phase": "defect_analysis",
+                "material": material.value,
+                "top_defects": [{"type": d.defect_type.value, "severity": round(d.severity, 3)} for d in top_defects],
+            }
+        )
+        logger.info(
+            "Material erkannt: %s | Top-Defekt: %s (Severity %.2f)",
+            material.value,
+            top_defects[0].defect_type.value if top_defects else "none",
+            top_defects[0].severity if top_defects else 0.0,
+        )
+
+        # ----------------------------------------------------------------
+        # Differenzierer #1: Kausale Defektgraph-Analyse
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Diff#1: Kausale Defektgraph-Analyse …", flush=True)
+        _td1 = time.perf_counter()
+        all_defects = defect_result.get_top_defects(n=15)
+        causal_ordered = self._causal_graph.resolve_causal_order(all_defects)
+        causal_explanation = self._causal_graph.explain(all_defects)
+        phantom_defects = self._causal_graph.get_phantom_defects(all_defects)
+        logger.debug(f"[ENGINE] Diff#1 fertig ({time.perf_counter()-_td1:.1f}s)", flush=True)
+        audit.append(
+            {
+                "phase": "causal_defect_graph",
+                "causal_order": [d.defect_type.value for d in causal_ordered],
+                "phantom_defects": [d.value for d in phantom_defects],
+                "explanation_lines": len(causal_explanation.splitlines()),
+            }
+        )
+        logger.info(
+            "Kausale Reparaturreihenfolge: %s",
+            " → ".join(d.defect_type.value for d in causal_ordered[:5]),
+        )
+
+        # ----------------------------------------------------------------
+        # Differenzierer #2: Physikalische Ketteninversion
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Diff#2: Ketteninversion …", flush=True)
+        _td2 = time.perf_counter()
+        if getattr(defect_result, "is_multi_generation", False):
+            chain_result = self._chain_model.invert_chain_sequence(
+                audio,
+                sample_rate,
+                defect_result.transfer_chain_raw,
+                all_defects,
+            )
+        else:
+            chain_result = self._chain_model.invert_chain(audio, sample_rate, material, all_defects)
+        logger.debug(
+            f"[ENGINE] Diff#2 fertig ({time.perf_counter()-_td2:.1f}s): corrections={len(chain_result.corrections_applied)}, Δ={chain_result.spectral_change_db:.2f}dB",
+            flush=True,
+        )
+        audio = chain_result.audio  # Ab hier: kettenentzerrtes Audio
+        audit.append(
+            {
+                "phase": "medium_chain_inversion",
+                "material": material.value,
+                "corrections": chain_result.corrections_applied,
+                "spectral_change_db": chain_result.spectral_change_db,
+            }
+        )
+        logger.info(
+            "Ketteninversion [%s]: %d Korrekturen, spektr. Δ=%.2f dB",
+            material.value,
+            len(chain_result.corrections_applied),
+            chain_result.spectral_change_db,
+        )
+
+        # ----------------------------------------------------------------
+        # Differenzierer #3: Semantische Lückenfüllung (GapReconstructor)
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Diff#3: GapReconstructor …", flush=True)
+        _td3 = time.perf_counter()
+        gap_result = self._gap_reconstructor.reconstruct(
+            audio,
+            sample_rate,
+            material_hint=material.value.split("_")[0].lower(),
+        )
+        logger.debug(
+            f"[ENGINE] Diff#3 fertig ({time.perf_counter()-_td3:.1f}s): gaps_found={gap_result.gaps_found}, repaired={gap_result.gaps_repaired}",
+            flush=True,
+        )
+        audio = gap_result.audio  # Ab hier: Lücken-bereinigtes Audio
+        audit.append(
+            {
+                "phase": "gap_reconstruction",
+                "gaps_found": gap_result.gaps_found,
+                "gaps_repaired": gap_result.gaps_repaired,
+                "gap_total_repaired_ms": gap_result.total_repaired_ms,
+            }
+        )
+        if gap_result.gaps_found > 0:
+            logger.info(
+                "Lückenfüllung: %d gefunden, %d repariert, %.1f ms gesamt",
+                gap_result.gaps_found,
+                gap_result.gaps_repaired,
+                gap_result.total_repaired_ms,
+            )
+
+        # ----------------------------------------------------------------
+        # Phase 3: Automatische musikalische Zielformulierung
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Phase 3: GoalSetter …", flush=True)
+        _t3 = time.perf_counter()
+        goal_profile: MusicalGoalProfile = self._goal_setter.compute_goals(
+            defect_result=defect_result,
+            quality_estimate=quality_before_estimate,
+        )
+        logger.debug(f"[ENGINE] Phase 3 fertig ({time.perf_counter()-_t3:.1f}s)", flush=True)
+        audit.append(
+            {
+                "phase": "goal_setting",
+                "goals": goal_profile.to_dict(),
+            }
+        )
+        logger.info(
+            "Musikalische Ziele: SNR_target=%.1f dB, Authenticity=%.2f, " "Naturalness=%.2f, Clarity=%.2f",
+            goal_profile.target_snr_db,
+            goal_profile.target_authenticity,
+            goal_profile.target_naturalness,
+            goal_profile.target_clarity,
+        )
+
+        # ----------------------------------------------------------------
+        # Phase 4: Processing-Varianten aufbauen (material- & defekt-adaptiv)
+        # ----------------------------------------------------------------
+        logger.debug("[ENGINE] Phase 4: _build_variants …", flush=True)
+        _t4 = time.perf_counter()
+        variants = self._build_variants(defect_result, goal_profile)
+        logger.debug(f"[ENGINE] Phase 4 fertig ({time.perf_counter()-_t4:.1f}s): {len(variants)} Variante(n)", flush=True)
+        audit.append(
+            {
+                "phase": "variant_selection",
+                "variants": [v.name for v in variants],
+            }
+        )
+        logger.info("Varianten: %s", [v.name for v in variants])
+
+        # ----------------------------------------------------------------
+        # Phase 5: Multi-Pass – alle Varianten ausführen, beste wählen
+        # ----------------------------------------------------------------
+        logger.debug(
+            f"[ENGINE] Phase 5: Starte _multi_pass() mit {len(variants)} Variante(n): {[v.name for v in variants]} …",
+            flush=True,
+        )
+        best_audio, best_variant_name, pass_scores = self._multi_pass(
+            audio=audio,
+            sample_rate=sample_rate,
+            variants=variants,
+            goal_profile=goal_profile,
+        )
+        logger.debug(f"[ENGINE] Phase 5 fertig: winner={best_variant_name}", flush=True)
+        audit.append(
+            {
+                "phase": "multi_pass",
+                "winner": best_variant_name,
+                "scores": {k: round(v, 3) for k, v in pass_scores.items()},
+            }
+        )
+        logger.info("Gewinner-Variante: %s (Score %.3f)", best_variant_name, pass_scores.get(best_variant_name, 0.0))
+
+        # ----------------------------------------------------------------
+        # Phase 6: Quality-Gate & Rollback-Schutz
+        # ----------------------------------------------------------------
+        quality_after_estimate: QualityEstimate = self._quality_analyzer.analyze_quality(
+            best_audio, sample_rate
+        )  # noqa: F841
+        # IAQS für Rollback-Vergleich (gleiche Skala wie quality_before)
+        quality_after = self._iaqs.score_as_float(best_audio, sample_rate) * 100
+        improvement = quality_after - quality_before
+        rollback_triggered = False
+
+        if improvement < self.ROLLBACK_THRESHOLD:
+            logger.warning(
+                "Qualitätsverschlechterung (Δ=%.2f) — Rollback auf Eingangssignal.",
+                improvement,
+            )
+            best_audio = audio
+            quality_after = quality_before
+            improvement = 0.0
+            rollback_triggered = True
+            audit.append({"phase": "quality_gate", "result": "ROLLBACK", "delta": improvement})
+        else:
+            audit.append(
+                {
+                    "phase": "quality_gate",
+                    "result": "PASS",
+                    "before": round(quality_before, 2),
+                    "after": round(quality_after, 2),
+                    "delta": round(improvement, 2),
+                }
+            )
+            logger.info("Quality-Gate: PASS | Δ=+%.2f (%.1f → %.1f)", improvement, quality_before, quality_after)
+
+        # ----------------------------------------------------------------
+        # Phase 7: Self-Learning-Update
+        # ----------------------------------------------------------------
+        if self.enable_self_learning and self._optimizer is not None:
+            self._optimizer.record_result(
+                material=material,
+                variant=best_variant_name,
+                defect_profile=defect_result,
+                quality_delta=improvement,
+            )
+            audit.append({"phase": "self_learning", "updated": True})
+
+        # ----------------------------------------------------------------
+        # Phase 8: SNR-Differenz berechnen
+        # ----------------------------------------------------------------
+        improvement_db = self._estimate_snr_improvement(audio, best_audio)
+
+        total_time = time.perf_counter() - start_time
+        logger.info(
+            "Verarbeitung abgeschlossen in %.1f s | SNR Δ=%.2f dB",
+            total_time,
+            improvement_db,
+        )
+
+        # ----------------------------------------------------------------
+        # Differenzierer #7: Provenanz-Vollaudit (archivtauglich)
+        # ----------------------------------------------------------------
+        provenance = ProvenanceAudit(
+            material=material.value,
+            mode=self.mode.value,
+        )
+        for step in audit:
+            provenance.record_from_dict(
+                step=step.get("phase", "unknown"),
+                are_audit_entry=step,
+            )
+        # Finale Entscheidung dokumentieren
+        provenance.record_decision(
+            step="restoration_complete",
+            rationale=(
+                f"Restaurierung abgeschlossen: Material={material.value}, "
+                f"Variante={best_variant_name}, "
+                f"Δ={improvement_db:+.2f} dB SNR, "
+                f"Rollback={'Ja' if rollback_triggered else 'Nein'}"
+            ),
+            confidence=1.0 - (0.5 if rollback_triggered else 0.0),
+            parameters={
+                "winning_variant": best_variant_name,
+                "quality_delta": round(improvement, 2),
+                "snr_improvement_db": round(improvement_db, 2),
+                "causal_order": [d.defect_type.value for d in causal_ordered],
+                "chain_corrections": chain_result.corrections_applied,
+            },
+        )
+
+        # ----------------------------------------------------------------
+        # Differenzierer #5: Defektspezifisches Qualitätsprotokoll
+        # ----------------------------------------------------------------
+        dq_report = DefectQualityReport(
+            material_type=material.value,
+            mode=self.mode.value,
+            total_audio_duration_seconds=round(len(best_audio) / sample_rate, 3),
+        )
+        # Globalen Reparaturbericht für alle erkannten Defekte erstellen
+        for defect_score in causal_ordered[:8]:  # Top-8 für Performance
+            entry = self._quality_reporter.measure_repair(
+                audio_before=audio,
+                audio_after=best_audio,
+                sample_rate=sample_rate,
+                defect_type=defect_score.defect_type,
+                severity_before=defect_score.severity,
+                confidence=defect_score.confidence,
+                phase_id=0,
+                repair_method=best_variant_name,
+                processing_time_ms=round(total_time * 1000 / max(len(causal_ordered), 1), 2),
+            )
+            dq_report.add_entry(entry)
+
+        return AutonomousRestorationResult(
+            audio=np.clip(best_audio, -1.0, 1.0),  # Clip am Ausgang (§3.1)
+            sample_rate=sample_rate,
+            mode=self.mode,
+            material_type=material,
+            defect_profile=defect_result,
+            goal_profile=goal_profile,
+            winning_variant=best_variant_name,
+            quality_before=round(quality_before, 2),
+            quality_after=round(quality_after, 2),
+            improvement_db=float(np.nan_to_num(round(improvement_db, 2), nan=0.0)),
+            passes_executed=len(variants),
+            rollback_triggered=rollback_triggered,
+            processing_time_seconds=round(total_time, 3),
+            audit_trail=audit,
+            # Weltspitzen-Differenzierer
+            causal_order=[d.defect_type.value for d in causal_ordered],
+            causal_explanation=causal_explanation,
+            chain_corrections=chain_result.corrections_applied,
+            chain_spectral_change_db=chain_result.spectral_change_db,
+            defect_quality_report=dq_report.to_dict(),
+            provenance=provenance.to_dict(),
+            gaps_found=gap_result.gaps_found,
+            gaps_repaired=gap_result.gaps_repaired,
+            gap_total_repaired_ms=gap_result.total_repaired_ms,
+        )
+
+    # ------------------------------------------------------------------
+    # Interne Methoden (vollautomatisch, kein Nutzereingriff)
+    # ------------------------------------------------------------------
+
+    def _validate_and_normalize_input(self, audio: np.ndarray) -> np.ndarray:
+        """Stellt sicher, dass audio float32 im Bereich [−1, +1] ist."""
+        if not hasattr(audio, "astype"):
+            raise TypeError(f"audio muss np.ndarray sein, nicht {type(audio).__name__!r}.")
+        audio = audio.astype(np.float32)
+        peak = np.max(np.abs(audio))
+        if peak > 1.0:
+            logger.info("Audio-Normalisierung: Peak %.4f → 1.0", peak)
+            audio = audio / peak
+        # NaN/Inf-Guard + Clip (§3.1)
+        audio = np.nan_to_num(audio, nan=0.0, posinf=1.0, neginf=-1.0)
+        audio = np.clip(audio, -1.0, 1.0)
+        # Mono-Sicherung: sicherstellen dass max 2 Kanäle
+        if audio.ndim > 2:
+            audio = audio[:, :2]
+        elif audio.ndim == 1:
+            pass  # mono OK
+        return audio
+
+    def _build_variants(
+        self,
+        defect_result: DefectAnalysisResult,
+        goal_profile: MusicalGoalProfile,
+    ) -> list[ProcessingVariant]:
+        """
+        Baut vollautomatisch 3–5 Processing-Varianten basierend auf
+        Defekt-Profil, Material und Zielprofil.
+
+        Keine Nutzereingabe erforderlich.
+        """
+        # Alle signifikanten Defekte abrufen (bis zu 20 Typen — 11 Kern + 9 Weltklasse-Erweiterung).
+        # Severity-Schwellwert und das Varianten-Limit sind die eigentlichen Filter —
+        # nicht ein willkürliches n=11, das neue Typen verdecken würde.
+        all_defects = defect_result.get_top_defects(n=20)
+        primary_severity = all_defects[0].severity if all_defects else 0.0
+        material = defect_result.material_type
+
+        base_mode = self.mode
+
+        # MAX_VARIANTS: Performance-Grenze (jede Variante = 1 restore()-Aufruf)
+        MAX_VARIANTS = 7
+
+        # Basis-Varianten: immer dabei
+        variants: list[ProcessingVariant] = [
+            ProcessingVariant.create_conservative(base_mode=base_mode),
+            ProcessingVariant.create_balanced(base_mode=base_mode),
+        ]
+
+        # Natürlichkeit-Priorisierung: Bei RESTORATION immer als Alternative
+        if self.mode == ProcessingMode.RESTORATION:
+            variants.append(ProcessingVariant.create_naturalness_first(base_mode=base_mode))
+
+        # Adaptiv: Bei starken Defekten auch aggressive Variante hinzufügen
+        if primary_severity > 0.4:
+            variants.append(ProcessingVariant.create_aggressive(base_mode=base_mode))
+
+        # Spezialisten für ALLE Defekte mit Severity > 0.2 — nach Severity sortiert.
+        # Primärer Defekt hat höchste Severity und wird damit automatisch zuerst abgedeckt.
+        # Sobald MAX_VARIANTS erreicht, stoppen — Performance vor Vollständigkeit.
+        existing_names = {v.name for v in variants}
+        for defect_entry in all_defects:
+            if len(variants) >= MAX_VARIANTS:
+                break
+            if defect_entry.severity < 0.2:
+                # Defekte ab hier zu schwach für einen eigenen Spezialisten
+                break
+            specialist = self._build_specialist_variant(defect_entry.defect_type, defect_entry.severity, base_mode)
+            if specialist is not None and specialist.name not in existing_names:
+                variants.append(specialist)
+                existing_names.add(specialist.name)
+
+        # Bei analogem Material: Authentizitäts-optimierte Variante (wenn noch Platz)
+        if (
+            len(variants) < MAX_VARIANTS
+            and material
+            in (
+                MaterialType.SHELLAC,
+                MaterialType.VINYL,
+                MaterialType.TAPE,
+                MaterialType.REEL_TAPE,
+            )
+            and self.mode == ProcessingMode.RESTORATION
+        ):
+            gd = ProcessingVariant.create_gentle_denoise(base_mode=base_mode)
+            if gd.name not in existing_names:
+                variants.append(gd)
+                existing_names.add(gd.name)
+
+        # Self-Learning-Empfehlung integrieren (wenn noch Platz)
+        if self.enable_self_learning and self._optimizer is not None and len(variants) < MAX_VARIANTS:
+            recommended = self._optimizer.recommend_variant(
+                material=defect_result.material_type,
+                defect_profile=defect_result,
+            )
+            if recommended and recommended not in existing_names:
+                learned_variant = ProcessingVariant.create_balanced(base_mode=base_mode)
+                learned_variant.name = f"learned_{recommended}"
+                learned_variant.description = "Self-Learning empfohlene Variante"
+                variants.append(learned_variant)
+
+        logger.info("Varianten gebaut (%d/%d): %s", len(variants), MAX_VARIANTS, [v.name for v in variants])
+        return variants
+
+    def _build_specialist_variant(
+        self,
+        defect_type: DefectType | None,
+        severity: float,
+        base_mode: ProcessingMode,
+    ) -> ProcessingVariant | None:
+        """Erstellt eine defektspezifische Spezialist-Variante via DefectPhaseMapper."""
+        if defect_type is None or severity < 0.2:
+            return None
+
+        from backend.core.processing_modes import get_processing_config
+
+        base_config = get_processing_config(base_mode)
+
+        config, variant_name = self._phase_mapper.build_specialist_config(
+            base_config=base_config,
+            defect_type=defect_type,
+            severity=severity,
+            is_restoration_mode=(base_mode == ProcessingMode.RESTORATION),
+        )
+
+        # Primary Phase-IDs für Logging
+        primary_phases = self._phase_mapper.get_primary_phases(defect_type)
+        description = (
+            f"Defekt-Spezialist für {defect_type.value} " f"(Severity={severity:.2f}, Phasen={primary_phases[:2]})"
+        )
+
+        return ProcessingVariant(
+            name=variant_name,
+            strategy=VariantStrategy.BALANCED,
+            config=config,
+            description=description,
+            weight=1.2,  # leicht bevorzugt beim Scoring
+        )
+
+    def _multi_pass(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        variants: list[ProcessingVariant],
+        goal_profile: MusicalGoalProfile,
+    ) -> tuple[np.ndarray, str, dict[str, float]]:
+        """
+        Führt alle Varianten aus und wählt die beste anhand objektiver Metriken.
+
+        Returns:
+            (best_audio, best_variant_name, {variant_name: score})
+        """
+        scorer = ObjectiveScorer(
+            enable_cdpam=False,  # Keine Referenz verfügbar in Zero-Intervention-Modus
+            enable_dnsmos=False,  # Deaktiviert für Varianten-Selektion (zu langsam: ~14s/Variant)
+            enable_musical_goals=True,
+        )
+        engine = MultiPassEngine(scorer=scorer)
+
+        try:
+            result = engine.process_with_variants(
+                audio=audio,
+                sample_rate=sample_rate,
+                variants=variants,
+            )
+        except Exception as exc:
+            logger.error("Multi-Pass fehlgeschlagen: %s — Passthrough.", exc)
+            return audio, "passthrough_error", {}
+
+        if not result or result.get("audio") is None:
+            logger.warning("Multi-Pass: Kein Ergebnis — Eingangssignal zurückgegeben.")
+            return audio, "passthrough", {}
+
+        best_audio: np.ndarray = result["audio"]
+        best_name: str = result.get("variant_name", "unknown")
+
+        # Scores aller Varianten als Dict aufbereiten
+        all_scores_list = result.get("all_scores", [])
+        scores: dict[str, float] = {
+            s.variant_name: s.composite_score
+            for s in all_scores_list
+            if hasattr(s, "variant_name") and hasattr(s, "composite_score")
+        }
+        if not scores and best_name != "passthrough":
+            scores[best_name] = float(result.get("composite_score", 0.0))
+
+        # Sicherheitsprüfung: Kein leises/stilles Ergebnis akzeptieren
+        if np.max(np.abs(best_audio)) < 1e-6:
+            logger.error("Gewinner-Variante %s liefert Stille — Fallback.", best_name)
+            return audio, "passthrough_fallback", scores
+
+        # Full-Processing (inkl. Voice Enhancement) einmalig auf Gewinner anwenden
+        best_variant_obj = next((v for v in variants if v.name == best_name), None)
+        if best_variant_obj is not None and engine._restorer is not None:
+            import io
+            import sys
+
+            logger.info("Full-Processing (quick_mode=False) auf Gewinner '%s'...", best_name)
+            _old = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                full_audio = engine._restorer.restore(
+                    audio=audio,
+                    sr=sample_rate,
+                    processing_config=best_variant_obj.config,
+                    quick_mode=False,
+                )
+                if np.max(np.abs(full_audio)) > 1e-6:
+                    best_audio = full_audio
+            except Exception as e:
+                logger.warning("Full-Processing fehlgeschlagen: %s — nutze Quick-Ergebnis.", e)
+            finally:
+                sys.stdout = _old
+
+        return best_audio, best_name, scores
+
+    @staticmethod
+    def _estimate_snr_improvement(original: np.ndarray, processed: np.ndarray) -> float:
+        """Schätzt SNR-Verbesserung in dB (Signal = processed, Noise = Differenz)."""
+        try:
+            # Shape normalisieren: beide auf Mono reduzieren
+            orig_mono = np.mean(original, axis=1) if original.ndim == 2 else original
+            proc_mono = np.mean(processed, axis=1) if processed.ndim == 2 else processed
+            # Ggf. Längen angleichen (restore() kann resampling verursachen)
+            min_len = min(len(orig_mono), len(proc_mono))
+            if min_len == 0:
+                return 0.0
+            orig_mono = orig_mono[:min_len]
+            proc_mono = proc_mono[:min_len]
+            diff = orig_mono - proc_mono
+            signal_power = float(np.mean(proc_mono**2))
+            noise_power = float(np.mean(diff**2))
+            if noise_power < 1e-12 or signal_power < 1e-12:
+                return 0.0
+            return float(10.0 * np.log10(signal_power / noise_power))
+        except Exception:
+            return 0.0

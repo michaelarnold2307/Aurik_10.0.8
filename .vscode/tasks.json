@@ -1,0 +1,119 @@
+{
+	"version": "2.0.0",
+	// ══════════════════════════════════════════════════════════════════════════
+	// AURIK TEST-TASK-STRATEGIE (Feb 2026)
+	//
+	// VS Code Test Explorer → NUR tests/unit/ (50 Dateien, ~600 Tests)
+	//   Konfiguriert in settings.json → python.testing.pytestArgs
+	//   Verhindert 5 200-Test-Pipe-Flood + ONNX-OOM-Absturz.
+	//
+	// Vollsuite → Terminal-Tasks hier (Strg+Shift+B):
+	//   Die Tasks laufen im integrierten Terminal, NICHT über den Extension-Host.
+	//   Kein JSON-RPC-Protokoll, kein Pipe-Overhead, kein VS Code-Absturz.
+	//
+	// Empfohlene Reihenfolge für tägliche Entwicklung:
+	//   1. "Unit-Tests" (schnell, immer) → via VS Code Test Explorer oder Task
+	//   2. "Integrations-Tests" (mittelschnell, nach Feature-Fertigstellung)
+	//   3. "Vollsuite parallel" (langsam, vor Commit/PR) → ausschließlich Terminal
+	// ══════════════════════════════════════════════════════════════════════════
+	"tasks": [
+		// ── 1. SCHNELL: nur tests/unit/ ─────────────────────────────────────
+		{
+			"label": "pytest: Unit-Tests (tests/unit/, schnell)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/unit -p no:xdist --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=30 --tb=short -q --disable-warnings --no-header",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true,
+				"group": "tests"
+			}
+		},
+		// ── 2. MITTEL: tests/ ohne e2e und ml-Marker ────────────────────────
+		{
+			"label": "pytest: Integrations-Tests (ohne E2E/ML)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests -m \"not e2e and not ml\" -p no:xdist --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=30 --tb=short -q --disable-warnings --no-header --maxfail=20 --ignore=tests/unit",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": "test",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true,
+				"group": "tests"
+			}
+		},
+		// ── 3. VOLLSUITE: 2 Worker im Terminal (kein VS Code Extension-Host) ─
+		{
+			"label": "pytest: Vollsuite (2 Worker, Terminal — NICHT für Test Explorer)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests -n 2 --dist=loadfile --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=60 --tb=short -q --disable-warnings --no-header --maxfail=5",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": "test",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true,
+				"group": "tests"
+			}
+		},
+		// ── 4. SCHNELL: Musical Goals speziell ─────────────────────────────
+		{
+			"label": "pytest: Musical Goals (tests/musical_goals/ + tests/unit/)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/musical_goals tests/unit -p no:xdist --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=30 --tb=short -q --disable-warnings --no-header",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": "test",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true,
+				"group": "tests"
+			}
+		},
+		// ── 5. RAUCH-TEST: Erste 50 Tests zur schnellen Orientierung ─────────
+		{
+			"label": "pytest: Smoke-Test (50 Tests, maxfail=3)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/unit -p no:xdist --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=20 --tb=line -q --disable-warnings --no-header --maxfail=3 -x",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": "test",
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"clear": true,
+				"group": "tests"
+			}
+		},
+		// ── 6. EINZELNE DATEI: aktive Editor-Datei testen ───────────────────
+		{
+			"label": "pytest: Aktive Test-Datei (Editor)",
+			"type": "shell",
+			"command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest \"${file}\" -p no:xdist --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=30 --tb=short -v --disable-warnings --no-header",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": ["$pytest"],
+			"group": "test",
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"clear": true
+			}
+		}
+	]
+}

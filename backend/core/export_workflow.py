@@ -1,0 +1,295 @@
+"""
+Aurik v8 – Professional Export Workflow
+
+GAPs ADRESSIERT:
+- GAP #41: Enhanced Format Support (AIFF, CAF, Ogg Vorbis, Opus)
+- GAP #42: Basic Metadata Preservation
+- GAP #44: Multi-Version Export (multiple modes/qualities)
+
+Exportiert restauriertes Audio in verschiedenen Formaten mit Metadata-Erhaltung
+und Multi-Version Support für professionelle Workflows.
+
+Version: 2.0.0
+"""
+
+from dataclasses import asdict, dataclass
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+import logging
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExportMetadata:
+    """Metadata for exported audio files"""
+
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    date: str | None = None
+    genre: str | None = None
+    comment: str | None = None
+    # Processing metadata
+    aurik_version: str = "v8.0"
+    processing_date: str | None = None
+    restoration_applied: bool = True
+    sample_rate: int | None = None
+    bit_depth: int | None = None
+    channels: int | None = None
+
+
+SUPPORTED_FORMATS = {
+    # Lossless formats (via soundfile)
+    "wav": {"subtype": "PCM_24", "extension": ".wav", "description": "WAV (PCM 24-bit)"},
+    "flac": {"subtype": "PCM_24", "extension": ".flac", "description": "FLAC (Lossless)"},
+    "aiff": {"subtype": "PCM_24", "extension": ".aif", "description": "AIFF (Apple)"},
+    "caf": {"subtype": "PCM_24", "extension": ".caf", "description": "CAF (Core Audio)"},
+    # Compressed formats (via soundfile - Ogg Vorbis)
+    "ogg": {"subtype": "VORBIS", "extension": ".ogg", "description": "Ogg Vorbis"},
+    # Note: Opus requires libsndfile 1.0.29+ with Opus support
+    # 'opus': {'subtype': 'OPUS', 'extension': '.opus', 'description': 'Opus'},
+}
+
+
+def export_audio(
+    audio: np.ndarray,
+    sr: int,
+    filename: str,
+    format: str = "wav",
+    metadata: ExportMetadata | None = None,
+    output_dir: str = "export",
+) -> str:
+    """
+    Export audio with format and metadata support.
+
+    Args:
+        audio: Audio data (mono or stereo)
+        sr: Sample rate
+        filename: Base filename (without extension)
+        format: Export format ('wav', 'flac', 'aiff', 'caf', 'ogg')
+        metadata: Optional metadata to embed
+        output_dir: Output directory
+
+    Returns:
+        Path to exported file
+
+    Raises:
+        ValueError: If format not supported
+        RuntimeError: If export fails
+    """
+    if format not in SUPPORTED_FORMATS:
+        raise ValueError(f"Format '{format}' not supported. " f"Supported: {', '.join(SUPPORTED_FORMATS.keys())}")
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Build full path with correct extension
+    fmt_info = SUPPORTED_FORMATS[format]
+    base_name = Path(filename).stem  # Remove any existing extension
+    export_path = os.path.join(output_dir, base_name + fmt_info["extension"])
+
+    # Prepare metadata
+    if metadata is None:
+        metadata = ExportMetadata()
+
+    # Update processing metadata
+    metadata.processing_date = datetime.now().isoformat()
+    metadata.sample_rate = sr
+    metadata.bit_depth = 24  # Default to 24-bit for quality
+    metadata.channels = audio.shape[1] if audio.ndim == 2 else 1
+
+    try:
+        # Write audio file
+        sf.write(export_path, audio, sr, format=format.upper(), subtype=fmt_info["subtype"])
+
+        # Write sidecar metadata (JSON) for formats that don't support embedded tags
+        if metadata:
+            _write_metadata_sidecar(export_path, metadata)
+
+        logger.debug(f"✓ Exported: {export_path} ({fmt_info['description']})")
+        return export_path
+
+    except Exception as e:
+        raise RuntimeError(f"Export failed for '{format}': {e}")
+
+
+def export_multi_version(
+    audio: np.ndarray,
+    sr: int,
+    base_filename: str,
+    formats: list[str] = None,
+    metadata: ExportMetadata | None = None,
+    output_dir: str = "export",
+) -> dict[str, str]:
+    """
+    GAP #44: Export multiple versions in different formats.
+
+    Useful for:
+    - Archive: FLAC (lossless)
+    - Distribution: WAV (universal)
+    - Streaming: Ogg Vorbis (compressed)
+
+    Args:
+        audio: Audio data
+        sr: Sample rate
+        base_filename: Base filename (without extension)
+        formats: List of formats to export (default: ['wav', 'flac'])
+        metadata: Optional metadata
+        output_dir: Output directory
+
+    Returns:
+        Dict mapping format -> file path
+    """
+    if formats is None:
+        formats = ["wav", "flac"]  # Default: lossless archive + universal
+
+    results = {}
+    for fmt in formats:
+        try:
+            path = export_audio(audio, sr, base_filename, format=fmt, metadata=metadata, output_dir=output_dir)
+            results[fmt] = path
+        except Exception as e:
+            logger.debug(f"⚠️ Export failed for format '{fmt}': {e}")
+            results[fmt] = None
+
+    logger.debug(f"✓ Multi-version export complete: {len([p for p in results.values() if p])} / {len(formats)} formats")
+    return results
+
+
+def _write_metadata_sidecar(audio_path: str, metadata: ExportMetadata):
+    """
+    Write metadata as JSON sidecar file (GAP #42: Basic Metadata Preservation).
+
+    For formats that don't support embedded tags (or as backup).
+    Creates a .json file alongside the audio file.
+    """
+    sidecar_path = Path(audio_path).with_suffix(".json")
+
+    metadata_dict = asdict(metadata)
+    # Remove None values
+    metadata_dict = {k: v for k, v in metadata_dict.items() if v is not None}
+
+    with open(sidecar_path, "w", encoding="utf-8") as f:
+        json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
+
+    return sidecar_path
+
+
+def export_audit_log(audit_log: list, filename: str):
+    """Export audit log (legacy function, kept for compatibility)"""
+    log_path = os.path.join("logs", filename)
+    os.makedirs("logs", exist_ok=True)
+    with open(log_path, "a") as f:
+        for entry in audit_log:
+            f.write(str(entry) + "\n")
+    logger.debug(f"✓ Audit-Log gespeichert: {log_path}")
+    return log_path
+
+
+# Example usage:
+# metadata = ExportMetadata(title="My Song", artist="Artist Name", album="Album")
+# export_audio(restored_audio, 48000, "result", format='flac', metadata=metadata)
+# export_multi_version(restored_audio, 48000, "result", formats=['wav', 'flac', 'ogg'])
+# export_stems(restored_audio, 48000, "result", backend='auto')  # GAP #43
+
+
+# ==============================================================================
+# GAP #43: STEM EXPORT
+# ==============================================================================
+
+
+def export_stems(
+    audio: np.ndarray,
+    sr: int,
+    base_filename: str,
+    format: str = "wav",
+    backend: str = "auto",
+    metadata: ExportMetadata | None = None,
+    output_dir: str = "export/stems",
+) -> dict[str, str]:
+    """
+    GAP #43: Export audio as separate stems (vocals, drums, bass, other).
+
+    Separates the mixed audio into individual stems using source separation,
+    then exports each stem as a separate file.
+
+    Args:
+        audio: Input audio (mixed/full track)
+        sr: Sample rate
+        base_filename: Base filename for stems (will add _vocals, _drums, etc.)
+        format: Export format ('wav', 'flac', 'aiff', etc.)
+        backend: Separation backend ('auto', 'spectral', 'banquet')
+        metadata: Optional metadata (copied to all stems)
+        output_dir: Output directory for stems
+
+    Returns:
+        Dict mapping stem name -> file path
+
+    Example:
+        >>> stems_paths = export_stems(audio, 48000, "my_song")
+        >>> # Creates: my_song_vocals.wav, my_song_drums.wav, my_song_bass.wav, my_song_other.wav
+    """
+    try:
+        from dsp.stem_separator import StemSeparator
+    except ImportError:
+        raise RuntimeError("Stem separator not available. " "Make sure dsp/ module is in your Python path.")
+
+    logger.debug(f"Separating stems (backend: {backend})...")
+
+    # Separate into stems
+    separator = StemSeparator(backend=backend)
+    stems = separator.separate(audio, sr)
+
+    backend_info = separator.get_backend_info()
+    logger.debug(f"✓ Separated using {backend_info['backend']} ({backend_info['quality']} quality)")
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Export each stem
+    results = {}
+    for stem_name, stem_audio in stems.items():
+        stem_filename = f"{base_filename}_{stem_name}"
+
+        # Copy metadata and add stem-specific info
+        if metadata:
+            stem_metadata = ExportMetadata(
+                title=metadata.title,
+                artist=metadata.artist,
+                album=metadata.album,
+                date=metadata.date,
+                genre=metadata.genre,
+                comment=f"{metadata.comment or ''} [Stem: {stem_name}]".strip(),
+                aurik_version=metadata.aurik_version,
+                processing_date=metadata.processing_date,
+                restoration_applied=metadata.restoration_applied,
+            )
+        else:
+            stem_metadata = ExportMetadata(comment=f"Stem: {stem_name}")
+
+        try:
+            path = export_audio(
+                stem_audio, sr, stem_filename, format=format, metadata=stem_metadata, output_dir=output_dir
+            )
+            results[stem_name] = path
+            logger.debug(f"  ✓ {stem_name:8s} → {os.path.basename(path)}")
+        except Exception as e:
+            logger.debug(f"  ⚠️  {stem_name:8s} export failed: {e}")
+            results[stem_name] = None
+
+    # Print summary
+    successful = len([p for p in results.values() if p])
+    logger.debug(f"✓ Stem export complete: {successful}/{len(stems)} stems exported")
+
+    # Print metrics
+    metrics = separator.get_metrics()
+    if metrics:
+        logger.debug(f"  Backend: {metrics.get('backend', 'unknown')}")
+        logger.debug(f"  Quality: {metrics.get('quality', 'unknown')}")
+
+    return results

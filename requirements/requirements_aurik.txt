@@ -1,0 +1,199 @@
+# Aurik 9 – requirements_aurik.txt (bereinigt, PyPI-verifiziert)
+# Aktualisiert: 22. Februar 2026
+# Validierte Versionen – §13.4 Out-of-the-Box-Pflicht
+#
+# ============================================================================
+# SYSTEM-ABHÄNGIGKEITEN (einmalig vor pip install ausführen)
+# Ubuntu/Debian:
+#   sudo apt-get install -y libportaudio2 portaudio19-dev ffmpeg
+# Fedora/RHEL:
+#   sudo dnf install -y portaudio portaudio-devel ffmpeg
+# ============================================================================
+#
+# INSTALLATION:  bash scripts/install_aurik.sh
+#   (installiert torch+cpu separat mit korrektem Index, dann diese Datei)
+#
+# HINWEIS §13.4: torch wird via install_aurik.sh mit +cpu-Suffix installiert:
+#   torch==2.2.2+cpu  torchaudio==2.2.2+cpu
+#   --extra-index-url https://download.pytorch.org/whl/cpu
+#   → NICHT direkt in dieser Datei, da pip sonst die CUDA-Variante zieht.
+# ============================================================================
+
+# --- Backend-Hilfsbibliotheken ---
+requests==2.32.5
+pyyaml==6.0.3
+python-multipart==0.0.22
+python-dotenv==1.2.1
+
+# --- Audio-Kernbibliotheken ---
+numpy==1.26.4
+scipy==1.15.3
+librosa==0.11.0
+soundfile==0.13.1
+soxr==1.0.0
+resampy==0.4.3
+audioread==3.1.0
+pyloudnorm==0.2.0
+pyFFTW>=0.15.0            # Benötigt libfftw3 (apt: libfftw3-dev); Fallback: numpy.fft (automatisch wenn nicht installiert)
+
+# --- ONNX-Runtime (CPU-only, §9.5) ---
+onnxruntime==1.23.2
+
+# --- Audio-Qualitätsmetriken ---
+# ⚠ VERBOTEN als Musik-Metrik (§10.2, §4.4):
+#   pesq==0.0.4   → Telefonband 300–3400 Hz, strukturell ungeeignet für Vollband-Musik
+#   pystoi==0.4.1 → Sprachverständlichkeit 150–5000 Hz, sinnlos für Instrumentalmusik
+# Erlaubte Musik-Metriken: PEAQ, FAD, CDPAM, PQS-MOS, ViSQOL v3 (--audio), Musical Goals
+# pesq und pystoi dürfen NICHT als globale Musik-Qualitäts-Gates verwendet werden.
+
+# --- Rauschunterdrückung (primär gebündelt) ---
+# DeepFilterNet v3 – lokale ONNX-Modelle in models/deepfilternet/
+deepfilternet==0.5.6
+
+# --- Torchmetrics (kompatibel mit torch 2.2.2) ---
+torchmetrics==1.8.2
+
+# --- Scientific Computing ---
+numba==0.63.1
+scikit-learn==1.7.2
+joblib==1.5.3
+
+# --- GUI (§11.3 PyQt5-Pflicht, §11.3 Frontend) ---
+PyQt5>=5.15.9
+
+# --- Audio-Verarbeitung ---
+pydub>=0.25.1
+sounddevice>=0.4.7        # Benötigt: sudo apt-get install libportaudio2
+
+# --- ML-Hilfsbibliotheken ---
+tqdm==4.67.3
+protobuf==6.33.5
+pydantic==2.12.5
+pydantic_core==2.41.5
+pydantic-settings>=2.0.0
+einops>=0.7.0
+safetensors>=0.4.0
+
+# --- HuggingFace-Ökosystem (für Modell-Caching §13.3) ---
+huggingface_hub>=0.24.0
+
+# --- Audio ML (offiziell auf PyPI verfügbar) ---
+crepe>=0.0.12
+encodec>=0.1.1
+
+# --- Vision / AV ---
+pillow>=10.0.0
+ffmpeg-python>=0.2.0
+matplotlib>=3.8.0
+
+# --- Visualisierung / Reporting ---
+Jinja2==3.1.6
+rich>=14.0.0
+
+# --- Utilities ---
+coloredlogs>=15.0.1
+colorlog>=6.0.0
+loguru>=0.7.0
+click>=8.0.0
+psutil>=5.9.0
+filelock>=3.10.0
+python-dateutil>=2.9.0
+packaging>=23.0,<24.0
+
+# --- Testing ---
+pytest==9.0.2
+pytest-cov>=7.0.0
+pytest-xdist>=3.0.0
+pytest-timeout>=2.0.0
+pytest-asyncio>=0.23.0
+pytest-benchmark>=4.0.0
+anyio>=4.0.0
+hypothesis>=6.100.0
+coverage>=7.0.0
+
+# --- Code-Qualität ---
+black>=26.0.0
+flake8>=7.0.0
+mypy>=1.10.0
+pylint>=3.0.0
+bandit>=1.9.0
+
+# --- Pydantic-Ökosystem ---
+annotated-types>=0.6.0
+
+# ============================================================================
+# OPTIONALE GROSSPAKETE (§9.5 Lazy-Load, nur bei Bedarf installieren)
+# Diese Pakete sind NICHT Pflicht für den Grundbetrieb. Sie werden von
+# ModelDownloader / Plugins lazy geladen wenn der jeweilige Defekttyp erkannt
+# wird. Größe jeweils im Kommentar genannt.
+# Installation separat: pip install <paketname>
+# ============================================================================
+
+# --- Stem-Separation (§4.4 MDX23C – primär via ONNX in models/) ---
+# demucs>=4.0.0           # ~200 MB Modellgewichte, nur wenn kein ONNX vorhanden
+
+# --- LAION-CLAP / Transformers (§2.14 EraClassifier + §4.4 Audio-Tagging) ---
+# HINWEIS: transformers==4.43.4 ist die letzte Version die torch 2.2.2 unterstützt.
+# transformers>=5.0 bricht torch 2.2 hart (RobertaModel-Import schlägt fehl).
+# transformers==4.43.4
+# tokenizers>=0.19.0
+# sentencepiece>=0.1.99
+# laion_clap wird als lokale Quelle unter models/clap/src/ geladen (kein PyPI-Paket)
+# Abhängigkeiten von laion_clap (alle auf PyPI verfügbar):
+torchvision==0.17.2+cpu  # --extra-index-url https://download.pytorch.org/whl/cpu
+# torchaudio==2.2.2+cpu    # --extra-index-url https://download.pytorch.org/whl/cpu
+# torchlibrosa>=0.1.0
+# h5py>=3.8.0
+# ftfy>=6.1.0
+# regex>=2023.0.0
+# braceexpand>=0.1.7
+# webdataset>=0.2.86        # Training-Framework, kein Desktop-App-Nutzen
+# ⚠ wandb: VERBOTEN (§13.4 100%-Offline-Pflicht) — macht aktive Internet-Calls beim Import
+# wandb>=0.15.0
+# wget>=3.2
+# progressbar>=2.5
+
+# --- Matchering 2.0 (§Studio-2026 Reference Mastering, matchering_plugin.py) ---
+matchering>=2.0.6        # Multiband Mid/Side Wiener reference mastering
+patsy>=1.0.0             # matchering dep (statsmodels formula API)
+statsmodels>=0.14.0      # matchering dep (spectral Wiener filter)
+
+# --- Matchering 2.0 (§Studio-2026 Reference Mastering, matchering_plugin.py) ---
+matchering>=2.0.6        # Multiband Mid/Side Wiener reference mastering
+patsy>=1.0.0             # matchering dep (statsmodels formula API)
+statsmodels>=0.14.0      # matchering dep (spectral Wiener filter)
+
+# --- VampNet (§4.4 Inpainting ≥50 ms, models/vampnet/) ---
+descript-audiotools @ git+https://github.com/hugofloresgarcia/audiotools.git  # VampNet-Pflichtabhängigkeit (vampnet_plugin.py)
+flatten_dict>=0.4.2      # audiotools dep
+pytorch-ignite>=0.5.0   # audiotools dep (ml/trainer.py)
+randomname>=0.2.1        # audiotools dep (ml/experiment.py)
+
+# --- AudioSR (§4.4 Bandbreiten-Erweiterung <8 kHz, 5.9 GB .safetensors) ---
+# audiosr>=1.0.0
+unidecode>=1.3.0        # Abhängigkeit von models/audiosr/ (phoneme_encoder/text/cleaners.py)
+timm>=0.9.0             # Abhängigkeit von models/audiosr/ (latent_diffusion/modules)
+
+# --- Phonemizer (§2.8 Vokal-Konsonanten-Erkennung) ---
+# phonemizer>=3.2.0
+
+# --- Madmom (§2.12 Beat-Tracking, Phrasen-Analyse) ---
+# madmom>=0.16.0          # RNNBeatTracker für GrooveMetric + InpaintingKontext
+
+# --- Spacy (NLP-Utilities) ---
+# spacy>=3.7.0
+
+# ============================================================================
+# PAKETE DIE NICHT AUF PYPI EXISTIEREN – als ONNX in models/ gebündelt
+# (§13.4 Verbotene-Praktiken: kein pip install für nicht-existente Pakete)
+# ============================================================================
+# ENTFERNT (waren alle nicht auf PyPI verfügbar, Aurik nutzt lokale ONNX):
+#   dnsmos-pytorch  → models/dnsmos/ (ONNX)
+#   nisqa           → Sprach-Modell, für Musik verboten (§10.2)
+#   diffwave        → models/diffwave/diffwave_model.onnx
+#   hifi-gan        → models/hifi_gan/hifi_gan.onnx
+#   dccrn           → models/dccrn/dccrn.onnx
+#   convtasnet      → nicht verwendet in Aurik 9
+#   gan-inpainting  → nicht verwendet in Aurik 9
+#   banquet         → models/banquet/ (Split-ONNX)
+# ============================================================================

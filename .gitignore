@@ -1,0 +1,130 @@
+# Aurik: Ignoriere große/vermeidbare Ordner und temporäre Dateien
+
+# ── Virtuelle Umgebungen ─────────────────────────────────────────────────────
+.venv_aurik/
+.venv_sota/
+.venv_dsp/
+.venv_encodec/
+.venv_matplotlib/
+.venv_singmos/
+.venv/
+venv/
+
+# ── Python-Caches ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# ── Build / Distribution ─────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ── ML-Modelle & Gewichte (lokal gebündelt, nicht ins Repo) ─────────────────
+models/
+pretrained_models/
+*.pt
+*.pth
+*.onnx
+*.onnx.data
+*.safetensors
+*.ckpt
+*.bin
+
+# ── Audio-Dateien ────────────────────────────────────────────────────────────
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.wma
+*.opus
+*.aiff
+*.aif
+
+# ── Laufzeit-Ausgaben & Sessions ─────────────────────────────────────────────
+output_audio/
+sessions/
+exports/
+logs/
+*.log
+*.ndjson
+nohup.out
+
+# ── Daten & Trainingsdaten ───────────────────────────────────────────────────
+datasets/
+data/
+testdata/
+golden_snippet_library/
+golden_snippets/
+audioseal/
+
+# ── Audit-Laufzeitdaten (enthalten lokale Pfade) ─────────────────────────────
+audit_logs/
+audit_reports/
+audit/audit_trail.json
+audit/*.yaml
+audit/*.ndjson
+
+# ── Nutzer-GP-Gedächtnis & Künstler-Signaturen ───────────────────────────────
+# ~/.aurik/ wird nicht ins Repo eingecheckt (Nutzerdaten, lokal)
+
+# ── Pakete & Archive ─────────────────────────────────────────────────────────
+node_modules/
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tgz
+
+# ── Betriebssystem ───────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.vscode/.ropeproject
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Umgebungsvariablen & Secrets ─────────────────────────────────────────────
+.env
+.env.*
+.env.local
+*.local
+secrets/
+config/local*
+
+# ── Temporäre Dateien ────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# ── Test-Ausgaben ────────────────────────────────────────────────────────────
+coverage.xml
+.coverage
+htmlcov/
+junit.xml
+
+# ── PyInstaller / AppImage ───────────────────────────────────────────────────
+*.spec.bak
+AppDir/
+
+# Lokaler Tool-Cache
+.cache/

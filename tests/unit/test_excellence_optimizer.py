@@ -1,0 +1,215 @@
+"""Unit-Tests für core/excellence_optimizer.py — ExcellenceOptimizer.
+
+Spec §2.x: Kontext-bewusstes Post-Processing (Spectral Continuity,
+Micro-Dynamic Re-injection, Harmonic Reinforcement, OLA Smoothing).
+≥ 14 Tests: Shape, NaN, Mono/Stereo, Material-Profile, Context-Analyse.
+"""
+
+from __future__ import annotations
+
+import math
+import numpy as np
+import pytest
+
+np.random.seed(42)
+
+from backend.core.excellence_optimizer import (
+    ExcellenceOptimizer,
+    ExcellenceContext,
+    ExcellenceResult,
+    MaterialProfile,
+    MATERIAL_PROFILES,
+    analyze_context,
+    optimize_for_excellence,
+    map_panns_to_profile,
+)
+
+SR = 48000
+
+
+def _sine(freq: float = 440.0, secs: float = 1.0) -> np.ndarray:
+    t = np.linspace(0, secs, int(SR * secs), endpoint=False)
+    return np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+
+def _stereo(secs: float = 1.0) -> np.ndarray:
+    mono = _sine(secs=secs)
+    return np.stack([mono, mono * 0.9])
+
+
+def _noise(secs: float = 1.0, amp: float = 0.05) -> np.ndarray:
+    rng = np.random.default_rng(0)
+    return (rng.standard_normal(int(SR * secs)) * amp).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Klasse 1: Import und Material-Profile
+# ---------------------------------------------------------------------------
+
+
+class TestExcellenceOptimizerImport:
+    def test_01_class_importable(self):
+        assert ExcellenceOptimizer is not None
+
+    def test_02_result_class_importable(self):
+        assert ExcellenceResult is not None
+
+    def test_03_material_profiles_present(self):
+        for key in ("auto", "vinyl", "tape", "shellac", "broadcast"):
+            assert key in MATERIAL_PROFILES, f"Profil '{key}' fehlt"
+
+    def test_04_material_profile_fields(self):
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(MaterialProfile)}
+        required = {"name", "flux_smoothing_max", "target_cv_min",
+                    "modulation_strength", "harm_boost_db", "ola_ms"}
+        assert required.issubset(fields)
+
+    def test_05_instantiate_default(self):
+        opt = ExcellenceOptimizer(sample_rate=SR)
+        assert opt is not None
+
+    def test_06_instantiate_with_material(self):
+        opt = ExcellenceOptimizer(sample_rate=SR, material="vinyl")
+        assert opt.material == "vinyl"
+
+
+# ---------------------------------------------------------------------------
+# Klasse 2: analyze_context
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeContext:
+    def test_07_context_returns_dataclass(self):
+        ctx = analyze_context(_sine(), SR)
+        assert isinstance(ctx, ExcellenceContext)
+
+    def test_08_context_fields_finite(self):
+        ctx = analyze_context(_sine(), SR)
+        assert math.isfinite(ctx.rms_db)
+        assert math.isfinite(ctx.snr_estimate_db)
+        assert 0.0 <= ctx.harmonicity <= 1.0
+        assert 0.0 <= ctx.transient_density <= 1.0
+
+    def test_09_context_stereo(self):
+        ctx = analyze_context(_stereo(), SR)
+        assert ctx.is_stereo is True
+
+    def test_10_context_mono_flag_false(self):
+        ctx = analyze_context(_sine(), SR)
+        assert ctx.is_stereo is False
+
+    def test_11_context_silence_low_rms(self):
+        silence = np.zeros(SR, dtype=np.float32)
+        ctx_silence = analyze_context(silence, SR)
+        ctx_sine = analyze_context(_sine(), SR)
+        assert ctx_silence.rms_db < ctx_sine.rms_db
+
+
+# ---------------------------------------------------------------------------
+# Klasse 3: optimize() — Shape und Wertebereiche
+# ---------------------------------------------------------------------------
+
+
+class TestExcellenceOptimizerOptimize:
+    def setup_method(self):
+        self.opt = ExcellenceOptimizer(sample_rate=SR)
+
+    def test_12_mono_shape_preserved(self):
+        audio = _sine()
+        out, result = self.opt.optimize(audio)
+        assert out.shape == audio.shape
+
+    def test_13_stereo_shape_preserved(self):
+        audio = _stereo()
+        out, result = self.opt.optimize(audio)
+        assert out.shape == audio.shape
+
+    def test_14_output_clipped_to_minus1_plus1(self):
+        audio = _sine()
+        out, _ = self.opt.optimize(audio)
+        assert np.all(out >= -1.0)
+        assert np.all(out <= 1.0)
+
+    def test_15_output_is_finite(self):
+        audio = _sine()
+        out, _ = self.opt.optimize(audio)
+        assert np.all(np.isfinite(out))
+
+    def test_16_result_is_excellence_result(self):
+        _, result = self.opt.optimize(_sine())
+        assert isinstance(result, ExcellenceResult)
+
+    def test_17_empty_audio_passthrough(self):
+        empty = np.array([], dtype=np.float32)
+        out, _ = self.opt.optimize(empty)
+        assert out.size == 0
+
+
+# ---------------------------------------------------------------------------
+# Klasse 4: NaN/Inf-Guard
+# ---------------------------------------------------------------------------
+
+
+class TestExcellenceOptimizerNaNGuard:
+    def setup_method(self):
+        self.opt = ExcellenceOptimizer(sample_rate=SR)
+
+    def test_18_nan_input_handled(self):
+        nan_audio = np.full(SR, float("nan"), dtype=np.float32)
+        out, _ = self.opt.optimize(nan_audio)
+        assert np.all(np.isfinite(out))
+
+    def test_19_inf_input_handled(self):
+        inf_audio = np.full(SR, float("inf"), dtype=np.float32)
+        out, _ = self.opt.optimize(inf_audio)
+        assert np.all(np.isfinite(out))
+
+
+# ---------------------------------------------------------------------------
+# Klasse 5: Material-spezifisches Verhalten
+# ---------------------------------------------------------------------------
+
+
+class TestExcellenceOptimizerMaterials:
+    def test_20_vinyl_material_runs(self):
+        opt = ExcellenceOptimizer(sample_rate=SR, material="vinyl")
+        out, _ = opt.optimize(_sine())
+        assert out.shape == (SR,)
+        assert np.all(np.isfinite(out))
+
+    def test_21_tape_material_runs(self):
+        opt = ExcellenceOptimizer(sample_rate=SR, material="tape")
+        out, _ = opt.optimize(_sine())
+        assert np.all(np.isfinite(out))
+
+    def test_22_shellac_material_runs(self):
+        opt = ExcellenceOptimizer(sample_rate=SR, material="shellac")
+        out, _ = opt.optimize(_sine())
+        assert np.all(np.isfinite(out))
+
+
+# ---------------------------------------------------------------------------
+# Klasse 6: Convenience-Funktion und PANNs-Mapping
+# ---------------------------------------------------------------------------
+
+
+class TestExcellenceConvenienceAndMapping:
+    def test_23_optimize_for_excellence_returns_audio(self):
+        audio = _sine()
+        out, result = optimize_for_excellence(audio, SR)
+        assert isinstance(out, np.ndarray)
+        assert out.shape == audio.shape
+        assert np.all(np.isfinite(out))
+
+    def test_24_map_panns_vinyl(self):
+        profile = map_panns_to_profile({"Vinyl": 0.9, "Radio": 0.1})
+        assert profile == "vinyl"
+
+    def test_25_map_panns_low_confidence_returns_auto(self):
+        profile = map_panns_to_profile({"Vinyl": 0.1})
+        assert profile == "auto"
+
+    def test_26_map_panns_empty_returns_auto(self):
+        profile = map_panns_to_profile({})
+        assert profile == "auto"
