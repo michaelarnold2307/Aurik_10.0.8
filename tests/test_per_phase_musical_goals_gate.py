@@ -292,7 +292,14 @@ class TestLogEntry:
     def test_26_log_entry_action_valid(self):
         audio = _tone(8.0)
         _, _, log_entry = wrap_phase(_pass_phase, audio, SR)
-        assert log_entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5", "rollback"}
+        assert log_entry.action in {
+            "passed",
+            "retry1",
+            "retry2",
+            "retry3",
+            "retry4",
+            "retry5",
+        } or log_entry.action.startswith("best_effort")
 
     def test_27_passthrough_action_is_passed(self):
         """Passthrough-Phase ohne Regression → action='passed'."""

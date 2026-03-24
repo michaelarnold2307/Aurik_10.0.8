@@ -9,6 +9,31 @@
 
 ---
 
+## v9.10.74 (25. März 2026) — Perceptual Salience + Denker-Differenzierung
+
+- **instructions_version**: 2.7 → **2.8** (neue RELEASE_MUST-Regeln §9.1c, §11.7a)
+- **Spec 07 §9.1c** (neu): Perceptual-Salience-Annotation — psychoakustische Maskierungsmodelle (Fastl & Zwicker 2007) für Defekt-Salienz
+- **Spec 03 §11.7a** (neu): Denker-Rollendifferenzierung — disjunkte Verantwortungen für ReparaturDenker, RekonstruktionsDenker, RestaurierDenker
+- **Neues Modul**: `backend/core/perceptual_salience.py` — `PerceptualSalienceEstimator` (Singleton)
+  - Simultane Maskierung (12 dB Schwelle), temporale Vorwärts-Maskierung (200 ms, 8 dB), Rückwärts-Maskierung (20 ms, 6 dB)
+  - Severity-Skalierung: `severity * (0.3 + 0.7 * mean_salience)`
+- **Code**: `DefectScanner.scan()` — Integration nach §9.1b Intro-Boost, vor Location-Offset
+- **Code**: `RekonstruktionsDenker.rekonstruiere()` — akzeptiert `defect_result`, extrahiert BANDWIDTH_LOSS, generiert ReconstructionContext-Felder
+- **Code**: `RestaurierDenker.restauriere()` — akzeptiert `reconstruction_context`, reicht an UV3 weiter
+- **Code**: `AurikDenker._run_rest()` — Kontextfluss: defect_result → RekonstruktionsDenker, rek → RestaurierDenker
+- **Tests**: 35 neue Tests (`tests/unit/test_perceptual_salience.py`)
+
+## v9.10.73 (24. März 2026) — Dropout-Erkennung: 3 neue Spec-Paragraphen + Code-Fixes
+
+- **instructions_version**: 2.6 → **2.7** (3 neue RELEASE_MUST-Regeln)
+- **Spec 05 §6.2a** (neu): Material-Prioritäts-Phasen MÜSSEN unbedingt aktiviert werden, unabhängig vom Severity-Score
+- **Spec 05 §6.4a** (neu): Material-adaptive Erkennungsschwellen im DefectScanner (Analog 20 % vs. Digital 10 %)
+- **Spec 07 §9.1a** (neu): Nicht-stationäre Defekttypen (DROPOUTS, TRANSPORT_BUMP) auf vollständigem Audio — kein 60 s Center-Crop
+- **Code**: `DefectScanner._detect_dropouts()` — 5 ms Fenster (war 10 ms), material-adaptive Schwelle, duration-basierte Severity, NaN-Guard
+- **Code**: `DefectScanner.scan()` — `_audio_mono_full` vor Center-Crop gesichert; `self.material_type` aus resolved type gesetzt
+- **Code**: `UnifiedRestorerV3._select_phases()` — Phase 24 unbedingt für dropout-prone Materials (inkl. DAT); dedupliziertes `_DROPOUT_PRONE_MATERIALS` Set
+- **Ursache**: Tape-Dropouts im Intro (Sec 0–5) waren unhörbar für die Pipeline: 60 s Center-Crop → Intro ausgeschlossen; 10 % statische Schwelle zu hoch für graduellen Tape-Pegelverlust; Phase 24 durch `sev > 0.10` Gate blockiert obwohl sie eigene Multi-Modal-Detektion besitzt
+
 ## v9.10.57d (21. März 2026) — Denker-Härtung: Pipeline-Zuverlässigkeit
 
 - **Fix 1**: `AurikDenker._recommend_autopilot_mode()` in try/except gewrappt — verhindert Gesamtpipeline-Abbruch bei Autopilot-Fehler (Fallback: requested mode)

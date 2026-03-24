@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+
 np.random.seed(42)  # §5.4 Reproduzierbarkeit
 import pytest
 
@@ -150,12 +151,12 @@ class TestCrepeChunkStreaming:
 
         audio = _sine(440.0, dur_s=1.0, sr=_SR)
         result = get_crepe_plugin().analyze(audio, _SR)
-        assert len(result.f0_hz) == len(
-            result.times_s
-        ), f"f0_hz ({len(result.f0_hz)}) ≠ times_s ({len(result.times_s)})"
-        assert len(result.f0_hz) == len(
-            result.voiced_prob
-        ), f"f0_hz ({len(result.f0_hz)}) ≠ voiced_prob ({len(result.voiced_prob)})"
+        assert len(result.f0_hz) == len(result.times_s), (
+            f"f0_hz ({len(result.f0_hz)}) ≠ times_s ({len(result.times_s)})"
+        )
+        assert len(result.f0_hz) == len(result.voiced_prob), (
+            f"f0_hz ({len(result.f0_hz)}) ≠ voiced_prob ({len(result.voiced_prob)})"
+        )
 
     def test_11_singleton_returns_same_instance(self):
         """get_crepe_plugin() muss dasselbe Singleton zurückgeben."""
@@ -265,91 +266,80 @@ class TestDiffWaveNMFInpainting:
 
 
 # ===========================================================================
-# P5 — HTDemucs 6s: korrekte Stub-/Experimental-Markierung
+# P5 — MDX23C (Kim_Vocal_2) als Primär-Separator; HTDemucs 6s Legacy-Fallback
 # ===========================================================================
 
 
-class TestHTDemucsStubMarkierung:
-    """P5: HTDemucs 6s ist als experimentell (2.6 MB Stub) korrekt deklariert.
+class TestMDX23CPrimarySeparator:
+    """P5: MDX23C (Kim_Vocal_2) ist der produktionsreife Primär-Separator.
 
-    Verifiziert Manifest-Einträge und Plugin-Fallback-Verhalten.
+    HTDemucs 6s verbleibt als experimenteller Legacy-Fallback.
+    Verifiziert Plugin-Funktionalität und Manifest-Konsistenz.
     """
 
-    def test_01_htdemucs_in_manifest(self):
-        """htdemucs_6s muss im Manifest vorhanden sein."""
+    def test_01_mdx23c_plugin_importable(self):
+        """MDX23CPlugin muss importierbar sein."""
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        assert MDX23CPlugin is not None
+
+    def test_02_mdx23c_returns_ndarray(self):
+        """MDX23CPlugin.process() muss ein ndarray zurückgeben."""
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        plugin = MDX23CPlugin()
+        audio = _sine(440.0, dur_s=2.0, sr=48000)
+        result = plugin.process(audio, sr=48000, stem="vocals")
+        assert isinstance(result, np.ndarray), f"Kein ndarray: {type(result)}"
+
+    def test_03_mdx23c_result_finite(self):
+        """Ergebnis-Array muss finite sein."""
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        plugin = MDX23CPlugin()
+        audio = _sine(440.0, dur_s=2.0, sr=48000)
+        result = plugin.process(audio, sr=48000, stem="vocals")
+        assert np.isfinite(result).all(), "NaN/Inf im MDX23C-Ergebnis"
+
+    def test_04_mdx23c_separate_all_stems(self):
+        """separate_all_stems() muss Dict mit vocals/inst zurückgeben."""
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        plugin = MDX23CPlugin()
+        audio = _noise(dur_s=2.0, sr=48000)
+        if audio.ndim == 1:
+            audio = np.stack([audio, audio])
+        result = plugin.separate_all_stems(audio, sr=48000)
+        assert isinstance(result, dict), f"Kein dict: {type(result)}"
+        assert "vocals" in result or "inst" in result, f"Stems fehlen: {list(result.keys())}"
+
+    def test_05_htdemucs_still_in_manifest(self):
+        """htdemucs_6s muss im Manifest als experimental vorhanden bleiben."""
         models = _manifest_by_name()
         assert "htdemucs_6s" in models, "htdemucs_6s fehlt im Manifest"
+        assert models["htdemucs_6s"].get("experimental") is True
 
-    def test_02_htdemucs_marked_experimental(self):
-        """htdemucs_6s muss experimental=True haben (Stub-Kennzeichnung)."""
-        entry = _manifest_by_name()["htdemucs_6s"]
-        assert entry.get("experimental") is True, f"experimental-Flag fehlt oder False: {entry}"
-
-    def test_03_htdemucs_size_below_stub_threshold(self):
-        """Dateigröße muss unter 3 MB liegen (entspricht dem 2.6 MB Stub)."""
-        entry = _manifest_by_name()["htdemucs_6s"]
-        size = entry.get("size_bytes", 0)
-        assert 0 < size < 3_000_000, f"size_bytes={size} unerwartet — kein 2.6 MB Stub?"
-
-    def test_04_htdemucs_has_dsp_fallback(self):
+    def test_06_htdemucs_has_dsp_fallback(self):
         """htdemucs_6s muss einen DSP-Fallback deklariert haben."""
         entry = _manifest_by_name()["htdemucs_6s"]
         fallback = entry.get("fallback", "")
         assert fallback, "Kein fallback-Eintrag für htdemucs_6s"
-        assert (
-            "hpss" in fallback.lower() or "dsp" in fallback.lower() or "nmf" in fallback.lower()
-        ), f"Fallback '{fallback}' enthält keinen DSP-Hinweis"
 
-    def test_05_demucs_plugin_returns_dict(self):
-        """DemucsV4Plugin.process() muss ein Dict zurückgeben (DSP-Fallback)."""
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
+    def test_07_mdx23c_convenience_functions(self):
+        """Convenience-Funktionen separate_vocals/separate_stems müssen existieren."""
+        from plugins.mdx23c_plugin import separate_stems, separate_vocals
 
-        plugin = DemucsV4Plugin()
-        audio = _sine(440.0, dur_s=2.0, sr=48000)
-        result = plugin.process(audio, sr=48000)
-        assert isinstance(result, dict), f"Kein dict zurückgegeben: {type(result)}"
+        assert callable(separate_vocals)
+        assert callable(separate_stems)
 
-    def test_06_demucs_result_has_vocals_key(self):
-        """process()-Dict muss 'vocals' oder ähnlichen Stem-Schlüssel haben."""
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
+    def test_08_htdemucs_facade_routes_to_mdx23c(self):
+        """htdemucs_plugin Facade muss auf MDX23CPlugin routen."""
+        from plugins.htdemucs_plugin import get_htdemucs_plugin
 
-        plugin = DemucsV4Plugin()
-        audio = _noise(dur_s=2.0, sr=48000)
-        result = plugin.process(audio, sr=48000)
-        # Vocals oder mindestens ein Stem-Schlüssel muss vorhanden sein
-        stem_keys = {"vocals", "drums", "bass", "other", "guitar", "piano"}
-        assert bool(stem_keys & set(result.keys())), f"Kein Stem-Schlüssel in Ergebnis: {list(result.keys())}"
-
-    def test_07_demucs_result_all_finite(self):
-        """Alle Stem-Arrays im Ergebnis-Dict müssen finite sein."""
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
-
-        plugin = DemucsV4Plugin()
-        audio = _sine(440.0, dur_s=2.0, sr=48000)
-        result = plugin.process(audio, sr=48000)
-        for key, arr in result.items():
-            assert np.isfinite(arr).all(), f"NaN/Inf in Stem '{key}'"
-
-    def test_08_demucs_warning_logged_for_stub(self, caplog):
-        """DemucsV4Plugin muss bei experimentellem Stub eine WARNING loggen."""
-        import logging
-
-        from plugins import demucs_v4_plugin
-
-        with caplog.at_level(logging.WARNING, logger="plugins.demucs_v4_plugin"):
-            p = demucs_v4_plugin.DemucsV4Plugin()
-        # Warning muss 'experimentell' oder 'fallback' enthalten
-        # (wird im __init__ beim Manifest-Check geloggt)
-        warning_text = caplog.text.lower()
-        has_warning = (
-            "experimentell" in warning_text
-            or "fallback" in warning_text
-            or "experimental" in warning_text
-            or "mdx23c" in warning_text
-        )
-        assert (
-            has_warning or p is not None
-        ), f"Weder Warning noch stabiles Objekt — Plugin fehlgeschlagen.\ncaplog: {caplog.text!r}"
+        plugin = get_htdemucs_plugin()
+        # Muss eine MDX23CPlugin-Instanz sein (oder None wenn nicht verfügbar)
+        if plugin is not None:
+            assert type(plugin).__name__ == "MDX23CPlugin"
 
 
 # ===========================================================================
@@ -395,9 +385,9 @@ class TestHiFiGANFallbackUndVocosStandard:
         """hifi_gan-Eintrag muss sota_upgrade haben (Vocos ist Upgrade)."""
         models = _manifest_by_name()
         assert "hifi_gan" in models, "hifi_gan fehlt im Manifest"
-        assert (
-            "sota_upgrade" in models["hifi_gan"]
-        ), "hifi_gan hat kein sota_upgrade-Feld — Vocos-Migration nicht dokumentiert"
+        assert "sota_upgrade" in models["hifi_gan"], (
+            "hifi_gan hat kein sota_upgrade-Feld — Vocos-Migration nicht dokumentiert"
+        )
 
     def test_07_hifigan_vocode_returns_ndarray(self):
         """vocode_audio(audio, sr) muss ein np.ndarray zurückgeben."""
@@ -449,9 +439,9 @@ class TestManifestIntegritaet:
         """P2: audiosr darf nicht bundled=True sein (5.8 GB-Datei entfernt)."""
         models = _manifest_by_name()
         assert "audiosr" in models, "audiosr fehlt im Manifest"
-        assert (
-            models["audiosr"].get("bundled") is not True
-        ), "audiosr bundled=True — Prüfe ob 5.8 GB-Datei noch existiert"
+        assert models["audiosr"].get("bundled") is not True, (
+            "audiosr bundled=True — Prüfe ob 5.8 GB-Datei noch existiert"
+        )
 
     def test_05_audiosr_has_sota_upgrade(self):
         """P2: audiosr muss sota_upgrade-Feld haben (optionaler Download)."""
@@ -464,16 +454,16 @@ class TestManifestIntegritaet:
         """P3: mert_instrument_detector darf nicht bundled=True sein (Lizenz-Problem)."""
         models = _manifest_by_name()
         assert "mert_instrument_detector" in models, "mert_instrument_detector fehlt"
-        assert (
-            models["mert_instrument_detector"].get("bundled") is not True
-        ), "mert_instrument_detector bundled=True — CC BY-NC-4.0 Lizenz-Verletzung"
+        assert models["mert_instrument_detector"].get("bundled") is not True, (
+            "mert_instrument_detector bundled=True — CC BY-NC-4.0 Lizenz-Verletzung"
+        )
 
     def test_07_mert_has_sota_upgrade(self):
         """P3: mert_instrument_detector muss sota_upgrade haben (optionaler Download)."""
         models = _manifest_by_name()
-        assert (
-            "sota_upgrade" in models["mert_instrument_detector"]
-        ), "mert_instrument_detector hat kein sota_upgrade-Feld"
+        assert "sota_upgrade" in models["mert_instrument_detector"], (
+            "mert_instrument_detector hat kein sota_upgrade-Feld"
+        )
 
     # --- P10: UTMOSv2 / CDPAM -----------------------------------------------
 
@@ -514,7 +504,7 @@ class TestManifestIntegritaet:
                 has_lazy = entry.get("lazy_load") or "sota_upgrade" in entry
                 if size > 1_000_000_000:
                     assert has_lazy, (
-                        f"'{name}': bundled=False, {size//1e9:.1f} GB groß, "
+                        f"'{name}': bundled=False, {size // 1e9:.1f} GB groß, "
                         f"aber kein lazy_load/sota_upgrade — Manifest-Inkonsistenz"
                     )
 

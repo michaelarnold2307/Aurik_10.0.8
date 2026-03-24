@@ -4,7 +4,7 @@
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
 > Rekonstruktions-Denkersystem.* Stand: März 2026 — Version **9.10.57**
 >
-> **instructions_version: 2.4** — 400 Zeilen, komprimiert 22.03.2026
+> **instructions_version: 2.9** — komprimiert 24.03.2026
 >
 > Bump-Regel: neue RELEASE_MUST-Zeile, neues Gate oder §-Änderung → `instructions_version` inkrementieren + `docs/CHANGELOG_HISTORY.md` Eintrag.
 >
@@ -149,12 +149,22 @@ Baseline-Key: `iZotope RX 11 (commercial)` (OQS 71.0). RX 10-Key als Legacy-Alia
 - **UI-Gating**: Magic-Buttons während aktiver Verarbeitung deaktiviert.
 - **Atomisches Schreiben**: `.tmp` → `os.replace` für Export-Dateien.
 
-**[RELEASE_MUST] Härtungsfahrplan**: (1) Denker-Einstieg erzwungen • (2) Konkurrenzfreiheit • (3) AMRB-Determinismus • (4) ML-Failure-Fallbacks (`release_mode = primary|fallback|blocked`) • (5) Export-Gate • (6) 8×RT + OOM-Budget • (7) Kein manueller Bypass.
+**[RELEASE_MUST] Härtungsfahrplan**: (1) Denker-Einstieg erzwungen • (2) Konkurrenzfreiheit • (3) AMRB-Determinismus • (4) ML-Failure-Fallbacks (`release_mode = primary|fallback|blocked`) • (5) Export-Gate • (6) 32×RT + OOM-Budget • (7) Kein manueller Bypass.
 
 ## Kanonischer Pipeline-Ablauf (Zusammenfassung)
 
 **PFLICHT-EINSTIEGSPUNKT: `AurikDenker.denke(audio, sr, mode, progress_callback)`**
 Kein direktes Aufrufen von `UnifiedRestorerV3.restore()` aus dem Frontend — immer über `AurikDenker`.
+
+### §11.7a Denker-Rollendifferenzierung (Pflicht, v9.10.74)
+
+| Stufe | Denker | Domäne | Kurzregel |
+|---|---|---|---|
+| 6 | ReparaturDenker | Defekt-Beseitigung | Entfernt bekannte Störungen (Clicks, Hum, Clipping) |
+| 7 | RekonstruktionsDenker | Rekonstruktion | **Erschafft, was fehlt** — füllt Lücken, annotiert Bandwidth-Verlust |
+| 8 | RestaurierDenker | Restaurierung | **Bewahrt, was da ist** — orchestriert UV3, schützt Klangcharakter |
+
+Kontextfluss: `defect_result → ReparaturDenker → RekonstruktionsDenker(+defect_result) → RestaurierDenker(+reconstruction_context) → UV3`
 
 UV3-Kernreihenfolge: DCOffset-Removal → TDP (HPSS) → RestorabilityEstimator → EraClassifier → MediumClassifier → GoalApplicabilityFilter → AdaptiveGoalThresholds → DefectScanner (28 Defekte) → CausalDefectReasoner (14 Ursachen) → GPParameterOptimizer → HarmonicPreservationGuard → Phasen-Ausführung (01–56) → FeedbackChain → PhysicalCeilingEstimator → MusicalGoalsChecker → MicroDynamicsEnvelopeMorphing → RestorationResult
 
@@ -186,9 +196,17 @@ Primär → Fallback1 → DSP-Fallback-Kaskade für alle Anwendungsfälle.
 ## Schlecht-Material-Verarbeitungsregeln
 
 **Adaptive Schwellen §2.29**: `REGRESSION_THRESHOLD` restorability-abhängig (GOOD 0.012 / FAIR 0.040 / POOR 0.060), max. 5 Retries.
+
+**[RELEASE_MUST] §2.29 PMGG Phase-Skip-Verbot (v9.10.64)**:
+- PMGG darf Phasen **NIEMALS** überspringen (kein Rollback auf Original-Audio).
+- CausalDefectReasoner hat die Phase als notwendig bestimmt — sie **MUSS** angewendet werden.
+- Nach 5 gescheiterten Retries: **Best-Effort** — der Versuch mit der **geringsten Musical-Goal-Regression** wird angewendet (`action="best_effort"`).
+- **VERBOTEN**: `return audio, scores_before, "rollback", 0.0` — Rückgabe von unverändertem Original-Audio = Phasen-Skip.
+- Gültige PMGG-Actions: `"passed"` | `"retry1"` … `"retry5"` | `"best_effort"` | `"best_effort_rN"`
 **Era-GP-Warmstart §2.14**: decade ≤ 1940 → `noise_reduction_strength ~ N(0.90, 0.05)`; ≤ 1960 → N(0.75, 0.08); ≥ 1970 → N(0.50, 0.10).
 **Material-MOS §6.2**: MOS ≥ 4.5 NUR für `cd_digital/dat/mp3_high/aac`; Shellac ≥ 3.8, Vinyl ≥ 4.0, Tape ≥ 4.2.
 **Chunk-Größe §7.6**: Silence 120 s, Severity ≥ 0.6 → 5 s, ≥ 0.3 → 15 s, sonst 60 s (Min. 2 s / Max. 120 s).
+Implementierung: `backend/core/adaptive_chunk_processor.py` — `process_in_adaptive_chunks(phase_fn, audio, sr, max_severity)`. Crossfade: Hanning 10 ms. Phasen können das Modul opt-in nutzen.
 
 ## Vintage Aesthetics (§5 — bindend)
 
@@ -300,24 +318,31 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print(); Logs auf Engli
 
 | Operation | Limit / Minute Audio |
 |---|---|
-| DefectScanner | ≤ 2 s |
-| Phase-Pipeline gesamt | ≤ 120 s |
-| FeedbackChain (alle Iter.) | ≤ 60 s |
-| ExcellenceOptimizer | ≤ 30 s |
+| DefectScanner | ≤ 4 s |
+| Phase-Pipeline gesamt | ≤ 240 s |
+| FeedbackChain (alle Iter.) | ≤ 120 s |
+| ExcellenceOptimizer | ≤ 60 s |
 | RestorabilityEstimator | ≤ 5 s |
 
 - Interne Verarbeitungs-SR (Phasen 01–56, Plugins): stets **48 000 Hz**
 - **Analyse-Module** (DefectScanner, classify_clipping, RestorabilityEstimator, EraClassifier, MediumClassifier): arbeiten bei **nativer Import-SR** — kein Resampling vor Analyse, kein `assert sr == 48000`
+- **§9.1a Nicht-stationäre Defekte** (DROPOUTS, TRANSPORT_BUMP): MÜSSEN auf **vollständigem Audio** analysiert werden — kein 60 s Center-Crop. Stationäre Defekte (Rauschen, Brummen, Flutter) dürfen Center-Crop nutzen.
+- **§6.2a Material-Prioritäts-Phasen**: Phasen aus Spec 05 §6.2 MÜSSEN bei erkanntem Material **unbedingt aktiviert** werden — unabhängig vom Severity-Score. Phase entscheidet intern über Reparaturbedarf.
+- **§6.4a Material-adaptive Schwellen**: DefectScanner-Erkennungsschwellen material-abhängig (Analog 20 % median-RMS für Dropouts, Digital 10 %).
+- **§9.1b Intro-Salienz-Gewichtung**: Defekte in den ersten 5 s erhalten Severity-Boost (×1.5) — erste Sekunden bestimmen Hörerurteil (Zacharov & Koivuniemi 2001).
+- **§9.1c Perceptual-Salience-Annotation**: Jeder Defekt wird mit psychoakustischem Salienz-Score annotiert (Fastl & Zwicker 2007). Maskierte Defekte erhalten reduzierte Severity: `severity * (0.3 + 0.7 * mean_salience)`. Modul: `backend/core/perceptual_salience.py`.
 - Alle ONNX-Sessions: `providers=["CPUExecutionProvider"]`
 - Torch-Modelle: `model.to("cpu")`; `torch.set_num_threads(os.cpu_count())`
 - MERT (3,9 GB) / AudioSR (5,9 GB): nur Lazy-Load bei Bedarf
 
-### [RELEASE_MUST] PerformanceGuard — 8×-Echtzeit-Limit
+### [RELEASE_MUST] PerformanceGuard — RT-Budget-System (v9.10.72)
 
-- `LIMIT_BALANCED = 8.0` (8× Echtzeit, Standard-Modus), `LIMIT_QUALITY = 10.0`, `LIMIT_MAXIMUM = 15.0`
+- `LIMIT_BALANCED = 32.0` (32× Echtzeit, Standard-Modus), `LIMIT_QUALITY = 32.0` (Restoration), `LIMIT_MAXIMUM = 32.0` (Studio 2026 / volle ML-Chain)
+- Absolutes Zeitlimit Stufe 1: **90 Minuten** (`MAX_ABSOLUTE_SECONDS = 5400.0`). Danach: KMV Stufe 2 übernimmt automatisch.
+- Begründung der Anhebung: 20-min Vinyl × SGMSE+(5× RT) + BsRoformer(3× RT) + 25 weitere Phasen → Ziel-RT ca. 28–32×; altes Limit 15–20× führte zu exzessiver Deferral auch bei normalen Songs.
 - Überschreitung in Stufe 1 → DSP-Fallback **+ Phase in `deferred_phases` eintragen** (kein endgültiger Abbruch)
 - `LIMIT_BACKGROUND = float("inf")` — ausschließlich für `MLRefinementThread` (§2.38 KMV Stufe 2)
-- `RT8_EXCELLENCE_BUDGET = 8.0` (Benchmark-Gate-Referenz). Kein Silence-Padding.
+- `RT8_EXCELLENCE_BUDGET = 32.0` (Benchmark-Gate-Referenz, RT-Kappe für reported rt_factor im Output). Kein Silence-Padding.
 
 ### [RELEASE_MUST] §2.38 Kontinuierliche ML-Veredelung (KMV) — Vollqualitäts-Garantie
 
@@ -414,7 +439,38 @@ Studio 2026: Stem-Sep → Vocal-AI → Instrumente → [Reference Mastering] →
 | HF-Kumulativ-Limit | Presence + Air ≤ +4 dB |
 | Mikro-Dynamik | Pearson LUFS-Profil (400 ms) ≥ 0.92 |
 | Emotionaler Dynamik-Bogen (≥ 30 s) | Arousal-Pearson ≥ 0.85, Valence-Pearson ≥ 0.80 |
+| Emotionaler-Bogen-Korrektur (post-MDEM) | `correct_emotional_arc()` — Makro-Gain-Korrektur bei Bogen-Degradation |
 | FeedbackChain-Rollback | |MOS_neu − MOS_alt| > 0.05 → sofortiger Rollback |
+
+## Psychoakustik & Gänsehaut-Prinzipien (§8.3 — bindend)
+
+**Oberstes Ziel**: Das Restaurierungsergebnis muss beim Hörer **emotionale Wirkung** erzeugen — nicht nur technische Korrektheit. Die Psychoakustik steht über der technischen Perfektion.
+
+**Gänsehaut-Formel**: `(TransientIntegrity × MicroDynamik × Klarheit × Authentizität) − Artefakte`
+
+| Komponente | Verantwortliches Modul | Anteil |
+|---|---|---|
+| **Transient-Punch** | TDP (Transient Decoupled Processing) | ~40 % |
+| **Mikro-Dynamik-Erhalt** | MDEM (400 ms LUFS-Morphing) + EmotionalArcCorrection (5 s Makro-Bogen) | ~25 % |
+| **Rauschbefreiung/Klarheit** | SGMSE+ / OMLSA/IMCRA | ~20 % |
+| **Vokal-Präsenz** | Phase 42 + Phase 43 + VocalAIEnhancement | ~10 % |
+| **Neurale Synthese** | Vocos 48 kHz (nur Studio 2026, MOS < 4.3) | ~5 % |
+
+**Zwei-Skalen-Dynamik-Schutz** (Pflicht):
+- **Mikro-Ebene (400 ms)**: MDEM — `morph(restored, original, sr)` — LUFS-Profil-Rückgewinnung
+- **Makro-Ebene (5 s)**: `correct_emotional_arc(original, restored, sr)` — post-MDEM, wenn Arousal/Valence-Bogen abgeflacht. Algorithmus: RMS-basierte Gain-Hüllkurve, ±6 dB, 70 % Dämpfung, Savitzky-Golay-geglättet. Safety-Revert wenn Korrektur verschlechtert.
+
+**Defect-Locations-Flow** (§9.1 Ergänzung):
+- `_execute_pipeline` extrahiert `defect_locations: dict[str, list[tuple[float, float]]]` + `max_defect_severity: float` aus `defect_result.scores`
+- Beide werden als `kwargs` an jede Phase übergeben (`defect_locations=`, `max_defect_severity=`)
+- Phasen können Location-Hints für gezieltere Verarbeitung nutzen (opt-in)
+- Phasen erkennen Defekte weiterhin auch eigenständig intern (Redundanz-Prinzip)
+
+**Psychoakustische Pflicht-Invarianten**:
+- Intro-Salienz (§9.1b): Defekte in den ersten 5 s → Severity ×1.5
+- Perceptual Masking (§9.1c): Maskierte Defekte → `severity * (0.3 + 0.7 * salience)`
+- Emotionaler Bogen: Messung + aktive Korrektur (nicht nur Logging)
+- Vintage-Harmonische: H2/H4 bewahren, Soft-Saturation ≠ Clipping
 
 ## Sprachkonvention
 
@@ -438,7 +494,7 @@ Fehlermeldungen immer mit **Ursache** + **Lösungsvorschlag** auf Deutsch.
 `Space` Play/Pause | `A` Original | `B` Restauriert | `Ctrl+O` Öffnen | `Ctrl+S` Export | `Ctrl+R` Restoration | `Ctrl+Shift+R` Studio 2026 | `Escape` Abbruch | `Ctrl+Z` Pfad-Clipboard | `L` Lyrics-Overlay
 
 ### Watchdog-Timer
-`QTimer(self)`, `setSingleShot(True)`. Timeout-Formel: `_per_file_ms = max(3_600_000, int(audio_dur_s * 8_000) + 900_000)` → `_watchdog_ms = max(3_600_000, n_files * _per_file_ms)` (Minimum **60 Min.**). Start vor `batch_thread.start()`. Callback: `requestInterruption()` → `wait(3000)` → `terminate()`.
+`QTimer(self)`, `setSingleShot(True)`. Timeout-Formel: `_per_file_ms = max(5_400_000, int(audio_dur_s * 32_000) + 1_800_000)` → `_watchdog_ms = max(5_400_000, n_files * _per_file_ms)` (Minimum **90 Min.**). Start vor `batch_thread.start()`. Callback: `requestInterruption()` → `wait(3000)` → `terminate()`.
 
 ### Bridge-Fallback (`_BRIDGE_AVAILABLE`)
 `from backend.api.bridge import ...` in `try/except ImportError` wrappen. Bei Fehler: `_BRIDGE_AVAILABLE = False` + Stubs. `_export_guard`-Stub vollständig implementieren (NaN-Guard + Clip). Alle anderen Stubs: `return None`.

@@ -57,6 +57,7 @@ class SileroPlugin:
             logger.warning("Silero Ladefehler: %s -- Energie-Fallback.", exc)
             try:
                 from backend.core.ml_memory_budget import release as _rel
+
                 _rel("SileroVAD")
             except Exception:
                 pass
@@ -70,25 +71,61 @@ class SileroPlugin:
         return self._energy_vad(mono)
 
     def get_speech_mask(self, audio: np.ndarray, sr: int) -> np.ndarray:
-        """Gibt bool-Array zurueck (True = Sprach-Segment)."""
+        """Gibt bool-Array zurueck (True = Sprach-Segment).
+
+        Uses a single ONNX call for the entire audio to avoid repeated small
+        inference calls that can destabilise the ONNX runtime.
+        """
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         mono16 = _resamp(mono, sr, _SR).astype(np.float32)
-        mask16 = np.zeros(len(mono16), dtype=bool)
+        n16 = len(mono16)
+
+        if self._session is not None:
+            try:
+                mask16 = self._vad_mask_single_call(mono16)
+            except Exception as exc:
+                logger.warning("Silero VAD single-call failed (%s), using energy fallback", exc)
+                mask16 = self._energy_mask(mono16)
+        else:
+            mask16 = self._energy_mask(mono16)
+
+        # Upsample mask to original SR via nearest-neighbour (contiguous ranges)
+        if sr != _SR and len(mono) != n16:
+            indices = np.arange(len(mono))
+            src_idx = np.clip((indices * n16 / len(mono)).astype(int), 0, n16 - 1)
+            return mask16[src_idx]
+        return mask16[: len(mono)]
+
+    def _vad_mask_single_call(self, mono16: np.ndarray) -> np.ndarray:
+        """Run ONNX model once on entire audio and derive per-sample bool mask."""
+        inp = mono16[None].astype(np.float32)  # [1, n_samples]
+        out = self._session.run(None, {"input": inp})[0]  # [1, frames, 999]
+        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+        probs = out[0]  # [frames, 999]
+        # Per-frame speech probability: max over non-silence classes
+        if probs.shape[-1] > 1:
+            frame_probs = probs[:, 1:].max(axis=-1)  # [frames]
+        else:
+            frame_probs = np.full(probs.shape[0], 0.5, dtype=np.float32)
+        frame_probs = np.clip(frame_probs, 0.0, 1.0)
+        # Expand frame-level decisions to sample-level mask
+        n_frames = len(frame_probs)
+        n_samples = len(mono16)
+        if n_frames < 1:
+            return np.ones(n_samples, dtype=bool)
+        # Map each sample to its frame
+        sample_indices = np.arange(n_samples)
+        frame_indices = np.clip((sample_indices * n_frames / n_samples).astype(int), 0, n_frames - 1)
+        return frame_probs[frame_indices] >= self._threshold
+
+    def _energy_mask(self, mono16: np.ndarray) -> np.ndarray:
+        """Energy-based VAD fallback: chunk-wise RMS."""
+        mask = np.zeros(len(mono16), dtype=bool)
         for s in range(0, len(mono16), _CHUNK):
             e = min(s + _CHUNK, len(mono16))
-            chunk = mono16[s:e]
-            prob = self._vad_onnx(chunk) if self._session else self._energy_vad(chunk)
-            if prob >= self._threshold:
-                mask16[s:e] = True
-        if sr != _SR:
-            factor = len(mono) / max(len(mono16), 1)
-            idx = (np.where(mask16)[0] * factor).astype(int)
-            mask = np.zeros(len(mono), dtype=bool)
-            valid = idx[idx < len(mono)]
-            if valid.size:
-                mask[valid] = True
-            return mask
-        return mask16[: len(mono)]
+            if self._energy_vad(mono16[s:e]) >= self._threshold:
+                mask[s:e] = True
+        return mask
 
     def _vad_onnx(self, chunk: np.ndarray) -> float:
         if len(chunk) < 1:

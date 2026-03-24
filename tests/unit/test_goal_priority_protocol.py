@@ -195,14 +195,14 @@ class TestShouldAbortIteration:
     def test_abort_on_level1_regression(self):
         before = dict.fromkeys(ALL_14_GOALS, 0.8)
         after = dict(before)
-        after["natuerlichkeit"] = 0.79  # Regression > epsilon
+        after["natuerlichkeit"] = 0.78  # Regression 0.02 > epsilon 0.012
         result = check_iteration_abort(before, after)
         assert result.should_abort is True
 
     def test_abort_on_priority2_regression(self):
         before = dict.fromkeys(ALL_14_GOALS, 0.85)
         after = dict(before)
-        after["tonal_center"] = 0.84
+        after["tonal_center"] = 0.83  # Regression 0.02 > epsilon 0.012
         result = check_iteration_abort(before, after)
         assert result.should_abort is True
 

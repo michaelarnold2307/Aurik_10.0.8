@@ -84,7 +84,7 @@ def hz_to_mel(f_hz: float) -> float:
 | Nicht-stationäres Rauschen | ML: **DeepFilterNet v3.II** | MMSE-LSA + IMCRA | ~~Spectral Subtraction~~ |
 | Diffuses Raumrauschen / Dereverb | ML: **SGMSE+** (ONNX) | WPE (nara_wpe) → NumPy-WPE → OMLSA | ~~einfacher Bandpass~~ |
 | Stem-Separation Vocals | ML: **MelBandRoformer** (`bs_roformer_plugin`, 860 MB ONNX) | NMF-β | — |
-| Stem-Separation Instrumental | ML: **HTDemucs-6s** (`htdemucs_plugin`) | NMF-β | — |
+| Stem-Separation Instrumental | ML: **MDX23C** (`mdx23c_plugin`, Kim_Vocal_2/Kim_Inst) | NMF-β | — |
 | Bandbreiten-Erweiterung | ML: **AudioSR** | Sinusoidal + Stoch. Modeling | ~~Harmonics-EQ~~ |
 | Dropout < 50 ms | DSP: **NMF-β + Sinusoidal** | Consistent Wiener | ~~Yule-Walker AR~~ |
 | Dropout 50–999 ms | ML: **CQTdiff+** → DiffWave | Spectral Interpolation | ~~einfaches AR~~ |

@@ -65,8 +65,6 @@ Date: März 2026
 """
 
 import logging
-import os
-import sys
 import time
 
 import numpy as np
@@ -239,14 +237,14 @@ class ReverbReduction(PhaseInterface):
                 warnings = []
                 if ml_result.reverb_estimate > 0.7:
                     warnings.append(
-                        f"High reverb detected: {ml_result.reverb_estimate:.2f} " f"(may require multiple passes)"
+                        f"High reverb detected: {ml_result.reverb_estimate:.2f} (may require multiple passes)"
                     )
 
-                ml_result = np.nan_to_num(ml_result, nan=0.0, posinf=0.0, neginf=0.0)
-                ml_result = np.clip(ml_result, -1.0, 1.0)
+                _audio_clean = np.nan_to_num(ml_result.audio, nan=0.0, posinf=0.0, neginf=0.0)
+                _audio_clean = np.clip(_audio_clean, -1.0, 1.0)
                 return PhaseResult(
                     success=True,
-                    audio=ml_result.audio,
+                    audio=_audio_clean,
                     metrics={
                         "rms_change_db": float(rms_change_db),
                         "reverb_estimate": ml_result.reverb_estimate,
@@ -276,8 +274,11 @@ class ReverbReduction(PhaseInterface):
                 )
 
             except Exception as e:
+                import traceback as _tb
+
                 logger.warning(
-                    f"ML-Hybrid dereverb failed: {e}, falling back to DSP. " f"Error type: {type(e).__name__}"
+                    f"ML-Hybrid dereverb failed: {e}, falling back to DSP. Error type: {type(e).__name__}\n"
+                    f"Traceback: {_tb.format_exc()}"
                 )
                 # Fall through to DSP path below
 
@@ -336,19 +337,27 @@ class ReverbReduction(PhaseInterface):
         is_stereo = audio.ndim == 2
 
         if is_stereo:
+            # Detect channel-major (2, N) vs time-major (N, 2).
+            # Aurik uses channel-major (2, N) throughout the pipeline.
+            _is_ch_maj = audio.shape[0] <= 2 and audio.shape[1] > audio.shape[0]
+            _left = audio[0] if _is_ch_maj else audio[:, 0]
+            _right = audio[1] if _is_ch_maj else audio[:, 1]
             # Process each channel in parallel (multicore via ThreadPoolExecutor)
             # Note: _reduce_reverb uses numpy FFT which releases GIL, enabling true parallelism
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                future_left = executor.submit(self._reduce_reverb, audio[:, 0], sample_rate, strength, damping)
-                future_right = executor.submit(self._reduce_reverb, audio[:, 1], sample_rate, strength, damping)
+                future_left = executor.submit(self._reduce_reverb, _left, sample_rate, strength, damping)
+                future_right = executor.submit(self._reduce_reverb, _right, sample_rate, strength, damping)
                 left_reduced = future_left.result()
                 right_reduced = future_right.result()
 
-            # Ensure same length
+            # Ensure same length and recombine in original format
             min_len = min(len(left_reduced), len(right_reduced))
-            reduced = np.column_stack([left_reduced[:min_len], right_reduced[:min_len]])
+            if _is_ch_maj:
+                reduced = np.stack([left_reduced[:min_len], right_reduced[:min_len]], axis=0)  # (2, N)
+            else:
+                reduced = np.column_stack([left_reduced[:min_len], right_reduced[:min_len]])  # (N, 2)
         else:
             reduced = self._reduce_reverb(audio, sample_rate, strength, damping)
 

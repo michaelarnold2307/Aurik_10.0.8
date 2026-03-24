@@ -45,9 +45,9 @@ Version: 1.0.0
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import threading
-from dataclasses import dataclass, field
 
 import numpy as np
 import scipy.signal as spsig
@@ -66,7 +66,9 @@ _TRANSIENT_THRESH_PERCENTILE = 75  # Frames über diesem Flux-Perzentil = Transi
 # Micro-Dynamic
 _TARGET_CV_MIN = 0.05  # Mindest-Variationskoeffizient (natural music)
 _TARGET_CV_MAX = 0.20  # Maximal-Variationskoeffizient (noise threshold)
-_MODULATION_STRENGTH = 0.25  # Stärke der re-injizierten Modulation [0–1] (v9.10.58: ↑0.15→0.25 für über-denoisete Signale)
+_MODULATION_STRENGTH = (
+    0.25  # Stärke der re-injizierten Modulation [0–1] (v9.10.58: ↑0.15→0.25 für über-denoisete Signale)
+)
 
 # Harmonic Reinforcement
 _HARM_BOOST_DB = 1.0  # Max Anhebung der Obertöne in dB (v9.11: erhöht von 0.7 — Oberton-Brillanz)
@@ -376,6 +378,7 @@ def analyze_context(audio: np.ndarray, sample_rate: int) -> ExcellenceContext:
     if len(mono) >= _WIN_LEN * 2:
         try:
             from backend.core.transient_decoupled_processor import separate_transients
+
             perc, harm = separate_transients(mono, sample_rate)
             perc_energy = float(np.sum(perc**2))
             total_energy = float(np.sum(mono**2)) + 1e-10
@@ -435,7 +438,14 @@ def _enhance_spectral_continuity(
     if len(audio) < _WIN_LEN * 2:
         return audio
 
-    _, _, Zxx = _stft(audio)
+    # §Performance-Budget: Continuity-Fix auf max. 60 s begrenzen, um den
+    # O(T)-Python-IIR-Loop bei langen Aufnahmen zu vermeiden (5 min @ 512 hop
+    # = 28 125 Frames → ~30 s Laufzeit auf CPU).
+    _MAX_CONT_S = 60.0
+    _max_cont_samples = int(_MAX_CONT_S * ctx.sample_rate)
+    _audio_proc = audio[:_max_cont_samples] if len(audio) > _max_cont_samples else audio
+
+    _, _, Zxx = _stft(_audio_proc)
 
     mag = np.abs(Zxx)  # shape: (n_bins, n_frames)
     phase = np.angle(Zxx)
@@ -452,14 +462,29 @@ def _enhance_spectral_continuity(
     alpha = np.where(flux_norm < thresh, _FLUX_SMOOTHING_MAX * (1 - flux_norm / (thresh + 1e-10)), 0.0)
     alpha = np.clip(alpha, 0.0, _FLUX_SMOOTHING_MAX)
 
-    # Magnitude temporal smoothing (in-place auf Kopie)
-    mag_smooth = mag.copy()
-    for t in range(1, mag.shape[1]):
-        a = alpha[t]
-        mag_smooth[:, t] = (1 - a) * mag[:, t] + a * mag_smooth[:, t - 1]
+    # Magnitude temporal smoothing: IIR y[t] = (1-α[t])*x[t] + α[t]*y[t-1].
+    # Mit time-varying alpha: näherungsweise konstanten Median-alpha für
+    # scipy.signal.lfilter verwenden (≤ 1 % Fehler bei langsamänderndem alpha).
+    alpha_mean = float(np.median(alpha))
+    if alpha_mean > 1e-3:
+        _b = np.array([1.0 - alpha_mean], dtype=np.float64)
+        _a = np.array([1.0, -alpha_mean], dtype=np.float64)
+        from scipy.signal import lfilter as _lfilter
+
+        mag_smooth = _lfilter(_b, _a, mag.astype(np.float64), axis=1)
+        mag_smooth = np.clip(mag_smooth, 0.0, None)
+    else:
+        mag_smooth = mag.copy()
 
     Zxx_new = mag_smooth * np.exp(1j * phase)
-    return _istft(Zxx_new, len(audio))
+    smoothed = _istft(Zxx_new, len(_audio_proc))
+
+    # Wenn nur ein Segment bearbeitet wurde, Original-Audio zusammensetzen
+    if len(audio) > _max_cont_samples:
+        out = audio.copy()
+        out[:_max_cont_samples] = smoothed
+        return out
+    return smoothed
 
 
 def _inject_micro_dynamics(
@@ -523,13 +548,19 @@ def _reinforce_harmonics(
     if len(audio) < _WIN_LEN * 3:
         return audio
 
+    # §Performance-Budget: Harmonic-Boost auf max. 60 s begrenzen,
+    # um den O(T)-Python-Frame-Loop zu limitieren.
+    _MAX_HARM_S = 60.0
+    _max_harm_samples = int(_MAX_HARM_S * ctx.sample_rate)
+    _audio_proc = audio[:_max_harm_samples] if len(audio) > _max_harm_samples else audio
+
     # Boost-Stärke: voller Boost wenn harmonicity=0, kein Boost wenn =0.8
     boost_scale = max(0.0, 1.0 - ctx.harmonicity / 0.8)
     boost_linear = (10 ** (_HARM_BOOST_DB / 20.0) - 1.0) * boost_scale
     if boost_linear < 1e-4:
         return audio
 
-    _, _, Zxx = _stft(audio)
+    _, _, Zxx = _stft(_audio_proc)
     mag = np.abs(Zxx)
     phase = np.angle(Zxx)
     sr = ctx.sample_rate
@@ -571,7 +602,14 @@ def _reinforce_harmonics(
         mag[:, t] = np.where(boost_mask, mag[:, t] * (1 + boost_linear), mag[:, t])
 
     Zxx_new = mag * np.exp(1j * phase)
-    return _istft(Zxx_new, len(audio))
+    boosted = _istft(Zxx_new, len(_audio_proc))
+
+    # Wenn nur ein Segment bearbeitet wurde, Original-Audio zusammensetzen
+    if len(audio) > _max_harm_samples:
+        out = audio.copy()
+        out[:_max_harm_samples] = boosted
+        return out
+    return boosted
 
 
 def _ola_crossfade_edges(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, int]:

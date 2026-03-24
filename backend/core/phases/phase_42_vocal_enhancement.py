@@ -45,8 +45,6 @@ Version: 2.0.0 Professional
 """
 
 import logging
-import os
-import sys
 import time
 from typing import Any
 
@@ -68,8 +66,8 @@ except ImportError:
 
 # FormantSystem: LPC-basiertes Formant-Tracking + Singer's Formant Enhancement (§2.8)
 try:
-    from dsp.formant_system import FormantSystem as _FormantSystemCls
-    from dsp.formant_system import VowelPhonemeFormantTargets as _VowelTargetsCls
+    from dsp.formant_system import FormantSystem as _FormantSystemCls, VowelPhonemeFormantTargets as _VowelTargetsCls
+
     _FORMANT_SYSTEM_AVAILABLE = True
 except ImportError:
     _FormantSystemCls = None  # type: ignore
@@ -80,6 +78,7 @@ except ImportError:
 # DSP-PhonemeDetector für vokal-phonemspezifische Formant-Steuerung
 try:
     from plugins.phoneme_detector import get_phoneme_detector as _get_phoneme_detector
+
     _PHONEME_DETECTOR_AVAILABLE = True
 except ImportError:
     _get_phoneme_detector = None  # type: ignore
@@ -264,6 +263,7 @@ class VocalEnhancement(PhaseInterface):
             # StemRemixBalancer: LUFS-korrekter Re-Mix (§1.4 Spec)
             try:
                 from backend.core.stem_remix_balancer import StemRemixBalancer
+
                 enhanced_audio = StemRemixBalancer().balance_remix(
                     enhanced_vocals, instr_stem, audio, sample_rate, float(vocal_weight)
                 )
@@ -303,9 +303,7 @@ class VocalEnhancement(PhaseInterface):
             warnings=[] if rt_factor < 0.35 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
 
-    def _try_stem_separation(
-        self, audio: np.ndarray, sr: int
-    ) -> "tuple[np.ndarray, np.ndarray, float, str] | None":
+    def _try_stem_separation(self, audio: np.ndarray, sr: int) -> "tuple[np.ndarray, np.ndarray, float, str] | None":
         """Vocal/Instrument stem separation cascade: bs_roformer → demucs_v4 → None.
 
         Returns (vocals, instruments, vocal_weight, model_name) or None on total failure.
@@ -317,6 +315,7 @@ class VocalEnhancement(PhaseInterface):
         # ── 1: BSRoFormer (MelBandRoformer, falls Modell verfügbar) ──────────
         try:
             from plugins.bs_roformer_plugin import get_bs_roformer
+
             roformer = get_bs_roformer()
             sep = roformer.separate(audio_mono, sr, stems=["vocals"])
             if sep is not None and "vocals" in sep.stems:
@@ -335,11 +334,13 @@ class VocalEnhancement(PhaseInterface):
         except Exception as exc:
             logger.debug("Phase42 bs_roformer fehlgeschlagen: %s", exc)
 
-        # ── 2: DemucsV4 fallback ──────────────────────────────────────────────
+        # ── 2: MDX23C fallback (Kim_Vocal_2) ─────────────────────────────────
         try:
-            from plugins.demucs_v4_plugin import DemucsV4Plugin
-            demucs = DemucsV4Plugin()
-            voc_mono, inst_mono = demucs.separate_vocals(audio_mono, sr)
+            from plugins.mdx23c_plugin import MDX23CPlugin
+
+            mdx = MDX23CPlugin()
+            voc_mono = mdx.process(audio_mono, sr, stem="vocals")
+            inst_mono = mdx.process(audio_mono, sr, stem="inst")
             n = min(len(audio_mono), len(voc_mono), len(inst_mono))
             if audio.ndim == 2:
                 vocals_out = np.column_stack([voc_mono[:n], voc_mono[:n]])
@@ -347,9 +348,9 @@ class VocalEnhancement(PhaseInterface):
             else:
                 vocals_out = voc_mono[:n]
                 instr_out = inst_mono[:n]
-            return vocals_out, instr_out, 0.5, "demucs_v4"
+            return vocals_out, instr_out, 0.65, "mdx23c_kim_vocal_2"
         except Exception as exc:
-            logger.debug("Phase42 demucs_v4 fehlgeschlagen: %s", exc)
+            logger.debug("Phase42 mdx23c fehlgeschlagen: %s", exc)
 
         return None
 
@@ -449,7 +450,7 @@ class VocalEnhancement(PhaseInterface):
                     enhanced, _pg_report = self._formant_system.phoneme_guided_enhance(
                         enhanced,
                         sample_rate,
-                        phoneme_segments=None,   # DSP fallback: F1/F2-driven classification
+                        phoneme_segments=None,  # DSP fallback: F1/F2-driven classification
                         gender="unknown",
                         correction_strength=0.25,
                     )

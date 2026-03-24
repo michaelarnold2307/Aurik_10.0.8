@@ -16,9 +16,9 @@ Author: AURIK Team
 Date: 10. Februar 2026
 """
 
-import logging
 from dataclasses import dataclass, field
 from enum import Enum
+import logging
 from typing import Any
 
 import numpy as np
@@ -394,9 +394,11 @@ class QualityAnalyzer:
         if np.sum(band_powers) > 0:
             band_powers = band_powers / np.sum(band_powers)
 
-            # Variance (low = natural)
+            # Variance (low = natural).
+            # Floor at 0.10 — real audio with a flat noise-like spectrum should
+            # never score exactly 0.0 (that would falsely trigger goal failures).
             variance = np.var(band_powers)
-            naturalness = 1.0 - min(variance / 0.02, 1.0)
+            naturalness = max(0.10, 1.0 - min(variance / 0.02, 1.0))
         else:
             naturalness = 0.75
 

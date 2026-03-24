@@ -28,10 +28,9 @@ Anforderungen erfüllt durch diese Datei:
 from __future__ import annotations
 
 import gc
-import sys
-import threading
-import tempfile
 import os
+import sys
+import tempfile
 
 import numpy as np
 import pytest
@@ -69,9 +68,11 @@ def _stereo(mono: np.ndarray) -> np.ndarray:
 # Budget- und PLM-Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+
 def _reset_budget() -> None:
     """Setzt den globalen ml_memory_budget-Zustand zurück (für Test-Isolation)."""
     from backend.core import ml_memory_budget as _bud
+
     with _bud._lock:
         _bud._allocated.clear()
         _bud._total_gb = 0.0
@@ -80,6 +81,7 @@ def _reset_budget() -> None:
 def _budget_total() -> float:
     """Gibt den aktuellen _total_gb-Wert zurück."""
     from backend.core import ml_memory_budget as _bud
+
     with _bud._lock:
         return _bud._total_gb
 
@@ -87,6 +89,7 @@ def _budget_total() -> float:
 def _plm_evict_all() -> None:
     """PLM: alle inaktiven Plugins entladen und Registry leeren."""
     from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
     plm = get_plugin_lifecycle_manager()
     plm.force_evict_all()
     with plm._lock:
@@ -105,6 +108,7 @@ def _reset_module_singleton(module_name: str) -> None:
 def _cleanup(budget_names: list[str], module_name: str = "") -> None:
     """Vollständiger Post-Test-Cleanup: Budget-Freigabe + PLM + GC."""
     from backend.core import ml_memory_budget as _bud
+
     for name in budget_names:
         _bud.release(name)
     _plm_evict_all()
@@ -117,9 +121,7 @@ def _cleanup(budget_names: list[str], module_name: str = "") -> None:
 def _assert_finite(arr: np.ndarray, label: str) -> None:
     """Stellt sicher, dass kein NaN/Inf im Array vorkommt."""
     arr = np.asarray(arr, dtype=np.float64)
-    assert np.isfinite(arr).all(), (
-        f"{label}: NaN/Inf-Werte gefunden — max_abs={np.abs(arr).max():.4g}"
-    )
+    assert np.isfinite(arr).all(), f"{label}: NaN/Inf-Werte gefunden — max_abs={np.abs(arr).max():.4g}"
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ class TestDeepFilterNetV3Plugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3Plugin
+
         p = DeepFilterNetV3Plugin()
         assert p is not None
         _cleanup(["DeepFilterNetV3"], "plugins.deepfilternet_v3_ii_plugin")
@@ -140,6 +143,7 @@ class TestDeepFilterNetV3Plugin:
     def test_02_enhance_mono_finite(self):
         _reset_budget()
         from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3Plugin
+
         p = DeepFilterNetV3Plugin()
         audio = _signal(2.0)
         result = p.enhance(audio, SR)
@@ -151,6 +155,7 @@ class TestDeepFilterNetV3Plugin:
     def test_03_enhance_stereo_finite(self):
         _reset_budget()
         from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3Plugin
+
         p = DeepFilterNetV3Plugin()
         audio = _stereo(_signal(2.0))
         result = p.enhance(audio, SR)
@@ -161,6 +166,7 @@ class TestDeepFilterNetV3Plugin:
     def test_04_budget_is_zero_after_cleanup(self):
         _reset_budget()
         from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3Plugin
+
         DeepFilterNetV3Plugin()
         _cleanup(["DeepFilterNetV3"], "plugins.deepfilternet_v3_ii_plugin")
         assert _budget_total() == 0.0, "Budget nicht auf 0 nach Cleanup"
@@ -172,6 +178,7 @@ class TestMpSenetPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.mp_senet_plugin import MpSenetPlugin
+
         p = MpSenetPlugin()
         assert p is not None
         _cleanup(["MP-SENet"], "plugins.mp_senet_plugin")
@@ -179,6 +186,7 @@ class TestMpSenetPlugin:
     def test_02_enhance_finite(self):
         _reset_budget()
         from plugins.mp_senet_plugin import MpSenetPlugin
+
         p = MpSenetPlugin()
         audio = _signal(2.0)
         result = p.enhance(audio, SR)
@@ -190,6 +198,7 @@ class TestMpSenetPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.mp_senet_plugin import MpSenetPlugin
+
         MpSenetPlugin()
         _cleanup(["MP-SENet"], "plugins.mp_senet_plugin")
         assert _budget_total() == 0.0
@@ -201,6 +210,7 @@ class TestSgmsePlusPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.sgmse_plugin import SGMSEPlusPlugin
+
         p = SGMSEPlusPlugin()
         assert p is not None
         _cleanup(["SGMSE+"], "plugins.sgmse_plugin")
@@ -208,6 +218,7 @@ class TestSgmsePlusPlugin:
     def test_02_enhance_finite(self):
         _reset_budget()
         from plugins.sgmse_plugin import SGMSEPlusPlugin
+
         p = SGMSEPlusPlugin()
         audio = _signal(2.0)
         result = p.enhance(audio, SR)
@@ -219,6 +230,7 @@ class TestSgmsePlusPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.sgmse_plugin import SGMSEPlusPlugin
+
         SGMSEPlusPlugin()
         _cleanup(["SGMSE+"], "plugins.sgmse_plugin")
         assert _budget_total() == 0.0
@@ -235,6 +247,7 @@ class TestVocosPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.vocos_plugin import VocosPlugin
+
         p = VocosPlugin()
         assert p is not None
         _cleanup(["Vocos"], "plugins.vocos_plugin")
@@ -242,6 +255,7 @@ class TestVocosPlugin:
     def test_02_vocode_finite(self):
         _reset_budget()
         from plugins.vocos_plugin import VocosPlugin
+
         p = VocosPlugin()
         audio = _signal(2.0)
         result = p.vocode(audio, SR)
@@ -253,6 +267,7 @@ class TestVocosPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.vocos_plugin import VocosPlugin
+
         VocosPlugin()
         _cleanup(["Vocos"], "plugins.vocos_plugin")
         assert _budget_total() == 0.0
@@ -264,12 +279,14 @@ class TestBigVGANv2Plugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.bigvgan_v2_plugin import synthesize_audio
+
         assert callable(synthesize_audio)
         _cleanup(["bigvgan_v2"], "plugins.bigvgan_v2_plugin")
 
     def test_02_synthesize_finite(self):
         _reset_budget()
         from plugins.bigvgan_v2_plugin import synthesize_audio
+
         audio = _signal(1.0)
         result = synthesize_audio(audio, SR)
         out = result.audio if hasattr(result, "audio") else np.asarray(result, dtype=np.float32)
@@ -280,6 +297,7 @@ class TestBigVGANv2Plugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.bigvgan_v2_plugin import synthesize_audio
+
         synthesize_audio(_signal(1.0), SR)
         _cleanup(["bigvgan_v2"], "plugins.bigvgan_v2_plugin")
         assert _budget_total() == 0.0
@@ -296,6 +314,7 @@ class TestBsRoformerPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.bs_roformer_plugin import BSRoFormerPlugin
+
         p = BSRoFormerPlugin()
         assert p is not None
         _cleanup(["MelBandRoformer"], "plugins.bs_roformer_plugin")
@@ -303,13 +322,16 @@ class TestBsRoformerPlugin:
     def test_02_separate_returns_two_finite_arrays(self):
         _reset_budget()
         from plugins.bs_roformer_plugin import BSRoFormerPlugin
+
         p = BSRoFormerPlugin()
         audio = _signal(3.0)
         result = p.separate(audio, SR)
         # StemSeparationResult hat .stems dict, kein direktes .vocals/.instruments
         vocals = result.stems.get("vocals") if hasattr(result, "stems") else None
         inst = result.stems.get("instruments", result.stems.get("other")) if hasattr(result, "stems") else None
-        assert vocals is not None, f"Kein 'vocals' Stem gefunden in {result.stems.keys() if hasattr(result, 'stems') else type(result)}"
+        assert vocals is not None, (
+            f"Kein 'vocals' Stem gefunden in {result.stems.keys() if hasattr(result, 'stems') else type(result)}"
+        )
         # NaN in Randframes des DSP-HPSS-Fallbacks erlaubt — Hauptnutzlast muss finite sein
         _assert_finite(np.nan_to_num(np.asarray(vocals, dtype=np.float32), nan=0.0), "BSRoFormer vocals")
         if inst is not None:
@@ -319,37 +341,42 @@ class TestBsRoformerPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.bs_roformer_plugin import BSRoFormerPlugin
+
         BSRoFormerPlugin()
         _cleanup(["MelBandRoformer"], "plugins.bs_roformer_plugin")
         assert _budget_total() == 0.0
 
 
 class TestDemucsV4Plugin:
-    """HTDemucs (Primär Instrumental): Laden, finite Stems, Budget sauber."""
+    """HTDemucs (Legacy-Fallback, experimental): Laden, finite Stems, Budget sauber.
+
+    §4.4: Primär-Separator ist MDX23C (Kim_Vocal_2). HTDemucs bleibt als Fallback.
+    """
 
     def test_01_loads_without_crash(self):
         _reset_budget()
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
-        p = DemucsV4Plugin()
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        p = MDX23CPlugin()
         assert p is not None
-        _cleanup(["DemucsV4"], "plugins.demucs_v4_plugin")
+        _cleanup(["MDX23C_vocals", "MDX23C_inst"], "plugins.mdx23c_plugin")
 
     def test_02_separate_finite(self):
         _reset_budget()
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
-        p = DemucsV4Plugin()
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        p = MDX23CPlugin()
         audio = _signal(2.0)
-        result = p.separate(audio, SR)
-        stems = result.stems if hasattr(result, "stems") else {}
-        for k, v in stems.items():
-            _assert_finite(np.asarray(v, dtype=np.float32), f"DemucsV4 stem={k}")
-        _cleanup(["DemucsV4"], "plugins.demucs_v4_plugin")
+        result = p.process(audio, SR, stem="vocals")
+        _assert_finite(np.asarray(result, dtype=np.float32), "MDX23C stem=vocals")
+        _cleanup(["MDX23C_vocals", "MDX23C_inst"], "plugins.mdx23c_plugin")
 
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
-        from plugins.demucs_v4_plugin import DemucsV4Plugin
-        DemucsV4Plugin()
-        _cleanup(["DemucsV4"], "plugins.demucs_v4_plugin")
+        from plugins.mdx23c_plugin import MDX23CPlugin
+
+        MDX23CPlugin()
+        _cleanup(["MDX23C_vocals", "MDX23C_inst"], "plugins.mdx23c_plugin")
         assert _budget_total() == 0.0
 
 
@@ -359,6 +386,7 @@ class TestMdx23cPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.mdx23c_plugin import MDX23CPlugin
+
         p = MDX23CPlugin()
         assert p is not None
         _cleanup(["MDX23C_vocals", "MDX23C_instruments"], "plugins.mdx23c_plugin")
@@ -366,6 +394,7 @@ class TestMdx23cPlugin:
     def test_02_separate_finite(self):
         _reset_budget()
         from plugins.mdx23c_plugin import MDX23CPlugin
+
         p = MDX23CPlugin()
         audio = _signal(2.0)
         # MDX23CPlugin nutzt .process() (nicht .separate())
@@ -376,6 +405,7 @@ class TestMdx23cPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.mdx23c_plugin import MDX23CPlugin
+
         MDX23CPlugin()
         _cleanup(["MDX23C_vocals", "MDX23C_instruments"], "plugins.mdx23c_plugin")
         assert _budget_total() == 0.0
@@ -387,6 +417,7 @@ class TestUvrMdxNetPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.uvr_mdxnet_plugin import UVRMDXNetPlugin
+
         p = UVRMDXNetPlugin()
         assert p is not None
         _cleanup(["UVR_MDXNet"], "plugins.uvr_mdxnet_plugin")
@@ -394,6 +425,7 @@ class TestUvrMdxNetPlugin:
     def test_02_separate_finite(self):
         _reset_budget()
         from plugins.uvr_mdxnet_plugin import UVRMDXNetPlugin
+
         p = UVRMDXNetPlugin()
         audio = _signal(2.0)
         try:
@@ -410,6 +442,7 @@ class TestUvrMdxNetPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.uvr_mdxnet_plugin import UVRMDXNetPlugin
+
         UVRMDXNetPlugin()
         _cleanup(["UVR_MDXNet"], "plugins.uvr_mdxnet_plugin")
         assert _budget_total() == 0.0
@@ -426,6 +459,7 @@ class TestFcpePlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.fcpe_plugin import FcpePlugin
+
         p = FcpePlugin()
         assert p is not None
         _cleanup(["FCPE"], "plugins.fcpe_plugin")
@@ -433,6 +467,7 @@ class TestFcpePlugin:
     def test_02_analyze_finite(self):
         _reset_budget()
         from plugins.fcpe_plugin import FcpePlugin
+
         p = FcpePlugin()
         audio = _sine(2.0, freq=440.0)
         result = p.analyze(audio, SR)
@@ -444,6 +479,7 @@ class TestFcpePlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.fcpe_plugin import FcpePlugin
+
         FcpePlugin()
         _cleanup(["FCPE"], "plugins.fcpe_plugin")
         assert _budget_total() == 0.0
@@ -455,6 +491,7 @@ class TestCrepePlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.crepe_plugin import CrepePlugin
+
         p = CrepePlugin()
         assert p is not None
         _cleanup(["CREPE"], "plugins.crepe_plugin")
@@ -462,6 +499,7 @@ class TestCrepePlugin:
     def test_02_analyze_finite(self):
         _reset_budget()
         from plugins.crepe_plugin import CrepePlugin
+
         p = CrepePlugin()
         audio = _sine(2.0, freq=440.0)
         result = p.analyze(audio, SR)
@@ -473,6 +511,7 @@ class TestCrepePlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.crepe_plugin import CrepePlugin
+
         CrepePlugin()
         _cleanup(["CREPE"], "plugins.crepe_plugin")
         assert _budget_total() == 0.0
@@ -484,6 +523,7 @@ class TestRmvpePlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.rmvpe_plugin import RmvpePlugin
+
         p = RmvpePlugin()
         assert p is not None
         _cleanup(["RMVPE"], "plugins.rmvpe_plugin")
@@ -491,6 +531,7 @@ class TestRmvpePlugin:
     def test_02_analyze_finite(self):
         _reset_budget()
         from plugins.rmvpe_plugin import RmvpePlugin
+
         p = RmvpePlugin()
         audio = _sine(2.0, freq=300.0)
         result = p.analyze(audio, SR)
@@ -502,6 +543,7 @@ class TestRmvpePlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.rmvpe_plugin import RmvpePlugin
+
         RmvpePlugin()
         _cleanup(["RMVPE"], "plugins.rmvpe_plugin")
         assert _budget_total() == 0.0
@@ -513,6 +555,7 @@ class TestBasicPitchPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.basicpitch_plugin import BasicPitchPlugin
+
         p = BasicPitchPlugin()
         assert p is not None
         _cleanup(["BasicPitch"], "plugins.basicpitch_plugin")
@@ -520,6 +563,7 @@ class TestBasicPitchPlugin:
     def test_02_analyze_finite(self):
         _reset_budget()
         from plugins.basicpitch_plugin import BasicPitchPlugin
+
         p = BasicPitchPlugin()
         audio = _signal(2.0)
         result = p.analyze(audio, SR)
@@ -531,6 +575,7 @@ class TestBasicPitchPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.basicpitch_plugin import BasicPitchPlugin
+
         BasicPitchPlugin()
         _cleanup(["BasicPitch"], "plugins.basicpitch_plugin")
         assert _budget_total() == 0.0
@@ -547,6 +592,7 @@ class TestBeatsPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.beats_plugin import BeatsPlugin
+
         p = BeatsPlugin()
         assert p is not None
         _cleanup(["BEATs"], "plugins.beats_plugin")
@@ -554,6 +600,7 @@ class TestBeatsPlugin:
     def test_02_get_tags_finite(self):
         _reset_budget()
         from plugins.beats_plugin import BeatsPlugin
+
         p = BeatsPlugin()
         audio = _signal(2.0)
         result = p.get_tags(audio, SR)
@@ -566,6 +613,7 @@ class TestBeatsPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.beats_plugin import BeatsPlugin
+
         BeatsPlugin()
         _cleanup(["BEATs"], "plugins.beats_plugin")
         assert _budget_total() == 0.0
@@ -577,6 +625,7 @@ class TestPannsPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.panns_plugin import PANNsPlugin
+
         p = PANNsPlugin()
         assert p is not None
         _cleanup(["PANNs"], "plugins.panns_plugin")
@@ -584,6 +633,7 @@ class TestPannsPlugin:
     def test_02_get_tags_finite(self):
         _reset_budget()
         from plugins.panns_plugin import PANNsPlugin
+
         p = PANNsPlugin()
         audio = _signal(2.0)
         result = p.get_tags(audio, SR)
@@ -596,6 +646,7 @@ class TestPannsPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.panns_plugin import PANNsPlugin
+
         PANNsPlugin()
         _cleanup(["PANNs"], "plugins.panns_plugin")
         assert _budget_total() == 0.0
@@ -607,6 +658,7 @@ class TestLaionClapPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.laion_clap_plugin import get_laion_clap
+
         p = get_laion_clap()
         assert p is not None
         _cleanup(["LAION-CLAP"], "plugins.laion_clap_plugin")
@@ -614,6 +666,7 @@ class TestLaionClapPlugin:
     def test_02_tag_audio_finite(self):
         _reset_budget()
         from plugins.laion_clap_plugin import tag_audio
+
         audio = _signal(2.0)
         result = tag_audio(audio, SR, text_queries=["music", "noise", "speech"])
         assert result is not None
@@ -625,6 +678,7 @@ class TestLaionClapPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.laion_clap_plugin import get_laion_clap
+
         get_laion_clap()
         _cleanup(["LAION-CLAP"], "plugins.laion_clap_plugin")
         assert _budget_total() == 0.0
@@ -641,6 +695,7 @@ class TestApolloPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.apollo_plugin import get_apollo
+
         p = get_apollo()
         assert p is not None
         _cleanup(["Apollo"], "plugins.apollo_plugin")
@@ -648,6 +703,7 @@ class TestApolloPlugin:
     def test_02_repair_finite(self):
         _reset_budget()
         from plugins.apollo_plugin import repair_codec_artifacts
+
         audio = _signal(2.0)
         result = repair_codec_artifacts(audio, SR)
         out = result.audio if hasattr(result, "audio") else np.asarray(result, dtype=np.float32)
@@ -658,6 +714,7 @@ class TestApolloPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.apollo_plugin import get_apollo
+
         get_apollo()
         _cleanup(["Apollo"], "plugins.apollo_plugin")
         assert _budget_total() == 0.0
@@ -669,6 +726,7 @@ class TestCqtdiffPlusPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus
+
         p = get_cqtdiff_plus()
         assert p is not None
         _cleanup(["CQTdiffPlus"], "plugins.cqtdiff_plus_plugin")
@@ -676,6 +734,7 @@ class TestCqtdiffPlusPlugin:
     def test_02_inpaint_gap_finite(self):
         _reset_budget()
         from plugins.cqtdiff_plus_plugin import inpaint_gap
+
         audio = _signal(3.0)
         # Simuliere einen Dropout-Gap von 100ms in der Mitte
         gap_start = int(SR * 1.0)
@@ -691,6 +750,7 @@ class TestCqtdiffPlusPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus
+
         get_cqtdiff_plus()
         _cleanup(["CQTdiffPlus"], "plugins.cqtdiff_plus_plugin")
         assert _budget_total() == 0.0
@@ -702,6 +762,7 @@ class TestGacelaPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.gacela_plugin import get_gacela_plugin
+
         p = get_gacela_plugin()
         assert p is not None
         _cleanup(["GACELA"], "plugins.gacela_plugin")
@@ -709,6 +770,7 @@ class TestGacelaPlugin:
     def test_02_generate_finite(self):
         _reset_budget()
         from plugins.gacela_plugin import generate_audio
+
         audio = _signal(2.0)
         result = generate_audio(audio, SR, intensity=0.3)
         out = result.audio if hasattr(result, "audio") else np.asarray(result, dtype=np.float32)
@@ -719,6 +781,7 @@ class TestGacelaPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.gacela_plugin import get_gacela_plugin
+
         get_gacela_plugin()
         _cleanup(["GACELA"], "plugins.gacela_plugin")
         assert _budget_total() == 0.0
@@ -730,6 +793,7 @@ class TestBanquetVinylPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.banquet_vinyl_plugin import BanquetVinylPlugin
+
         p = BanquetVinylPlugin()
         assert p is not None
         _cleanup(["BanquetVinyl"], "plugins.banquet_vinyl_plugin")
@@ -737,7 +801,9 @@ class TestBanquetVinylPlugin:
     def test_02_process_file_finite(self):
         _reset_budget()
         import soundfile as sf
+
         from plugins.banquet_vinyl_plugin import BanquetVinylPlugin
+
         audio = _signal(2.0)
         with tempfile.TemporaryDirectory() as td:
             in_path = os.path.join(td, "input.wav")
@@ -753,6 +819,7 @@ class TestBanquetVinylPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.banquet_vinyl_plugin import BanquetVinylPlugin
+
         BanquetVinylPlugin()
         _cleanup(["BanquetVinyl"], "plugins.banquet_vinyl_plugin")
         assert _budget_total() == 0.0
@@ -769,6 +836,7 @@ class TestSileroPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.silero_plugin import SileroPlugin
+
         p = SileroPlugin()
         assert p is not None
         _cleanup(["SileroVAD"], "plugins.silero_plugin")
@@ -776,6 +844,7 @@ class TestSileroPlugin:
     def test_02_speech_mask_finite(self):
         _reset_budget()
         from plugins.silero_plugin import SileroPlugin
+
         p = SileroPlugin()
         audio = _signal(2.0)
         mask = p.get_speech_mask(audio, SR)
@@ -787,6 +856,7 @@ class TestSileroPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.silero_plugin import SileroPlugin
+
         SileroPlugin()
         _cleanup(["SileroVAD"], "plugins.silero_plugin")
         assert _budget_total() == 0.0
@@ -798,6 +868,7 @@ class TestUtmosPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.utmos_plugin import get_utmos
+
         p = get_utmos()
         assert p is not None
         _cleanup(["UTMOSv2"], "plugins.utmos_plugin")
@@ -807,7 +878,8 @@ class TestUtmosPlugin:
     def test_02_estimate_mos_in_range(self):
         _reset_budget()
         from plugins.utmos_plugin import estimate_mos
-        audio = _signal(3.0)
+
+        _signal(3.0)
         result = estimate_mos(_sine(3.0, 440.0), SR)
         score = result.mos if hasattr(result, "mos") else float(result)
         assert np.isfinite(score), f"UTMOS MOS nicht finite: {score}"
@@ -817,6 +889,7 @@ class TestUtmosPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.utmos_plugin import get_utmos
+
         get_utmos()
         _cleanup(["UTMOSv2"], "plugins.utmos_plugin")
         assert _budget_total() == 0.0
@@ -833,6 +906,7 @@ class TestDacPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.dac_plugin import DacPlugin
+
         p = DacPlugin()
         assert p is not None
         _cleanup(["DacEncoder", "DacDecoder"], "plugins.dac_plugin")
@@ -840,12 +914,15 @@ class TestDacPlugin:
     def test_02_round_trip_finite(self):
         _reset_budget()
         from plugins.dac_plugin import DacPlugin
+
         p = DacPlugin()
         audio = _signal(1.0)
         result = p.round_trip(audio, SR)
         # DacRoundTripResult.audio_out (nicht .audio)
-        out = result.audio_out if hasattr(result, "audio_out") else (
-            result.audio if hasattr(result, "audio") else np.asarray(result, dtype=np.float32)
+        out = (
+            result.audio_out
+            if hasattr(result, "audio_out")
+            else (result.audio if hasattr(result, "audio") else np.asarray(result, dtype=np.float32))
         )
         _assert_finite(out, "DacPlugin.round_trip")
         assert np.max(np.abs(out)) <= 1.0
@@ -854,6 +931,7 @@ class TestDacPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.dac_plugin import DacPlugin
+
         DacPlugin()
         _cleanup(["DacEncoder", "DacDecoder"], "plugins.dac_plugin")
         assert _budget_total() == 0.0
@@ -867,6 +945,7 @@ class TestArtifactDetectionPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.artifact_detection_plugin import ArtifactDetectionPlugin
+
         p = ArtifactDetectionPlugin(self._MODEL_PATH)
         assert p is not None
         _cleanup(["ArtifactDetection"], "plugins.artifact_detection_plugin")
@@ -874,6 +953,7 @@ class TestArtifactDetectionPlugin:
     def test_02_detect_artifacts_finite(self):
         _reset_budget()
         from plugins.artifact_detection_plugin import ArtifactDetectionPlugin
+
         p = ArtifactDetectionPlugin(self._MODEL_PATH)
         audio = _signal(2.0)
         result = p.detect_artifacts(audio, SR)
@@ -887,6 +967,7 @@ class TestArtifactDetectionPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.artifact_detection_plugin import ArtifactDetectionPlugin
+
         ArtifactDetectionPlugin(self._MODEL_PATH)
         _cleanup(["ArtifactDetection"], "plugins.artifact_detection_plugin")
         assert _budget_total() == 0.0
@@ -898,6 +979,7 @@ class TestResembleEnhancePlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.resemble_enhance_plugin import ResembleEnhancePlugin
+
         p = ResembleEnhancePlugin()
         assert p is not None
         _cleanup(["ResembleEnhance"], "plugins.resemble_enhance_plugin")
@@ -905,6 +987,7 @@ class TestResembleEnhancePlugin:
     def test_02_enhance_finite(self):
         _reset_budget()
         from plugins.resemble_enhance_plugin import ResembleEnhancePlugin
+
         p = ResembleEnhancePlugin()
         audio = _signal(2.0)
         result = p.enhance(audio, SR)
@@ -916,6 +999,7 @@ class TestResembleEnhancePlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.resemble_enhance_plugin import ResembleEnhancePlugin
+
         ResembleEnhancePlugin()
         _cleanup(["ResembleEnhance"], "plugins.resemble_enhance_plugin")
         assert _budget_total() == 0.0
@@ -932,6 +1016,7 @@ class TestLyricsTranscriberPlugin:
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.lyrics_transcriber_plugin import get_lyrics_transcriber
+
         p = get_lyrics_transcriber()
         assert p is not None
         _cleanup(["WhisperTiny"], "plugins.lyrics_transcriber_plugin")
@@ -939,6 +1024,7 @@ class TestLyricsTranscriberPlugin:
     def test_02_transcribe_returns_result(self):
         _reset_budget()
         from plugins.lyrics_transcriber_plugin import transcribe_audio
+
         # 5 Sekunden Sinus — kurz genug für DSP-Pfad
         audio = _signal(5.0)
         result = transcribe_audio(audio, SR)
@@ -951,6 +1037,7 @@ class TestLyricsTranscriberPlugin:
     def test_03_budget_zero_after_cleanup(self):
         _reset_budget()
         from plugins.lyrics_transcriber_plugin import get_lyrics_transcriber
+
         get_lyrics_transcriber()
         _cleanup(["WhisperTiny"], "plugins.lyrics_transcriber_plugin")
         assert _budget_total() == 0.0
@@ -971,29 +1058,30 @@ class TestGlobalBudgetInvariants:
 
     def test_try_allocate_idempotent(self):
         """try_allocate(name) für bereits allokierten Namen zählt nicht doppelt."""
-        from backend.core.ml_memory_budget import try_allocate, release
+        from backend.core.ml_memory_budget import release, try_allocate
+
         _reset_budget()
         ok1 = try_allocate("TestDouble", size_gb=0.01)
         ok2 = try_allocate("TestDouble", size_gb=0.01)  # idempotent
         assert ok1 is True
         assert ok2 is True
         # Total darf NICHT 0.02 sein (doppelte Zählung verboten)
-        assert _budget_total() == pytest.approx(0.01, abs=1e-6), (
-            f"Doppelte Budget-Allokation: {_budget_total():.4f} GB"
-        )
+        assert _budget_total() == pytest.approx(0.01, abs=1e-6), f"Doppelte Budget-Allokation: {_budget_total():.4f} GB"
         release("TestDouble")
         assert _budget_total() == 0.0, "Budget nach release() nicht 0"
 
     def test_release_safe_for_unknown_name(self):
         """release() auf unbekannten Namen darf nicht crashen und Budget bleibt 0."""
         from backend.core.ml_memory_budget import release
+
         _reset_budget()
         release("NonExistentPlugin")  # kein Fehler
         assert _budget_total() == 0.0
 
     def test_budget_exhaustion_blocks_allocation(self):
         """Wenn Budget erschöpft, blockiert try_allocate() neue Allokationen."""
-        from backend.core.ml_memory_budget import try_allocate, release, set_budget
+        from backend.core.ml_memory_budget import release, set_budget, try_allocate
+
         _reset_budget()
         set_budget(0.05)  # 50 MB mini-Budget für Test
         _reset_budget()
@@ -1005,13 +1093,14 @@ class TestGlobalBudgetInvariants:
         # Budget wiederherstellen
         _reset_budget()
         from backend.core.ml_memory_budget import _auto_detect_budget
-        from backend.core import ml_memory_budget as _bud
+
         auto = _auto_detect_budget()
         set_budget(auto)
 
     def test_plm_force_evict_all_runs_unload_fns(self):
         """PLM.force_evict_all() ruft alle registrierten unload_fn() auf."""
         from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
         plm = get_plugin_lifecycle_manager()
         _plm_evict_all()  # Sauberer Start
 
@@ -1021,14 +1110,13 @@ class TestGlobalBudgetInvariants:
         plm.register("TestPluginB", size_gb=0.01, unload_fn=lambda: called.append("B"))
         plm.force_evict_all()
 
-        assert "A" in called and "B" in called, (
-            f"unload_fn nicht aufgerufen: {called}"
-        )
+        assert "A" in called and "B" in called, f"unload_fn nicht aufgerufen: {called}"
         _plm_evict_all()
 
     def test_plm_active_plugin_not_evicted(self):
         """PLM-Plugins mit active=True werden NICHT evicted."""
         from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
         plm = get_plugin_lifecycle_manager()
         _plm_evict_all()
 
@@ -1044,10 +1132,10 @@ class TestGlobalBudgetInvariants:
     def test_cleanup_after_all_plugins_budget_stays_zero(self):
         """Nach komplettem Cleanup aller Plugin-Budget-Slots ist _total_gb==0."""
         from backend.core import ml_memory_budget as _bud
+
         _reset_budget()
         _plm_evict_all()
         gc.collect()
         assert _bud._total_gb == 0.0, (
-            f"Verbleibendes Budget nach globalem Cleanup: {_bud._total_gb:.4f} GB; "
-            f"allocated={dict(_bud._allocated)}"
+            f"Verbleibendes Budget nach globalem Cleanup: {_bud._total_gb:.4f} GB; allocated={dict(_bud._allocated)}"
         )

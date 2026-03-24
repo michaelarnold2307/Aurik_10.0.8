@@ -764,6 +764,10 @@ class DefectScanner:
         if material_type is None:
             material_type = self.material_type or _auto_material
 
+        # §9.7.5a — Update instance attribute so _detect_dropouts() can access
+        # the resolved material type for adaptive thresholds.
+        self.material_type = material_type
+
         self.thresholds = self.MATERIAL_SENSITIVITY[material_type]
 
         # Audio normalisieren für konsistente Detection
@@ -773,6 +777,31 @@ class DefectScanner:
         else:
             is_stereo = False
             audio_mono = audio
+
+        # §9.7.5 Audio-Cap for 28 detectors.
+        # Defects are stationary over a 60 s sample (spec: ≤ 2 s/min audio).
+        # Reduces scan time from ~22 s (225 s track) to ~6 s.
+        # The spectral fingerprint and _auto_detect_material() above intentionally
+        # run on the full audio for a representative signal characterisation.
+        _DETECTOR_CAP_S = 60
+        _detector_cap_n = _DETECTOR_CAP_S * sr
+        _location_offset_s = 0.0  # seconds to add to all detector locations
+        # §9.7.5a — Full-audio reference for non-stationary defects (dropouts).
+        # Dropouts can occur anywhere (intro, outro, tape leader) — the 60 s
+        # center-crop would miss them.  Other detectors (noise, hum, flutter)
+        # are stationary and still use the cropped audio for performance.
+        _audio_mono_full = audio_mono  # kept for dropout detection
+        if len(audio_mono) > _detector_cap_n:
+            _dc_mid = len(audio_mono) // 2
+            _dc_half = _detector_cap_n // 2
+            _location_offset_s = (_dc_mid - _dc_half) / sr
+            audio_mono = audio_mono[_dc_mid - _dc_half : _dc_mid + _dc_half]
+            logger.debug(
+                "DefectScanner: audio_mono capped to %d s (%d samples) for detection pass, offset=%.1f s",
+                _DETECTOR_CAP_S,
+                _detector_cap_n,
+                _location_offset_s,
+            )
 
         def _prog(pct: int, name: str = "") -> None:
             if progress_callback is not None:
@@ -812,7 +841,9 @@ class DefectScanner:
             self._detect_phase_issues(audio) if is_stereo else DefectScore(DefectType.PHASE_ISSUES, 0.0, 0.0)
         )
         _prog(64, "Aussetzer")
-        scores[DefectType.DROPOUTS] = self._detect_dropouts(audio_mono)
+        # §9.7.5a — Dropout detection runs on FULL audio (not center-cropped).
+        # Tape dropouts occur anywhere (intro, leader, splice points).
+        scores[DefectType.DROPOUTS] = self._detect_dropouts(_audio_mono_full)
         _prog(70, "Übersteuerung")
         # --- Weltklasse-Erweiterung: 4 neue Defekttypen ---
         scores[DefectType.CLIPPING] = self._detect_clipping(audio_mono)
@@ -843,6 +874,178 @@ class DefectScanner:
         scores[DefectType.PRE_ECHO] = self._detect_pre_echo(audio_mono)
         scores[DefectType.ALIASING] = self._detect_aliasing(audio_mono)
         scores[DefectType.TRANSPORT_BUMP] = self._detect_transport_bump(audio_mono)
+
+        # ── §9.1b Intro-Salienz-Gewichtung ──────────────────────────────────────
+        # Psychoacoustic research (Zacharov & Koivuniemi 2001, Bech & Zacharov 2006):
+        # the first 3-5 seconds define the listener's overall quality judgment.
+        # Defects in the intro region receive a severity boost so that the pipeline
+        # prioritizes their repair.  This is especially critical for tape media
+        # where leader artifacts and run-in fluctuations cluster at the beginning.
+        _INTRO_SECONDS = 5.0
+        _INTRO_SEVERITY_BOOST = 1.5  # 50% boost for intro defects
+        _total_duration_s = len(_audio_mono_full) / sr
+        if _total_duration_s > _INTRO_SECONDS * 2:  # only for non-trivial audio
+            for _dt, _ds in scores.items():
+                if not _ds.locations:
+                    continue
+                _intro_events = [(t0, t1) for t0, t1 in _ds.locations if t0 < _INTRO_SECONDS]
+                if _intro_events and _ds.severity > 0.0:
+                    _intro_fraction = len(_intro_events) / max(len(_ds.locations), 1)
+                    # Boost severity proportional to intro defect concentration
+                    _boost = 1.0 + (_INTRO_SEVERITY_BOOST - 1.0) * _intro_fraction
+                    _old_sev = _ds.severity
+                    _ds.severity = float(
+                        np.nan_to_num(
+                            min(1.0, _ds.severity * _boost),
+                            nan=0.0,
+                        )
+                    )
+                    if _ds.severity > _old_sev:
+                        _ds.metadata["intro_boost_applied"] = True
+                        _ds.metadata["intro_boost_factor"] = round(_boost, 3)
+                        _ds.metadata["intro_events"] = len(_intro_events)
+                        logger.debug(
+                            "Intro-saliency boost: %s severity %.3f → %.3f (%d/%d events in first %.0fs)",
+                            _dt.value,
+                            _old_sev,
+                            _ds.severity,
+                            len(_intro_events),
+                            len(_ds.locations),
+                            _INTRO_SECONDS,
+                        )
+
+        # ── Location-Offset korrigieren ─────────────────────────────────────────
+        # Detektoren, die auf dem 60 s-Mitte-Clip (audio_mono) laufen, erzeugen
+        # Locations relativ zum Clip-Start.  Der Offset muss addiert werden, damit
+        # die Marker an der korrekten Stelle im Gesamt-Audio erscheinen.
+        # _detect_clicks() bei Stereo nutzt das volle Audio → kein Offset nötig.
+        if _location_offset_s > 0.0:
+            _FULL_AUDIO_DETECTORS = {DefectType.DROPOUTS}  # runs on full audio, no offset needed
+            if is_stereo:
+                _FULL_AUDIO_DETECTORS.add(DefectType.CLICKS)
+            for _dt, _ds in scores.items():
+                if _dt in _FULL_AUDIO_DETECTORS:
+                    continue
+                if _ds.locations:
+                    _ds.locations = [(t0 + _location_offset_s, t1 + _location_offset_s) for t0, t1 in _ds.locations]
+
+        # ── Per-Channel Location-Tags (L/R) für Stereo ─────────────────────────
+        # Alle lokalisierbaren Impuls-/Event-Defekte werden pro Kanal detektiert,
+        # damit die Wellenform-Visualisierung kanalgenau darstellen kann.
+        # Premium-Anforderung: kein "über einen Kamm scheren" beider Kanäle.
+        if is_stereo and audio.ndim == 2 and audio.shape[1] >= 2:
+            _per_channel_locs: dict = {}
+            _DT_TO_KEY = {
+                DefectType.CLICKS: "clicks",
+                DefectType.DROPOUTS: "dropout",
+                DefectType.CRACKLE: "crackle",
+                DefectType.CLIPPING: "clipping",
+                DefectType.SIBILANCE: "sibilance",
+                DefectType.TRANSPORT_BUMP: "transport_bump",
+            }
+            for _ch_idx, _ch_label in ((0, "L"), (1, "R")):
+                _ch_audio = audio[:, _ch_idx]
+                # Clicks per channel
+                _ch_clicks = self._detect_clicks(_ch_audio)
+                if _ch_clicks.locations:
+                    _per_channel_locs.setdefault("clicks", {})[_ch_label] = list(_ch_clicks.locations)
+                # Dropout per channel
+                _ch_drops = self._detect_dropouts(_ch_audio)
+                if _ch_drops.locations:
+                    _per_channel_locs.setdefault("dropout", {})[_ch_label] = list(_ch_drops.locations)
+                # Crackle per channel
+                try:
+                    _ch_crackle = self._detect_crackle(_ch_audio)
+                    if _ch_crackle.locations:
+                        _per_channel_locs.setdefault("crackle", {})[_ch_label] = list(_ch_crackle.locations)
+                except Exception:
+                    pass
+                # Clipping per channel
+                try:
+                    _ch_clip = self._detect_clipping(_ch_audio)
+                    if _ch_clip.locations:
+                        _per_channel_locs.setdefault("clipping", {})[_ch_label] = list(_ch_clip.locations)
+                except Exception:
+                    pass
+                # Sibilance per channel
+                try:
+                    _ch_sib = self._detect_sibilance(_ch_audio)
+                    if _ch_sib.locations:
+                        _per_channel_locs.setdefault("sibilance", {})[_ch_label] = list(_ch_sib.locations)
+                except Exception:
+                    pass
+                # Transport bumps per channel
+                try:
+                    _ch_bump = self._detect_transport_bump(_ch_audio)
+                    if _ch_bump.locations:
+                        _per_channel_locs.setdefault("transport_bump", {})[_ch_label] = list(_ch_bump.locations)
+                except Exception:
+                    pass
+            # Store per-channel info as metadata on the combined scores
+            for _dk, _ch_dict in _per_channel_locs.items():
+                _dt_key = {v: k for k, v in _DT_TO_KEY.items()}.get(_dk)
+                if _dt_key and _dt_key in scores:
+                    scores[_dt_key].metadata["channel_locations"] = _ch_dict
+
+        # ── §6.3 Medium-Gate: physikalisch unmögliche Defekte unterdrücken ──────
+        # RIAA-Entzerrungsfehler sind NUR auf Disc-Medien möglich (Vinyl, Shellac,
+        # Lacquer-Disc, Wax-Cylinder).  Auf Magnetband / Digital / Codec-Quellen
+        # ist ein Bass/Mid-Ungleichgewicht KEIN RIAA-Fehler, sondern ggf. ein
+        # EQ-Problem oder Aufnahme-Charakteristik — severity wird auf 0 gesetzt.
+        _DISC_MEDIA = {
+            MaterialType.VINYL,
+            MaterialType.SHELLAC,
+            MaterialType.LACQUER_DISC,
+            MaterialType.WAX_CYLINDER,
+            MaterialType.UNKNOWN,  # unbekannt: nicht unterdrücken
+        }
+        if material_type not in _DISC_MEDIA:
+            _riaa_orig = scores[DefectType.RIAA_CURVE_ERROR].severity
+            if _riaa_orig > 0.0:
+                logger.info(
+                    "Medium-Gate: RIAA_CURVE_ERROR suppressed (material=%s, was=%.3f) "
+                    "— RIAA is disc-only, not applicable to %s",
+                    material_type.value,
+                    _riaa_orig,
+                    material_type.value,
+                )
+                scores[DefectType.RIAA_CURVE_ERROR] = DefectScore(
+                    defect_type=DefectType.RIAA_CURVE_ERROR,
+                    severity=0.0,
+                    confidence=scores[DefectType.RIAA_CURVE_ERROR].confidence,
+                    locations=[],
+                    metadata={
+                        **scores[DefectType.RIAA_CURVE_ERROR].metadata,
+                        "medium_gated": True,
+                        "original_severity": _riaa_orig,
+                    },
+                )
+
+        # ── §9.1c Perceptual Salience — psychoacoustic masking annotation ───────
+        # Annotates each defect with a 'perceptual_salience' score (0.0–1.0).
+        # Masked defects (in loud passages) get reduced severity; exposed defects
+        # (in quiet passages) keep full severity.  This prevents unnecessary repairs
+        # on inaudible defects and focuses the pipeline on what the ear can detect.
+        try:
+            from backend.core.perceptual_salience import get_perceptual_salience_estimator
+
+            _pse = get_perceptual_salience_estimator()
+            _pse_audio = _audio_mono_full if _audio_mono_full is not None else audio_mono
+            _pse_result = _pse.annotate_defect_scores(
+                _pse_audio,
+                sr,
+                DefectAnalysisResult(
+                    material_type=material_type,
+                    scores=scores,
+                    analysis_time_seconds=0.0,
+                    sample_rate=sr,
+                    duration_seconds=len(_pse_audio) / sr,
+                ),
+            )
+            scores = _pse_result.scores
+        except Exception as _pse_err:
+            logger.warning("PerceptualSalienceEstimator failed (non-critical): %s", _pse_err)
+
         _prog(99)
 
         analysis_time = time.time() - start_time
@@ -1955,9 +2158,21 @@ class DefectScanner:
         )
 
     def _detect_dropouts(self, audio: np.ndarray) -> DefectScore:
-        """Erkennt Dropouts (kurze Stille/niedrig-Energie Segmente)."""
-        # RMS in kurzen Fenstern
-        window_size = int(0.01 * self.sample_rate)  # 10ms windows
+        """Detect dropouts (short silence / low-energy segments).
+
+        Algorithm (v9.10.73 — material-adaptive):
+        1. RMS in 5 ms windows (was 10 ms): catches short tape dropouts
+        2. Material-adaptive threshold: tape/vinyl 20% median-RMS, digital 10%
+        3. Minimum 1 window (>= 2.5 ms) — was 2 windows (10-20 ms)
+        4. Severity = total_dropout_duration / audio_duration (was: count-based)
+           -> even few but long dropouts are correctly weighted
+
+        Typical tape dropout signatures:
+        - Short level fluctuations (2-50 ms): oxide loss, tape guide errors
+        - Level drops at tape start/end: tape leader, reel geometry
+        """
+        # 5 ms windows for finer detection (was 10 ms)
+        window_size = max(1, int(0.005 * self.sample_rate))
         hop_size = window_size // 2
 
         rms_values = []
@@ -1966,38 +2181,62 @@ class DefectScanner:
             rms = np.sqrt(np.mean(window**2))
             rms_values.append(rms)
 
+        if not rms_values:
+            return DefectScore(DefectType.DROPOUTS, 0.0, 0.5)
+
         rms_values = np.array(rms_values)
 
-        # Threshold für Dropout (10% der median RMS)
-        median_rms = np.median(rms_values)
-        dropout_threshold = 0.1 * median_rms
+        # Material-adaptive threshold: analog media are more sensitive
+        _DROPOUT_ANALOG_MATERIALS = {
+            MaterialType.TAPE,
+            MaterialType.REEL_TAPE,
+            MaterialType.VINYL,
+            MaterialType.SHELLAC,
+            MaterialType.WAX_CYLINDER,
+            MaterialType.WIRE_RECORDING,
+            MaterialType.LACQUER_DISC,
+            MaterialType.DAT,
+        }
+        _mat = getattr(self, "material_type", None)
+        # Analog/DAT: 20% median-RMS (catches gradual level fades); digital: 10%
+        _threshold_ratio = 0.20 if _mat in _DROPOUT_ANALOG_MATERIALS else 0.10
+        median_rms = float(np.median(rms_values))
+        dropout_threshold = _threshold_ratio * median_rms
 
         dropout_mask = rms_values < dropout_threshold
 
-        # Finde Dropout-Events
+        # Find dropout events via connected-component labelling
         from scipy.ndimage import label
 
         labeled_array, num_dropouts = label(dropout_mask)  # type: ignore[misc]
 
         locations = []
+        total_dropout_s = 0.0
         for i in range(1, num_dropouts + 1):
             indices = np.where(labeled_array == i)[0]
-            if len(indices) >= 2:  # Mindestens 2 Windows = 10-20ms
+            if len(indices) >= 1:  # 1 window suffices (>= 2.5 ms) — was 2
                 start = indices[0] * hop_size / self.sample_rate
-                end = indices[-1] * hop_size / self.sample_rate
+                end = (indices[-1] + 1) * hop_size / self.sample_rate
                 locations.append((start, end))
+                total_dropout_s += end - start
 
-        # Severity
+        # Severity: based on total dropout duration (not just count)
+        # 1% dropout fraction -> severity 0.5; 2% -> 1.0
         duration = len(audio) / self.sample_rate
-        dropout_rate = len(locations) / duration
-        severity = min(1.0, dropout_rate / 1.0)  # 1 dropout/sec = max
+        dropout_fraction = total_dropout_s / max(duration, 1e-6)
+        severity = float(np.nan_to_num(min(1.0, dropout_fraction / 0.02), nan=0.0))
 
         return DefectScore(
             defect_type=DefectType.DROPOUTS,
             severity=severity,
             confidence=0.85,
             locations=self._sample_locations_evenly(locations, 50),
-            metadata={"dropout_count": len(locations), "dropout_rate": dropout_rate},
+            metadata={
+                "dropout_count": len(locations),
+                "dropout_rate": len(locations) / max(duration, 1e-6),
+                "total_dropout_s": round(total_dropout_s, 4),
+                "threshold_ratio": _threshold_ratio,
+            },
         )
 
     # ========== NEU: Weltklasse-Detektoren ==========
@@ -2747,6 +2986,7 @@ class DefectScanner:
 
         Measures the fraction of total spectral power in the sibilance range.
         High ratio (> 0.40) indicates problematic sibilance requiring de-essing.
+        Windowed analysis provides time-locations of sibilant events.
         """
         n = len(audio)
         if n < 1024:
@@ -2765,11 +3005,39 @@ class DefectScanner:
             if severity < threshold * 0.15:
                 severity = 0.0
 
+            # Windowed sibilance location detection (50 ms windows, 25 ms hop)
+            locations: list[tuple[float, float]] = []
+            if severity > 0.0:
+                win_sib = max(1, int(0.050 * self.sample_rate))
+                hop_sib = max(1, win_sib // 2)
+                sib_threshold = 0.20  # fraction above which a window is sibilant
+                in_event = False
+                ev_start = 0.0
+                for i in range(0, n - win_sib, hop_sib):
+                    chunk = audio[i : i + win_sib]
+                    cf = np.fft.rfftfreq(len(chunk), 1.0 / self.sample_rate)
+                    cs = np.abs(np.fft.rfft(chunk)) ** 2
+                    c_total = float(np.sum(cs) + 1e-20)
+                    c_sib = float(np.sum(cs[(cf >= 4000.0) & (cf <= 12000.0)]))
+                    frac = c_sib / c_total
+                    t_s = i / self.sample_rate
+                    if frac >= sib_threshold:
+                        if not in_event:
+                            ev_start = t_s
+                            in_event = True
+                    else:
+                        if in_event:
+                            locations.append((ev_start, t_s + win_sib / self.sample_rate))
+                            in_event = False
+                if in_event:
+                    locations.append((ev_start, n / self.sample_rate))
+                locations = self._sample_locations_evenly(locations, 50)
+
             return DefectScore(
                 defect_type=DefectType.SIBILANCE,
                 severity=severity,
                 confidence=0.68,
-                locations=[],
+                locations=locations,
                 metadata={"sibilance_power_fraction": sib_frac},
             )
         except Exception:
@@ -2907,6 +3175,7 @@ class DefectScanner:
                 return DefectScore(DefectType.TRANSIENT_SMEARING, 0.0, 0.3)
 
             rise_times_ms: list[float] = []
+            smear_locations: list[tuple[float, float]] = []
             for idx in onset_idxs[:20]:
                 peak_val = float(envelope[idx])
                 level_10 = peak_val * 0.10
@@ -2924,6 +3193,10 @@ class DefectScanner:
                     rt = (idx_90 - idx_10) / self.sample_rate * 1000.0
                     if 0.5 < rt < 100.0:
                         rise_times_ms.append(rt)
+                        if rt > 8.0:  # only mark actually smeared onsets
+                            t_s = window_back / self.sample_rate
+                            t_e = (idx + int(0.010 * self.sample_rate)) / self.sample_rate
+                            smear_locations.append((t_s, t_e))
 
             if not rise_times_ms:
                 return DefectScore(DefectType.TRANSIENT_SMEARING, 0.0, 0.3)
@@ -2938,7 +3211,7 @@ class DefectScanner:
                 defect_type=DefectType.TRANSIENT_SMEARING,
                 severity=severity,
                 confidence=0.60,
-                locations=[],
+                locations=smear_locations if severity > 0.0 else [],
                 metadata={"mean_rise_time_ms": mean_rt, "n_onsets": len(rise_times_ms)},
             )
         except Exception:
@@ -2974,6 +3247,7 @@ class DefectScanner:
             pre_window_s = int(0.030 * self.sample_rate)
             baseline_window_s = int(0.100 * self.sample_rate)
             pre_echo_ratios: list[float] = []
+            pre_echo_locations: list[tuple[float, float]] = []
 
             for idx in transient_idxs[:15]:
                 pre_start = max(0, idx - pre_window_s - int(0.005 * self.sample_rate))
@@ -2991,6 +3265,9 @@ class DefectScanner:
                 ratio = pre_energy / baseline_energy
                 if ratio > 1.0:
                     pre_echo_ratios.append(ratio)
+                    t_start = pre_start / self.sample_rate
+                    t_end = idx / self.sample_rate
+                    pre_echo_locations.append((t_start, t_end))
 
             if not pre_echo_ratios:
                 return DefectScore(DefectType.PRE_ECHO, 0.0, 0.3)
@@ -3005,7 +3282,7 @@ class DefectScanner:
                 defect_type=DefectType.PRE_ECHO,
                 severity=severity,
                 confidence=0.62,
-                locations=[],
+                locations=pre_echo_locations if severity > 0.0 else [],
                 metadata={"pre_echo_mean_ratio": mean_ratio, "n_transients": len(transient_idxs[:15])},
             )
         except Exception:

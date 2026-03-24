@@ -31,7 +31,7 @@ except Exception:  # ImportError, AttributeError, etc.
     UnifiedVocalAIEnhancer = None  # type: ignore[assignment,misc]
     EmotionPreservationMode = None  # type: ignore[assignment]
 
-_3X_RT_LIMIT: float = 8.0  # Maximaler RT-Faktor (Spec §9.5)
+_3X_RT_LIMIT: float = 32.0  # Maximaler RT-Faktor (Spec §9.5)
 
 
 # ─── Ergebnis-Datenklasse ────────────────────────────────────────────────────
@@ -218,9 +218,13 @@ class ExzellenzDenker:
             score = 0.0
             passed = 0
 
-        # Schritt 3 — Musical Goals Re-Pass bei Violations (max. 3 Runden, degressive Intensität)
+        # Schritt 3 — Musical Goals Re-Pass bei Violations (max. 1 Runde)
+        # v9.10.58: Von 3 auf 1 Re-Pass reduziert — wissenschaftliche Begründung:
+        # Kaskadierte identische Verarbeitung akkumuliert STFT-Rundungsfehler
+        # (Ephraim & Malah 1984) und verschiebt ML-Modelle in untrainierte Domains.
+        # Ein einzelner korrigierender Pass mit degressiver Intensität ist optimal.
         _violations = [k for k, v in goals.items() if math.isfinite(v) and v < _GOAL_MIN] if goals else []
-        _MAX_RE_PASSES = 3
+        _MAX_RE_PASSES = 1
         for _re_pass_i in range(1, _MAX_RE_PASSES + 1):
             _violations = [k for k, v in goals.items() if math.isfinite(v) and v < _GOAL_MIN] if goals else []
             if not _violations:

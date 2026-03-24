@@ -1,0 +1,132 @@
+flowchart TD
+    classDef io fill:#2c3e50,color:#fff,stroke:#1a252f
+    classDef ml fill:#7B2FBE,color:#fff,stroke:#5a1f8a
+    classDef dsp fill:#1a6fcf,color:#fff,stroke:#1050a0
+    classDef metric fill:#0f7a3e,color:#fff,stroke:#085e2e
+    classDef mem fill:#a05c10,color:#fff,stroke:#7a4508
+    classDef gate fill:#c0392b,color:#fff,stroke:#922b21
+    classDef denker fill:#e67e22,color:#fff,stroke:#b05a10
+
+    %% ─── FRONTEND ───
+    subgraph FE["🖥️ Frontend — ModernMainWindow"]
+        A1([📂 Datei öffnen]) --> A2[_bg_load\nAudio-Kaskade 3-stufig]
+        A2 --> A3[_carrier_bg\nCarrierForensics]
+        A3 --> A4[_detect_era_genre_bg]
+        A4 --> PA1[EraClassifier]
+        A4 --> PA2[MediumClassifier]
+        A4 --> PA3[GermanSchlagersDetector]
+        PA1 & PA2 & PA3 --> A5[constrain_era_to_medium\n§MEDIUM_DECADE_FLOOR]
+        A5 --> A6[(Cache\nera / medium / genre)]
+    end
+
+    A6 --> D0
+
+    %% ─── AURIK DENKER ───
+    subgraph DK["🧠 AurikDenker — denke()"]
+        D0[Stufe 1: Tonträger-Inspektion\nCarrierForensics] --> D1
+        D1[Stufe 2: Ketten-Erkennung\nMediaChainDetector] --> D2
+        D2[Stufe 3: Defekt-Vorscan\nSchnell-Heuristik] --> D3
+        D3[Stufe 4: GlobalPlan\nhint_decade ← cached_era_result] --> D4
+        D4[Stufe 5: Strategie\nautopilot_mode] --> D5
+        D5[Stufe 6–10: RestaurierDenker\nUV3 aufrufen]
+    end
+
+    %% ─── UV3 KERNPIPELINE ───
+    subgraph UV3["⚙️ UnifiedRestorerV3 — restore()"]
+        subgraph PRE["① Voranalyse"]
+            direction TB
+            U0[DCOffset Removal] --> U1[HPSS / TDP]
+            U1 --> U2[RestorabilityEstimator]
+            U2 --> U3_1[EraClassifier] & U3_2[MediumClassifier] & U3_3[GermanSchlagersDetector]
+            U3_1 & U3_2 & U3_3 --> U3F[constrain_era_to_medium\n§Medium-Floor-Constraint]
+            U3F --> U4[GoalApplicabilityFilter\nAdaptiveGoalThresholds]
+        end
+
+        subgraph DEFECT["② Defektanalyse"]
+            direction TB
+            U5[DefectScanner\n28 Defekte, nat. Import-SR] --> U6[CausalDefectReasoner\n14 Ursachen]
+            U6 --> U7[GPParameterOptimizer\nEra-Warmstart §2.14]
+            U7 --> U8[HarmonicPreservationGuard]
+        end
+
+        subgraph PMGG_WRAP["③ PMGG-Wrapper "]
+            direction TB
+            PM1{PMGG\nMusical Goal\nGuard} --> PH
+
+            subgraph PH["④ 56 Phasen (01–56)"]
+                direction TB
+                PH1[Tier 0–1: Defektkorrektur\nPhase 01–30\nNR · Click · Hum · Stereo] --> PH2
+                PH2[Stem-Separation\nMDX23C + BsRoformer\n§Studio 2026 only] --> PH3
+                PH3[Tier 2: Vokal und Instrumente\nPhase 42–52\nVocalAI · Guitar · Brass · Piano · Drums] --> PH4
+                PH4[Tier 3: Mastering\nPhase 53–55\nLUFS · TruePeak · Stereo] --> PH5
+                PH5[Tier 4: Export-Prep\nPhase 56 · Dithering]
+            end
+
+            PH5 --> PM2{Musical Goals\nbestanden?}
+            PM2 -->|ja| POST
+            PM2 -->|nein, Retry bis 5| PM1
+            PM2 -->|best_effort nach 5| POST
+        end
+
+        subgraph POST["⑤ Nachbearbeitung"]
+            direction TB
+            N1[EraAuthenticPerceptualCompletion] --> N2
+            N2[IntroducedArtifactDetector] --> N3
+            N3[PhysicalCeilingEstimator] --> N4
+            N4[MicroDynamicsEnvelopeMorphing\n400 ms LUFS]
+        end
+
+        subgraph QA["⑥ Qualitätskette"]
+            direction TB
+            Q1[PerceptualQualityScorer\nNSIM · MCD · MOS] --> Q2
+            Q2[MusicalGoalsChecker\n14 Ziele §1.2] --> Q3
+            Q3[FeedbackChain\nmax 5 Iter] --> Q4
+            Q4[ExcellenceOptimizer\nMOO-Pareto]
+        end
+    end
+
+    D5 --> PRE
+    PRE --> DEFECT
+    DEFECT --> PMGG_WRAP
+    POST --> QA
+
+    %% ─── EXPORT-GATE ───
+    subgraph EG["🚦 Export-Gate"]
+        G1{PQS-MOS ≥ Schwelle\nMusical Goals\nOQS ≥ 80} -->|bestanden| G2
+        G1 -->|fail_reason| G3[RestorationResult\nFail-Reason in metadata]
+        G2[Atomischer Export\n.tmp → os.replace]
+    end
+
+    QA --> EG
+
+    %% ─── KMV STUFE 2 ───
+    subgraph KMV["🔄 §2.38 KMV — Kontinuierliche ML-Veredelung"]
+        K1{deferred_phases ≥ 1?} -->|ja| K2
+        K2[MLRefinementThread\nPriority=Low · nice+10] --> K3
+        K3[UV3 Full-Pass\nno_rt_limit=True] --> K4
+        K4{stufe2_quality ≥ stufe1?} -->|ja| K5
+        K4 -->|nein| K6[Stufe-1-Export\nbleibt]
+        K5[Overwrite\nAtomisch]
+    end
+
+    G2 --> K1
+
+    %% ─── PERSISTENZ ───
+    subgraph PERS["💾 Persistenz"]
+        P1[(GP-Gedächtnis\nEra-Prior-Update)]
+        P2[(~/.aurik/\nSitzungs-Cache)]
+        P3[(models/manifest.json\nML-Modelle · sha256 · GB)]
+    end
+
+    QA -.-> P1
+    A6 -.-> P2
+    PMGG_WRAP -.-> P3
+
+    %% ─── KLASSEN ───
+    class A1,A2,A3,G2,G3,K5,K6 io
+    class PA1,PA2,PA3,U3_1,U3_2,U3_3,PH2,PH3 ml
+    class U0,U1,PH1,PH4,PH5,N1,N2,N3,N4 dsp
+    class Q1,Q2,Q3,Q4,PM1,PM2 metric
+    class P1,P2,P3 mem
+    class G1,G2,K4 gate
+    class D0,D1,D2,D3,D4,D5 denker

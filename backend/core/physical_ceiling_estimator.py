@@ -8,11 +8,11 @@ aus Quell-SNR und Bandbreite.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import math
 import threading
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 
@@ -189,8 +189,8 @@ class PhysicalCeilingEstimator:
         # Natuerlichkeit: sigmoid((mean_snr - 5) / 5) * 0.97 + 0.03
         nat = sigmoid((mean_snr - 5.0) / 5.0) * 0.97 + 0.03
 
-        # Brillanz: sigmoid((bw_hz - 8000) / 2000) * 0.95
-        brill = sigmoid((bw_hz - 8000.0) / 2000.0) * 0.95
+        # Brillanz: sigmoid((bw_hz - 8000) / 2000) * 0.98 + 0.02
+        brill = sigmoid((bw_hz - 8000.0) / 2000.0) * 0.98 + 0.02
 
         # Stereo-Dekorrelation (vereinfacht)
         if mono.ndim == 1 or len(mono) < 100:
@@ -211,31 +211,41 @@ class PhysicalCeilingEstimator:
         tonal_center = sigmoid(mean_snr * 2.0) * 0.98
 
         ceiling = {
-            "natuerlichkeit": min(0.98, nat),
-            "brillanz": min(0.95, brill),
-            "spatial_depth": min(0.92, spatial),
-            "groove": min(0.97, groove),
-            "tonal_center": min(0.98, tonal_center),
-            # Alle anderen: konservativ 0.98
-            "waerme": 0.98,
-            "authentizitaet": 0.98,
-            "emotionalitaet": 0.98,
-            "transparenz": 0.98,
-            "bass_kraft": 0.98,
-            "timbre_authentizitaet": 0.98,
-            "micro_dynamics": 0.98,
-            "separation_fidelity": 0.98,
-            "artikulation": 0.98,
+            "natuerlichkeit": min(0.99, nat),
+            "brillanz": min(0.98, brill),
+            "spatial_depth": min(0.95, spatial),
+            "groove": min(0.98, groove),
+            "tonal_center": min(0.99, tonal_center),
+            # Alle anderen: konservativ 0.99 (material-spezifische Caps unten)
+            "waerme": 0.99,
+            "authentizitaet": 0.99,
+            "emotionalitaet": 0.99,
+            "transparenz": 0.99,
+            "bass_kraft": 0.99,
+            "timbre_authentizitaet": 0.99,
+            "micro_dynamics": 0.99,
+            "separation_fidelity": 0.99,
+            "artikulation": 0.99,
         }
 
-        # Shellac/Wachswalze: kuenstliche Deckel
+        # Shellac/Wachswalze: kuenstliche Deckel (physikalische Limitierung)
         if material in {"shellac", "wax_cylinder"}:
             ceiling["brillanz"] = min(ceiling["brillanz"], 0.75)
             ceiling["natuerlichkeit"] = min(ceiling["natuerlichkeit"], 0.85)
+            for _g in ceiling:
+                ceiling[_g] = min(ceiling[_g], 0.95)
+
+        # Vinyl: moderate Deckel
+        elif material in {"vinyl", "vinyl_lp"}:
+            ceiling["brillanz"] = min(ceiling["brillanz"], 0.90)
 
         # MP3 (Verlustbehaftet): Codec-Artefakt-bedingter Brillanz-Deckel
-        if material in {"mp3_low", "mp3_high", "mp3"}:
-            ceiling["brillanz"] = min(ceiling["brillanz"], 0.82)
+        elif material in {"mp3_low", "mp3_high", "mp3"}:
+            ceiling["brillanz"] = min(ceiling["brillanz"], 0.85)
+
+        # Tape: leichte Limitierung in Höhen
+        elif material in {"tape", "reel_tape", "cassette"}:
+            ceiling["brillanz"] = min(ceiling["brillanz"], 0.92)
 
         return ceiling
 

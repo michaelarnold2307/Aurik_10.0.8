@@ -395,7 +395,7 @@ class TestPhaseRegressionLog:
         defect_mock = _make_mock_defect_result()
 
         # Direkt _execute_pipeline aufrufen, alle Phasen-Listen leer → kein Loop
-        _out, _ex, _sk = restorer._execute_pipeline(
+        _out, _ex, _sk, _def = restorer._execute_pipeline(
             audio,
             SR,
             MaterialType.CD_DIGITAL if hasattr(MaterialType, "CD_DIGITAL") else list(MaterialType)[0],

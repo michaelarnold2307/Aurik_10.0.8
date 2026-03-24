@@ -16,12 +16,12 @@ Type-Annotations nach §3.7.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 import math
 import threading
-from typing import Any, Optional
-from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -189,6 +189,7 @@ class DefektDenker:
         material: str = "unknown",
         validate_audio: bool = True,
         progress_callback: Callable[[int, str], None] | None = None,
+        cached_defect_result: Any | None = None,
     ) -> DefektErgebnis:
         """Erkennt und klassifiziert Defekte im Audio-Signal.
 
@@ -215,10 +216,14 @@ class DefektDenker:
 
         self._ensure_loaded()
 
-        # Step 1: Defect Scan
+        # Step 1: Defect Scan (Cache-First — kein Doppelscan §9.4)
         defect_scores: dict[str, float] = {}
         scan_result: Any | None = None
-        if self._scanner is not None:
+        if cached_defect_result is not None:
+            scan_result = cached_defect_result
+            defect_scores = self._extract_scores(scan_result)
+            logger.info("DefektDenker: Verwende gecachten DefectScan (kein Doppelscan).")
+        elif self._scanner is not None:
             try:
                 scan_result = self._scanner.scan(audio, sample_rate=sr, progress_callback=progress_callback)
                 defect_scores = self._extract_scores(scan_result)

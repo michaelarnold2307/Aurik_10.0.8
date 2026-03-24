@@ -27,14 +27,14 @@ Referenzen:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 import logging
 import math
+from pathlib import Path
 import threading
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import scipy.linalg
@@ -85,13 +85,13 @@ PARETO_OBJECTIVES: list[str] = [
 # mode: "float" | "int" | "log" (log-uniform sampling)
 
 PARAMETER_SPACE: dict[str, tuple[float, float, str]] = {
-    "noise_reduction_strength": (0.05, 0.95, "float"),
-    "harmonic_boost_db": (0.0, 6.0, "float"),  # §2.5: max +6 dB harmonisch
+    "noise_reduction_strength": (0.0, 1.0, "float"),  # full range: 0=bypass, 1=max NR
+    "harmonic_boost_db": (0.0, 8.0, "float"),  # §2.5: extended for studio quality
     "ola_crossfade_ms": (5.0, 60.0, "float"),
     "compression_ratio": (1.05, 5.0, "log"),
     "eq_high_shelf_db": (-6.0, 6.0, "float"),
-    "ar_order": (16.0, 128.0, "int"),
-    "click_threshold_sigma": (3.0, 8.0, "float"),
+    "ar_order": (16.0, 200.0, "int"),  # extended for high-SR LPC analysis
+    "click_threshold_sigma": (2.5, 8.0, "float"),  # lower floor for extreme crackle
     "hpf_cutoff_hz": (10.0, 120.0, "log"),
     "nr_smoothing_ms": (20.0, 200.0, "log"),
     "declip_threshold": (0.90, 0.99, "float"),
@@ -623,20 +623,23 @@ class GPParameterOptimizer:
 
         # ── Einträge mit vollständigen goal_scores ermitteln ──────────────
         moo_entries = [
-            e for e in memory
-            if len(e.params_normalized) == self._dim
-            and len(e.goal_scores) >= len(PARETO_OBJECTIVES)
+            e for e in memory if len(e.params_normalized) == self._dim and len(e.goal_scores) >= len(PARETO_OBJECTIVES)
         ]
 
         if len(moo_entries) < n_init:
             # ── Fallback: UCB-Diversitätssampling (bisheriges Verhalten) ──
             logger.debug(
                 "propose_pareto: zu wenig MOO-Daten (%d < %d), UCB-Fallback für '%s'",
-                len(moo_entries), n_init, material,
+                len(moo_entries),
+                n_init,
+                material,
             )
             return self._pareto_ucb_fallback(
-                material=material, n_c=n_c, n_init=n_init,
-                memory=memory, era_warmstart=era_warmstart,
+                material=material,
+                n_c=n_c,
+                n_init=n_init,
+                memory=memory,
+                era_warmstart=era_warmstart,
             )
 
         # ── 14 separate GPs eine pro Objective ───────────────────────────
@@ -681,9 +684,7 @@ class GPParameterOptimizer:
         pareto_indices = np.where(~is_dominated)[0]
 
         # ── Crowding-Distance-Selektion für diverse Repräsentanten ───────
-        selected_indices = self._crowding_distance_select(
-            pareto_indices, pred_means, n_c
-        )
+        selected_indices = self._crowding_distance_select(pareto_indices, pred_means, n_c)
 
         proposals: list[ParameterProposal] = []
         it = self._iterations.get(material, 0)
@@ -709,7 +710,9 @@ class GPParameterOptimizer:
         self._iterations[material] = it + 1
         logger.debug(
             "propose_pareto: %d Pareto-Kandidaten (aus %d nicht-dominierten) für material='%s'",
-            len(proposals), len(pareto_indices), material,
+            len(proposals),
+            len(pareto_indices),
+            material,
         )
         return proposals
 
@@ -814,9 +817,7 @@ class GPParameterOptimizer:
             distances[sorted_order[0]] = np.inf
             distances[sorted_order[-1]] = np.inf
             for k in range(1, len(sorted_order) - 1):
-                distances[sorted_order[k]] += (
-                    (front[sorted_order[k + 1], m] - front[sorted_order[k - 1], m]) / f_range
-                )
+                distances[sorted_order[k]] += (front[sorted_order[k + 1], m] - front[sorted_order[k - 1], m]) / f_range
 
         # Select n_select with highest crowding distance
         top_k = np.argsort(distances)[::-1][:n_select]
@@ -875,7 +876,10 @@ class GPParameterOptimizer:
 
         logger.debug(
             "GP-Update: material=%s score=%.4f goals=%d n_memory=%d",
-            material, score, len(clean_goals), len(memory),
+            material,
+            score,
+            len(clean_goals),
+            len(memory),
         )
 
     def best_known_parameters(self, material: str) -> dict[str, Any] | None:

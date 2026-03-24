@@ -191,7 +191,9 @@ class TestPMGGWrapPhaseStructure:
     def test_10_action_is_valid_string(self, gate, audio_5s):
         gate.reset()
         out, scores, entry = gate.wrap_phase(_MockPassPhase(), audio_5s, SR)
-        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5", "rollback"}
+        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5"} or entry.action.startswith(
+            "best_effort"
+        )
 
     def test_11_strength_used_is_positive(self, gate, audio_5s):
         gate.reset()
@@ -263,11 +265,13 @@ class TestPMGGRegression:
         assert entry.action in {"passed", "retry1"}
 
     def test_20_zero_phase_triggers_protection(self, gate, audio_5s):
-        """Null-Phase zerstört Signal — Gate soll Rollback/Retry auslösen."""
+        """Null-Phase zerstört Signal — Gate soll Best-Effort/Retry auslösen."""
         gate.reset()
         _, _, entry = gate.wrap_phase(_MockZeroPhase(), audio_5s, SR)
-        # Bei starker Regression: rollback oder retry
-        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5", "rollback"}
+        # Bei starker Regression: best_effort oder retry (kein Rollback/Skip mehr seit v9.10.64)
+        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5"} or entry.action.startswith(
+            "best_effort"
+        )
 
     def test_21_zero_phase_output_is_bounded(self, gate, audio_5s):
         gate.reset()
@@ -294,7 +298,9 @@ class TestPMGGInputVariations:
         gate.reset()
         out, scores, entry = gate.wrap_phase(_MockPassPhase(), audio_1s, SR)
         assert np.isfinite(out).all()
-        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5", "rollback"}
+        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5"} or entry.action.startswith(
+            "best_effort"
+        )
 
     def test_24_stereo_audio(self, gate):
         np.random.seed(42)
@@ -323,7 +329,9 @@ class TestPMGGInputVariations:
         }
         out, scores, entry = gate.wrap_phase(_MockPassPhase(), audio_5s, SR, scores_before=initial_scores)
         assert np.isfinite(out).all()
-        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5", "rollback"}
+        assert entry.action in {"passed", "retry1", "retry2", "retry3", "retry4", "retry5"} or entry.action.startswith(
+            "best_effort"
+        )
 
     def test_26_attenuate_phase_passes(self, gate, audio_5s):
         """Minimale Dämpfung (0.98) sollte in den meisten Fällen akzeptiert werden."""
@@ -337,54 +345,63 @@ class TestPMGGInputVariations:
 # Tests §9.7.3 — Phasen-adaptive Sample-Dauer (PHASE_SAMPLE_DURATIONS)
 # ----------------------------------------------------------------------
 
+
 class TestPMGGAdaptiveSampleDuration:
     """§9.7.3: Triviale Phasen bekommen kürzere Sample-Dauer als Standard."""
 
     def test_27_trivial_phases_have_short_duration(self):
         from backend.core.per_phase_musical_goals_gate import (
-            _get_sample_duration,
-            SAMPLE_DURATION_S,
             PHASE_SAMPLE_DURATIONS,
+            SAMPLE_DURATION_S,
+            _get_sample_duration,
         )
+
         for prefix in PHASE_SAMPLE_DURATIONS:
             dur = _get_sample_duration(prefix)
             assert dur < SAMPLE_DURATION_S, f"Phase {prefix}: {dur} nicht kürzer als {SAMPLE_DURATION_S}"
 
     def test_28_standard_phase_gets_full_duration(self):
-        from backend.core.per_phase_musical_goals_gate import _get_sample_duration, SAMPLE_DURATION_S
+        from backend.core.per_phase_musical_goals_gate import SAMPLE_DURATION_S, _get_sample_duration
+
         assert _get_sample_duration("phase_03_denoise") == SAMPLE_DURATION_S
         assert _get_sample_duration("phase_55_diffusion_inpainting") == SAMPLE_DURATION_S
         assert _get_sample_duration("phase_29_tape_hiss_reduction") == SAMPLE_DURATION_S
 
     def test_29_dc_offset_phase_1s(self):
         from backend.core.per_phase_musical_goals_gate import _get_sample_duration
+
         dur = _get_sample_duration("phase_30_dc_offset_removal")
         assert 1.0 <= dur <= 2.0
 
     def test_30_rumble_filter_phase_1s(self):
         from backend.core.per_phase_musical_goals_gate import _get_sample_duration
+
         dur = _get_sample_duration("phase_05_rumble_filter")
         assert 1.0 <= dur <= 2.0
 
     def test_31_hum_removal_phase_2s(self):
         from backend.core.per_phase_musical_goals_gate import _get_sample_duration
+
         dur = _get_sample_duration("phase_02_hum_removal")
         assert 1.0 <= dur <= 2.5
 
     def test_32_duration_bounded_min_1s(self):
         from backend.core.per_phase_musical_goals_gate import _get_sample_duration
+
         # Keine Dauer darf unter 1 Sekunde liegen
         for prefix in ("phase_30", "phase_05", "phase_02", "phase_15", "phase_11", "phase_18"):
             assert _get_sample_duration(prefix) >= 1.0
 
     def test_33_duration_bounded_max_5s(self):
-        from backend.core.per_phase_musical_goals_gate import _get_sample_duration, SAMPLE_DURATION_S
+        from backend.core.per_phase_musical_goals_gate import SAMPLE_DURATION_S, _get_sample_duration
+
         # Keine adaptive Dauer darf über den Standard hinausgehen
         for prefix in ("phase_30", "phase_05", "phase_02", "phase_15", "phase_11", "phase_18"):
             assert _get_sample_duration(prefix) <= SAMPLE_DURATION_S
 
     def test_34_phase_sample_durations_dict_nonempty(self):
         from backend.core.per_phase_musical_goals_gate import PHASE_SAMPLE_DURATIONS
+
         assert len(PHASE_SAMPLE_DURATIONS) >= 6
 
     def test_35_wrap_phase_uses_short_duration_for_trivial(self, gate, audio_5s):

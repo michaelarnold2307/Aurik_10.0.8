@@ -10,8 +10,8 @@
 |---|---|---|---|
 | Noise Reduction (Vocals/Gesang) | DeepFilterNet v3.II | OMLSA+IMCRA | DTLN, RNNoise |
 | Noise Reduction (rein instrumental) | OMLSA/IMCRA (kein Speech-Prior) | DeepFilterNet v3.II (energy_bias=−9 dB) | DTLN, RNNoise |
-| Stem Separation Vocals | MelBandRoformer (`bs_roformer_plugin`) | HTDemucs-6s, NMF-β | OpenUnmix |
-| Stem Separation Instrumental | HTDemucs-6s (`htdemucs_plugin`) | MDX23C Kim_Inst, NMF-β | OpenUnmix |
+| Stem Separation Vocals | MelBandRoformer (`bs_roformer_plugin`) | MDX23C (Kim_Vocal_2), NMF-β | OpenUnmix |
+| Stem Separation Instrumental | MDX23C (`mdx23c_plugin`, Kim_Inst) | HTDemucs-6s (Legacy), NMF-β | OpenUnmix |
 | Audio Super-Resolution | AudioSR | Sinusoidal + Stoch. Modeling | SEGAN |
 | Codec Artefakte | Apollo | Resemble-Enhance | MetricGAN+ |
 | Pitch Estimation | FCPE | CREPE → PESTO → pYIN | SWIPE, YIN |

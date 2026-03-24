@@ -14,6 +14,7 @@ Migrationsanleitung::
 
 Referenz: §2.1 Aurik-9-Spec, MediumClassifier (§6.1 MaterialType)
 """
+
 from __future__ import annotations
 
 import warnings as _warnings
@@ -35,7 +36,8 @@ from backend.core.medium_classifier import (
 # Aurik-6.0-kompatibler Alias
 CarrierForensics = MediumClassifier
 
-def analyze_carrier_forensics(mono: np.ndarray, sr: int) -> dict:
+
+def analyze_carrier_forensics(mono, sr: int) -> dict:
     """Legacy compatibility shim (Aurik 6.0 → 9.x).
 
     Delegates to ``classify_medium`` and returns a dict compatible with the
@@ -46,9 +48,12 @@ def analyze_carrier_forensics(mono: np.ndarray, sr: int) -> dict:
         ``features`` (dict).
     """
     import numpy as _np
+
     result = classify_medium(_np.asarray(mono), sr)
     return {
-        "carrier_forensic": str(result.material_type.value if hasattr(result.material_type, "value") else result.material_type),
+        "carrier_forensic": str(
+            result.material_type.value if hasattr(result.material_type, "value") else result.material_type
+        ),
         "score": float(result.confidence),
         "features": {},
     }

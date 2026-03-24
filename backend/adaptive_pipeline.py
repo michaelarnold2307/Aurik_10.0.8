@@ -324,8 +324,8 @@ class AdaptiveProcessingPipeline:
         # Bei Fehler: Plugin = None, weiter mit nächstem, Fallback später
         self.deepfilternet = self._safe_load_plugin("deepfilternet", DeepFilterNetV3IIPlugin)
         self.resemble_enhance = self._safe_load_plugin("resemble_enhance", ResembleEnhancePlugin)
-        self.demucs = self._safe_load_plugin("demucs", DemucsV4Plugin)
         self.mdx23c = self._safe_load_plugin("mdx23c", MDX23CPlugin)
+        self.demucs = self.mdx23c  # §4.4: MDX23C (Kim_Vocal_2) ersetzt HTDemucs als Primär-Separator
         self.sgmse = self._safe_load_plugin("wpe", WpePlugin)
         self.mp_senet = self._safe_load_plugin("mp_senet", MpSenetPlugin)
         self.banquet = self._safe_load_plugin("banquet", BanquetVinylPlugin)
@@ -342,7 +342,9 @@ class AdaptiveProcessingPipeline:
             "resemble_enhance", self.resemble_enhance, {"type": "universal", "domain": "vocal", "quality": "high"}
         )
         self.model_manager.register_model(
-            "mp_senet", self.mp_senet, {"type": "enhancement", "domain": "music", "quality": "high"}  # §4.4
+            "mp_senet",
+            self.mp_senet,
+            {"type": "enhancement", "domain": "music", "quality": "high"},  # §4.4
         )
         self.model_manager.register_model(
             "wpe", self.sgmse, {"type": "denoising", "domain": "music", "quality": "high"}
@@ -414,16 +416,21 @@ class AdaptiveProcessingPipeline:
         for name in all_plugins:
             mark = "*" if name in chosen else " "
             self.logger.info(f"│{mark} ✓ {name.ljust(17)} │")
-        self.logger.info(f"└─ Status: {len(all_plugins)}/47 ML-Plugins & Metriken importiert ───────────────────────┘\n")
+        self.logger.info(
+            f"└─ Status: {len(all_plugins)}/47 ML-Plugins & Metriken importiert ───────────────────────┘\n"
+        )
         self._print_component_status()
 
         # v8.1: Advanced Vocal Separation (Hybrid: MDX-Net + Demucs v5)
         if VOCAL_SEPARATION_V8_AVAILABLE:
             self.vocal_separator_v8 = HybridVocalSeparator(
-                fusion_strategy="adaptive", sample_rate=44100, device=None  # Auto-detect CUDA/CPU
+                fusion_strategy="adaptive",
+                sample_rate=44100,
+                device=None,  # Auto-detect CUDA/CPU
             )
             self.vocal_safety_wrapper = VocalSeparationSafetyWrapper(
-                self.vocal_separator_v8, strict_mode=False  # Warning mode (not blocking)
+                self.vocal_separator_v8,
+                strict_mode=False,  # Warning mode (not blocking)
             )
             self.logger.info("v8.1 Vocal Separation initialized (Hybrid: MDX-Net + Demucs v5)")
         else:
@@ -441,7 +448,8 @@ class AdaptiveProcessingPipeline:
                 formant_preservation=True,  # Always enabled
             )
             self.pitch_corrector_safety = PitchCorrectionSafetyWrapper(
-                self.pitch_corrector_v8, strict_mode=False  # Warning mode (logs but doesn't block)
+                self.pitch_corrector_v8,
+                strict_mode=False,  # Warning mode (logs but doesn't block)
             )
             self.logger.info("v8.2 Pitch Correction initialized (CREPE + Epistemic Gates)")
         else:
@@ -589,9 +597,7 @@ class AdaptiveProcessingPipeline:
             HIPSViolationError: If strict_mode=True and HIPS violation detected
         """
         if not VOCAL_SEPARATION_V8_AVAILABLE or self.vocal_separator_v8 is None:
-            raise RuntimeError(
-                "v8.1 Vocal Separation not available. " "Install dependencies: pip install demucs librosa"
-            )
+            raise RuntimeError("v8.1 Vocal Separation not available. Install dependencies: pip install demucs librosa")
 
         self.logger.info("Starting v8.1 vocal separation (Hybrid: MDX-Net + Demucs v5)")
 
@@ -609,9 +615,7 @@ class AdaptiveProcessingPipeline:
         # Log metrics
         metrics = self.vocal_separator_v8.get_metrics()
         self.logger.info(
-            f"Vocal separation complete: "
-            f"{metrics['total_separations']} total, "
-            f"fusion={metrics['fusion_strategy']}"
+            f"Vocal separation complete: {metrics['total_separations']} total, fusion={metrics['fusion_strategy']}"
         )
 
         # Audio monitor tracking (if available)
@@ -660,7 +664,7 @@ class AdaptiveProcessingPipeline:
         """
         if not PITCH_CORRECTION_V8_AVAILABLE or self.pitch_corrector_v8 is None:
             self.logger.warning(
-                "v8.2 Pitch Correction not available. " "Install dependencies: pip install crepe-tf librosa scipy"
+                "v8.2 Pitch Correction not available. Install dependencies: pip install crepe-tf librosa scipy"
             )
             return audio, {
                 "corrected": False,
@@ -795,7 +799,7 @@ class AdaptiveProcessingPipeline:
         if media_chain:
             self.logger.info(
                 "\n🔎 Erkannte Medienkette: "
-                + " → ".join(f"{m['medium']} ({m['confidence']*100:.1f}%)" for m in media_chain)
+                + " → ".join(f"{m['medium']} ({m['confidence'] * 100:.1f}%)" for m in media_chain)
             )
         else:
             self.logger.info("\n🔎 Medienkette: Keine eindeutige Erkennung möglich")
@@ -1280,7 +1284,10 @@ class AdaptiveProcessingPipeline:
 
                 # Process Vocals mit adaptiven Sibilanten-Parametern
                 audio_vocal_enhanced = process_vocals(
-                    audio_refined, sr=sr, gender=detected_gender, model_path=None  # Optional: ML-based HF texture model
+                    audio_refined,
+                    sr=sr,
+                    gender=detected_gender,
+                    model_path=None,  # Optional: ML-based HF texture model
                 )
 
                 self.logger.info(f"✓ Vocal Enhancement applied (gender={detected_gender})")
@@ -1544,9 +1551,9 @@ class AdaptiveProcessingPipeline:
         # Policy-Engine wählt optimales Model
         model_name = self.policy_engine.select_separation_model(context, goal)
 
-        self.logger.info(f"\n{'='*80}")
+        self.logger.info(f"\n{'=' * 80}")
         self.logger.info(f"🎶 SOURCE-SEPARATION AUSGEWÄHLT: {model_name.upper()}")
-        self.logger.info(f"{'='*80}")
+        self.logger.info(f"{'=' * 80}")
         self.logger.info(f"   Stems: {goal.get('stems', 4)}")
         self.logger.info(f"   Genre: {context.get('genre', 'unknown')}")
 
@@ -1557,7 +1564,7 @@ class AdaptiveProcessingPipeline:
         else:
             self.logger.info("   Model: UVR-MDXNet (2-stem)")
 
-        self.logger.info(f"{'='*80}\n")
+        self.logger.info(f"{'=' * 80}\n")
 
         plugin = getattr(self, model_name)
 
@@ -1627,12 +1634,12 @@ class AdaptiveProcessingPipeline:
         # NUTZE CONTEXT AUS PHASE 1
         self.logger.info(f"Remastering Pipeline: detected_medium={context.get('detected_medium', 'unknown')}")
 
-        self.logger.info(f"\n{'='*80}")
+        self.logger.info(f"\n{'=' * 80}")
         self.logger.info("🎼 MASTERING/REMASTERING")
-        self.logger.info(f"{'='*80}")
+        self.logger.info(f"{'=' * 80}")
         self.logger.info("   Method: Matchering 2.0 (AI-powered)")
         self.logger.info("   Target: Professional Mastering Standards")
-        self.logger.info(f"{'='*80}\n")
+        self.logger.info(f"{'=' * 80}\n")
 
         container_info = {
             "container": "matchering2.0",
@@ -1773,8 +1780,8 @@ class AdaptiveProcessingPipelineV2:
         # Processing Plugins
         self.deepfilternet = DeepFilterNetV3IIPlugin()
         self.resemble_enhance = ResembleEnhancePlugin()
-        self.demucs = DemucsV4Plugin()
-        self.mdx23c = MDX23CPlugin()
+        self.mdx23c = MDX23CPlugin()  # §4.4: MDX23C (Kim_Vocal_2) Primär-Separator
+        self.demucs = self.mdx23c  # Legacy-Alias
         self.sgmse = WpePlugin()
         # self.fullsubnet entfernt — 16 kHz-Sprach-NR, nicht §11.3
         # DCCRNPlugin entfernt — §4.4 verboten; MpSenetPlugin übernimmt
@@ -1988,9 +1995,9 @@ class AdaptiveProcessingPipelineV2:
 
     def _process_step_with_tracking(self, job, audio, sr, operation, model_name, step_id, context, goal):
         """Process a single step and create ProcessingStep tracking"""
+        from datetime import datetime
         import io
         import tempfile
-        from datetime import datetime
 
         import soundfile as sf
 

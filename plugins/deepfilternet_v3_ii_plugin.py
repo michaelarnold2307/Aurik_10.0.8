@@ -91,8 +91,7 @@ class DeepFilterNetV3Plugin:
         # ── ML-Budget-Check VOR dem Laden (§5.1 OOM-Schutz) ──────────────────
         _allocated = False
         try:
-            from backend.core.ml_memory_budget import release as _release
-            from backend.core.ml_memory_budget import try_allocate
+            from backend.core.ml_memory_budget import release as _release, try_allocate
 
             if not try_allocate("DeepFilterNetV3", size_gb=0.15):
                 logger.warning("DeepFilterNet: ML-Budget erschöpft — DSP-Fallback aktiv")
@@ -201,6 +200,10 @@ class DeepFilterNetV3Plugin:
     def _compute_features(self, mono: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Berechne ERB-Features und Spektrum-Features aus mono-Audio.
 
+        Vectorized batch-FFT: statt Python-Loop über n_frames wird eine
+        Frame-Matrix per stride_tricks gebaut und np.fft.rfft batch-weise
+        ausgeführt (~50-100× schneller bei langen Dateien).
+
         Returns:
             feat_erb   [1, 1, S, 32]
             feat_spec  [1, 2, S, 96]
@@ -214,12 +217,10 @@ class DeepFilterNetV3Plugin:
         mono_p = np.zeros(padded_len, dtype=np.float32)
         mono_p[:n] = mono
 
-        spec = []
-        for i in range(n_frames):
-            frame = mono_p[i * _HOP : i * _HOP + _N_FFT] * win
-            f = np.fft.rfft(frame)
-            spec.append(f)
-        spec_cx = np.array(spec, dtype=np.complex64).T  # [481, S]
+        # Vectorized STFT: batch-FFT über alle Frames gleichzeitig
+        indices = np.arange(n_frames)[:, np.newaxis] * _HOP + np.arange(_N_FFT)
+        frames = mono_p[indices] * win  # [n_frames, _N_FFT]
+        spec_cx = np.fft.rfft(frames, axis=1).astype(np.complex64).T  # [481, S]
 
         mag = np.abs(spec_cx).astype(np.float32)  # [481, S]
 
@@ -240,24 +241,38 @@ class DeepFilterNetV3Plugin:
         return feat_erb.astype(np.float32), feat_spec.astype(np.float32), spec_cx
 
     def _apply_df_filter(self, spec_cx: np.ndarray, coefs: np.ndarray, alpha: np.ndarray) -> np.ndarray:
-        """Wende Deep-Filter-Koeffizienten auf komplexes Spektrum an.
+        """Wende Deep-Filter-Koeffizienten auf komplexes Spektrum an (vektorisiert).
+
+        Vectorized FIR-Filter: statt O(S × n_bins × DF_ORDER) Python-Iterationen
+        werden nur _DF_ORDER (=10) NumPy-Array-Operationen durchgeführt.
+        Beschleunigung: ~100-1000× gegenüber reinem Python-Loop.
 
         coefs: [S, 96, 10] DF-Koeffizienten
+        alpha: [1, S, 1] oder skalar — Blending-Faktor (0..1)
         """
         n_bins = min(coefs.shape[1], spec_cx.shape[0])
         S = spec_cx.shape[1]
         result = spec_cx.copy()
 
-        for t in range(S):
-            for b in range(n_bins):
-                # Laufendes FIR über DF_ORDER vergangene Frames
-                acc = complex(0.0)
-                for k in range(_DF_ORDER):
-                    t_past = max(0, t - k)
-                    c = coefs[t, b, k]
-                    acc += c * spec_cx[b, t_past]
-                blend = float(alpha[0, t, 0]) if alpha.ndim >= 2 else 0.5
-                result[b, t] = blend * acc + (1 - blend) * spec_cx[b, t]
+        spec_sub = spec_cx[:n_bins, :]  # [n_bins, S]
+        acc = np.zeros((n_bins, S), dtype=np.complex128)
+
+        for k in range(_DF_ORDER):
+            if k == 0:
+                shifted = spec_sub
+            else:
+                shifted = np.empty_like(spec_sub)
+                shifted[:, k:] = spec_sub[:, : S - k]
+                shifted[:, :k] = spec_sub[:, 0:1]  # max(0, t-k) → clamp to t=0
+            # coefs[:, :, k] shape [S, n_bins] → transpose to [n_bins, S]
+            acc += coefs[:, :n_bins, k].T * shifted
+
+        # Alpha-Blending: blend × FIR-Ergebnis + (1 - blend) × Original
+        if alpha.ndim >= 2 and alpha.shape[1] >= S:
+            blend = alpha[0, :S, 0].astype(np.float64)[np.newaxis, :]  # [1, S]
+        else:
+            blend = np.full((1, S), 0.5, dtype=np.float64)
+        result[:n_bins, :] = (blend * acc + (1.0 - blend) * spec_sub).astype(spec_cx.dtype)
 
         return result
 
@@ -300,16 +315,23 @@ class DeepFilterNetV3Plugin:
             logger.debug("DeepFilterNet ONNX-Inferenz-Fehler: %s — DSP-Fallback.", exc)
             return self._omlsa_fallback(mono, _SR)
 
-        # ISTFT
+        # ISTFT (vectorized batch-IRFFT + overlap-add)
         win = np.hanning(_N_FFT).astype(np.float32)
         n_frames = spec_filtered.shape[1]
         n_out = _HOP * n_frames + _N_FFT
+
+        # Batch-IRFFT: alle Frames auf einmal transformieren
+        frames_out = np.fft.irfft(spec_filtered.T, n=_N_FFT, axis=1).astype(np.float32)  # [n_frames, _N_FFT]
+        frames_out *= win  # Windowing
+
+        # Overlap-Add (Loop bleibt, da in-place Akkumulation nötig — aber nur leichte Arithmetik)
         out = np.zeros(n_out, dtype=np.float32)
+        win_sq = win * win
         win_sum = np.zeros(n_out, dtype=np.float32)
         for i in range(n_frames):
-            frame = np.fft.irfft(spec_filtered[:, i], n=_N_FFT).real.astype(np.float32)
-            out[i * _HOP : i * _HOP + _N_FFT] += frame * win
-            win_sum[i * _HOP : i * _HOP + _N_FFT] += win * win
+            s = i * _HOP
+            out[s : s + _N_FFT] += frames_out[i]
+            win_sum[s : s + _N_FFT] += win_sq
 
         win_sum = np.where(win_sum < 1e-8, 1.0, win_sum)
         out /= win_sum

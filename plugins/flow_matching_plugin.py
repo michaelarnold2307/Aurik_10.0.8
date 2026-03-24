@@ -361,9 +361,9 @@ class FlowMatchingPlugin:
     ) -> np.ndarray | None:
         """Versucht CQTdiff+-Inpainting (SOTA-Upgrade)."""
         try:
-            from plugins.cqtdiff_plus_plugin import CQTdiffPlusPlugin  # type: ignore[import]
+            from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus  # type: ignore[import]
 
-            plugin = CQTdiffPlusPlugin()
+            plugin = get_cqtdiff_plus()
             result = plugin.inpaint(audio, sr, gap_start, gap_end, context_audio=phrase_context)
             return result.audio
         except (ImportError, Exception) as e:

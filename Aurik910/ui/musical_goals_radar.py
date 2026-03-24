@@ -8,9 +8,7 @@ Vollständig laienfreundlich: Deutsche Labels, Farb-Kodierung, Prozentwerte, Too
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Optional
 
 from PyQt5.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PyQt5.QtGui import (
@@ -47,38 +45,38 @@ class GoalEntry:
 
 # Standard-Goals gemäß §1.2 der Spec — vollständige deutsche Bezeichnungen
 DEFAULT_GOALS: list[GoalEntry] = [
-    GoalEntry("brillanz",             "Brillanz",         0.85),
-    GoalEntry("waerme",               "Wärme",            0.80),
-    GoalEntry("natuerlichkeit",       "Natürlichkeit",    0.90),
-    GoalEntry("authentizitaet",       "Authentizität",    0.88),
-    GoalEntry("emotionalitaet",       "Emotionalität",    0.87),
-    GoalEntry("transparenz",          "Transparenz",      0.89),
-    GoalEntry("bass_kraft",           "Bass-Kraft",       0.85),
-    GoalEntry("groove",               "Groove",           0.88),
-    GoalEntry("spatial_depth",        "Raumtiefe",        0.75),
-    GoalEntry("timbre_authentizitaet","Timbre",           0.87),
-    GoalEntry("tonal_center",         "Tonales Zentrum",  0.95),
-    GoalEntry("micro_dynamics",       "Mikro-Dynamik",    0.92),
-    GoalEntry("separation_fidelity",  "Separation",       0.82),
-    GoalEntry("artikulation",         "Artikulation",     0.85),
+    GoalEntry("brillanz", "Brillanz", 0.85),
+    GoalEntry("waerme", "Wärme", 0.80),
+    GoalEntry("natuerlichkeit", "Natürlichkeit", 0.90),
+    GoalEntry("authentizitaet", "Authentizität", 0.88),
+    GoalEntry("emotionalitaet", "Emotionalität", 0.87),
+    GoalEntry("transparenz", "Transparenz", 0.89),
+    GoalEntry("bass_kraft", "Bass-Kraft", 0.85),
+    GoalEntry("groove", "Groove", 0.88),
+    GoalEntry("spatial_depth", "Raumtiefe", 0.75),
+    GoalEntry("timbre_authentizitaet", "Timbre", 0.87),
+    GoalEntry("tonal_center", "Tonales Zentrum", 0.95),
+    GoalEntry("micro_dynamics", "Mikro-Dynamik", 0.92),
+    GoalEntry("separation_fidelity", "Separation", 0.82),
+    GoalEntry("artikulation", "Artikulation", 0.85),
 ]
 
 # Farb-Konstanten
-COLOR_PASS   = QColor(76, 175, 80, 220)    # Grün  — Ziel erfüllt
-COLOR_WARN   = QColor(255, 193, 7, 220)    # Gelb  — knapp am Limit (< +0.04)
-COLOR_FAIL   = QColor(244, 67, 54, 220)    # Rot   — Ziel unterschritten
-COLOR_NA     = QColor(100, 110, 130, 140)  # Grau  — nicht anwendbar
-COLOR_SYNTH  = QColor(220, 130, 240, 200)  # Lila  — era-authentisch ergänzt
-COLOR_BAR_BG = QColor(30, 38, 58, 180)     # Balken-Hintergrund
+COLOR_PASS = QColor(76, 175, 80, 220)  # Grün  — Ziel erfüllt
+COLOR_WARN = QColor(255, 193, 7, 220)  # Gelb  — knapp am Limit (< +0.04)
+COLOR_FAIL = QColor(244, 67, 54, 220)  # Rot   — Ziel unterschritten
+COLOR_NA = QColor(100, 110, 130, 140)  # Grau  — nicht anwendbar
+COLOR_SYNTH = QColor(220, 130, 240, 200)  # Lila  — era-authentisch ergänzt
+COLOR_BAR_BG = QColor(30, 38, 58, 180)  # Balken-Hintergrund
 COLOR_THRESH = QColor(255, 255, 255, 120)  # Schwellwert-Linie
-COLOR_TEXT   = QColor(190, 200, 218)       # Standard-Textfarbe
-COLOR_DIM    = QColor(120, 130, 150, 160)  # Gedimmter Text
+COLOR_TEXT = QColor(190, 200, 218)  # Standard-Textfarbe
+COLOR_DIM = QColor(120, 130, 150, 160)  # Gedimmter Text
 
 # Vollständige Farbpalette für Bar BG je nach Status
 _BAR_BG_PASS = QColor(76, 175, 80, 40)
 _BAR_BG_WARN = QColor(255, 193, 7, 35)
 _BAR_BG_FAIL = QColor(244, 67, 54, 35)
-_BAR_BG_NA   = QColor(60, 70, 90, 60)
+_BAR_BG_NA = QColor(60, 70, 90, 60)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,14 +100,14 @@ class MusicalGoalsRadarWidget(QWidget):
     """
 
     # Geometry constants
-    _LABEL_W = 98    # px width of the goal name column
-    _SCORE_W = 34    # px width of the "87 %" score column
-    _ICON_W  = 18    # px width of status icon
-    _ROW_H   = 16    # px height per goal row
-    _ROW_GAP = 2     # px gap between rows
-    _PAD_X   = 8     # horizontal outer padding
-    _PAD_TOP = 28    # top padding (header)
-    _PAD_BOT = 22    # bottom padding (legend)
+    _LABEL_W = 98  # px width of the goal name column
+    _SCORE_W = 34  # px width of the "87 %" score column
+    _ICON_W = 18  # px width of status icon
+    _ROW_H = 16  # px height per goal row
+    _ROW_GAP = 2  # px gap between rows
+    _PAD_X = 8  # horizontal outer padding
+    _PAD_TOP = 28  # top padding (header)
+    _PAD_BOT = 22  # bottom padding (legend)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -119,6 +117,7 @@ class MusicalGoalsRadarWidget(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent, False)
 
         import copy
+
         self._goals: list[GoalEntry] = copy.deepcopy(DEFAULT_GOALS)
         self._hovered_idx: int = -1
         self._has_data: bool = False  # False = vor erster Restaurierung
@@ -185,9 +184,112 @@ class MusicalGoalsRadarWidget(QWidget):
     def reset(self) -> None:
         """Setzt alle Scores zurück (vor erster Restaurierung)."""
         import copy
+
         self._goals = copy.deepcopy(DEFAULT_GOALS)
         self._has_data = False
         self.update()
+
+    # ──────────────────────────── Vektor-Icons ────────────────────────────
+
+    @staticmethod
+    def _draw_icon(painter: QPainter, cx: float, cy: float, r: float, kind: str, color: QColor) -> None:
+        """Draw a crisp vector status icon centered at (cx, cy) with radius r.
+
+        kind: 'pass' | 'warn' | 'fail' | 'na' | 'synth'
+        """
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if kind == "pass":
+            # Filled circle + white checkmark
+            bg = QColor(color)
+            bg.setAlpha(210)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cx, cy), r, r)
+            pen = QPen(QColor(255, 255, 255, 240), max(1.2, r * 0.3))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            # Checkmark path  ✓
+            painter.drawLine(
+                QPointF(cx - r * 0.38, cy + r * 0.05),
+                QPointF(cx - r * 0.08, cy + r * 0.38),
+            )
+            painter.drawLine(
+                QPointF(cx - r * 0.08, cy + r * 0.38),
+                QPointF(cx + r * 0.42, cy - r * 0.32),
+            )
+
+        elif kind == "warn":
+            # Filled rounded triangle + white exclamation mark
+            bg = QColor(color)
+            bg.setAlpha(210)
+            tri = QPolygonF(
+                [
+                    QPointF(cx, cy - r * 0.92),
+                    QPointF(cx - r * 0.88, cy + r * 0.62),
+                    QPointF(cx + r * 0.88, cy + r * 0.62),
+                ]
+            )
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPolygon(tri)
+            pen = QPen(QColor(255, 255, 255, 240), max(1.2, r * 0.28))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(
+                QPointF(cx, cy - r * 0.28),
+                QPointF(cx, cy + r * 0.12),
+            )
+            painter.drawPoint(QPointF(cx, cy + r * 0.35))
+
+        elif kind == "fail":
+            # Filled circle + white X
+            bg = QColor(color)
+            bg.setAlpha(210)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cx, cy), r, r)
+            pen = QPen(QColor(255, 255, 255, 240), max(1.2, r * 0.3))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            d = r * 0.35
+            painter.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
+            painter.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
+
+        elif kind == "synth":
+            # Diamond shape (rotated square) with inner glow
+            bg = QColor(color)
+            bg.setAlpha(200)
+            diamond = QPolygonF(
+                [
+                    QPointF(cx, cy - r),
+                    QPointF(cx + r * 0.72, cy),
+                    QPointF(cx, cy + r),
+                    QPointF(cx - r * 0.72, cy),
+                ]
+            )
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPolygon(diamond)
+            # Inner star dot
+            painter.setBrush(QBrush(QColor(255, 255, 255, 200)))
+            painter.drawEllipse(QPointF(cx, cy), r * 0.22, r * 0.22)
+
+        else:  # na / default — grey circle with horizontal dash
+            bg = QColor(color)
+            bg.setAlpha(120)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cx, cy), r, r)
+            pen = QPen(QColor(255, 255, 255, 180), max(1.0, r * 0.28))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(cx - r * 0.4, cy), QPointF(cx + r * 0.4, cy))
+
+        painter.restore()
 
     # ──────────────────────────── Geometrie ───────────────────────────────
 
@@ -263,7 +365,9 @@ class MusicalGoalsRadarWidget(QWidget):
             for row, name in enumerate(chunk):
                 x = 10 + col * col_w
                 y = h / 2 + 48 + row * 10
-                painter.drawText(QRectF(x, y, col_w, 10), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"· {name}")
+                painter.drawText(
+                    QRectF(x, y, col_w, 10), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"· {name}"
+                )
 
     def _draw_header(self, painter: QPainter) -> None:
         """Kopfzeile: Statusübersicht (✅ N  ⚠ N  ✗ N)."""
@@ -284,20 +388,27 @@ class MusicalGoalsRadarWidget(QWidget):
         font = QFont("Segoe UI", 7, QFont.Weight.Bold)
         painter.setFont(font)
 
-        parts = [
-            (f"✅ {n_pass}", COLOR_PASS),
-            (f"⚠ {n_warn}", COLOR_WARN),
-            (f"✗ {n_fail}", COLOR_FAIL),
+        parts: list[tuple[str, str, QColor]] = [
+            (str(n_pass), "pass", COLOR_PASS),
+            (str(n_warn), "warn", COLOR_WARN),
+            (str(n_fail), "fail", COLOR_FAIL),
         ]
         if n_na > 0:
-            parts.append((f"– {n_na}", COLOR_NA))
+            parts.append((str(n_na), "na", COLOR_NA))
 
         x = float(self._PAD_X)
-        y = 6.0
+        y_top = 6.0
         h_row = 18.0
-        for text, color in parts:
-            painter.setPen(QPen(color))
-            painter.drawText(QRectF(x, y, 52, h_row), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        _icon_r = 5.0
+        for label, kind, col in parts:
+            self._draw_icon(painter, x + _icon_r, y_top + h_row * 0.5, _icon_r, kind, col)
+            painter.setPen(QPen(col))
+            painter.drawText(
+                QRectF(x + _icon_r * 2 + 3, y_top, 32, h_row),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label,
+            )
+            x += 48
             x += 52
 
         # Thin separator line
@@ -332,7 +443,7 @@ class MusicalGoalsRadarWidget(QWidget):
                 bar_bg = _BAR_BG_FAIL
 
             # Hover highlight
-            is_hovered = (idx == self._hovered_idx)
+            is_hovered = idx == self._hovered_idx
             if is_hovered:
                 painter.setBrush(QBrush(QColor(255, 255, 255, 12)))
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -340,18 +451,21 @@ class MusicalGoalsRadarWidget(QWidget):
                     QRectF(self._PAD_X, y - 1, self.width() - 2 * self._PAD_X, self._ROW_H + 2), 3, 3
                 )
 
-            # ── Status icon ──
-            icon = "✅" if g.score >= t + 0.04 else ("⚠" if g.score >= t else "✗") if g.applicable else "–"
+            # ── Status icon (vector) ──
             if g.synthesized:
-                icon = "✦"
-            font_icon = QFont("Segoe UI", 6)
-            painter.setFont(font_icon)
-            painter.setPen(QPen(color))
-            painter.drawText(
-                QRectF(self._PAD_X, y, self._ICON_W, self._ROW_H),
-                Qt.AlignmentFlag.AlignCenter,
-                icon,
-            )
+                _ik = "synth"
+            elif not g.applicable:
+                _ik = "na"
+            elif g.score >= t + 0.04:
+                _ik = "pass"
+            elif g.score >= t:
+                _ik = "warn"
+            else:
+                _ik = "fail"
+            _icx = self._PAD_X + self._ICON_W * 0.5
+            _icy = y + self._ROW_H * 0.5
+            _ir = min(self._ICON_W, self._ROW_H) * 0.38
+            self._draw_icon(painter, _icx, _icy, _ir, _ik, color)
 
             # ── Goal name ──
             painter.setFont(font_label)
@@ -417,7 +531,9 @@ class MusicalGoalsRadarWidget(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QRectF(x, y + 2, 7, 7))
             painter.setPen(QPen(QColor(160, 170, 190, 180)))
-            painter.drawText(QRectF(x + 10, y, 58, 12), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+            painter.drawText(
+                QRectF(x + 10, y, 58, 12), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text
+            )
             x += 66
 
     # ──────────────────────────── Tooltip / Hover ─────────────────────────
@@ -456,20 +572,20 @@ class MusicalGoalsRadarWidget(QWidget):
         """Laienverständlicher Tooltip-Text für ein Goal."""
         # Human-readable descriptions per goal
         _DESCRIPTIONS: dict[str, str] = {
-            "brillanz":             "Helligkeit und Klarheit in den Höhen (Obertöne, Luftigkeit).",
-            "waerme":               "Wärme und Fülle im Bassbereich — angenehmes Klangfundament.",
-            "natuerlichkeit":       "Klingt die Aufnahme natürlich und unverarbeitet?",
-            "authentizitaet":       "Entspricht der Klang dem Original-Charakter der Aufnahme?",
-            "emotionalitaet":       "Transportiert die Restaurierung die emotionale Intensität?",
-            "transparenz":          "Sind alle Instrumente klar voneinander trennbar?",
-            "bass_kraft":           "Kraft und Tiefe im Bass inkl. fehlende Grundtöne.",
-            "groove":               "Rhythmisches Timing — keine Verschmierung von Transienten.",
-            "spatial_depth":        "Stereobreite und Raumtiefe (nur bei Stereo-Aufnahmen).",
-            "timbre_authentizitaet":"Klangfarbe der Instrumente — klingt die Oboe noch wie eine Oboe?",
-            "tonal_center":         "Tonart und Stimmung — kein Pitch-Shift durch die Restaurierung.",
-            "micro_dynamics":       "Lautstärke-Feinstruktur — Atemzüge, Pianissimo-Stellen.",
-            "separation_fidelity":  "Stimme und Instrumente bleiben getrennt (kein Matsch).",
-            "artikulation":         "Ansätze, Transienten und Konsonanten bleiben scharf.",
+            "brillanz": "Helligkeit und Klarheit in den Höhen (Obertöne, Luftigkeit).",
+            "waerme": "Wärme und Fülle im Bassbereich — angenehmes Klangfundament.",
+            "natuerlichkeit": "Klingt die Aufnahme natürlich und unverarbeitet?",
+            "authentizitaet": "Entspricht der Klang dem Original-Charakter der Aufnahme?",
+            "emotionalitaet": "Transportiert die Restaurierung die emotionale Intensität?",
+            "transparenz": "Sind alle Instrumente klar voneinander trennbar?",
+            "bass_kraft": "Kraft und Tiefe im Bass inkl. fehlende Grundtöne.",
+            "groove": "Rhythmisches Timing — keine Verschmierung von Transienten.",
+            "spatial_depth": "Stereobreite und Raumtiefe (nur bei Stereo-Aufnahmen).",
+            "timbre_authentizitaet": "Klangfarbe der Instrumente — klingt die Oboe noch wie eine Oboe?",
+            "tonal_center": "Tonart und Stimmung — kein Pitch-Shift durch die Restaurierung.",
+            "micro_dynamics": "Lautstärke-Feinstruktur — Atemzüge, Pianissimo-Stellen.",
+            "separation_fidelity": "Stimme und Instrumente bleiben getrennt (kein Matsch).",
+            "artikulation": "Ansätze, Transienten und Konsonanten bleiben scharf.",
         }
         lines: list[str] = [f"<b>{g.label}</b>"]
         if _desc := _DESCRIPTIONS.get(g.key, ""):

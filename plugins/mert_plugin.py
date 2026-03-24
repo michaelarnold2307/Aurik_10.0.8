@@ -31,10 +31,10 @@ Version: 1.0.0
 
 from __future__ import annotations
 
-import logging
-import threading
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
+import threading
 
 import numpy as np
 import scipy.signal as spsig
@@ -50,7 +50,7 @@ _F0_MIN_HZ = 50.0
 _F0_MAX_HZ = 2000.0
 _MERT_MODEL_DIR = Path(__file__).parent.parent / "models" / "mert"
 _MERT_330M_DIR = Path(__file__).parent.parent / "models" / "mert-v1-330m"  # §1.5, §9.5: primäres MERT-Modell
-_MERT_95M_DIR = Path(__file__).parent.parent / "models" / "mert-95m"   # Apache-2.0 Fallback
+_MERT_95M_DIR = Path(__file__).parent.parent / "models" / "mert-95m"  # Apache-2.0 Fallback
 
 # NAT-Enhancement Zielwerte (DSP-Fallback)
 _NAT_HARM_BOOST_DB_MAX = 1.0  # Max Oberton-Anhebung (konservativer als ExcellenceOptimizer)
@@ -372,6 +372,7 @@ class MertPlugin:
         if self._model_type != "dsp_fallback":
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
+
                 _unload_fn = globals().get("unload_mert")
                 if _unload_fn is not None:
                     _reg_plm("MERT", size_gb=3.7, unload_fn=_unload_fn)
@@ -392,6 +393,7 @@ class MertPlugin:
         # Globaler ML-Budget-Guard: ~1.2 GB für MERT-330M HuggingFace.
         try:
             from backend.core.ml_memory_budget import try_allocate as _try_alloc
+
             if not _try_alloc("MERT-330M-HF", 1.2):
                 return  # Budget erschöpft → nächste Priorität
         except Exception:
@@ -402,9 +404,7 @@ class MertPlugin:
             self._processor = Wav2Vec2FeatureExtractor.from_pretrained(
                 str(hf_dir), trust_remote_code=True, local_files_only=True
             )
-            self._model = AutoModel.from_pretrained(
-                str(hf_dir), trust_remote_code=True, local_files_only=True
-            )  # nosec B615 — lokales, SHA256-verifiziertes Modell
+            self._model = AutoModel.from_pretrained(str(hf_dir), trust_remote_code=True, local_files_only=True)  # nosec B615 — lokales, SHA256-verifiziertes Modell
             self._model.eval()
             self._model_type = "mert_hf"
             logger.info("MERT-v1-330M (HuggingFace, CC BY-NC 4.0) geladen: %s", hf_dir)
@@ -412,6 +412,7 @@ class MertPlugin:
             logger.debug("MERT-v1-330M HuggingFace Ladefehler: %s → weiter", e)
             try:
                 from backend.core.ml_memory_budget import release as _rel
+
                 _rel("MERT-330M-HF")
             except Exception:
                 pass
@@ -437,6 +438,7 @@ class MertPlugin:
         # Globaler ML-Budget-Guard: ~3.7 GB für MERT-330M fairseq.
         try:
             from backend.core.ml_memory_budget import try_allocate as _try_alloc
+
             if not _try_alloc("MERT-330M-fairseq", 3.7):
                 return  # Budget erschöpft → weiter mit nächster Priorität
         except Exception:
@@ -457,6 +459,7 @@ class MertPlugin:
             logger.debug("MERT-v1-330M fairseq Ladefehler: %s → weiter", e)
             try:
                 from backend.core.ml_memory_budget import release as _rel
+
                 _rel("MERT-330M-fairseq")
             except Exception:
                 pass
@@ -477,7 +480,9 @@ class MertPlugin:
             from transformers import AutoModel, Wav2Vec2FeatureExtractor  # type: ignore
 
             self._processor = Wav2Vec2FeatureExtractor.from_pretrained(
-                str(hf_dir), trust_remote_code=True, local_files_only=True  # nosec B615 — local_files_only=True, kein Download
+                str(hf_dir),
+                trust_remote_code=True,
+                local_files_only=True,  # nosec B615 — local_files_only=True, kein Download
             )
             self._model = AutoModel.from_pretrained(str(hf_dir), trust_remote_code=True, local_files_only=True)  # nosec B615
             self._model.eval()
@@ -497,6 +502,15 @@ class MertPlugin:
         if not pt_path.exists():
             logger.debug("MERT fairseq-Checkpoint nicht gefunden (%s) → weiter", pt_path)
             return
+        # ML-Budget-Guard: ~0.38 GB for MERT-v1-95M fairseq (§RELEASE_MUST OOM-Schutz)
+        try:
+            from backend.core.ml_memory_budget import try_allocate as _try_alloc_fs
+
+            if not _try_alloc_fs("MERT-95M-fairseq", 0.40):
+                logger.warning("MERT fairseq: ML-Budget erschöpft — DSP-Fallback")
+                return
+        except Exception:
+            pass
         try:
             import os as _os
 
@@ -510,6 +524,12 @@ class MertPlugin:
             n_keys = len(state_dict) if hasattr(state_dict, "__len__") else -1
             logger.info("MERT fairseq-Checkpoint geladen: %s (%d Parameter-Blöcke)", pt_path, n_keys)
         except Exception as e:
+            try:
+                from backend.core.ml_memory_budget import release as _rel_fs
+
+                _rel_fs("MERT-95M-fairseq")
+            except Exception:
+                pass
             logger.debug("MERT fairseq Ladefehler: %s → weiter", e)
 
     def _try_load_onnx(self) -> None:
@@ -537,9 +557,7 @@ class MertPlugin:
                 _reg_plm(
                     "MERT-ONNX",
                     size_gb=0.18,
-                    unload_fn=lambda s=self: (
-                        setattr(s, "_model", None) or setattr(s, "_model_type", "dsp")
-                    ),
+                    unload_fn=lambda s=self: setattr(s, "_model", None) or setattr(s, "_model_type", "dsp"),
                 )
             except Exception:
                 pass
@@ -650,14 +668,18 @@ class MertPlugin:
             # §Lücke10: MERT-Kalibrierung Guard (Pearson r=0.74 vs. DSP-Proxy, Li et al. 2023)
             # σ_residual = sqrt(1-r²) ≈ 0.67; anomaly if |delta| > 0.40 (2σ heuristic)
             _PEARSON: float = 0.74
-            _ANOMALY_THRESH: float = min((1.0 - _PEARSON ** 2) ** 0.5 * 1.5, 0.40)
+            _ANOMALY_THRESH: float = min((1.0 - _PEARSON**2) ** 0.5 * 1.5, 0.40)
             _delta = abs(score - dsp.naturalness_score)
             if _delta > _ANOMALY_THRESH:
                 logger.warning(
                     "MERT ONNX score %.3f deviates from DSP naturalness %.3f"
                     " (|delta|=%.3f > anomaly_thresh=%.3f, Pearson r=%.2f) —"
                     " blending 50/50 instead of 60/40",
-                    score, dsp.naturalness_score, _delta, _ANOMALY_THRESH, _PEARSON,
+                    score,
+                    dsp.naturalness_score,
+                    _delta,
+                    _ANOMALY_THRESH,
+                    _PEARSON,
                 )
                 dsp.naturalness_score = float(np.clip(0.5 * dsp.naturalness_score + 0.5 * score, 0.0, 1.0))
             else:
@@ -759,6 +781,7 @@ def unload_mert() -> None:
     Aufruf: nach Abschluss der Analyse-Phase in der Pipeline.
     """
     import gc
+
     if _default_plugin is not None and _default_plugin._model is not None:
         model_type = _default_plugin._model_type
         _default_plugin._model = None
@@ -767,6 +790,7 @@ def unload_mert() -> None:
         gc.collect()
         try:
             from backend.core.ml_memory_budget import release as _rel
+
             for key in ("MERT-330M-HF", "MERT-330M-fairseq", "MERT-95M-HF"):
                 _rel(key)
         except Exception:

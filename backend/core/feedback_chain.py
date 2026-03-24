@@ -287,8 +287,8 @@ class FeedbackChain:
                 best = candidate.copy()
 
             # §2.33 PhysicalCeilingEstimator: Frühzeitiger Abbruch wenn Ceiling erreicht
-            # Adaptive headroom: low MOS → more headroom (5%), high MOS → tight (2%)
-            _adaptive_headroom = 0.05 if best_mos < 3.5 else (0.03 if best_mos < 4.0 else 0.02)
+            # Tight headroom: allow iterations to push closer to ceiling
+            _adaptive_headroom = 0.01
             if ceiling is not None and best_mos >= ceiling - _adaptive_headroom:
                 _ceiling_reached = True
                 converged = True

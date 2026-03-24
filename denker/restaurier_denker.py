@@ -19,16 +19,14 @@ from dataclasses import dataclass, field
 import logging
 import math
 import threading
-import time
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# A-1: RT-Budget-Konstanten für V3 Post-Pass nach ARE-Erfolg (§9.5)
+# RT-Budget-Konstante (§9.5) — caps reported rt_factor
 _3X_RT_LIMIT: float = 8.0
-_V3_POSTPASS_BUDGET_FRACTION: float = 0.70  # nur wenn ARE < 70 % des RT-Budgets nutzte
 
 # ---------------------------------------------------------------------------
 # Ergebnis-Datenstruktur
@@ -265,6 +263,14 @@ class RestaurierDenker:
         chain_info: Any | None = None,
         defekt_hint: Any | None = None,
         progress_callback: Any | None = None,
+        audio_update_callback: Any | None = None,
+        cached_era_result: Any | None = None,
+        cached_genre_result: Any | None = None,
+        cached_defect_result: Any | None = None,
+        cached_medium_result: Any | None = None,
+        cached_restorability_result: Any | None = None,
+        reconstruction_context: Any | None = None,
+        pre_repair_reference: np.ndarray | None = None,
     ) -> RestaurierErgebnis:
         """Restauriert Audio vollständig mit UnifiedRestorerV3.
 
@@ -281,25 +287,92 @@ class RestaurierDenker:
             Qualitätsmodus (``"quality"`` oder ``"studio2026"``).
         validate_audio:
             Ob Eingabe auf NaN/Inf geprüft werden soll.
+        reconstruction_context:
+            Optional RekonstruktionsErgebnis from RekonstruktionsDenker (§11.7a).
+            Contains bandwidth loss hints and gap statistics for UV3 context.
 
         Rückgabe
         --------
         RestaurierErgebnis mit restauriertem Audio und Pipeline-Metadaten.
         """
         assert sr == 48000, f"RestaurierDenker.restauriere() erwartet sr=48000 Hz, erhalten: {sr} Hz"
+        logger.info(
+            "RestaurierDenker.restauriere() gestartet: mode=%s, material=%s, duration=%.1fs, caches=%s",
+            mode,
+            material,
+            len(audio) / max(sr, 1),
+            cached_defect_result is not None,
+        )
         if validate_audio:
             audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         else:
             audio = audio.astype(np.float32)
 
-        # ── ARE (AurikAutonomousPipeline) als primäre Engine (M-5) ──────────
+        # ── v9.10.72: Direkt-UV3-Pfad (kein ARE-Umweg) ─────────────────────
+        # AurikDenker hat Preprocessing (ReparaturDenker + RekonstruktionsDenker)
+        # und alle Analysen (DefectScan, Era, Medium, Restorability) bereits
+        # durchgeführt und als Caches weitergegeben. ARE wiederholt diese Arbeit
+        # redundant (Chain-Inversion, Gap-Repair, IAQS, DefectScan, CausalGraph)
+        # und gibt dann unmodifiziertes Audio an UV3 weiter — 2 nutzlose Passes.
+        # Direkt-UV3-Pfad spart ~85-170s pro Datei und erreicht MOS 4.2+ im 1. Pass.
+        _has_caches = cached_defect_result is not None
         _audio_dur_s: float = float(len(audio)) / max(float(sr), 1.0)
+
+        if _has_caches:
+            logger.info(
+                "RestaurierDenker: Direkt-UV3-Pfad (Caches vorhanden, ARE übersprungen) — %.1fs Audio",
+                _audio_dur_s,
+            )
+            restorer = self._get_restorer(mode=mode)
+            if restorer is None:
+                return self._fallback(audio, material or "unknown", "Kein Restorer verfügbar")
+
+            _uv3_kwargs: dict = {"sample_rate": sr}
+            if global_plan is not None:
+                _uv3_kwargs["global_plan"] = global_plan
+            if chain_info is not None:
+                _uv3_kwargs["chain_info"] = chain_info
+            if defekt_hint is not None:
+                _uv3_kwargs["defekt_hint"] = defekt_hint
+            if progress_callback is not None:
+                _uv3_kwargs["progress_callback"] = progress_callback
+            if audio_update_callback is not None:
+                _uv3_kwargs["audio_update_callback"] = audio_update_callback
+            if cached_era_result is not None:
+                _uv3_kwargs["cached_era_result"] = cached_era_result
+            if cached_genre_result is not None:
+                _uv3_kwargs["cached_genre_result"] = cached_genre_result
+            if cached_defect_result is not None:
+                _uv3_kwargs["cached_defect_result"] = cached_defect_result
+            if cached_medium_result is not None:
+                _uv3_kwargs["cached_medium_result"] = cached_medium_result
+            if cached_restorability_result is not None:
+                _uv3_kwargs["cached_restorability_result"] = cached_restorability_result
+            # §11.7a: Pass reconstruction context to UV3 for bandwidth/gap awareness
+            if reconstruction_context is not None:
+                _uv3_kwargs["reconstruction_context"] = reconstruction_context
+                _bw = getattr(reconstruction_context, "bandwidth_limited", False)
+                _gaps = getattr(reconstruction_context, "gaps_repaired", 0)
+                if _bw or _gaps > 0:
+                    logger.info(
+                        "RestaurierDenker: reconstruction_context → UV3 (bw_limited=%s, gaps_repaired=%d)",
+                        _bw,
+                        _gaps,
+                    )
+            # §G1: Pre-Repair-Referenz für referenz-basierte Musical Goals
+            if pre_repair_reference is not None:
+                _uv3_kwargs["pre_repair_reference"] = pre_repair_reference
+            try:
+                raw = restorer.restore(audio, **_uv3_kwargs)
+                return self._konvertiere(raw, material=material)
+            except Exception as uv3_exc:
+                logger.warning("UV3 Direkt-Pfad fehlgeschlagen: %s — Fallback.", uv3_exc)
+                return self._fallback(audio, material or "unknown", str(uv3_exc))
+
+        # ── Fallback ohne Caches: ARE → UV3 (Legacy-Pfad) ────────────────────
         pipeline = self._get_are_pipeline()
         if pipeline is not None:
             try:
-                _t0_are = time.perf_counter()
-                # §Dach: Forward Denker context (global_plan, chain_info, defekt_hint, mode, material)
-                # so ARE can propagate it to the UV3 full-processing call.
                 _are_ctx: dict = {}
                 if global_plan is not None:
                     _are_ctx["global_plan"] = global_plan
@@ -311,57 +384,36 @@ class RestaurierDenker:
                     _are_ctx["mode"] = mode
                 if material:
                     _are_ctx["material"] = material
+                if cached_defect_result is not None:
+                    _are_ctx["cached_defect_result"] = cached_defect_result
                 are_result = pipeline.process(audio, sample_rate=sr, progress_callback=progress_callback, **_are_ctx)
-                adapter = _AREAdapter(are_result, audio_duration_s=_audio_dur_s)
-                logger.info(
-                    "\U0001f680 RestaurierDenker: ARE primary OK \u2014 Q=%.3f RT=%.2f\u00d7",
-                    adapter.quality_estimate,
-                    adapter.rt_factor,
-                )
-                # A-1: V3 Post-Pass additiv auf ARE-Output — nur wenn:
-                # 1. RT-Budget nicht überschritten (< 70 % des 5×-Limits für Quality)
-                # 2. V3 bereits instanziiert (warm!) — kein Cold-Start-Loading
-                #    Begründung: UV3 Initialisierung dauert 20–60s bei kalten Modellen.
-                #    Cold-Start-Loading würde das gesamte RT-Budget sprengen.
-                #    Warmup (warmup_models_background) soll V3 vorladen.
-                _are_elapsed = time.perf_counter() - _t0_are
-                _are_rt = _are_elapsed / max(_audio_dur_s, 1e-6)
-                _v3_warm = mode in self._restorers and self._restorers[mode] is not None
-                if _are_rt < _3X_RT_LIMIT * _V3_POSTPASS_BUDGET_FRACTION and _v3_warm:
-                    _v3 = self._restorers[mode]  # never triggers cold-load
-                    if _v3 is not None:
-                        try:
-                            _v3_raw = _v3.restore(adapter.audio, sample_rate=sr)
-                            _v3_audio = np.nan_to_num(
-                                np.array(_v3_raw.audio, dtype=np.float32),
-                                nan=0.0,
-                                posinf=0.0,
-                                neginf=0.0,
-                            )
-                            adapter.audio = np.clip(_v3_audio, -1.0, 1.0)
-                            adapter.quality_estimate = max(
-                                adapter.quality_estimate,
-                                float(getattr(_v3_raw, "quality_estimate", 0.0)),
-                            )
-                            adapter.phases_executed = [*list(adapter.phases_executed), "v3_post_pass"]
-                            logger.info(
-                                "RestaurierDenker: V3 Post-Pass OK \u2014 ARE RT-Nutzung: %.1f%% (< %.0f%%)",
-                                _are_rt / _3X_RT_LIMIT * 100,
-                                _V3_POSTPASS_BUDGET_FRACTION * 100,
-                            )
-                        except Exception as _v3_exc:
-                            logger.debug(
-                                "RestaurierDenker: V3 Post-Pass \u00fcbersprungen (%s) \u2014 ARE-Ergebnis bleibt.",
-                                _v3_exc,
-                            )
-                return self._konvertiere(adapter, material=material)
-            except Exception as are_exc:
-                logger.warning(
-                    "AurikAutonomousPipeline fehlgeschlagen: %s \u2014 Fallback auf UnifiedRestorerV3",
-                    are_exc,
-                )
+                _are_audio = getattr(are_result, "audio", audio)
+                del are_result, pipeline  # RAM für UV3 freigeben
 
-        # ── Fallback: UnifiedRestorerV3 ───────────────────────────────────────
+                restorer = self._get_restorer(mode=mode)
+                if restorer is not None:
+                    logger.info("RestaurierDenker: Legacy ARE → UV3-Pass …")
+                    _uv3_kwargs2: dict = {"sample_rate": sr}
+                    if global_plan is not None:
+                        _uv3_kwargs2["global_plan"] = global_plan
+                    if chain_info is not None:
+                        _uv3_kwargs2["chain_info"] = chain_info
+                    if defekt_hint is not None:
+                        _uv3_kwargs2["defekt_hint"] = defekt_hint
+                    if progress_callback is not None:
+                        _uv3_kwargs2["progress_callback"] = progress_callback
+                    if audio_update_callback is not None:
+                        _uv3_kwargs2["audio_update_callback"] = audio_update_callback
+                    try:
+                        raw = restorer.restore(_are_audio, **_uv3_kwargs2)
+                        return self._konvertiere(raw, material=material)
+                    except Exception as uv3_exc:
+                        logger.warning("UV3 auf ARE-Audio fehlgeschlagen: %s", uv3_exc)
+                        return self._fallback(_are_audio, material or "unknown", str(uv3_exc))
+            except Exception as are_exc:
+                logger.warning("AurikAutonomousPipeline fehlgeschlagen: %s — Fallback auf UV3", are_exc)
+
+        # ── Letzter Fallback: UV3 direkt ──────────────────────────────────────
         restorer = self._get_restorer(mode=mode)
         if restorer is None:
             return self._fallback(audio, material or "unknown", "Kein Restorer verfügbar")
@@ -376,9 +428,21 @@ class RestaurierDenker:
                 _restore_kwargs["defekt_hint"] = defekt_hint
             if progress_callback is not None:
                 _restore_kwargs["progress_callback"] = progress_callback
+            if audio_update_callback is not None:
+                _restore_kwargs["audio_update_callback"] = audio_update_callback
+            if cached_era_result is not None:
+                _restore_kwargs["cached_era_result"] = cached_era_result
+            if cached_genre_result is not None:
+                _restore_kwargs["cached_genre_result"] = cached_genre_result
+            if cached_defect_result is not None:
+                _restore_kwargs["cached_defect_result"] = cached_defect_result
+            if cached_medium_result is not None:
+                _restore_kwargs["cached_medium_result"] = cached_medium_result
+            if cached_restorability_result is not None:
+                _restore_kwargs["cached_restorability_result"] = cached_restorability_result
             raw = restorer.restore(audio, **_restore_kwargs)
         except Exception as exc:
-            logger.warning("UnifiedRestorerV3.restore() fehlgeschlagen: %s \u2014 Fallback auf Original", exc)
+            logger.warning("UnifiedRestorerV3.restore() fehlgeschlagen: %s — Fallback auf Original", exc)
             return self._fallback(audio, material or "unknown", str(exc))
 
         return self._konvertiere(raw, material=material)
@@ -409,10 +473,13 @@ class RestaurierDenker:
                 UnifiedRestorerV3,
             )
 
-            qmode = QualityMode.STUDIO_2026 if mode == "studio2026" else QualityMode.QUALITY
+            # §11.7a: studio2026 → MAXIMUM quality + studio_2026 flag
+            _is_studio = mode == "studio2026"
+            qmode = QualityMode.MAXIMUM if _is_studio else QualityMode.QUALITY
 
             cfg = RestorationConfig(
                 mode=qmode,
+                studio_2026=_is_studio,  # §11.7a — activates Stem-Sep, Matchering, Vocos
                 enforce_3x_rt=True,  # NIEMALS False — Pflicht-Invariante
                 enable_performance_guard=True,
                 enable_adaptive_skipping=True,

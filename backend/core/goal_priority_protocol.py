@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
+import threading
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,9 @@ class GoalPriorityProtocol:
     }
 
     ABORT_PRIORITY_THRESHOLD: int = 2
-    REGRESSION_EPSILON: float = 0.001
+    REGRESSION_EPSILON: float = (
+        0.012  # §2.29: GOOD threshold (0.001 was too strict, caused FC abort on numerical noise)
+    )
 
     def resolve_conflict(
         self,

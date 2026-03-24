@@ -3,20 +3,12 @@ from typing import Any, List, Optional, TypedDict
 import numpy as np
 
 # Modular: Policy kann beliebige DSP-Kette vorgeben ("custom_dsp_chain" als Liste von Strings)
-from dsp.analysis_and_quality import RMSEnergy, SpectralCentroid, SpectralRolloff, ZeroCrossingRate
-from dsp.dynamic_range_expander import DynamicRangeExpander
-from dsp.harmonic_exciter import HarmonicExciter
-from dsp.limiter import Limiter
-from dsp.sota_denoiser import SotaDenoiser
-from dsp.spectral_gate import SpectralGate
-from dsp.stereo_widener import StereoWidener
-from dsp.transient_shaper import TransientShaper
-from dsp.wow_flutter_remover import WowFlutterRemover
 
 try:
     from dsp.custom_compressor import CustomCompressor
 except ImportError:
     CustomCompressor = None
+from backend.core.forensics.analysis_and_modules import FeatureExtractor, PolicyManager
 from backend.core.validate_musical_goals import (
     ArtifactChecker,
     FormantGuard,
@@ -24,19 +16,7 @@ from backend.core.validate_musical_goals import (
     PitchContourChecker,
     VoiceMatchChecker,
 )
-
-from backend.core.forensics.analysis_and_modules import FeatureExtractor, PolicyManager
-from dsp.dither import Dither
-from dsp.envelope_matching import EnvelopeMatcher
 from dsp.feedback import UserFeedback
-from dsp.linearphase_filter import LinearPhaseHighpass
-from dsp.multiband_compressor import MultibandCompressor
-from dsp.multiband_expander import MultibandExpander
-from dsp.multiband_gate import MultibandGate
-from dsp.multiband_limiter import MultibandLimiter
-from dsp.oversampling import Oversampler
-from dsp.sample_rate_conversion import SampleRateConverter
-from dsp.spectral_subtractor import SpectralSubtractor
 
 
 class AdaptiveController:
@@ -68,7 +48,7 @@ class AdaptiveController:
         import random
 
         # §4.4: Nur musik-geeignete ML-Module (CDPAM/DNSMOS/NISQA VERBOTEN)
-        modules = ["DeepFilterNet", "HTDemucs", "WPE", "Vocos", "DiffWave", "BEATs", "VERSA", "UTMOS", "ViSQOL"]
+        modules = ["DeepFilterNet", "MDX23C", "WPE", "Vocos", "DiffWave", "BEATs", "VERSA", "UTMOS", "ViSQOL"]
         # Gewichtung nach Quality-Gates, User-Feedback, Genre
         genre = feedback.get("genre", "default")
         quality = feedback.get("user_score", 0.8)
@@ -148,7 +128,7 @@ class AdaptiveController:
 
 
 class MediaHistoryDict(TypedDict, total=False):
-    original_chain: List[str]
+    original_chain: list[str]
 
 
 class ChainAuthenticityDict(TypedDict, total=False):
@@ -162,7 +142,7 @@ class FeaturesDict(TypedDict, total=False):
     media_characteristics: dict[str, Any]
     vocal_scores: dict[str, float]
     feedback_data: Any
-    genre: Optional[str]
+    genre: str | None
 
 
 class ChainAuthenticityChecker:
@@ -170,7 +150,7 @@ class ChainAuthenticityChecker:
     SOTA ChainAuthenticityChecker: Prüft DSP-Ketten auf Authentizität und dokumentiert im Audit-Log.
     """
 
-    def check(self, dsp_chain: List[str], media_history: Optional[MediaHistoryDict] = None) -> ChainAuthenticityDict:
+    def check(self, dsp_chain: list[str], media_history: MediaHistoryDict | None = None) -> ChainAuthenticityDict:
         authentic = True
         details = {}
         if media_history and media_history.get("original_chain") != dsp_chain:
@@ -185,7 +165,7 @@ class ChainAuthenticityChecker:
             audit_path = Path("audit/audit_trail.json")
             audit_path.parent.mkdir(parents=True, exist_ok=True)
             if audit_path.exists():
-                with open(audit_path, "r") as f:
+                with open(audit_path) as f:
                     audit_data = json.load(f)
             else:
                 audit_data = []
@@ -220,7 +200,9 @@ class VocalQualityChecker:
     def check(self, scores: dict[str, float]) -> dict[str, bool]:
         results = {}
         media_characteristics = scores.get("media_characteristics", {})
-        is_vocal_material = bool(media_characteristics.get("vocal")) if isinstance(media_characteristics, dict) else False
+        is_vocal_material = (
+            bool(media_characteristics.get("vocal")) if isinstance(media_characteristics, dict) else False
+        )
 
         # Prefer explicit vocal_scores payload provided by the caller.
         vocal_scores = scores.get("vocal_scores", {})
@@ -247,7 +229,7 @@ class VocalQualityChecker:
             audit_path = Path("audit/audit_trail.json")
             audit_path.parent.mkdir(parents=True, exist_ok=True)
             if audit_path.exists():
-                with open(audit_path, "r") as f:
+                with open(audit_path) as f:
                     audit_data = json.load(f)
             else:
                 audit_data = []
@@ -271,20 +253,20 @@ class PolicyEngine:
         self,
         audio: np.ndarray,
         sr: int,
-        reference: Optional[np.ndarray] = None,
-        media_history: Optional[MediaHistoryDict] = None,
-        policy_override: Optional[dict] = None,
-        expert_feedback: Optional[dict] = None,
-        user_score: Optional[float] = None,
-        user_comment: Optional[str] = None,
-        media_characteristics: Optional[dict[str, Any]] = None,
-        vocal_scores: Optional[dict[str, float]] = None,
-        feedback_data: Optional[Any] = None,
+        reference: np.ndarray | None = None,
+        media_history: MediaHistoryDict | None = None,
+        policy_override: dict | None = None,
+        expert_feedback: dict | None = None,
+        user_score: float | None = None,
+        user_comment: str | None = None,
+        media_characteristics: dict[str, Any] | None = None,
+        vocal_scores: dict[str, float] | None = None,
+        feedback_data: Any | None = None,
     ) -> dict:
         """
         Aurik entfesselt: Kombiniert alle SOTA-DSP-Module, experimentelle Ketten, adaptive Policy, Experten-Feedback, Klangästhetik, Audit und robuste Tonträgererkennung.
         """
-        policy = policy_override if policy_override is not None else self.policy
+        policy_override if policy_override is not None else self.policy
         features: FeaturesDict = self.feature_extractor.extract(audio, sr, reference, self.policy_manager)  # type: ignore
         # Zusätzliche Parameter in Features integrieren
         if user_score is not None:
@@ -460,7 +442,7 @@ class PolicyEngine:
             audit_path = Path("audit/audit_trail.json")
             audit_path.parent.mkdir(parents=True, exist_ok=True)
             if audit_path.exists():
-                with open(audit_path, "r") as f:
+                with open(audit_path) as f:
                     audit_data = json.load(f)
             else:
                 audit_data = []

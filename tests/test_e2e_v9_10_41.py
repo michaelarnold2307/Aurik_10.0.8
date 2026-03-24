@@ -18,7 +18,6 @@ from __future__ import annotations
 import math
 import pathlib
 import time
-from typing import Optional
 
 import numpy as np
 import pytest
@@ -99,9 +98,9 @@ def _validate_restoration_result(result, min_duration_s: float = 1.0) -> None:
     assert np.isfinite(audio).all(), "result.audio enthält NaN oder Inf"
     # Spec §8.2 ¶11 + §1.4: True-Peak ≤ −1.0 dBTP (ITU-R BS.1770-4, phase_47)
     _TP_LIMIT = 10 ** (-1.0 / 20)  # ≈ 0.8913 linear
-    assert (
-        np.max(np.abs(audio)) <= _TP_LIMIT + 1e-4
-    ), f"True-Peak: {20 * np.log10(np.max(np.abs(audio)) + 1e-12):.2f} dBTP > −1.0 dBTP (Spec §8.2)"
+    assert np.max(np.abs(audio)) <= _TP_LIMIT + 1e-4, (
+        f"True-Peak: {20 * np.log10(np.max(np.abs(audio)) + 1e-12):.2f} dBTP > −1.0 dBTP (Spec §8.2)"
+    )
 
     n_samples = audio.shape[0]
     assert n_samples > 0, "Audio ist leer"
@@ -111,14 +110,14 @@ def _validate_restoration_result(result, min_duration_s: float = 1.0) -> None:
 
     # Dauer-Check: wir kennen die interne SR (48 000 Hz) nicht direkt,
     # daher prüfen wir nur auf > 0 Samples und eine Mindestzahl.
-    assert (
-        n_samples >= 48_000 * min_duration_s
-    ), f"Audio zu kurz: {n_samples} Samples (erwartet ≥ {int(48_000 * min_duration_s)})"
+    assert n_samples >= 48_000 * min_duration_s, (
+        f"Audio zu kurz: {n_samples} Samples (erwartet ≥ {int(48_000 * min_duration_s)})"
+    )
 
     # --- Metadaten-Validierung ---
-    assert isinstance(
-        result.material_type, MaterialType
-    ), f"material_type muss MaterialType sein, ist: {type(result.material_type)}"
+    assert isinstance(result.material_type, MaterialType), (
+        f"material_type muss MaterialType sein, ist: {type(result.material_type)}"
+    )
     assert isinstance(result.phases_executed, list), "phases_executed muss list sein"
     # K-1 (SCHRITTE §KRITISCH): Triviale >0-Prüfung ersetzt durch TIER-Membership-Check.
     # Spec §7.1: ≥ 2 TIER-1-Phasen (phase_01..phase_06) UND ≥ 3 TIER-6-Phasen (phase_51..phase_56)
@@ -133,12 +132,10 @@ def _validate_restoration_result(result, min_duration_s: float = 1.0) -> None:
         if p.startswith(("phase_51", "phase_52", "phase_53", "phase_54", "phase_55", "phase_56"))
     ]
     assert len(_tier1_exec) >= 2, (
-        f"K-1: Weniger als 2 TIER-1-Phasen ausgeführt: {sorted(_tier1_exec)} "
-        f"(Spec §7.1: ≥ 2 aus phase_01..phase_06)"
+        f"K-1: Weniger als 2 TIER-1-Phasen ausgeführt: {sorted(_tier1_exec)} (Spec §7.1: ≥ 2 aus phase_01..phase_06)"
     )
     assert len(_tier6_exec) >= 3, (
-        f"K-1: Weniger als 3 TIER-6-Phasen ausgeführt: {sorted(_tier6_exec)} "
-        f"(Spec §7.1: ≥ 3 aus phase_51..phase_56)"
+        f"K-1: Weniger als 3 TIER-6-Phasen ausgeführt: {sorted(_tier6_exec)} (Spec §7.1: ≥ 3 aus phase_51..phase_56)"
     )
     assert isinstance(result.phases_skipped, list), "phases_skipped muss list sein"
 
@@ -348,10 +345,12 @@ class TestE2ERestorationQuality:
         result = restorer.restore(audio, sample_rate=sr)
 
         pmgg_log = result.metadata.get("phase_gate_log", [])
-        tier1_rollbacks = [e for e in pmgg_log if "TIER-1" in str(e) or "rollback" in str(e).lower()]
-        assert (
-            len(tier1_rollbacks) < 5
-        ), f"Zu viele PMGG-Rollbacks in TIER-1: {tier1_rollbacks} — Engine instabil (§2.29)"
+        tier1_best_effort = [
+            e for e in pmgg_log if "TIER-1" in str(e) or "best_effort" in str(e).lower() or "rollback" in str(e).lower()
+        ]
+        assert len(tier1_best_effort) < 5, (
+            f"Zu viele PMGG-Best-Effort-Phasen in TIER-1: {tier1_best_effort} — Engine instabil (§2.29)"
+        )
 
     def test_09_panns_vocals_detected(self) -> None:
         """PANNs muss Gesang für Gesangs-Testmaterial erkennen (§2.9)."""
@@ -366,12 +365,11 @@ class TestE2ERestorationQuality:
         panns_tags = result.metadata.get("panns_tags", {})
         vocals_conf = panns_tags.get("vocals", panns_tags.get("Singing", 0.0))
         assert vocals_conf >= 0.4, (
-            f"PANNs Gesang-Konfidenz {vocals_conf:.3f} < 0.40 — "
-            "phase_42_vocal_enhancement wird nicht aktiviert (§2.9)"
+            f"PANNs Gesang-Konfidenz {vocals_conf:.3f} < 0.40 — phase_42_vocal_enhancement wird nicht aktiviert (§2.9)"
         )
-        assert (
-            "phase_42_vocal_enhancement" in result.phases_executed
-        ), "phase_42_vocal_enhancement nicht ausgeführt obwohl Testmaterial Gesang enthält (§2.9)"
+        assert "phase_42_vocal_enhancement" in result.phases_executed, (
+            "phase_42_vocal_enhancement nicht ausgeführt obwohl Testmaterial Gesang enthält (§2.9)"
+        )
 
     def test_10_restoration_improves_quality(self) -> None:
         """Restaurierung muss messbar besser sein als das Original (§8.2, Punkt 8)."""
@@ -388,7 +386,7 @@ class TestE2ERestorationQuality:
 
         delta = abs(result_orig.quality_estimate - result_degrad.quality_estimate)
         assert delta <= 0.20, (
-            f"Quality-Delta {delta:.3f} > 0.20 — Restaurierung adaptiert sich nicht " "an Degradierung (§8.2 Punkt 8)"
+            f"Quality-Delta {delta:.3f} > 0.20 — Restaurierung adaptiert sich nicht an Degradierung (§8.2 Punkt 8)"
         )
         goals = result_degrad.metadata.get("musical_goals", {})
         tonal_center = goals.get("tonal_center", goals.get("tonales_zentrum"))
@@ -414,9 +412,9 @@ class TestE2ERestorationQuality:
             assert mqa is True, "MusicalQualityAssurance: quality_guaranteed=False — §8.1 nicht erfüllt"
         artifact_check = meta.get("passes_aurik_standards") or meta.get("artifact_check_passed")
         if artifact_check is not None:
-            assert (
-                artifact_check is True
-            ), "ArtifactDetector: passes_aurik_standards=False — Artefakte im Output (§2.23)"
+            assert artifact_check is True, (
+                "ArtifactDetector: passes_aurik_standards=False — Artefakte im Output (§2.23)"
+            )
         assert any(x is not None for x in [oqs, mqa, artifact_check]), (
             "Kein internes Qualitäts-Gate im metadata vorhanden — "
             "MushraEvaluator/MQA/ArtifactDetector wurden nicht aufgerufen (§8.1)"
@@ -424,8 +422,8 @@ class TestE2ERestorationQuality:
 
     def test_12_material_type_specific(self) -> None:
         """MaterialType muss inhaltlich plausibel sein — nicht nur 'unknown' (§2.1)."""
-        from backend.core.performance_guard import QualityMode  # type: ignore
         from backend.core.defect_scanner import MaterialType  # type: ignore
+        from backend.core.performance_guard import QualityMode  # type: ignore
         from backend.core.unified_restorer_v3 import RestorationConfig, UnifiedRestorerV3  # type: ignore
 
         audio, sr = _load_audio_clip(_AUDIO_FILE)
@@ -433,12 +431,12 @@ class TestE2ERestorationQuality:
         restorer = UnifiedRestorerV3(config=config)
         result = restorer.restore(audio, sample_rate=sr)
 
-        assert isinstance(
-            result.material_type, MaterialType
-        ), f"material_type ist kein MaterialType: {type(result.material_type)}"
-        assert (
-            result.material_type != MaterialType.UNKNOWN
-        ), "MaterialType ist UNKNOWN — MediumClassifier hat nicht funktioniert (§2.1)"
+        assert isinstance(result.material_type, MaterialType), (
+            f"material_type ist kein MaterialType: {type(result.material_type)}"
+        )
+        assert result.material_type != MaterialType.UNKNOWN, (
+            "MaterialType ist UNKNOWN — MediumClassifier hat nicht funktioniert (§2.1)"
+        )
         EXPECTED_DIGITAL_TYPES = {
             MaterialType.MP3_LOW,
             MaterialType.MP3_HIGH,
@@ -483,13 +481,13 @@ class TestE2ERestorationQuality:
         natuerlichkeit = goals.get("natuerlichkeit")
         authentizitaet = goals.get("authentizitaet")
         if natuerlichkeit is not None:
-            assert (
-                natuerlichkeit >= 0.88
-            ), f"NatürlichkeitMetric {natuerlichkeit:.3f} < 0.88 — HPG nicht wirksam (§2.28)"
+            assert natuerlichkeit >= 0.88, (
+                f"NatürlichkeitMetric {natuerlichkeit:.3f} < 0.88 — HPG nicht wirksam (§2.28)"
+            )
         if authentizitaet is not None:
-            assert (
-                authentizitaet >= 0.85
-            ), f"AuthentizitätMetric {authentizitaet:.3f} < 0.85 — HPG nicht wirksam (§2.28)"
+            assert authentizitaet >= 0.85, (
+                f"AuthentizitätMetric {authentizitaet:.3f} < 0.85 — HPG nicht wirksam (§2.28)"
+            )
 
     def test_15_micro_dynamics_preserved(self) -> None:
         """MDEM muss MicroDynamics-Pearson ≥ 0.90 sichern (§2.30)."""
@@ -507,9 +505,9 @@ class TestE2ERestorationQuality:
             assert micro_dyn >= 0.90, f"MicroDynamicsMetric {micro_dyn:.3f} < 0.90 — MDEM nicht wirksam (§2.30)"
         lufs_diff = result.metadata.get("lufs_diff") or result.metadata.get("lufs_delta")
         if lufs_diff is not None:
-            assert (
-                abs(lufs_diff) <= 1.0
-            ), f"LUFS-Differenz {lufs_diff:.2f} LU > 1 LU — §1.4 Restoration-Invariante verletzt"
+            assert abs(lufs_diff) <= 1.0, (
+                f"LUFS-Differenz {lufs_diff:.2f} LU > 1 LU — §1.4 Restoration-Invariante verletzt"
+            )
 
     def test_16_temporal_quality_coherent(self) -> None:
         """Qualität muss über die Zeitachse kohärent sein — keine Ausreißer (§2.16)."""
@@ -572,13 +570,13 @@ class TestE2EStudio2026Balanced:
         checker_max = MusicalGoalsChecker()
         scores_max = checker_max.measure_all(result.audio, sr=48_000)
         # Brillanz ≥ 0.90 (verschärft gegenüber Mindestschwelle 0.85, Spec §1.4)
-        assert (
-            scores_max.get("brillanz", 0.0) >= 0.90
-        ), f"Studio 2026 §1.4: Brillanz {scores_max.get('brillanz', 0.0):.3f} < 0.90"
+        assert scores_max.get("brillanz", 0.0) >= 0.90, (
+            f"Studio 2026 §1.4: Brillanz {scores_max.get('brillanz', 0.0):.3f} < 0.90"
+        )
         # Bass-Kraft ≥ 0.88 (verschärft gegenüber Mindestschwelle 0.85, Spec §1.4)
-        assert (
-            scores_max.get("bass_kraft", 0.0) >= 0.88
-        ), f"Studio 2026 §1.4: Bass-Kraft {scores_max.get('bass_kraft', 0.0):.3f} < 0.88"
+        assert scores_max.get("bass_kraft", 0.0) >= 0.88, (
+            f"Studio 2026 §1.4: Bass-Kraft {scores_max.get('bass_kraft', 0.0):.3f} < 0.88"
+        )
 
         print(
             f"  Studio2026 PQS-MOS={pqs_max.pqs_mos:.3f}  "
@@ -634,7 +632,7 @@ class TestE2EMusicalGoals:
         assert isinstance(scores, dict), "measure_all muss dict zurückgeben"
         # Spec §1.2 v9.9.9: genau 14 Musical Goals
         assert len(scores) == 14, (
-            f"Erwartet 14 Musical Goals (Spec §1.2 v9.9.9), erhalten {len(scores)}: " f"{sorted(scores.keys())}"
+            f"Erwartet 14 Musical Goals (Spec §1.2 v9.9.9), erhalten {len(scores)}: {sorted(scores.keys())}"
         )
 
         for goal, score in scores.items():
@@ -696,7 +694,7 @@ class TestE2EMusicalGoals:
         waerme = goals.get("waerme")
         if waerme is not None:
             assert waerme >= 0.88, (
-                f"Wärme {waerme:.3f} < 0.88 — " "Schlager-Profil nicht korrekt angewendet (W-6, §2.19.3)"
+                f"Wärme {waerme:.3f} < 0.88 — Schlager-Profil nicht korrekt angewendet (W-6, §2.19.3)"
             )
 
 

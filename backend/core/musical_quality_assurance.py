@@ -22,9 +22,9 @@ Author: AURIK Team
 Date: 10. Februar 2026
 """
 
-import logging
 from dataclasses import dataclass
 from enum import Enum
+import logging
 from typing import Any
 
 import numpy as np
@@ -634,8 +634,24 @@ class MusicalQualityAssurance:
             return True, "No gates defined"
 
         # Check medium-specific gates
-        if current.snr_db < medium_gates.min_snr_db:
-            return False, f"SNR too low: {current.snr_db:.1f} < {medium_gates.min_snr_db:.1f} dB"
+        # SNR gate: Compare against material-adaptive threshold.
+        # For degraded analog material, the baseline SNR may be far below the
+        # medium's theoretical min_snr_db.  In that case, require at least an
+        # *improvement* of ≥3 dB OR reaching ≥70% of the medium target — whichever
+        # is lower.  This prevents false hard-fails on heavily degraded sources
+        # while still catching genuine SNR regressions.
+        _snr_target = medium_gates.min_snr_db
+        _snr_baseline = baseline.snr_db if baseline is not None else 0.0
+        _snr_adaptive_floor = max(
+            _snr_baseline + 3.0,  # at least 3 dB improvement
+            _snr_target * 0.60,  # at least 60% of medium target
+        )
+        _effective_snr_min = min(_snr_target, _snr_adaptive_floor)
+        if current.snr_db < _effective_snr_min:
+            return (
+                False,
+                f"SNR too low: {current.snr_db:.1f} < {_effective_snr_min:.1f} dB (target={_snr_target:.0f}, baseline={_snr_baseline:.1f})",
+            )
 
         if current.clarity < medium_gates.min_clarity:
             return False, f"Clarity too low: {current.clarity:.2f} < {medium_gates.min_clarity:.2f}"
@@ -954,7 +970,9 @@ class MusicalQualityAssurance:
         elif not integrity_result.passed:
             verdict = f"❌ MUSICAL INTEGRITY VIOLATED - {len(integrity_result.violations)} issues"
         elif overprocessed:
-            verdict = f"❌ OVERPROCESSED - Intensity {processing_intensity:.1%} exceeds limit {_max_processing_intensity:.1%}"
+            verdict = (
+                f"❌ OVERPROCESSED - Intensity {processing_intensity:.1%} exceeds limit {_max_processing_intensity:.1%}"
+            )
         elif not authenticity_preserved:
             verdict = f"❌ AUTHENTICITY LOST - {medium_type.value} character destroyed"
         else:

@@ -25,10 +25,10 @@ Anwendung in Aurik:
 
 from __future__ import annotations
 
-import logging
-import threading
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
+import threading
 
 import numpy as np
 
@@ -191,7 +191,18 @@ class LAIONCLAPPlugin:
         self._text_embeddings: np.ndarray | None = None
         self._model_loaded: bool = False
         self._fallback_active: bool = False
-        self._try_load_model()
+        self._load_attempted: bool = False
+        self._load_lock = threading.Lock()
+
+    def _ensure_loaded(self) -> None:
+        """Lazy-Load: Modell erst beim ersten Aufruf laden (2.2 GB PyTorch-Checkpoint)."""
+        if self._load_attempted:
+            return
+        with self._load_lock:
+            if self._load_attempted:
+                return
+            self._load_attempted = True
+            self._try_load_model()
 
     def _try_load_model(self) -> None:
         """Lädt CLAP: erst ONNX-SOTA, dann lokales PyTorch-Checkpoint, dann DSP."""
@@ -209,8 +220,6 @@ class LAIONCLAPPlugin:
                 try:
                     from backend.core.ml_memory_budget import (
                         release as _ml_release_onnx,
-                    )
-                    from backend.core.ml_memory_budget import (
                         try_allocate as _try_alloc_onnx,
                     )
 
@@ -494,6 +503,7 @@ class LAIONCLAPPlugin:
             ValueError: Falls sr != 48000
         """
         assert sr == 48000, f"LAION-CLAP: SR muss 48000 Hz sein, erhalten: {sr}"
+        self._ensure_loaded()
         audio_f32 = np.asarray(audio, dtype=np.float32)
         audio_f32 = np.nan_to_num(audio_f32, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -774,7 +784,7 @@ def unload_laion_clap() -> None:
 
     if _instance is not None:
         _instance._clap_model = None
-        _instance._session = None
+        _instance._audio_session = None
         _instance._model_loaded = False
         gc.collect()
         try:

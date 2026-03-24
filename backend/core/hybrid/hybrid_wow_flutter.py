@@ -33,12 +33,9 @@ Version: 1.0.0
 Date: 16. Februar 2026
 """
 
-import csv
-import logging
-import os
-import tempfile
 from dataclasses import dataclass
 from enum import Enum
+import logging
 from typing import Any
 
 import numpy as np
@@ -118,12 +115,12 @@ class PolyphonicSpeedCurveEstimator:
     - BasicPitch ONNX unavailable / fails → pYIN DSP (via WowFlutterFix).
     """
 
-    _REF_HZ: float = 440.0          # Canonical reference for virtual pitch output
-    _MIN_VOICES: int = 2            # Minimum simultaneous voices for consensus
-    _SG_WINDOW: int = 51            # Savitzky-Golay window (≈ 0.5 s at 10 ms hop)
-    _SG_POLY: int = 3               # Savitzky-Golay polynomial order
-    _MIN_HZ: float = 20.0           # Below this: treat slot as unvoiced
-    _MIN_CONF: float = 0.20         # Minimum per-slot confidence to include in consensus
+    _REF_HZ: float = 440.0  # Canonical reference for virtual pitch output
+    _MIN_VOICES: int = 2  # Minimum simultaneous voices for consensus
+    _SG_WINDOW: int = 51  # Savitzky-Golay window (≈ 0.5 s at 10 ms hop)
+    _SG_POLY: int = 3  # Savitzky-Golay polynomial order
+    _MIN_HZ: float = 20.0  # Below this: treat slot as unvoiced
+    _MIN_CONF: float = 0.20  # Minimum per-slot confidence to include in consensus
 
     def __init__(self) -> None:
         self._bp = None
@@ -168,13 +165,12 @@ class PolyphonicSpeedCurveEstimator:
 
     def _estimate_polyphonic(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
         """Core polyphonic consensus estimation."""
-        import math as _math
 
         from scipy.signal import savgol_filter
 
         mono = np.mean(audio, axis=1).astype(np.float32) if audio.ndim == 2 else audio.astype(np.float32)
         result = self._bp.analyze(mono, sr, max_polyphony=6)
-        pitches_hz: np.ndarray = result.pitches_hz    # [T, K]
+        pitches_hz: np.ndarray = result.pitches_hz  # [T, K]
         confidences: np.ndarray = result.confidences  # [T, K]
 
         T, K = pitches_hz.shape
@@ -227,18 +223,36 @@ class PolyphonicSpeedCurveEstimator:
 
         speed_curve = np.nan_to_num(speed_curve, nan=0.0).astype(np.float32)
 
+        # Step 6b: Plausibility guard — speed deviations > 200 cents (2 semitones)
+        # are physically implausible for wow/flutter and indicate estimation failure.
+        _max_abs_cents = float(np.max(np.abs(speed_curve))) if len(speed_curve) > 0 else 0.0
+        if _max_abs_cents > 200.0:
+            logger.warning(
+                "PolyphonicSpeedCurveEstimator: speed_range implausible (max |%.1f| cents > 200) — zeroing speed_curve",
+                _max_abs_cents,
+            )
+            speed_curve[:] = 0.0
+            final_conf = np.full_like(speed_curve, 0.05, dtype=np.float32)
+        else:
+            final_conf = None  # computed below
+
         # Step 7: virtual pitch trajectory (phase_12 pipeline compatible)
         virtual_pitch = (self._REF_HZ * np.power(2.0, speed_curve / 1200.0)).astype(np.float32)
         virtual_pitch = np.clip(virtual_pitch, self._MIN_HZ, 4000.0)
 
-        final_conf = np.where(consensus_conf > 0.0, 0.85, 0.30).astype(np.float32)
-        final_conf[nan_mask] *= 0.5
+        if final_conf is None:
+            final_conf = np.where(consensus_conf > 0.0, 0.85, 0.30).astype(np.float32)
+            final_conf[nan_mask] *= 0.5
 
         logger.info(
             "PolyphonicSpeedCurveEstimator: T=%d frames, K=%d voices, "
             "consensus=%d/%d frames, speed_range=[%.2f, %.2f] cents",
-            T, K, int(np.sum(~nan_mask)), T,
-            float(np.min(speed_curve)), float(np.max(speed_curve)),
+            T,
+            K,
+            int(np.sum(~nan_mask)),
+            T,
+            float(np.min(speed_curve)),
+            float(np.max(speed_curve)),
         )
         return virtual_pitch, final_conf
 
@@ -321,6 +335,7 @@ class HybridWowFlutter:
         """Initialize FCPE/CREPE pitch plugin (lazy-loading, FCPE preferred)."""
         try:
             from plugins.fcpe_plugin import get_fcpe_plugin
+
             self.crepe = get_fcpe_plugin()
             logger.info("FCPE pitch plugin loaded for wow/flutter detection (model=%s)", self.crepe.model_used)
             return
@@ -328,6 +343,7 @@ class HybridWowFlutter:
             logger.debug("FCPE-Plugin nicht verfügbar (%s) — CREPE-Fallback", e)
         try:
             from plugins.crepe_plugin import get_crepe_plugin
+
             self.crepe = get_crepe_plugin()
             logger.info("CREPE plugin geladen für wow/flutter-Detektion")
         except Exception as e:
@@ -541,7 +557,7 @@ if __name__ == "__main__":
     audio = 0.5 * np.sin(phase)
 
     logger.debug(f"Generated {duration}s test audio @ {sample_rate} Hz")
-    logger.debug(f"Base frequency: {base_freq} Hz with {wow_amount*100:.1f}% wow at {wow_freq} Hz")
+    logger.debug(f"Base frequency: {base_freq} Hz with {wow_amount * 100:.1f}% wow at {wow_freq} Hz")
     logger.debug("")
 
     # Test strategies

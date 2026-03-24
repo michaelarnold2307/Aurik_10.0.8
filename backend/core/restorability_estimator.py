@@ -237,14 +237,14 @@ class RestorabilityEstimator:
         try:
             frame_len = int(sr * 0.025)  # 25 ms
             hop = frame_len // 2
-            energies = []
-            for i in range(0, len(mono) - frame_len, hop):
-                frame = mono[i : i + frame_len]
-                rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
-                energies.append(rms)
-            if not energies:
+            if len(mono) < frame_len:
                 return 0.0
-            energies = np.array(energies)
+            # Vectorized sliding-window RMS — replaces Python loop over ~18k frames (225s audio)
+            n_frames = max(1, (len(mono) - frame_len) // hop + 1)
+            windows = np.lib.stride_tricks.sliding_window_view(mono, frame_len)[::hop][:n_frames]
+            energies = np.sqrt(np.mean(windows.astype(np.float64) ** 2, axis=1) + 1e-12)
+            if len(energies) == 0:
+                return 0.0
             noise_floor = np.percentile(energies, 5)
             signal_level = np.percentile(energies, 90)
             if noise_floor < 1e-9:
@@ -274,15 +274,17 @@ class RestorabilityEstimator:
     def _estimate_crackle_rate(self, mono: np.ndarray, sr: int) -> float:
         """Impuls-/Crackle-Dichte: Anteil kurzer hochenergetischer Spikes."""
         try:
-            frame_len = int(sr * 0.010)  # 10 ms
-            hop = frame_len
-            rms_vals = []
-            for i in range(0, len(mono) - frame_len, hop):
-                frame = mono[i : i + frame_len]
-                rms_vals.append(float(np.sqrt(np.mean(frame**2) + 1e-12)))
-            if len(rms_vals) < 4:
+            frame_len = int(sr * 0.010)  # 10 ms, non-overlapping
+            if len(mono) < frame_len * 4:
                 return 0.0
-            rms_arr = np.array(rms_vals)
+            # Vectorized non-overlapping reshape — replaces Python loop over ~22.5k frames (225s audio)
+            n_frames = len(mono) // frame_len
+            rms_arr = np.sqrt(
+                np.mean(mono[: n_frames * frame_len].reshape(n_frames, frame_len).astype(np.float64) ** 2, axis=1)
+                + 1e-12
+            )
+            if len(rms_arr) < 4:
+                return 0.0
             median_rms = np.median(rms_arr)
             threshold = median_rms * 6.0  # 6× Median = Impuls
             n_impulses = int(np.sum(rms_arr > threshold))

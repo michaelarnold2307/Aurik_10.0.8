@@ -13,10 +13,10 @@ except ImportError as e:  # pragma: no cover
     _log.warning("MpSenetPlugin nicht verfügbar: %s", e)
 
 try:
-    from plugins.demucs_v4_plugin import DemucsV4Plugin
+    from plugins.mdx23c_plugin import MDX23CPlugin
 except ImportError as e:  # pragma: no cover
-    DemucsV4Plugin = None  # type: ignore[misc,assignment]
-    _log.warning("DemucsV4Plugin nicht verfügbar: %s", e)
+    MDX23CPlugin = None  # type: ignore[misc,assignment]
+    _log.warning("MDX23CPlugin nicht verfügbar: %s", e)
 
 try:
     from plugins.wpe_plugin import WpePlugin
@@ -34,7 +34,7 @@ class SOTAUniversalEnhancer:
         self.mode = mode
         # §4.4: MP-SENet 2023 übernimmt Sprach-/Fallback-Enhancement (ersetzt FullSubNet+/DCCRN)
         self.speech_model = MpSenetPlugin() if MpSenetPlugin else None
-        self.music_model = DemucsV4Plugin() if DemucsV4Plugin else None
+        self.music_model = MDX23CPlugin() if MDX23CPlugin else None
         self.mix_model = WpePlugin() if WpePlugin else None
         self.fallback_model = MpSenetPlugin() if MpSenetPlugin else None
 
@@ -52,7 +52,9 @@ class SOTAUniversalEnhancer:
             result = self.speech_model.enhance(audio, sr)
             enhanced = np.nan_to_num(
                 result.audio if hasattr(result, "audio") else result,
-                nan=0.0, posinf=0.0, neginf=0.0,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
             )
             return np.clip(enhanced, -1.0, 1.0)
         elif typ == "music" and self.music_model:

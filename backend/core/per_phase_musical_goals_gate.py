@@ -27,7 +27,14 @@ Pro Phase (wrap_phase()):
          Retry-3: Phase mit strength × 0.35
          Retry-4: Phase mit strength × 0.20
          Retry-5 (Last-Resort): Phase mit strength × 0.10
-         Falls immer noch: Rollback + phase_gate_log-Eintrag
+         Falls immer noch: Best-Effort — Versuch mit geringster Regression wird
+         angewendet. KEIN Rollback/Skip erlaubt (§2.29 v9.10.64).
+
+WICHTIG (§2.29 v9.10.64):
+-----------
+PMGG darf Phasen NIEMALS überspringen (kein Rollback auf Original-Audio).
+CausalDefectReasoner hat die Phase als notwendig bestimmt — sie MUSS angewendet
+werden, ggf. mit reduzierter Stärke (best-effort).
 
 KONSTANTEN:
 -----------
@@ -84,6 +91,83 @@ PHASE_SAMPLE_DURATIONS: dict[str, float] = {
     "phase_11": 1.5,  # Limiting (True-Peak)
     "phase_18": 2.0,  # Noise-Gate
     # Standard: SAMPLE_DURATION_S = 5.0 für alle anderen Phasen
+}
+
+# §9.7.4 Phase-specific goal exclusions.
+# Goals whose DSP proxy is structurally unreliable for a given processing type.
+# These goals are NOT checked for regression when the phase matches.
+#
+# Rationale for phase_02 / phase_28:
+#   Both apply comb / spectral-notch filters.  The MFCC-smoothness proxy for
+#   "natuerlichkeit" and the flatness-based proxy for "separation_fidelity"
+#   interpret the introduced notches as artefacts, producing false-positive
+#   regressions of 0.36–0.69 >> REGRESSION_THRESHOLD_GOOD (0.012).
+#   Perceptually the hum/noise removal IS the correct action; the measurement
+#   artifact must therefore be suppressed for these phases.
+#   Also: "timbre_authentizitaet" (centroid-stability proxy) and "authentizitaet"
+#   (spectral-roughness proxy) degrade because comb-filter notches at 50/100/
+#   150/200/250/300/350/400 Hz create spectral discontinuities and shift the
+#   centroid distribution.  "bass_kraft" degrades because the 50-Hz fundamental
+#   falls directly in the 20–250 Hz bass band.  All three produce constant
+#   false-positive regressions of 0.15–0.35 independent of wet/dry strength,
+#   confirming measurement artifacts (not real quality degradation).
+#
+# Rationale for phase_06 (frequency restoration):
+#   SBR + LPC harmonic extension intentionally modifies the spectral envelope
+#   above the rolloff frequency.  "timbre_authentizitaet" (centroid-stability)
+#   and "authentizitaet" (spectral-roughness) proxies interpret the new harmonic
+#   content as spectral deformation, producing regressions of 0.05–0.10 even
+#   though the restoration IS the intended action.  "brillanz" is also excluded
+#   because SBR increases HF energy — the proxy measures the change as
+#   deviation, not improvement.
+#
+# Rationale for phase_24 (dropout repair):
+#   Fills signal gaps with reconstructed audio.  The MFCC-smoothness proxy
+#   and NMF-flatness proxy interpret the reconstructed segments as artefacts,
+#   producing constant false-positive regressions (~0.37) independent of
+#   Wet/Dry strength — physically impossible for real quality degradation.
+#
+# Rationale for phase_05 / phase_30:
+#   Rumble filter and DC-offset removal modify only sub-sonic content.
+#   The MFCC proxy interprets the changed spectral baseline as degradation
+#   (regressions 0.36–0.50), although perceptual quality is unchanged or
+#   improved.  bass_kraft is also excluded because the removed content is
+#   below audible bass range (< 20 Hz for DC, < 30 Hz for rumble).
+#   timbre_authentizitaet (MFCC-Pearson) is also excluded: MFCC coefficient
+#   #0 encodes the spectral energy level; sub-sonic removal shifts this
+#   coefficient producing a false-positive Pearson drop of 0.35–0.45.
+#
+# Rationale for phase_55 (diffusion inpainting):
+#   Reconstructs dropout gaps via CQTdiff diffusion.  The MFCC-smoothness
+#   proxy interprets the AI-reconstructed segments identically to phase_24 —
+#   constant false-positive regression (~0.044) independent of Wet/Dry
+#   strength.  Same proxy artifact pattern as phase_24.
+#
+# Rationale for phase_29 (tape hiss / noise reduction):
+#   Broadband noise reduction (DeepFilterNet / OMLSA) removes HF noise floor.
+#   brillanz proxy (raw HF energy ratio) falsely reports regression because
+#   the removed content IS the noise, not musical signal.  timbre_authentizitaet
+#   (MFCC-Pearson) degrades because spectral envelope changes; natuerlichkeit
+#   and separation_fidelity show the same comb-filter false-positive pattern.
+#   Constant regression of ~0.31 observed across all wet/dry strengths —
+#   physically impossible for strength-proportional wet/dry blending, confirming
+#   measurement artifact independent of processing level.
+#
+# Rationale for phase_08 (transient preservation):
+#   Transient shaping modifies attack envelopes.  The MFCC-smoothness proxy
+#   (natuerlichkeit) and MFCC-Pearson proxy (timbre_authentizitaet) interpret
+#   the changed spectral energy distribution over time as degradation, producing
+#   false-positive regressions of ~0.10 independent of strength.
+PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
+    "phase_02": {"natuerlichkeit", "separation_fidelity", "timbre_authentizitaet", "authentizitaet", "bass_kraft"},
+    "phase_28": {"natuerlichkeit", "separation_fidelity"},
+    "phase_24": {"natuerlichkeit", "separation_fidelity"},
+    "phase_55": {"natuerlichkeit", "separation_fidelity"},
+    "phase_05": {"natuerlichkeit", "separation_fidelity", "bass_kraft", "timbre_authentizitaet"},
+    "phase_30": {"natuerlichkeit", "separation_fidelity", "bass_kraft", "timbre_authentizitaet"},
+    "phase_29": {"natuerlichkeit", "separation_fidelity", "brillanz", "timbre_authentizitaet"},
+    "phase_08": {"natuerlichkeit", "separation_fidelity", "timbre_authentizitaet"},
+    "phase_06": {"timbre_authentizitaet", "authentizitaet", "brillanz"},
 }
 
 
@@ -158,7 +242,7 @@ class PhaseGateLogEntry:
     """Eintrag im phase_gate_log für eine Phase."""
 
     phase_id: str
-    action: str  # "passed" | "retry1" | "retry2" | "rollback"
+    action: str  # "passed" | "retry1" | ... | "retry5" | "best_effort" | "best_effort_rN"
     goal_regressions: dict[str, float]  # Ziel → Δ-Score
     strength_used: float
     timestamp: float = field(default_factory=time.time)
@@ -535,11 +619,6 @@ class PerPhaseMusicalGoalsGate:
         if sr != 48000:
             logger.debug(f"PMGG: SR={sr} (nicht 48000) — Goal-Messung läuft trotzdem")
 
-        # Vor-Scores messen (wenn nicht übergeben)
-        sample_before = _extract_sample(audio, sr)
-        if scores_before is None:
-            scores_before = _measure_quick(sample_before, sr)
-
         if phase_kwargs is None:
             phase_kwargs = {}
 
@@ -549,8 +628,14 @@ class PerPhaseMusicalGoalsGate:
         # Adaptiven Threshold bestimmen (§2.29)
         threshold = _get_adaptive_threshold(restorability_score)
 
-        # §9.7.3 Phasen-adaptive Sample-Dauer
+        # §9.7.3 Phasen-adaptive Sample-Dauer — MUSS vor scores_before bestimmt werden,
+        # damit before und after dieselbe Sample-Länge nutzen (sonst falsche Regression).
         _sample_dur = _get_sample_duration(phase_id)
+
+        # Vor-Scores messen (wenn nicht übergeben) — gleiche duration wie after-Messung
+        sample_before = _extract_sample(audio, sr, duration_s=_sample_dur)
+        if scores_before is None:
+            scores_before = _measure_quick(sample_before, sr)
 
         # Effective goal set: Schnitt aus FAST_GOALS_SUBSET + applicable_goals
         if applicable_goals is not None:
@@ -559,6 +644,23 @@ class PerPhaseMusicalGoalsGate:
                 effective_goals = FAST_GOALS_SUBSET  # Fallback: alle
         else:
             effective_goals = FAST_GOALS_SUBSET
+
+        # §9.7.4 Phase-specific goal exclusions (comb-filter-sensitive proxies).
+        # Remove goals whose DSP proxy is unreliable for this particular phase type.
+        _excluded_goals: set[str] = set()
+        for _pfx, _excl in PHASE_GOAL_EXCLUSIONS.items():
+            if phase_id.startswith(_pfx):
+                _excluded_goals |= _excl
+        if _excluded_goals:
+            effective_goals = [g for g in effective_goals if g not in _excluded_goals]
+            if not effective_goals:
+                effective_goals = list(FAST_GOALS_SUBSET)  # Safety fallback
+            logger.debug(
+                "PMGG: %s goal exclusions applied: %s → %d goals checked",
+                phase_id,
+                sorted(_excluded_goals),
+                len(effective_goals),
+            )
 
         # Phase ausführen + Regression prüfen (§2.29: initial_strength statt immer 1.0)
         audio_out, scores_after, action, strength = self._run_with_retry(
@@ -574,12 +676,14 @@ class PerPhaseMusicalGoalsGate:
             initial_strength=max(0.0, min(1.0, initial_strength)),
         )
 
-        # Rollback-Zähler
-        if action in ("rollback",):
+        # Best-Effort-Zähler (Phase wurde mit reduzierter Stärke angewendet, nicht übersprungen)
+        if action.startswith("best_effort"):
             self._rollback_count += 1
             if self._rollback_count > 3 and not self._user_warned:
                 self._user_warned = True
-                logger.warning("ℹ️ Einige Verarbeitungsschritte wurden angepasst, um den Klang zu schützen.")
+                logger.warning(
+                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, um den Klang zu schützen."
+                )
 
         goal_regressions = {
             g: scores_after.get(g, 0.5) - scores_before.get(g, 0.5)
@@ -649,12 +753,61 @@ class PerPhaseMusicalGoalsGate:
         if regression <= threshold:
             return audio_out, scores_after, "passed", initial_strength
 
+        # Log which goal caused the regression (diagnostics for false-positive detection)
+        _worst_goal = max(
+            effective_goals,
+            key=lambda g: max(0.0, scores_before.get(g, 0.5) - scores_after.get(g, 0.5)),
+        )
+        logger.debug(
+            "PMGG: %s regression=%.4f > threshold=%.3f — worst goal: %s (before=%.3f after=%.3f)",
+            phase_id,
+            regression,
+            threshold,
+            _worst_goal,
+            scores_before.get(_worst_goal, 0.5),
+            scores_after.get(_worst_goal, 0.5),
+        )
+
         # Retry-Stärken relativ zur Initialstärke skalieren (§2.29):
         # initial_strength=1.0 → normale Retry-Folge [0.65, 0.50, ...]
         # initial_strength<1.0 → proportional nach unten skaliert
         retry_strengths = [s * initial_strength for s in _RETRY_STRENGTHS]
+
+        # §2.29 Best-Effort-Tracking: Speichere den Versuch mit geringster Regression.
+        # PMGG darf Phasen NICHT überspringen — CausalDefectReasoner hat die Phase
+        # als notwendig bestimmt. Stattdessen wird der beste Versuch verwendet.
+        best_audio = audio_out
+        best_scores = scores_after
+        best_regression = regression
+        best_strength = initial_strength
+        best_action = "best_effort"
+
         # Retry-Schleife
+        _prev_regression = regression  # Track previous regression for stagnation detection
+        _retry_t0 = time.time()  # Per-phase time budget for retries
+        _RETRY_BUDGET_S = 300.0  # Max 5 min for all retries of a single phase
         for attempt, strength in enumerate(retry_strengths):
+            # Per-phase time budget: abort retries if total retry time exceeds budget.
+            # Prevents runaway phases (e.g. Phase 06: 42 min, Phase 36: 16 min).
+            _retry_elapsed = time.time() - _retry_t0
+            if _retry_elapsed > _RETRY_BUDGET_S:
+                logger.info(
+                    "PMGG: %s retry time budget exceeded (%.0fs > %.0fs) — "
+                    "using best attempt so far (regression=%.4f, attempt=%d)",
+                    phase_id,
+                    _retry_elapsed,
+                    _RETRY_BUDGET_S,
+                    best_regression,
+                    attempt,
+                )
+                break
+
+            # §OOM-Safety: Garbage Collection zwischen Retries — jeder Retry
+            # kann ~1 GB temporäre Arrays erzeugen (ResembleEnhance, OMLSA).
+            import gc
+
+            gc.collect()
+
             action_label = f"retry{attempt + 1}"
             logger.debug(
                 "PMGG: %s Retry %d mit strength=%.2f (Regression=%.4f, threshold=%.3f)",
@@ -669,14 +822,41 @@ class PerPhaseMusicalGoalsGate:
             regression_retry = self._max_regression(scores_before, scores_retry, effective_goals)
             if regression_retry <= threshold:
                 return audio_retry, scores_retry, action_label, strength
+            # Track best attempt (lowest regression)
+            if regression_retry < best_regression:
+                best_audio = audio_retry
+                best_scores = scores_retry
+                best_regression = regression_retry
+                best_strength = strength
+                best_action = f"best_effort_r{attempt + 1}"
 
-        # Rollback
+            # Stagnation guard: if regression barely changes across consecutive
+            # retries despite strength variation, further retries are wasted
+            # computation.  Threshold 0.002 catches near-identical ML outputs
+            # (e.g. ResembleEnhance ignoring omlsa_alpha) as well as DSP phases
+            # where wet/dry blending produces marginal improvement (< 0.2%).
+            if abs(regression_retry - _prev_regression) < 0.002 and attempt >= 1:
+                logger.info(
+                    "PMGG: %s stagnation detected at retry %d (Δregression=%.6f) — skipping remaining retries",
+                    phase_id,
+                    attempt + 1,
+                    abs(regression_retry - _prev_regression),
+                )
+                break
+            _prev_regression = regression_retry
+
+        # §2.29 KEIN Rollback — Phase wird mit geringster Regression angewendet.
+        # VERBOTEN: Phase überspringen (Original-Audio zurückgeben).
+        # CausalDefectReasoner hat diese Phase als notwendig bestimmt.
         logger.warning(
-            "⚠️ PMGG: %s übersprungen — Musical Goal Regression %.4f überschreitet Limit",
+            "⚠️ PMGG: %s best-effort (strength=%.2f, Regression=%.4f > threshold=%.3f) — "
+            "Phase wird trotzdem angewendet (kein Rollback/Skip erlaubt)",
             phase_id,
-            regression,
+            best_strength,
+            best_regression,
+            threshold,
         )
-        return audio, scores_before, "rollback", 0.0
+        return best_audio, best_scores, best_action, best_strength
 
     @staticmethod
     def _run_phase(

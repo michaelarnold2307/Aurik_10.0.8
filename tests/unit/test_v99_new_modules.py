@@ -234,6 +234,41 @@ class TestMicroDynamicsMetric:
         crest = m._crest_factor_db(audio)
         assert crest >= 0.0
 
+    def test_10_no_reference_dynamic_music_meets_threshold(self):
+        """Normaldynamisches Audio (cv≈0.12) ohne Referenz erzielt Score ≥ 0.92.
+
+        Regression-Test für v9.10.57: altes cv/0.3 lieferte 0.33–0.60 für
+        typische Musik; neue Formel 0.60 + cv*4.0 kalibriert korrekt.
+        """
+        from backend.core.musical_goals.musical_goals_metrics import MicroDynamicsMetric
+
+        rng = np.random.default_rng(7)
+        m = MicroDynamicsMetric()
+        sr = SR
+        win = int(sr * m.WINDOW_MS / 1000)
+        # Build audio with varying RMS per 400-ms window (cv ≈ 0.12)
+        rms_targets = [0.30, 0.50, 0.20, 0.70, 0.40, 0.60, 0.15, 0.55, 0.35, 0.65] * 3
+        audio = np.zeros(win * len(rms_targets), dtype=np.float32)
+        for i, rms_t in enumerate(rms_targets):
+            seg = rng.standard_normal(win).astype(np.float32)
+            seg = seg / (np.std(seg) + 1e-8) * rms_t
+            audio[i * win : (i + 1) * win] = np.clip(seg, -1.0, 1.0)
+        score = m.measure(audio, sr)
+        assert score >= 0.92, (
+            f"Dynamic music (cv≈0.12) should score ≥ 0.92 without reference, got {score:.3f}. "
+            "Regression: old cv/0.3 formula produced 0.33–0.60 for typical music."
+        )
+
+    def test_11_over_compressed_scores_below_threshold(self):
+        """Flat-komprimiertes Audio (cv≈0) erzielt Score < 0.88 (korrekt als schlechte Dynamik markiert)."""
+        from backend.core.musical_goals.musical_goals_metrics import MicroDynamicsMetric
+
+        m = MicroDynamicsMetric()
+        # Pure sine = near-constant RMS profile → cv ≈ 0
+        audio = _sine(440.0, 5.0)
+        score = m.measure(audio, SR)
+        assert score < 0.88, f"Flat/sine audio should be below threshold, got {score:.3f}"
+
 
 # ===========================================================================
 # 3. MusicalGoalsChecker — 12 Ziele

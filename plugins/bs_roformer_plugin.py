@@ -10,7 +10,7 @@ Referenz:
 
 SOTA-Entscheidungsmatrix (§4.4 Aurik-Spec):
     Primär: BS-RoFormer (ONNX, CPUExecutionProvider)
-    Fallback: demucs_v4_plugin (lokal, kein Docker)
+    Fallback: mdx23c_plugin (Kim_Vocal_2/Kim_Inst, lokal, kein Docker)
 
 CPU-Policy: Ausschließlich CPUExecutionProvider — keine GPU-Abhängigkeit.
 Modell-Gewichte: ~/.aurik/models/bs_roformer/ (via ModelDownloader beim 1. Start)
@@ -18,11 +18,11 @@ Modell-Gewichte: ~/.aurik/models/bs_roformer/ (via ModelDownloader beim 1. Start
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import math
-import threading
-from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 
 import numpy as np
 
@@ -164,8 +164,7 @@ class BSRoFormerPlugin:
         # ── ML-Budget-Check VOR dem Laden (§5.1 OOM-Schutz) ──────────────────
         _allocated = False
         try:
-            from backend.core.ml_memory_budget import release as _release
-            from backend.core.ml_memory_budget import try_allocate
+            from backend.core.ml_memory_budget import release as _release, try_allocate
 
             if not try_allocate("MelBandRoformer", size_gb=0.90):
                 logger.warning("BSRoFormer: ML-Budget erschöpft — Fallback aktiv")

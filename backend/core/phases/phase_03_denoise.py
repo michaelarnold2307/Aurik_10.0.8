@@ -92,6 +92,17 @@ except ImportError:
     ML_HYBRID_AVAILABLE = False
     logging.getLogger(__name__).warning("ML-Hybrid denoiser not available, using DSP-only mode")
 
+# PGHI phase-reconstruction instead of direct iSTFT after spectral gain application
+try:
+    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_from_stft
+
+    _PGHI_AVAILABLE = True
+except ImportError:
+    _PGHI_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        "PGHI not available; scipy.signal.istft fallback active for phase-reconstruction"
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -184,6 +195,22 @@ class DenoisePhase(PhaseInterface):
         "high": (5000, 20000),  # High frequencies (hiss region)
     }
 
+    # MRSA Multi-Resolution Spectral Analysis zones (mandatory, §DSP-Spezialregeln)
+    # VERBOTEN: arbitrary FFT sizes — only these 5 zone-optimal windows are permitted.
+    # Each zone uses the optimal time-frequency resolution for its frequency content:
+    #   sub_bass (win=65536): ~1.36 s window → 0.73 Hz/bin freq resolution for bass transients
+    #   air (win=128): ~2.7 ms window → 375 Hz/bin → precise temporal resolution for HF
+    _MRSA_ZONES: tuple = (
+        # (name,       win_size, hop_size, f_low_hz, f_high_hz)
+        ("sub_bass", 65536, 16384, 0, 250),
+        ("mid_low", 16384, 4096, 250, 2500),
+        ("mid", 8192, 2048, 2500, 8000),
+        ("presence", 1024, 256, 8000, 16000),
+        ("air", 128, 32, 16000, 24000),
+    )
+    # Hanning crossfade transition bandwidth at zone boundaries (~10 ms spectral transition)
+    _MRSA_CROSSFADE_BW_HZ: float = 100.0
+
     def get_metadata(self) -> PhaseMetadata:
         return PhaseMetadata(
             phase_id="phase_03_denoise",
@@ -226,6 +253,11 @@ class DenoisePhase(PhaseInterface):
         # Get material-specific parameters
         params = self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"])
 
+        # PMGG passes strength via kwargs to control retry intensity (§2.29).
+        # If not provided, fall back to material-specific default.
+        effective_strength = kwargs.get("strength", params["strength"])
+        effective_strength = max(0.01, min(1.0, float(effective_strength)))
+
         # ML-Hybrid Mode Routing (v3.0)
         # quality_mode from UnifiedRestorerV3: 'fast', 'balanced', 'maximum'
         quality_mode = kwargs.get("quality_mode", "balanced")
@@ -262,7 +294,7 @@ class DenoisePhase(PhaseInterface):
                 denoiser = HybridMLDenoiser(
                     config=DenoiseConfig(
                         strategy=strategy,
-                        omlsa_alpha=params["strength"],
+                        omlsa_alpha=effective_strength,
                         resemble_denoise=True,
                         enable_preprocessing=True,
                         quality_threshold=0.85,  # Skip Resemble if OMLSA result clean enough
@@ -329,15 +361,19 @@ class DenoisePhase(PhaseInterface):
                 # Fall through to DSP path below
 
         # DSP-Only Path (Fast mode or ML fallback)
-        logger.info(f"Phase 03 DSP-Only: material={material_type}, strength={params['strength']}")
+        logger.info(f"Phase 03 DSP-Only: material={material_type}, strength={effective_strength}")
+
+        # Override material-default strength with PMGG-controlled effective_strength
+        dsp_params = dict(params)
+        dsp_params["strength"] = effective_strength
 
         # Stereo/Mono handling
         if audio.ndim == 2:
             left, stats_left = self._denoise_mono_professional(
-                audio[:, 0], params, noise_profile_start, noise_profile_end
+                audio[:, 0], dsp_params, noise_profile_start, noise_profile_end
             )
             right, stats_right = self._denoise_mono_professional(
-                audio[:, 1], params, noise_profile_start, noise_profile_end
+                audio[:, 1], dsp_params, noise_profile_start, noise_profile_end
             )
             result_audio = np.column_stack([left, right])
 
@@ -345,7 +381,9 @@ class DenoisePhase(PhaseInterface):
             noise_reduction_db = (stats_left["reduction_db"] + stats_right["reduction_db"]) / 2
             musical_noise_suppression = (stats_left["musical_suppression"] + stats_right["musical_suppression"]) / 2
         else:
-            result_audio, stats = self._denoise_mono_professional(audio, params, noise_profile_start, noise_profile_end)
+            result_audio, stats = self._denoise_mono_professional(
+                audio, dsp_params, noise_profile_start, noise_profile_end
+            )
             noise_reduction_db = stats["reduction_db"]
             musical_noise_suppression = stats["musical_suppression"]
 
@@ -366,10 +404,10 @@ class DenoisePhase(PhaseInterface):
             audio=result_audio,
             modifications={
                 "noise_reduction_db": noise_reduction_db,
-                "strength": params["strength"],
+                "strength": effective_strength,
                 "musical_noise_suppression": musical_noise_suppression,
                 "material_type": material_type,
-                "bands": params["bands"],
+                "bands": dsp_params["bands"],
             },
             warnings=warnings,
             metadata={
@@ -407,51 +445,12 @@ class DenoisePhase(PhaseInterface):
         Returns:
             (denoised_audio, statistics)
         """
-        # STFT — 75% overlap für bessere OMLSA-Zeitauflösung
-        nperseg = 2048
-        noverlap = nperseg * 3 // 4
-
-        f, t, Zxx = signal.stft(audio, self.sample_rate, nperseg=nperseg, noverlap=noverlap)
-        magnitude = np.abs(Zxx)
-        phase_arr = np.angle(Zxx)
-
-        # Schritt 1: Noise PSD via IMCRA (zeitvariant, F×T)
-        if noise_start is not None and noise_end is not None:
-            # Nutzer-definierter Rauschbereich → statisches Profil
-            noise_mag = self._estimate_noise_profile_adaptive(Zxx, f, t, noise_start, noise_end)
-            if noise_mag.ndim == 1:
-                noise_mag = noise_mag[:, np.newaxis] * np.ones((1, magnitude.shape[1]))
-        else:
-            # Vollautomatisch: IMCRA Minimum-Statistik
-            noise_mag = self._estimate_noise_imcra(magnitude, t)
-
-        # Schritt 2: OMLSA Gain (Cohen 2003)
-        G_omlsa, _p_speech = self._compute_omlsa_gain(magnitude, noise_mag, params)
-
-        # Schritt 3: Multi-Band Gate
-        gain_multiband = self._apply_multiband_gate(G_omlsa, f, params["bands"])
-
-        # Schritt 4: Musical-Noise-Unterdrückung (Cappé 1994 Glättung)
-        gain_smoothed = self._suppress_musical_noise(
-            gain_multiband, params["musical_noise_suppression"], params["smoothing_time"], params["smoothing_freq"]
+        # MRSA Multi-Resolution Spectral Analysis (§DSP-Spezialregeln)
+        # 5-zone optimal STFT windows + PGHI reconstruction — replaces fixed nperseg=2048.
+        # VERBOTEN: arbitrary FFT sizes (§DSP-Spezialregeln).
+        audio_filtered, gain_multiband_mean, gain_smoothed_mean = self._denoise_mono_mrsa(
+            audio, params, self.sample_rate, noise_start, noise_end
         )
-
-        # Schritt 5: Transient Preservation
-        gain_final = self._preserve_transients(magnitude, gain_smoothed, params["transient_preserve"])
-
-        # Gain auf komplexes Spektrum anwenden
-        Zxx_filtered = gain_final * magnitude * np.exp(1j * phase_arr)
-
-        # Inverse STFT
-        _, audio_filtered = signal.istft(Zxx_filtered, self.sample_rate, nperseg=nperseg, noverlap=noverlap)
-
-        # Länge angleichen + clippen
-        if len(audio_filtered) > len(audio):
-            audio_filtered = audio_filtered[: len(audio)]
-        elif len(audio_filtered) < len(audio):
-            audio_filtered = np.pad(audio_filtered, (0, len(audio) - len(audio_filtered)))
-        audio_filtered = np.clip(audio_filtered, -1.0, 1.0)
-        audio_filtered = np.nan_to_num(audio_filtered, nan=0.0, posinf=0.0, neginf=0.0)
 
         # §4.5 Psychoakustischer Masking-Gain-Clamp (ISO 11172-3, Painter & Spanias 2000)
         # Berechnet auf Input-Audio → zeitvariante Schutzmaske für Stille / sensit. Bereiche
@@ -493,9 +492,214 @@ class DenoisePhase(PhaseInterface):
 
         # Statistiken
         reduction_db = self._measure_noise_reduction(audio, audio_filtered)
-        musical_suppression = float(np.mean(gain_smoothed) / (np.mean(gain_multiband) + 1e-10))
+        musical_suppression = gain_smoothed_mean / (gain_multiband_mean + 1e-10)
 
         return audio_filtered, {"reduction_db": reduction_db, "musical_suppression": musical_suppression}
+
+    def _denoise_mono_mrsa(
+        self,
+        audio: np.ndarray,
+        params: dict[str, Any],
+        sr: int,
+        noise_start: float | None,
+        noise_end: float | None,
+    ) -> tuple[np.ndarray, float, float]:
+        """MRSA 5-zone OMLSA/IMCRA with PGHI phase reconstruction.
+
+        Multi-Resolution Spectral Analysis (MRSA): each frequency zone is processed
+        at its optimal time-frequency resolution using a zone-specific STFT window.
+        Per-zone OMLSA/IMCRA gains are interpolated (frequency & time) to the
+        reference STFT grid and blended with Hanning-weighted crossfades at zone
+        boundaries.  Final audio is synthesised via PGHI (Perraudin 2013) instead of
+        direct iSTFT.
+
+        Zone definitions (mandatory, §DSP-Spezialregeln):
+            sub_bass:  win=65536, hop=16384, 0–250 Hz
+            mid_low:   win=16384, hop=4096,  250–2500 Hz
+            mid:       win=8192,  hop=2048,  2500–8000 Hz
+            presence:  win=1024,  hop=256,   8000–16000 Hz
+            air:       win=128,   hop=32,    16000–24000 Hz
+
+        Args:
+            audio:       Mono float32 [-1, 1], SR=48000.
+            params:      Material-specific parameters dict.
+            sr:          Sample rate (must be 48000).
+            noise_start: Optional noise-profile segment start (s).
+            noise_end:   Optional noise-profile segment end (s).
+
+        Returns:
+            (audio_out, gain_multiband_mean, gain_smoothed_mean)
+        """
+        n_samples = len(audio)
+        nyquist = float(sr // 2)
+
+        # Reference STFT (win=2048, 75 % overlap) for final gain application
+        REF_WIN = 2048
+        REF_HOP = REF_WIN * 3 // 4
+        REF_NOVERLAP = REF_WIN - REF_HOP
+
+        f_ref, t_ref, Zxx_ref = signal.stft(audio.astype(np.float64), sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP)
+        n_bins, n_t = f_ref.shape[0], Zxx_ref.shape[1]
+
+        # Accumulated weighted gain: G_acc[k, t] / w_acc[k] → final gain per bin
+        G_acc = np.zeros((n_bins, n_t), dtype=np.float64)
+        w_acc = np.zeros(n_bins, dtype=np.float64)
+
+        all_gain_mb_means: list[float] = []
+        all_gain_sm_means: list[float] = []
+
+        for zone_name, zone_win, zone_hop, f_low, f_high in self._MRSA_ZONES:
+            try:
+                # Use zone-specific STFT if audio is long enough; fall back to reference STFT
+                if n_samples >= zone_win * 2:
+                    zone_noverlap = zone_win - zone_hop
+                    f_z, t_z, Zxx_z = signal.stft(
+                        audio.astype(np.float64), sr, nperseg=zone_win, noverlap=zone_noverlap
+                    )
+                else:
+                    f_z, t_z, Zxx_z = f_ref, t_ref, Zxx_ref
+                    zone_win, zone_hop = REF_WIN, REF_HOP
+
+                mag_z = np.abs(Zxx_z)
+                n_z_t = mag_z.shape[1]
+
+                # --- Noise PSD estimation ---
+                if noise_start is not None and noise_end is not None:
+                    nm_z = self._estimate_noise_profile_adaptive(Zxx_z, f_z, t_z, noise_start, noise_end)
+                    if nm_z.ndim == 1:
+                        nm_z = nm_z[:, np.newaxis] * np.ones((1, n_z_t))
+                elif n_z_t > 10_000:
+                    # High-frame-rate zones (presence, air): stationary noise assumption;
+                    # full IMCRA would be too slow at this frame rate.
+                    nm_z = np.percentile(mag_z, 10, axis=1, keepdims=True) * np.ones((1, n_z_t))
+                    nm_z = np.maximum(nm_z, 1e-8)
+                elif n_z_t < 6:
+                    nm_z = np.percentile(mag_z, 10, axis=1, keepdims=True) * np.ones((1, n_z_t))
+                    nm_z = np.maximum(nm_z, 1e-8)
+                else:
+                    nm_z = self._estimate_noise_imcra(mag_z, t_z)
+
+                # --- OMLSA gain chain ---
+                G_z, _ = self._compute_omlsa_gain(mag_z, nm_z, params)
+                G_mb = self._apply_multiband_gate(G_z, f_z, params["bands"])
+                G_sm = self._suppress_musical_noise(
+                    G_mb,
+                    params["musical_noise_suppression"],
+                    params["smoothing_time"],
+                    params["smoothing_freq"],
+                )
+                G_tr = self._preserve_transients(mag_z, G_sm, params["transient_preserve"])
+
+                all_gain_mb_means.append(float(np.mean(G_mb)))
+                all_gain_sm_means.append(float(np.mean(G_sm)))
+
+                # Extract zone frequency bins from zone STFT
+                zm_z = (f_z >= float(f_low)) & (f_z <= float(f_high))
+                if not np.any(zm_z):
+                    continue
+
+                f_z_zone = f_z[zm_z]  # zone freqs in zone STFT
+                G_z_zone = G_tr[zm_z, :]  # (n_zone_freq, n_z_t)
+
+                # Reference STFT bins for this zone (extended by crossfade bandwidth)
+                ref_zm = (f_ref >= max(0.0, float(f_low) - self._MRSA_CROSSFADE_BW_HZ)) & (
+                    f_ref <= min(nyquist, float(f_high) + self._MRSA_CROSSFADE_BW_HZ)
+                )
+                if not np.any(ref_zm):
+                    continue
+
+                f_ref_zone = f_ref[ref_zm]
+                ref_indices = np.where(ref_zm)[0]
+                n_ref_zone = len(ref_indices)
+
+                # --- Temporal resampling: zone frames → reference frames ---
+                if n_z_t != n_t and len(f_z_zone) > 0:
+                    t_src = np.linspace(0.0, 1.0, n_z_t)
+                    t_dst = np.linspace(0.0, 1.0, n_t)
+                    G_z_time = np.empty((len(f_z_zone), n_t), dtype=np.float64)
+                    for k in range(len(f_z_zone)):
+                        G_z_time[k, :] = np.interp(t_dst, t_src, G_z_zone[k, :])
+                else:
+                    G_z_time = G_z_zone.astype(np.float64)
+
+                # --- Frequency interpolation: zone bins → reference bins ---
+                G_ref_zone = np.empty((n_ref_zone, n_t), dtype=np.float64)
+                if len(f_z_zone) >= 2:
+                    for ti in range(n_t):
+                        G_ref_zone[:, ti] = np.interp(
+                            f_ref_zone,
+                            f_z_zone,
+                            G_z_time[:, ti],
+                            left=float(G_z_time[0, ti]),
+                            right=float(G_z_time[-1, ti]),
+                        )
+                elif len(f_z_zone) == 1:
+                    G_ref_zone[:, :] = G_z_time[0:1, :]
+                else:
+                    continue
+
+                # Hanning amplitude weights at zone boundaries (smooth crossfade)
+                if n_ref_zone > 2:
+                    hann_w = np.hanning(n_ref_zone + 2)[1:-1]  # exclude 0-endpoints
+                    hann_w = np.clip(hann_w, 1e-3, 1.0)
+                else:
+                    hann_w = np.ones(n_ref_zone)
+
+                # Accumulate weighted gain
+                for ki, k in enumerate(ref_indices):
+                    w = float(hann_w[ki])
+                    G_acc[k, :] += w * G_ref_zone[ki, :]
+                    w_acc[k] += w
+
+            except Exception as zone_exc:
+                logger.warning("MRSA zone '%s' failed: %s", zone_name, zone_exc)
+                continue
+
+        # Weighted average; unprocessed bins → gain=1.0 (pass-through)
+        valid = w_acc > 0.0
+        G_combined = np.ones((n_bins, n_t), dtype=np.float32)
+        G_combined[valid, :] = (G_acc[valid, :] / w_acc[valid, np.newaxis]).astype(np.float32)
+        G_combined = np.clip(G_combined, 0.0, 1.0)
+        G_combined = np.nan_to_num(G_combined, nan=1.0)
+
+        # Statistics
+        gain_mb_mean = float(np.mean(all_gain_mb_means)) if all_gain_mb_means else 1.0
+        gain_sm_mean = float(np.mean(all_gain_sm_means)) if all_gain_sm_means else 1.0
+
+        # Apply MRSA gain to reference STFT
+        Zxx_processed = G_combined * np.abs(Zxx_ref) * np.exp(1j * np.angle(Zxx_ref))
+
+        # PGHI phase reconstruction (Perraudin 2013) — replaces direct iSTFT
+        if _PGHI_AVAILABLE:
+            try:
+                audio_out = _pghi_from_stft(Zxx_processed.astype(np.complex64), sr=sr, win_size=REF_WIN, hop=REF_HOP)
+            except Exception as pghi_exc:
+                logger.warning("PGHI reconstruction failed, using istft fallback: %s", pghi_exc)
+                _, audio_out = signal.istft(Zxx_processed, sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP)
+        else:
+            _, audio_out = signal.istft(Zxx_processed, sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP)
+
+        # Length matching
+        audio_out = np.asarray(audio_out)
+        if len(audio_out) > n_samples:
+            audio_out = audio_out[:n_samples]
+        elif len(audio_out) < n_samples:
+            audio_out = np.pad(audio_out, (0, n_samples - len(audio_out)))
+
+        audio_out = np.nan_to_num(audio_out, nan=0.0, posinf=0.0, neginf=0.0)
+        audio_out = np.clip(audio_out.astype(np.float32), -1.0, 1.0)
+
+        logger.debug(
+            "MRSA: %d/%d zones ok, valid_bins=%d/%d, gain_mb=%.3f, gain_sm=%.3f",
+            sum(1 for _ in self._MRSA_ZONES),
+            len(self._MRSA_ZONES),
+            int(np.sum(valid)),
+            n_bins,
+            gain_mb_mean,
+            gain_sm_mean,
+        )
+
+        return audio_out, gain_mb_mean, gain_sm_mean
 
     def _estimate_noise_imcra(self, magnitude: np.ndarray, times: np.ndarray) -> np.ndarray:
         """IMCRA Noise PSD Estimation (zeitvariant).

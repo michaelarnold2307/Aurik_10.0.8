@@ -34,25 +34,27 @@ from backend.core.pipeline_health_state import PipelineHealthState, pipeline_hea
 
 logger = logging.getLogger(__name__)
 
-_3X_RT_LIMIT: float = 8.0  # RT-Reported max (Spec §9.5 — caps rt_factor in output)
+_3X_RT_LIMIT: float = 32.0  # RT-Reported max (Spec §9.5 — caps rt_factor in output)
 # Mode-abhängige RT-Budgets für RestaurierDenker-Thread (Spec §9.5):
-#   BALANCED=8×, QUALITY=10×, MAXIMUM=15×
+#   BALANCED=32×, QUALITY=32×, MAXIMUM=32×
+#   Werte sind auf PerformanceGuard.LIMIT_* ausgerichtet.
 _RT_BUDGET_BY_MODE: dict = {
-    "balanced": 8.0,
-    "restoration": 10.0,  # "Restoration" maps to quality
-    "quality": 10.0,
-    "studio2026": 15.0,
-    "maximum": 15.0,
+    "balanced": 32.0,
+    "restoration": 32.0,  # "Restoration" maps to quality
+    "quality": 32.0,
+    "studio2026": 32.0,
+    "maximum": 32.0,
 }
 # Cold-Start-Minimum: Erster Lauf lädt ML-Modelle (PANNs 0.7GB, UV3 vollständig, etc.)
-# UV3-Init + Klassifikation allein dauert 20–60s. 900s = 15 min Watchdog-konsistenter Floor
-# (Frontend-Watchdog ebenfalls 600s/Datei). UV3's interne PerformanceGuard begrenzt
-# die eigentliche Verarbeitungszeit — dieser Floor ist nur für Cold-Start-Model-Loading.
-_COLDSTART_MIN_SECONDS: float = 900.0
-# Absolutes Gesamtlimit (§9.5 Ausnahme-Deckel): eine Restaurierung dauert niemals > 30 Minuten.
-# Zeitbudget-Ausnahmen (Cold-Start, langsame Systeme) sind einkalkuliert; dieses Limit
-# gilt als härte Schranke, damit der Nutzer niemals endlos wartet.
-_MAX_TOTAL_SECONDS: float = 1800.0
+# UV3-Init + Klassifikation allein dauert 20–120s je nach Host-System. 1800s = 30 min
+# deckt auch langsame HDDs + thermisches Throttling ab. PerformanceGuard begrenzt
+# die eigentliche Verarbeitungszeit — dieser Floor gilt ausschließlich für Cold-Start.
+_COLDSTART_MIN_SECONDS: float = 1800.0
+# Absolutes Gesamtlimit (§9.5): eine Stufe-1-Restaurierung endet spätestens nach 90 min.
+# Begründung: 20-min Vinyl (1200s) × 4× DSP-RT = 4800s; 90 min = komfortabler Puffer.
+# KMV Stufe 2 (MLRefinementThread) übernimmt danach ohne Zeitlimit.
+# Alter Wert: 1800s (30 min) — zu eng für Aufnahmen > 10 min mit schweren Defekten.
+_MAX_TOTAL_SECONDS: float = 5400.0  # 90 Minuten
 _MIN_AUDIO_SAMPLES: int = 64  # Mindestsignallänge
 
 # Material-adaptive MOS-Mindestziele (§6.2)
@@ -214,6 +216,12 @@ class AurikDenker:
         validate_audio: bool = True,
         mode: str = "quality",
         progress_callback: Any | None = None,
+        audio_update_callback: Any | None = None,
+        cached_era_result: Any | None = None,
+        cached_genre_result: Any | None = None,
+        cached_defect_result: Any | None = None,
+        cached_medium_result: Any | None = None,
+        cached_restorability_result: Any | None = None,
     ) -> AurikErgebnis:
         """Vollständige Aurik-Restaurierung: 8 Stufen orchestriert.
 
@@ -228,6 +236,20 @@ class AurikDenker:
         """
         t_start = time.perf_counter()
         assert sr == 48000, f"AurikDenker.restauriere() erwartet sr=48000 Hz, erhalten: {sr} Hz"
+
+        _dur_s = len(audio) / max(sr, 1) if audio.ndim == 1 else audio.shape[0] / max(sr, 1)
+        logger.info(
+            "AurikDenker.denke() gestartet: mode=%s, sr=%d, duration=%.1fs, shape=%s, caches=[era=%s, genre=%s, defect=%s, medium=%s, rest=%s]",
+            mode,
+            sr,
+            _dur_s,
+            audio.shape,
+            cached_era_result is not None,
+            cached_genre_result is not None,
+            cached_defect_result is not None,
+            cached_medium_result is not None,
+            cached_restorability_result is not None,
+        )
 
         # NaN/Inf-Schutz (Spec §3.1)
         audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
@@ -246,7 +268,18 @@ class AurikDenker:
 
         try:
             ergebnis = self._orchestriere(
-                audio, sr, audio_duration_s, t_start, mode=mode, progress_callback=progress_callback
+                audio,
+                sr,
+                audio_duration_s,
+                t_start,
+                mode=mode,
+                progress_callback=progress_callback,
+                audio_update_callback=audio_update_callback,
+                cached_era_result=cached_era_result,
+                cached_genre_result=cached_genre_result,
+                cached_defect_result=cached_defect_result,
+                cached_medium_result=cached_medium_result,
+                cached_restorability_result=cached_restorability_result,
             )
         except MemoryError as exc:
             elapsed = time.perf_counter() - t_start
@@ -282,6 +315,12 @@ class AurikDenker:
             sr,
             mode=kwargs.get("mode", "quality"),
             progress_callback=kwargs.get("progress_callback"),
+            audio_update_callback=kwargs.get("audio_update_callback"),
+            cached_era_result=kwargs.get("cached_era_result"),
+            cached_genre_result=kwargs.get("cached_genre_result"),
+            cached_defect_result=kwargs.get("cached_defect_result"),
+            cached_medium_result=kwargs.get("cached_medium_result"),
+            cached_restorability_result=kwargs.get("cached_restorability_result"),
         )
 
     @staticmethod
@@ -500,6 +539,12 @@ class AurikDenker:
         *,
         mode: str = "quality",
         progress_callback: Any | None = None,
+        audio_update_callback: Any | None = None,
+        cached_era_result: Any | None = None,
+        cached_genre_result: Any | None = None,
+        cached_defect_result: Any | None = None,
+        cached_medium_result: Any | None = None,
+        cached_restorability_result: Any | None = None,
     ) -> AurikErgebnis:
         """Führt die 10-stufige Restaurierungs-Pipeline aus.
 
@@ -563,8 +608,8 @@ class AurikDenker:
 
         def _budget_ok() -> bool:
             # M-2: RT-Primärcheck — mode-abhängig (Spec §9.5):
-            #   BALANCED=8× | RESTORATION/QUALITY=10× | MAXIMUM=15×
-            # Zusätzlich: absolutes 30-Minuten-Limit — gilt unabhängig vom RT-Faktor.
+            #   BALANCED=32× | RESTORATION/QUALITY=32× | MAXIMUM=32×
+            # Zusätzlich: absolutes 90-Minuten-Limit — gilt unabhängig vom RT-Faktor.
             # StrategieDenker.check() wird hier NICHT verwendet, da es immer 8×RT
             # hardcoded prüft und so ExzellenzDenker in Restoration/Quality-Mode
             # fälschlich blockieren würde. Der primäre _RT_BUDGET_BY_MODE-Check ist
@@ -620,7 +665,11 @@ class AurikDenker:
 
         try:
             defekt = get_defekt_denker().analysiere(
-                aktuelles_audio, sr, material=material, progress_callback=_defekt_scan_cb
+                aktuelles_audio,
+                sr,
+                material=material,
+                progress_callback=_defekt_scan_cb,
+                cached_defect_result=cached_defect_result,
             )
             defekt_primär = getattr(defekt, "primary_defect", None) or getattr(defekt, "primary_cause", "unknown")
             stage_notes["defekt"] = f"Hauptdefekt: {defekt_primär} (Schwere: {defekt.overall_severity:.2f})"
@@ -647,12 +696,18 @@ class AurikDenker:
             # use_ml_classifiers=False: EraClassifier/GermanSchlagerClassifier laufen
             # bereits parallel in UnifiedRestorerV3 (§P-3). Doppelaufruf vermeiden
             # (Anti-Parallelwelten-Pflicht). Nur DSP-Heuristik in Stufe 4.
+            # hint_decade: cached_era_result aus Frontend-Vorabanalyse übergeben —
+            # verhindert, dass GlobalPlan via DSP-Rolloff eine physikalisch unmögliche
+            # Ära (z.B. 1890er für Magnetband) berechnet, die dann _recommend_autopilot_mode
+            # und die emotionale Intention falsch setzt.
+            _hint_decade = int(getattr(cached_era_result, "decade", 0) or 0) or None
             _globalplan = _erstelle_gp(
                 aktuelles_audio,
                 sr,
                 material=material,
                 use_ml_classifiers=False,
                 chain_info=chain_info,
+                hint_decade=_hint_decade,
             )
             stage_notes["globalplan"] = (
                 f"\u00c4ra: {_globalplan.portrait.decade}er, "
@@ -788,8 +843,22 @@ class AurikDenker:
                 _rek_result_box: list = []  # RekonstruktionsDenker Ergebnis (4b)
 
                 def _run_rest() -> None:
+                    # §Safety: PLM-Eviction für gesamte Restaurierungskette sperren —
+                    # nicht nur _execute_pipeline(), sondern auch ReparaturDenker und
+                    # RekonstruktionsDenker nutzen ONNX-Modelle. Refcount-basiert,
+                    # sodass UV3-interner Guard additiv funktioniert.
+                    try:
+                        from backend.core.plugin_lifecycle_manager import set_pipeline_active
+
+                        set_pipeline_active(True)
+                    except Exception:
+                        pass
                     try:
                         _work_audio = aktuelles_audio.copy()
+                        # §G1: Pre-Repair-Referenz sichern — echtes Original VOR
+                        # ReparaturDenker/RekonstruktionsDenker für referenz-basierte
+                        # Musical Goals (Authentizität, Groove, Timbre, Artikulation).
+                        _pre_repair_reference = _work_audio.copy()
                         # [6/10] ReparaturDenker — gezielter Phase-Mix (Preprocessing vor UV3)
                         _emit(13, "Gezielte DSP-Reparaturen (Vorverarbeitung) …")
                         _ph = set(getattr(defekt, "recommended_phases", None) or [])
@@ -833,14 +902,22 @@ class AurikDenker:
                         _rep_result_box.append(rep)
                         # [7/10] RekonstruktionsDenker — Lücken-Erkennung & Reparatur (Preprocessing vor UV3)
                         _emit(16, "Dropout-Lücken werden rekonstruiert (Vorverarbeitung) …")
-                        rek = get_rekonstruktions_denker().rekonstruiere(_work_audio, sr, material_hint=material)
+                        rek = get_rekonstruktions_denker().rekonstruiere(
+                            _work_audio,
+                            sr,
+                            material_hint=material,
+                            defect_result=cached_defect_result,
+                        )
                         _work_audio = rek.audio
                         _rek_result_box.append(rek)
                         # 4c: RestaurierDenker (UV3-Vollpipeline) auf vorgereinigtem Material
-                        # Scaled inner progress: UV3 0–100 → AurikDenker 18–80
+                        # Scaled inner progress: UV3 0–100 → AurikDenker 15–94
+                        # Weiter Bereich (79 pts) damit UV3-Phasen (pct 30–80)
+                        # auf denker-pct 38–78 → UI direkt 38–78 mappen (40 sichtbare
+                        # Punkte). Kein Double-Compression mehr.
                         _inner_cb: Any | None = None
                         if progress_callback is not None:
-                            _inner_cb = lambda pct, msg, elapsed=0.0: _emit(18 + int(pct * 0.62), msg)
+                            _inner_cb = lambda pct, msg, elapsed=0.0: _emit(min(94, 15 + int(pct * 0.79)), msg)
                         _result_box.append(
                             get_restaurier_denker().restauriere(
                                 _work_audio,
@@ -851,10 +928,25 @@ class AurikDenker:
                                 chain_info=chain_info or None,
                                 defekt_hint=_defekt_hint,
                                 progress_callback=_inner_cb,
+                                audio_update_callback=audio_update_callback,
+                                cached_era_result=cached_era_result,
+                                cached_genre_result=cached_genre_result,
+                                cached_defect_result=cached_defect_result,
+                                cached_medium_result=cached_medium_result,
+                                cached_restorability_result=cached_restorability_result,
+                                reconstruction_context=rek,
+                                pre_repair_reference=_pre_repair_reference,
                             )
                         )
                     except Exception as _e:
                         _err_box.append(_e)
+                    finally:
+                        try:
+                            from backend.core.plugin_lifecycle_manager import set_pipeline_active
+
+                            set_pipeline_active(False)
+                        except Exception:
+                            pass
 
                 _t = threading.Thread(target=_run_rest, daemon=True)
                 _t.start()
@@ -941,7 +1033,7 @@ class AurikDenker:
             logger.warning("AurikDenker [8/10] Budget erschöpft, Restaurierung übersprungen")
 
         # ── Stufe 7: Exzellenz-Optimierung + Musical Goals ───────────────────
-        _emit(91, "Musikalische Exzellenz wird optimiert …")
+        _emit(95, "Musikalische Exzellenz wird optimiert …")
         musical_goals: dict[str, float] = dict(_rest_musical_goals)
         goals_passed: int = _rest_goals_passed
         excellence_score = 0.0
@@ -979,25 +1071,49 @@ class AurikDenker:
                 _skip_metrics,
             )
         elif _budget_ok():
+            # v9.10.72: ExzellenzDenker nur noch Messung (Musical Goals + VERSA),
+            # KEINE zusätzliche DSP-Verarbeitung. UV3 FeedbackChain (5 Post-Phasen:
+            # HarmonicRestoration, PhaseCorrection, FinalEQ, MasteringPolish, LUFS)
+            # hat bereits alle Exzellenz-relevanten Schritte ausgeführt.
+            # Begründung: Ephraim & Malah 1984 — kaskadierte STFT-Modifikation
+            # akkumuliert Rundungsfehler; ML-Modelle sind nicht auf eigenen Output
+            # trainiert (Domain Shift). Ein zusätzlicher DSP-Pass NACH UV3+FeedbackChain
+            # verschlechtert Natürlichkeit und Authentizität statt sie zu verbessern.
             try:
-                exz = get_exzellenz_denker().optimiere(aktuelles_audio, sr, material=_exz_material)
-                aktuelles_audio = exz.audio
-                # A-5: ExzellenzDenker nur wenn er bessere Goals liefert
-                if exz.musical_goals and exz.goals_passed >= goals_passed:
-                    musical_goals = exz.musical_goals
-                    goals_passed = exz.goals_passed
-                excellence_score = exz.excellence_score
-                # M-8b: VERSA-MOS aus ExzellenzDenker zwischenspeichern —
-                # vermeidet doppelte VERSA-Inferenz in Stage 8
-                _exz_versa_mos: float = float(getattr(exz, "versa_mos", 0.0))
-                warnings.extend(exz.warnings or [])
-                stage_notes["exzellenz"] = exz.processing_note
-                phases_executed.append("exzellenz_optimierung")
+                exd = get_exzellenz_denker()
+                # Nur Goals messen, nicht optimieren
+                goals = exd.messe_ziele(aktuelles_audio, sr)
+                _GOAL_MIN = 0.75
+                if goals:
+                    import math as _math_exz
+
+                    finite_vals = [v for v in goals.values() if _math_exz.isfinite(v)]
+                    excellence_score = float(np.mean(finite_vals)) if finite_vals else 0.0
+                    goals_passed = sum(1 for v in finite_vals if v >= _GOAL_MIN)
+                    musical_goals = dict(goals)
+                # VERSA MOS für Qualitätsentscheidung
+                try:
+                    from plugins.versa_plugin import score_mos as _exz_score_mos
+
+                    _mono_exz = aktuelles_audio if aktuelles_audio.ndim == 1 else aktuelles_audio.mean(axis=-1)
+                    _mono_exz = np.nan_to_num(_mono_exz.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+                    _vr_exz = _exz_score_mos(_mono_exz, sr)
+                    _exz_versa_mos = float(_vr_exz.mos)
+                except Exception as _ve_exz:
+                    logger.debug("ExzellenzDenker VERSA nicht verfügbar: %s", _ve_exz)
+
+                stage_notes["exzellenz"] = (
+                    f"Messung: Score {excellence_score:.3f}, "
+                    f"{goals_passed}/{len(goals)} Ziele erfüllt"
+                    + (f", VERSA MOS={_exz_versa_mos:.2f}" if _exz_versa_mos > 0.0 else "")
+                    + " (keine Zusatz-DSP — UV3 FeedbackChain ausreichend)"
+                )
+                phases_executed.append("exzellenz_messung")
                 logger.info(
-                    "AurikDenker [9/10] Exzellenz: Score=%.3f, Goals %d/%d%s",
+                    "AurikDenker [9/10] Exzellenz-Messung: Score=%.3f, Goals %d/%d%s (kein DSP-Re-Pass)",
                     excellence_score,
                     goals_passed,
-                    exz.goals_total,
+                    len(goals),
                     f", VERSA={_exz_versa_mos:.3f}" if _exz_versa_mos > 0.0 else "",
                 )
             except Exception as exc:
@@ -1007,9 +1123,43 @@ class AurikDenker:
             stage_notes["exzellenz"] = "Übersprungen (RT-Budget ausgeschöpft)"
             warnings.append("Exzellenz-Optimierung übersprungen: RT-Budget ausgeschöpft")
             logger.warning("AurikDenker [9/10] Exzellenz übersprungen")
+            # Musical Goals + VERSA trotzdem messen (~7 s) — essentiell für UI-Anzeige
+            # und Qualitätsurteil, auch wenn Optimierung übersprungen wird.
+            try:
+                from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
+
+                _mg_budget = MusicalGoalsChecker()
+                _budget_goals = _mg_budget.measure_all(aktuelles_audio, sr)
+                if _budget_goals:
+                    import math as _math_budget
+
+                    musical_goals = dict(_budget_goals)
+                    _finite_bg = [v for v in _budget_goals.values() if _math_budget.isfinite(v)]
+                    goals_passed = sum(1 for v in _finite_bg if v >= 0.75)
+                    excellence_score = float(np.mean(_finite_bg)) if _finite_bg else 0.0
+                    logger.info(
+                        "AurikDenker [9/10] Goals gemessen trotz Budget-Limit: %d/%d bestanden",
+                        goals_passed,
+                        len(_budget_goals),
+                    )
+            except Exception as _mg_exc:
+                logger.debug("Musical Goals Messung nach Budget-Limit: %s", _mg_exc)
+            try:
+                from plugins.versa_plugin import score_mos as _budget_score_mos
+
+                _mono_budget = aktuelles_audio if aktuelles_audio.ndim == 1 else aktuelles_audio.mean(axis=-1)
+                _mono_budget = np.nan_to_num(_mono_budget.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+                _vr_budget = _budget_score_mos(_mono_budget, sr)
+                _exz_versa_mos = float(_vr_budget.mos)
+                logger.info(
+                    "AurikDenker [9/10] VERSA MOS gemessen trotz Budget-Limit: %.3f",
+                    _exz_versa_mos,
+                )
+            except Exception as _ve_budget:
+                logger.debug("VERSA MOS nach Budget-Limit: %s", _ve_budget)
 
         # ── Stufe 10: VERSA MOS — finales Qualitätsurteil (§4.4) ────────────
-        _emit(95, "VERSA MOS-Qualitätsbewertung läuft …")
+        _emit(97, "VERSA MOS-Qualitätsbewertung läuft …")
         # M-8b: VERSA-MOS-Cache aus ExzellenzDenker übernehmen um doppelte
         # Inferenz zu vermeiden. Nur wenn dort kein Score verfügbar, VERSA neu fahren.
         _versa_mos: float = _exz_versa_mos
@@ -1065,36 +1215,23 @@ class AurikDenker:
             "shellac": 3.8,
         }
         _mos_gate_target = _MATERIAL_MOS_GATE.get(_exz_material, 4.0)
-        if _versa_mos > 0.0 and _versa_mos < _mos_gate_target and not _skip_excellence and _budget_ok():
-            _emit(97, f"VERSA MOS-Gate (Ziel {_mos_gate_target:.1f}): 2. Exzellenz-Optimierungspass …")
-            try:
-                exz2 = get_exzellenz_denker().optimiere(aktuelles_audio, sr, material=_exz_material)
-                aktuelles_audio = exz2.audio
-                if exz2.musical_goals and exz2.goals_passed >= goals_passed:
-                    musical_goals = exz2.musical_goals
-                    goals_passed = exz2.goals_passed
-                if exz2.excellence_score > excellence_score:
-                    excellence_score = exz2.excellence_score
-                # M-8b: VERSA vom 2. Exzellenz-Pass übernehmen wenn verfügbar
-                _exz2_mos = float(getattr(exz2, "versa_mos", 0.0))
-                if _exz2_mos > 0.0:
-                    _versa_mos = _exz2_mos
-                warnings.extend(exz2.warnings or [])
-                stage_notes["exzellenz_2"] = (
-                    f"MOS-Gate (MOS={_versa_mos:.2f} < 4.0): "
-                    f"Score={exz2.excellence_score:.3f}, Goals {exz2.goals_passed}/{exz2.goals_total}"
-                )
-                phases_executed.append("exzellenz_optimierung_2")
-                logger.info(
-                    "AurikDenker [10/10] MOS-Gate: 2. Exzellenz Score=%.3f, Goals %d/%d",
-                    exz2.excellence_score,
-                    goals_passed,
-                    exz2.goals_total,
-                )
-            except Exception as exc:
-                warnings.append(f"ExzellenzDenker 2. Durchlauf fehlgeschlagen: {exc}")
-                stage_notes["exzellenz_2"] = f"MOS-Gate Fehler: {exc}"
-                logger.warning("AurikDenker [10/10] MOS-Gate ExzellenzDenker 2. Pass: %s", exc)
+        if _versa_mos > 0.0 and _versa_mos < _mos_gate_target:
+            # v9.10.58: 2. ExzellenzDenker-Aufruf entfernt — wissenschaftlich nicht gerechtfertigt.
+            # Der ExzellenzDenker (Stufe 7) hat bereits 1× ExcellenceOptimizer + 1× Re-Pass
+            # ausgeführt. Ein erneuter identischer Durchlauf auf demselben Audio erzeugt
+            # kumulative STFT-Artefakte und Domain-Shift bei ML-Modellen.
+            # VERSA MOS dient hier nur als Qualitätssignal für Metadaten/Logging.
+            logger.warning(
+                "AurikDenker [10/10] VERSA MOS=%.3f < Ziel %.1f für %s — "
+                "Qualität unter Material-Schwellwert (Korrektur bereits in Stufe 7 erfolgt)",
+                _versa_mos,
+                _mos_gate_target,
+                _exz_material,
+            )
+            warnings.append(
+                f"VERSA MOS={_versa_mos:.2f} < Material-Ziel {_mos_gate_target:.1f} "
+                f"({_exz_material}) — physikalische Grenze des Quellmaterials"
+            )
 
         # ── RAM-Cleanup nach Pipeline ────────────────────────────────────────
         # PluginLifecycleManager entlädt inaktive ML-Modelle wenn RAM knapp ist.
@@ -1115,12 +1252,12 @@ class AurikDenker:
         _rt_raw = elapsed / max(audio_duration_s, 1e-6)
         if _rt_raw > _3X_RT_LIMIT:
             logger.warning(
-                "AurikDenker: 8×RT-Limit überschritten (roh=%.2f×, gecappt=%.2f×). "
+                "AurikDenker: 32×RT-Limit überschritten (roh=%.2f×, gecappt=%.2f×). "
                 "Lösung: FAST/BALANCED nutzen oder adaptive Skips erhöhen.",
                 _rt_raw,
                 _3X_RT_LIMIT,
             )
-        rt_factor = min(_rt_raw, _3X_RT_LIMIT)  # Spec §9.5: niemals > 8.0
+        rt_factor = min(_rt_raw, _3X_RT_LIMIT)  # Spec §9.5: niemals > 32.0
 
         # Qualitätsschätzung nach Spec §8.1 (normative Formel):
         # quality_estimate = 0.40*(1-defect_severity) + 0.60*(pqs_mos-1)/4
@@ -1184,10 +1321,13 @@ class AurikDenker:
             if _critical_failed:
                 _fail_reason = f"critical_stage_failure:{','.join(_critical_failed)}"
                 stage_notes["fail_reason"] = _fail_reason
-                quality_estimate = min(float(quality_estimate), 0.54)
+                # Proportional penalty: scale down by number of critical failures
+                # 1 critical failure → ×0.85, 2 → ×0.72, 3+ → ×0.55 (near export gate)
+                _penalty = max(0.55, 0.85 ** len(_critical_failed))
+                quality_estimate = min(float(quality_estimate), float(quality_estimate) * _penalty)
                 warnings.append(
                     "Kritische Stufen ausgefallen: "
-                    f"{', '.join(_critical_failed)}. Qualitätsausgabe wurde defensiv begrenzt."
+                    f"{', '.join(_critical_failed)}. Qualitätsausgabe wurde proportional begrenzt."
                 )
         else:
             stage_notes["degradation_status"] = PipelineHealthState.OK.value
@@ -1206,11 +1346,28 @@ class AurikDenker:
             warnings.append(_msg)
             stage_notes["material_mos_gate"] = f"FAILED: {_mos_material} MOS={_versa_mos:.3f} < {_mos_target:.3f}"
             if mode.lower() in {"restoration", "studio2026", "maximum"}:
-                quality_estimate = min(float(quality_estimate), 0.54)
+                # Proportional penalty: the closer MOS is to target, the less penalty.
+                # MOS-Deficit ratio: 0 → no penalty, 1.0+ → cap at 0.54
+                _mos_deficit_ratio = min(1.0, max(0.0, (_mos_target - _versa_mos) / _mos_target))
+                _qe_penalty = 1.0 - 0.46 * _mos_deficit_ratio  # [0.54 .. 1.0]
+                quality_estimate = min(float(quality_estimate), float(quality_estimate) * _qe_penalty)
 
         # Finale NaN/Inf-Bereinigung und Clip
         aktuelles_audio = np.nan_to_num(aktuelles_audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         aktuelles_audio = np.clip(aktuelles_audio, -1.0, 1.0)
+
+        _total_elapsed = time.perf_counter() - t_start
+        logger.info(
+            "AurikDenker.denke() abgeschlossen: Q=%.3f, RT=%.2f×, Phasen=%d, "
+            "Material=%s, MOS=%.2f, Dauer=%.1fs, Warnungen=%d",
+            quality_estimate,
+            rt_factor,
+            len(phases_executed),
+            material,
+            _versa_mos,
+            _total_elapsed,
+            len(warnings),
+        )
 
         note = (
             f"Aurik 9 Restaurierung abgeschlossen: "

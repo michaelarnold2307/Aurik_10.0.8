@@ -2,7 +2,7 @@
 Hybrid Dereverb - AURIK 9.0 Phase 20 ML-Hybrid
 ===============================================
 
-Two-stage dereverb: DSP spectral gating + DCCRN ML refinement.
+Two-stage dereverb: DSP spectral gating + ML refinement (SGMSE+ / ResembleEnhance).
 
 Architecture:
 1. Stage 1: DSP Spectral Gating (fast, ~0.3× RT)
@@ -10,15 +10,14 @@ Architecture:
    - Frequency-dependent gating
    - Tail damping
 
-2. Stage 2: DCCRN ML Refinement (slower, ~2.0× RT)
-   - Deep Complex CRN for dereverberation
+2. Stage 2: ML Refinement (slower, ~2.0× RT)
+   - SGMSE+ (primary) or ResembleEnhance (fallback)
    - Preserves direct sound, removes reflections
-   - Docker-based inference
 
 Strategy Modes:
 - DSP_ONLY: Fast spectral gating only
-- DCCRN_ONLY: Pure ML (no DSP pre-processing)
-- HYBRID: DSP → DCCRN pipeline
+- ML_ONLY: Pure ML (no DSP pre-processing)
+- HYBRID: DSP → ML pipeline
 - ADAPTIVE: Choose based on reverb severity
 
 Author: Aurik 9.0 Development Team
@@ -26,10 +25,10 @@ Version: 1.0.0
 Date: 16. Februar 2026
 """
 
-import logging
-import threading
 from dataclasses import dataclass
 from enum import Enum
+import logging
+import threading
 from typing import Any, Optional
 
 import numpy as np
@@ -194,10 +193,10 @@ class HybridDereverb:
 
             # Skip DCCRN if reverb already low enough
             if reverb_after_dsp < self.config.reverb_threshold and strategy == DereverbStrategy.HYBRID:
-                logger.info(f"Reverb sufficient ({reverb_after_dsp:.3f}), skipping DCCRN")
+                logger.info(f"Reverb sufficient ({reverb_after_dsp:.3f}), skipping ML refinement")
                 strategy = DereverbStrategy.DSP_ONLY
 
-        # Stage 2: DCCRN ML refinement (if needed)
+        # Stage 2: ML refinement (SGMSE+ / ResembleEnhance, if needed)
         if strategy in [DereverbStrategy.DCCRN_ONLY, DereverbStrategy.HYBRID]:
             if self.dccrn is not None:
                 logger.info("Stage 2: ResembleEnhance ML-Dereverb-Stufe...")
@@ -210,7 +209,7 @@ class HybridDereverb:
                 reverb_after_dccrn = self._estimate_reverb_level(audio, sample_rate)
                 metadata["reverb_after_dccrn"] = reverb_after_dccrn
 
-                logger.info(f"DCCRN complete: reverb → {reverb_after_dccrn:.3f}")
+                logger.info(f"ML dereverb complete: reverb → {reverb_after_dccrn:.3f}")
             else:
                 logger.info("ResembleEnhance nicht verfügbar — WPE-DSP-Ergebnis wird verwendet")
 
@@ -245,8 +244,8 @@ class HybridDereverb:
             logger.info(f"Moderate reverb ({reverb_level:.3f}), Hybrid mode")
             return DereverbStrategy.HYBRID
         else:
-            # Heavy reverb - Full DCCRN
-            logger.info(f"Heavy reverb ({reverb_level:.3f}), DCCRN only")
+            # Heavy reverb - Full ML dereverb
+            logger.info(f"Heavy reverb ({reverb_level:.3f}), ML-only")
             return DereverbStrategy.DCCRN_ONLY if self.dccrn else DereverbStrategy.HYBRID
 
     def _apply_dsp_dereverb(self, audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, dict[str, Any]]:
@@ -262,20 +261,36 @@ class HybridDereverb:
         # Create phase instance
         phase = ReverbReduction()
 
-        # Process with DSP
+        # Detect stereo format: channel-major (2, N) vs time-major (N, 2).
+        # Aurik uses channel-major (2, N) throughout the pipeline.
+        _is_ch_maj = audio.ndim == 2 and audio.shape[0] <= 2 and audio.shape[1] > audio.shape[0]
+
+        # Process with DSP — extract correct mono channel
+        if audio.ndim == 1:
+            _left_ch = audio
+        elif _is_ch_maj:
+            _left_ch = audio[0]  # channel-major: first row = left channel
+        else:
+            _left_ch = audio[:, 0]  # time-major: first column = left channel
+
         result = phase._reduce_reverb(
-            audio if audio.ndim == 1 else audio[:, 0],  # Mono for now
+            _left_ch,
             sample_rate,
             strength=self.config.dsp_strength,
             damping=self.config.dsp_damping,
         )
 
-        # Handle stereo
+        # Handle stereo: extract right channel and recombine in original format
         if audio.ndim == 2:
+            _right_ch = audio[1] if _is_ch_maj else audio[:, 1]
             result_right = phase._reduce_reverb(
-                audio[:, 1], sample_rate, strength=self.config.dsp_strength, damping=self.config.dsp_damping
+                _right_ch, sample_rate, strength=self.config.dsp_strength, damping=self.config.dsp_damping
             )
-            result = np.column_stack([result, result_right])
+            _n = min(len(result), len(result_right))
+            if _is_ch_maj:
+                result = np.stack([result[:_n], result_right[:_n]], axis=0)  # (2, N)
+            else:
+                result = np.column_stack([result[:_n], result_right[:_n]])  # (N, 2)
 
         metadata["strength"] = self.config.dsp_strength
         metadata["damping"] = self.config.dsp_damping
@@ -287,7 +302,14 @@ class HybridDereverb:
         metadata: dict[str, Any] = {}
         try:
             audio_in = audio.astype(np.float32)
-            mono_in = audio_in.mean(axis=-1) if audio_in.ndim == 2 else audio_in
+            # Detect channel-major (2, N) vs time-major (N, 2) format.
+            # For channel-major: mean along axis=0 collapses channels → (N,).
+            # For time-major:  mean along axis=1 (=axis=-1) collapses channels → (N,).
+            _dccrn_ch_maj = audio_in.ndim == 2 and audio_in.shape[0] <= 2 and audio_in.shape[1] > audio_in.shape[0]
+            if audio_in.ndim == 2:
+                mono_in = audio_in.mean(axis=0) if _dccrn_ch_maj else audio_in.mean(axis=1)
+            else:
+                mono_in = audio_in
 
             if self._sgmse_active:
                 # §4.4 Primär: SGMSE+ — enhance(audio, sr) → SGMSEResult
@@ -304,9 +326,12 @@ class HybridDereverb:
                 enhanced = np.asarray(enhanced, dtype=np.float32)
                 metadata["model"] = "resemble_enhance"
 
-            # Stereo wiederherstellen
+            # Stereo wiederherstellen — in der gleichen Format-Konvention wie der Eingang.
             if audio.ndim == 2:
-                enhanced = np.stack([enhanced, enhanced], axis=-1)
+                if _dccrn_ch_maj:
+                    enhanced = np.stack([enhanced[: audio.shape[1]], enhanced[: audio.shape[1]]], axis=0)  # (2, N)
+                else:
+                    enhanced = np.stack([enhanced, enhanced], axis=-1)  # (N, 2)
             elif audio.ndim == 1 and enhanced.ndim > 1:
                 enhanced = np.mean(enhanced, axis=-1)
 

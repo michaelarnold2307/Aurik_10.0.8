@@ -54,6 +54,25 @@ SUPPORTED_MATERIALS = [
 
 ---
 
+## §6.2a [RELEASE_MUST] Pflicht-Phasen-Aktivierung pro Material (v9.10.73)
+
+Die in §6.2 gelisteten **Prioritäts-Phasen** eines Materials MÜSSEN **unbedingt aktiviert** werden, wenn das Material erkannt wurde — **unabhängig vom DefectScanner-Severity-Score**.
+
+**Begründung**: Der DefectScanner arbeitet mit statistischen Schwellwerten auf begrenztem Audio-Ausschnitt. Einzelne Defekte (z. B. ein kurzer Tape-Dropout im Intro) können unter der Schwelle liegen, obwohl sie für den Hörer klar wahrnehmbar sind. Die Prioritäts-Phasen enthalten eigene, hochauflösende Detektionslogik und entscheiden selbst, ob eine Reparatur notwendig ist.
+
+**Invariante**:
+
+```python
+# In _select_phases(): Material-Prioritäts-Phasen immer aktivieren
+for phase_id in MATERIAL_PRIORITY_PHASES[material]:
+    if phase_id not in selected:
+        selected.append(phase_id)
+```
+
+**Ausnahme**: Phasen, die explizit durch `GoalApplicabilityFilter` für das Material deaktiviert wurden (z. B. `phase_48_stereo_imaging` bei Mono-Material).
+
+---
+
 ## §6.3 DefectType-Vollkatalog (28 Defekte)
 
 ```python
@@ -116,12 +135,27 @@ SIBILANCE         # Zischlautüberbetonung (> 6 kHz) — De-Esser-Trigger (phase
 ```python
 def classify_clipping(audio: np.ndarray, sr: int) -> ClippingType:
     """Diskriminiert CLIPPING von SOFT_SATURATION.
-    
+
     CLIPPING:        flat_tops > 0.1 % UND THD_odd > THD_even × 1.5
     SOFT_SATURATION: flat_tops < 0.1 % ODER THD_even > THD_odd
     SOFT_SATURATION → Pipeline überspringt Clipping-Reparatur (BEWAHREN!)
     """
 ```
+
+---
+
+## §6.4a [RELEASE_MUST] Material-adaptive Erkennungsschwellen im DefectScanner (v9.10.73)
+
+DefectScanner-Erkennungsschwellen MÜSSEN **material-adaptiv** sein. Analoge Medien erfordern empfindlichere Schwellwerte als digitale Quellen.
+
+| Defekttyp | Analog-Medien | Digital-Medien | Begründung |
+|---|---|---|---|
+| DROPOUTS | 20 % median-RMS | 10 % median-RMS | Tape-Dropouts: graduelle Pegelfades statt hartem Null |
+| CLICKS | material-skaliert | Standard | Vinyl-Rillengeräusche vs. digitale Störimpulse |
+
+**Analog-Medien** (empfindlichere Schwellen): `tape`, `reel_tape`, `vinyl`, `shellac`, `wax_cylinder`, `wire_recording`, `lacquer_disc`, `dat`.
+
+**Invariante**: `_detect_dropouts()` greift auf `self.material_type` zu — dieses MUSS vor dem Aufruf aus dem resolved material_type der `scan()`-Methode gesetzt sein.
 
 ---
 
@@ -137,6 +171,7 @@ def classify_clipping(audio: np.ndarray, sr: int) -> ClippingType:
 ```
 
 Format:
+
 ```json
 {
   "observations": [
@@ -162,6 +197,7 @@ Format:
 | AIFF (24-bit, 48 kHz) | Apple-Ökosystem | Logic Pro / Pro Tools |
 
 **Pflicht-Regeln:**
+
 - Bit-Tiefe: 24-bit → 24-bit (kein forced Downgrade ohne Nutzer-Wahl)
 - Dithering 24→16 bit: **POW-r Typ 3** (Wannamaker 1992); Fallback: TPDF
 - VERBOTEN: Truncation ohne Dithering
@@ -240,6 +276,7 @@ if result.is_multi_generation:
 | CAF | `.caf` |
 
 **Invarianten:**
+
 - Alle Formate → intern float32, 48 000 Hz, Stereo oder Mono
 - Maximale Dateigröße: 10 GB (darüber Chunk-Modus)
 - > 2 Kanäle → PANNs-gewichteter Stereo-Downmix

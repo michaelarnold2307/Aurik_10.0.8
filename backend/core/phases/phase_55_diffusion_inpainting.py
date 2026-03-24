@@ -253,9 +253,9 @@ def _try_cqtdiff_plus_plugin(audio: np.ndarray, start: int, end: int, sample_rat
         if _plugins_dir not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from plugins.cqtdiff_plus_plugin import CQTdiffPlusPlugin
+        from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus
 
-        plugin = CQTdiffPlusPlugin()
+        plugin = get_cqtdiff_plus()
         result = plugin.inpaint(audio=audio, sr=sample_rate, gap_start_sample=start, gap_end_sample=end)
         # InpaintingResult.audio = volles Audio-Signal mit gefüllter Lücke
         repaired_segment = result.audio[start:end]

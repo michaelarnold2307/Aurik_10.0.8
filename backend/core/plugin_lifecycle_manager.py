@@ -15,12 +15,11 @@ Thread-sicher: alle öffentlichen Methoden sind Lock-geschützt.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import gc
 import logging
 import threading
 import time
-from collections.abc import Callable
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +31,15 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Konfiguration
 # ---------------------------------------------------------------------------
-_RAM_EVICT_THRESHOLD_PCT: float = 82.0   # RAM% ab der Eviction beginnt
-_RAM_TARGET_PCT: float = 70.0            # RAM% auf die wir evicten wollen
-_MIN_FREE_MB_HARD: float = 1500.0        # immer mind. 1.5 GB frei halten
+_RAM_EVICT_THRESHOLD_PCT: float = 82.0  # RAM% ab der Eviction beginnt
+_RAM_TARGET_PCT: float = 70.0  # RAM% auf die wir evicten wollen
+_MIN_FREE_MB_HARD: float = 1500.0  # immer mind. 1.5 GB frei halten
 
 
 # ---------------------------------------------------------------------------
 # Registry-Eintrag
 # ---------------------------------------------------------------------------
+
 
 class _PluginEntry:
     __slots__ = ("active", "last_used_ts", "name", "size_gb", "unload_fn")
@@ -54,7 +54,7 @@ class _PluginEntry:
         self.size_gb = size_gb
         self.unload_fn = unload_fn
         self.last_used_ts: float = time.monotonic()
-        self.active: bool = False   # True = darf NICHT evicted werden (Phase läuft)
+        self.active: bool = False  # True = darf NICHT evicted werden (Phase läuft)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +79,7 @@ def get_plugin_lifecycle_manager() -> PluginLifecycleManager:
 # Haupt-Klasse
 # ---------------------------------------------------------------------------
 
+
 class PluginLifecycleManager:
     """LRU-basierter Plugin-Memory-Manager mit automatischer Eviction.
 
@@ -91,6 +92,7 @@ class PluginLifecycleManager:
         self._entries: dict[str, _PluginEntry] = {}
         self._auto_evict_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._pipeline_active: int = 0  # Refcount: >0 suppresses auto-eviction during pipeline
         self._start_auto_evict_monitor()
         logger.info("PluginLifecycleManager: initialisiert (RAM-Threshold %.0f %%)", _RAM_EVICT_THRESHOLD_PCT)
 
@@ -156,6 +158,11 @@ class PluginLifecycleManager:
         """
         ram_pct = self._ram_percent()
         free_mb = self._free_mb()
+        # §Safety: Während Pipeline-Ausführung keine automatische Eviction —
+        # ONNX-Session-Destruktoren können mit laufender Inferenz kollidieren
+        # (double free / heap corruption). Nur force_evict_all() umgeht dies.
+        if self._pipeline_active > 0 and required_mb <= 0:
+            return 0
         needs_evict = (
             ram_pct > _RAM_EVICT_THRESHOLD_PCT
             or free_mb < _MIN_FREE_MB_HARD
@@ -205,6 +212,7 @@ class PluginLifecycleManager:
                 # Budget-Freigabe
                 try:
                     from backend.core.ml_memory_budget import release as _release
+
                     _release(entry.name)
                 except ImportError:
                     pass
@@ -284,6 +292,7 @@ class PluginLifecycleManager:
 # Convenience-Funktionen (Modul-Level)
 # ---------------------------------------------------------------------------
 
+
 def register_plugin(name: str, size_gb: float, unload_fn: Callable[[], None]) -> None:
     """Registriert ein Plugin beim globalen Lifecycle-Manager."""
     get_plugin_lifecycle_manager().register(name, size_gb, unload_fn)
@@ -297,6 +306,20 @@ def touch_plugin(name: str) -> None:
 def evict_stale_plugins(required_mb: float = 0.0) -> int:
     """Entlädt inaktive Plugins falls RAM-Druck besteht. Gibt Anzahl zurück."""
     return get_plugin_lifecycle_manager().evict_if_needed(required_mb)
+
+
+def set_pipeline_active(active: bool) -> None:
+    """Sperrt/entsperrt automatische Plugin-Eviction während Pipeline-Ausführung.
+
+    Uses a refcount so nested enter/leave pairs work correctly:
+    AurikDenker._run_rest() → UV3._execute_pipeline() both call this.
+    Eviction blocked while count > 0.
+    """
+    mgr = get_plugin_lifecycle_manager()
+    if active:
+        mgr._pipeline_active += 1
+    else:
+        mgr._pipeline_active = max(0, mgr._pipeline_active - 1)
 
 
 def cleanup_after_file() -> int:

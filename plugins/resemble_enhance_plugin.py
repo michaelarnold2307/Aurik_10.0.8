@@ -34,7 +34,6 @@ class ResembleEnhancePlugin:
             return
         # ML-Budget-Guard: Resemble-Enhance model.onnx ~722 MB
         try:
-            from backend.core.ml_memory_budget import release as _rel
             from backend.core.ml_memory_budget import try_allocate as _try_alloc
 
             if not _try_alloc("ResembleEnhance", size_gb=0.72):
@@ -69,6 +68,27 @@ class ResembleEnhancePlugin:
         audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         n = len(mono)
+        # RAM-Check: Resemble braucht ~130 MB pro 30s-Chunk + ONNX-Overhead.
+        # Bei < 4 GB verfügbar → DSP-Fallback statt OOM-Risiko.
+        try:
+            import psutil
+
+            _avail_gb = psutil.virtual_memory().available / (1024**3)
+            if _avail_gb < 4.0:
+                logger.warning(
+                    "Resemble-Enhance: Nur %.1f GB RAM verfügbar (< 4.0 GB) — Wiener-DSP-Fallback.",
+                    _avail_gb,
+                )
+                m44 = _resamp(mono, sr, _SR)
+                out = _wiener(m44, _SR)
+                out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+                result = _resamp(out, _SR, sr)[:n]
+                result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+                if audio.ndim == 2:
+                    result = np.stack([result, result], axis=1)
+                return np.clip(result, -1.0, 1.0).astype(np.float32)
+        except ImportError:
+            pass
         m44 = _resamp(mono, sr, _SR)
         out = self._onnx(m44) if self._session else _wiener(m44, _SR)
         out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
@@ -99,8 +119,55 @@ class ResembleEnhancePlugin:
             return (1, "", str(e))
 
     def _onnx(self, mono: np.ndarray) -> np.ndarray:
+        """STFT → ONNX → OLA resynthesis.  Chunked to cap peak RAM.
+
+        Processes in ~30-second chunks (MAX_CHUNK_FRAMES) to prevent OOM on
+        long files.  Each chunk is independent; overlap-add at chunk boundaries
+        uses a Hanning crossfade of _N samples to avoid clicks.
+        """
         win = np.hanning(_N).astype(np.float32)
-        nf = max(1, (len(mono) + _HOP - 1) // _HOP)
+        total_nf = max(1, (len(mono) + _HOP - 1) // _HOP)
+
+        # ~30 s at 44.1 kHz  →  ~3150 STFT frames  →  ~130 MB peak per chunk
+        _MAX_CHUNK_FRAMES = 3150
+        if total_nf <= _MAX_CHUNK_FRAMES:
+            return self._onnx_single(mono, win, total_nf)
+
+        # ── Chunked processing ──────────────────────────────────────────
+        overlap_samples = _N  # overlap between chunks for crossfade
+        chunk_samples = _MAX_CHUNK_FRAMES * _HOP + _N
+        step_samples = chunk_samples - overlap_samples
+        out_full = np.zeros(len(mono), np.float32)
+        pos = 0
+        chunk_idx = 0
+        while pos < len(mono):
+            end = min(pos + chunk_samples, len(mono))
+            chunk = mono[pos:end]
+            nf_chunk = max(1, (len(chunk) + _HOP - 1) // _HOP)
+            processed = self._onnx_single(chunk, win, nf_chunk)
+            processed = processed[: len(chunk)]
+
+            if chunk_idx == 0:
+                # First chunk: copy directly
+                out_full[pos : pos + len(processed)] = processed
+            else:
+                # Crossfade in overlap region
+                ol = min(overlap_samples, len(processed), len(out_full) - pos)
+                if ol > 0:
+                    fade_in = np.linspace(0.0, 1.0, ol, dtype=np.float32)
+                    fade_out = 1.0 - fade_in
+                    out_full[pos : pos + ol] = out_full[pos : pos + ol] * fade_out + processed[:ol] * fade_in
+                if ol < len(processed):
+                    out_full[pos + ol : pos + len(processed)] = processed[ol:]
+
+            pos += step_samples
+            chunk_idx += 1
+            # Explicit cleanup between chunks to prevent RAM drift
+            del chunk, processed
+        return out_full
+
+    def _onnx_single(self, mono: np.ndarray, win: np.ndarray, nf: int) -> np.ndarray:
+        """Process a single audio chunk through ONNX (original algorithm)."""
         buf = np.zeros(nf * _HOP + _N, np.float32)
         buf[: len(mono)] = mono
         frames = [np.fft.rfft(buf[i * _HOP : i * _HOP + _N] * win)[:_BINS] for i in range(nf)]
@@ -108,7 +175,6 @@ class ResembleEnhancePlugin:
         mag = np.abs(spec)
         cos = spec.real / (mag + 1e-8)
         sin_v = spec.imag / (mag + 1e-8)
-        # Verarbeite ganzes Spektrum in einem Batch
         inp = lambda a: a[None].astype(np.float32)  # [1,841,F]
         try:
             outs = self._session.run(None, {"mag": inp(mag), "cos": inp(cos), "sin": inp(sin_v)})

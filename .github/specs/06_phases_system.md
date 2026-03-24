@@ -159,6 +159,7 @@ CAUSE_TO_PHASES = {
 ## §7.4 PhaseInterface — Pflicht-Pattern für neue Phasen
 
 Jede neue Phase **muss**:
+
 - In `backend/core/phases/phase_NN_<beschreibung>.py` angelegt werden
 - `PhaseInterface` aus `backend/core/phases/phase_interface.py` implementieren
 - `process(audio: np.ndarray, **kwargs) -> PhaseResult` bereitstellen
@@ -198,16 +199,22 @@ TIER 6:   IMMER sequenziell (EQ → Polish → LUFS → TruePeak → Format)
 | Niedrig (severity < 0.3) | **60 s** | Kontextkohärenz |
 | Stille-Segmente | **120 s** | Passthrough ohne DSP |
 
+**Implementierung**: `backend/core/adaptive_chunk_processor.py`
+
 ```python
-def adaptive_chunk_size(defect_severity: float, segment_type: str) -> float:
-    if segment_type == "silence":
-        return 120.0
-    if defect_severity >= 0.6:
-        return 5.0
-    if defect_severity >= 0.3:
-        return 15.0
-    return 60.0
+from backend.core.adaptive_chunk_processor import process_in_adaptive_chunks
+
+# Opt-in für Phasen, die von feinerer Chunk-Verarbeitung profitieren:
+result = process_in_adaptive_chunks(
+    phase_fn=my_phase_process,
+    audio=audio,
+    sr=48000,
+    max_severity=defect_severity,
+    phase_kwargs={"material_type": material, ...},
+)
+# Crossfade: Hanning-Fenster 10 ms, Overlap-Add
 # Minimum: 2 s | Maximum: 120 s
-# Crossfade: Hanning-Fenster, ola_crossfade_ms aus GP-Optimizer
 # Segment-Grenzen (SegmentAdaptiveProcessor) haben Vorrang vor Chunk-Grenzen
 ```
+
+**Defect-Locations-Flow** (v9.10.75): `_execute_pipeline` extrahiert `defect_locations` (dict[str, list[tuple[float,float]]]) und `max_defect_severity` (float) aus DefectScanner-Ergebnissen und übergibt sie als kwargs an jede Phase. Phasen können Locations als Hints für gezieltere Verarbeitung nutzen (opt-in), erkennen Defekte weiterhin auch eigenständig intern (Redundanz-Prinzip).

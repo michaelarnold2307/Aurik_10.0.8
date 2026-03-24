@@ -25,12 +25,12 @@ Invarianten (§3.1, §3.2, §3.7 Aurik-Spec):
     - Alle öffentlichen Methoden vollständig typisiert (PEP 484)
 """
 
+from dataclasses import dataclass, field
 import hashlib
 import logging
 import math
-import threading
-from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 
 import numpy as np
 
@@ -324,8 +324,11 @@ class CrepePlugin:
             seg_len = min(len(audio), int(sr * 30.0))
             seg = audio[:seg_len]
 
-            _fmin_safe = float(librosa.note_to_hz("C1"))  # ≈32.7 Hz — safe for all sample rates (fmin > sr/frame_length)
-            f0, _, voiced_probs = librosa.pyin(seg, fmin=_fmin_safe, fmax=2_000.0, sr=sr)
+            _frame_length = 2048
+            # fmin must allow at least 2 periods to fit in frame_length (librosa requirement)
+            _fmin_floor = float(librosa.note_to_hz("C1"))  # ≈32.7 Hz — ideal lower bound
+            _fmin_safe = max(_fmin_floor, sr / _frame_length * 2)  # ≈46.9 Hz @ 48 kHz/2048
+            f0, _, voiced_probs = librosa.pyin(seg, fmin=_fmin_safe, fmax=2_000.0, sr=sr, frame_length=_frame_length)
             f0 = np.nan_to_num(f0.astype(np.float32))
             voiced_probs = np.nan_to_num(voiced_probs.astype(np.float32))
             n_frames = len(f0)

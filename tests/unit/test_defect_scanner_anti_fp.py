@@ -8,13 +8,13 @@ positives on clean/musical signals while still detecting real defects.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 SR = 48_000
 
 
 def _scanner(sr: int = SR):
     from backend.core.defect_scanner import DefectScanner
+
     return DefectScanner(sample_rate=sr)
 
 
@@ -35,6 +35,7 @@ def _complex_tone(duration: float = 3.0) -> np.ndarray:
 # ============================================================
 # CLICKS – Anti-False-Positive
 # ============================================================
+
 
 class TestClicksAntiFP:
     """Clean signals must NOT trigger click detection."""
@@ -96,25 +97,27 @@ class TestClicksAntiFP:
         # Added on TOP of existing signal (like real drums) to avoid
         # boundary discontinuities that create artificial click-like edges.
         idx = int(1.0 * SR)
-        attack_samples = int(0.002 * SR)   # 2 ms attack (96 samples @ 48 kHz)
-        decay_samples = int(0.020 * SR)    # 20 ms decay
+        attack_samples = int(0.002 * SR)  # 2 ms attack (96 samples @ 48 kHz)
+        decay_samples = int(0.020 * SR)  # 20 ms decay
         total = attack_samples + decay_samples
-        envelope = np.concatenate([
-            np.linspace(0.0, 0.6, attack_samples),
-            np.linspace(0.6, 0.0, decay_samples),
-        ]).astype(np.float32)
-        audio[idx:idx + total] += envelope
+        envelope = np.concatenate(
+            [
+                np.linspace(0.0, 0.6, attack_samples),
+                np.linspace(0.6, 0.0, decay_samples),
+            ]
+        ).astype(np.float32)
+        audio[idx : idx + total] += envelope
         audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
         score = sc._detect_clicks(audio)
         # Wide musical transient should not be flagged as click
-        click_at_1s = [loc for loc in score.locations
-                       if abs(loc[0] - 1.0) < 0.03]
+        click_at_1s = [loc for loc in score.locations if abs(loc[0] - 1.0) < 0.03]
         assert len(click_at_1s) == 0
 
 
 # ============================================================
 # CRACKLE – Anti-False-Positive
 # ============================================================
+
 
 class TestCrackleAntiFP:
     """Brilliant / HF-rich signals must NOT trigger crackle detection."""
@@ -149,6 +152,7 @@ class TestCrackleAntiFP:
 # ============================================================
 # COMPRESSION ARTIFACTS – Anti-False-Positive
 # ============================================================
+
 
 class TestCompressionArtifactsAntiFP:
     """Tonal / full-bandwidth signals must NOT trigger codec artifact detection."""
@@ -187,3 +191,95 @@ class TestCompressionArtifactsAntiFP:
         score = sc._detect_compression_artifacts(audio)
         # Should detect the bandwidth limitation
         assert score.severity > 0.0
+
+
+# ============================================================
+# RIAA_CURVE_ERROR — Medium-Gate (§6.3 Medium-Filter)
+# ============================================================
+
+
+class TestRiaaMediumGate:
+    """RIAA_CURVE_ERROR must be suppressed on non-disc media.
+
+    RIAA equalisation is physically relevant ONLY for disc media
+    (vinyl, shellac, lacquer disc, wax cylinder).  A bass-heavy tape
+    or MP3 signal must NEVER report RIAA_CURVE_ERROR ≠ 0.
+    """
+
+    @staticmethod
+    def _bass_heavy_signal(duration: float = 3.0) -> np.ndarray:
+        """Synthesise a bass-heavy signal whose bass/mid ratio > 5.
+
+        This would trigger RIAA_CURVE_ERROR on a purely spectral check.
+        """
+        t = np.linspace(0, duration, int(SR * duration), endpoint=False)
+        bass = 0.8 * np.sin(2 * np.pi * 80 * t)  # dominant bass
+        mid = 0.02 * np.sin(2 * np.pi * 2000 * t)  # very quiet mid
+        return (bass + mid).astype(np.float32)
+
+    def test_tape_no_riaa_detection(self):
+        """Tape material + bass-heavy signal → RIAA severity must be 0."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.TAPE, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.severity == 0.0, f"RIAA_CURVE_ERROR must be 0 on TAPE, got {riaa.severity:.3f}"
+
+    def test_mp3_low_no_riaa_detection(self):
+        """MP3_LOW material + bass-heavy signal → RIAA severity must be 0."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.MP3_LOW, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.severity == 0.0, f"RIAA_CURVE_ERROR must be 0 on MP3_LOW, got {riaa.severity:.3f}"
+
+    def test_cd_digital_no_riaa_detection(self):
+        """CD_DIGITAL material + bass-heavy signal → RIAA severity must be 0."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.CD_DIGITAL, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.severity == 0.0, f"RIAA_CURVE_ERROR must be 0 on CD_DIGITAL, got {riaa.severity:.3f}"
+
+    def test_reel_tape_no_riaa_detection(self):
+        """REEL_TAPE material + bass-heavy signal → RIAA severity must be 0."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.REEL_TAPE, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.severity == 0.0, f"RIAA_CURVE_ERROR must be 0 on REEL_TAPE, got {riaa.severity:.3f}"
+
+    def test_vinyl_allows_riaa_detection(self):
+        """Vinyl material + bass-heavy signal → RIAA detection ALLOWED."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.VINYL, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        # On vinyl, the spectral check should detect the imbalance
+        assert riaa.severity > 0.0, "RIAA_CURVE_ERROR should be non-zero on VINYL with bass-heavy signal"
+
+    def test_shellac_allows_riaa_detection(self):
+        """Shellac material + bass-heavy signal → RIAA detection ALLOWED."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.SHELLAC, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.severity > 0.0, "RIAA_CURVE_ERROR should be non-zero on SHELLAC with bass-heavy signal"
+
+    def test_medium_gated_metadata_present(self):
+        """When RIAA is suppressed, metadata must contain medium_gated=True."""
+        from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
+
+        sc = DefectScanner(sample_rate=SR)
+        result = sc.scan(self._bass_heavy_signal(), material_type=MaterialType.TAPE, sample_rate=SR)
+        riaa = result.scores[DefectType.RIAA_CURVE_ERROR]
+        assert riaa.metadata.get("medium_gated") is True, (
+            "medium_gated flag must be set when RIAA is suppressed on tape"
+        )
+        assert riaa.metadata.get("original_severity", 0.0) > 0.0, "original_severity must be preserved in metadata"

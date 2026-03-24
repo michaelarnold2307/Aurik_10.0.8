@@ -252,13 +252,9 @@ class TestStructuredFailReasonBanner:
 
     def test_primary_error_code_extraction_present(self):
         """Primärer Fehlercode wird aus fail_reasons extrahiert (metadata/stage_notes)."""
-        assert _src_contains("primary_error_code"), (
-            "primary_error_code-Extraktion fehlt in modern_window.py"
-        )
-        assert _src_contains("_meta.get(\"fail_reasons\")"), (
-            "Fehlercode-Extraktion aus metadata.fail_reasons fehlt"
-        )
-        assert _src_contains("_stage_notes.get(\"fail_reasons\")"), (
+        assert _src_contains("primary_error_code"), "primary_error_code-Extraktion fehlt in modern_window.py"
+        assert _src_contains('_meta.get("fail_reasons")'), "Fehlercode-Extraktion aus metadata.fail_reasons fehlt"
+        assert _src_contains('_stage_notes.get("fail_reasons")'), (
             "Fallback-Extraktion aus stage_notes.fail_reasons fehlt"
         )
 
@@ -280,9 +276,7 @@ class TestStructuredFailReasonShortStatus:
 
     def test_short_status_includes_error_code_suffix(self):
         """Kurzstatus ergänzt strukturierten Fehlercode wenn verfügbar."""
-        assert _src_contains("Code:"), (
-            "Fehlercode-Suffix im Kurzstatus fehlt"
-        )
+        assert _src_contains("Code:"), "Fehlercode-Suffix im Kurzstatus fehlt"
         assert _src_contains("ratio") and _src_contains("alpha"), (
             "Severity-proportionales Alpha in _draw_defect_overlay fehlt — Spec §11.4: Alpha proportional zur Severity"
         )
@@ -342,11 +336,13 @@ class TestWatchdogTimer:
         assert _src_contains("setSingleShot(True)"), "_watchdog_timer.setSingleShot(True) fehlt"
 
     def test_watchdog_timeout_formula(self):
-        """Watchdog-Timeout: max(600_000, n * 900_000) Formel (relaxiert für lange Audio + Metriken)."""
-        assert _src_contains("600_000") or _src_contains("600000"), (
-            "Watchdog-Timeout Basis 600_000 ms (10 min) fehlt — max(600_000, pending_files × 900_000)"
+        """Watchdog-Timeout: max(5_400_000, n * per_file_ms) Formel (§11.4: Minimum 90 Min.)."""
+        assert _src_contains("5_400_000") or _src_contains("5400000"), (
+            "Watchdog-Timeout Basis 5_400_000 ms (90 min) fehlt — max(5_400_000, n_files × _per_file_ms)"
         )
-        assert _src_contains("900_000") or _src_contains("900000"), "Watchdog-Timeout 900_000 ms/Datei fehlt"
+        assert _src_contains("1_800_000") or _src_contains("1800000"), (
+            "Watchdog per-file Offset 1_800_000 ms fehlt — _per_file_ms = max(5_400_000, audio_dur_s * 32_000 + 1_800_000)"
+        )
 
     def test_watchdog_stopped_on_finish(self):
         """_watchdog_timer.stop() wird in _on_all_finished und _cancel aufgerufen."""

@@ -298,24 +298,42 @@ class CQTdiffPlusPlugin:
             return self._inpaint_dsp_fallback(audio, sr, gap_start, gap_end)
 
         try:
+            import gc
+
             import torch
             import torchaudio
 
             gap_len_48k = gap_end - gap_start
             scale = self._CQTDIFF_SR / sr  # 22050/48000 ≈ 0.459
-
-            # --- 1. Resample zu 22050 Hz ---
-            audio_t = torch.from_numpy(audio).unsqueeze(0)  # [1, N]
-            resampler_down = torchaudio.transforms.Resample(sr, self._CQTDIFF_SR)
-            audio_22k = resampler_down(audio_t).squeeze(0).numpy()  # [N_22k]
-
-            # Lücken-Indices in 22050-Hz-Domäne
-            gap_s22 = int(gap_start * scale)
-            gap_e22 = int(gap_end * scale)
-            max(1, gap_e22 - gap_s22)
-
-            # --- 2. Kontext-Fenster extrahieren (65536 Samples) ---
             win = self._AUDIO_LEN  # 65536
+
+            # --- 1. Lokales Kontextfenster extrahieren (NUR Lücke ± Puffer) ---
+            # Berechne benötigten 48 kHz-Bereich: win/scale Samples + Puffer
+            needed_48k = int(win / scale) + 4096  # ~146k Samples ≈ 3 s
+            extract_start = max(0, gap_start - needed_48k // 2)
+            extract_end = min(len(audio), gap_end + needed_48k // 2)
+            # Mindestens benötigte Fenstergröße
+            if extract_end - extract_start < needed_48k:
+                extract_start = max(0, extract_end - needed_48k)
+            if extract_end - extract_start < needed_48k:
+                extract_end = min(len(audio), extract_start + needed_48k)
+
+            local_audio = audio[extract_start:extract_end].copy()
+            local_gap_start_48k = gap_start - extract_start
+            local_gap_end_48k = gap_end - extract_start
+
+            # --- 2. Resample NUR lokales Segment zu 22050 Hz ---
+            audio_t = torch.from_numpy(local_audio).unsqueeze(0)  # [1, N_local]
+            if not hasattr(self, "_resampler_down") or self._resampler_down is None:
+                self._resampler_down = torchaudio.transforms.Resample(sr, self._CQTDIFF_SR)
+            audio_22k = self._resampler_down(audio_t).squeeze(0).numpy()
+            del audio_t  # Sofort freigeben
+
+            # Lücken-Indices in 22050-Hz-Domäne (relativ zum lokalen Segment)
+            gap_s22 = int(local_gap_start_48k * scale)
+            gap_e22 = int(local_gap_end_48k * scale)
+
+            # --- 3. Kontext-Fenster extrahieren (65536 Samples) ---
             # Zentriere das Fenster um die Lücke
             center = (gap_s22 + gap_e22) // 2
             win_start = max(0, center - win // 2)
@@ -329,6 +347,7 @@ class CQTdiffPlusPlugin:
             eff_start = max(0, win_start)
             eff_end = min(len(audio_22k), win_end)
             segment_raw = audio_22k[eff_start:eff_end]
+            del audio_22k  # Nicht mehr benötigt
             y_obs = np.zeros(win, dtype=np.float32)
             y_obs[pad_left : pad_left + len(segment_raw)] = segment_raw
 
@@ -338,7 +357,7 @@ class CQTdiffPlusPlugin:
             local_gap_e = min(win, gap_e22 - eff_start + pad_left)
             known_mask[local_gap_s:local_gap_e] = False
 
-            # --- 3. EDM-Sampling mit Replacement ---
+            # --- 4. EDM-Sampling mit Replacement ---
             y_t = torch.from_numpy(y_obs).unsqueeze(0)  # [1, 65536]
             known_t = torch.from_numpy(known_mask).unsqueeze(0)  # [1, 65536]
 
@@ -387,28 +406,33 @@ class CQTdiffPlusPlugin:
                     # Replacement-Data-Consistency: bekannte Teile unveränderlich
                     x = torch.where(known_t, y_t, x)
 
-            # --- 4. NaN/Inf-Guard + Clip ---
+            # --- 5. NaN/Inf-Guard + Clip ---
             out_np = x.squeeze(0).numpy()  # [65536]
+            del x, y_t, known_t, noise, sigmas, i_steps  # Torch-Tensoren freigeben
             out_np = np.nan_to_num(out_np, nan=0.0, posinf=0.0, neginf=0.0)
             out_np = np.clip(out_np, -1.0, 1.0).astype(np.float32)
 
-            # --- 5. Resample 22050 → 48000 Hz ---
+            # --- 6. Resample 22050 → 48000 Hz ---
             out_t = torch.from_numpy(out_np).unsqueeze(0)  # [1, 65536]
-            resampler_up = torchaudio.transforms.Resample(self._CQTDIFF_SR, sr)
-            out_48k = resampler_up(out_t).squeeze(0).numpy()  # [N_48k]
+            if not hasattr(self, "_resampler_up") or self._resampler_up is None:
+                self._resampler_up = torchaudio.transforms.Resample(self._CQTDIFF_SR, sr)
+            out_48k = self._resampler_up(out_t).squeeze(0).numpy()  # [N_48k]
+            del out_t, out_np  # Sofort freigeben
 
             # Das generierte Segment auf die exakte Lückenlänge zuschneiden
-            gap_offset_48k = gap_start - int(eff_start / scale)
+            gap_offset_48k = local_gap_start_48k - int(eff_start / scale)
             gen_gap = out_48k[gap_offset_48k : gap_offset_48k + gap_len_48k]
+            del out_48k
             if len(gen_gap) < gap_len_48k:
                 gen_gap = np.pad(gen_gap, (0, gap_len_48k - len(gen_gap)))
             gen_gap = np.nan_to_num(gen_gap[:gap_len_48k], nan=0.0)
             gen_gap = np.clip(gen_gap, -1.0, 1.0).astype(np.float32)
 
-            # --- 6. Crossfade + Splice ---
+            # --- 7. Crossfade + Splice ---
             result = audio.copy()
             result[gap_start:gap_end] = gen_gap
             result = self._crossfade_edges(result, gap_start, gap_end, sr, fade_ms=5.0)
+            gc.collect()  # Erzwinge Speicherfreigabe nach Diffusion
             return np.clip(result, -1.0, 1.0).astype(np.float32)
 
         except Exception as exc:

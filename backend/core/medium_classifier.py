@@ -218,7 +218,11 @@ class _MaterialScorer:
             "tape": self._s(nc > 1.3, wf > 0.5, snr < 35.0, bw < 16000.0, cd < 0.0005),
             # reel_tape: stable flutter, tape hiss, no crackle
             "reel_tape": self._s(nc > 1.1, wf < 0.5, snr < 30.0, cd < 0.0005),
-            "wire_recording": self._s(wf > 1.5, snr < 20.0),
+            # wire_recording (1940–1955): extrem selten — braucht ALLE Merkmale:
+            # sehr hoher Jitter (wf > 2.0), stark begrenzter HF (< 8 kHz),
+            # niedriger SNR (< 18 dB), kein Knistern (kein Schallplatten-Medium),
+            # steile Rauschanstiegskurve (nc > 1.5 = tieffrequentes Rauschen).
+            "wire_recording": self._s(wf > 2.0, snr < 18.0, bw < 8000.0, nc > 1.5, cd < 0.0003),
             "lacquer_disc": self._s(cd > 0.001, snr < 25.0, bw < 12000.0),
             "dat": self._s(bw > 18000.0, ba > 0.05, snr > 40.0),
             "cd_digital": self._s(bw > 18000.0, snr > 50.0, ba < 0.05, wf < 0.3),

@@ -52,8 +52,8 @@ import logging
 import time
 
 import numpy as np
-import scipy.signal as sig
 from scipy.ndimage import median_filter
+import scipy.signal as sig
 
 from .phase_interface import (
     PhaseCategory,
@@ -183,6 +183,16 @@ class AdvancedDereverbPhase(PhaseInterface):
         """WPE-Dereverberation für einen einzelnen Kanal."""
         n_orig = len(audio)
 
+        # 0. Schroeder T60-Schätzung — Vorab-Prüfung für Early-Exit
+        t60 = self._estimate_t60_schroeder(audio, sample_rate)
+        if t60 < 0.15:
+            logger.info(
+                "Phase 49 WPE: T60=%.3fs < 0.15s — kein signifikanter Nachhall, WPE übersprungen (Kanal %d Samples)",
+                t60,
+                n_orig,
+            )
+            return np.clip(audio.copy(), -1.0, 1.0)
+
         # 1. Transientenmaske
         transient_mask: np.ndarray | None = None
         if protect_transients:
@@ -194,9 +204,6 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # 3. WPE: iterative Nachhall-Schätzung & Subtraktion
         enhanced = stft_matrix.copy()
-        # Schroeder (1965) Backward Integration — blinde T60-Schätzung;
-        # übersteuert die Klassenkonstanten mit datei-spezifischen Werten.
-        t60 = self._estimate_t60_schroeder(audio, sample_rate)
         t60_frames = max(1, int(t60 * sample_rate / self._HOP_SIZE))
         D = max(2, min(6, int(t60_frames * 0.25)))  # ~25 % von T60
         K = max(3, min(12, int(t60_frames * 0.60)))  # ~60 % von T60

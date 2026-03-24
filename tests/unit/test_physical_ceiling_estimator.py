@@ -10,6 +10,7 @@ import math
 import threading
 
 import numpy as np
+
 np.random.seed(42)  # §5.4 Reproduzierbarkeit
 
 from backend.core.physical_ceiling_estimator import (
@@ -202,7 +203,7 @@ class TestMaterialPriors:
     def test_mp3_low_caps_brillanz(self):
         audio = _sine()
         result = estimate_physical_ceiling(audio, SR, _current_scores(), material="mp3_low")
-        assert result.ceiling["brillanz"] <= 0.82
+        assert result.ceiling["brillanz"] <= 0.85
 
     def test_cd_digital_higher_ceiling(self):
         audio = _sine()

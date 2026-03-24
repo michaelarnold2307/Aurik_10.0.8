@@ -21,9 +21,9 @@ Datum: 20. Februar 2026
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import threading
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -317,15 +317,46 @@ class StereoAuthenticitiyInvariant:
         _compute_ms_correlation(original)
 
         if result.original_type == "mono":
-            # Mono: Beide Kanäle identisch (Mid-Signal)
+            # Mono: Beide Kanäle identisch (Mid-Signal).
+            # Guard: Wenn L+R ≈ 0 (anti-korrelierte Kanäle / phasengekehrtes Stereo),
+            # würde mid = 0.5*(L+R) ≈ 0 → Stille erzeugen.
+            # In diesem Fall den energiereicheren Kanal für beide Kanäle verwenden.
             if audio.ndim == 1:
                 out = np.clip(audio, -1.0, 1.0)
             elif audio.shape[-1] == 2:
-                mid = 0.5 * (audio[:, 0] + audio[:, 1])
+                # time-major (N, 2)
+                ch_l, ch_r = audio[:, 0], audio[:, 1]
+                mid = 0.5 * (ch_l + ch_r)
+                mid_rms = float(np.sqrt(np.mean(mid**2) + 1e-12))
+                orig_rms = float(np.sqrt(np.mean(audio**2) + 1e-12))
+                if mid_rms < orig_rms * 0.10:
+                    # Anti-Korrelation: energiereicheren Kanal als Mono verwenden
+                    chosen = ch_l if np.mean(ch_l**2) >= np.mean(ch_r**2) else ch_r
+                    mid = chosen
+                    logger.warning(
+                        "🔧 StereoAuth enforce: Anti-korrelierte Kanäle (mid_rms/orig=%.3f) — "
+                        "Kanal mit höherer Energie als Mono-Basis verwendet (Ära %d)",
+                        mid_rms / orig_rms,
+                        decade,
+                    )
                 out = np.stack([mid, mid], axis=-1)
                 out = np.clip(out, -1.0, 1.0)
             elif audio.shape[0] == 2:
-                mid = 0.5 * (audio[0] + audio[1])
+                # channel-major (2, N)
+                ch_l, ch_r = audio[0], audio[1]
+                mid = 0.5 * (ch_l + ch_r)
+                mid_rms = float(np.sqrt(np.mean(mid**2) + 1e-12))
+                orig_rms = float(np.sqrt(np.mean(audio**2) + 1e-12))
+                if mid_rms < orig_rms * 0.10:
+                    # Anti-Korrelation: energiereicheren Kanal als Mono verwenden
+                    chosen = ch_l if np.mean(ch_l**2) >= np.mean(ch_r**2) else ch_r
+                    mid = chosen
+                    logger.warning(
+                        "🔧 StereoAuth enforce: Anti-korrelierte Kanäle (mid_rms/orig=%.3f) — "
+                        "Kanal mit höherer Energie als Mono-Basis verwendet (Ära %d)",
+                        mid_rms / orig_rms,
+                        decade,
+                    )
                 out = np.stack([mid, mid], axis=0)
                 out = np.clip(out, -1.0, 1.0)
             else:

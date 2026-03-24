@@ -15,10 +15,10 @@ Usage::
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import math
 import threading
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -71,6 +71,13 @@ class RekonstruktionsErgebnis:
     phases_applied: list[str] = field(default_factory=list)
     """Liste der angewandten Phasen-IDs."""
 
+    # §11.7a ReconstructionContext fields (v9.10.74)
+    bandwidth_limited: bool = False
+    """True if BANDWIDTH_LOSS was detected in defect analysis."""
+
+    estimated_original_bandwidth_hz: float = 0.0
+    """Estimated original bandwidth before degradation (Hz)."""
+
     def as_dict(self) -> dict[str, object]:
         """Liefert alle Felder als serialisierbares Dict."""
         return {
@@ -117,6 +124,7 @@ class RekonstruktionsDenker:
         *,
         material: str | None = None,
         material_hint: str | None = None,
+        defect_result: Any | None = None,
         validate_audio: bool = True,
     ) -> RekonstruktionsErgebnis:
         """Erkennt und repariert Dropout-Lücken im Audio.
@@ -129,6 +137,8 @@ class RekonstruktionsDenker:
             Abtastrate in Hz.
         material_hint:
             Optionaler Träger-Hint (z. B. ``"tape"``, ``"vinyl"``).
+        defect_result:
+            Optional DefectAnalysisResult for context-aware reconstruction.
         validate_audio:
             Ob Eingabe auf NaN/Inf geprüft werden soll.
 
@@ -137,23 +147,56 @@ class RekonstruktionsDenker:
         :class:`RekonstruktionsErgebnis` mit repariertem Audio und Statistik.
         """
         assert sr == 48000, f"RekonstruktionsDenker.rekonstruiere() erwartet sr=48000 Hz, erhalten: {sr} Hz"
+        logger.info(
+            "RekonstruktionsDenker.rekonstruiere() gestartet: duration=%.1fs, material_hint=%s",
+            len(audio) / max(sr, 1),
+            material_hint or material,
+        )
         if validate_audio:
             audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         else:
             audio = audio.astype(np.float32)
 
+        # §11.7a: Extract bandwidth context from defect analysis
+        _bw_limited = False
+        _est_bw_hz = 0.0
+        if defect_result is not None:
+            try:
+                _bw_score = getattr(defect_result, "scores", {})
+                # Check for BANDWIDTH_LOSS defect
+                for _dt, _ds in _bw_score.items():
+                    _dt_val = getattr(_dt, "value", str(_dt))
+                    if _dt_val == "bandwidth_loss" and getattr(_ds, "severity", 0.0) > 0.05:
+                        _bw_limited = True
+                        # Extract estimated bandwidth from spectral fingerprint
+                        _sf = getattr(defect_result, "spectral_fingerprint", {})
+                        _est_bw_hz = float(_sf.get("effective_bandwidth_hz", 0.0))
+                        logger.info(
+                            "RekonstruktionsDenker: BANDWIDTH_LOSS detected "
+                            "(severity=%.3f, est_bw=%.0f Hz) — hint passed to UV3",
+                            float(getattr(_ds, "severity", 0.0)),
+                            _est_bw_hz,
+                        )
+                        break
+            except Exception as _bw_exc:
+                logger.debug("Bandwidth extraction failed: %s", _bw_exc)
+
         reconstructor = self._get_reconstructor()
 
         if reconstructor is None:
-            return self._dsp_fallback(audio, sr)
+            result = self._dsp_fallback(audio, sr)
+        else:
+            try:
+                raw = reconstructor.reconstruct(audio, sr, material_hint=material_hint or material)
+                result = self._konvertiere(raw)
+            except Exception as exc:
+                logger.warning("GapReconstructor.reconstruct() fehlgeschlagen: %s — DSP-Fallback", exc)
+                result = self._dsp_fallback(audio, sr, reason=str(exc))
 
-        try:
-            raw = reconstructor.reconstruct(audio, sr, material_hint=material_hint or material)
-        except Exception as exc:
-            logger.warning("GapReconstructor.reconstruct() fehlgeschlagen: %s — DSP-Fallback", exc)
-            return self._dsp_fallback(audio, sr, reason=str(exc))
-
-        return self._konvertiere(raw)
+        # §11.7a: Attach ReconstructionContext fields
+        result.bandwidth_limited = _bw_limited
+        result.estimated_original_bandwidth_hz = _est_bw_hz
+        return result
 
     def erkenne_luecken(self, audio: np.ndarray, sr: int) -> list[Any]:
         """Erkennt Lücken ohne Reparatur (detect_only).
@@ -219,7 +262,7 @@ class RekonstruktionsDenker:
         elif repaired == found:
             note = f"{repaired} Lücken vollständig rekonstruiert ({total_ms:.1f} ms gesamt)"
         else:
-            note = f"{repaired} von {found} Lücken rekonstruiert, " f"{skipped} übersprungen ({total_ms:.1f} ms gesamt)"
+            note = f"{repaired} von {found} Lücken rekonstruiert, {skipped} übersprungen ({total_ms:.1f} ms gesamt)"
 
         logger.info(
             "🧩 RekonstruktionsDenker: %d/%d Lücken repariert (%.1f ms)",

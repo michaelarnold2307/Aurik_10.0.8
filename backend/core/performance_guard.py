@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class PerformanceStatus(Enum):
-    """Performance-Status der Verarbeitung."""
+    """Performance-Status der Verarbeitung (relativ zum aktiven RT-Budget)."""
 
-    OPTIMAL = "optimal"  # < 2× RT (viel Spielraum)
-    GOOD = "good"  # 2-2.5× RT
-    ACCEPTABLE = "acceptable"  # 2.5-2.9× RT
-    CRITICAL = "critical"  # 2.9-3× RT ⚠️
-    EXCEEDED = "exceeded"  # > 3× RT ❌
+    OPTIMAL = "optimal"  # < 25 % des Budgets
+    GOOD = "good"  # 25–50 % des Budgets
+    ACCEPTABLE = "acceptable"  # 50–75 % des Budgets
+    CRITICAL = "critical"  # 75–100 % des Budgets ⚠️
+    EXCEEDED = "exceeded"  # > 100 % des Budgets ❌
 
 
 class QualityMode(Enum):
@@ -42,7 +42,7 @@ class QualityMode(Enum):
     FAST = "fast"  # ~1.5× RT, 87% Quality
     BALANCED = "balanced"  # max 3× RT (DEFAULT)
     QUALITY = "quality"  # max 5× RT
-    MAXIMUM = "maximum"  # max 8× RT (§9.5 — maximum / studio_2026)
+    MAXIMUM = "maximum"  # max 32× RT (§9.5 — maximum / studio_2026)
 
 
 class DeploymentMode(Enum):
@@ -109,24 +109,32 @@ class PerformanceGuard:
     """
 
     # Performance Limits (RT Factors)
-    LIMIT_3X_RT = 8.0  # Hard Limit für Balanced Mode (RT×8)
+    # Rationale for values (desktop CPU, no GPU, longer/degraded audio):
+    #   BALANCED  = 32× — Standard. Allows full pipeline including ML phases.
+    #   QUALITY   = 32× — Restoration mode. Same budget to avoid premature deferral.
+    #   MAXIMUM   = 32× — Studio 2026. Full ML chain (SGMSE+, BsRoformer, Vocos,
+    #                     Matchering) needs ~5× RT each; 32× gives comfortable margin
+    #                     for 5–10 min audio in Stufe 1 without excessive deferral.
+    #   BACKGROUND = ∞  — MLRefinementThread (KMV Stufe 2) only — never for Stufe 1.
+    LIMIT_3X_RT = 32.0  # Hard Limit (RT×32)
     LIMIT_FAST = 3.0  # Target für Fast Mode
-    LIMIT_BALANCED = 8.0  # Budget für Balanced Mode — maximal RT×8
-    LIMIT_QUALITY = 10.0  # Budget für Quality Mode — maximal RT×10
-    LIMIT_MAXIMUM = 15.0  # Spec-Referenz für Maximum/Studio-artige Pfade
+    LIMIT_BALANCED = 32.0  # Budget für Balanced Mode — maximal RT×32
+    LIMIT_QUALITY = 32.0  # Budget für Quality/Restoration Mode — maximal RT×32
+    LIMIT_MAXIMUM = 32.0  # Budget für Maximum/Studio-2026-Pfade — maximal RT×32
     # §2.38 KMV: Hintergrund-ML-Veredelung läuft ohne RT-Limit (MLRefinementThread)
     LIMIT_BACKGROUND: float = float("inf")  # Stufe 2 — unbeschränkt, Priority=LowPriority
 
-    # Warnschwellen
-    WARNING_THRESHOLD_OPTIMAL = 4.0
-    WARNING_THRESHOLD_GOOD = 5.5
-    WARNING_THRESHOLD_ACCEPTABLE = 7.5
-    WARNING_THRESHOLD_CRITICAL = 8.0
+    # Warnschwellen — Bruchteile des aktiven Budgets (target_rt_factor)
+    # _get_status() multipliziert diese mit target_rt_factor.
+    WARNING_FRACTION_OPTIMAL = 0.25  # < 25 % → OPTIMAL
+    WARNING_FRACTION_GOOD = 0.50  # < 50 % → GOOD
+    WARNING_FRACTION_ACCEPTABLE = 0.75  # < 75 % → ACCEPTABLE
+    WARNING_FRACTION_CRITICAL = 1.0  # < 100 % → CRITICAL, darüber → EXCEEDED
 
     # Phase Priorities (höher = wichtiger für Quality)
     # ── Musikalische Exzellenz — Priorität 1 (§MusEx-P1) ────────────────────
     # Phasen mit Priority ≥ 9 werden NIEMALS übersprungen (§2.29, §9.5).
-    # RT×8-Budget (max. 8× Audiodauer) bleibt harte Obergrenze — garantiert
+    # RT×32-Budget bleibt harte Obergrenze — garantiert
     # durch <15 ms/s Laufzeit der Excellence-Phasen (§9.5 Performance-Budget).
     # ─────────────────────────────────────────────────────────────────────────
     PHASE_PRIORITIES = {
@@ -137,7 +145,7 @@ class PerformanceGuard:
         "dehum": 10,
         "decracklé": 9,
         # ── Musikalische Exzellenz Priorität 1 (§MusEx-P1) ──────────────────
-        # Waren MEDIUM/HIGH → auf CRITICAL angehoben: RT×8 Budget garantiert.
+        # Waren MEDIUM/HIGH → auf CRITICAL angehoben: RT×32 Budget garantiert.
         "harmonic_recovery": 10,  # war: 5 (MEDIUM, skippable bei >2.5×)
         "frequency_restoration": 10,  # war: 7 (HIGH,   skippable bei >2.8×)
         "transient_preservation": 10,  # war: 5 (MEDIUM, skippable bei >2.5×)
@@ -159,7 +167,7 @@ class PerformanceGuard:
 
     # Musikalische Exzellenz — Priorität 1 (§MusEx-P1)
     # Phasen in diesem Set werden unter keinen Umständen übersprungen.
-    # RT×8-Kompatibilität: alle Excellence-Phasen < 15 ms/s Audio (§9.5).
+    # RT×32-Kompatibilität: alle Excellence-Phasen < 15 ms/s Audio (§9.5).
     MUSICAL_EXCELLENCE_PHASES: frozenset = frozenset(
         {
             "harmonic_recovery",
@@ -174,10 +182,13 @@ class PerformanceGuard:
     )
 
     # Hard Budget: maximaler RT-Faktor für Musikalische Exzellenz-Betrieb
-    RT8_EXCELLENCE_BUDGET: float = 8.0
+    RT8_EXCELLENCE_BUDGET: float = 32.0
 
-    # Absolutes Zeitlimit (§9.5 Ausnahme-Deckel): Restaurierung darf niemals > 30 Minuten dauern
-    MAX_ABSOLUTE_SECONDS: float = 1800.0
+    # Absolutes Zeitlimit (§9.5): Stufe-1-Restaurierung endet spätestens nach 90 Minuten.
+    # Rationale: 30-min Vinyl-Seite (1800s Audio) × 3× DSP-RT = 5400s. KMV Stufe 2
+    # übernimmt danach automatisch die verbleibenden ML-Phasen ohne Zeitlimit.
+    # Alter Wert: 1800s (30 min) — zu eng für Aufnahmen > 10 min mit schweren Defekten.
+    MAX_ABSOLUTE_SECONDS: float = 5400.0  # 90 Minuten
 
     def __init__(
         self, mode: QualityMode = QualityMode.QUALITY, enforce_limit: bool = True, enable_adaptive_skipping: bool = True
@@ -199,7 +210,7 @@ class PerformanceGuard:
             QualityMode.FAST: self.LIMIT_FAST,
             QualityMode.BALANCED: self.LIMIT_BALANCED,
             QualityMode.QUALITY: self.LIMIT_QUALITY,
-            QualityMode.MAXIMUM: self.LIMIT_MAXIMUM,  # 8× RT — maximum / studio_2026
+            QualityMode.MAXIMUM: self.LIMIT_MAXIMUM,  # 32× RT — maximum / studio_2026
         }[mode]
 
         # Tracking State
@@ -231,7 +242,12 @@ class PerformanceGuard:
             # audio_duration bleibt None → should_skip_phase gibt False zurück
             return
         self.start_time = time.perf_counter()
-        self.audio_duration = audio_duration_seconds
+        # Minimum 30s floor for RT calculation — prevents fixed overhead
+        # (DefectScanner, EraClassifier, CausalDefect, FeedbackChain, etc.)
+        # from dominating on short clips/excerpts (e.g. 10s multi-pass chunks)
+        # and causing pathological phase-skipping.  For actual 10s audio files
+        # this means a generous but finite processing budget of 10× × 30s = 300s.
+        self.audio_duration = max(30.0, audio_duration_seconds)
         self.phase_performances.clear()
         self.skipped_phases.clear()
         self.warnings.clear()
@@ -338,7 +354,7 @@ class PerformanceGuard:
             self.warnings.append(warning)
             logger.warning(warning)
         elif status == PerformanceStatus.EXCEEDED:
-            warning = f"❌ Performance EXCEEDED: {self.current_rt_factor:.2f}× RT"
+            warning = f"❌ Performance EXCEEDED: {self.current_rt_factor:.2f}× RT (limit: {self.target_rt_factor:.1f}×)"
             self.warnings.append(warning)
             logger.error(warning)
 
@@ -369,26 +385,19 @@ class PerformanceGuard:
 
         # Musikalische Exzellenz — Priorität 1 (§MusEx-P1): niemals überspringen.
         # Doppelter Schutz: Priority-Dict UND Namens-Set verhindern Skip.
-        # RT×8-Kompatibilität garantiert: alle Excellence-Phasen < 15 ms/s (§9.5).
+        # RT×32-Kompatibilität garantiert: alle Excellence-Phasen < 15 ms/s (§9.5).
         short_id = self._normalize_phase_id(phase_id)
         if short_id in self.MUSICAL_EXCELLENCE_PHASES:
             logger.debug(
                 f"🎵 Phase '{phase_id}' ist Musikalische-Exzellenz-Phase (§MusEx-P1) "
-                f"— wird niemals übersprungen (RT×8 Budget: {self.RT8_EXCELLENCE_BUDGET:.1f}×)"
+                f"— wird niemals übersprungen (RT×32 Budget: {self.RT8_EXCELLENCE_BUDGET:.1f}×)"
             )
             return False
 
         # Prognostiziere RT Factor nach dieser Phase — subtract analytics overhead
         # so goal-measurement time does not count against processing budget.
         _elapsed_processing = max(0.0, (time.perf_counter() - self.start_time) - self._analytics_overhead_s)
-        estimated_total_time = _elapsed_processing + estimated_time_seconds
-        estimated_total_time / self.audio_duration if self.audio_duration else 0
-
-        # Schätze verbleibende Zeit (konservativ: 0.5s pro Phase)
-        estimated_remaining_time = remaining_phases * 0.5
-        final_projected_rt_factor = (
-            (estimated_total_time + estimated_remaining_time) / self.audio_duration if self.audio_duration else 0
-        )
+        current_rt = _elapsed_processing / self.audio_duration if self.audio_duration else 0
 
         # Skip-Kriterien basierend auf Phase Priority
         phase_priority = self.PHASE_PRIORITIES.get(short_id, 5)  # Default: Medium
@@ -403,13 +412,29 @@ class PerformanceGuard:
         else:  # CRITICAL (≥ 9)
             return False  # Never skip
 
-        # Entscheidung
-        should_skip = final_projected_rt_factor > skip_threshold
+        # Marginale RT-Kosten dieser einzelnen Phase
+        marginal_rt = estimated_time_seconds / self.audio_duration if self.audio_duration else 0
+
+        if current_rt >= skip_threshold:
+            # RT ist bereits über dem Threshold (z.B. nach BsRoformer Stem-Separation).
+            # Nur Phasen mit hohen marginalen Kosten (> 0.5× RT) werden geskippt
+            # und an KMV Stufe 2 deferiert. Leichte DSP-Phasen (EQ, Kompression,
+            # Limiting etc.) laufen trotzdem — sie fügen nur Millisekunden hinzu.
+            should_skip = marginal_rt > 0.5
+        else:
+            # RT noch unter Threshold — Standardlogik: projiziere Gesamtkosten
+            estimated_total_time = _elapsed_processing + estimated_time_seconds
+            estimated_remaining_time = remaining_phases * 0.3  # 0.3s pro DSP-Phase (konservativ)
+            final_projected_rt_factor = (
+                (estimated_total_time + estimated_remaining_time) / self.audio_duration if self.audio_duration else 0
+            )
+            should_skip = final_projected_rt_factor > skip_threshold
 
         if should_skip:
             logger.warning(
                 f"⏭️ Skipping {phase_id} (priority={phase_priority}): "
-                f"Projected {final_projected_rt_factor:.2f}× RT > {skip_threshold:.1f}× threshold"
+                f"current={current_rt:.2f}× RT, marginal={marginal_rt:.2f}× RT, "
+                f"threshold={skip_threshold:.1f}× — deferring to KMV Stufe 2"
             )
             self.skipped_phases.append(phase_id)
 
@@ -427,18 +452,18 @@ class PerformanceGuard:
             remaining_phases: Anzahl verbleibender Phasen
 
         Returns:
-            True wenn sofortiger Abbruch empfohlen (nur bei 30-min-Limit)
+            True wenn sofortiger Abbruch empfohlen (nur bei 90-min-Limit)
         """
         if not self.enforce_limit:
             return False
 
-        # §9.5 Absolutes 30-Minuten-Limit — einziger harter Abbruchgrund.
+        # §2.38 Absolutes 90-Minuten-Limit — einziger harter Abbruchgrund.
         # Gilt unabhängig vom RT-Faktor.
         if self.start_time is not None:
             elapsed_abs = time.perf_counter() - self.start_time
             if elapsed_abs >= self.MAX_ABSOLUTE_SECONDS:
                 logger.error(
-                    "❌ ABSOLUTES ZEITLIMIT: %.0fs ≥ %.0fs (30 min) — "
+                    "❌ ABSOLUTES ZEITLIMIT: %.0fs ≥ %.0fs (90 min) — "
                     "Early-Exit bei %d verbleibenden Phasen erzwungen.",
                     elapsed_abs,
                     self.MAX_ABSOLUTE_SECONDS,
@@ -452,7 +477,7 @@ class PerformanceGuard:
         if self.current_rt_factor > current_limit:
             logger.warning(
                 "⚠️ RT-Limit überschritten: %.2f× RT (limit=%.1f×), "
-                "%d Phasen verbleiben — Pipeline läuft weiter (§2.38 KMV, 30-min-Limit gilt)",
+                "%d Phasen verbleiben — Pipeline läuft weiter (§2.38 KMV, 90-min-Limit gilt)",
                 self.current_rt_factor,
                 current_limit,
                 remaining_phases,
@@ -489,16 +514,22 @@ class PerformanceGuard:
         return report
 
     def _get_status(self) -> PerformanceStatus:
-        """Ermittelt aktuellen Performance-Status."""
-        rt = self.current_rt_factor
+        """Ermittelt aktuellen Performance-Status relativ zum aktiven RT-Budget.
 
-        if rt > self.WARNING_THRESHOLD_CRITICAL:
+        Thresholds are fractions of target_rt_factor:
+        OPTIMAL < 25 %, GOOD < 50 %, ACCEPTABLE < 75 %, CRITICAL < 100 %, EXCEEDED > 100 %.
+        For BALANCED (32×): EXCEEDED fires at >32× RT (not at >8× as before).
+        """
+        rt = self.current_rt_factor
+        budget = self.target_rt_factor
+
+        if rt > self.WARNING_FRACTION_CRITICAL * budget:
             return PerformanceStatus.EXCEEDED
-        elif rt > self.WARNING_THRESHOLD_ACCEPTABLE:
+        elif rt > self.WARNING_FRACTION_ACCEPTABLE * budget:
             return PerformanceStatus.CRITICAL
-        elif rt > self.WARNING_THRESHOLD_GOOD:
-            return PerformanceStatus.ACCEPTABLE
-        elif rt > self.WARNING_THRESHOLD_OPTIMAL:
+        elif rt > self.WARNING_FRACTION_GOOD * budget:
+            return PerformanceStatus.GOOD
+        elif rt > self.WARNING_FRACTION_OPTIMAL * budget:
             return PerformanceStatus.GOOD
         else:
             return PerformanceStatus.OPTIMAL

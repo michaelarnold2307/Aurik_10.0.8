@@ -18,11 +18,10 @@ Referenz:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import math
 import threading
-from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -285,6 +284,129 @@ class EmotionalArcPreservationMetric:
         except Exception:
             return 0.0
 
+    def correct_arc(
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+        max_gain_db: float = 6.0,
+        damping: float = 0.7,
+    ) -> tuple[np.ndarray, EmotionalArcResult]:
+        """Correct emotional arc via macro-level RMS-based gain envelope.
+
+        Operates at 5 s segment timescale, complementing MDEM's 400 ms
+        micro-dynamics.  Only the RMS component (0.6 weight in arousal
+        proxy) responds to gain correction; ZCR (0.4 weight) is spectral.
+
+        Algorithm (Thayer 1989 / Kim & André 2008):
+            1. Per-segment RMS for original + restored (5 s, hop 2.5 s)
+            2. gain_db = 20·log₁₀(rms_orig / rms_rest) · damping, ±max_gain_db
+            3. Savitzky-Golay smooth → linear interpolation to sample-level
+            4. Apply per-channel, NaN-guard, clip ±1.0
+            5. Re-measure; revert if arousal worsened
+
+        Args:
+            original: Pre-repair reference audio (float32, 1D/2D)
+            restored: Post-MDEM restored audio (float32, 1D/2D)
+            sr:       48000
+            max_gain_db: Max per-segment gain (default 6 dB)
+            damping:  Correction fraction 0–1 (default 0.7 = 70 % correction)
+
+        Returns:
+            (corrected_audio, EmotionalArcResult after correction)
+        """
+        assert sr == 48000, f"SR muss 48000 Hz sein, erhalten: {sr}"
+
+        def _to_mono(a: np.ndarray) -> np.ndarray:
+            arr = np.asarray(a, dtype=np.float32)
+            arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+            return np.mean(arr, axis=0) if arr.ndim == 2 else arr
+
+        orig_mono = _to_mono(original)
+        rest_mono = _to_mono(restored)
+
+        n = min(len(orig_mono), len(rest_mono))
+        orig_mono = orig_mono[:n]
+        rest_mono = rest_mono[:n]
+
+        # Too short for meaningful arc correction
+        if n / sr < self.MIN_DURATION_S:
+            return restored.copy(), self.measure(original, restored, sr)
+
+        seg_len = int(self.SEGMENT_S * sr)
+        hop_len = int(self.HOP_S * sr)
+        positions = list(range(0, n - seg_len + 1, hop_len))
+
+        if len(positions) < 3:
+            return restored.copy(), self.measure(original, restored, sr)
+
+        # ---- Per-segment RMS ----
+        rms_orig = np.empty(len(positions), dtype=np.float32)
+        rms_rest = np.empty(len(positions), dtype=np.float32)
+        for i, start in enumerate(positions):
+            end = start + seg_len
+            rms_orig[i] = float(np.sqrt(np.mean(orig_mono[start:end] ** 2) + 1e-12))
+            rms_rest[i] = float(np.sqrt(np.mean(rest_mono[start:end] ** 2) + 1e-12))
+
+        # ---- Gain in dB, damped ----
+        eps = 1e-9
+        gain_db = 20.0 * np.log10((rms_orig + eps) / (rms_rest + eps))
+        gain_db = np.clip(gain_db.astype(np.float64) * damping, -max_gain_db, max_gain_db)
+
+        # Savitzky-Golay smooth (boxcar fallback)
+        if len(gain_db) >= 7:
+            try:
+                from scipy.signal import savgol_filter
+
+                gain_db = savgol_filter(gain_db, window_length=7, polyorder=2)
+            except Exception:
+                kernel = np.ones(5, dtype=np.float64) / 5.0
+                gain_db = np.convolve(gain_db, kernel, mode="same")
+
+        gain_db = np.clip(gain_db, -max_gain_db, max_gain_db).astype(np.float32)
+
+        # ---- Interpolate to sample-level via segment centres ----
+        centres = np.array([start + seg_len // 2 for start in positions], dtype=np.float64)
+        sample_idx = np.arange(n, dtype=np.float64)
+        gain_db_interp = np.interp(sample_idx, centres, gain_db).astype(np.float32)
+        gain_linear = np.float32(10.0) ** (gain_db_interp / np.float32(20.0))
+
+        # ---- Apply gain ----
+        out = np.asarray(restored, dtype=np.float32).copy()
+        if out.ndim == 2:
+            for ch in range(out.shape[0]):
+                ch_n = min(out.shape[1], len(gain_linear))
+                out[ch, :ch_n] *= gain_linear[:ch_n]
+        else:
+            ch_n = min(len(out), len(gain_linear))
+            out[:ch_n] *= gain_linear[:ch_n]
+
+        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+        out = np.clip(out, -1.0, 1.0)
+
+        # ---- Re-measure; safety-revert if correction worsened arousal ----
+        arc_before = self.measure(original, restored, sr)
+        arc_after = self.measure(original, out, sr)
+
+        if not arc_before.skipped:
+            if arc_after.arousal_pearson < arc_before.arousal_pearson - 0.02:
+                logger.warning(
+                    "EmotionalArc correction worsened arousal (%.3f → %.3f) — reverting",
+                    arc_before.arousal_pearson,
+                    arc_after.arousal_pearson,
+                )
+                return restored.copy(), arc_before
+
+        logger.info(
+            "EmotionalArc correction applied: arousal %.3f→%.3f  valence %.3f→%.3f  max_gain=±%.1f dB",
+            arc_before.arousal_pearson,
+            arc_after.arousal_pearson,
+            arc_before.valence_pearson,
+            arc_after.valence_pearson,
+            float(np.max(np.abs(gain_db))),
+        )
+        return out, arc_after
+
 
 # ---------------------------------------------------------------------------
 # Thread-sicherer Singleton (Double-Checked Locking §3.2)
@@ -320,3 +442,25 @@ def measure_emotional_arc(
         EmotionalArcResult mit Pearson-Korrelationen und Klimax-Analyse.
     """
     return get_emotional_arc_metric().measure(original, restored, sr)
+
+
+def correct_emotional_arc(
+    original: np.ndarray,
+    restored: np.ndarray,
+    sr: int,
+    max_gain_db: float = 6.0,
+    damping: float = 0.7,
+) -> tuple[np.ndarray, EmotionalArcResult]:
+    """Convenience wrapper: correct emotional arc macro-dynamics.
+
+    Args:
+        original: Pre-repair reference audio, float32, SR=48000
+        restored: Post-MDEM restored audio, float32, SR=48000
+        sr:       48000 (mandatory)
+        max_gain_db: Max per-segment gain (default 6 dB)
+        damping:  Correction fraction 0–1 (default 0.7)
+
+    Returns:
+        (corrected_audio, EmotionalArcResult)
+    """
+    return get_emotional_arc_metric().correct_arc(original, restored, sr, max_gain_db=max_gain_db, damping=damping)

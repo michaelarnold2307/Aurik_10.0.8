@@ -34,8 +34,8 @@ from dsp.resample_utils import ensure_sr
 from dsp.stereo_widener import StereoWidener
 from dsp.target_sound_matcher import TargetSoundMatcher
 from plugins.deepfilternet_v3_ii_plugin import enhance_audio
-from plugins.demucs_v4_plugin import DemucsV4Plugin
 from plugins.diffwave_plugin import DiffwavePlugin
+from plugins.mdx23c_plugin import MDX23CPlugin
 from plugins.utmos_plugin import estimate_mos
 
 
@@ -114,6 +114,7 @@ def policy_engine(analysis_result: dict[str, Any]) -> list[dict[str, Any]]:
     """Gibt die Verarbeitungskette basierend auf Analyse zurück."""
     try:
         from policy.ml_policy_engine import MLModelPolicyEngine
+
         engine = MLModelPolicyEngine()
         return engine.select_processing_chain(analysis_result)
     except Exception as exc:
@@ -166,8 +167,8 @@ def rekonstruktion(audio: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
 
     logger.info("[5] Rekonstruktion...")
     audio, sr = ensure_sr(audio, sr, 48000)
-    plugin = DemucsV4Plugin()
-    vocals, _instruments = plugin.separate_vocals(audio, sr)
+    plugin = MDX23CPlugin()
+    vocals = plugin.process(audio, sr, stem="vocals")
     audio = vocals
     # NaN/Inf-Guard am Ausgang (§3.1)
     audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -300,7 +301,9 @@ def main(importfile_path: str, out_path: str) -> None:
         male = raw_tags.get("Male voice", 0.0)
         child = raw_tags.get("Child speech, kid speaking", 0.0)
         choir = raw_tags.get("Choir", 0.0)
-        logger.info(f"    Frauenstimme: {female:.2f} | Männerstimme: {male:.2f} | Kind: {child:.2f} | Chor: {choir:.2f}")
+        logger.info(
+            f"    Frauenstimme: {female:.2f} | Männerstimme: {male:.2f} | Kind: {child:.2f} | Chor: {choir:.2f}"
+        )
         # Kombinationen
         detected = []
         if female > 0.3:
@@ -408,7 +411,7 @@ def main(importfile_path: str, out_path: str) -> None:
     while step_idx < len(chain):
         # Wenn chain Dicts enthält, nutze Phase, DSPs und Modelle
         if isinstance(chain[step_idx], dict):
-            step = chain[step_idx].get("phase", f"Schritt {step_idx+1}")
+            step = chain[step_idx].get("phase", f"Schritt {step_idx + 1}")
             dsps = chain[step_idx].get("dsps", [])
             models = chain[step_idx].get("models", [])
             logger.info(
@@ -428,7 +431,7 @@ def main(importfile_path: str, out_path: str) -> None:
         while step_idx < len(chain):
             # Wenn chain Dicts enthält, nutze Phase, DSPs und Modelle
             if isinstance(chain[step_idx], dict):
-                step = chain[step_idx].get("phase", f"Schritt {step_idx+1}")
+                step = chain[step_idx].get("phase", f"Schritt {step_idx + 1}")
                 dsps = chain[step_idx].get("dsps", [])
                 models = chain[step_idx].get("models", [])
             else:
@@ -462,7 +465,7 @@ def main(importfile_path: str, out_path: str) -> None:
                 )
                 logger.info(f"        Quality Gate: UTMOS={mos_score:.3f}")
             # --- Export Zwischenergebnis ---
-            interm_path = f"intermediate_{step_idx+1}_{step}.wav"
+            interm_path = f"intermediate_{step_idx + 1}_{step}.wav"
             export(audio, sr, interm_path)
             intermediate_exports.append(interm_path)
             audit_entry["intermediate_export"] = interm_path

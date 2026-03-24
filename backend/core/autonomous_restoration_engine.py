@@ -11,7 +11,7 @@ Alle weiteren Entscheidungen trifft die Engine autonom:
   2. Defekt-Profiling               (11 Defekttypen mit Severity/Confidence)
   3. Automatische Zielformulierung  (AutoMusicalGoalSetter)
   4. Ketten-Auswahl & -Optimierung  (AdaptiveChainBuilder)
-  5. Multi-Pass-Verarbeitung        (3–5 Varianten, objektiv bewertet)
+  5. Vorverarbeitung abschließen     (Analyse → REST-Denker für UV3-Full-Pass)
   6. Quality-Gate-Prüfung           (musikalische + technische Schwellwerte)
   7. Rollback bei Verschlechterung  (Overprocessing-Schutz)
   8. Self-Learning-Update           (Ergebnis fließt in zukünftige Sessions)
@@ -44,8 +44,6 @@ from backend.core.gap_reconstructor import GapReconstructor
 from backend.core.intrinsic_audio_quality_scorer import IntrinsicAudioQualityScorer
 from backend.core.medium_chain_model import PhysicalMediumChainModel
 from backend.core.multi_pass_strategy import (
-    MultiPassEngine,
-    ObjectiveScorer,
     ProcessingVariant,
     VariantStrategy,
 )
@@ -203,7 +201,7 @@ class AutonomousRestorationEngine:
             AutonomousRestorationResult mit restauriertem Audio und vollständigem Protokoll.
         """
         # Store Denker context for full-processing UV3 call (§Dach: context propagation)
-        _ctx_keys = ("global_plan", "chain_info", "defekt_hint", "mode", "material")
+        _ctx_keys = ("global_plan", "chain_info", "defekt_hint", "mode", "material", "cached_defect_result")
         self._denker_context: dict = {k: v for k, v in kwargs.items() if k in _ctx_keys and v is not None}
         start_time = time.perf_counter()
         audit: list[dict[str, Any]] = []
@@ -253,7 +251,12 @@ class AutonomousRestorationEngine:
         # ----------------------------------------------------------------
         logger.debug("[ENGINE] Phase 2: Starte DefectScanner.scan() …")
         _p(18, "Defekte und Material werden erkannt …")
-        defect_result: DefectAnalysisResult = self._defect_scanner.scan(audio, sample_rate)
+        _cached_defect = self._denker_context.get("cached_defect_result")
+        if _cached_defect is not None:
+            defect_result: DefectAnalysisResult = _cached_defect
+            logger.info("[ENGINE] Phase 2: Verwende gecachten DefectScan (kein Triple-Scan).")
+        else:
+            defect_result = self._defect_scanner.scan(audio, sample_rate)
         logger.debug(f"[ENGINE] Phase 2 fertig: material={defect_result.material_type.value}")
         material = defect_result.material_type
         top_defects = defect_result.get_top_defects(n=5)
@@ -617,17 +620,15 @@ class AutonomousRestorationEngine:
         base_mode = self.mode
 
         # MAX_VARIANTS: Performance-Grenze (jede Variante = 1 restore()-Aufruf).
-        # Dynamisch nach Audiodauer skaliert — kurze Clips brauchen weniger Varianten
-        # als lange, da der Mehrwert zusätzlicher Passdurchläufe bei kurzen Signalen
-        # durch das Modell-Cold-Start-Overhead nicht gerechtfertigt wird.
+        # Jede Variante löst einen vollständigen UV3-Pipeline-Durchlauf aus
+        # (DefectScan + EraClassify + CausalDefect + Phasen + FeedbackChain + PQS),
+        # selbst auf 10s-Excerpts ~85s Overhead. Daher konservativ begrenzen.
         if audio_duration_s < 10.0:
             MAX_VARIANTS = 2  # Kurze Test-Clips / Snippets: minimal
-        elif audio_duration_s < 30.0:
-            MAX_VARIANTS = 3  # Kurze Passagen
-        elif audio_duration_s < 120.0:
-            MAX_VARIANTS = 5  # Standard-Stücke
+        elif audio_duration_s < 60.0:
+            MAX_VARIANTS = 2  # Kurze bis mittlere Passagen
         else:
-            MAX_VARIANTS = 7  # Lange Aufnahmen: voller Multi-Pass
+            MAX_VARIANTS = 3  # Standard-Stücke und lange Aufnahmen
 
         # Basis-Varianten: immer dabei
         variants: list[ProcessingVariant] = [
@@ -734,104 +735,32 @@ class AutonomousRestorationEngine:
         progress_callback=None,
     ) -> tuple[np.ndarray, str, dict[str, float]]:
         """
-        Führt alle Varianten aus und wählt die beste anhand objektiver Metriken.
+        Returns preprocessed audio for the downstream UV3 full pass.
+
+        Since v9.10.57 the full UV3 pass is delegated to RestaurierDenker.
+        Since v9.10.72 the variant evaluation on 10s excerpts is removed
+        entirely: UV3 has its own superior adaptive systems (CausalDefectReasoner,
+        GPParameterOptimizer, AdaptiveGoalThresholds, FeedbackChain) that make
+        the ARE variant evaluation redundant.  Running 2–3 extra UV3.restore()
+        calls on 10s excerpts wasted ~170–255 s per file WITHOUT influencing
+        the final UV3 pass (the winning variant config was never forwarded).
 
         Returns:
-            (best_audio, best_variant_name, {variant_name: score})
+            (audio, variant_name, {})
         """
-        scorer = ObjectiveScorer(
-            enable_versa=True,  # VERSA ist non-reference MOS — kein Referenz-Audio nötig (§4.4)
-            enable_dnsmos=False,  # Deaktiviert — DNSMOS P.835 verboten als Musik-Metrik (§10.2)
-            enable_musical_goals=True,
+        _variant_name = "adaptive"
+        if variants:
+            _variant_name = variants[0].name
+        logger.info(
+            "Multi-Pass übersprungen (v9.10.72): %d Varianten geplant, "
+            "UV3-Full-Pass an RestaurierDenker delegiert (adaptive Systeme übernehmen).",
+            len(variants),
         )
-        engine = MultiPassEngine(scorer=scorer)
+        if progress_callback is not None:
+            with contextlib.suppress(Exception):
+                progress_callback(85, "Analyse abgeschlossen — Restaurierung wird vorbereitet …", 0.0)
 
-        # Scale callback: ARE 42-85% covers multi-pass variant loop (0-100 variant-internal).
-        # Full-pass (winner) gets the raw callback so UV3 phase names flow through.
-        max(len(variants), 1)
-
-        def _mp_cb(pct: int, msg: str, elapsed: float = 0.0) -> None:
-            if progress_callback is not None:
-                # variant-internal 0-100 → ARE-scale 42-85
-                scaled = 42 + int(43 * pct / 100)
-                with contextlib.suppress(Exception):
-                    progress_callback(scaled, msg, elapsed)
-
-        try:
-            result = engine.process_with_variants(
-                audio=audio,
-                sample_rate=sample_rate,
-                variants=variants,
-                progress_callback=_mp_cb,
-            )
-        except Exception as exc:
-            logger.error("Multi-Pass fehlgeschlagen: %s — Passthrough.", exc)
-            return audio, "passthrough_error", {}
-
-        if not result or result.get("audio") is None:
-            logger.warning("Multi-Pass: Kein Ergebnis — Eingangssignal zurückgegeben.")
-            return audio, "passthrough", {}
-
-        best_audio: np.ndarray = result["audio"]
-        best_name: str = result.get("variant_name", "unknown")
-
-        # Scores aller Varianten als Dict aufbereiten
-        all_scores_list = result.get("all_scores", [])
-        scores: dict[str, float] = {
-            s.variant_name: s.composite_score
-            for s in all_scores_list
-            if hasattr(s, "variant_name") and hasattr(s, "composite_score")
-        }
-        if not scores and best_name != "passthrough":
-            scores[best_name] = float(result.get("composite_score", 0.0))
-
-        # Sicherheitsprüfung: Kein leises/stilles Ergebnis akzeptieren
-        if np.max(np.abs(best_audio)) < 1e-6:
-            logger.error("Gewinner-Variante %s liefert Stille — Fallback.", best_name)
-            return audio, "passthrough_fallback", scores
-
-        # Full-Processing (inkl. Voice Enhancement) einmalig auf Gewinner anwenden
-        best_variant_obj = next((v for v in variants if v.name == best_name), None)
-        if best_variant_obj is not None and engine._restorer is not None:
-            import io
-            import sys
-
-            logger.info("Full-Processing (quick_mode=False) auf Gewinner '%s'...", best_name)
-            if progress_callback is not None:
-                with contextlib.suppress(Exception):
-                    progress_callback(85, f"Gewinner-Variante '{best_name}' wird final verarbeitet …", 0.0)
-
-            # Full pass progress: UV3 0-100 → ARE 85-100 (monoton steigend).
-            # VORHER war progress_callback direkt → UV3 pct 0 → ARE pct 0 → Rücksprung!
-            def _full_pass_cb(pct: int, msg: str, elapsed: float = 0.0) -> None:
-                if progress_callback is not None:
-                    # UV3 0-100 → ARE 85-100 (15 pts Spanne für Full-Pass)
-                    scaled = 85 + int(15 * pct / 100)
-                    with contextlib.suppress(Exception):
-                        progress_callback(scaled, msg, elapsed)
-
-            _old = sys.stdout
-            sys.stdout = io.StringIO()
-            try:
-                # §Dach: Forward Denker context (global_plan, chain_info, defekt_hint, mode)
-                # to UV3 full-processing so that era/material/chain can influence phases.
-                _ctx = getattr(self, "_denker_context", {})
-                _full_result = engine._restorer.restore(
-                    audio=audio,
-                    sample_rate=sample_rate,
-                    progress_callback=_full_pass_cb,
-                    **_ctx,
-                )
-                # restore() gibt RestorationResult zurück — Audio steckt in .audio
-                full_audio = _full_result.audio if hasattr(_full_result, "audio") else _full_result
-                if isinstance(full_audio, np.ndarray) and np.max(np.abs(full_audio)) > 1e-6:
-                    best_audio = full_audio
-            except Exception as e:
-                logger.warning("Full-Processing fehlgeschlagen: %s — nutze Quick-Ergebnis.", e)
-            finally:
-                sys.stdout = _old
-
-        return best_audio, best_name, scores
+        return audio, _variant_name, {}
 
     @staticmethod
     def _estimate_snr_improvement(original: np.ndarray, processed: np.ndarray) -> float:

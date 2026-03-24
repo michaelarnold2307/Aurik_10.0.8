@@ -88,6 +88,44 @@ DECADE_MATERIAL_PRIOR: dict[int, str] = {
     2025: "streaming",
 }
 
+# Medium-based minimum decade floor: a recording on a given medium cannot
+# predate the physical invention of that medium.  Used by
+# constrain_era_to_medium() to correct impossible decade assignments
+# (e.g. reel_tape → 1890 is a classification artefact, not a real recording).
+#
+# Conservative lower bounds (rounded to nearest VALID_DECADES entry):
+#   wax_cylinder  : 1890 (Edison 1877 → commercial 1888)
+#   wire_recording: 1900 (Poulsen Telegraphone 1898)
+#   shellac       : 1900 (shellac discs commercial ~1898)
+#   lacquer_disc  : 1920 (transcription discs widespread 1920s)
+#   vinyl         : 1950 (Columbia 12″ LP 1948, 45rpm 1949)
+#   reel_tape     : 1940 (AEG Magnetophon 1935; commercial 1940s)
+#   tape/cassette : 1960 (Philips compact cassette 1963)
+#   dat           : 1980 (DAT standard 1987; decade floor 1980)
+#   minidisc      : 1990 (Sony MiniDisc 1992)
+#   cd_digital/cd : 1980 (first CD October 1982)
+#   mp3_low/high  : 1990 (MP3 standard 1993)
+#   aac           : 2000 (AAC in iTunes 2001)
+#   streaming     : 2000 (consumer streaming widespread ~2005)
+MEDIUM_DECADE_FLOOR: dict[str, int] = {
+    "wax_cylinder": 1890,
+    "wire_recording": 1900,
+    "shellac": 1900,
+    "lacquer_disc": 1920,
+    "vinyl": 1950,
+    "reel_tape": 1940,
+    "tape": 1960,
+    "cassette": 1960,
+    "dat": 1980,
+    "minidisc": 1990,
+    "cd_digital": 1980,
+    "cd": 1980,
+    "mp3_low": 1990,
+    "mp3_high": 1990,
+    "aac": 2000,
+    "streaming": 2000,
+}
+
 # GP-Warmstart: noise_reduction_strength prior mean pro Epoche
 DECADE_NR_PRIOR_MEAN: dict[int, float] = {
     1890: 0.95,
@@ -286,66 +324,115 @@ def _dsp_hf_rolloff(audio_mono: np.ndarray, sr: int) -> float:
         hf_mask = freqs >= 8000.0
         hf_fraction = float(np.sum(avg_spec[hf_mask])) / (total_energy + 1e-20)
         if hf_fraction > 0.02:
-            rolloff = 8000.0
+            # Bass-heavy recording with real HF content (e.g. bass-heavy Schlager MP3):
+            # The 90th-percentile is dominated by low-frequency energy, but the
+            # recording has genuine HF content.  Use the 98th-percentile rolloff
+            # to find where energy actually ends rather than capping at exactly
+            # 8 kHz (which would incorrectly map 1970s/80s tracks to decade 1930).
+            idx98 = int(np.searchsorted(cum_energy, 0.98 * total_energy))
+            idx98 = int(np.clip(idx98, 0, len(avg_spec) - 1))
+            rolloff_98 = float(freqs[idx98])
+            # Ensure at least 8 kHz floor in case 98th-pct is also dominated by bass.
+            rolloff = max(rolloff_98, 8000.0)
 
     return rolloff
 
 
 def _dsp_fingerprint_decade(rolloff_hz: float, snr_db: float) -> tuple[int, float]:
-    """Mappt Bandbreite auf Jahrzehnt via Schwellwert-Tabelle.
+    """Mappt Bandbreite + SNR auf Jahrzehnt via kalibrierter Schwellwert-Tabelle.
 
-    Ersetzt den SNR-Dominanzfehler (früherer *200-Multiplikator auf SNR-Differenz
-    ließ 1 dB SNR-Abweichung 200 Hz-äquivalent wirken und überlagerte alle
-    Spektral-Evidenz). Die Jahrzehnt-Selektion basiert jetzt primär auf der
-    Bandbreite (rolloff_hz). SNR dient nur als leichter Korrekturfaktor bei
-    Grenzfällen (Carbon-Mikrofon-Heuristik).
+    Erkennungsprinzip:
+    - Jahrzehnte 1890–1980: Bandbreite (HF-Rolloff) ist der primäre Indikator,
+      da analoge Medien physikalisch begrenzte Übertragungsbandbreiten haben.
+      SNR dient als Sekundärindikator und verstärkt die Konfidenz bei Grenzfällen.
+    - Jahrzehnte 1990–2025: Alle haben nominell ≥20 kHz Bandbreite — BW allein
+      kann sie nicht unterscheiden. Der dynamische Bereich (SNR = P90/P10 der
+      Frame-Energien) dient als primärer Diskriminator: CD (1990) ≈ 30–45 dB
+      Musikdynamik, HD-Streaming (2010+) > 45 dB.
+
+    SNR-Schwellwerte für post-1980 Material sind bewusst konservativ gesetzt, da
+    der Frame-Energie-SNR-Schätzer die Musikdynamik misst, nicht den Rauschboden
+    des Mediums. Stark komprimierte Musik (DR3–DR8) ergibt niedrige SNR-Werte
+    und fällt zurecht in 1980/1990 (ältere Produktionspraxis).
 
     Args:
-        rolloff_hz: Gemessener HF-Rolloff in Hz.
-        snr_db:     Geschätzter SNR in dB.
+        rolloff_hz: Gemessener HF-Rolloff in Hz (90th-percentile cumulative energy).
+        snr_db:     Geschätzter SNR in dB (frame-energy P90/P10 ratio).
 
     Returns:
         (decade, confidence)
     """
     bw_khz = rolloff_hz / 1000.0
 
-    # Primäre Jahrzehnt-Selektion via Bandbreite.
-    # Schwellwerte = Mittelwert der 90th-Pct-Rolloffs benachbarter Jahrzehnte:
+    # Primary decade selection via bandwidth.
+    # Thresholds = midpoint of 0.90 × adjacent DECADE_HF_LIMITS:
     #   threshold(D, D+1) = (DECADE_HF_LIMITS[D] × 0.9 + DECADE_HF_LIMITS[D+1] × 0.9) / 2
-    # Beispiel 1960/1970: (15000×0.9 + 17000×0.9)/2 = (13500+15300)/2 = 14400 → 14.5 kHz
-    if bw_khz < 4.5:
-        decade = 1890  # LIMIT  4 kHz → expected rolloff ~3.6 kHz
+    # Recalibrated 23.03.2026 to match DECADE_HF_LIMITS table consistently.
+    # 1900 added: threshold(1890, 1900) = (3000×0.9 + 4000×0.9)/2 = 3150 → 3.2 kHz
+    if bw_khz < 3.2:
+        decade = 1890  # LIMIT  3 kHz → expected rolloff ~2.7 kHz
+    elif bw_khz < 4.5:
+        decade = 1900  # LIMIT  4 kHz → expected rolloff ~3.6 kHz
     elif bw_khz < 5.4:
         decade = 1910  # LIMIT  5 kHz → expected rolloff ~4.5 kHz
     elif bw_khz < 7.0:
-        decade = 1920  # LIMIT  7 kHz → expected rolloff ~6.3 kHz
+        decade = 1920  # LIMIT  6 kHz → expected rolloff ~5.4 kHz
     elif bw_khz < 8.8:
-        decade = 1930  # LIMIT  8.5 kHz → expected rolloff ~7.7 kHz (0.95×8.5=8.1, +0.7 Marge)
-    elif bw_khz < 11.3:
-        decade = 1940  # LIMIT 12 kHz → expected rolloff ~10.8 kHz
-    elif bw_khz < 12.6:
-        decade = 1950  # LIMIT 13 kHz → expected rolloff ~11.7 kHz
-    elif bw_khz < 14.5:
-        decade = 1960  # LIMIT 15 kHz → expected rolloff ~13.5 kHz
+        decade = 1930  # LIMIT  7 kHz → expected rolloff ~6.3 kHz
+    elif bw_khz < 9.5:
+        decade = 1940  # LIMIT  8 kHz → expected rolloff ~7.2 kHz; (7200+9000)/2=8100
+    elif bw_khz < 11.5:
+        decade = 1950  # LIMIT 10 kHz → expected rolloff ~9.0 kHz; (9000+10800)/2=9900
+    elif bw_khz < 12.8:
+        decade = 1960  # LIMIT 12 kHz → expected rolloff ~10.8 kHz; (10800+14400)/2=12600
     elif bw_khz < 17.0:
-        decade = 1970  # LIMIT 17 kHz → expected rolloff ~15.3 kHz
+        decade = 1970  # LIMIT 16 kHz → expected rolloff ~14.4 kHz; (14400+18000)/2=16200
     elif bw_khz < 19.0:
         decade = 1980  # LIMIT 20 kHz → expected rolloff ~18.0 kHz
     else:
-        decade = 1990  # LIMIT 22 kHz → expected rolloff ~19.8 kHz
+        # Full-bandwidth (≥ 19 kHz): BW cannot distinguish 1990–2025.
+        # Use frame-energy SNR to differentiate digital decades.
+        # Conservative thresholds: real-music DR is ~15–30 dB lower than medium SNR.
+        #   2020 streaming: medium ~80 dB → typical music DR 50–65 dB
+        #   2010 streaming: medium ~75 dB → typical music DR 45–60 dB
+        #   2000 digital:   medium ~70 dB → typical music DR 33–50 dB
+        #   1990 CD:        medium ~65 dB → typical music DR 22–40 dB
+        #   1980 tape:      medium ~58 dB → typical music DR < 22 dB
+        if snr_db >= 50.0:
+            decade = 2020
+        elif snr_db >= 38.0:
+            decade = 2010
+        elif snr_db >= 28.0:
+            decade = 2000
+        elif snr_db >= 18.0:
+            decade = 1990
+        else:
+            decade = 1980
 
-    # Leichte SNR-Mikro-Korrektur (Carbon/Ribbon-Mikrofon-Heuristik, kein Dominanzproblem)
+    # SNR micro-correction for vintage decades (Carbon/Ribbon-microphone heuristic)
     if snr_db < 20.0 and bw_khz < 6.0:
-        decade = min(decade, 1930)  # Carbon-Mikrofon-Charakteristik
+        decade = min(decade, 1930)  # Carbon-microphone characteristic
     elif snr_db < 25.0 and bw_khz < 8.0 and decade > 1940:
-        decade = min(max(decade, 1920), 1940)  # Ribbon-Mikrofon-Ära
+        decade = min(max(decade, 1920), 1940)  # Ribbon-microphone era
 
-    # Confidence aus relativem BW-Fehler gegenüber dem Tabellenwert des Jahrzehnts
-    expected_bw = DECADE_HF_LIMITS.get(decade, 10000.0) / 1000.0
+    # Confidence: combine BW error and SNR deviation for each era class.
+    expected_bw = DECADE_HF_LIMITS.get(decade, 20000.0) / 1000.0
     bw_error = abs(bw_khz - expected_bw) / max(expected_bw, 1.0)
-    conf = float(np.clip(1.0 - bw_error * 0.8, 0.25, 0.85))
-    if bw_khz >= 18.0:
-        conf = max(conf, 0.75)  # modernes Material eindeutig erkennbar
+    expected_snr = _decade_expected_snr(decade)
+    snr_error = abs(snr_db - expected_snr) / max(expected_snr, 1.0)
+
+    if decade >= 1990:
+        # Post-1990: SNR is primary classifier; BW error is irrelevant (all ≈20 kHz)
+        conf = float(np.clip(1.0 - snr_error * 0.55, 0.50, 0.90))
+    elif decade <= 1940:
+        # Pre-1950: BW and SNR both carry independent physical evidence
+        conf = float(np.clip(1.0 - bw_error * 0.50 - snr_error * 0.30, 0.25, 0.90))
+    else:
+        # 1950–1980: BW-dominated, SNR secondary
+        conf = float(np.clip(1.0 - bw_error * 0.70 - snr_error * 0.15, 0.25, 0.87))
+
+    if bw_khz >= 18.0 and decade < 1990:
+        conf = max(conf, 0.75)  # Full-bandwidth analog clearly ≥ 1980
     return decade, conf
 
 
@@ -409,34 +496,62 @@ def _estimate_snr(audio_mono: np.ndarray, sr: int = 48000) -> float:
 
 
 def _microphone_type_decade(bark_energies: np.ndarray) -> tuple[int, float]:
-    """Grobe Ära-Schätzung aus charakteristischem Mikrofon-Frequenzgang.
+    """Ära-Schätzung aus 24 Bark-Band-Energien via 95th-Perzentil-Bandbreite (Tier-3 Fallback).
 
-    Carbon-Mikrofone (1900–1930): SNR < 25 dB, Frequenzgang stark abfallend
-    Kondensator post-1950: Frequenzgang-Flächigkeit ≥ 0.80
+    Mirrors Tier-2's 90th-percentile rolloff logic but operates on the already-computed
+    Bark-band energy array.  The 95th-percentile Bark band (bw95) is the band index below
+    which 95 % of the total spectral energy lies.  This is a robust proxy for the recording's
+    effective bandwidth and avoids the non-linear Bark band width bias that invalidates
+    simple min/max flatness ratios.
+
+    Calibration (6th-order Butterworth through _bark_band_energies at 48 kHz):
+        cutoff 3.5 kHz  → bw95 ≈ 15–16  (Bark band boundary ~3.2 kHz)
+        cutoff 6.0 kHz  → bw95 ≈ 18–19  (~5.3 kHz)
+        cutoff 10 kHz   → bw95 ≈ 20     (~6.4 kHz region)
+        cutoff 14 kHz   → bw95 ≈ 21     (~7.7 kHz)
+        cutoff 20 kHz+  → bw95 ≈ 22–23  (full band)
 
     Args:
-        bark_energies: 24 normalisierte Bark-Bänder-Energien.
+        bark_energies: 24 normalised Bark-band energies (sum should be ≈ 1.0).
 
     Returns:
         (decade, confidence)
     """
-    # Flächigkeit = Verhältnis Min/Max im relevanten Bereich (Bänder 2–18)
-    relevant = bark_energies[2:18]
-    if relevant.max() < 1e-10:
-        return 1960, 0.20
-    flatness = float(relevant.min() / (relevant.max() + 1e-10))
+    total = float(bark_energies.sum()) + 1e-12
 
-    # Hohe LF-Dominanz → älteres Mikrofon
-    lf_dominance = float(np.sum(bark_energies[:6]) / (np.sum(bark_energies) + 1e-10))
+    # Low-frequency dominance: fraction of energy below 630 Hz (Bark bands 0–5)
+    lf_frac = float(np.sum(bark_energies[:6]) / total)
 
-    if flatness < 0.05 and lf_dominance > 0.60:
-        return 1920, 0.35
-    elif flatness < 0.15:
-        return 1940, 0.30
-    elif flatness < 0.40:
-        return 1960, 0.28
+    # 95th-percentile Bark bandwidth band (similar principle to Tier-2's 90th-pct rolloff)
+    cum = np.cumsum(bark_energies)
+    bw95 = int(np.clip(int(np.searchsorted(cum, 0.95 * total)), 0, 23))
+
+    # Map bandwidth band to decade.  Boundaries calibrated against Butterworth LP test signals.
+    if bw95 <= 6:
+        # < ~770 Hz effective BW → pre-1920 acoustic/mechanical format
+        return 1910, 0.42
+    elif bw95 <= 9:
+        # 770–1270 Hz → carbon-microphone era (1920s)
+        return 1920, 0.40
+    elif bw95 <= 12:
+        # 1270–1720 Hz → early ribbon/condenser (1930s)
+        return 1930, 0.38
+    elif bw95 <= 16:
+        # 1720–3700 Hz → vintage tape/early vinyl; SNR-based sub-split
+        dec = 1930 if lf_frac > 0.30 else 1940
+        return dec, 0.36
+    elif bw95 <= 18:
+        # 3700–5300 Hz → HiFi LP / early reel tape (1950s/60s)
+        return 1960, 0.33
+    elif bw95 <= 20:
+        # 5300–7700 Hz → FM radio / cassette era (1970s)
+        return 1970, 0.31
+    elif bw95 <= 22:
+        # 7700–12000 Hz → HiFi tape / early digital (1980s)
+        return 1980, 0.30
     else:
-        return 1980, 0.25
+        # > 12000 Hz → full-bandwidth digital era (1990+)
+        return 1990, 0.28
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +559,7 @@ def _microphone_type_decade(bark_energies: np.ndarray) -> tuple[int, float]:
 # ---------------------------------------------------------------------------
 
 CACHE_DIR = Path.home() / ".aurik" / "era_cache"
-_CACHE_VERSION = "v3"  # Erhöhen bei DSP-Algorithmen-Änderungen → alte Caches automatisch ungültig
+_CACHE_VERSION = "v5"  # v5: recalibrated 1940-1970 BW thresholds to match DECADE_HF_LIMITS (23.03.2026)
 
 
 class EraClassifier:
@@ -500,7 +615,13 @@ class EraClassifier:
         cache_path = CACHE_DIR / f"{sha}_{_CACHE_VERSION}.json"
         cached = self._load_cache(cache_path)
         if cached:
-            logger.debug("EraClassifier: Cache-Hit %s", sha)
+            logger.debug(
+                "EraClassifier: Cache-Hit %s → Jahrzehnt=%d, Konfidenz=%.2f, Tier=%d",
+                sha,
+                cached.decade,
+                cached.confidence,
+                cached.tier_used,
+            )
             return cached
 
         bark = _bark_band_energies(audio_mono, sr)
@@ -736,3 +857,58 @@ def classify_era(audio: np.ndarray, sr: int) -> EraResult:
         EraResult mit Dekade, Confidence, Material-Prior und Noise-Profil.
     """
     return get_era_classifier().classify(audio, sr)
+
+
+def constrain_era_to_medium(era_result: EraResult, medium: str) -> EraResult:
+    """Applies a physical medium-based minimum decade floor to an EraResult.
+
+    A tape recording cannot originate from 1890; a vinyl disc cannot predate
+    1948.  This function corrects impossible decade assignments that arise when
+    the EraClassifier operates on short or ambiguous audio segments.
+
+    The corrected decade is the smallest VALID_DECADES entry >= the floor for
+    the given medium.  Confidence is scaled down by 0.65 (indicating the
+    assignment was constrained rather than directly measured) but clamped to
+    [0.25, 0.80] to prevent both over-confidence and useless uncertainty.
+
+    Args:
+        era_result: EraResult produced by EraClassifier.classify().
+        medium:     Physical medium string (e.g. 'tape', 'reel_tape', 'vinyl').
+                    Case-insensitive; unknown medium strings are ignored.
+
+    Returns:
+        Original EraResult if no constraint applies; corrected EraResult otherwise.
+    """
+    floor = MEDIUM_DECADE_FLOOR.get(medium.strip().lower(), 0)
+    if floor == 0 or era_result.decade >= floor:
+        return era_result
+
+    valid_above_floor = [d for d in VALID_DECADES if d >= floor]
+    if not valid_above_floor:
+        return era_result
+
+    corrected_decade = min(valid_above_floor)
+    new_conf = float(np.clip(era_result.confidence * 0.65, 0.25, 0.80))
+    # Use the actually detected medium — not the decade-based prior which can
+    # map e.g. 1960 → "vinyl" even though the medium was detected as "tape".
+    new_material = medium.strip().lower()
+
+    logger.info(
+        "EraClassifier medium-floor constraint: %dер → %d (medium=%s, floor=%d, confidence %.2f → %.2f)",
+        era_result.decade,
+        corrected_decade,
+        medium,
+        floor,
+        era_result.confidence,
+        new_conf,
+    )
+    return EraResult(
+        decade=corrected_decade,
+        era_label=f"{corrected_decade}er",
+        confidence=new_conf,
+        material_prior=new_material,
+        noise_profile=era_result.noise_profile,
+        tier_used=era_result.tier_used,
+        hf_rolloff_hz=era_result.hf_rolloff_hz,
+        is_remaster_suspected=era_result.is_remaster_suspected,
+    )

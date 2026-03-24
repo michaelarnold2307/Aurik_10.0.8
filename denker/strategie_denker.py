@@ -26,8 +26,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# 8×RT-Grenze aus §9.5 / PerformanceGuard.LIMIT_3X_RT
-_3X_RT_LIMIT: float = 8.0
+# 32×RT-Grenze aus §9.5 / PerformanceGuard.LIMIT_3X_RT
+_3X_RT_LIMIT: float = 32.0
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,7 @@ Du kennst die **copilot-instructions.md** vollständig auswendig und setzt sie *
 ## Technische Pflicht-Standards (alle verbindlich)
 
 ### DSP & Algorithmen
+
 - **NR**: OMLSA/IMCRA (Cohen 2002/2003) + MMSE-LSA; G_floor via HarmonicPreservationGuard  
 - **Inpainting kurz** (<50 ms): NMF-β-Divergenz (Févotte 2011) + Sinusoidal Modeling + PGHI  
 - **Inpainting lang** (≥50 ms): CQTdiff+ → DiffWave (Kaskade) + PGHI  
@@ -53,6 +54,7 @@ Du kennst die **copilot-instructions.md** vollständig auswendig und setzt sie *
 - **Dithering**: POW-r Typ 3 (Wannamaker 1992) bei 24→16 bit; niemals Truncation
 
 ### VERBOTEN (absolut, keine Ausnahmen)
+
 - `PESQ`, `DNSMOS`, `NISQA`, `STOI` als Musik-Qualitätsmetriken
 - Wiener 1984 / Spectral Subtraction als Primärverarbeitung
 - `YIN` Pitch-Tracker (nur pYIN oder CREPE)
@@ -63,6 +65,7 @@ Du kennst die **copilot-instructions.md** vollständig auswendig und setzt sie *
 - Stubs/`raise NotImplementedError` in Produktion (V-5 CI prüft dies)
 
 ### Code-Qualität (Pflicht)
+
 ```python
 # Singleton-Pattern (jedes neue Kernmodul):
 _instance: Optional[MyModule] = None
@@ -87,10 +90,11 @@ def process(self, audio: np.ndarray, sr: int, *, mode: str = "restoration") -> M
 ```
 
 ### Modell-Prioritäten (lokale Bundles, kein Download)
+
 | Aufgabe | Primär | DSP-Fallback |
 |---|---|---|
 | Stem-Separation Vocals | MelBandRoformer (`bs_roformer_plugin`, 860 MB ONNX) | HPSS + NMF-β |
-| Stem-Separation Instrumental | HTDemucs-6s (`htdemucs_plugin`) | NMF-β |
+| Stem-Separation Instrumental | MDX23C (`mdx23c_plugin`, Kim_Vocal_2/Kim_Inst) | NMF-β |
 | Breitrauschen | DeepFilterNet v3.II (37 MB, 3 ONNX) | OMLSA/IMCRA |
 | Codec-Artefakte | Apollo (`apollo_plugin`, TorchScript) | Resemble-Enhance (722 MB ONNX) |
 | Pitch f₀ | FCPE (`fcpe_plugin`, ONNX) → CREPE full (85 MB ONNX) | PESTO → pYIN |
@@ -101,16 +105,20 @@ def process(self, audio: np.ndarray, sr: int, *, mode: str = "restoration") -> M
 ## Workflow bei jeder Aufgabe
 
 ### Schritt 0 — Anti-Parallelwelten-Check
+
 ```bash
 grep -rn "<Klassenname>\|<Funktionsname>" core/ plugins/ backend/ dsp/ | head -20
 ```
+
 Erst bei 0 Treffern → neue Datei anlegen.
 
 ### Schritt 1 — Spec lesen
+
 Bei Fragen zur Architektur: `.github/copilot-instructions.md` ist die einzige Quelle der Wahrheit.  
 Relevante Abschnitte: §2.x (Architektur), §4.x (DSP-Standards), §7.x (Phasen), §8.x (Qualität), §13.x (Distribution).
 
 ### Schritt 2 — Implementieren (vollständig)
+
 - Singleton + DCL Pattern (§3.2)
 - Vollständige Type-Annotations (§3.7)
 - NaN/Inf-Guards (§3.1)
@@ -120,12 +128,14 @@ Relevante Abschnitte: §2.x (Architektur), §4.x (DSP-Standards), §7.x (Phasen)
 - SR-Assertion `assert sample_rate == 48000` (§6.6)
 
 ### Schritt 3 — Tests schreiben (≥ 35 pro neuem Modul)
+
 ```
 tests/unit/test_v<version>_<feature>.py
 Pflicht: Shape, NaN, Bounds, Edge-Cases, Mono, Stereo, Konsistenz
 ```
 
 ### Schritt 4 — Validierung
+
 ```bash
 # Musical Goals prüfen (nach jeder Implementierung):
 python -c "
@@ -165,6 +175,7 @@ EmotionalArcPreservationMetric → MicroDynamicsEnvelopeMorphing → Export
 ```
 
 ## Checkliste — neues Modul fertig wenn:
+
 ```
 □ Kein raise NotImplementedError / pass-Body in Produktionscode
 □ Singleton + DCL vorhanden (threading.Lock)

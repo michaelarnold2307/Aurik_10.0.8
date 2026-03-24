@@ -223,6 +223,14 @@ quality_estimate = 0.40 * (1 - defect_severity) + 0.60 * (pqs_mos - 1) / 4
 
 ## §2.29 PerPhaseMusicalGoalsGate — Adaptive Regression-Schwellen
 
+**[RELEASE_MUST] PMGG darf Phasen NIEMALS überspringen (kein Rollback auf Original-Audio).**
+CausalDefectReasoner hat die Phase als notwendig bestimmt — sie MUSS angewendet
+werden, ggf. mit reduzierter Stärke (best-effort). Nach 5 Retries wird der Versuch
+mit der geringsten Musical-Goal-Regression angewendet (action=`best_effort`).
+
+VERBOTEN: `return audio, scores_before, "rollback", 0.0` — Rückgabe von
+unverändertem Original-Audio gleichbedeutend mit Phasen-Skip.
+
 ```python
 # Schwellwerte restorability-adaptiv:
 REGRESSION_THRESHOLD_GOOD: float = 0.012   # restorability ≥ 70
@@ -252,6 +260,8 @@ for phase in selected_phases:
         restorability_score=re_result.restorability_score,
         applicable_goals=goal_filter.applicable,
     )
+# Nach 5 Retries: best-effort (geringste Regression), KEIN Rollback/Skip.
+# action ∈ {"passed", "retry1"..., "best_effort", "best_effort_rN"}
 ```
 
 ---

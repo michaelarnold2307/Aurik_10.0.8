@@ -147,6 +147,13 @@ class ReparaturDenker:
         :class:`ReparaturErgebnis` mit repariertem Audio und Statistik.
         """
         assert sr == 48000, f"ReparaturDenker.repariere() erwartet sr=48000 Hz, erhalten: {sr} Hz"
+        logger.info(
+            "ReparaturDenker.repariere() gestartet: clicks=%s, hum=%s, clipping=%s, duration=%.1fs",
+            remove_clicks,
+            remove_hum,
+            repair_clipping,
+            len(audio) / max(sr, 1),
+        )
         if validate_audio:
             audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         else:

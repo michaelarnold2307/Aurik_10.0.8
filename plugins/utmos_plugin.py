@@ -25,10 +25,14 @@ Modell-Gewichte: ~/.aurik/models/utmos/ (via ModelDownloader)
 
 from __future__ import annotations
 
-import logging
-import threading
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
+import threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
 
 import numpy as np
 
@@ -153,6 +157,17 @@ class UTMOSPlugin:
 
             model_path = self.MODELS_DIR / "utmos.onnx"
             if model_path.exists():
+                # ML-Budget-Guard before ONNX session creation (§RELEASE_MUST OOM-Schutz)
+                try:
+                    from backend.core.ml_memory_budget import try_allocate as _ta_utmos
+
+                    if not _ta_utmos("UTMOS-ONNX", 0.05):  # UTMOS ONNX ≈ 50 MB
+                        logger.warning("UTMOS ONNX: ML-Budget erschöpft — nächster Fallback")
+                        raise RuntimeError("Budget exceeded")
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass  # psutil not available — proceed
                 self._session = ort.InferenceSession(
                     str(model_path),
                     providers=["CPUExecutionProvider"],
@@ -186,6 +201,7 @@ class UTMOSPlugin:
         # Globaler ML-Budget-Guard: ~0.8 GB pro Fold (1 Fold nach Optimierung).
         try:
             from backend.core.ml_memory_budget import try_allocate as _try_alloc
+
             if not _try_alloc("UTMOSv2", 0.8 * self._N_FOLDS):
                 logger.warning("UTMOSv2: ML-Budget erschöpft — PQS-DSP-Fallback aktiv.")
                 return False
@@ -204,9 +220,9 @@ class UTMOSPlugin:
 
             # utmosv2-Paket testen
             try:
-                import utmosv2
-                from utmosv2._settings import configure_defaults
-                from utmosv2.utils import get_model as _get_model
+                import utmosv2  # type: ignore[import-untyped]
+                from utmosv2._settings import configure_defaults  # type: ignore[import-untyped]
+                from utmosv2.utils import get_model as _get_model  # type: ignore[import-untyped]
 
                 # Patch: get_ssl_output_shape akzeptiert nur hartcodierte HF-Namen,
                 # nicht lokale Verzeichnispfade. Wir erweitern es so, dass bei einem
@@ -214,13 +230,14 @@ class UTMOSPlugin:
                 try:
                     import json as _json
 
-                    import utmosv2.model.ssl as _ssl_mod
+                    import utmosv2.model.ssl as _ssl_mod  # type: ignore[import-untyped]
 
                     _orig_ssl_shape = _ssl_mod.get_ssl_output_shape
 
                     def _local_aware_ssl_shape(name: str) -> tuple[int, int]:
                         """Extend get_ssl_output_shape to handle local directory paths."""
                         import pathlib as _pl
+
                         p = _pl.Path(name)
                         if p.is_dir():
                             cfg_f = p / "config.json"
@@ -254,16 +271,17 @@ class UTMOSPlugin:
                 if _use_package and _get_model and configure_defaults:
                     try:
                         import importlib as _importlib
+
                         # configure_defaults(cfg) erwartet ein Config-Objekt (SimpleNamespace | ModuleType).
                         # Das UTMOSv2-Trainingsconfig-Modul dient als Config — es ist ein ModuleType,
                         # das alle Parameter als Modul-Attribute bereitstellt.
                         cfg = _importlib.import_module("utmosv2.config.fusion_stage3_wo_somos")
                         configure_defaults(cfg)
                         cfg.now_fold = fold_idx  # type: ignore[attr-defined]
-                        cfg.weight = None        # type: ignore[attr-defined] — wir laden state_dict manuell
+                        cfg.weight = None  # type: ignore[attr-defined] — wir laden state_dict manuell
                         cfg.phase = "inference"  # type: ignore[attr-defined] — verhindert Vortraining-Gewicht-Laden
                         cfg.print_config = False  # type: ignore[attr-defined]
-                        cfg.data_config = None   # type: ignore[attr-defined] — nötig für get_dataset_map()
+                        cfg.data_config = None  # type: ignore[attr-defined] — nötig für get_dataset_map()
                         # Bug 3-Fix: SSLExtModel._SSLEncoder lädt intern AutoModel.from_pretrained(cfg.model.ssl.name).
                         # Standard-Config nutzt "facebook/wav2vec2-base" (360 MB) aus dem HuggingFace-Hub.
                         # Lokale Kopie unter models/wav2vec2-base/ verwenden falls vorhanden (offline-sicher).
@@ -294,7 +312,8 @@ class UTMOSPlugin:
                                 "UTMOS Fold %d: SSL-Encoder benötigt 'facebook/wav2vec2-base' "
                                 "(HuggingFace-Cache oder ONNX unter ~/.aurik/models/utmos/utmos.onnx). "
                                 "→ Checkpoint-Direkt-Pfad (%s)",
-                                fold_idx, type(exc).__name__,
+                                fold_idx,
+                                type(exc).__name__,
                             )
                         else:
                             logger.debug("UTMOS Fold %d (Paket) Fehler: %s", fold_idx, exc)
@@ -325,6 +344,7 @@ class UTMOSPlugin:
                 # PLM-Registrierung für LRU-basierte Auto-Eviction
                 try:
                     from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
+
                     _unload_fn = globals().get("unload_utmos")
                     if _unload_fn is not None:
                         _reg_plm("UTMOSv2", size_gb=0.8 * self._N_FOLDS, unload_fn=_unload_fn)
@@ -421,11 +441,15 @@ class UTMOSPlugin:
             audio_16k = self._resample_to_16k(audio, sr)
             feat = audio_16k[np.newaxis, :].astype(np.float32)  # [1, T]
 
+            if self._session is None:
+                return self._estimate_pqs_dsp(audio, sr)
             input_name = self._session.get_inputs()[0].name
             outputs = self._session.run(None, {input_name: feat})
 
             if outputs and outputs[0] is not None:
-                raw_mos = float(np.squeeze(np.nan_to_num(outputs[0], nan=0.0, posinf=0.0, neginf=0.0)))
+                _out = np.asarray(outputs[0], dtype=np.float32)
+                _out = np.nan_to_num(_out, nan=0.0, posinf=0.0, neginf=0.0)
+                raw_mos = float(np.squeeze(_out))
                 # Musik-Bias-Korrektur: UTMOS unterschätzt Musik systematisch
                 mos = raw_mos + self.MUSIC_BIAS
                 return (
@@ -481,9 +505,7 @@ class UTMOSPlugin:
         frame_tensors: list = []
         for frame_idx in range(num_frames):
             start = frame_idx * frame_samples
-            frame = torch.tensor(
-                audio_16k[start : start + frame_samples], dtype=torch.float32
-            )
+            frame = torch.tensor(audio_16k[start : start + frame_samples], dtype=torch.float32)
             spec_tensors: list = []
             for spec in specs_cfg:
                 mel_tf = torchaudio.transforms.MelSpectrogram(
@@ -501,12 +523,10 @@ class UTMOSPlugin:
                 # Resize (n_mels, T_frames) → (target_H, target_W)
                 mel_4d = mel_norm.unsqueeze(0).unsqueeze(0)  # (1, 1, n_mels, T)
                 if mel_4d.shape[-2:] != target:
-                    mel_4d = torch.nn.functional.interpolate(
-                        mel_4d, size=target, mode="bilinear", align_corners=False
-                    )
+                    mel_4d = torch.nn.functional.interpolate(mel_4d, size=target, mode="bilinear", align_corners=False)
                 # EfficientNetV2 (Spec-Branch-Backbone) erwartet 3-Kanal-Eingabe (RGB).
                 # Mel-Spektrogramm → Graustufenbild → 3× expandieren (kein Kopieren im Speicher).
-                mel_1ch = mel_4d.squeeze(0)        # (1, H, W)
+                mel_1ch = mel_4d.squeeze(0)  # (1, H, W)
                 mel_3ch = mel_1ch.expand(3, -1, -1)  # (3, H, W)
                 spec_tensors.append(mel_3ch)
             frame_tensors.append(torch.stack(spec_tensors, dim=0))  # (num_specs, 1, H, W)
@@ -559,9 +579,7 @@ class UTMOSPlugin:
                         #   x2: (1, num_frames*num_specs, 3, H, W) Mel-Spektrogramme (3-Kanal)
                         #   d:  (1, num_dataset) Dataset-ID — Null-Vektor bei Inferenz
                         with torch.no_grad():
-                            x1 = torch.tensor(
-                                audio_16k[np.newaxis], dtype=torch.float32
-                            )  # (1, T)
+                            x1 = torch.tensor(audio_16k[np.newaxis], dtype=torch.float32)  # (1, T)
                             x2 = self._compute_x2_melspecs(audio_16k, cfg)  # (1, 8, 1, 512, 512)
                             num_ds: int = getattr(model_or_state, "num_dataset", 1)
                             d = torch.zeros(1, num_ds)  # (1, num_dataset)
@@ -732,6 +750,7 @@ def unload_utmos() -> None:
     Aufruf: nach der letzten MOS-Bewertung in der Pipeline.
     """
     import gc
+
     if _instance is not None:
         _instance._fold_models.clear()
         _instance._session = None
@@ -740,6 +759,7 @@ def unload_utmos() -> None:
         gc.collect()
         try:
             from backend.core.ml_memory_budget import release as _rel
+
             _rel("UTMOSv2")
         except Exception:
             pass

@@ -8,7 +8,6 @@ Materialien, Posterior-Summe, soft_saturation→leere Phasen, Singleton, etc.
 
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
 

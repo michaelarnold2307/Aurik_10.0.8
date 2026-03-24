@@ -1,6 +1,7 @@
 import io
 import logging
 import math
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -169,6 +170,48 @@ def _export_guard(audio: np.ndarray) -> np.ndarray:
     return audio
 
 
+def validate_export_quality(result: Any) -> tuple[bool, list[str]]:
+    """Validate export quality based on RestorationResult metadata.
+
+    Checks chroma correlation (§8.2), LUFS delta, and Musical Goals.
+    Returns (passed, list_of_warnings).  Always allows export but logs violations.
+    Hard-fail only on chroma_correlation < 0.80 (catastrophic tonal shift).
+    """
+    warnings: list[str] = []
+    passed = True
+
+    # §8.2 Chroma correlation ≥ 0.95 (Tonart-Erhaltung)
+    chroma = getattr(result, "chroma_correlation", None)
+    if chroma is not None:
+        if chroma < 0.80:
+            warnings.append(
+                f"KRITISCH: Chroma-Korrelation {chroma:.3f} < 0.80 — "
+                "schwere Tonart-Verschiebung erkannt. Export wird nicht empfohlen."
+            )
+            passed = False
+        elif chroma < 0.95:
+            warnings.append(f"WARNUNG: Chroma-Korrelation {chroma:.3f} < 0.95 — geringe Tonart-Abweichung erkannt.")
+
+    # §8.2 LUFS delta ≤ 1 LU (Restoration) / EBU R128 (Studio 2026)
+    lufs_delta = getattr(result, "lufs_delta", None)
+    if lufs_delta is not None and lufs_delta > 3.0:
+        warnings.append(f"WARNUNG: LUFS-Delta {lufs_delta:.1f} LU > 3.0 LU — signifikante Lautstärke-Änderung.")
+
+    # Musical Goals Violations
+    meta = getattr(result, "metadata", {})
+    goals_meta = meta.get("musical_goals", {})
+    violations = goals_meta.get("violations", [])
+    if violations:
+        warnings.append(
+            f"Qualitäts-Hinweis: {len(violations)} Musical Goal(s) nicht erfüllt: {', '.join(violations[:5])}"
+        )
+
+    for w in warnings:
+        logger.warning("Export-Quality-Gate: %s", w)
+
+    return passed, warnings
+
+
 def export_audio(
     audio_bytes,
     export_path: str,
@@ -207,7 +250,18 @@ def export_audio(
     try:
         audio, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
     except Exception as e:
+        logger.error("Export: Audiodaten konnten nicht gelesen werden: %s", e)
         raise RuntimeError(f"Fehler beim Lesen der Audiodaten: {e}")
+
+    logger.info(
+        "Export gestartet: path=%s, format=%s, bit_depth=%d, sr=%d, shape=%s, duration=%.1fs",
+        export_path,
+        format,
+        bit_depth,
+        sr,
+        audio.shape,
+        len(audio) / max(sr, 1) if audio.ndim == 1 else audio.shape[0] / max(sr, 1),
+    )
 
     # 2. NaN/Inf-Bereinigung + True-Peak-Schutz
     audio = _export_guard(audio)
@@ -229,9 +283,14 @@ def export_audio(
                 write_kwargs["subtype"] = subtype
             sf.write(tmp_path, audio, sr, **write_kwargs)
             os.replace(tmp_path, export_path)
+            _size_mb = os.path.getsize(export_path) / (1024 * 1024)
+            logger.info(
+                "Export abgeschlossen: %s (%.1f MB, %s %d-bit)", export_path, _size_mb, format.upper(), bit_depth
+            )
             return True
         except Exception as e:
             # Cleanup orphaned tmp on failure
+            logger.error("Export fehlgeschlagen (%s): %s", format, e)
             try:
                 os.remove(tmp_path)
             except OSError:
@@ -256,9 +315,12 @@ def export_audio(
                 out_args["audio_bitrate"] = "320k"
             (ffmpeg.input(tmp_wav).output(tmp_out, **out_args).run(overwrite_output=True, quiet=True))
             os.replace(tmp_out, export_path)
+            _size_mb = os.path.getsize(export_path) / (1024 * 1024)
+            logger.info("Export abgeschlossen: %s (%.1f MB, %s)", export_path, _size_mb, format.upper())
             return True
         except Exception as e:
             # Cleanup orphaned tmp files
+            logger.error("Export fehlgeschlagen (%s via ffmpeg): %s", format, e)
             for _p in (tmp_out,):
                 try:
                     os.remove(_p)

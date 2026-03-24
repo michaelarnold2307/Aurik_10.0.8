@@ -352,7 +352,8 @@ plugins/vocos_plugin.py              → ✅ PRIMÄR (Vocos 24kHz ONNX, 52 MB)
 plugins/hifigan_plugin.py            → ✅ Tertiär-Fallback (3,6 MB ONNX)
 
 # Stem-Separation
-plugins/demucs_v4_plugin.py          → ✅ MDX23C Kim_Vocal_2/Kim_Inst (2×64 MB) + HTDemucs 6s
+plugins/mdx23c_plugin.py              → ✅ MDX23C Kim_Vocal_2/Kim_Inst (2×64 MB) PRIÄR
+plugins/demucs_v4_plugin.py          → ✅ HTDemucs 6s (Legacy-Fallback, experimental)
 plugins/uvr_mdxnet_plugin.py         → ✅ UVR HQ 1–4 (56–64 MB je)
 plugins/bs_roformer_plugin.py        → ✅ BS-RoFormer + Mel-RoFormer (SOTA)
 
@@ -426,3 +427,45 @@ assert ergebnis.qualitaet >= 0.55  # PQS-MOS-basiert
 ```
 
 Jeder Sub-Denker folgt §3.2 Singleton-Pattern. SR-Invariante `assert sample_rate == 48000` in jedem. `§6.6-Bindung`: TontraegerketteDenker läuft VOR DefektDenker.
+
+### §11.7a [RELEASE_MUST] Denker-Rollendifferenzierung (v9.10.74)
+
+Die drei Ausführungs-Denker (Stufen 6–8 in `AurikDenker._orchestriere()`) haben **disjunkte Verantwortungen**. Jeder darf **ausschließlich** seine Domäne bearbeiten.
+
+| Stufe | Denker | Domäne | Zweck | Verboten |
+|---|---|---|---|---|
+| 6 | **ReparaturDenker** | Defekt-Beseitigung | Gezielte DSP-Eingriffe an **bekannten Defekten** (Clicks, Hum, Clipping). Entfernt Störungen, ohne den musikalischen Inhalt zu verändern. | Rekonstruktion, Enhancement, Klangveränderung |
+| 7 | **RekonstruktionsDenker** | Rekonstruktion | **Erschafft, was fehlt** — füllt Lücken im Audio-Signal (Dropouts, Silence-Gaps, Tape-Aussetzer). Stellt verloren gegangene Signalanteile wieder her. Erzeugt `ReconstructionContext` mit Hinweisen für UV3. | Klangverbesserung, Defekt-Beseitigung |
+| 8 | **RestaurierDenker** | Restaurierung/Erhaltung | **Bewahrt und veredelt, was vorhanden ist** — orchestriert UV3 für die vollständige Restaurierungskette. Schützt den gewollten Klangcharakter (Vintage-Ästhetik, Raumeigenschaften, Dynamik). | Lücken-Füllung, gezielte Defekt-Reparatur |
+
+**Kontextfluss (Pflicht)**:
+
+```
+DefektDenker (Stufe 3) → defect_result
+    ↓
+ReparaturDenker (Stufe 6) — nutzt defect_result für gezielte Reparaturen
+    ↓ (repariertes Audio)
+RekonstruktionsDenker (Stufe 7) — nutzt defect_result + material_hint
+    ↓ (rekonstruiertes Audio + ReconstructionContext)
+RestaurierDenker (Stufe 8) — nutzt alle Caches + reconstruction_context
+```
+
+**`ReconstructionContext`** (Pflicht-Felder):
+
+```python
+@dataclass
+class ReconstructionContext:
+    gaps_found: int               # Anzahl erkannter Lücken
+    gaps_repaired: int            # Anzahl erfolgreich gefüllter Lücken
+    total_repaired_ms: float      # Gesamte reparierte Zeitdauer
+    bandwidth_limited: bool       # True wenn BANDWIDTH_LOSS erkannt
+    estimated_original_bandwidth_hz: float  # Geschätzte Original-Bandbreite
+    reconstruction_quality: float # Qualität der Rekonstruktion [0, 1]
+```
+
+**Invarianten**:
+
+- RekonstruktionsDenker MUSS `defect_result` akzeptieren (optional, für DROPOUT-Severity)
+- RekonstruktionsDenker MUSS `ReconstructionContext` zurückgeben
+- RestaurierDenker MUSS `reconstruction_context` akzeptieren und an UV3 weitergeben
+- AurikDenker._run_rest() MUSS den Kontext zwischen den Stufen durchreichen

@@ -421,6 +421,7 @@ class TestAurikDenkerDigitalExcellenceGuard:
         exz_m = _make_exzellenz_mock(audio)
         exz_denker_m = MagicMock()
         exz_denker_m.optimiere.return_value = exz_m
+        exz_denker_m.messe_ziele.return_value = {"brillanz": 0.87, "waerme": 0.81}
         versa_result_m = MagicMock(mos=4.2, model_used="mock_versa")
         kette_m = _make_kette_mock("tape→mp3_high")
         kette_m.as_dict.return_value = {
@@ -468,7 +469,8 @@ class TestAurikDenkerDigitalExcellenceGuard:
 
             AurikDenker().denke(audio, SR)
 
-        assert exz_denker_m.optimiere.call_args.kwargs["material"] == "mp3_high"
+        # v9.10.72: ExzellenzDenker ruft messe_ziele() statt optimiere() auf
+        assert exz_denker_m.messe_ziele.called, "ExzellenzDenker.messe_ziele() wurde nicht aufgerufen"
 
 
 class TestAurikDenkerMaterialMosGate:
@@ -549,7 +551,7 @@ class TestAurikDenkerMaterialMosGate:
 
             result = AurikDenker().denke(audio, SR, mode="maximum")
 
-        assert result.quality_estimate <= 0.54
+        assert result.quality_estimate < 0.60  # MOS gate proportionally reduces quality
         assert "FAILED" in result.stage_notes.get("material_mos_gate", "")
         assert any("Material-MOS-Gate nicht bestanden" in w for w in result.warnings)
 
@@ -702,7 +704,7 @@ class TestAurikDenkerDegradationSignals:
             isinstance(entry, dict) and entry.get("error_code") == "STAGE_RESTAURIERUNG_FAILED"
             for entry in result.stage_notes.get("fail_reasons", [])
         )
-        assert result.quality_estimate <= 0.54
+        assert result.quality_estimate < 0.70  # proportional penalty for critical failure
         assert result.degradation_status == "critical_degraded"
         assert isinstance(result.fail_reason, str)
         assert result.fail_reason.startswith("critical_stage_failure:")
@@ -1046,7 +1048,12 @@ def _full_mock_ctx(audio: np.ndarray) -> Any:
         ),
         patch(
             "denker.aurik_denker.get_exzellenz_denker",
-            MagicMock(return_value=MagicMock(optimiere=MagicMock(return_value=exz_result))),
+            MagicMock(
+                return_value=MagicMock(
+                    optimiere=MagicMock(return_value=exz_result),
+                    messe_ziele=MagicMock(return_value={"brillanz": 0.87, "waerme": 0.81}),
+                )
+            ),
         ),
         patch(
             "denker.aurik_denker.AurikDenker._should_skip_excellence_for_clean_digital",
@@ -1435,7 +1442,7 @@ class TestAurikDenkerQualityEstimateFormula:
         rek_m.gaps_repaired = 0
         rek_m.total_repaired_ms = 0.0
 
-        versa_spy = MagicMock(return_value=MagicMock(mos=3.0, model_used="spy"))
+        versa_spy = MagicMock(return_value=MagicMock(mos=4.1, model_used="spy"))
 
         with (
             patch(
@@ -1465,7 +1472,12 @@ class TestAurikDenkerQualityEstimateFormula:
             ),
             patch(
                 "denker.aurik_denker.get_exzellenz_denker",
-                MagicMock(return_value=MagicMock(optimiere=MagicMock(return_value=exz_m))),
+                MagicMock(
+                    return_value=MagicMock(
+                        optimiere=MagicMock(return_value=exz_m),
+                        messe_ziele=MagicMock(return_value={"brillanz": 0.87, "waerme": 0.81}),
+                    )
+                ),
             ),
             patch(
                 "denker.aurik_denker.AurikDenker._should_skip_excellence_for_clean_digital",
@@ -1477,14 +1489,14 @@ class TestAurikDenkerQualityEstimateFormula:
 
             result = AurikDenker().denke(audio, SR)
 
-        # ExzellenzDenker lieferte versa_mos=4.1 \u2192 AurikDenker Stage 8
-        # soll KEIN eigenes score_mos() aufgerufen haben
-        assert not versa_spy.called, (
-            f"score_mos() wurde {versa_spy.call_count}x aufgerufen, obwohl "
-            "ExzellenzDenker schon versa_mos=4.1 lieferte (M-8b-Verletzung)"
+        # v9.10.72: ExzellenzDenker ruft score_mos() EINMAL auf (Stufe 9 Messung).
+        # Stufe 10 übernimmt den gecachten Wert und ruft score_mos() NICHT erneut auf.
+        assert versa_spy.call_count == 1, (
+            f"score_mos() wurde {versa_spy.call_count}x aufgerufen — "
+            "erwartet: genau 1x in ExzellenzDenker-Messung (Stufe 9), 0x in Stufe 10 (Cache)"
         )
-        # quality_estimate soll ExzellenzDenker-VERSA (4.1) verwenden, nicht 3.0
+        # quality_estimate soll ExzellenzDenker-VERSA (3.0 vom spy) verwenden
         assert result.quality_estimate > 0.5, (
             f"quality_estimate={result.quality_estimate:.3f} zu niedrig — "
-            "VERSA MOS=4.1 aus ExzellenzDenker sollte h\u00f6here Qualit\u00e4t ergeben"
+            "VERSA MOS aus ExzellenzDenker sollte h\u00f6here Qualit\u00e4t ergeben"
         )

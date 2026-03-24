@@ -262,7 +262,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                 audio=audio,
                 modifications={
                     "processing": "skipped",
-                    "reason": f'speed error {speed_error_percent:.2f}% exceeds max {params["max_speed_error"]*100:.1f}%',
+                    "reason": f"speed error {speed_error_percent:.2f}% exceeds max {params['max_speed_error'] * 100:.1f}%",
                     "detected_pitch": detected_pitch,
                     "reference_pitch": reference_pitch,
                     "speed_ratio": speed_ratio,
@@ -653,6 +653,123 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             # For larger ratios, use Phase Vocoder (better quality)
             return self._correct_phase_vocoder(audio, ratio, params)
 
+    def _estimate_speed_curve_polyphonic(
+        self,
+        audio: np.ndarray,
+        sr: int,
+    ) -> tuple[float, float, np.ndarray, np.ndarray]:
+        """§2.12 PolyphonicSpeedCurveEstimator — BasicPitch ONNX + Savitzky-Golay.
+
+        Detects the dominant pitch using polyphonic pitch tracking (BasicPitch ONNX).
+        Per frame, the confidence-weighted median over all simultaneously voiced
+        pitches (≥ 2 voices required) is computed to estimate the instantaneous pitch.
+        The resulting pitch curve is smoothed with a Savitzky-Golay filter
+        (window=51, polyorder=3) to produce a stable speed-deviation estimate.
+
+        Algorithm:
+            1. BasicPitch ONNX → pitches_hz [T, K], confidences [T, K]
+            2. Per frame: voiced = pitches_hz > 0;  require ≥ 2 voiced voices
+            3. Confidence-weighted median per frame (weighted_percentile 50)
+            4. Savitzky-Golay smoothing (window=min(51, T//2|1), polyorder=3)
+            5. Global pitch = median of smoothed curve
+            6. Confidence = mean per-frame confidence of contributing voices
+
+        Reference:
+            §2.12 PolyphonicSpeedCurveEstimator, copilot-instructions.md
+            Bitteur et al. (2010) — multi-voice confidence weighting
+
+        Args:
+            audio: Input audio (mono or stereo).
+            sr:    Sample rate (must be 48 000 Hz).
+
+        Returns:
+            (global_pitch_hz, confidence, frame_pitches, frame_times_s)
+            frame_pitches is the smoothed per-frame pitch curve (for wow/flutter use).
+        """
+        try:
+            from plugins.basicpitch_plugin import analyze_polyphonic_pitch
+
+            bp_result = analyze_polyphonic_pitch(audio, sr, max_polyphony=6)
+
+            pitches = bp_result.pitches_hz  # [T, K]
+            confs = bp_result.confidences  # [T, K]
+            times = bp_result.frame_times_s  # [T]
+
+            T = pitches.shape[0]
+            if T == 0:
+                return 0.0, 0.0, np.array([]), np.array([])
+
+            frame_pitch = np.zeros(T, dtype=np.float32)
+            frame_conf_sum = np.zeros(T, dtype=np.float32)
+
+            for t in range(T):
+                voiced_mask = pitches[t, :] > 0.0
+                n_voiced = int(np.sum(voiced_mask))
+                if n_voiced < 2:
+                    # Require ≥ 2 simultaneous voices for polyphonic estimate
+                    frame_pitch[t] = 0.0
+                    continue
+
+                p_t = pitches[t, voiced_mask]
+                c_t = confs[t, voiced_mask]
+                c_sum = float(np.sum(c_t))
+                if c_sum < 1e-8:
+                    continue
+
+                # Confidence-weighted median (Bitteur 2010)
+                sort_idx = np.argsort(p_t)
+                p_sorted = p_t[sort_idx]
+                c_sorted = c_t[sort_idx]
+                c_cum = np.cumsum(c_sorted)
+                median_threshold = c_sum * 0.5
+                med_idx = int(np.searchsorted(c_cum, median_threshold))
+                med_idx = min(med_idx, len(p_sorted) - 1)
+
+                frame_pitch[t] = float(p_sorted[med_idx])
+                frame_conf_sum[t] = float(np.mean(c_t))
+
+            # Keep only frames with a valid polyphonic estimate
+            valid_mask = frame_pitch > 0.0
+            n_valid = int(np.sum(valid_mask))
+
+            if n_valid < 3:
+                logger.debug("PolyphonicSpeedCurveEstimator: too few valid frames (%d) — fallback", n_valid)
+                return 0.0, 0.0, np.array([]), np.array([])
+
+            # Savitzky-Golay smoothing of pitch curve (window=51, polyorder=3)
+            try:
+                from scipy.signal import savgol_filter
+
+                sg_window = min(51, (n_valid // 2) * 2 + 1)  # odd, ≤ 51
+                sg_window = max(sg_window, 5)
+                smoothed_valid = savgol_filter(
+                    frame_pitch[valid_mask].astype(np.float64), sg_window, polyorder=3
+                ).astype(np.float32)
+            except Exception:
+                smoothed_valid = frame_pitch[valid_mask]
+
+            # Build full smoothed curve (unset frames = 0)
+            smoothed_curve = np.zeros(T, dtype=np.float32)
+            smoothed_curve[valid_mask] = smoothed_valid
+
+            global_pitch = float(np.median(smoothed_valid[smoothed_valid > 0]))
+            confidence = float(np.mean(frame_conf_sum[valid_mask]))
+
+            logger.info(
+                "PolyphonicSpeedCurveEstimator: pitch=%.2f Hz, conf=%.3f, valid_frames=%d/%d, model=%s",
+                global_pitch,
+                confidence,
+                n_valid,
+                T,
+                bp_result.model_used,
+            )
+
+            return global_pitch, confidence, smoothed_curve, times
+
+        except Exception as exc:
+            logger.warning("PolyphonicSpeedCurveEstimator failed: %s — pYIN/CREPE fallback", exc)
+            return 0.0, 0.0, np.array([]), np.array([])
+
     def _detect_pitch_ml_hybrid(
         self, audio: np.ndarray, sample_rate: int, quality_mode: str
     ) -> tuple[float, float, dict[str, Any]]:
@@ -673,9 +790,36 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             (detected_pitch, confidence, metadata)
         """
         try:
+            # MAXIMUM mode: §2.12 PolyphonicSpeedCurveEstimator
+            # BasicPitch ONNX → confidence-weighted median ≥2 voices → Savitzky-Golay
+            if quality_mode == "maximum":
+                poly_pitch, poly_conf, poly_curve, poly_times = self._estimate_speed_curve_polyphonic(
+                    audio, sample_rate
+                )
+                if poly_pitch > 0.0 and poly_conf >= 0.30:
+                    logger.info(
+                        "Phase 31 §2.12 PolyphonicSpeedCurveEstimator: pitch=%.2f Hz, conf=%.3f",
+                        poly_pitch,
+                        poly_conf,
+                    )
+                    return (
+                        poly_pitch,
+                        poly_conf,
+                        {
+                            "strategy": "polyphonic_speed_curve",
+                            "pyin_applied": False,
+                            "crepe_applied": False,
+                            "basicpitch_applied": True,
+                            "poly_pitch": poly_pitch,
+                            "poly_confidence": poly_conf,
+                            "poly_curve_frames": int(len(poly_curve)),
+                        },
+                    )
+                # BasicPitch gave no reliable result → fall through to HYBRID
+
             # Configure strategy based on quality mode
             if quality_mode == "maximum":
-                strategy = PitchDetectionStrategy.HYBRID  # pYIN + CREPE kombiniert
+                strategy = PitchDetectionStrategy.HYBRID  # pYIN + CREPE kombiniert (fallback)
             else:  # balanced
                 strategy = PitchDetectionStrategy.ADAPTIVE  # pYIN → CREPE wenn nötig
 
@@ -753,16 +897,16 @@ if __name__ == "__main__":
 
     logger.debug(f"\nTest Audio: {duration}s @ {sr} Hz (stereo)")
     logger.debug(f"True pitch: {true_pitch} Hz")
-    logger.debug(f"Simulated speed error: {speed_error*100:.1f}% (too fast)")
+    logger.debug(f"Simulated speed error: {speed_error * 100:.1f}% (too fast)")
     logger.debug(f"Played pitch: {played_pitch:.2f} Hz")
 
     # Test with different materials
     materials = ["tape", "vinyl", "shellac"]
 
     for material in materials:
-        logger.debug(f"\n{'-'*80}")
+        logger.debug(f"\n{'-' * 80}")
         logger.debug(f"Testing with material: {material.upper()}")
-        logger.debug(f"{'-'*80}")
+        logger.debug(f"{'-' * 80}")
 
         phase = SpeedPitchCorrectionPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material, reference_pitch=true_pitch)
@@ -777,14 +921,16 @@ if __name__ == "__main__":
             logger.debug(f"   Speed Error: {result.modifications['speed_error_percent']:.2f}%")
             logger.debug(f"   Correction Ratio: {result.modifications['correction_ratio']:.4f}")
             logger.debug(f"   Algorithm: {result.metadata['algorithm']}")
-            logger.debug(f"   Samples: {result.modifications['samples_before']} → {result.modifications['samples_after']}")
+            logger.debug(
+                f"   Samples: {result.modifications['samples_before']} → {result.modifications['samples_after']}"
+            )
         else:
             logger.debug("⏭️  Processing Skipped")
             logger.debug(f"   Reason: {result.modifications.get('reason', 'unknown')}")
 
-    logger.debug(f"\n{'='*80}")
+    logger.debug(f"\n{'=' * 80}")
     logger.debug("✅ Professional Speed/Pitch Correction v2.0 Test Complete!")
-    logger.debug(f"{'='*80}")
+    logger.debug(f"{'=' * 80}")
     logger.debug(f"Algorithm: {result.metadata['algorithm']}")
     logger.debug(f"Scientific Reference: {result.metadata.get('scientific_ref', 'N/A')}")
     logger.debug(f"Benchmark: {result.metadata.get('benchmark', 'N/A')}")
