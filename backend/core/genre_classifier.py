@@ -76,7 +76,7 @@ class GermanSchlagerClassifier:
     ]
 
     # ---- Schwellwerte ----
-    SCHLAGER_CONFIDENCE_THRESHOLD: float = 0.52
+    SCHLAGER_CONFIDENCE_THRESHOLD: float = 0.44
     CLAP_POSITIVE_THRESHOLD: float = 0.26
     ACCORDION_AM_FREQ_RANGE: tuple[float, float] = (5.0, 15.0)
     ACCORDION_TREMOLO_RANGE: tuple[float, float] = (4.0, 8.0)
@@ -199,6 +199,22 @@ class GermanSchlagerClassifier:
         non_schlager_scores = self._compute_non_schlager_scores(centroid, onset, hsi, dr_db, bpm)
         alt_genre, alt_conf = self._pick_non_schlager_genre(non_schlager_scores)
 
+        # Post-classification veto: insufficient harmonic complexity + German vocal → not Jazz.
+        # hsi >= 0.50: already outside Jazz harmonic range (Jazz requires genuinely complex chords).
+        # lang_de_score >= 0.30: any detectable German vocal presence rules out Jazz.
+        # Either condition alone is sufficient for degraded analogue-chain sources
+        # (Vinyl→Kassette→MP3) where DSP cues are noisy and language scores are suppressed.
+        # Guard: n_active >= 1 required — veto is only for Schlager tracks that *narrowly miss*
+        # the gate, not for audio with zero Schlager evidence (e.g. German choral, Kunstlied).
+        if (
+            not is_schlager
+            and n_active >= 1
+            and alt_genre == "Jazz"
+            and (hsi >= 0.50 or lang_de_score >= 0.30)
+        ):
+            is_schlager = True
+            confidence = float(max(confidence, self.SCHLAGER_CONFIDENCE_THRESHOLD))
+
         # Genre-Label + Subgenre
         if is_schlager:
             genre_label = self._determine_genre_label(subgenre, bpm, lang_de_score)
@@ -285,16 +301,26 @@ class GermanSchlagerClassifier:
         This is only used as an additive cue for borderline genre decisions.
         It must never log or persist lyric text.
         """
+        if audio.size < max(sr * 8, 1):
+            return 0.0
+        # Resample to 48 kHz if needed — LGE requires 48 kHz input.
+        audio_48k = audio
+        sr_48k = sr
         if sr != 48_000:
-            return 0.0
-        if audio.size < sr * 8:
-            return 0.0
+            try:
+                import librosa
+
+                audio_48k = librosa.resample(audio if audio.ndim == 1 else audio[0], orig_sr=sr, target_sr=48_000)
+                sr_48k = 48_000
+            except Exception as _exc:
+                logger.debug("Lyrics hint: resample to 48k failed: %s", _exc)
+                return 0.0
 
         try:
             from backend.core.lyrics_guided_enhancement import get_lyrics_guided_enhancement
 
             lge = get_lyrics_guided_enhancement()
-            transcription = lge.transcribe(audio, sr)
+            transcription = lge.transcribe(audio_48k, sr_48k)
         except Exception as exc:
             logger.debug("Lyrics hint unavailable for genre classification: %s", exc)
             return 0.0
@@ -413,7 +439,51 @@ class GermanSchlagerClassifier:
             tremolo_energy = float(np.sum(fft_env[tr_mask] ** 2))
 
             score = float(np.clip((reed_energy + 0.5 * tremolo_energy) / total_energy * 20.0, 0.0, 1.0))
-            return float(np.nan_to_num(score))
+
+            # ---- Tremolo-Diskriminator: Inter-Band-AM-Kohärenz ----
+            # Physik: Akkordeon-Reeds haben paarweise unabhängige Verstimmung →
+            # AM-Schwebungsfrequenzen UNTERSCHEIDEN sich zwischen Frequenzbändern.
+            # Tremolo-Gitarre / Vibrato-Violine hat einen EINZIGEN Modulator →
+            # Alle Bänder zeigen denselben AM-Peak (hohe Inter-Band-Kohärenz).
+            # Hohe Kohärenz → kein Akkordeon → Score reduzieren.
+            try:
+                sub_bands = [(150.0, 600.0), (600.0, 1500.0), (1500.0, 2500.0)]
+                band_peak_freqs: list[float] = []
+                am_band_mask = (freqs >= 4.0) & (freqs <= 15.0)
+                if np.any(am_band_mask) and score > 0.10:
+                    for blo, bhi in sub_bands:
+                        lo_s = float(np.clip(blo / nyq, 1e-6, 0.9999))
+                        hi_s = float(np.clip(bhi / nyq, 1e-6, 0.9999))
+                        if lo_s >= hi_s:
+                            continue
+                        sos_s = butter(4, [lo_s, hi_s], btype="band", output="sos")
+                        filt_s = sosfilt(sos_s, mono)
+                        env_s = np.abs(hilbert(np.asarray(filt_s, dtype=np.float64)))[::hop].astype(np.float32)
+                        env_s = np.nan_to_num(env_s)
+                        if len(env_s) < 10:
+                            continue
+                        fft_s = np.abs(np.fft.rfft(env_s))
+                        # Peak AM frequency within [4, 15] Hz for this sub-band
+                        peak_idx = int(np.argmax(fft_s[am_band_mask]))
+                        band_peak_freqs.append(float(freqs[am_band_mask][peak_idx]))
+
+                    if len(band_peak_freqs) == 3:
+                        freq_spread = float(np.std(band_peak_freqs))
+                        # freq_spread > 2 Hz → different reed-pairs beating independently → Akkordeon
+                        # freq_spread < 1 Hz → single modulator → Tremolo/Vibrato → reduce score
+                        coherence = float(np.clip(1.0 - freq_spread / 2.0, 0.0, 1.0))
+                        score *= 1.0 - 0.40 * coherence
+                        logger.debug(
+                            "AccordionDiscriminator: band_peaks=%s spread=%.2f Hz coherence=%.2f → score×%.2f",
+                            [f"{f:.1f}" for f in band_peak_freqs],
+                            freq_spread,
+                            coherence,
+                            1.0 - 0.40 * coherence,
+                        )
+            except Exception as _disc_exc:
+                logger.debug("AccordionDiscriminator skipped: %s", _disc_exc)
+
+            return float(np.nan_to_num(np.clip(score, 0.0, 1.0)))
 
         except Exception as e:
             logger.debug("AccordionScore Fallback: %s", e)
@@ -532,11 +602,20 @@ class GermanSchlagerClassifier:
 
             # Vokal-Segmente via Energie-Schwelle + ZCR
             frame_len = int(sr * 0.025)  # 25 ms
-            frames = [audio[i : i + frame_len] for i in range(0, len(audio) - frame_len, frame_len)]
+            all_frames = [audio[i : i + frame_len] for i in range(0, len(audio) - frame_len, frame_len)]
+            # Distribute 200 frames evenly over the full song (not just the first 5 s).
+            # Long songs with instrumental intros would otherwise yield vocal_prior ≈ 0.5
+            # (no vocal data in first 5 s) and miss the Schlager classification.
+            _n_want = 200
+            if len(all_frames) <= _n_want:
+                frames = all_frames
+            else:
+                _step = len(all_frames) / _n_want
+                frames = [all_frames[int(i * _step)] for i in range(_n_want)]
 
             f1_vals, f2_vals = [], []
 
-            for frame in frames[:200]:  # max 200 Frames
+            for frame in frames:  # evenly distributed across full song
                 rms = float(np.sqrt(np.mean(frame**2)))
                 if not np.isfinite(rms) or rms < 0.01:
                     continue  # Stille
@@ -546,14 +625,12 @@ class GermanSchlagerClassifier:
                 if len(frame) <= order:
                     continue
                 try:
-                    # Autokorrelations-LPC
-                    r = np.correlate(frame, frame, mode="full")
-                    r = r[len(r) // 2 :]
-                    if not np.isfinite(r).all() or r[0] < 1e-12:
+                    # Autokorrelations-LPC via Levinson-Durbin (O(order²))
+                    r_full = np.correlate(frame, frame, mode="full")
+                    r_full = r_full[len(r_full) // 2 :]
+                    if not np.isfinite(r_full).all() or r_full[0] < 1e-12:
                         continue
-                    R = np.array([r[abs(i - j)] for i in range(order) for j in range(order)]).reshape(order, order)
-                    rhs = r[1 : order + 1]
-                    lpc_coefs = np.linalg.lstsq(R, rhs, rcond=None)[0]
+                    lpc_coefs = self._lpc_levinson(r_full, order)
                     if not np.isfinite(lpc_coefs).all():
                         continue
 
@@ -645,26 +722,32 @@ class GermanSchlagerClassifier:
 
             frame_len = int(sr * 0.025)  # 25 ms
             hop = frame_len
-            frames = [audio[i : i + frame_len] for i in range(0, len(audio) - frame_len, hop)]
+            all_frames_lang = [audio[i : i + frame_len] for i in range(0, len(audio) - frame_len, hop)]
+            # Distribute 300 frames evenly over the full song (not just the first 7.5 s).
+            _n_want_lang = 300
+            if len(all_frames_lang) <= _n_want_lang:
+                frames = all_frames_lang
+            else:
+                _step_lang = len(all_frames_lang) / _n_want_lang
+                frames = [all_frames_lang[int(i * _step_lang)] for i in range(_n_want_lang)]
 
             f1_vals: list[float] = []
             f2_vals: list[float] = []
             order = 16
 
-            for frame in frames[:300]:
+            for frame in frames:  # evenly distributed across full song
                 rms = float(np.sqrt(np.mean(frame**2)))
                 if not np.isfinite(rms) or rms < 0.01:
                     continue
                 if len(frame) <= order:
                     continue
                 try:
-                    r = np.correlate(frame, frame, mode="full")
-                    r = r[len(r) // 2 :]
-                    if not np.isfinite(r).all() or r[0] < 1e-12:
+                    # Levinson-Durbin LPC — O(order²) vs O(order³) for lstsq
+                    r_full = np.correlate(frame, frame, mode="full")
+                    r_full = r_full[len(r_full) // 2 :]
+                    if not np.isfinite(r_full).all() or r_full[0] < 1e-12:
                         continue
-                    R = np.array([r[abs(i - j)] for i in range(order) for j in range(order)]).reshape(order, order)
-                    rhs = r[1 : order + 1]
-                    lpc_coefs = np.linalg.lstsq(R, rhs, rcond=None)[0]
+                    lpc_coefs = self._lpc_levinson(r_full, order)
                     if not np.isfinite(lpc_coefs).all():
                         continue
                     poly = np.concatenate([[1.0], -lpc_coefs])
@@ -776,17 +859,12 @@ class GermanSchlagerClassifier:
             # Kosinus-SSM
             ssm = mfcc_s @ mfcc_s.T  # [max_frames, max_frames]
 
-            # Ähnliche Paare mit Mindestabstand
-            n_total = 0
-            n_similar = 0
-            for i in range(max_frames):
-                for j in range(i + min_gap_frames, max_frames):
-                    n_total += 1
-                    if ssm[i, j] >= 0.85:
-                        n_similar += 1
-
+            # Ähnliche Paare mit Mindestabstand — vektorisiert (O(n²) Python-Loop vermieden)
+            upper_mask = np.triu(np.ones((max_frames, max_frames), dtype=bool), k=min_gap_frames)
+            n_total = int(np.sum(upper_mask))
             if n_total == 0:
                 return 0.35
+            n_similar = int(np.sum((ssm >= 0.85) & upper_mask))
 
             score = float(n_similar / n_total)
             score = float(np.clip(score * 2.0, 0.0, 1.0))
@@ -884,20 +962,38 @@ class GermanSchlagerClassifier:
         dr_db: float,
         bpm: float,
     ) -> float:
-        """Jazz genre score: complex harmony + wide dynamics + moderate tempo."""
+        """Jazz genre score: complex harmony + wide dynamics + moderate tempo.
+
+        Jazz requires genuinely complex harmony (low HSI). Songs with high harmonic
+        simplicity (hsi >= 0.68, typical for Schlager/Folk/Pop) cannot be Jazz —
+        the threshold is intentionally strict to avoid false Jazz labels for simple-
+        harmony German music that has been degraded through analogue chain + MP3.
+        """
         score = 0.0
-        # Low HSI = complex harmony (quintessential Jazz feature)
+        # Low HSI = complex harmony (quintessential Jazz feature).
+        # Threshold tightened from 0.65 → 0.55: songs with hsi 0.55-0.65 have
+        # intermediate simplicity that is NOT characteristic of Jazz (harmonic
+        # complexity is the single most defining Jazz feature). Schlager and similar
+        # simple-harmony styles sit in the 0.60-0.82 range even after analogue degradation.
         if hsi < 0.50:
             score += 0.40
-        elif hsi < 0.65:
+        elif hsi < 0.55:
             score += 0.20
-        # Wide dynamic range (expressive playing)
-        if dr_db > 35:
+        # Anti-Jazz guard: harmonic simplicity in the Schlager/Pop/Folk range → zero Jazz.
+        # Threshold tightened from 0.68 → 0.58: any song with hsi ≥ 0.58 lacks the
+        # complex harmony that is the single defining feature of Jazz.
+        if hsi >= 0.58:
+            return 0.0
+        # Wide dynamic range (expressive playing).
+        # Thresholds raised from 35/25 → 40/32: analogue-chain recordings (Vinyl→Kassette→MP3)
+        # naturally exhibit wide DR; this must NOT be credited as Jazz.
+        if dr_db > 40:
             score += 0.20
-        elif dr_db > 25:
+        elif dr_db > 32:
             score += 0.08
-        # Moderate spectral centroid (warm, not aggressive)
-        if 1400 < centroid_hz < 3200:
+        # Moderate spectral centroid (warm, not aggressive); tightened to 1500-2800 Hz
+        # (the original 1400-3200 range is too broad and catches Schlager warm-vocal tone).
+        if 1500 < centroid_hz < 2800:
             score += 0.15
         # Jazz BPM range is extremely variable; moderate tempos common
         if 80 <= bpm <= 200:
@@ -944,16 +1040,25 @@ class GermanSchlagerClassifier:
     ) -> bool:
         """Identify German Schlager near-miss cases to avoid wrong fallback labels.
 
-        This guard is intentionally strict and only triggers when core Schlager
-        cues are present but the hard gate is narrowly missed.
+        Thresholds for hsi and rhythm_score are intentionally relaxed from their
+        original values (0.60 / 0.55) to 0.55 / 0.45 to handle recordings that
+        have been degraded through an analogue chain (Vinyl→Kassette→MP3): codec
+        artefacts and generational noise reduce apparent harmonic simplicity and
+        can disturb BPM detection, causing the strict gate to be narrowly missed
+        even for unambiguous Schlager material.
         """
         if n_active < 2:
             return False
-        if confidence < (self.SCHLAGER_CONFIDENCE_THRESHOLD - 0.08):
+        if confidence < (self.SCHLAGER_CONFIDENCE_THRESHOLD - 0.12):
             return False
-        if hsi < 0.68 or rhythm_score < 0.55:
+        # Relaxed from 0.60→0.55 (hsi) and 0.55→0.45 (rhythm) to tolerate
+        # analogue+codec degradation in recordings like Vinyl→Kassette→MP3.
+        if hsi < 0.55 or rhythm_score < 0.45:
             return False
-        if vocal_prior < 0.52 or lang_de_score < 0.58:
+        # vocal_prior and lang_de_score: require only ONE of the two to be strong
+        # (long songs with instrumental intros have fewer voiced frames → lower scores).
+        # Fallback: HSI >= 0.68 (unambiguous Schlager harmonic simplicity) alone suffices.
+        if vocal_prior < 0.50 and lang_de_score < 0.45 and hsi < 0.68:
             return False
         if melodic_rep < 0.36:
             return False
@@ -993,6 +1098,442 @@ class GermanSchlagerClassifier:
             score += 0.15
         return float(np.clip(score, 0.0, 1.0))
 
+    def _score_pop(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Pop genre score: bright centroid + dense onsets + compressed dynamics."""
+        score = 0.0
+        # Bright, polished sound (mix engineer-boosted highs)
+        if centroid_hz > 3000:
+            score += 0.25
+        elif centroid_hz > 2500:
+            score += 0.12
+        # High onset density (modern production, programmed beats)
+        if onset_rate > 3.5:
+            score += 0.25
+        elif onset_rate > 2.5:
+            score += 0.12
+        # Moderately simple harmony (pop songwriting convention)
+        if 0.58 <= hsi <= 0.85:
+            score += 0.20
+        # Compressed loudness-war dynamics (Pop is more compressed than Rock: DR typically < 18)
+        if dr_db < 14:
+            score += 0.20
+        elif dr_db < 18:
+            score += 0.10
+        # Typical Pop BPM range (90–145)
+        if 90 <= bpm <= 145:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_blues(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Blues genre score: pentatonic harmony + expressive dynamics + warm centroid.
+
+        Intermediate harmonic complexity between Jazz (hsi < 0.50) and Schlager (hsi > 0.72).
+        Blues musicians use the pentatonic/blues scale — not as chromatic as Jazz but
+        significantly more than Schlager's simple I-IV-V diatonism.
+        """
+        score = 0.0
+        # Pentatonic/blues scale: hsi 0.38–0.65; looser upper bound 0.72 for blues-rock
+        if 0.38 <= hsi <= 0.65:
+            score += 0.35
+        elif 0.65 < hsi <= 0.72:
+            score += 0.15
+        # Warm, mid-focused centroid (guitar body resonance, vocal warmth)
+        if 1500 < centroid_hz < 2800:
+            score += 0.20
+        elif 1200 < centroid_hz <= 1500:
+            score += 0.08
+        # Wide dynamic range (expressive guitar; no heavy compression)
+        if dr_db > 28:
+            score += 0.20
+        elif dr_db > 20:
+            score += 0.10
+        # Moderate onset density (guitar + drums; not as dense as Rock)
+        if 1.5 <= onset_rate <= 3.5:
+            score += 0.15
+        # Blues BPM range (60–130, shuffle tempos common)
+        if 60 <= bpm <= 130:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_soul_rnb(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Soul/R&B score: gospel-influenced harmony + vocal warmth + moderate compression."""
+        score = 0.0
+        # Intermediate harmonic complexity (gospel chords, 7ths; not pure Jazz)
+        if 0.45 <= hsi <= 0.72:
+            score += 0.30
+        # Warm vocal centroid range (singer's formant prominent in the mix)
+        if 1800 < centroid_hz < 3200:
+            score += 0.25
+        elif 1400 < centroid_hz <= 1800:
+            score += 0.10
+        # Moderate onset density (groove-based rhythm section)
+        if 2.0 <= onset_rate <= 4.5:
+            score += 0.20
+        # Moderate dynamics (analog studio warmth, not heavily compressed like modern pop)
+        if 18 <= dr_db <= 38:
+            score += 0.15
+        # Soul/R&B BPM range (70–120)
+        if 70 <= bpm <= 120:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_country(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Country genre score: simple diatonic harmony + bright twang + wide dynamics."""
+        score = 0.0
+        # Simple diatonic harmony (I-IV-V progressions; similar to Schlager but higher centroid)
+        if 0.62 <= hsi <= 0.88:
+            score += 0.30
+        # Bright, twangy spectral centroid (steel guitar, banjo, fiddle presence)
+        if 2200 < centroid_hz < 4000:
+            score += 0.25
+        elif 1800 < centroid_hz <= 2200:
+            score += 0.10
+        # Wide dynamics (organic, live-sounding recording)
+        if dr_db > 22:
+            score += 0.20
+        # Moderate onset density (pick/strum rhythm patterns)
+        if 1.8 <= onset_rate <= 4.0:
+            score += 0.15
+        # Country BPM range (85–160, two-step to slow ballad)
+        if 85 <= bpm <= 160:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_folk(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Folk genre score: very simple harmony + acoustic warmth + low onset density.
+
+        Disambiguation from Klassik: Folk recordings rarely exceed ~38 dB DR.
+        Classical/orchestral recordings regularly achieve 40–55 dB DR (pianissimo
+        to fortissimo). A penalty is applied for extreme DR to avoid misclassifying
+        orchestral or chamber music as Folk.
+        """
+        score = 0.0
+        # Very simple, diatonic harmony (three-chord folk tradition)
+        if 0.65 <= hsi <= 0.92:
+            score += 0.35
+        # Warm, acoustic centroid (acoustic guitar, voice, fiddle)
+        if 1400 < centroid_hz < 2600:
+            score += 0.25
+        elif 1000 < centroid_hz <= 1400:
+            score += 0.10
+        # Low onset density (strumming, fingerpicking; no programmed beats)
+        if onset_rate < 2.0:
+            score += 0.25
+        elif onset_rate < 2.8:
+            score += 0.12
+        # Folk BPM range (relaxed tempos, 60–140)
+        if 60 <= bpm <= 140:
+            score += 0.15
+        # Orchestral-range DR (> 40 dB) is not typical of acoustic folk recordings
+        # and strongly indicates Klassik/orchestral material instead.
+        if dr_db > 40:
+            score = float(np.clip(score - 0.25, 0.0, 1.0))
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_funk(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Funk genre score: dense syncopated 16th-note rhythm + warm-bright centroid + compressed groove.
+
+        Disambiguation from Rock/Metal: Funk is warm-bright, not Rock-aggressive.
+        Centroid of 3000–3500 Hz is typical for Rock/Metal distortion; genuine Funk
+        has a warmer mix (horn section + slap bass complement = 1800–3500 Hz but
+        with a characteristic upper bound). An explicit centroid window ensures
+        Rock-parametrized signals are not misclassified as Funk.
+        """
+        score = 0.0
+        # High onset density (syncopated 16th-note patterns, slap bass attacks)
+        if onset_rate > 4.0:
+            score += 0.30
+        elif onset_rate > 3.0:
+            score += 0.15
+        # Intermediate harmonic complexity (7th chords, sus chords; not Schlager-simple)
+        if 0.38 <= hsi <= 0.64:
+            score += 0.25
+        # Warm-bright presence (horn section, slap bass attack).
+        # Rock/Metal brightness (centroid >= 2800 Hz) does NOT indicate Funk.
+        # Funk peak = 1800–2800 Hz (horns, wah-guitar); above 2800 Hz is Rock/Metal.
+        if 1800 < centroid_hz < 2800:
+            score += 0.20
+        elif 1400 < centroid_hz <= 1800:
+            score += 0.08
+        # Funk dynamics: compressed but punchy
+        if 12 <= dr_db <= 28:
+            score += 0.15
+        # Funk BPM range (75–120, groove-based)
+        if 75 <= bpm <= 120:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_electronic(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Electronic/Dance genre score: very bright + dense onsets + extreme compression.
+
+        Disambiguation from acoustic styles (Folk, Blues, Jazz, Classical):
+        Synthesizers and digital production create inherently bright spectral content
+        (centroid typically > 2200 Hz). A dark/bass-heavy centroid (< 1800 Hz) combined
+        with low DR simply indicates a compressed acoustic recording, NOT Electronic.
+        Centroid gate (>= 2200 Hz) prevents false positives on compressed shellac/tape.
+        """
+        score = 0.0
+        # Electronic gate: synthesis is inherently bright.
+        # Without significant high-frequency content (centroid >= 2200 Hz),
+        # low DR alone indicates compressed acoustic music, not synthesis.
+        if centroid_hz < 2200:
+            return 0.0
+        # Very bright, artificial synthesis
+        if centroid_hz > 3500:
+            score += 0.30
+        elif centroid_hz > 2800:
+            score += 0.15
+        # High onset density (kick, clap, hi-hat programming)
+        if onset_rate > 4.0:
+            score += 0.25
+        elif onset_rate > 3.0:
+            score += 0.12
+        # Extreme loudness-war compression (DR typically very low in electronic music)
+        if dr_db < 12:
+            score += 0.25
+        elif dr_db < 18:
+            score += 0.12
+        # Electronic dance BPM ranges (120–180 for house/techno/drum and bass)
+        if 115 <= bpm <= 185:
+            score += 0.20
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_hiphop(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Hip-Hop genre score: heavy bass + compressed dynamics + moderate onset density.
+
+        Disambiguation from compressed acoustic music:
+        Hip-Hop features vocal presence in the mid-range (centroid > 1400 Hz due to
+        rapper's formant). A very low centroid (< 1400 Hz) with low DR indicates
+        bass-heavy acoustic compression, not Hip-Hop.
+        """
+        score = 0.0
+        # Hip-Hop gate: vocal/sample presence requires centroid > 1400 Hz.
+        if centroid_hz < 1400:
+            return 0.0
+        # Compressed dynamics (heavily produced, mastered loud)
+        if dr_db < 15:
+            score += 0.30
+        elif dr_db < 22:
+            score += 0.15
+        # Moderate-high onset density (trap hi-hats, boom-bap kick patterns)
+        if 2.5 <= onset_rate <= 6.0:
+            score += 0.25
+        # Moderate spectral centroid (bass-forward but not dull; vocal presence in mid-range)
+        if 1500 < centroid_hz < 3200:
+            score += 0.20
+        # Relatively simple harmonic loops (sample-based, modal)
+        if 0.55 <= hsi <= 0.85:
+            score += 0.15
+        # Hip-Hop BPM range (70–110 boom-bap; 130–180 trap)
+        if (70 <= bpm <= 110) or (130 <= bpm <= 180):
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_metal(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Metal genre score: very high centroid + extreme onset density + distorted timbres."""
+        score = 0.0
+        # Very bright, distortion-rich spectral content
+        if centroid_hz > 3200:
+            score += 0.30
+        elif centroid_hz > 2600:
+            score += 0.15
+        # Very high onset density (blast beats, rapid power-chord riffing)
+        if onset_rate > 5.0:
+            score += 0.30
+        elif onset_rate > 3.5:
+            score += 0.15
+        # Complex or power-chord harmony (distortion blurs tonal clarity → low HSI)
+        if hsi < 0.55:
+            score += 0.20
+        elif hsi < 0.67:
+            score += 0.10
+        # Metal BPM (100–260: doom to blast beat)
+        if bpm >= 100:
+            score += 0.15
+        # Some dynamic range (live recording feel; not full brick-wall)
+        if dr_db > 20:
+            score += 0.05
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_latin(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        bpm: float,
+    ) -> float:
+        """Latin genre score: rhythmic density + moderate harmony + bright centroid.
+
+        Covers Salsa, Bossa Nova, Cumbia, Latin Jazz, Merengue.
+        Key differentiators: dense clave-based rhythms, brass/percussion brightness.
+
+        Disambiguation from Electronic/Rock:
+        Latin music requires BOTH high onset density AND bright spectral content
+        (brass section, percussion transients). Onset density alone without the
+        characteristic brass brightness (centroid > 1800 Hz) indicates Rock/Metal,
+        not Latin. This prevents false positives on dark-centroid signals (e.g.
+        pure tones, bass-heavy material) that happen to have high onset density.
+        """
+        score = 0.0
+        # Latin gate: brass/percussion brightness is mandatory.
+        # A dark centroid (< 1800 Hz) means no brass section → not Latin.
+        if centroid_hz < 1800:
+            return 0.0
+        # Dense, syncopated clave-based rhythms (congas, timbales, güiro)
+        if onset_rate > 3.5:
+            score += 0.30
+        elif onset_rate > 2.5:
+            score += 0.15
+        # BPM-context-aware centroid bonus — prevents Rock/Electric false positives:
+        # Salsa (bpm > 150): bright brass is expected at centroid > 2200 Hz.
+        # Bossa nova/cumbia (bpm <= 150): dark acoustic spectrum → centroid 1800–2500.
+        # A signal at centroid > 2500 Hz AND bpm 90–150 is typical Rock, not Latin.
+        if bpm > 150 and centroid_hz > 2200:
+            score += 0.25  # salsa / merengue brass (high BPM + bright)
+        elif bpm <= 150 and 1800 < centroid_hz < 2500:
+            score += 0.25  # bossa nova / cumbia (moderate BPM, darker spectrum)
+        elif bpm <= 150 and centroid_hz >= 2500:
+            score += 0.05  # marginal; centroid too bright for moderate-BPM Latin
+        # Moderate harmonic complexity (salsa = simple; Latin jazz = complex)
+        if 0.42 <= hsi <= 0.75:
+            score += 0.25
+        # Latin BPM ranges: salsa 160–240, bossa nova 80–130, cumbia 80–120
+        if (80 <= bpm <= 130) or (160 <= bpm <= 250):
+            score += 0.20
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_gospel(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Gospel genre score: choir-rich vocals + extended chords + expressive dynamics."""
+        score = 0.0
+        # Gospel harmony: richer than Schlager (major 7ths, extended) but less complex than Jazz
+        if 0.45 <= hsi <= 0.72:
+            score += 0.30
+        # Vocal-prominent centroid (choir raises upper-mid energy)
+        if 1800 < centroid_hz < 3200:
+            score += 0.25
+        # Wide dynamics (call-and-response, emotional climaxes)
+        if dr_db > 25:
+            score += 0.20
+        elif dr_db > 18:
+            score += 0.10
+        # Moderate onset density (choir consonants + organ/piano rhythmic stabs)
+        if 1.5 <= onset_rate <= 3.5:
+            score += 0.15
+        # Gospel BPM range (60–130)
+        if 60 <= bpm <= 130:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
+    def _score_reggae(
+        self,
+        centroid_hz: float,
+        onset_rate: float,
+        hsi: float,
+        dr_db: float,
+        bpm: float,
+    ) -> float:
+        """Reggae genre score: offbeat skank rhythm + bass-heavy warmth + simple harmony.
+
+        Disambiguation from Electronic/Hip-Hop:
+        Reggae's defining feature is the sub-bass weight: low centroid (< 2500 Hz)
+        combined with slow/moderate tempo (55–95 BPM). High-centroid bright signals
+        indicate synthesis or distortion, not Reggae. Electronic music at 120+ BPM
+        must not be mistaken for Reggae.
+        """
+        score = 0.0
+        # Reggae gate: BPM must be in the reggae/dub groove range.
+        # Electronic/Hip-Hop at 120+ BPM is excluded explicitly.
+        if bpm > 100:
+            return 0.0
+        # Simple, repetitive harmony (I-IV-V, minor pentatonic; reggae chords diatonic)
+        if 0.58 <= hsi <= 0.85:
+            score += 0.30
+        # Bass-heavy, warm spectral profile (sub-bass dominant in reggae/dub mixes)
+        if 1200 < centroid_hz < 2600:
+            score += 0.25
+        elif centroid_hz <= 1200:
+            score += 0.10  # very bass-forward sub-style (dub)
+        # Moderate dynamics (analog tape warmth, dub mixing headroom)
+        if 15 <= dr_db <= 35:
+            score += 0.20
+        # Reggae BPM range (55–95; characteristic slow groove with heavy sub-bass)
+        if 55 <= bpm <= 95:
+            score += 0.15
+        # Moderate onset density (offbeat skank guitar + steady bass walk)
+        if 1.5 <= onset_rate <= 3.5:
+            score += 0.10
+        return float(np.clip(score, 0.0, 1.0))
+
     def _compute_non_schlager_scores(
         self,
         centroid_hz: float,
@@ -1005,11 +1546,35 @@ class GermanSchlagerClassifier:
         jazz_s = self._score_jazz(centroid_hz, hsi, dr_db, bpm)
         classical_s = self._score_classical(centroid_hz, onset_rate, hsi, dr_db)
         oper_s = self._score_oper(centroid_hz, onset_rate, hsi, dr_db)
+        pop_s = self._score_pop(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        blues_s = self._score_blues(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        soul_s = self._score_soul_rnb(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        country_s = self._score_country(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        folk_s = self._score_folk(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        funk_s = self._score_funk(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        electronic_s = self._score_electronic(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        hiphop_s = self._score_hiphop(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        metal_s = self._score_metal(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        latin_s = self._score_latin(centroid_hz, onset_rate, hsi, bpm)
+        gospel_s = self._score_gospel(centroid_hz, onset_rate, hsi, dr_db, bpm)
+        reggae_s = self._score_reggae(centroid_hz, onset_rate, hsi, dr_db, bpm)
         return {
             "Rock": float(np.clip(rock_s, 0.0, 1.0)),
             "Jazz": float(np.clip(jazz_s, 0.0, 1.0)),
             "Klassik": float(np.clip(classical_s, 0.0, 1.0)),
             "Oper": float(np.clip(oper_s, 0.0, 1.0)),
+            "Pop": float(np.clip(pop_s, 0.0, 1.0)),
+            "Blues": float(np.clip(blues_s, 0.0, 1.0)),
+            "Soul/R&B": float(np.clip(soul_s, 0.0, 1.0)),
+            "Country": float(np.clip(country_s, 0.0, 1.0)),
+            "Folk": float(np.clip(folk_s, 0.0, 1.0)),
+            "Funk": float(np.clip(funk_s, 0.0, 1.0)),
+            "Electronic": float(np.clip(electronic_s, 0.0, 1.0)),
+            "Hip-Hop": float(np.clip(hiphop_s, 0.0, 1.0)),
+            "Metal": float(np.clip(metal_s, 0.0, 1.0)),
+            "Latin": float(np.clip(latin_s, 0.0, 1.0)),
+            "Gospel": float(np.clip(gospel_s, 0.0, 1.0)),
+            "Reggae": float(np.clip(reggae_s, 0.0, 1.0)),
         }
 
     def _pick_non_schlager_genre(self, scores: dict[str, float]) -> tuple[str, float]:
@@ -1026,12 +1591,31 @@ class GermanSchlagerClassifier:
         non_schlager_scores: dict[str, float],
         schlager_family_score: float,
     ) -> tuple[str, float]:
+        g = non_schlager_scores  # shorthand
         family_scores = {
-            "schlager_folk": float(np.clip(schlager_family_score, 0.0, 1.0)),
-            "rock": float(np.clip(non_schlager_scores.get("Rock", 0.0), 0.0, 1.0)),
-            "jazz": float(np.clip(non_schlager_scores.get("Jazz", 0.0), 0.0, 1.0)),
-            "klassik": float(np.clip(non_schlager_scores.get("Klassik", 0.0), 0.0, 1.0)),
-            "oper": float(np.clip(non_schlager_scores.get("Oper", 0.0), 0.0, 1.0)),
+            "schlager_folk": float(np.clip(
+                max(schlager_family_score, g.get("Folk", 0.0), g.get("Country", 0.0)),
+                0.0, 1.0)),
+            "rock": float(np.clip(
+                max(g.get("Rock", 0.0), g.get("Metal", 0.0)),
+                0.0, 1.0)),
+            "jazz": float(np.clip(
+                max(g.get("Jazz", 0.0), g.get("Blues", 0.0)),
+                0.0, 1.0)),
+            "klassik": float(np.clip(g.get("Klassik", 0.0), 0.0, 1.0)),
+            "oper": float(np.clip(g.get("Oper", 0.0), 0.0, 1.0)),
+            "pop": float(np.clip(
+                max(g.get("Pop", 0.0), g.get("Soul/R&B", 0.0)),
+                0.0, 1.0)),
+            "funk_soul": float(np.clip(
+                max(g.get("Funk", 0.0), g.get("Soul/R&B", 0.0), g.get("Gospel", 0.0)),
+                0.0, 1.0)),
+            "electronic": float(np.clip(
+                max(g.get("Electronic", 0.0), g.get("Hip-Hop", 0.0)),
+                0.0, 1.0)),
+            "latin": float(np.clip(
+                max(g.get("Latin", 0.0), g.get("Reggae", 0.0)),
+                0.0, 1.0)),
         }
         label = max(family_scores, key=family_scores.get)  # type: ignore[arg-type]
         score = float(family_scores[label])
@@ -1132,6 +1716,35 @@ class GermanSchlagerClassifier:
             return 0.35  # neutral
 
     # ---- Hilfsfunktionen ----
+
+    @staticmethod
+    def _lpc_levinson(r: np.ndarray, order: int) -> np.ndarray:
+        """Levinson-Durbin Yule-Walker solver — O(order²) vs O(order³) for lstsq.
+
+        Solves the autocorrelation normal equations and returns lpc_coefs such that
+        ``poly = np.concatenate([[1.0], -lpc_coefs])`` is the all-pole filter whose
+        roots correspond to formant frequencies.  Replaces the former
+        ``np.linalg.lstsq`` on the full Toeplitz matrix (16×16 → up to 300 calls per
+        classify() call, each O(order³) ≈ 4096 FLOPs → Levinson reduces to ≈256).
+        """
+        r = np.asarray(r, dtype=np.float64)
+        a = np.zeros(order, dtype=np.float64)  # AR coefficients a_ar[1..p]
+        e = float(r[0])
+        for m in range(order):
+            if e < 1e-18:
+                break
+            # Reflection coefficient: k = -(r[m+1] + a[:m] · r[m:0:-1]) / e
+            k = -(float(r[m + 1]) + float(np.dot(a[:m], r[m:0:-1]))) / e
+            a_new = a.copy()
+            if m > 0:
+                a_new[:m] = a[:m] + k * a[m - 1::-1]
+            a_new[m] = k
+            a = a_new
+            e *= 1.0 - k * k
+            if e < 1e-18:
+                break
+        # Return -a_ar so that poly = [1, -lpc_coefs] = [1, a_ar] (standard all-pole filter)
+        return -a
 
     def _to_mono(self, audio: np.ndarray) -> np.ndarray:
         """Konvertiert Stereo → Mono."""
@@ -1254,6 +1867,109 @@ _SUBGENRE_EXTENSIONS: dict = {
 
 
 # ── Genre-Restaurierungsprofile (Spec §2.20) ────────────────────────────────
+POP_RESTORATION_PROFILE: dict = {
+    "compression_ratio_cap": 2.0,
+    "brillanz_target": 0.88,
+    "deessing_strength_cap": 0.60,
+    "groove_dtw_max_ms": 7.0,
+    "gp_memory_key": "pop",
+}
+
+BLUES_RESTORATION_PROFILE: dict = {
+    "soft_saturation_preserve": True,
+    "clipping_repair_threshold_db": -3.0,
+    "compression_ratio_cap": 1.5,
+    "waerme_target": 0.88,
+    "groove_dtw_max_ms": 6.0,
+    "gp_memory_key": "blues",
+}
+
+SOUL_RNB_RESTORATION_PROFILE: dict = {
+    "compression_ratio_cap": 1.8,
+    "waerme_target": 0.85,
+    "deessing_strength_cap": 0.50,
+    "groove_dtw_max_ms": 5.0,
+    "gp_memory_key": "soul_rnb",
+}
+
+COUNTRY_RESTORATION_PROFILE: dict = {
+    "soft_saturation_preserve": True,
+    "transient_preservation_strength": 1.0,
+    "compression_ratio_cap": 1.5,
+    "brillanz_target": 0.85,
+    "groove_dtw_max_ms": 7.0,
+    "gp_memory_key": "country",
+}
+
+FOLK_RESTORATION_PROFILE: dict = {
+    "soft_saturation_preserve": True,
+    "transient_preservation_strength": 1.0,
+    "compression_ratio_cap": 1.3,
+    "waerme_target": 0.85,
+    "groove_dtw_max_ms": 8.0,
+    "gp_memory_key": "folk",
+}
+
+FUNK_RESTORATION_PROFILE: dict = {
+    "transient_preservation_strength": 1.0,
+    "brillanz_target": 0.88,
+    "bass_kraft_target": 0.88,
+    "groove_dtw_max_ms": 4.0,
+    "compression_ratio_cap": 2.2,
+    "gp_memory_key": "funk",
+}
+
+ELECTRONIC_RESTORATION_PROFILE: dict = {
+    "brillanz_target": 0.92,
+    "bass_kraft_target": 0.88,
+    "compression_ratio_cap": 2.5,
+    "groove_dtw_max_ms": 3.0,
+    "gp_memory_key": "electronic",
+}
+
+HIPHOP_RESTORATION_PROFILE: dict = {
+    "bass_kraft_target": 0.90,
+    "transient_preservation_strength": 1.0,
+    "compression_ratio_cap": 2.0,
+    "groove_dtw_max_ms": 4.0,
+    "gp_memory_key": "hiphop",
+}
+
+METAL_RESTORATION_PROFILE: dict = {
+    "transient_preservation_strength": 1.0,
+    "clipping_repair_threshold_db": -1.5,
+    "soft_saturation_preserve": True,
+    "brillanz_target": 0.90,
+    "compression_ratio_cap": 2.5,
+    "groove_dtw_max_ms": 5.0,
+    "gp_memory_key": "metal",
+}
+
+LATIN_RESTORATION_PROFILE: dict = {
+    "transient_preservation_strength": 1.0,
+    "groove_dtw_max_ms": 4.0,
+    "brillanz_target": 0.87,
+    "compression_ratio_cap": 1.8,
+    "gp_memory_key": "latin",
+}
+
+GOSPEL_RESTORATION_PROFILE: dict = {
+    "waerme_target": 0.86,
+    "deessing_strength_cap": 0.45,
+    "compression_ratio_cap": 1.6,
+    "groove_dtw_max_ms": 6.0,
+    "gp_memory_key": "gospel",
+}
+
+REGGAE_RESTORATION_PROFILE: dict = {
+    "soft_saturation_preserve": True,
+    "bass_kraft_target": 0.88,
+    "waerme_target": 0.86,
+    "groove_dtw_max_ms": 5.0,
+    "compression_ratio_cap": 1.8,
+    "gp_memory_key": "reggae",
+}
+
 JAZZ_RESTORATION_PROFILE: dict = {
     "groove_dtw_max_ms": 4.0,
     "tonal_center_threshold": 0.92,
@@ -1299,17 +2015,44 @@ ROCK_RESTORATION_PROFILE: dict = {
 # Alle Profile in einem Dict — für Tests und Iteration
 # Keys: Kleinschreibung (intern) UND Großschreibung (Test-Kompatibilität / genre_label)
 GENRE_RESTORATION_PROFILES: dict[str, dict] = {
+    # Kleinschreibung (intern)
     "schlager": SCHLAGER_RESTORATION_PROFILE,
     "jazz": JAZZ_RESTORATION_PROFILE,
     "klassik": KLASSIK_RESTORATION_PROFILE,
     "oper": OPER_RESTORATION_PROFILE,
     "rock": ROCK_RESTORATION_PROFILE,
+    "pop": POP_RESTORATION_PROFILE,
+    "blues": BLUES_RESTORATION_PROFILE,
+    "soul/r&b": SOUL_RNB_RESTORATION_PROFILE,
+    "soul_rnb": SOUL_RNB_RESTORATION_PROFILE,
+    "country": COUNTRY_RESTORATION_PROFILE,
+    "folk": FOLK_RESTORATION_PROFILE,
+    "funk": FUNK_RESTORATION_PROFILE,
+    "electronic": ELECTRONIC_RESTORATION_PROFILE,
+    "hip-hop": HIPHOP_RESTORATION_PROFILE,
+    "hiphop": HIPHOP_RESTORATION_PROFILE,
+    "metal": METAL_RESTORATION_PROFILE,
+    "latin": LATIN_RESTORATION_PROFILE,
+    "gospel": GOSPEL_RESTORATION_PROFILE,
+    "reggae": REGGAE_RESTORATION_PROFILE,
     # Kapitalisierte Aliases (GermanSchlagerClassifier.genre_label-Format)
     "Schlager": SCHLAGER_RESTORATION_PROFILE,
     "Jazz": JAZZ_RESTORATION_PROFILE,
     "Klassik": KLASSIK_RESTORATION_PROFILE,
     "Oper": OPER_RESTORATION_PROFILE,
     "Rock": ROCK_RESTORATION_PROFILE,
+    "Pop": POP_RESTORATION_PROFILE,
+    "Blues": BLUES_RESTORATION_PROFILE,
+    "Soul/R&B": SOUL_RNB_RESTORATION_PROFILE,
+    "Country": COUNTRY_RESTORATION_PROFILE,
+    "Folk": FOLK_RESTORATION_PROFILE,
+    "Funk": FUNK_RESTORATION_PROFILE,
+    "Electronic": ELECTRONIC_RESTORATION_PROFILE,
+    "Hip-Hop": HIPHOP_RESTORATION_PROFILE,
+    "Metal": METAL_RESTORATION_PROFILE,
+    "Latin": LATIN_RESTORATION_PROFILE,
+    "Gospel": GOSPEL_RESTORATION_PROFILE,
+    "Reggae": REGGAE_RESTORATION_PROFILE,
 }
 
 
@@ -1317,8 +2060,11 @@ def get_restoration_profile(subgenre: str = "unknown") -> dict:
     """Gibt das Restaurierungsprofil für ein Genre/Subgenre zurück.
 
     Unterstützte Genre-Label (exakt wie GermanSchlagerClassifier.genre_label):
-        'Schlager', 'Walzer', 'Marsch', 'Disco-Schlager', 'Jazz', 'Klassik',
-        'Oper', 'Rock', 'Volksmusik'
+        'Schlager', 'Walzer', 'Marsch', 'Disco-Schlager', 'Volksmusik',
+        'Jazz', 'Klassik', 'Oper', 'Rock',
+        'Pop', 'Blues', 'Soul/R&B', 'Country', 'Folk',
+        'Funk', 'Electronic', 'Hip-Hop', 'Metal',
+        'Latin', 'Gospel', 'Reggae'
     Unterstützte Subgenre-Keys (SCHLAGER_SUBGENRE_EXTENSIONS):
         'schunkel', 'walzer', 'marsch', 'discoschlager', 'schlager_1950s',
         'schlager_modern', 'volksmusik'
@@ -1332,6 +2078,7 @@ def get_restoration_profile(subgenre: str = "unknown") -> dict:
     key = subgenre.strip().lower()
     # Genre-Label → kanonisches Profil
     label_map: dict[str, dict] = {
+        # Schlager-Varianten
         "schlager": SCHLAGER_RESTORATION_PROFILE,
         "walzer": {**SCHLAGER_RESTORATION_PROFILE, **_SUBGENRE_EXTENSIONS.get("walzer", {})},
         "marsch": {**SCHLAGER_RESTORATION_PROFILE, **_SUBGENRE_EXTENSIONS.get("marsch", {})},
@@ -1340,10 +2087,32 @@ def get_restoration_profile(subgenre: str = "unknown") -> dict:
         "volksmusik": {**SCHLAGER_RESTORATION_PROFILE, **_SUBGENRE_EXTENSIONS.get("volksmusik", {})},
         "schlager_1950s": {**SCHLAGER_RESTORATION_PROFILE, **_SUBGENRE_EXTENSIONS.get("schlager_1950s", {})},
         "schlager_modern": {**SCHLAGER_RESTORATION_PROFILE, **_SUBGENRE_EXTENSIONS.get("schlager_modern", {})},
+        # Klassische Genres
         "jazz": JAZZ_RESTORATION_PROFILE,
         "klassik": KLASSIK_RESTORATION_PROFILE,
         "oper": OPER_RESTORATION_PROFILE,
         "rock": ROCK_RESTORATION_PROFILE,
+        # Neue Genres
+        "pop": POP_RESTORATION_PROFILE,
+        "blues": BLUES_RESTORATION_PROFILE,
+        "soul/r&b": SOUL_RNB_RESTORATION_PROFILE,
+        "soul_rnb": SOUL_RNB_RESTORATION_PROFILE,
+        "soul": SOUL_RNB_RESTORATION_PROFILE,
+        "r&b": SOUL_RNB_RESTORATION_PROFILE,
+        "rnb": SOUL_RNB_RESTORATION_PROFILE,
+        "country": COUNTRY_RESTORATION_PROFILE,
+        "folk": FOLK_RESTORATION_PROFILE,
+        "funk": FUNK_RESTORATION_PROFILE,
+        "electronic": ELECTRONIC_RESTORATION_PROFILE,
+        "dance": ELECTRONIC_RESTORATION_PROFILE,
+        "hip-hop": HIPHOP_RESTORATION_PROFILE,
+        "hiphop": HIPHOP_RESTORATION_PROFILE,
+        "hip hop": HIPHOP_RESTORATION_PROFILE,
+        "rap": HIPHOP_RESTORATION_PROFILE,
+        "metal": METAL_RESTORATION_PROFILE,
+        "latin": LATIN_RESTORATION_PROFILE,
+        "gospel": GOSPEL_RESTORATION_PROFILE,
+        "reggae": REGGAE_RESTORATION_PROFILE,
     }
     return dict(label_map.get(key, {}))  # leere Kopie wenn unbekannt
 

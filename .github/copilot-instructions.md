@@ -4,13 +4,13 @@
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
 > Rekonstruktions-Denkersystem.* Stand: März 2026 — Version **9.10.83**
 >
-> **instructions_version: 4.0** — komprimiert 30.03.2026
+> **instructions_version: 4.1** — komprimiert 04.04.2026
 >
 > Bump-Regel: neue RELEASE_MUST-Zeile, neues Gate oder §-Änderung → `instructions_version` inkrementieren + `docs/CHANGELOG_HISTORY.md` Eintrag.
 >
 > Aktuelle Testzahl: **~8919+ Pytest-IDs** (inkl. parametrisierter Tests; `def test_`-Funktionen ≈ 7271; alle grün)
 >
-> Stand: 30. März 2026 — §2.29c Restorative-Baseline-Capping + §9.7.11 ext phase_12 + timbre_authentizitaet Exclusions; 122 PMGG-Tests.
+> Stand: 4. April 2026 — §2.19 Genre-Classifier-Härtung (17 Genres, Disambiguation-Gates) + §2.29c Restorative-Baseline-Capping + §9.7.11 ext phase_12 + timbre_authentizitaet Exclusions; 122 PMGG-Tests.
 >
 > **§2.36 `LyricsGuidedEnhancement`** ist ab Version **9.10.x Pflicht** (bisher v10.0-Label entfernt).
 
@@ -382,6 +382,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print(); Logs auf Engli
 **Architektur — verboten:**
 - `from Aurik910... import` in `backend/core/` (keine UI-Importe im Backend)
 - `torch.load(..., map_location="cuda")` (CPU-only)
+- `sf.read(path)` / `librosa.load(path)` direkt für beliebige Audio-Formate → immer `load_audio_file(filepath)` aus `backend.file_import` (Kaskade: soundfile → pedalboard/FFmpeg → pydub). `sf.read(io.BytesIO(...))` auf interne PCM-Puffer bleibt erlaubt.
 
 **Metriken — verboten:** `pesq()`, `dnsmos()`, `nisqa()` (kein Musik-Training)
 
@@ -604,6 +605,7 @@ Auto-Budget: `max(4.0, min(12.0, RAM_GB/3))`. Überschreitung → DSP-Fallback +
 
 - **MRSA-Zonen (5 Pflicht-Zonen)**: sub_bass win=65536 / mid_low 16384 / mid 8192 / presence 1024 / air 128 — PGHI per Zone, Kreuzfade Hanning 10 ms. VERBOTEN: willkürliche FFT-Größen.
 - **Dithering Export**: POW-r Typ 3 (primär) → TPDF (fallback). VERBOTEN: Truncation ohne Dithering.
+- **MP3-Export**: LAME VBR V0 (`ffmpeg q:a=0`, bis 320 kbps adaptiv, ≈245 kbps Ø). VERBOTEN: CBR für Restaurierungsausgaben — CBR erzeugt Pre-Echo auf restaurierten Transienten (TDP/MDEM §8.3). GUI zeigt „bis 320 kbps, VBR".
 - **Print-Through (Phase 29, reel_tape)**: Bidirektionale LMS — alpha_pre ≠ alpha_post. VERBOTEN: Comb-Filter oder symmetrisches Modell.
 - **§2.12 PolyphonicSpeedCurveEstimator** (`quality_mode=maximum`): BasicPitch ONNX → Konfidenz-gewichteter Median ≥ 2 Voices → Savitzky-Golay. try_allocate("BasicPitch", 0.12) Pflicht. GrooveMetric-DTW ≤ 8 ms RMS nach Korrektur.
 - **Perceptuelle Pflicht-Messwerte**: LUFS-Diff ≤ 1 LU | Chroma Pearson ≥ 0.95 | Groove DTW ≤ 8 ms RMS | Transient Attack ≤ ±2 ms | MERT-Harmonizität ≥ 0.85.
@@ -733,7 +735,18 @@ Fehlermeldungen immer mit **Ursache** + **Lösungsvorschlag** auf Deutsch.
 | 8 | **Vorab-Hörprobe** | `QTimer.singleShot(1400, self._auto_preview_restored)` in `_on_item_finished_with_result`; spielt erste 5 s (= 5×48000 Samples) des restaurierten Audios; nur wenn kein anderer Playback läuft |
 
 ### Async-Analyse-Kette nach Datei-Öffnen
-4 Daemon-Threads: `_bg_load` (3-stufige Audio-Kaskade) → `_carrier_bg` → `_detect_era_genre_bg` → `_estimate_restorability_bg`. Alle via `_dispatch_to_gui` oder `QTimer.singleShot(0, ...)`. DefectScan erst in `BatchProcessingThread`.
+5 Daemon-Threads beim Datei-Öffnen: `_bg_load` (3-stufige Audio-Kaskade) → `_carrier_bg` → `_detect_era_genre_bg` → `_estimate_restorability_bg` → `_run_defect_scan_bg`. Alle via `_dispatch_to_gui` oder `QTimer.singleShot(0, ...)`.
+
+**Magic-Button-Synchronisations-Gate (v9.10.x):** Die Magic Buttons bleiben deaktiviert, bis **beide** Pre-Analyse-Threads abgeschlossen haben: `_run_defect_scan_bg` (Defektanalyse) **und** `_detect_era_genre_bg` (Ära/Genre). Erst wenn beide signalisiert haben, werden die Buttons via `_finalize_preanalysis()` freigegeben. Timeout-Fallback: `QTimer.singleShot(15_000, _preanalysis_timeout)` — danach Freigabe unabhängig vom Era/Genre-Status. Begründung: UV3 nutzt `_era_denoise_scale` (±10–12 % NR-Stärke) und Genre-`family_scalars` (vocal +10 %, transient +5 %) — die Empfehlung, die der Nutzer sieht, muss alle vier Signale enthalten.
+
+**Sync-Mechanismus in `_continue_file_loaded`:**
+- `_finalize_preanalysis()`: Buttons freigeben, Progress 100 %, Empfehlungstext setzen; Double-Fire-Guard via `_preanalysis_finalized_for`
+- `_try_signal_preanalysis_done(flag)`: Flag `"defect_scan"` | `"era_genre"` setzen; bei beiden → `_finalize_preanalysis()`; bei nur `"defect_scan"` → indeterminate Spinner `"⏳ Ära & Genre werden erkannt …"`
+- State-Reset in `_load_file`: `_preanalysis_flags: set[str] = set()`, `_preanalysis_timeout_fired = False`, `_preanalysis_finalized_for = ""`
+- `_run_defect_scan_bg._apply()`: kein direktes `_set_magic_buttons_enabled(True)` mehr — ruft `_try_signal_preanalysis_done("defect_scan")`
+- `_upd` in `_detect_era_genre_bg`: ruft `_try_signal_preanalysis_done("era_genre")` am Ende; No-badge-Pfad dispatcht `_signal_era_done_no_badge` statt sofort zu returnen
+
+**VERBOTEN:** `_set_magic_buttons_enabled(True)` direkt in `_run_defect_scan_bg._apply()` oder `_detect_era_genre_bg._upd()` — immer über `_try_signal_preanalysis_done()`.
 
 **`_carrier_bg` Pflicht-Invarianten (v9.10.97)**:
 - MUSS `get_medium_detector().detect(audio, sr, file_ext=Path(file_path).suffix)` nutzen — **NICHT** `medium_classifier.classify_medium()` (kein file_ext-Kontext → gibt bei codec-enkodiertem Analog-Material "unknown" zurück).
@@ -743,6 +756,33 @@ Fehlermeldungen immer mit **Ursache** + **Lösungsvorschlag** auf Deutsch.
 
 ### Bridge-Funktionen (vollständige Liste)
 `export_guard` | `get_audio_file_validator` | `get_defect_scanner` | `get_defect_type` | `get_quality_mode` | `get_restorer_classes` | `get_medium_classifier_fn` | `get_era_classifier_fn` | `get_genre_classifier_fn` | `get_restorability_estimator_class` | `get_carrier_forensics_fn` | `get_audio_exporter_class` | `cache_defect_result` | `get_cached_defect_result` | `clear_defect_cache` | `warmup_models_background`
+
+## §2.19 Genre-Classifier-Härtung (17 Genres, [RELEASE_MUST])
+
+`GermanSchlagerClassifier` MUSS im Non-Schlager-Zweig 16 Genres parallel scoren:
+`Rock`, `Jazz`, `Klassik`, `Oper`, `Pop`, `Blues`, `Soul/R&B`, `Country`, `Folk`,
+`Funk`, `Electronic`, `Hip-Hop`, `Metal`, `Latin`, `Gospel`, `Reggae`.
+
+**Open-Set-Invarianten (bindend):**
+- `best_score < _NON_SCHLAGER_MIN_SCORE` → `genre_label = "Unbekannt"`
+- `best_score - second_score < _OPEN_SET_MARGIN` → `genre_label = "Unbekannt"`
+- Bei Tests mit gezielten Top-Genre-Assertions müssen alle nicht getesteten neuen Scorer
+    auf Neutralwert (z. B. `0.10`) gepatcht werden, damit Onset-/Centroid-Artefakte keine
+    Margin-Kollisionen erzeugen.
+
+**Disambiguation-Gates (Pflicht):**
+- `Funk`: Centroid-Bonus nur in warmem Fenster `1800 < centroid_hz < 2800` (kein Rock/Metal-Bright-Bonus).
+- `Latin`: Hartes Gate `centroid_hz >= 1800`; BPM-kontextierte Centroid-Bewertung (`bpm>150` hell, `bpm<=150` dunkler).
+- `Electronic`: Bei `centroid_hz < 2200` zwingend `score=0.0`.
+- `Hip-Hop`: Bei `centroid_hz < 1400` zwingend `score=0.0`.
+- `Reggae`: Bei `bpm > 100` zwingend `score=0.0`.
+- `Folk`: DR-Guard bei `dr_db > 40` (Penalty gegen Klassik-Fehlzuordnung).
+- `Jazz`: Anti-Schlager-Guard `hsi >= 0.58` → `score=0.0`.
+
+**Nicht verhandelbar:**
+- Rock-Referenzprofil (`centroid≈3200`, `onset≈4.5`, `hsi≈0.58`, `dr≈20`, `bpm≈120`) darf nicht
+    durch `Funk`/`Latin` zu `open_set_unknown=True` degenerieren.
+- Jazz-Veto-Guard MUSS stabil bleiben (`n_active>=1` + `alt_genre="Jazz"` + `lang_de>=0.30`).
 
 ## §2.36 LyricsGuidedEnhancement (ab 9.10.x — PFLICHT)
 

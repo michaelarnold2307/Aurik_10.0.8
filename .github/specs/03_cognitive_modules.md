@@ -27,14 +27,11 @@
 | `SongCalibrationProfile` | `backend/core/song_calibration.py` | §2.31a: materialadaptives Kalibrierungsprofil (global_scalar + family_scalars) vor Phasenkette |
 | `EraAuthenticPerceptualCompletion` | `backend/core/era_authentic_completion.py` | Ära-authentische Wahrnehmungs-Ergänzung (Quell-BW < 10 kHz); Studio-2026-Kette Schritt 8 |
 | `LyricsGuidedEnhancement` | `backend/core/lyrics_guided_enhancement.py` | §2.36 RELEASE_MUST: Whisper-Tiny ONNX → Phonem-Alignment → ContentAwareProcessor |
-| `SongCalibrationProfile` | `backend/core/song_calibration.py` | §2.31a: materialadaptives Kalibrierungsprofil (global_scalar + family_scalars) vor Phasenkette |
-| `EraAuthenticPerceptualCompletion` | `backend/core/era_authentic_completion.py` | Ära-authentische Wahrnehmungs-Ergänzung (Quell-BW < 10 kHz); Studio-2026-Kette Schritt 8 |
 | `EraClassifier` | `plugins/era_classifier_plugin.py` | Ära 1890–2025 |
 | `GermanSchlagerClassifier` | `backend/core/genre_classifier.py` | 6-Schicht Zero-Shot |
 | `RestorabilityEstimator` | `backend/core/restorability_estimator.py` | < 5 s Vor-Assessment |
 | `IntroducedArtifactDetector` | `backend/core/introduced_artifact_detector.py` | Post-Restaurierungs-Artefakte |
 | `MicroDynamicsEnvelopeMorphing` | `backend/core/micro_dynamics_envelope_morphing.py` | Letzter Schritt vor Export |
-| `LyricsGuidedEnhancement` | `backend/core/lyrics_guided_enhancement.py` | §2.36 RELEASE_MUST: Whisper-Tiny ONNX → Phonem-Alignment → ContentAwareProcessor |
 | `MertPlugin` | `plugins/mert_plugin.py` | Music Understanding + Naturalness |
 | `DiffWavePlugin` | `plugins/diffwave_plugin.py` | AR-Inpainting für Dropout-Lücken |
 | `CrepePlugin` | `plugins/crepe_plugin.py` | Pitch-Tracking f₀, CNN-basiert |
@@ -185,7 +182,25 @@ class VoiceGender:
 | Brass / Trumpet / Saxophone | `phase_45_brass_enhancement` | ≥ 0.5 |
 | Drum / Percussion | `phase_51_drums_enhancement` | ≥ 0.5 |
 | Piano / Keyboard | `phase_52_piano_restoration` | ≥ 0.5 |
-| Singing voice / Vocals | `phase_19` + `phase_42` + `phase_43` + VocalAIEnhancement | ≥ 0.40 |
+| Singing voice / Vocals / Speech | `phase_19` + `phase_42` + `phase_43` + VocalAIEnhancement | Vocals/Singing ≥ **0.40** / Speech ≥ **0.35** (konservativere Aktivierung für Sprach-Audio) |
+
+**[RELEASE_MUST] §2.9a PANNs Soft-Activation-Regel (v9.10.100+):**
+Vokale PANNs-Konfidenz im Bereich **0.35–0.40** führt zu 50 % Vocal-Enhancement-Strength
+(kein Hard-Block). Hintergrund: Ensemble-Aufnahmen mit schwächem Vocalkanal liefern
+typischerweise 0.36–0.39 — ein harter Block bei 0.40 unterbindet Enhancement dort, wo
+es klanglich wichtigsten Einfluss hätte.
+
+```python
+# Implementierung in UV3 vor Phase-Aktivierung:
+vocal_prob = panns_result.get("Singing voice", 0.0)
+if vocal_prob >= 0.40:
+    vocal_strength_scale = 1.0        # Volle Aktivierung
+elif vocal_prob >= 0.35:
+    vocal_strength_scale = 0.5        # Soft-Aktivierung (50 % Strength)
+else:
+    vocal_strength_scale = 0.0        # Keine Vocal-Phasen aktiviert
+# vocal_strength_scale wird als kwargs an phase_19/42/43/VocalAIEnhancement übergeben.
+```
 
 ---
 
@@ -244,12 +259,183 @@ Nutzer-Meldung: „Deutscher Schlager erkannt — Akkordeon-Klangcharakter und S
 
 ---
 
+### §2.19.2 17-Genre-System (Non-Schlager, ab v9.10.103)
+
+`_compute_non_schlager_scores()` berechnet für alle 16 Non-Schlager-Genres einen Wert ∈ [0, 1]
+aus 5 akustischen Parametern:
+
+| Parameter | Quelle | Bedeutung |
+| --- | --- | --- |
+| `centroid_hz` | Spektraler Centroid (Librosa) | Helligkeit / Frequenzschwerpunkt |
+| `onset_rate` | Onset-Dichte (Librosa) | Anschlags- / Rhythmusdichte |
+| `hsi` | Harmonische Simplizität (CQT) | 1 = sehr schlicht; 0 = sehr komplex |
+| `dr_db` | Dynamikumfang (Crest-Faktor, dB) | Kompressionsgrad |
+| `bpm` | Tempo (Rhythmus-Tier) | Schläge pro Minute |
+
+**Best-Genre-Auswahl:**
+`best = max(scores)`. Genre wird nur vergeben wenn:
+
+- `best_score >= _NON_SCHLAGER_MIN_SCORE` (0.35) UND
+- `best_score - second_score >= _OPEN_SET_MARGIN` (0.08)
+
+Andernfalls: `genre_label="Unbekannt"`, `open_set_unknown=True`.
+
+### §2.19.3 Vollständige Genre-Liste (v9.10.103)
+
+| Label | gp_memory_key | Methode |
+| --- | --- | --- |
+| Schlager | `schlager` | `is_schlager=True` (§2.19) |
+| Rock | `rock` | `_score_rock` |
+| Jazz | `jazz` | `_score_jazz` |
+| Klassik | `orchestral` | `_score_classical` |
+| Oper | `opera` | `_score_oper` |
+| Pop | `pop` | `_score_pop` |
+| Blues | `blues` | `_score_blues` |
+| Soul/R&B | `soul_rnb` | `_score_soul_rnb` |
+| Country | `country` | `_score_country` |
+| Folk | `folk` | `_score_folk` |
+| Funk | `funk` | `_score_funk` |
+| Electronic | `electronic` | `_score_electronic` |
+| Hip-Hop | `hiphop` | `_score_hiphop` |
+| Metal | `metal` | `_score_metal` |
+| Latin | `latin` | `_score_latin` |
+| Gospel | `gospel` | `_score_gospel` |
+| Reggae | `reggae` | `_score_reggae` |
+
+### §2.19.4 [RELEASE_MUST] Genre-Diskriminierungs-Regeln (Anti-Falsifikations-Matrix, v9.10.103)
+
+**Zweck:** Verhindert, dass akustisch ähnliche Genres sich gegenseitig verdrücken.
+Alle Regeln sind kanonisch im Code-Kommentar jeder `_score_*`-Methode dokumentiert.
+
+#### Harte Centroid-Gates (früher Return 0.0)
+
+| Methode | Gate-Bedingung | Begründung |
+| --- | --- | --- |
+| `_score_latin` | `centroid_hz < 1800` → `return 0.0` | Kein Blechblas-Anteil → kein Latin |
+| `_score_electronic` | `centroid_hz < 2200` → `return 0.0` | Synthese ist inhärent hell; dunkler Centroid + niedriger DR = komprimiertes Akustik-Material, nicht Synthese |
+| `_score_hiphop` | `centroid_hz < 1400` → `return 0.0` | Keine Vokal-/Sample-Präsenz im Mid-Range |
+| `_score_reggae` | `bpm > 100` → `return 0.0` | Electronic/Hip-Hop bei 120+ BPM explizit ausgeschlossen |
+
+#### Centroid-Fenstergrenzen (Disambiguation Rock/Metal vs. Wärme-Genres)
+
+| Methode | Centroid-Regel | Rock/Metal-Ausschluss |
+| --- | --- | --- |
+| `_score_funk` | Centroid-Bonus NUR bei `1800 < centroid < 2800` Hz | centroid ≥ 2800 Hz = Rock/Metal-Distortion → kein Funk-Centroid-Bonus |
+| `_score_blues` | Pentatonischer Bereich `hsi ∈ [0.38, 0.65]` | Blues hat moderate Harmonie; Jazz-Komplexität (hsi < 0.38) oder Schlager-Simplizität (hsi > 0.65) schließen Blues aus |
+| `_score_soul_rnb` | hsi ∈ [0.38, 0.70] | Soul verwendet Gospel-Akkorde; zu simpel (> 0.70) = Schlager, zu komplex (< 0.38) = Jazz |
+
+#### BPM-Kontext-Abhängige Centroid-Bonus-Logik (Latin)
+
+**Problem:** Bossa Nova (bpm 80–130) hat dunklen Streicher-Centroid (~1800–2400 Hz).
+Salsa (bpm > 150) hat helle Blechbläser (~2200–4000 Hz). Rock-Signale (bpm 90–150 + centroid 2800+)
+würden ohne Kontextprüfung gleichwertig behandelt.
+
+**Regel in `_score_latin`:**
+
+```python
+# Salsa (bpm > 150): heller Blechblas-Spectral-Content erwartet
+if bpm > 150 and centroid_hz > 2200:
+    score += 0.25   # Salsa / Merengue Blechbläser
+# Bossa nova / Cumbia (bpm <= 150): dunkleres Streifen-Spektrum
+elif bpm <= 150 and 1800 < centroid_hz < 2500:
+    score += 0.25   # Bossa nova / Cumbia
+# centroid >= 2500 bei bpm <= 150 → marginal; Rock-Gebiet
+elif bpm <= 150 and centroid_hz >= 2500:
+    score += 0.05
+```
+
+**Ergebnis:** Latin(centroid=3200, bpm=120) = 0.80 vs. Rock(centroid=3200, bpm=120) = 0.90 → Margin 0.10 ✓
+
+#### Anti-Jazz-Guard (hsi-Gate)
+
+`_score_jazz`: wenn `hsi >= 0.58` → `return 0.0`.
+**Begründung:** Jazz-Harmonik (chromatische Akkorde, Tritond-Substitution) erzeugt niedrigen hsi.
+Ein Signal mit harmonisch einfachem Charakter (hsi ≥ 0.58) kann nicht Jazz sein.
+
+#### Folk-Klassik-Guard (DR-Penalty)
+
+`_score_folk`: wenn `dr_db > 40` → `score -= 0.25`.
+**Begründung:** Orchestermaterial hat sehr hohe DR (> 40 dB). Folk ist intim und kompakter.
+Ohne diese Regel klassifiziert der Scorer Streicherquartette als Folk.
+
+#### Unit-Test-Isolierungs-Invariante
+
+**[RELEASE_MUST]** Alle Unit-Tests, die gezielt ein bestimmtes Genre überprüfen, MÜSSEN
+alle anderen 12+ Score-Methoden über `monkeypatch.setattr` auf einen Neutralwert (z. B. `0.10`)
+patchen. Andernfalls können Audio-Synthesis-Artefakte (z. B. hohe Onset-Rate bei reinen
+Sinustönen durch Onset-Detektor-Störungen) benachbarte Scores hochziehen und die Margin-Prüfung
+zum offenen-Set kollabieren lassen.
+
+```python
+# Pflicht-Pattern für Isolation-Tests:
+for _method in ("_score_pop", "_score_blues", "_score_soul_rnb", "_score_country",
+                "_score_folk", "_score_funk", "_score_electronic", "_score_hiphop",
+                "_score_metal", "_score_latin", "_score_gospel", "_score_reggae"):
+    monkeypatch.setattr(clf, _method, lambda *_a, **_k: 0.10)
+```
+
+---
+
 ## §2.20 Genre-Restaurierungsprofile
+
+### [RELEASE_MUST] Aktivierungsregeln (v9.10.102)
+
+Jedes Genre-Profil wird NUR aktiviert wenn die zugehörige PANNs-Kategorie den Schwellwert
+überschreitet. Die Erkennung läuft parallel im `_run_genre_classifier`-Thread (§9.7.2 Spec 08).
+
+| Genre-Profil | Aktivierungsbedingung | Priorität |
+| --- | --- | --- |
+| `SCHLAGER_RESTORATION_PROFILE` | `GermanSchlagerClassifier.is_schlager=True` (§2.19) | 1 (höchste) |
+| `OPER_RESTORATION_PROFILE` | PANNs `"Opera"` ≥ 0.45 **oder** `"Singing"` ≥ 0.50 + `formant_pearson ≥ 0.90` | 2 |
+| `KLASSIK_RESTORATION_PROFILE` | PANNs `"Orchestra"` ≥ 0.45 **oder** `"Classical music"` ≥ 0.40 | 3 |
+| `JAZZ_RESTORATION_PROFILE` | PANNs `"Jazz"` ≥ 0.40 **oder** `"Blues"` ≥ 0.40 | 4 |
+| `ROCK_RESTORATION_PROFILE` | PANNs `"Rock music"` ≥ 0.40 **oder** `"Electric guitar"` + `"Drum"` beide ≥ 0.35 | 5 (niedrigste) |
+
+**Kollisionregel:** Nur ein Profil ist aktiv (höchste Priorität gewinnt). `SCHLAGER` schlägt immer alle anderen.
+
+**Kein-Profil-Fallback:** Kein PANNs-Score über Schwellwert → `DEFAULT_RESTORATION_PROFILE` (alle Felder auf Standardwerte).
+
+### [RELEASE_MUST] Genre-Profil-Override-Invariante gegenüber CausalDefectReasoner (v9.10.102)
+
+**Problem:** CausalDefectReasoner aktiviert `phase_20`/`phase_49` bei erkanntem `REVERB_EXCESS`.
+`KLASSIK_RESTORATION_PROFILE` setzt `phase_20_dereverb_enabled: False` — aber ohne Durchsetzungsregel
+überschreibt der Reasoner das Profil und vernichtet den Konzertsaal-RT60.
+
+**Bindende Durchsetzungsregel:**
+UV3 MUSS unmittelbar nach `CausalDefectReasoner`-Auswertung, vor der Phasenausführung,
+alle `*_enabled: False`-Keys des aktiven Genre-Profils als **harten Override** auf den
+Phasenplan anwenden. Genre-Profil hat Priorität über CausalDefectReasoner für diese Phasen.
+
+```python
+# Pflicht-Pattern in UV3._execute_pipeline() (nach causal_result, vor Phase-Exec):
+if active_genre_profile:
+    for key, val in active_genre_profile.items():
+        if key.endswith("_enabled") and val is False:
+            phase_id = key.replace("_enabled", "")   # z. B. "phase_20_dereverb"
+            if phase_id in planned_phases:
+                planned_phases.remove(phase_id)
+                logger.info(
+                    "genre_profile_override: phase=%s disabled by genre=%s",
+                    phase_id, active_genre_profile["gp_memory_key"]
+                )
+```
+
+**Invariante:** `*_enabled: False` im Genre-Profil = absolutes Verbot dieser Phase, unabhängig
+vom Defekt-Score. Ausnahme: Wenn ein Defekt-Score > 0.85 (kritisch) vorliegt, darf UV3
+eine einmalige Warn-Meldung ins Log schreiben und die Phase trotzdem überspringen — die
+Entscheidung des Genre-Profils ist final. Nur ein manueller Studio-2026-Modus darf diesen
+Override aufheben (kein automatischer Bypass).
 
 ```python
 JAZZ_RESTORATION_PROFILE = {
     "groove_dtw_max_ms": 4.0,      # Jazz-Timing heilig
-    "tonal_center_threshold": 0.92,
+    "tonal_center_threshold": 0.92, # PMGG-intern (phase-level Regression Guard) — KEIN Export-Gate-Override!
+                                    # Musikalisch korrekt für Jazz: Blue Notes (♭3/♭5/♭7), Tritond-Substitution,
+                                    # modale Harmonik und chromatische Stimmführung lösen K-S-Detektions-
+                                    # änderungen aus, die KEINE echten Regressionen sind.
+                                    # INVARIANTE: MusicalGoalsChecker erzwingt immer Restoration ≥ 0.95 /
+                                    #   Studio 2026 ≥ 0.97 — dieser Wert (0.92) begrenzt NUR den
+                                    #   PMGG-Retry-Auslöser während der Phasenausführung.
     "harmonic_exciter_enabled": False,
     "dereverb_strength_cap": 0.30,
     "compression_ratio_cap": 1.8,   # Jazz lebt von Dynamik
@@ -258,7 +444,7 @@ JAZZ_RESTORATION_PROFILE = {
 
 KLASSIK_RESTORATION_PROFILE = {
     "phase_20_dereverb_enabled": False,
-    "phase_49_dereverb_enabled": False,  # Konzertsaal-RT60 heilig
+    "phase_49_dereverb_enabled": False,  # Konzertsaal-RT60 heilig — Genre-Override aktiv (s. o.)
     "transient_preservation_strength": 1.0,
     "compression_ratio_cap": 1.3,
     "spatial_depth_threshold": 0.82,
@@ -277,7 +463,7 @@ OPER_RESTORATION_PROFILE = {
     "deessing_target_hz": 7000,
     "deessing_strength_cap": 0.35,
     "formant_pearson_threshold": 0.97,
-    "phase_20_dereverb_enabled": False,
+    "phase_20_dereverb_enabled": False,  # Opernhall-Raum heilig — Genre-Override aktiv (s. o.)
     "vibrato_rate_tolerance_hz": 0.20,
     "de_esser_voice_adaptive": True,
     "gp_memory_key": "opera",
@@ -295,7 +481,9 @@ PERCUSSIVE_ONLY_PHASES: list[str] = [
     "phase_01_click_removal", "phase_27_click_pop_removal",
 ]
 # Rekombination: audio_out = audio_p_processed + audio_h_processed
-# via OLA-Crossfade (Hanning, 10 ms)
+# via OLA-Crossfade (Hanning 480 Samples = 10 ms @ 48 kHz, Hop = 240 Samples)
+# COLA-Invariante: Hop = fsize/2 = 240 Samples (VERBOTEN: Hop > 240 Samples)
+# → Hanning-Fenster: w[n]² + w[n+hop]² = 1.0 für alle n — kein Amplitudendip
 # Safety-Net: falls DTW > 8 ms RMS → audio_p_original direkt übernehmen
 # Laufzeit: ≤ 0.8 s / Minute Audio
 ```
@@ -322,7 +510,11 @@ VOICING_CONFIDENCE_MIN: float = 0.60
 ## §2.30 MicroDynamicsEnvelopeMorphing (MDEM)
 
 ```python
-MAX_GAIN_LU: float = 3.0          # (Restoration-Modus: 2.0 LU)
+MAX_GAIN_LU_RESTORATION: float = 4.0   # Restoration-Modus: ±4.0 LU (konservativ, Originalcharakter)
+MAX_GAIN_LU_STUDIO:      float = 6.0   # Studio-2026-Modus: ±6.0 LU (modern, stärker, frischer)
+# Normative Quelle: copilot-instructions §8.3 + Spec 07 §8.3 Zwei-Skalen-Dynamik-Schutz.
+# VERBOTEN: einheitliches MAX_GAIN_LU = 3.0 / 2.0 LU — ignoriert die bewusste
+#   Modus-Differenzierung (Studio 2026 soll mehr Dynamik-Spielraum als Restoration haben).
 FRAME_SIZE_SAMPLES: int = 19200   # 400 ms @ 48000 Hz
 HOP_SIZE_SAMPLES: int = 9600      # 200 ms (50 % Überlappung)
 PEARSON_TARGET: float = 0.93
@@ -332,6 +524,21 @@ MIN_LEVEL_LUFS: float = -60.0     # Stille-Segmente: G[k] = 0
 # Glättung: Savitzky-Golay(G, window=7, polyorder=2)
 # True-Peak-Prüfung nach Morphing: −1.0 dBTP zwingend
 ```
+
+**[RELEASE_MUST] MDEM tail-gap-Invariante (v9.10.100):**
+`gain_envelope` MUSS lückenlos alle Samples bis `n-1` abdecken. Die Standard-Frame-Formel
+`(n - fsize) // hop + 1` lässt bis zu `hop - 1 = 9599` Samples (⋜200 ms) am Songschluss
+unbehandelt (gain = 1.0). Fix:
+
+```python
+# Nach dem gain_envelope-Loop: letzten Gain-Wert bis Signalende fortschreiben
+_last_covered = min((n_frames - 1) * hop + fsize, n)
+if _last_covered < n and _last_covered > 0:
+    gain_envelope[_last_covered:] = gain_envelope[_last_covered - 1]
+```
+
+Begründung: Die letzten ~200 ms eines Songs (Fade-out, pp-Ausklang) dürfen kein abruptes
+Ende des LUFS-Morphings erfahren. `gain_envelope[…] = 1.0` ist ein impliziter Pegel-Sprung.
 
 ---
 
@@ -438,7 +645,8 @@ unterschiedliche Spektral-/Zeit-Behandlung.
 # ✅ = lokal gebündelt, kein Download, out-of-the-box
 
 # Vocoder & Synthese
-plugins/vocos_plugin.py              → ✅ PRIMÄR (Vocos 24kHz ONNX, 52 MB)
+plugins/vocos_plugin.py              → ✅ PRIMÄR (Vocos 48 kHz nativ, Kaskade: 48k→44.1k→24k)
+plugins/bigvgan_v2_plugin.py         → ✅ SEKUNDÄR (BigVGAN-v2, 0,4 GB ONNX/PyTorch, Studio-2026, CPU-only)
 plugins/hifigan_plugin.py            → ✅ Tertiär-Fallback (3,6 MB ONNX)
 
 # Stem-Separation
