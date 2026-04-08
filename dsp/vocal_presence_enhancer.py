@@ -578,6 +578,7 @@ if __name__ == "__main__":
 
     # Load audio
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -599,28 +600,28 @@ if __name__ == "__main__":
     logger.info("\n[Harmonic Enhancement]")
     harm = report["harmonic_enhancement"]
     if "fundamental_hz" in harm:
-        logger.info("  Fundamental:       %.1f Hz", harm['fundamental_hz'])
-        logger.info("  Harmonics enhanced: %s", harm['harmonics_enhanced'])
-        logger.info("  Gain applied:      %.1f dB", harm['gain_db'])
+        logger.info("  Fundamental:       %.1f Hz", harm["fundamental_hz"])
+        logger.info("  Harmonics enhanced: %s", harm["harmonics_enhanced"])
+        logger.info("  Gain applied:      %.1f dB", harm["gain_db"])
 
     logger.info("\n[Broadcast Clarity]")
     clar = report["broadcast_clarity"]
     if "improvement_db" in clar:
-        logger.info("  Frequency:         %.0f Hz", clar['frequency_hz'])
-        logger.info("  Improvement:       %.1f dB", clar['improvement_db'])
+        logger.info("  Frequency:         %.0f Hz", clar["frequency_hz"])
+        logger.info("  Improvement:       %.1f dB", clar["improvement_db"])
 
     logger.info("\n[Air Band]")
     air = report["air_band"]
     if "frequency_hz" in air:
-        logger.info("  Frequency:         %.0f Hz", air['frequency_hz'])
-        logger.info("  Gain:              %.1f dB", air['gain_db'])
-        logger.info("  Type:              %s", air['type'])
+        logger.info("  Frequency:         %.0f Hz", air["frequency_hz"])
+        logger.info("  Gain:              %.1f dB", air["gain_db"])
+        logger.info("  Type:              %s", air["type"])
 
     logger.info("\n[Vocal Saturation]")
     sat = report["vocal_saturation"]
     if "harmonics_added" in sat:
-        logger.info("  Harmonics added:   %.4f", sat['harmonics_added'])
-        logger.info("  Mix:               %s", format(sat['mix'], '.1%'))
+        logger.info("  Harmonics added:   %.4f", sat["harmonics_added"])
+        logger.info("  Mix:               %s", format(sat["mix"], ".1%"))
 
     logger.info(str("=" * 70))
 

@@ -18,22 +18,22 @@ import numpy as np
 import pytest
 
 from backend.core.source_fidelity_reconstructor import (
-    SourceFidelityTarget,
-    SourceFidelityReconstructor,
-    SourceFidelityEQProcessor,
     _ERA_MIC_TYPE,
-    _MIC_PRESENCE_CENTER_HZ,
     _GENERATION_LOSS_DB_PER_GEN,
     _MAX_CORRECTION_DB,
+    _MIC_PRESENCE_CENTER_HZ,
+    SourceFidelityEQProcessor,
+    SourceFidelityReconstructor,
+    SourceFidelityTarget,
     _lookup_era_str,
-    get_source_fidelity_reconstructor,
     get_source_fidelity_eq_processor,
+    get_source_fidelity_reconstructor,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def sfr() -> SourceFidelityReconstructor:
@@ -80,6 +80,7 @@ def _stereo(seconds: float = 0.5, sr: int = 48000) -> np.ndarray:
 # § 1  Neue Felder in SourceFidelityTarget
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSourceFidelityTargetNewFields:
     def test_era_mic_type_default(self):
         t = SourceFidelityTarget()
@@ -107,6 +108,7 @@ class TestSourceFidelityTargetNewFields:
 # ─────────────────────────────────────────────────────────────────────────────
 # § 2  Tabellen-Integrität
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestSOTATables:
     def test_era_mic_type_covers_decades(self):
@@ -146,12 +148,13 @@ class TestSOTATables:
                 assert db >= 0.0, f"{mat}@{freq_hz}: loss must be non-negative"
 
     def test_max_correction_constant_12(self):
-        assert _MAX_CORRECTION_DB == pytest.approx(12.0)
+        assert pytest.approx(12.0) == _MAX_CORRECTION_DB
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # § 3  _lookup_era_str
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestLookupEraStr:
     def test_exact_match(self):
@@ -172,6 +175,7 @@ class TestLookupEraStr:
 # ─────────────────────────────────────────────────────────────────────────────
 # § 4  compute_correction_curve_db
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestComputeCorrectionCurveDb:
     def test_output_shape_matches_freqs(self, sfr):
@@ -243,6 +247,7 @@ class TestComputeCorrectionCurveDb:
 # § 5  SourceFidelityEQProcessor
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSourceFidelityEQProcessor:
     def test_singleton_returns_same_object(self):
         p1 = get_source_fidelity_eq_processor()
@@ -297,7 +302,7 @@ class TestSourceFidelityEQProcessor:
         audio = _mono()
         target = SourceFidelityTarget(
             confidence=0.90,
-            reconstruction_strength=0.10,   # < 0.15 threshold
+            reconstruction_strength=0.10,  # < 0.15 threshold
             transfer_generation_count=5,
             material_key="shellac",
             era_decade=1930,
@@ -324,6 +329,7 @@ class TestSourceFidelityEQProcessor:
 # ─────────────────────────────────────────────────────────────────────────────
 # § 6  SourceFidelityReconstructor.estimate() erzeugt neue Felder
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestEstimateNewFields:
     def test_era_1930_gives_ribbon_mic(self, sfr):
@@ -360,14 +366,16 @@ class TestEstimateNewFields:
 # § 7  Phase 38 ära-bewusste Presence-Center
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestPhase38EraPresence:
     """Prüft dass Phase 38 den Presence-Center aus song_calibration_profile nutzt."""
 
     @staticmethod
     def _run_phase_38(sr: int = 48000, sfr_cal: dict | None = None) -> dict:
         """Führt Phase 38 mit minimal-Konfiguration aus und gibt config zurück."""
-        from backend.core.phases.phase_38_presence_boost import PresenceBoost
         import unittest.mock as mock
+
+        from backend.core.phases.phase_38_presence_boost import PresenceBoost
 
         phase = PresenceBoost()
         audio = np.zeros(sr * 1, dtype=np.float32)
@@ -428,7 +436,7 @@ class TestPhase38EraPresence:
         cal_normal = {
             "source_fidelity_presence_hz_lower": 3500.0,
             "source_fidelity_presence_hz_upper": 6000.0,
-            "source_fidelity_harmonic_density": 1.0,   # normal
+            "source_fidelity_harmonic_density": 1.0,  # normal
             "source_fidelity_era_mic_type": "ribbon",
         }
         cfg_sparse = self._run_phase_38(sfr_cal=cal_sparse)
@@ -443,29 +451,30 @@ class TestPhase38EraPresence:
 # § 8  Phase 39 ära-bewusste Air-Ceiling
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestPhase39EraCeiling:
     """Prüft dass Phase 39 shelf_freq durch source_fidelity_bandwidth_target_hz deckelt."""
 
     @staticmethod
     def _run_phase_39(sr: int = 48000, sfr_cal: dict | None = None) -> dict:
+        pass
+
         from backend.core.phases.phase_39_air_band_enhancement import AirBandEnhancement
-        import unittest.mock as mock
 
         phase = AirBandEnhancement()
         t = np.linspace(0, 1.0, sr, dtype=np.float32)
         audio = (0.3 * np.sin(2 * np.pi * 1000 * t)).astype(np.float32)
 
         kwargs: dict = {"song_calibration_profile": sfr_cal or {}}
-        captured_shelf_freq = {}
 
-        original_process = phase._apply_shelf_filter if hasattr(phase, "_apply_shelf_filter") else None
+        phase._apply_shelf_filter if hasattr(phase, "_apply_shelf_filter") else None
 
         # Patche process() selbst leicht um config zu extrahieren
         original_process_method = phase.process
-        captured_config = {}
 
         def capture_process(in_audio, in_sr, strength=0.5, **kw):
-            import copy
+            pass
+
             # Build config same as normal, then capture mid-way via kwargs tracking
             return original_process_method(in_audio, in_sr, strength=strength, **kw)
 
@@ -518,6 +527,7 @@ class TestPhase39EraCeiling:
 # ─────────────────────────────────────────────────────────────────────────────
 # § 9  Phase 06 EQ-Prozessor-Integration
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestPhase06EQIntegration:
     """Smoke-Tests: Phase 06 mit SourceFidelityEQ-Aktivierung."""

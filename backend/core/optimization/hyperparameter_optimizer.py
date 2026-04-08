@@ -506,9 +506,9 @@ class MultiMaterialOptimizer:
         results = {}
 
         for material in self.material_types:
-            logger.info("\n%s", '=' * 80)
+            logger.info("\n%s", "=" * 80)
             logger.info("Optimizing %s", material)
-            logger.info("%s\n", '=' * 80)
+            logger.info("%s\n", "=" * 80)
 
             optimizer = self.optimizers[material]
             dataset = datasets.get(material, [])
@@ -546,8 +546,8 @@ class MultiMaterialOptimizer:
             json.dump(summary, f, indent=2)
 
         logger.info("\nOptimization summary saved: %s", output_path)
-        logger.info("Average quality score: %.4f", summary['overall_stats']['avg_quality_score'])
-        logger.info("Best material: %s", summary['overall_stats']['best_material'])
+        logger.info("Average quality score: %.4f", summary["overall_stats"]["avg_quality_score"])
+        logger.info("Best material: %s", summary["overall_stats"]["best_material"])
 
 
 # Example usage
@@ -567,5 +567,5 @@ if __name__ == "__main__":
     results = optimizer.optimize(evaluation_dataset=dummy_dataset, process_function=dummy_process)
 
     logger.debug("\nOptimization completed!")
-    logger.debug("Best score: %.4f", results['best_score'])
-    logger.debug("Best params: %s", results['best_params'])
+    logger.debug("Best score: %.4f", results["best_score"])
+    logger.debug("Best params: %s", results["best_params"])

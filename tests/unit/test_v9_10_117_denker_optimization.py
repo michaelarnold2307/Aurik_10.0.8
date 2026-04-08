@@ -18,11 +18,9 @@ era_decade, material) to Repair + Reconstruction stages.
 
 from __future__ import annotations
 
-import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 # ── ReparaturDenker Tests ─────────────────────────────────────────────────
 
@@ -32,6 +30,7 @@ class TestReparaturDenkerMaterialProfiles:
 
     def _make_denker(self):
         from denker.reparatur_denker import ReparaturDenker
+
         return ReparaturDenker()
 
     def test_shellac_profile_applied(self):
@@ -101,6 +100,7 @@ class TestReparaturDenkerMaterialProfiles:
     def test_all_profiles_have_four_keys(self):
         """Every material profile has all 4 required threshold keys."""
         from denker.reparatur_denker import ReparaturDenker
+
         required_keys = {"click_iqr", "click_kernel_ms", "clip_threshold", "hum_detect_db"}
         for mat, profile in ReparaturDenker._MATERIAL_PROFILES.items():
             assert required_keys <= set(profile.keys()), f"Material '{mat}' missing keys"
@@ -108,6 +108,7 @@ class TestReparaturDenkerMaterialProfiles:
     def test_shellac_iqr_less_than_cd(self):
         """Shellac must have lower IQR than CD (more aggressive)."""
         from denker.reparatur_denker import ReparaturDenker
+
         shellac_iqr = ReparaturDenker._MATERIAL_PROFILES["shellac"]["click_iqr"]
         cd_iqr = ReparaturDenker._MATERIAL_PROFILES["cd_digital"]["click_iqr"]
         assert shellac_iqr < cd_iqr
@@ -115,6 +116,7 @@ class TestReparaturDenkerMaterialProfiles:
     def test_analog_hum_more_sensitive_than_digital(self):
         """Analog materials need more sensitive hum detection (higher dB value)."""
         from denker.reparatur_denker import ReparaturDenker
+
         shellac_hum = ReparaturDenker._MATERIAL_PROFILES["shellac"]["hum_detect_db"]
         cd_hum = ReparaturDenker._MATERIAL_PROFILES["cd_digital"]["hum_detect_db"]
         # Higher dB = more sensitive (closer to 0)
@@ -126,6 +128,7 @@ class TestReparaturDenkerEraAdaptive:
 
     def _make_denker(self):
         from denker.reparatur_denker import ReparaturDenker
+
         return ReparaturDenker()
 
     def test_era_pre1940_hum_sensitivity(self):
@@ -164,6 +167,7 @@ class TestReparaturDenkerChirurgicalRepair:
 
     def _make_denker(self):
         from denker.reparatur_denker import ReparaturDenker
+
         return ReparaturDenker()
 
     def test_click_locations_restrict_mask(self):
@@ -184,7 +188,8 @@ class TestReparaturDenkerChirurgicalRepair:
             "click": [(0.4, 0.6)],
         }
         result = d.repariere(
-            audio, sr,
+            audio,
+            sr,
             remove_clicks=True,
             remove_hum=False,
             repair_clipping=False,
@@ -202,7 +207,8 @@ class TestReparaturDenkerChirurgicalRepair:
         for i in range(0, sr, 5000):
             audio[i] = 0.95
         result = d.repariere(
-            audio, sr,
+            audio,
+            sr,
             remove_clicks=True,
             remove_hum=False,
             repair_clipping=False,
@@ -216,7 +222,8 @@ class TestReparaturDenkerChirurgicalRepair:
         sr = 48000
         audio = np.random.randn(sr).astype(np.float32) * 0.1
         result = d.repariere(
-            audio, sr,
+            audio,
+            sr,
             remove_clicks=True,
             remove_hum=False,
             repair_clipping=False,
@@ -230,6 +237,7 @@ class TestReparaturDenkerBackwardCompat:
 
     def _make_denker(self):
         from denker.reparatur_denker import ReparaturDenker
+
         return ReparaturDenker()
 
     def test_basic_call_without_new_params(self):
@@ -268,7 +276,8 @@ class TestReparaturDenkerBackwardCompat:
         d = self._make_denker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.repariere(
-            audio, 48000,
+            audio,
+            48000,
             defect_scores={"click": 0.7, "hum": 0.3},
         )
         assert result.audio is not None
@@ -283,12 +292,14 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_material_gap_configs_exist(self):
         """All analog materials have gap configs."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         required = {"shellac", "vinyl", "tape", "reel_tape", "cassette", "wax_cylinder"}
         assert required <= set(RekonstruktionsDenker._MATERIAL_GAP_CONFIGS.keys())
 
     def test_shellac_shorter_gaps(self):
         """Shellac has shorter max gap than tape."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         shellac_max = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["shellac"]["max_gap_duration_ms"]
         tape_max = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["tape"]["max_gap_duration_ms"]
         assert shellac_max < tape_max
@@ -296,6 +307,7 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_tape_longer_blend(self):
         """Tape uses longer blend for smoother transitions."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         shellac_blend = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["shellac"]["blend_ms"]
         tape_blend = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["tape"]["blend_ms"]
         assert tape_blend > shellac_blend
@@ -303,6 +315,7 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_shellac_higher_silence_threshold(self):
         """Shellac has higher silence threshold (more noise floor)."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         shellac_thr = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["shellac"]["silence_threshold_db"]
         reel_thr = RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["reel_tape"]["silence_threshold_db"]
         assert shellac_thr > reel_thr
@@ -310,6 +323,7 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_all_configs_have_four_keys(self):
         """Every gap config has all required keys."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         required_keys = {"silence_threshold_db", "min_gap_duration_ms", "max_gap_duration_ms", "blend_ms"}
         for mat, cfg in RekonstruktionsDenker._MATERIAL_GAP_CONFIGS.items():
             assert required_keys <= set(cfg.keys()), f"Material '{mat}' missing gap config keys"
@@ -317,6 +331,7 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_material_adaptive_reconstructor_called(self):
         """_get_reconstructor(material='tape') uses material-adaptive config."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         # _build_reconstructor should be called with material
         with patch.object(d, "_build_reconstructor", return_value=None) as mock_build:
@@ -326,6 +341,7 @@ class TestRekonstruktionsDenkerMaterialConfig:
     def test_unknown_material_uses_default(self):
         """Unknown material falls back to default config."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         with patch.object(d, "_build_reconstructor", return_value=None) as mock_build:
             d._get_reconstructor(material="unknown_material")
@@ -340,11 +356,13 @@ class TestRekonstruktionsDenkerNewParams:
     def test_defect_locations_param_accepted(self):
         """defect_locations param is accepted without error."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         # Digital material → skip GapReconstructor entirely (no error)
         result = d.rekonstruiere(
-            audio, 48000,
+            audio,
+            48000,
             material_hint="cd_digital",
             defect_locations={"dropout": [(0.5, 0.7)]},
         )
@@ -353,10 +371,12 @@ class TestRekonstruktionsDenkerNewParams:
     def test_era_decade_param_accepted(self):
         """era_decade param is accepted without error."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.rekonstruiere(
-            audio, 48000,
+            audio,
+            48000,
             material_hint="mp3_high",
             era_decade=1990,
         )
@@ -365,6 +385,7 @@ class TestRekonstruktionsDenkerNewParams:
     def test_digital_guard_still_works(self):
         """Digital material still skips GapReconstructor."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.rekonstruiere(audio, 48000, material_hint="cd_digital")
@@ -374,6 +395,7 @@ class TestRekonstruktionsDenkerNewParams:
     def test_backward_compat_no_new_params(self):
         """Basic rekonstruiere() call without new params still works."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.rekonstruiere(audio, 48000, material_hint="mp3_high")
@@ -389,10 +411,12 @@ class TestAurikDenkerContextForwarding:
     def test_reparatur_denker_accepts_new_params(self):
         """ReparaturDenker.repariere() accepts defect_scores, defect_locations, era_decade."""
         from denker.reparatur_denker import ReparaturDenker
+
         d = ReparaturDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.repariere(
-            audio, 48000,
+            audio,
+            48000,
             material="vinyl",
             defect_scores={"click": 0.7, "hum": 0.5},
             defect_locations={"click": [(0.1, 0.2), (0.5, 0.6)]},
@@ -404,10 +428,12 @@ class TestAurikDenkerContextForwarding:
     def test_rekonstruktions_denker_accepts_new_params(self):
         """RekonstruktionsDenker.rekonstruiere() accepts defect_locations, era_decade."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         d = RekonstruktionsDenker()
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = d.rekonstruiere(
-            audio, 48000,
+            audio,
+            48000,
             material_hint="mp3_high",
             defect_locations={"dropout": [(0.5, 0.8)]},
             era_decade=1995,
@@ -424,6 +450,7 @@ class TestMaterialProfileMonotonicity:
     def test_iqr_ordering_analog_to_digital(self):
         """IQR should increase from shellac → vinyl → tape → CD."""
         from denker.reparatur_denker import ReparaturDenker
+
         p = ReparaturDenker._MATERIAL_PROFILES
         assert p["shellac"]["click_iqr"] < p["vinyl"]["click_iqr"]
         assert p["vinyl"]["click_iqr"] < p["tape"]["click_iqr"]
@@ -432,6 +459,7 @@ class TestMaterialProfileMonotonicity:
     def test_hum_db_ordering(self):
         """Hum sensitivity should decrease from shellac → CD."""
         from denker.reparatur_denker import ReparaturDenker
+
         p = ReparaturDenker._MATERIAL_PROFILES
         # Higher dB = more sensitive (closer to 0)
         assert p["shellac"]["hum_detect_db"] > p["vinyl"]["hum_detect_db"]
@@ -440,6 +468,7 @@ class TestMaterialProfileMonotonicity:
     def test_clip_threshold_ordering(self):
         """Clip threshold should increase from degraded → clean."""
         from denker.reparatur_denker import ReparaturDenker
+
         p = ReparaturDenker._MATERIAL_PROFILES
         assert p["wax_cylinder"]["clip_threshold"] < p["cd_digital"]["clip_threshold"]
 
@@ -453,21 +482,25 @@ class TestGapConfigPlausibility:
     def test_shellac_max_gap_physical_limit(self):
         """Shellac mechanical needle jumps: max ~200 ms."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         assert RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["shellac"]["max_gap_duration_ms"] <= 300
 
     def test_tape_max_gap_allows_long_dropouts(self):
         """Tape dropouts can be up to 2 seconds."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         assert RekonstruktionsDenker._MATERIAL_GAP_CONFIGS["tape"]["max_gap_duration_ms"] >= 1000
 
     def test_blend_ms_positive(self):
         """All blend values must be positive."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         for mat, cfg in RekonstruktionsDenker._MATERIAL_GAP_CONFIGS.items():
             assert cfg["blend_ms"] > 0, f"Material '{mat}' has non-positive blend_ms"
 
     def test_silence_thresholds_negative(self):
         """All silence thresholds must be negative dB values."""
         from denker.rekonstruktions_denker import RekonstruktionsDenker
+
         for mat, cfg in RekonstruktionsDenker._MATERIAL_GAP_CONFIGS.items():
             assert cfg["silence_threshold_db"] < 0, f"Material '{mat}' has non-negative silence threshold"

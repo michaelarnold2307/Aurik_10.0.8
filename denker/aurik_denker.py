@@ -27,6 +27,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -162,6 +163,7 @@ class AurikErgebnis:
     fail_reason: str | None = None
     # §Dach: Musikalischer Globalplan — stilbewusstes Restaurierungsportrait
     global_plan: dict[str, Any] | None = field(default=None)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         """Serialisierungsformat für Logging und Persistenz."""
@@ -185,6 +187,7 @@ class AurikErgebnis:
             "degradation_status": self.degradation_status,
             "fail_reason": self.fail_reason,
             "global_plan": self.global_plan,
+            "metadata": dict(self.metadata),
         }
 
 
@@ -336,8 +339,7 @@ class AurikDenker:
             if kwargs.get("cached_restorability_result") is None and getattr(_pre, "restorability", None) is not None:
                 kwargs["cached_restorability_result"] = _pre.restorability
             logger.debug(
-                "AurikDenker.denke(): pre_analysis_result entpackt "
-                "(era=%s genre=%s defects=%s medium=%s rest=%s)",
+                "AurikDenker.denke(): pre_analysis_result entpackt (era=%s genre=%s defects=%s medium=%s rest=%s)",
                 "✓" if kwargs.get("cached_era_result") else "—",
                 "✓" if kwargs.get("cached_genre_result") else "—",
                 "✓" if kwargs.get("cached_defect_result") else "—",
@@ -736,7 +738,9 @@ class AurikDenker:
         chain_info: dict[str, Any] = {}
         try:
             kette = get_tontraegerkette_denker().analysiere(
-                aktuelles_audio, sr, file_path=input_path,
+                aktuelles_audio,
+                sr,
+                file_path=input_path,
                 cached_medium_result=cached_medium_result,
             )
             chain_info = kette.as_dict()
@@ -900,6 +904,7 @@ class AurikDenker:
         _rest_variant: str | None = None
         _rest_musical_goals: dict[str, float] = {}
         _rest_goals_passed: int = 0
+        _rest_metadata: dict[str, Any] = {}
         _gaps_found: int = 0
         _gaps_repaired: int = 0
         _gap_total_ms: float = 0.0
@@ -979,6 +984,7 @@ class AurikDenker:
                         # §2.39 OOM-Recovery: bei vorhandenem Checkpoint direkte
                         # Wiederaufnahme in UV3 (ohne erneute Reparatur-/Rekonstruktionsstufen).
                         if recovery_checkpoint is not None:
+
                             def _resume_cb(pct: int, msg: str, elapsed: float = 0.0) -> None:
                                 if pct <= 19:
                                     d = 13 + int(pct * 7 / 19) if pct > 0 else 13
@@ -1167,6 +1173,20 @@ class AurikDenker:
                 if _err_box:
                     raise _err_box[0]  # type: ignore[misc]
                 rest = _result_box[0]
+                if isinstance(rest, np.ndarray):
+                    rest = SimpleNamespace(
+                        audio=np.asarray(rest, dtype=np.float32),
+                        phases_executed=[],
+                        warnings=[],
+                        quality_estimate=0.0,
+                        rt_factor=0.0,
+                        confidence=0.85,
+                        rollback_triggered=False,
+                        winning_variant=None,
+                        musical_goals={},
+                        goals_passed=0,
+                        metadata={},
+                    )
                 aktuelles_audio = rest.audio
                 phases_executed.extend(rest.phases_executed or [])
                 warnings.extend(rest.warnings or [])
@@ -1177,6 +1197,8 @@ class AurikDenker:
                 _raw_goals = getattr(rest, "musical_goals", None)
                 _rest_musical_goals = dict(_raw_goals) if _raw_goals else {}
                 _rest_goals_passed = int(getattr(rest, "goals_passed", 0))
+                _meta_raw = getattr(rest, "metadata", None)
+                _rest_metadata = dict(_meta_raw) if isinstance(_meta_raw, dict) else {}
                 # §Dach-Enrichment: era_decade aus RestorationResult in Globalplan übernehmen
                 # (ML-Klassifikatoren liefen in UV3 — jetzt Ergebnis in Plan einpflegen)
                 if _globalplan is not None:
@@ -1193,22 +1215,22 @@ class AurikDenker:
                 # [6/10] ReparaturDenker-Ergebnis (Preprocessing-Schritt)
                 if _rep_result_box:
                     _rep = _rep_result_box[0]
-                    warnings.extend(_rep.warnings or [])
+                    warnings.extend(getattr(_rep, "warnings", []) or [])
                     stage_notes["reparatur"] = (
-                        f"Clicks: {_rep.clicks_removed}, "
-                        f"Hum: {_rep.hum_removed}, "
-                        f"Clipping: {_rep.clipping_repaired} (Vorverarbeitung)"
+                        f"Clicks: {getattr(_rep, 'clicks_removed', False)}, "
+                        f"Hum: {getattr(_rep, 'hum_removed', False)}, "
+                        f"Clipping: {getattr(_rep, 'clipping_repaired', False)} (Vorverarbeitung)"
                     )
                     logger.info(
                         "AurikDenker [6/10] Reparatur (Pre-UV3): clicks=%s hum=%s clipping=%s",
-                        _rep.clicks_removed,
-                        _rep.hum_removed,
-                        _rep.clipping_repaired,
+                        getattr(_rep, "clicks_removed", False),
+                        getattr(_rep, "hum_removed", False),
+                        getattr(_rep, "clipping_repaired", False),
                     )
                 # [7/10] RekonstruktionsDenker-Ergebnis (Preprocessing-Schritt)
                 if _rek_result_box:
                     _rek = _rek_result_box[0]
-                    warnings.extend(_rek.warnings or [])
+                    warnings.extend(getattr(_rek, "warnings", []) or [])
                     _gaps_found = int(getattr(_rek, "gaps_found", 0))
                     _gaps_repaired = int(getattr(_rek, "gaps_repaired", 0))
                     _gap_total_ms = float(getattr(_rek, "total_repaired_ms", 0.0))
@@ -1280,25 +1302,58 @@ class AurikDenker:
                 _skip_metrics,
             )
         elif _budget_ok():
-            # v9.10.72: ExzellenzDenker nur noch Messung (Musical Goals + VERSA),
-            # KEINE zusätzliche DSP-Verarbeitung. UV3 FeedbackChain (5 Post-Phasen:
-            # HarmonicRestoration, PhaseCorrection, FinalEQ, MasteringPolish, LUFS)
-            # hat bereits alle Exzellenz-relevanten Schritte ausgeführt.
-            # Begründung: Ephraim & Malah 1984 — kaskadierte STFT-Modifikation
-            # akkumuliert Rundungsfehler; ML-Modelle sind nicht auf eigenen Output
-            # trainiert (Domain Shift). Ein zusätzlicher DSP-Pass NACH UV3+FeedbackChain
-            # verschlechtert Natürlichkeit und Authentizität statt sie zu verbessern.
+            # v9.10.72: STFT-basierte ExcellenceOptimizer-Passe nach UV3+FeedbackChain
+            # deaktiviert (Ephraim & Malah 1984: kaskadierte STFT-Modifikation akkumuliert
+            # Rundungsfehler; ML-Modelle nicht auf eigenen Output trainiert → Domain Shift).
+            # v9.11.1: messe_und_repariere() ersetzt messe_ziele() — nutzt ausschließlich
+            # Zeit-Domain-Operationen (micro_dynamics, ola_edges) und linearen Blend mit
+            # Original-Audio für P3-P5-Verletzungen. Kein STFT-Roundtrip → Ephraim-sicher.
             try:
                 exd = get_exzellenz_denker()
-                # Nur Goals messen, nicht optimieren
-                goals = exd.messe_ziele(aktuelles_audio, sr)
-                _GOAL_MIN = 0.75
+                # Goals messen + konservative P3-P5-Reparatur (Zeit-Domain-first, §0 + §2.45).
+                # Legacy-Fallback für Testmocks/ältere ExzellenzDenker mit messe_ziele().
+                goals = {}
+                _used_repair_path = False
+                _repair_fn = getattr(exd, "messe_und_repariere", None)
+                if callable(_repair_fn):
+                    _mr = _repair_fn(
+                        aktuelles_audio,
+                        sr,
+                        mode=effective_mode,
+                        material=_exz_material,
+                        reference_audio=audio,
+                    )
+                    if isinstance(_mr, tuple) and len(_mr) == 2:
+                        aktuelles_audio, goals = _mr
+                        _used_repair_path = True
+
+                if not _used_repair_path:
+                    _legacy_fn = getattr(exd, "messe_ziele", None)
+                    if not callable(_legacy_fn):
+                        raise RuntimeError("ExzellenzDenker liefert weder messe_und_repariere() noch messe_ziele()")
+                    _legacy_out = _legacy_fn(aktuelles_audio, sr, material=_exz_material)
+                    if isinstance(_legacy_out, tuple) and len(_legacy_out) == 2:
+                        aktuelles_audio, goals = _legacy_out
+                    else:
+                        goals = _legacy_out or {}
                 if goals:
                     import math as _math_exz
 
+                    try:
+                        from backend.core.per_phase_musical_goals_gate import _get_canonical_thresholds as _gct_exz
+
+                        _exz_thresholds = _gct_exz(is_studio_2026=(effective_mode == "studio2026"))
+                    except Exception:
+                        _exz_thresholds = {}
+                    _FALLBACK_GOAL_MIN = 0.75
+
                     finite_vals = [v for v in goals.values() if _math_exz.isfinite(v)]
                     excellence_score = float(np.mean(finite_vals)) if finite_vals else 0.0
-                    goals_passed = sum(1 for v in finite_vals if v >= _GOAL_MIN)
+                    goals_passed = sum(
+                        1
+                        for k, v in goals.items()
+                        if _math_exz.isfinite(v) and v >= _exz_thresholds.get(k, _FALLBACK_GOAL_MIN)
+                    )
                     musical_goals = dict(goals)
                 # VERSA MOS für Qualitätsentscheidung
                 try:
@@ -1311,19 +1366,25 @@ class AurikDenker:
                 except Exception as _ve_exz:
                     logger.debug("ExzellenzDenker VERSA nicht verfügbar: %s", _ve_exz)
 
+                _goals_total = len(goals) if goals else 0
                 stage_notes["exzellenz"] = (
-                    f"Messung: Score {excellence_score:.3f}, "
-                    f"{goals_passed}/{len(goals)} Ziele erfüllt"
+                    f"Messung{' + Repair' if _used_repair_path else ''}: Score {excellence_score:.3f}, "
+                    f"{goals_passed}/{_goals_total} Ziele erfüllt"
                     + (f", VERSA MOS={_exz_versa_mos:.2f}" if _exz_versa_mos > 0.0 else "")
-                    + " (keine Zusatz-DSP — UV3 FeedbackChain ausreichend)"
+                    + (
+                        " (Zeit-Domain-Repair für P3-P5 — kein STFT-Re-Pass)"
+                        if _used_repair_path
+                        else " (Legacy-Goal-Messpfad)"
+                    )
                 )
-                phases_executed.append("exzellenz_messung")
+                phases_executed.append("exzellenz_messung_repair" if _used_repair_path else "exzellenz_messung")
                 logger.info(
-                    "AurikDenker [9/10] Exzellenz-Messung: Score=%.3f, Goals %d/%d%s (kein DSP-Re-Pass)",
+                    "AurikDenker [9/10] Exzellenz: Score=%.3f, Goals %d/%d%s (%s)",
                     excellence_score,
                     goals_passed,
-                    len(goals),
+                    _goals_total,
                     f", VERSA={_exz_versa_mos:.3f}" if _exz_versa_mos > 0.0 else "",
+                    "Goal-Repair aktiv" if _used_repair_path else "Legacy-Goal-Messung",
                 )
             except Exception as exc:
                 _record_stage_failure("exzellenz", "ExzellenzDenker", exc)
@@ -1672,6 +1733,7 @@ class AurikDenker:
             degradation_status=_degradation_status,
             fail_reason=_fail_reason,
             global_plan=_globalplan.as_dict() if _globalplan is not None else None,
+            metadata=_rest_metadata,
         )
 
     # ── Fallback ─────────────────────────────────────────────────────────────
@@ -1713,6 +1775,7 @@ class AurikDenker:
             chain_info=None,
             degradation_status=PipelineHealthState.BLOCKED.value,
             fail_reason=f"pipeline_blocked:{grund}",
+            metadata={},
         )
 
 

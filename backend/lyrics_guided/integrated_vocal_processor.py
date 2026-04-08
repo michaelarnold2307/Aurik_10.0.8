@@ -42,6 +42,14 @@ from backend.semantic.semantic_audio_analyzer import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_aurik_mode(aurik_mode: str | None) -> str:
+    """Normalize external mode aliases to canonical values."""
+    _m = str(aurik_mode or "restoration").strip().lower().replace("_", "").replace(" ", "")
+    if _m in {"studio2026", "studio", "highendstudio", "maximum"}:
+        return "studio2026"
+    return "restoration"
+
+
 # ============================================================================
 # ENUMS
 # ============================================================================
@@ -167,7 +175,7 @@ class IntegratedVocalProcessor:
         Args:
             audio: Input audio (mono or stereo)
             sr: Sample rate
-            aurik_mode: "restoration" or "highend_studio"
+            aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
             language: Language code for lyrics transcription
             provided_lyrics: Optional pre-known lyrics
 
@@ -182,6 +190,7 @@ class IntegratedVocalProcessor:
 
         duration = len(audio_mono) / sr
 
+        aurik_mode = _normalize_aurik_mode(aurik_mode)
         logger.info(
             f"Creating integrated vocal timeline (mode={aurik_mode}, duration={duration:.2f}s, language={language})"
         )
@@ -489,7 +498,7 @@ class IntegratedVocalProcessor:
             base_compression *= 1.3  # More compression for sustained
 
         # EQ boost for clarity
-        if aurik_mode == "studio" and semantic_profile.enhance_clarity:
+        if aurik_mode == "studio2026" and semantic_profile.enhance_clarity:
             eq_boost = 3.0  # +3dB in presence range
         else:
             eq_boost = 1.0  # +1dB
@@ -557,7 +566,7 @@ def create_integrated_vocal_timeline(
     Args:
         audio: Input audio (mono or stereo)
         sr: Sample rate
-        aurik_mode: "restoration" or "highend_studio"
+        aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
         language: Language code (en, de, es, etc.)
         provided_lyrics: Optional pre-known lyrics
 

@@ -94,6 +94,7 @@ transformers:  4.30.2 → 5.1.0   (Major Version Change)
 #### **EMPFEHLUNG: TESTEN, DANN ENTSCHEIDEN** ⚠️
 
 **Test-Strategie:**
+
 1. Docker Image neu bauen
 2. Test mit Beispiel-Audio durchführen
 3. Bei Fehler: Rollback
@@ -114,6 +115,7 @@ docker build -t audiosr:test -f Dockerfile.audiosr .
 ### ✅ **AKZEPTABEL: Andere Modelle**
 
 Die meisten anderen Modelle hatten **nur Minor Updates** (z.B. torch 2.8→2.10) und sind unkritisch:
+
 - audioldm2: torch 2.8.0 → 2.10.0 ✅
 - vampnet: torch 2.0.1 → 2.10.0 ✅  
 - sgmse_plus: torch 2.0.1 → 2.10.0 ✅
@@ -200,6 +202,7 @@ pytest tests/test_ml_policy_engine.py::TestMLPolicyEngine::test_super_resolution
 ### ✅ **SOFORT DURCHFÜHREN:**
 
 1. **deepfilternet_v3_ii Rollback** (KRITISCH)
+
    ```bash
    cd models/deepfilternet_v3_ii
    cp requirements.txt.backup_20260213 requirements.txt
@@ -225,6 +228,7 @@ pytest tests/test_ml_policy_engine.py::TestMLPolicyEngine::test_super_resolution
 Falls du perspektivisch torch 2.x für deepfilternet nutzen möchtest:
 
 1. **Alternative:** DeepFilterNet neu kompilieren
+
    ```bash
    # Im Dockerfile:
    # rustup install 1.75.0  # Neuere Rust-Version
@@ -232,7 +236,8 @@ Falls du perspektivisch torch 2.x für deepfilternet nutzen möchtest:
    ```
 
 2. **Alternative:** Auf neuere DeepFilterNet-Version wechseln
-   - Check GitHub: https://github.com/Rikorose/DeepFilterNet
+
+   - Check GitHub: [Rikorose/DeepFilterNet](https://github.com/Rikorose/DeepFilterNet)
    - Neuere Releases unterstützen möglicherweise torch 2.x
 
 3. **Alternative:** Modell in isolation lassen
@@ -253,6 +258,7 @@ Falls du perspektivisch torch 2.x für deepfilternet nutzen möchtest:
 - ✅ **Andere Modelle**: Minor Updates sind **SICHER** → **BEHALTEN**
 
 **Nächste Schritte:**
+
 1. Rollback für deepfilternet_v3_ii durchführen
 2. audiosr testen (optional)
 3. Dokumentation aktualisieren

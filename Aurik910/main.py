@@ -28,6 +28,7 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 # ── PyTorch global thread-pool — must be set once at startup (§VERBOTEN) ─────
 try:
     import torch as _torch
+
     _torch.set_num_threads(os.cpu_count() or 4)
 except Exception:  # torch not installed / import error on first run
     pass
@@ -249,11 +250,13 @@ def main():
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # Application icon (taskbar, dock, alt-tab)
-    _icon_path = Path(__file__).parent / "resources" / "icon.png"
-    if _icon_path.exists():
-        from PyQt5.QtGui import QIcon
+    _res = Path(__file__).parent / "resources"
+    for _icon_path in (_res / "icon_premium.svg", _res / "icon.png"):
+        if _icon_path.exists():
+            from PyQt5.QtGui import QIcon
 
-        app.setWindowIcon(QIcon(str(_icon_path)))
+            app.setWindowIcon(QIcon(str(_icon_path)))
+            break
 
     # Set dark theme style
     app.setStyle("Fusion")

@@ -22,6 +22,7 @@
 ### **Impact auf User-Zielstellung:**
 
 **"Sich in den Klang 'hineinlegen' und absolut wohl fühlen":**
+
 - ✅ **Listening Comfort**: 9/10 (Phase 1) → Ermüdungsfreiheit
 - ✅ **3D Immersion**: +80% (Phase 2) → Räumliche Tiefe
 - ✅ **Emotional Resonance**: +60% (Phase 2) → Emotionale Verbindung
@@ -37,11 +38,13 @@
 
 **Description:**
 Erzeugt räumliche Tiefe durch Multi-Layer Spatial Processing:
+
 - **Foreground** (Direct Sound): 70% Mix
 - **Midground** (Early Reflections): 20% Mix, 10-50ms Delay
 - **Background** (Diffuse Reverb): 10% Mix, 50-300ms RT60
 
 **Technical Implementation:**
+
 ```python
 class SoundstageDepthEnhancer:
     def __init__(self, depth_amount=0.5, room_size=0.5, hf_damping_hz=8000):
@@ -51,17 +54,20 @@ class SoundstageDepthEnhancer:
 ```
 
 **Key Algorithms:**
+
 1. **Early Reflections Modeling**: 3 Reflections @ 15ms, 22.5ms, 30ms mit Pan-Offsets
 2. **Schroeder Reverberator**: 4 Allpass Filters (Diffusion) + 4 Comb Filters (Reverb Tail)
 3. **Distance Cues**: HF Damping @ 8 kHz (simuliert fernen Sound)
 4. **Depth Score Measurement**: Reverb Presence (50-300ms Energy) + HF Roll-off
 
 **Parameters:**
+
 - `depth_amount`: 0.0-1.0 (Stärke des Effekts)
 - `room_size`: 0.0-1.0 (0.3 = Small Room, 0.7 = Concert Hall)
 - `hf_damping_hz`: Cutoff für HF Damping (default: 8000 Hz)
 
 **Impact:**
+
 - 3D Immersion: +80% ⭐⭐⭐⭐⭐
 - Realistisch: Early Reflections @ 10-50ms (wissenschaftlich fundiert)
 - Subtil: Kein "Over-Reverbed" Sound (nur 10-20% Mix)
@@ -76,12 +82,14 @@ class SoundstageDepthEnhancer:
 
 **Description:**
 Erzeugt 3D Audio für Kopfhörer mit HRTF (Head-Related Transfer Functions) & Crossfeed:
+
 - **ITD** (Interaural Time Difference): 0-700 μs für L/R Lokalisierung
 - **ILD** (Interaural Level Difference): 0-20 dB @ High-Frequencies
 - **Pinna Filtering**: Notches @ 6-16 kHz für Elevation Cues
 - **Crossfeed**: Bauer's Stereophonic-to-Binaural (Verhindert "Inside-Head" Localization)
 
 **Technical Implementation:**
+
 ```python
 class BinauralEnhancer:
     def __init__(self, azimuth_deg=30, elevation_deg=0, distance_m=1.0, crossfeed_amount=0.5):
@@ -92,6 +100,7 @@ class BinauralEnhancer:
 ```
 
 **Key Algorithms:**
+
 1. **ITD Calculation**: Woodworth-Schlosberg Formula: `ITD = (r/c) * (θ + sin(θ))`
 2. **ILD Gain**: Linear Shadow Model: 0 dB @ 0°, 20 dB @ 90°
 3. **Pinna Notches**: Elevation-dependent: 6 kHz (above) → 10 kHz (below)
@@ -99,20 +108,23 @@ class BinauralEnhancer:
 5. **Distance Cues**: Inverse Square Law (-6 dB per doubling) + HF Damping
 
 **Parameters:**
+
 - `azimuth_deg`: -90 (links) bis +90 (rechts)
 - `elevation_deg`: -40 (unten) bis +90 (oben)
 - `distance_m`: 0.5-5.0 Meter
 - `crossfeed_amount`: 0.0-1.0 (Stärke des Crosstalk)
 
 **Impact:**
+
 - Externalization: +73% (Test @ 45° azimuth, 15° elevation)
 - Kopfhörer-Qualität: +80% ⭐⭐⭐⭐⭐
 - Realistische 3D Lokalisierung (ITD + ILD + Pinna Cues)
 
 **Status:** ✅ COMPLETE - Import & Processing erfolgreich getestet
-  - ITD: 380.7 μs @ 45° (realistisch)
-  - ILD: 10.0 dB @ 45° (realistisch)
-  - Externalization: 73.4% (gut!)
+
+- ITD: 380.7 μs @ 45° (realistisch)
+- ILD: 10.0 dB @ 45° (realistisch)
+- Externalization: 73.4% (gut!)
 
 ---
 
@@ -122,6 +134,7 @@ class BinauralEnhancer:
 
 **Description:**
 Misst & Enhanced emotionale Resonanz mit 5 Faktoren:
+
 1. **Vocal Warmth** (200-800 Hz Energy in Vocals)
 2. **Dynamic Expression** (Mikrodynamik + Makrodynamik kombiniert)
 3. **Harmonic Richness** (Even Harmonics vs. Odd Harmonics)
@@ -129,6 +142,7 @@ Misst & Enhanced emotionale Resonanz mit 5 Faktoren:
 5. **Air & Presence** (12-20 kHz Detail)
 
 **Technical Implementation:**
+
 ```python
 class EmotionalResonanceAnalyzer:
     def analyze(self, audio, sr) -> EmotionalResonanceAnalysis:
@@ -158,6 +172,7 @@ class EmotionalResonanceEnhancer:
 ```
 
 **Key Algorithms:**
+
 1. **Vocal Warmth**: FFT Energy Ratio @ 200-800 Hz (Formants)
 2. **Dynamic Expression**: Peak-to-RMS (Makro) + Frame RMS Variance (Mikro)
 3. **Harmonic Richness**: FFT Fundamental Detection + Even/Odd Harmonic Power Ratio
@@ -165,18 +180,21 @@ class EmotionalResonanceEnhancer:
 5. **Air & Presence**: FFT Energy Ratio @ 12-20 kHz
 
 **Enhancement Strategy:**
+
 - **Low Warmth** → +2 dB Bell @ 400 Hz (Vocal Boost)
 - **Low Richness** → Tube Saturation (Even Harmonics, tanh formula)
 - **Low Air** → +1 dB High-Shelf @ 12 kHz
 - **Low Expression** → Gentle Expansion (1.2:1 ratio)
 
 **Impact:**
+
 - Emotionale Resonanz: +60% ⭐⭐⭐⭐
 - Wissenschaftlich fundiert: 5 Faktoren basierend auf Psychoakustik-Literatur
 - Adaptive: Nur anwenden wenn unter Threshold (0.70)
 
 **Status:** ✅ COMPLETE - Import & Processing erfolgreich getestet
-  - Test @ A3 (220 Hz) Sine: Emotional Score 56.3% → Enhancement würde aktiviert
+
+- Test @ A3 (220 Hz) Sine: Emotional Score 56.3% → Enhancement würde aktiviert
 
 ---
 
@@ -186,6 +204,7 @@ class EmotionalResonanceEnhancer:
 
 **Description:**
 Erweitert Musical Goals von 10 auf 12 Goals:
+
 - **Original 7**: brillanz, waerme, natuerlichkeit, authentizitaet, emotionalitaet, transparenz, bass_kraft
 - **Phase 1 (3)**: soundstage, listening_comfort, mikrodynamik
 - **Phase 2 (2)**: binaural_quality, emotional_depth 🆕
@@ -205,6 +224,7 @@ class BinauralQualityMetric:
 ```
 
 **Messung:**
+
 - **Correlation Score**: Low Correlation = External Localization (gut für 3D)
 - **Stereo Width**: L/R RMS Difference (0.05-0.30 typisch)
 - **HF Difference**: High-Frequency Spectral Difference (Localization Cues)
@@ -222,10 +242,12 @@ class EmotionalDepthMetric:
 ```
 
 **Messung:**
+
 - **Direkt von EmotionalResonanceAnalyzer**: 5 Faktoren (Warmth, Expression, Richness, Flow, Air)
 - **Fallback** (wenn Import fehlt): Simplified Dynamic Range + Spectral Variance
 
 **Impact:**
+
 - Musical Goals: 10 → **12 Goals** (+20%)
 - Erweiterte Coverage: Binaural (3D Audio) + Emotional Depth (Resonanz)
 - Integration in MusicalGoalsCheckerV2 (jetzt V2.1)
@@ -241,6 +263,7 @@ class EmotionalDepthMetric:
 **Location:** `core/unified_restorer_v2.py` Lines ~4000-4035
 
 **Integration:**
+
 ```python
 # === PHASE 10: SOUNDSTAGE DEPTH ENHANCEMENT ===
 if mode == ProcessingMode.STUDIO_2026:
@@ -305,10 +328,11 @@ if emotion_analysis.emotional_resonance_score < 0.70:
 **Location:** `core/unified_restorer_v2.py` Lines ~3975-4000
 
 **Changes:**
+
 - "10 Goals" → "12 Goals"
 - Neue Section: "PHASE 2: IMMERSIVE & EMOTIONAL GOALS"
-  - binaural_quality ✨
-  - emotional_depth ✨
+- binaural_quality ✨
+- emotional_depth ✨
 - Achievement Threshold: 11/12 = Excellent, 12/12 = Perfection
 
 ---
@@ -318,12 +342,14 @@ if emotion_analysis.emotional_resonance_score < 0.70:
 **Location:** `core/unified_restorer_v2.py` Line ~4145
 
 **Old:**
+
 ```
 Durchgeführte Operationen: 12 Phasen (inkl. Psychoakustisches Enhancement)
 PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 ```
 
 **New:**
+
 ```
 Durchgeführte Operationen: 14 Phasen (inkl. Psychoakustisches Enhancement, 3D Immersion, Emotional Resonance)
 PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
@@ -358,7 +384,7 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 ### **Quantitative Impact:**
 
 | Metrik | Phase 1 | Phase 2 | Total Improvement |
-|--------|---------|---------|-------------------|
+| -------- | --------- | --------- | ------------------- |
 | **Psychoakustische Qualität** | 7.5/10 → 8.5/10 | 8.5/10 → 9.5/10 | **+2.0** ✨✨ |
 | **Musical Goals** | 7 → 10 | 10 → 12 | **+71%** (7→12) |
 | **Pipeline Phasen** | 10 → 12 | 12 → 14 | **+40%** (10→14) |
@@ -371,11 +397,13 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 #### **Was ist jetzt messbar, was vorher nicht messbar war?**
 
 **Phase 1 Added:**
+
 - ✅ Listening Fatigue (5 Faktoren: Harshness, IMD, Roughness, Bark Balance, Temporal Masking)
 - ✅ Mikrodynamik (Frame-by-Frame RMS Variance @ 50ms)
 - ✅ Soundstage (Stereo Width + Center Stability + Reverb Presence)
 
 **Phase 2 Added:**
+
 - ✅ **Binaural Quality** (Externalization Score: Correlation + Stereo Width + HF Difference)
 - ✅ **Emotional Depth** (5 Faktoren: Vocal Warmth + Dynamic Expression + Harmonic Richness + Temporal Flow + Air)
 - ✅ **Soundstage Depth** (Reverb Presence 50-300ms + HF Roll-off)
@@ -383,11 +411,13 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 #### **Was ist jetzt optimierbar, was vorher "black box" war?**
 
 **Phase 1 Optimization:**
+
 - Listening Fatigue Prevention (durch conditional Air & Presence Enhancement)
 - Mikrodynamik Preservation (durch adaptive Expansion statt Compression)
 - Harmonic Character (Even Harmonics statt THD-Reduktion)
 
 **Phase 2 Optimization:**
+
 - **3D Soundstage Depth** (Early Reflections + Diffuse Reverb mit wissenschaftlichen Delays)
 - **Binaural Audio** (HRTF-based ITD/ILD + Crossfeed für Kopfhörer)
 - **Emotional Resonance** (5-Factor Analysis mit Targeted Enhancements: Warmth, Richness, Air, Expression)
@@ -401,6 +431,7 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 5. **3D Soundstage Depth** mit Early Reflections + Schroeder Reverberator ⭐⭐⭐⭐⭐
 
 **Kein Audio-Processing-Tool kombiniert:**
+
 - Technische Perfektion (55 Defekttypen, 98%+ Recall)
 - Psychoakustische Exzellenz (12 Goals, 5 Faktoren Emotional Resonance)
 - 3D Immersion (Soundstage Depth + Binaural HRTF)
@@ -444,7 +475,7 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 ### **Achievement:**
 
 | Dimension | Before | Phase 1 | Phase 2 | Improvement |
-|-----------|--------|---------|---------|-------------|
+| ----------- | -------- | --------- | --------- | ------------- |
 | **Technische Qualität** | 9.1/10 | 9.1/10 | 9.2/10 | +0.1 |
 | **Psychoakustische Qualität** | 7.5/10 | 8.5/10 | **9.5/10** | **+2.0** ✨✨ |
 | **Emotionale Resonanz** | 7.0/10 | 7.5/10 | **8.5/10** | **+1.5** ✨ |
@@ -455,21 +486,25 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 ### **"Wohlfühl-Faktor" Breakdown:**
 
 **Listening Comfort (Ermüdungsfreiheit):**
+
 - Phase 1: **9/10** (Listening Fatigue Prevention aktiv)
 - Phase 2: **9/10** (stable)
 - **RESULT: +2.0 from baseline** ✨
 
 **3D Immersion (Räumliche Tiefe):**
+
 - Phase 1: **7/10** (Soundstage Width + Stereo Enhancement)
 - Phase 2: **9/10** (Soundstage Depth + Binaural Processing)
 - **RESULT: +2.0 from Phase 1** ✨
 
 **Emotional Resonance (Emotionale Verbindung):**
+
 - Phase 1: **7.5/10** (Enhanced Emotionalität Metric)
 - Phase 2: **8.5/10** (5-Factor Emotional Resonance Analysis + Enhancement)
 - **RESULT: +1.0 from Phase 1** ✨
 
 **GESAMT "Wohlfühl-Faktor":**
+
 - Before: **7.5/10**
 - After Phase 2: **9.5/10**
 - **IMPROVEMENT: +2.0 (+26%)** ✨✨
@@ -523,6 +558,7 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 ### **PHASE 2: ✅ 100% COMPLETE**
 
 **Features:**
+
 - ✅ Soundstage Depth Enhancement (570 Zeilen)
 - ✅ Binaural Processing (HRTF) (650 Zeilen)
 - ✅ Enhanced Emotional Resonance (750 Zeilen)
@@ -532,6 +568,7 @@ PHASE 1 (Quick Wins): Listening Comfort, Mikrodynamik, Soundstage optimiert
 **Total Code:** ~2320 Zeilen
 
 **Impact:**
+
 - Psychoakustische Qualität: **9.5/10** (+2.0 from baseline) ✨✨
 - Musical Goals: **12 Goals** (+71% from original 7)
 - Pipeline: **14 Phasen** (+40% from original 10)

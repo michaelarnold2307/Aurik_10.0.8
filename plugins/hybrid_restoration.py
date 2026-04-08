@@ -161,8 +161,9 @@ class HybridRestorationPlugin:
         sr: int,
     ) -> npt.NDArray[np.float32]:
         """Wendet DeepFilterNet v3 an (energy_bias = -4 dB für Musik, §4.4)."""
-        import torch
         from typing import Any
+
+        import torch
 
         _dfn: Any = self._dfn_model
         init_df: Any

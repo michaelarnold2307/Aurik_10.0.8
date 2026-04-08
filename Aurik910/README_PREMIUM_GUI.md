@@ -74,7 +74,7 @@ pip install PyQt5 numpy soundfile psutil
 cd Aurik_Standalone
 
 # 2. GUI starten
-python start_aurik_90.py
+./run_aurik.sh
 
 # Oder mit aktivierter venv:
 source .venv_aurik/bin/activate  # Linux/Mac
@@ -137,7 +137,7 @@ AURIK 9.x.x bietet **2 prominente Verarbeitungs-Modi** mit einem Klick:
 ### GUI Starten
 
 ```bash
-python start_aurik_90.py
+./run_aurik.sh
 ```
 
 ### So funktioniert's

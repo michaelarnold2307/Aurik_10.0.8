@@ -200,9 +200,7 @@ class PghiReconstructor:
         initial_phase = np.angle(stft_modified)
 
         if use_original_phase:
-            audio = self._istft(
-                stft_modified, win_size or self.win_size, hop or self.hop, boundary=True
-            )
+            audio = self._istft(stft_modified, win_size or self.win_size, hop or self.hop, boundary=True)
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
             return PghiResult(

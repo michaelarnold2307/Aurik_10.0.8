@@ -23,7 +23,6 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,7 @@ class MetadataPreserver:
             return meta
 
         # --- ID3-based (MP3, AIFF) ---
-        if isinstance(mf, (MP3, AIFF)) or hasattr(mf, "tags") and isinstance(getattr(mf, "tags", None), ID3):
+        if isinstance(mf, (MP3, AIFF)) or (hasattr(mf, "tags") and isinstance(getattr(mf, "tags", None), ID3)):
             tags = mf.tags
             if tags is None:
                 return meta
@@ -235,9 +234,7 @@ class MetadataPreserver:
             # Still write provenance even without original tags
             if aurik_version:
                 orig_hash = self._file_hash(source_path)
-                return self.apply(
-                    target_path, AudioMetadata(), aurik_version=aurik_version, original_hash=orig_hash
-                )
+                return self.apply(target_path, AudioMetadata(), aurik_version=aurik_version, original_hash=orig_hash)
             return False
 
         orig_hash = self._file_hash(source_path) if aurik_version else ""
@@ -277,8 +274,11 @@ class MetadataPreserver:
         if version:
             from mutagen.id3 import COMM
 
-            tags.add(COMM(encoding=3, lang="eng", desc="Aurik Provenance",
-                          text=[self._provenance_comment(version, orig_hash)]))
+            tags.add(
+                COMM(
+                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash)]
+                )
+            )
 
         tags.save(str(path))
         logger.info("metadata applied (ID3): %s", path.name)
@@ -336,8 +336,11 @@ class MetadataPreserver:
         if version:
             from mutagen.id3 import COMM
 
-            tags.add(COMM(encoding=3, lang="eng", desc="Aurik Provenance",
-                          text=[self._provenance_comment(version, orig_hash)]))
+            tags.add(
+                COMM(
+                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash)]
+                )
+            )
         mf.save()
         logger.info("metadata applied (AIFF/ID3): %s", path.name)
         return True

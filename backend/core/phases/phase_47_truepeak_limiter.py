@@ -114,6 +114,8 @@ class TruePeakLimiterPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": 0.0},
             )
@@ -163,6 +165,8 @@ class TruePeakLimiterPhase(PhaseInterface):
                 "oversampling": _OVERSAMPLING,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "true_peak_before_dbfs": tp_before,

@@ -5,6 +5,7 @@
 ✅ **Task abgeschlossen: Nur sichere Updates durchgeführt**
 
 Von 37 Model-Requirements-Dateien wurden:
+
 - **2 Modelle mit Rollback** (kritische Versionen wiederhergestellt)
 - **~30 Modelle mit Updates** (sichere Minor-Version-Updates)
 - **5 Main Requirements** (komplett aktualisiert)
@@ -110,6 +111,7 @@ soundfile:    0.13.1
 ### Alle Original-Versionen gesichert
 
 Für ALLE 37 Modelle existieren Backups:
+
 ```bash
 models/*/requirements.txt.backup_20260213
 models/*/*/requirements*.txt.backup_20260213
@@ -133,6 +135,7 @@ find models -name "requirements.txt.backup_20260213" -exec bash -c 'cp "$0" "${0
 ### Versions-Analyse Ergebnisse
 
 **Identifizierte Major Version Changes:**
+
 ```
 🔴 deepfilternet_v3_ii:
    - torchaudio: 0.11.0 → 2.5.1 (Major +2)
@@ -155,12 +158,14 @@ find models -name "requirements.txt.backup_20260213" -exec bash -c 'cp "$0" "${0
 ### ✅ Getestet & Funktional
 
 **Alle Dependencies:**
+
 - 51/51 Pakete funktional (100%)
 - PortAudio installiert (libportaudio2 19.6.0)
 - FFmpeg verfügbar
 - sounddevice: 24 Audio-Devices erkannt
 
 **Kritische Module:**
+
 - KIHörbarkeitsAnalyzer: ✅
 - KIQualityAnalyzer: ✅
 - PhonemeDetector: ✅
@@ -190,7 +195,7 @@ pytest tests/ -k "audioldm2 or vampnet" -v
 ### Was wurde geändert?
 
 | Kategorie | Anzahl | Status |
-|-----------|--------|--------|
+| ----------- | -------- | -------- |
 | **Main Requirements** | 7 Dateien | ✅ Vollständig aktualisiert |
 | **Model Requirements (sicher)** | ~30 Modelle | ✅ Updates behalten |
 | **Model Requirements (kritisch)** | 2 Modelle | ✅ Rollback durchgeführt |

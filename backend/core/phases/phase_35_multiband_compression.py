@@ -195,6 +195,8 @@ class MultibandCompressionPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"rms_change_db": 0.0, "peak_before_db": 0.0, "peak_after_db": 0.0},
                 modifications={"algorithm": "skipped_zero_strength", "bands": 4},
@@ -251,6 +253,8 @@ class MultibandCompressionPhase(PhaseInterface):
                 "band_metrics": band_metrics,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": round(float(min(0.0, rms_change_db)), 3),  # §2.45a Telemetrie
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "rms_change_db": float(rms_change_db),
@@ -623,15 +627,15 @@ if __name__ == "__main__":
     test_materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.STREAMING]
 
     for material in test_materials:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Material: %s", material.name)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(test_audio_stereo, sample_rate, material)
 
         if result.success:
             logger.debug("\n✅ Professional Multiband Compression:")
-            logger.debug("   RMS Change: %.2f dB", result.metrics['rms_change_db'])
+            logger.debug("   RMS Change: %.2f dB", result.metrics["rms_change_db"])
             logger.debug(
                 f"   Peak: {result.metrics['peak_before_db']:.1f} → {result.metrics['peak_after_db']:.1f} dBFS"
             )
@@ -660,6 +664,6 @@ if __name__ == "__main__":
                 f"({result.execution_time_seconds / duration:.2f}× realtime)"
             )
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("Test abgeschlossen")
-    logger.debug("%s", '=' * 80)
+    logger.debug("%s", "=" * 80)

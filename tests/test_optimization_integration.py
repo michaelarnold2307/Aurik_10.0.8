@@ -12,7 +12,9 @@ def test_optimization_integration():
     """Canonical CLI exists and exposes the current AurikDenker-based interface."""
     cli_path = Path("cli/aurik_cli.py")
     assert cli_path.exists(), "Kanonischer CLI-Einstieg cli/aurik_cli.py fehlt"
-    assert not Path("orchestrator_and_cli.py").exists(), "Legacy-Skript orchestrator_and_cli.py sollte nicht mehr verwendet werden"
+    assert not Path("orchestrator_and_cli.py").exists(), (
+        "Legacy-Skript orchestrator_and_cli.py sollte nicht mehr verwendet werden"
+    )
 
     result = subprocess.run(
         [sys.executable, "-m", "cli.aurik_cli", "--help"],

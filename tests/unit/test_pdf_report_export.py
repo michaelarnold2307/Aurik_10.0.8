@@ -5,12 +5,9 @@ with correct structure, handles empty reports, and integrates with
 ProcessingReportGenerator.
 """
 
-import tempfile
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
-import pytest
 
 from audit.processing_report_generator import (
     ProcessingReport,
@@ -19,7 +16,6 @@ from audit.processing_report_generator import (
     ReportSection,
     ReportSectionType,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,57 +42,78 @@ def _make_full_report() -> ProcessingReport:
     """Create a report with all section types for thorough testing."""
     report = _make_report()
 
-    report.add_section(ReportSection(
-        section_type=ReportSectionType.INPUT_ANALYSIS,
-        title="Eingangsanalyse",
-        content={"Dauer": "3:24", "Abtastrate": "44100 Hz", "Kanäle": "Stereo"},
-        summary="MP3-Datei, mäßige Qualität.",
-    ))
-    report.add_section(ReportSection(
-        section_type=ReportSectionType.DETECTED_ISSUES,
-        title="Erkannte Defekte",
-        content={"issues": [
-            {"type": "BROADBAND_NOISE", "severity": "HIGH", "confidence": 0.95, "description": "Starkes Rauschen"},
-            {"type": "HUM_50HZ", "severity": "MEDIUM", "confidence": 0.88, "description": "Netzbrummen"},
-        ]},
-    ))
-    report.add_section(ReportSection(
-        section_type=ReportSectionType.APPLIED_MODULES,
-        title="Angewandte Module",
-        content={"modules": [
-            {"name": "Phase 03 — Denoise", "reason": "Breitbandrauschen", "strength": 0.75},
-            {"name": "Phase 02 — Hum Removal", "reason": "50 Hz Brummen", "strength": 0.60},
-        ]},
-    ))
-    report.add_section(ReportSection(
-        section_type=ReportSectionType.MUSICAL_GOALS,
-        title="Musical Goals",
-        content={"goals": {
-            "natuerlichkeit": 0.93,
-            "authentizitaet": 0.91,
-            "tonal_center": 0.97,
-            "timbre_authentizitaet": 0.89,
-            "artikulation": 0.87,
-            "emotionalitaet": 0.85,
-            "micro_dynamics": 0.90,
-            "groove": 0.86,
-            "transparenz": 0.84,
-            "waerme": 0.78,
-            "bass_kraft": 0.81,
-            "separation_fidelity": 0.80,
-            "brillanz": 0.82,
-            "raumtiefe": 0.73,
-        }},
-    ))
-    report.add_section(ReportSection(
-        section_type=ReportSectionType.BEFORE_AFTER_METRICS,
-        title="Vorher / Nachher",
-        content={
-            "before": {"SNR_dB": 18.5, "LUFS": -22.0, "MOS": 2.8},
-            "after": {"SNR_dB": 42.3, "LUFS": -14.1, "MOS": 4.2},
-            "improvement": {"SNR_dB": 23.8, "LUFS": 7.9, "MOS": 1.4},
-        },
-    ))
+    report.add_section(
+        ReportSection(
+            section_type=ReportSectionType.INPUT_ANALYSIS,
+            title="Eingangsanalyse",
+            content={"Dauer": "3:24", "Abtastrate": "44100 Hz", "Kanäle": "Stereo"},
+            summary="MP3-Datei, mäßige Qualität.",
+        )
+    )
+    report.add_section(
+        ReportSection(
+            section_type=ReportSectionType.DETECTED_ISSUES,
+            title="Erkannte Defekte",
+            content={
+                "issues": [
+                    {
+                        "type": "BROADBAND_NOISE",
+                        "severity": "HIGH",
+                        "confidence": 0.95,
+                        "description": "Starkes Rauschen",
+                    },
+                    {"type": "HUM_50HZ", "severity": "MEDIUM", "confidence": 0.88, "description": "Netzbrummen"},
+                ]
+            },
+        )
+    )
+    report.add_section(
+        ReportSection(
+            section_type=ReportSectionType.APPLIED_MODULES,
+            title="Angewandte Module",
+            content={
+                "modules": [
+                    {"name": "Phase 03 — Denoise", "reason": "Breitbandrauschen", "strength": 0.75},
+                    {"name": "Phase 02 — Hum Removal", "reason": "50 Hz Brummen", "strength": 0.60},
+                ]
+            },
+        )
+    )
+    report.add_section(
+        ReportSection(
+            section_type=ReportSectionType.MUSICAL_GOALS,
+            title="Musical Goals",
+            content={
+                "goals": {
+                    "natuerlichkeit": 0.93,
+                    "authentizitaet": 0.91,
+                    "tonal_center": 0.97,
+                    "timbre_authentizitaet": 0.89,
+                    "artikulation": 0.87,
+                    "emotionalitaet": 0.85,
+                    "micro_dynamics": 0.90,
+                    "groove": 0.86,
+                    "transparenz": 0.84,
+                    "waerme": 0.78,
+                    "bass_kraft": 0.81,
+                    "separation_fidelity": 0.80,
+                    "brillanz": 0.82,
+                    "raumtiefe": 0.73,
+                }
+            },
+        )
+    )
+    report.add_section(
+        ReportSection(
+            section_type=ReportSectionType.BEFORE_AFTER_METRICS,
+            title="Vorher / Nachher",
+            content={
+                "before": {"SNR_dB": 18.5, "LUFS": -22.0, "MOS": 2.8},
+                "after": {"SNR_dB": 42.3, "LUFS": -14.1, "MOS": 4.2},
+                "improvement": {"SNR_dB": 23.8, "LUFS": 7.9, "MOS": 1.4},
+            },
+        )
+    )
     return report
 
 
@@ -170,22 +187,26 @@ class TestPdfViaGenerator:
 class TestPdfExportEdgeCases:
     def test_only_musical_goals(self, tmp_path):
         report = _make_report()
-        report.add_section(ReportSection(
-            section_type=ReportSectionType.MUSICAL_GOALS,
-            title="Goals",
-            content={"goals": {"natuerlichkeit": 0.95, "transparenz": 0.80}},
-        ))
+        report.add_section(
+            ReportSection(
+                section_type=ReportSectionType.MUSICAL_GOALS,
+                title="Goals",
+                content={"goals": {"natuerlichkeit": 0.95, "transparenz": 0.80}},
+            )
+        )
         pdf_path = tmp_path / "goals_only.pdf"
         ok = ReportExporter.export_pdf(report, pdf_path)
         assert ok
 
     def test_only_issues(self, tmp_path):
         report = _make_report()
-        report.add_section(ReportSection(
-            section_type=ReportSectionType.DETECTED_ISSUES,
-            title="Defekte",
-            content={"issues": ["noise", "clipping"]},
-        ))
+        report.add_section(
+            ReportSection(
+                section_type=ReportSectionType.DETECTED_ISSUES,
+                title="Defekte",
+                content={"issues": ["noise", "clipping"]},
+            )
+        )
         pdf_path = tmp_path / "issues_only.pdf"
         ok = ReportExporter.export_pdf(report, pdf_path)
         assert ok

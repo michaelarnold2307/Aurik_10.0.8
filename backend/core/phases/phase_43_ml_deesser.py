@@ -307,6 +307,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"avg_gain_reduction_db": 0.0},
             )
@@ -517,6 +519,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 "ml_refine_blend": ml_blend,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={"avg_gain_reduction_db": avg_gr},
         )

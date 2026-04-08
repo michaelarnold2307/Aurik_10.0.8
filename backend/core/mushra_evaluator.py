@@ -33,6 +33,7 @@ intermediate quality levels of audio systems"
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import threading
@@ -167,6 +168,9 @@ class MushraEvaluator:
     def __init__(self) -> None:
         self._gammatone_ready: bool = False
         self._mu_checker = None  # Lazily loaded
+        self._mg_cache: dict[str, dict[str, float]] = {}
+        self._mg_cache_lock = threading.Lock()
+        self._mg_cache_max_entries = 32
 
     # ------------------------------------------------------------------
     # Öffentliche API
@@ -448,11 +452,28 @@ class MushraEvaluator:
                 self._mu_checker = get_checker()
             except ImportError:
                 return {}
+
+        audio_f32 = np.ascontiguousarray(audio, dtype=np.float32)
+        cache_key = f"{sr}:{len(audio_f32)}:{hashlib.blake2b(audio_f32.tobytes(), digest_size=16).hexdigest()}"
+        with self._mg_cache_lock:
+            cached = self._mg_cache.get(cache_key)
+        if cached is not None:
+            return dict(cached)
+
         try:
-            return self._mu_checker.measure_all(audio, sr)
+            measured = self._mu_checker.measure_all(audio_f32, sr)
         except Exception as exc:
             logger.debug("Musical Goals Fehler in MUSHRA: %s", exc)
             return {}
+
+        cleaned = {str(k): float(np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)) for k, v in measured.items()}
+        with self._mg_cache_lock:
+            self._mg_cache[cache_key] = cleaned
+            if len(self._mg_cache) > self._mg_cache_max_entries:
+                oldest_key = next(iter(self._mg_cache), None)
+                if oldest_key is not None:
+                    self._mg_cache.pop(oldest_key, None)
+        return dict(cleaned)
 
     def _create_anchor(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """Erzeugt den ITU-R BS.1534-3 3.5-kHz-Tiefpassfilter-Anchor.

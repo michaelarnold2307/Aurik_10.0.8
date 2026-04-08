@@ -266,7 +266,7 @@ class GermanSchlagerClassifier:
 
         if is_schlager:
             logger.info(
-                "🎵 %s erkannt — Akkordeon-Klangcharakter und "
+                "🎵 %s erkannt — melodische Lead-Stimme und "
                 "Schunkelrhythmus werden sorgfältig bewahrt. "
                 "Konfidenz=%.2f, Subgenre=%s, Sprache=%.2f",
                 genre_label,
@@ -321,6 +321,7 @@ class GermanSchlagerClassifier:
 
         try:
             import sys as _sys
+
             _lge_mod = _sys.modules.get("backend.core.lyrics_guided_enhancement")
 
             # Skip LGE load during pre-analysis / file-open scanning.
@@ -340,6 +341,7 @@ class GermanSchlagerClassifier:
                 return 0.0
 
             from backend.core.lyrics_guided_enhancement import get_lyrics_guided_enhancement
+
             lge = get_lyrics_guided_enhancement()
             transcription = lge.transcribe(audio_48k, sr_48k)
         except Exception as exc:
@@ -539,13 +541,19 @@ class GermanSchlagerClassifier:
         try:
             import librosa
 
-            if len(audio) < sr // 4:
+            if len(audio) < max(int(sr * 0.5), 8192):
                 return 0.5  # neutral bei sehr kurzem Audio
 
             hop_len = int(sr * 0.5)  # 500-ms-Hop
             hop_len = max(512, hop_len)
 
-            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr, hop_length=hop_len)
+            # Use STFT chroma for short clips to avoid CQT internals requesting
+            # large FFT windows (n_fft > signal length) on sparse test inputs.
+            if len(audio) < 12000:
+                _n_fft = max(512, min(2048, len(audio)))
+                chroma = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=hop_len, n_fft=_n_fft)
+            else:
+                chroma = librosa.feature.chroma_cqt(y=audio, sr=sr, hop_length=hop_len)
             chroma = np.nan_to_num(chroma)
 
             if chroma.shape[1] < 2:
@@ -1632,29 +1640,19 @@ class GermanSchlagerClassifier:
     ) -> tuple[str, float]:
         g = non_schlager_scores  # shorthand
         family_scores = {
-            "schlager_folk": float(np.clip(
-                max(schlager_family_score, g.get("Folk", 0.0), g.get("Country", 0.0)),
-                0.0, 1.0)),
-            "rock": float(np.clip(
-                max(g.get("Rock", 0.0), g.get("Metal", 0.0)),
-                0.0, 1.0)),
-            "jazz": float(np.clip(
-                max(g.get("Jazz", 0.0), g.get("Blues", 0.0)),
-                0.0, 1.0)),
+            "schlager_folk": float(
+                np.clip(max(schlager_family_score, g.get("Folk", 0.0), g.get("Country", 0.0)), 0.0, 1.0)
+            ),
+            "rock": float(np.clip(max(g.get("Rock", 0.0), g.get("Metal", 0.0)), 0.0, 1.0)),
+            "jazz": float(np.clip(max(g.get("Jazz", 0.0), g.get("Blues", 0.0)), 0.0, 1.0)),
             "klassik": float(np.clip(g.get("Klassik", 0.0), 0.0, 1.0)),
             "oper": float(np.clip(g.get("Oper", 0.0), 0.0, 1.0)),
-            "pop": float(np.clip(
-                max(g.get("Pop", 0.0), g.get("Soul/R&B", 0.0)),
-                0.0, 1.0)),
-            "funk_soul": float(np.clip(
-                max(g.get("Funk", 0.0), g.get("Soul/R&B", 0.0), g.get("Gospel", 0.0)),
-                0.0, 1.0)),
-            "electronic": float(np.clip(
-                max(g.get("Electronic", 0.0), g.get("Hip-Hop", 0.0)),
-                0.0, 1.0)),
-            "latin": float(np.clip(
-                max(g.get("Latin", 0.0), g.get("Reggae", 0.0)),
-                0.0, 1.0)),
+            "pop": float(np.clip(max(g.get("Pop", 0.0), g.get("Soul/R&B", 0.0)), 0.0, 1.0)),
+            "funk_soul": float(
+                np.clip(max(g.get("Funk", 0.0), g.get("Soul/R&B", 0.0), g.get("Gospel", 0.0)), 0.0, 1.0)
+            ),
+            "electronic": float(np.clip(max(g.get("Electronic", 0.0), g.get("Hip-Hop", 0.0)), 0.0, 1.0)),
+            "latin": float(np.clip(max(g.get("Latin", 0.0), g.get("Reggae", 0.0)), 0.0, 1.0)),
         }
         label = max(family_scores, key=family_scores.get)  # type: ignore[arg-type]
         score = float(family_scores[label])
@@ -1776,7 +1774,7 @@ class GermanSchlagerClassifier:
             k = -(float(r[m + 1]) + float(np.dot(a[:m], r[m:0:-1]))) / e
             a_new = a.copy()
             if m > 0:
-                a_new[:m] = a[:m] + k * a[m - 1::-1]
+                a_new[:m] = a[:m] + k * a[m - 1 :: -1]
             a_new[m] = k
             a = a_new
             e *= 1.0 - k * k
@@ -1807,11 +1805,15 @@ class GermanSchlagerClassifier:
         try:
             import librosa
 
-            # chroma_cqt → vqt → pitch_tuning: needs >= 4096 samples to avoid
-            # "Trying to estimate tuning from empty frequency set" UserWarning.
-            if len(audio) < 4096:
+            # chroma_cqt -> vqt -> pitch_tuning may request large FFT windows on
+            # short clips; use chroma_stft fallback in that case.
+            if len(audio) < 2048:
                 return "Unbekannt"
-            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+            if len(audio) < 12000:
+                _n_fft = max(512, min(2048, len(audio)))
+                chroma = librosa.feature.chroma_stft(y=audio, sr=sr, n_fft=_n_fft)
+            else:
+                chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
             chroma_mean = np.nan_to_num(chroma.mean(axis=1))
             key_idx = int(np.argmax(chroma_mean))
             key_names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "H"]

@@ -28,6 +28,33 @@
 - Rauschboden ≤ −72 dBFS (§0a)
 - HPI-Gate: PQS-Improvement dominant (§2.44)
 
+### §1.4a [RELEASE_MUST] Fail-Fast-Kontrakt für kritische Qualitätsmodule (v9.10.130)
+
+Kritische Qualitätsmodule dürfen in `restoration` und `studio2026` nicht unbemerkt in
+qualitativ schwache Platzhalterpfade fallen.
+
+**Kritische Module:**
+
+- `PerceptualQualityScorer` / PQS
+- `HolisticPerceptualGate`
+- `ArtifactFreedomGate`
+- `MusicalGoalsChecker` (P1/P2)
+
+**Pflichtregeln:**
+
+1. Fällt ein kritisches Modul zur Laufzeit aus, MUSS ein strukturierter
+    `fail_reason`-Eintrag erzeugt werden (`severity=failed`, `component`, `error_code`).
+2. Für `studio2026` ist bei Ausfall von PQS oder HPI kein stiller Positiv-Proxy erlaubt.
+    Der Run MUSS in einen kontrollierten Safe-Mode mit striktem End-Gate wechseln
+    oder fail-fast abbrechen.
+3. Für `restoration` gilt: Primum non nocere hat Vorrang. Bei unklarer Qualitätslage
+    MUSS auf das beste artefaktfreie Checkpoint-Audio oder Input zurückgerollt werden.
+4. VERBOTEN: Konstante positive Platzhalter (`pqs_improvement=0.1` o. ä.) als
+    dauerhafter Ersatz für echte Qualitätsmessung im finalen Exportpfad.
+
+**Invariante:** Ein Export darf nie allein deshalb passieren, weil ein kritischer
+Qualitätsdetektor nicht verfügbar war.
+
 ---
 
 ## §1.5 Studio-2026-Verarbeitungskette (kanonische Reihenfolge nach Defektkorrektur)
@@ -86,7 +113,7 @@ class StemRemixBalancer:
 
 ### §2.2.0 Sample-Rate-Vertrag (Dual-SR, [RELEASE_MUST])
 
-- `analysis_sr = import_sr` (native): DefectScanner, RestorabilityEstimator, EraClassifier, MediumClassifier, classify_clipping/analyse_clipping.
+- `analysis_sr = import_sr` (native): DefectScanner, RestorabilityEstimator, EraClassifier, MediumDetector, classify_clipping/analyse_clipping.
 - `processing_sr = 48000`: alle Verarbeitungsphasen (01–64), PMGG, ML-Plugins, Export-Gates.
 - Es müssen zwei getrennte Datenpfade geführt werden: `analysis_audio` (native SR) und `processing_audio` (48 kHz).
 - Wenn die Normierung `import_sr -> 48000` fehlschlägt, MUSS die Verarbeitung fail-fast abbrechen; ein Weiterlauf der Phasen auf Nicht-48k ist unzulässig.
@@ -198,10 +225,10 @@ Audio-Eingang (mono/stereo, beliebige SR)
 [GermanSchlagerClassifier]  → SchlagerClassificationResult
     │ → aktiviert SCHLAGER_RESTORATION_PROFILE bei is_schlager=True
     ↓
-[MediumClassifier]  → ClassificationResult (MaterialType, confidence)
+[MediumDetectorResult]  → transfer_chain, primary_material, confidence (aus PreAnalysis-Handover)
 
-  ⚡ PARALLEL (ThreadPoolExecutor max_workers=3):
-    EraClassifier + GermanSchlagerClassifier + MediumClassifier gleichzeitig
+    ⚡ PARALLEL (ThreadPoolExecutor max_workers=3):
+        EraClassifier + GermanSchlagerClassifier + RestorabilityEstimator gleichzeitig
     (ONNX gibt GIL frei → echte Parallelität)
 
     ↓
@@ -318,6 +345,25 @@ class RestorationResult:
     refinement_complete:  bool = False                               # True nach ML-Veredelung
     stufe2_quality_estimate: Optional[float] = None                  # quality nach vollständigem ML-Pass
 ```
+
+### §2.2.3 [RELEASE_MUST] Experience-Telemetrie-Vertrag (v9.11.1)
+
+Für die Produktions-Closed-Loop-Steuerung müssen folgende Felder in `RestorationResult.metadata`
+normativ vorhanden sein (fehlertolerant, aber schema-stabil):
+
+- `song_calibration.cluster_key: str`
+- `song_calibration.cluster_policy: dict`
+- `joy_runtime_index: {joy_index: float, fatigue_index: float, components: dict}`
+- `auto_improvement_recommendations: {count: int, recommendations: list[dict]}`
+
+**Invarianten:**
+
+1. Alle numerischen Werte sind finite und auf [0,1] bzw. plausible Bereiche begrenzt.
+2. Fehlende Upstream-Teile führen zu leeren Strukturen (`{}`, `[]`), nicht zu Schema-Bruch.
+3. Die Telemetrie ist advisory-only: sie darf Pipeline/Export nicht blockieren.
+
+**Rationale:** Ohne explizite Freude-/Ermüdungs- und Root-Cause-Telemetrie bleibt die
+geschlossene Nachbesserung intransparent und kann in UI/Orchestrator nicht stabil genutzt werden.
 
 ### §2.38a ML-Guard-Fallback-Metadaten (PFLICHT)
 
@@ -1214,7 +1260,7 @@ Aurik verarbeitet **kein generisches Audio** — jede Eingabe ist ein einzigarti
 4. RestorabilityEstimator       → 0–100, tier (GOOD/FAIR/POOR/EXTREME), scale_factor
 5. DefectScanner.scan_all()     → 32 defect_types × severity × locations
 6. CausalDefectReasoner         → 35 Ursachen → Phase-Selektion (CAUSE_TO_PHASES)
-7. SongCalibrationProfile       → 8 family_scalars + global_scalar [0.30–1.80]
+7. SongCalibrationProfile       → family_scalars [0.30–1.80] + global_scalar [0.50–1.50]
 8. GPOptimizer.propose()        → Pareto-optimale Hyperparameter (14-D MOO)
 ```
 
@@ -1266,6 +1312,80 @@ Wenn ein ML-Plugin nicht geladen werden kann (OOM, korruptes Modell, ONNX-Fehler
 | MertPlugin OOM | DSP-Analyse: F0+Harmonizität+SpektralFlux-Kohärenz (besser als MFCC) | Bypass (HPI ohne MERT-Anteil) |
 
 **Invariante**: Kein ML-Failure darf die Pipeline vollständig abbrechen. Jede Phase **muss** einen DSP-Fallback haben (§4.4 Spec 04). Der Fallback wird in `RestorationResult.metadata["ml_fallbacks_used"]` protokolliert.
+
+### §2.47 Adaptions-Erweiterungen (v9.11.0)
+
+Vier neue Intelligence-Hebel ergänzen die Adaptions-Kaskade. Sie sind **nach** dem GP-Optimizer aktiv und erhöhen die perceptuelle Präzision ohne neue ML-Modelle.
+
+#### Hebel 1 — Salience-aware PhaseSkipping (`_salience_adjusted_severity`)
+
+`_apply_phase_skipping` in UV3 liest **keine rohe `DefectScore.severity`** mehr direkt, sondern ruft `_salience_adjusted_severity(defect_type)` auf:
+
+```python
+def _salience_adjusted_severity(defect_type: str) -> float:
+    ds = defect_result.scores.get(defect_type)
+    if ds is None:
+        return 0.0
+    sev = float(ds.severity)               # ERB-adjustiert durch PerceptualSalienceEstimator
+    meta = getattr(ds, "metadata", {}) or {}
+    n_masked   = int(meta.get("n_masked_events", 0))
+    n_salient  = int(meta.get("n_salient_events", 0))
+    if n_masked >= 3 and n_salient == 0:   # vollständig ERB-maskiert
+        sev *= 0.5                          # zusätzlich -50 % → Phase meist inaktiv
+    return sev
+```
+
+**Rationale**: Defekte, die durch simultane Maskierung unhörbar sind (ERB-Maskierungskurve), sollen keine Phase einschalten — §0 Minimal-Intervention. Das ERA-Flag `n_masked_events`/`n_salient_events` im `DefectScore.metadata` stammt aus dem `PerceptualSalienceEstimator` (§2.47 Schritt 5).
+
+**Invariante**: Eine Phase, die durch reine Severity-Kalkulation aktiviert würde, aber nur vollständig maskierte Defekte adressiert, wird übersprungen (`_skip_phase()`) — kein Klangschaden durch unnötige Verarbeitung.
+
+#### Hebel 2 — SGMSE+ Tier-0 in `phase_03_denoise` (Richter et al. 2022)
+
+Score-based Diffusion-Denoising als **erster** Processing-Pfad vor dem bisherigen ML-Hybrid-Pfad:
+
+```text
+Tier 0  SGMSE+ (diffusion)    — Bedingungen: quality_mode ∈ {quality, maximum}
+                                              + (vocal_genre OR panns_singing_confidence ≥ 0.30)
+                                              + NOT digital (cd_digital, dat, minidisc)
+                                              + NOT use_lightweight
+Tier 1  ML-Hybrid (DeepFilterNet/MP-SENet + OMLSA)  — bisheriger Hauptpfad
+Tier 2  OMLSA/IMCRA                                 — DSP-Fallback
+Tier 3  Spectral-Gating                             — letzter Ausweg
+```
+
+**Tier-0-Auslöser**: Vokalmusik profitiert überproportional von Diffusion-Denoising, weil SGMSE+ die Lernverteilung natürlicher Sprachlaute als implizites Prior nutzt — Formanttreue bleibt erhalten. Bei nicht-vokalen Genres oder Digital-Material überwiegt das ML-Hybrid-Verfahren (deterministischer, kein Over-Smoothing).
+
+**Metadata-Markierung**: `phase_result.metadata["sgmse_plus_tier0_applied"] = True` bei Tier-0-Nutzung.
+
+#### Hebel 3 — PhaseConductor (inter-phase adaptive Strength)
+
+Vollständiger Workflow und Invarianten: siehe §2.52 dieses Dokuments.
+
+**Einbettungspunkt**: UV3 `_execute_pipeline`, sequentiell nach §2.31a MidCalibrate-Block.
+
+#### Hebel 4 — Carrier-Formant-Decay-Inversion in `phase_42` (Stage 0.5)
+
+Analoge Tonträger dämpfen charakteristisch den Formantbereich durch mechanische und magnetische Transfer-Verluste:
+
+```python
+def _restore_carrier_formant_decay(audio, sr, material_type):
+    """Stage 0.5: Invertiert träger-spezifische F1–F4-Unterdrückung via zero-phase Bell-EQ."""
+```
+
+Trägertypische Bell-EQ-Profile (Gain in dB, Zentrum-Hz, Q):
+
+| Material | F1-Boost | F2-Boost | F3-Boost | F4-Boost |
+| --- | --- | --- | --- | --- |
+| vinyl | +0.8 dB @ 800 Hz, Q=2.0 | +1.2 dB @ 1800 Hz, Q=2.5 | +0.6 dB @ 3200 Hz, Q=3.0 | +0.4 dB @ 4500 Hz, Q=3.5 |
+| reel_tape | +1.0 dB @ 750 Hz, Q=1.8 | +1.5 dB @ 1700 Hz, Q=2.2 | +0.8 dB @ 3000 Hz, Q=2.8 | — |
+| tape | +0.6 dB @ 800 Hz, Q=2.0 | +1.0 dB @ 1800 Hz, Q=2.5 | +0.5 dB @ 3200 Hz, Q=3.0 | — |
+| shellac | +2.0 dB @ 600 Hz, Q=1.5 | +3.0 dB @ 1500 Hz, Q=2.0 | +1.5 dB @ 2800 Hz, Q=2.5 | — |
+| minidisc | +0.4 dB @ 850 Hz, Q=2.5 | +0.8 dB @ 1900 Hz, Q=3.0 | +0.3 dB @ 3400 Hz, Q=3.5 | — |
+| cd_digital | passthrough (kein Formant-Decay) | — | — | — |
+
+**Implementierung**: `scipy.signal.filtfilt` (zero-phase, IIR-Biquad-Peaking) pro Formant. Kein Phasen-Artefakt, kein Pre-Ringing. Stage 0.5 läuft **vor** Stage 1 (Pitch-Korrektur) in `_enhance_channel(audio, sr, material_type=material)`.
+
+> Kreuzreferenz: §2.52 (PhaseConductor), §2.46 (Carrier-Chain-Inversion), Spec 06 §7.4
 
 ## §2.48 [RELEASE_MUST] Kumulative-Phasen-Interaktions-Guard (v9.10.123)
 
@@ -1329,6 +1449,59 @@ CAUSE_TO_PHASES wählt **welche** Phasen aktiv sind. Die **Reihenfolge** der akt
 
 > Kreuzreferenz: §2.29d (P1/P2 = hart), §2.45 (perceptual_delta), §2.44 (HPI)
 
+## §2.48a [RELEASE_MUST] Phase-Typ-Ontologie — Architektur-Inversion (v9.11.0)
+
+### Prinzip
+
+**Guards dürfen nur feuern, wenn ihre Messvoraussetzung strukturell erfüllt ist** — abgeleitet aus dem intrinsischen Operationstyp der Phase, nicht aus Ausnahmelisten.
+
+Das bisherige Muster (Ausnahmeliste) ist nicht skalierbar: Jede neue Phase braucht manuellen Eintrag in `_RESTORATIVE_PHASE_IDS`, `STFT_PHASES`, `PHASE_GOAL_EXCLUSIONS`. Fehlt ein Eintrag, feuert der Guard falsch → Rollback auf verbessertes Audio.
+
+**Lösung**: `backend/core/phase_ontology.py` definiert `PhaseOperationType` als Enum. Jeder Guard konsultiert den Typ und entscheidet strukturell, ob seine Messung valide ist.
+
+### Phase-Operationstypen (normativ)
+
+| Typ | Beschreibung | Beispiele |
+| --- | --- | --- |
+| `SUBTRACTIVE` | Entfernt Rauschen/Artefakte | phase_03, phase_09, phase_18, phase_20, phase_27, phase_28, phase_29, phase_49, phase_50 |
+| `ADDITIVE` | Fügt neue Signalkomponenten hinzu | phase_06, phase_07, phase_21, phase_22, phase_37, phase_38, phase_39 |
+| `CORRECTIVE` | Korrigiert spektrale/zeitliche Eigenschaften | phase_04, phase_12, phase_14, phase_25, phase_30, phase_31, phase_41 |
+| `ML_GENERATIVE` | ML-Diffusion/Flow-Matching (kein STFT-kohärenter Ausgang) | phase_42, phase_55, phase_36, phase_64 |
+| `DYNAMICS` | Hüllkurven-Verarbeitung | phase_08, phase_10, phase_11, phase_17, phase_19, phase_26, phase_35, phase_40, phase_47 |
+| `ANALYSIS_ONLY` | Kein Audio-Output | phase_53 |
+| `ENHANCEMENT` | Mix/nicht eindeutig | phase_13, phase_32, phase_46, phase_48, phase_58 |
+
+### Guard-Applicability-Matrix (normativ)
+
+| Guard | Valide für Typen | Invalide für Typen | Wissenschaftliche Grundlage |
+| --- | --- | --- | --- |
+| **Noise-Texture-Check** (§2.49) | `SUBTRACTIVE` | alle anderen | Schwarz & Grill 2004: BW-Erweiterung verändert Spektral-Tilt intentional |
+| **Pre-Echo-Detektor** (§2.49) | `DYNAMICS`, `ENHANCEMENT` | `SUBTRACTIVE`, `ADDITIVE`, `CORRECTIVE`, `ML_GENERATIVE` | Brandenburg & Johnston 1994: Pre-Echo ist ausschließlich Transform-Coding-Artefakt; Residual subtraktiver Phasen ≠ Prä-Transient-Energie |
+| **GDD-Check** (§2.48) | `SUBTRACTIVE`, `DYNAMICS`, `ENHANCEMENT` | `ML_GENERATIVE`, `ADDITIVE` | Richter et al. (SGMSE+, TASLP 2022): Diffusionsausgang nicht STFT-phasenkohärent; Synthese erzeugt neue Bins mit eigener Phase |
+| **Baseline-Capping** §2.29c | `SUBTRACTIVE` | alle anderen | ITU-R BS.1387 §4.2: Rauschresidual ist kein Artefakt; defekt-inflationierte Baseline ist strukturelles Merkmal subtraktiver Phasen |
+| **P1/P2-Drift-Check** (§2.48) | alle außer `ANALYSIS_ONLY` | `ANALYSIS_ONLY` | Audio unverändert → Drift trivial 0.0 |
+
+### Implementierung
+
+```python
+# backend/core/phase_ontology.py — normatives Register
+from backend.core.phase_ontology import get_phase_type, GDD_VALID_TYPES, NOISE_TEXTURE_VALID_TYPES, PRE_ECHO_VALID_TYPES
+
+# Guard-Entscheidung (Inversion):
+phase_type = get_phase_type(phase_id)
+if phase_type in NOISE_TEXTURE_VALID_TYPES:      # nur SUBTRACTIVE
+    check_noise_texture(...)
+if phase_type in PRE_ECHO_VALID_TYPES:           # nur DYNAMICS + ENHANCEMENT
+    check_pre_echo(...)
+if phase_type in GDD_VALID_TYPES:                # nicht ML_GENERATIVE, nicht ADDITIVE
+    check_group_delay(...)
+```
+
+**Invariante**: `phase_ontology.py` IST die Wahrheit. Alle Guards leiten ihre Exemptionen ab — keine doppelte Pflege von Ausnahmelisten.
+
+> Implementierung: `backend/core/phase_ontology.py` — `PhaseOperationType`, `get_phase_type()`, Guard-Applicability-Sets.
+> Konsumenten: `artifact_freedom_gate.py`, `cumulative_interaction_guard.py`, `per_phase_musical_goals_gate.py`.
+
 ## §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate (v9.10.123)
 
 Dediziertes Gate für **Artefakt-Erkennung** — unabhängig von den 14 Musical Goals. Eine Phase kann alle Goals bestehen und trotzdem hörbare Artefakte erzeugen.
@@ -1336,7 +1509,7 @@ Dediziertes Gate für **Artefakt-Erkennung** — unabhängig von den 14 Musical 
 ### Geprüfte Artefakte
 
 | Artefakt | Erkennungsmethode | Schwellwert |
-| --- | --- | --- | 
+| --- | --- | --- |
 | Musical Noise | Spectral-Variance in Stille-Segmenten: isolierte tonale Peaks (> 12 dB über Nachbarn) in Stille/Pausen | 0 Events |
 | Pre-Echo | Transient-Onset-Analyse: Energie in 5-ms-Fenster vor Attack ≤ −40 dB relativ zum Attack-Peak | 0 Events |
 | Spectral Holes | Bandbreiten-Kontinuitäts-Check: keine Energielücken > 200 Hz im erwarteten Passband (SourceFidelity BW) | 0 Holes |
@@ -1538,3 +1711,94 @@ Kein Accept-Checkpoint darf `mono_compat < 0.20` in mehr als 5 % der Frames habe
 **Implementierungsprüfung**: `_detect_phase_cancellation()` im §2.49-Gate ist der objective Prüfer. Nach Umsetzung der obigen Phasen dürfen phase_07, phase_18, phase_23, phase_24, phase_35 keine §2.49-Rollbacks mehr auslösen.
 
 > Kreuzreferenz: §2.49 (ArtifactFreedomGate), §2.50 (SourceMaterialBaseline), §7.4 Spec06 (PhaseInterface)
+
+---
+
+## §2.52 [RELEASE_MUST] PhaseConductor — Inter-Phase Adaptive Feedback (v9.11.0)
+
+### Überblick
+
+`PhaseConductor` ist ein **rein DSP-basierter inter-phase Feedback-Controller**. Er misst nach jeder Phase den verbleibenden Signal-Zustand und leitet daraus eine adaptive `strength`-Empfehlung für die **nächste** Phase ab. Kein ML, kein Netzwerkzugriff, kein I/O.
+
+- **Singleton**: `get_phase_conductor()` in `backend/core/phase_conductor.py`; thread-safe (double-checked locking)
+- **Session-Scope**: `conductor.reset()` zu Beginn jedes Songs in UV3 `_execute_pipeline`
+- **Advisory-only**: PMGG-Strength hat immer Vorrang; alle Empfehlungen sind Hinweise, keine Befehle
+
+### 4D State-Vector
+
+| Dimension | Beschreibung | Normierung | Messzeit (48 kHz, 3 min) |
+| --- | --- | --- | --- |
+| `noise_floor_db` | 5. Perzentil der Leistungsdichteschätzung (PSD) | dBFS ≤ 0 | < 5 ms |
+| `hf_energy_ratio` | Energie 8–24 kHz / Breitband (0–24 kHz) | [0, 1] | < 5 ms |
+| `transient_density` | Onset-Rate (librosa.onset.onset_detect) [Events/s] | roh; as_vec() → /20 | < 20 ms |
+| `harmonic_coherence` | Autocorrelation-Peak-Ratio auf Mid-Kanal | [0, 1] | < 15 ms |
+
+Gesamt `measure_state()` < **50 ms** pro Aufruf auch für 3 Minuten Audio.
+
+### Referenzgitter und Nearest-Neighbor-Empfehlung
+
+Pro Material gibt es ein vorberechnetes Referenzgitter aus (state_4d → optimal_strength)-Paaren:
+
+```python
+# Beispiel-Grid (werden zur Laufzeit nicht trainiert, sind hardcoded DSP-Messungen):
+_REFERENCE_GRIDS: dict[str, list[tuple[PhaseState, float]]] = {
+    "vinyl":    [...],   # 12 Referenzpunkte × (state_vec, optimal_strength)
+    "reel_tape":[...],
+    "tape":     [...],
+    "shellac":  [...],
+    "minidisc": [...],
+    "cd_digital":[...],
+}
+```
+
+**Nearest-Neighbor**: L2-Distanz auf normiertem State-Vektor (noise/−90, hf/1, transient/20, coherence/1). Bei `distance > 0.8` → Fallback auf `_DEFAULT_STRENGTH[phase_id]` (kein Over-Extrapolation).
+
+### Workflow in `_execute_pipeline` (UV3)
+
+```python
+# 1. Init vor Phase-Loop
+_conductor = get_phase_conductor()
+_conductor.reset()
+_conductor_strength_hints: dict[str, float] = {}
+
+# 2. Nach jeder erfolgreichen Phase
+_conductor.measure_state(current_audio, sr, phase_id=current_phase_id)
+
+# 3. Look-Ahead für nächste Phase
+if next_phase_id:
+    rec = _conductor.recommend(next_phase_id, state=_conductor.last_state, material_type=material_type)
+    if rec.strength_hint is not None:
+        _conductor_strength_hints[next_phase_id] = rec.strength_hint
+
+# 4. In _profiled_phase_call: hint injizieren (nur wenn strength nicht explizit gesetzt)
+if phase_id in _conductor_strength_hints and "strength" not in explicit_kwargs:
+    kwargs["strength"] = _conductor_strength_hints[phase_id]
+```
+
+### Invarianten
+
+| Invariante | Beschreibung |
+| --- | --- |
+| `_NEVER_SKIP` | `frozenset({"phase_01", "phase_09", "phase_12", "phase_14", "phase_15"})` — diese Phasen erhalten nie `skip_recommended=True`, egal wie der State-Vektor aussieht |
+| `_MIN_STRENGTH` | `{"phase_03": 0.35, "phase_09": 0.50, ...}` — Untergrenze für kritische Phasen; `recommended_strength = max(rec, _MIN_STRENGTH.get(phase_id, 0.0))` |
+| Exception-Sicherheit | Jede Exception in `measure_state` oder `recommend` → `logger.debug(exc)`, Pipeline läuft **unverändert** weiter (kein Abbruch, kein Fehler-Propagation) |
+| Kein §0-Verstoß | Wenn `recommended_strength < explicit_strength`: PMGG-Wert gewinnt; wenn `recommended_strength > explicit_strength`: PMGG-Wert gewinnt — ConductorHint beeinflusst nur **nicht explizit gesetzten** Strength |
+| Keine ML-Abhängigkeit | Rein DSP, nur numpy + scipy; kein torch, kein ONNX, kein Remote-Call |
+
+### Zusammenspiel mit §2.47 PhaseSkipper (Hebel 1 + Hebel 3 Synergie)
+
+```text
+DefectScanner → _salience_adjusted_severity() (Hebel 1)
+     ↓ severity (ERB-gewichtet)
+_apply_phase_skipping → Phase aktiv/inaktiv?
+     ↓ wenn aktiv:
+_conductor.recommend(next_phase_id, …) (Hebel 3)
+     ↓ strength_hint
+_profiled_phase_call → Phase läuft mit adaptiver Wetness
+```
+
+Hebel 1 entscheidet **ob** eine Phase läuft; Hebel 3 entscheidet **wie stark** sie läuft. Beide zusammen vermeiden Über- und Unter-Processing.
+
+> Implementierung: `backend/core/phase_conductor.py`
+> UV3-Integration: `backend/core/unified_restorer_v3.py` — `_execute_pipeline`, `_profiled_phase_call`
+> Tests: `tests/unit/test_hebel_intelligence_levers.py` (Hebel 3: Tests 17–26, 32/32 grün)

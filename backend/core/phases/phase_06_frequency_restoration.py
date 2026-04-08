@@ -279,6 +279,31 @@ class FrequencyRestorationPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
+        # §2.47 PMGG-Retry: locality_factor skaliert finale Intensität bei Retries
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "frequency_restored": False,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["Frequency restoration skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
+
         # Get material-specific parameters (mutable copy for source-fidelity overrides)
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
 
@@ -300,9 +325,7 @@ class FrequencyRestorationPhase(PhaseInterface):
                 params["max_boost_db"] = float(params.get("max_boost_db", 8.0)) + _extra_boost
                 # Also increase extension range proportional to generation count
                 if _sfr_gen >= 3:
-                    params["restoration_strength"] = float(
-                        min(params.get("restoration_strength", 0.5) * 1.10, 0.95)
-                    )
+                    params["restoration_strength"] = float(min(params.get("restoration_strength", 0.5) * 1.10, 0.95))
 
         # Check if restoration needed
         if params["restoration_strength"] == 0.0:
@@ -318,6 +341,8 @@ class FrequencyRestorationPhase(PhaseInterface):
                     "algorithm": "none",
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -342,12 +367,14 @@ class FrequencyRestorationPhase(PhaseInterface):
                     "measured_rolloff_freq": measured_rolloff_freq,
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
         # Step 2: Multi-band HF restoration with ML-Hybrid support
         # =========================================================
-        quality_mode = kwargs.get("quality_mode", "balanced")
+        quality_mode = kwargs.get("quality_mode", "quality")
         use_ml_hybrid = (
             ML_HYBRID_AVAILABLE
             and quality_mode in ["balanced", "quality", "maximum"]
@@ -424,6 +451,13 @@ class FrequencyRestorationPhase(PhaseInterface):
             except Exception as _sfr_exc:
                 logger.debug("Phase 06: SourceFidelityEQ übersprungen: %s", _sfr_exc)
 
+        # NaN/Inf-Guard final + §2.47 PMGG-Retry locality blend
+        restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
+        restored = np.clip(restored, -1.0, 1.0)
+        if _effective_strength < 1.0:
+            restored = audio + _effective_strength * (restored - audio)
+            restored = np.clip(restored, -1.0, 1.0)
+
         return create_phase_result(
             audio=restored,
             modifications={
@@ -433,6 +467,8 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "hf_boost_db": hf_boost_db,
                 "restoration_strength": params["restoration_strength"],
                 "sbr_enabled": enable_sbr,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
                 "material_type": material_type,
             },
             warnings=[f"Aggressive HF extension: {hf_boost_db:.1f} dB"] if hf_boost_db > 15 else [],
@@ -447,6 +483,10 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "benchmark": "iZotope RX De-clip (HF), Waves Renaissance Axx, Aphex Aural Exciter, SPL Vitalizer",
                 "algorithm_version": "3.0_ml_hybrid" if use_ml_hybrid else "2.0_professional",
                 "execution_time_seconds": execution_time,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
                 **ml_metadata,
             },
         )
@@ -513,8 +553,7 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "quality_mode": quality_mode,
                 "strategy_used": "dsp_only",
                 "ml_reason": (
-                    f"short_clip_guard: duration={audio_dur_s:.2f}s "
-                    f"< min_duration={audiosr_min_duration_s:.2f}s"
+                    f"short_clip_guard: duration={audio_dur_s:.2f}s < min_duration={audiosr_min_duration_s:.2f}s"
                 ),
                 "ml_watchdog": "short_clip_guard",
             }
@@ -857,7 +896,9 @@ class FrequencyRestorationPhase(PhaseInterface):
         Zxx_refined = G_combined * mag_in_ref * np.exp(1j * np.angle(Zxx_in))
         if _PGHI_AVAILABLE_P06:
             try:
-                audio_refined = _pghi_p06(Zxx_refined.astype(np.complex64), sr=sr, win_size=REF_WIN, hop=REF_HOP, n_samples=n)
+                audio_refined = _pghi_p06(
+                    Zxx_refined.astype(np.complex64), sr=sr, win_size=REF_WIN, hop=REF_HOP, n_samples=n
+                )
             except Exception:
                 _, audio_refined = signal.istft(Zxx_refined, fs=sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP)
         else:
@@ -1280,9 +1321,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = FrequencyRestorationPhase(sample_rate=sr)
         result = phase.process(audio_rolled_off.copy(), material_type=material)
@@ -1292,28 +1333,28 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Rolloff: %s Hz", result.modifications['rolloff_hz'])
-            logger.debug("   Extension Range: %s Hz", result.modifications['extension_range_hz'])
-            logger.debug("   HF Boost: %.1f dB", result.modifications['hf_boost_db'])
-            logger.debug("   Restoration Strength: %.2f", result.modifications['restoration_strength'])
-            logger.debug("   SBR Enabled: %s", result.modifications['sbr_enabled'])
+            logger.debug("   Rolloff: %s Hz", result.modifications["rolloff_hz"])
+            logger.debug("   Extension Range: %s Hz", result.modifications["extension_range_hz"])
+            logger.debug("   HF Boost: %.1f dB", result.modifications["hf_boost_db"])
+            logger.debug("   Restoration Strength: %.2f", result.modifications["restoration_strength"])
+            logger.debug("   SBR Enabled: %s", result.modifications["sbr_enabled"])
             logger.debug(
                 f"   Measured Rolloff: {result.metadata['measured_rolloff_db']:.1f} dB at {result.metadata['measured_rolloff_freq']:.0f} Hz"
             )
-            logger.debug("   LPC Order: %s", result.metadata['lpc_order'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   LPC Order: %s", result.metadata["lpc_order"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("⏭️  Frequency Restoration Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
             if "measured_rolloff_db" in result.metadata:
                 logger.debug(
                     f"   Measured Rolloff: {result.metadata['measured_rolloff_db']:.1f} dB at {result.metadata.get('measured_rolloff_freq', 0):.0f} Hz"
                 )
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Frequency Restoration v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata.get('algorithm', 'N/A'))
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata.get("algorithm", "N/A"))
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.91 (Professional-Grade)")

@@ -27,7 +27,7 @@ with AudioFile(FILE) as f:
 audio_mono = raw.mean(axis=0).astype("float32")
 dur_s = len(audio_mono) / sr
 channels = raw.shape[0]
-print(f"    -> SR={sr} Hz | Kanaele={channels} | Laenge={dur_s:.1f}s | geladen in {time.time()-t0:.2f}s")
+print(f"    -> SR={sr} Hz | Kanaele={channels} | Laenge={dur_s:.1f}s | geladen in {time.time() - t0:.2f}s")
 
 print("[2] Starte gezielte Defektanalyse (dropouts / transport_bump / tape_head_level_dip) ...")
 scanner = DefectScanner(sample_rate=sr, material_type=MaterialType.TAPE)
@@ -45,7 +45,7 @@ t4 = time.time()
 scores = [drop, bump, dip]
 print("\n[3] Ergebnis relevante Defekte:")
 print(f"\n  {'Defekttyp':<35} {'Severity':>8} {'Conf':>6} {'Locations':>10}")
-print(f"  {'-'*35} {'-'*8} {'-'*6} {'-'*10}")
+print(f"  {'-' * 35} {'-' * 8} {'-' * 6} {'-' * 10}")
 
 total_locations = 0
 for sc in scores:
@@ -55,17 +55,14 @@ for sc in scores:
     print(f"  {sc.defect_type.value:<35} {sc.severity:>8.3f} {sc.confidence:>6.2f} {n_loc:>10}{marker}")
 
 print(f"\n  Gesamt Ereignis-Locations: {total_locations}")
-print(
-    "\n  Laufzeiten: "
-    f"dropouts={t2-t1:.2f}s | transport_bump={t3-t2:.2f}s | tape_head_level_dip={t4-t3:.2f}s"
-)
+print(f"\n  Laufzeiten: dropouts={t2 - t1:.2f}s | transport_bump={t3 - t2:.2f}s | tape_head_level_dip={t4 - t3:.2f}s")
 
 top = max(scores, key=lambda s: len(s.locations or []))
 if len(top.locations or []) > 0:
     print(f"\n[4] Erste 15 Locations von '{top.defect_type.value}' ({len(top.locations)} gesamt):")
     for i, (s, e) in enumerate(top.locations[:15]):
-        print(f"    [{i+1:3}] {s:7.2f}s - {e:7.2f}s  (Dauer {(e-s)*1000:.0f} ms)")
+        print(f"    [{i + 1:3}] {s:7.2f}s - {e:7.2f}s  (Dauer {(e - s) * 1000:.0f} ms)")
     if len(top.locations) > 15:
-        print(f"    ... und {len(top.locations)-15} weitere")
+        print(f"    ... und {len(top.locations) - 15} weitere")
 
 print("\n[5] Scan abgeschlossen.")

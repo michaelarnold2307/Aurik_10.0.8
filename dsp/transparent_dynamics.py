@@ -650,7 +650,7 @@ class MicroDynamicsEnhancer:
         analysis = self.analyze_micro_dynamics(audio, sr)
         self.metrics = analysis
 
-        logger.info("[MicroDynamics] Micro-Dynamics Score: %.3f", analysis['micro_dynamics_score'])
+        logger.info("[MicroDynamics] Micro-Dynamics Score: %.3f", analysis["micro_dynamics_score"])
 
         # Check if enhancement needed
         if analysis["micro_dynamics_score"] < 0.1:
@@ -868,6 +868,7 @@ if __name__ == "__main__":
     # Load audio
     logger.info("\nLoading: %s", input_file)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(input_file)
     audio, sr = _res["audio"], int(_res["sr"])
 

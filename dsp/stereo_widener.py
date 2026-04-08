@@ -257,7 +257,7 @@ def select_stereo_widening_strategy(context: dict, goal: dict) -> dict:
 
     params = {"width": width, "genre": context.get("genre", "unknown")}
 
-    logger.info("Stereo Widening SELECTED: width=%.2f, genre=%s", width, params['genre'])
+    logger.info("Stereo Widening SELECTED: width=%.2f, genre=%s", width, params["genre"])
 
     return params
 

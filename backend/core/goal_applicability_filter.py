@@ -113,7 +113,6 @@ class GoalApplicabilityFilter:
 
         # Audio-Basis-Analysen
         duration_s = 0.0
-        snr_db = 30.0
         bw_hz = 20000.0
         is_mono_signal = False
 
@@ -127,7 +126,10 @@ class GoalApplicabilityFilter:
                 # Stereo-Analyse
                 if arr.shape[0] >= 2:
                     corr = float(np.corrcoef(arr[0], arr[1])[0, 1])
-                    is_mono_signal = bool(np.isnan(corr) or corr >= 0.97)
+                    # Schwellwert 0.995 (vorher 0.97 — zu strict: typische
+                    # Popmusik mit zentriertem Gesang hat corr ≈ 0.97–0.99
+                    # und ist dennoch kein Mono-Signal).
+                    is_mono_signal = bool(np.isnan(corr) or corr >= 0.995)
                 else:
                     is_mono_signal = True
                 mono = arr.mean(axis=0)
@@ -144,16 +146,19 @@ class GoalApplicabilityFilter:
                 n_floor = max(1, len(sorted_e) // 10)
                 noise_e = float(np.mean(sorted_e[:n_floor]))
                 signal_e = float(np.mean(sorted_e[-n_floor:]))
-                snr_db = 10.0 * math.log10(max(signal_e / max(noise_e, 1e-15), 1e-15))
+                10.0 * math.log10(max(signal_e / max(noise_e, 1e-15), 1e-15))
 
-                # Effektive Bandbreite
-                cumsum = np.cumsum(spec[::-1])[::-1]
-                total = cumsum[0]
-                if total > 0:
-                    for i, f in enumerate(freqs):
-                        if cumsum[i] / total < 0.01:
-                            bw_hz = float(f)
-                            break
+                # Effektive Bandbreite: höchste Frequenz mit Energie > Rauschboden + 20 dB.
+                # Vorheriger Algorithmus (99th-Perzentil-Energie-Schwerpunkt) unterschätzte
+                # die BW für typische Musik systematisch: Bassenergie dominiert →
+                # 99 % der Energie unterhalb ~2–4 kHz → brillanz fälschlich deaktiviert.
+                noise_floor_db = 10.0 * math.log10(float(np.percentile(spec, 10)) + 1e-15)
+                bw_hz = 0.0
+                for _bi in range(len(freqs) - 1, 0, -1):
+                    _e_db = 10.0 * math.log10(float(spec[_bi]) + 1e-15)
+                    if _e_db > noise_floor_db + 18.0:  # 18 dB über Rauschboden
+                        bw_hz = float(freqs[_bi])
+                        break
 
         # REGEL: SpatialDepthMetric
         era_mono = era_decade is not None and era_decade <= 1950
@@ -179,8 +184,7 @@ class GoalApplicabilityFilter:
         # Tonleitersystem mit festen K, kein Western-Durtonart-Profil anwendbar).
         if material == "wax_cylinder":
             inapplicable["tonal_center"] = (
-                "Wachswalze — K-S-Durtonart-Profil nicht anwendbar: "
-                "proprietäres Tonleitersystem, kein Western-Key."
+                "Wachswalze — K-S-Durtonart-Profil nicht anwendbar: proprietäres Tonleitersystem, kein Western-Key."
             )
 
         # REGEL: GrooveMetric
@@ -255,8 +259,7 @@ ALL_GOALS: frozenset[str] = _ALL_GOALS
 ALWAYS_APPLICABLE: frozenset[str] = _ALWAYS_APPLICABLE
 
 # Spec-konformer Funktionsname-Alias (§3.2)
-get_goal_applicability_filter = get_goal_filter
-"""Alias für get_goal_filter() — Spec-konformer Name (§3.2)."""
+get_goal_applicability_filter = get_goal_filter  # Alias für get_goal_filter() — Spec-konformer Name (§3.2)
 
 __all__ = [
     "ALL_GOALS",

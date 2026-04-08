@@ -569,7 +569,11 @@ class AdaptiveGoalsCalculator:
         # §2.31: restorability-adaptive scale factor (normative SCALE_FACTORS table)
         # §2.47: pass shellac flag for special-case handling (restorability < 20 + shellac → 0.65)
         _is_shellac = "shellac" in (quality.medium_chain or [])
-        scale = get_restorability_scale_factor(float(restorability_score), is_shellac=_is_shellac) if restorability_score is not None else 1.0
+        scale = (
+            get_restorability_scale_factor(float(restorability_score), is_shellac=_is_shellac)
+            if restorability_score is not None
+            else 1.0
+        )
 
         # Apply relaxation to each threshold
         thresholds = {}

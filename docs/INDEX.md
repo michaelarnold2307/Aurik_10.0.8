@@ -34,6 +34,15 @@ Rekonstruktions-Denkersystem. Alle Inhalte sind an die KI-Programmierrichtlinien
 - **[Contributing Guide](development/CONTRIBUTING.md)** – Beitrag leisten
 - **[Testing Guide](development/TESTING.md)** – Teststrategie & Best Practices
 - **[Performance Guard Spec](PERFORMANCE_GUARD_SPEC.md)** – 3×-Echtzeit-Budgetregeln
+- **[MUSHRA Studienprotokoll](guides/MUSHRA_STUDIENPROTOKOLL.md)** – Externe Hoervalidierung nach ITU-R BS.1534-3
+- **[Statistische Kalibrierungsrichtlinie](guides/STATISTISCHE_KALIBRIERUNGSRICHTLINIE.md)** – Datenbasierte Schwellwert-Aenderungen
+- **[CI Determinismus Checkliste](guides/CI_DETERMINISMUS_CHECKLISTE.md)** – Reproduzierbarkeits-Gates fuer CI/Release
+- **[Freude-Gate](guides/FREUDE_GATE.md)** – Psychoakustisches PASS/FAIL-Release-Gate fuer Hoerfreude
+- **[Phase Harmonization Audit](../scripts/phase_harmonization_audit.py)** – Modulweise 100%-Checkliste fuer produktive Strength/Locality-Harmonisierung
+- **[Spec Evidenzblock Template](guides/SPEC_EVIDENZBLOCK_TEMPLATE.md)** – Pflichtnachweis fuer normative Spec-Aenderungen
+- **[PR Hoervalidierung Template](guides/PR_HOERVALIDIERUNG_TEMPLATE.md)** – Review-Template fuer Blindtest/Mini-MUSHRA
+- **[Externe MUSHRA-Studie 2026 Q2](reports/studies/mushra_2026q2/README.md)** – Studienpaket mit Praeregistration und Szenarienmatrix
+- **[Spec Evidence Reports](reports/spec_evidence/README.md)** – Pflichtberichte bei Spec-Aenderungen auf main (Solo-Release-Gate)
 
 ### Status & Fortschritt
 

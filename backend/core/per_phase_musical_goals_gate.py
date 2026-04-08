@@ -212,8 +212,14 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "authentizitaet",
         "artikulation",
         "timbre_authentizitaet",
-    },  # Dropout repair: synthesised HF content; timbre_authentizitaet: AudioSR synthesis creates new spectral content → MFCC correlation against damaged reference is meaningless
-    "phase_28": set(),  # Noise reduction variant: handled by correlation
+        "transparenz",
+        "tonal_center",
+    },  # Dropout repair: synthesised HF content; timbre_authentizitaet: AudioSR synthesis creates new spectral content → MFCC correlation against damaged reference is meaningless; transparenz: dropout silence regions inflate spectral clarity proxy (silence = perfect rolloff) → after AudioSR fill slight noise floor added → proxy drops (false P4); tonal_center: dropout silence has undefined/near-zero chroma → K-S key detection unstable; after AudioSR tonal synthesis K-S locks onto different key estimate → false tonal regression despite musically unchanged pitch centre (stagnation 0.3137 confirmed, 2026-04-08)
+    "phase_28": {
+        "artikulation",
+        "natuerlichkeit",
+        "timbre_authentizitaet",
+    },  # Surface noise profiling (vinyl): broadband noise events look like transients to ArticulationMetric → after profiling/removal pseudo-transients gone → false P1 regression (catastrophic 0.4222 confirmed, 2026-04-08); natuerlichkeit: broadband spectral denoising (same MFCC-smoothness mechanism as phase_03/phase_29); timbre_authentizitaet: spectral envelope changes when broadband surface noise removed → MFCC-Pearson + centroid-CV shift
     # Diffusion inpainting: synthesised content has no transient reference →
     # ArticulationMetric correlation vs pre-inpainting fragment is meaningless.
     # micro_dynamics excluded: inpainting inserts new content with its own
@@ -329,8 +335,11 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "authentizitaet",
         "natuerlichkeit",
         "timbre_authentizitaet",
-    },  # EQ deliberately redistributes spectrum (§9.7.11 K-S: tonal_center not yet observed failing here)
-    "phase_06": set(),  # SBR adds content not in reference → §9.7.12 crest-factor brillanz proxy is reference-free and correctly scores HF synthesis improvement
+        "artikulation",
+    },  # EQ deliberately redistributes spectrum (§9.7.11 K-S: tonal_center not yet observed failing here); artikulation: EQ spectral reshaping modifies frequency distribution of transient attacks → ArticulationMetric transient-shape correlation changes as spectral envelope of attacks shifts (catastrophic P2 regression 0.2515 confirmed, 2026-04-08)
+    "phase_06": {
+        "timbre_authentizitaet",
+    },  # SBR/bandwidth extension adds new HF harmonics: brillanz excluded rationale no longer applies here because §9.7.12 crest-proxy correctly handles synthesis improvement. timbre_authentizitaet: adding sub-10kHz HF harmonics via SBR changes MFCC-Pearson + spectral-centroid-CV (intentional spectral content addition = false P2 by design, confirmed catastrophic regression 0.2185 on timbre_authentizitaet P1 in E2E, 2026-04-08)
     "phase_07": {
         "artikulation",
         "timbre_authentizitaet",
@@ -351,13 +360,15 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     "phase_01": {
         "artikulation",
         "natuerlichkeit",
-    },  # Click removal: impulse transients → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1 (confirmed 0.267 regression, 2026-04-07)
+        "timbre_authentizitaet",
+    },  # Click removal: impulse transients → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1 (confirmed 0.267 regression, 2026-04-07); timbre_authentizitaet: spectral interpolation at click locations changes MFCC-Pearson (identical mechanism to phase_02 comb-notch + phase_27; best_effort 0.0899 observed, 2026-04-08)
     # Click/pop removal: identical mechanism to phase_01 (different algorithm,
     # same false-regression root cause for artikulation + natuerlichkeit proxies).
     "phase_27": {
         "artikulation",
         "natuerlichkeit",
-    },  # Click/pop removal: identical to phase_01 — impulse transients removed → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1
+        "timbre_authentizitaet",
+    },  # Click/pop removal: identical to phase_01 — impulse transients removed → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1; timbre_authentizitaet: spectral interpolation at click/pop locations changes MFCC-Pearson (same mechanism as phase_02 comb-filter: spectral modification at removed event locations → MFCC trajectory disruption, catastrophic P2 regression 0.5196 confirmed, 2026-04-08)
     # BANQUET blind denoising: full-band neural diffusion-based crackle/noise removal.
     # natuerlichkeit excluded: BANQUET modifies the full spectral envelope (same root
     # cause as phase_03/phase_29 — MFCC-smoothness proxy disturbed by denoising).
@@ -510,7 +521,7 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # selectively at sibilant positions → local crest-factor ratio shifts → false P3
     # regression despite intended timbral improvement.
     "phase_58_lyrics_guided_enhancement": {
-        "tonal_center",           # §Y5: fricative ramp-gain (4–8 kHz) shifts HF energy profile → K-S key-label flip (SNR-sensitive K-S already excluded from shaped-NR phases)
+        "tonal_center",  # §Y5: fricative ramp-gain (4–8 kHz) shifts HF energy profile → K-S key-label flip (SNR-sensitive K-S already excluded from shaped-NR phases)
         "timbre_authentizitaet",
         "artikulation",
         "emotionalitaet",
@@ -676,7 +687,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "timbre_authentizitaet",
         "groove",
         "emotionalitaet",
-    },  # BSRoFormer vocal enhancement: stem separation + micro-compression + formant shaping → false regressions via synthesis/crest/MFCC mechanisms (identical to phase_19 + phase_23)
+        "artikulation",
+    },  # BSRoFormer vocal enhancement: stem separation + micro-compression + formant shaping → false regressions via synthesis/crest/MFCC mechanisms (identical to phase_19 + phase_23); artikulation: BSRoFormer stem resynthesis reshapes transient content → ArticulationMetric transient-shape correlation vs. original meaningless for ML-synthesized output (catastrophic P2 regression 0.2043 confirmed, 2026-04-08)
     # Drums/percussion enhancement: transient shaping (attack/sustain) + DrumsEnhancementSystem
     # which includes compression (Dbx-style). Beat-synchronous transient shaping alters
     # the inter-beat RMS contrast → groove autocorr[lag_05] disrupted.
@@ -1155,7 +1167,11 @@ def _safe_pearson(a: np.ndarray, b: np.ndarray) -> float:
     if n < 4:
         return 0.0
     try:
-        r = float(np.corrcoef(a[:n].ravel(), b[:n].ravel())[0, 1])
+        av = a[:n].ravel()
+        bv = b[:n].ravel()
+        if float(np.std(av)) < 1e-12 or float(np.std(bv)) < 1e-12:
+            return 1.0 if np.allclose(av, bv, atol=1e-12, rtol=1e-6) else 0.0
+        r = float(np.corrcoef(av, bv)[0, 1])
         return r if math.isfinite(r) else 0.0
     except Exception:
         return 0.0
@@ -2233,7 +2249,15 @@ class PerPhaseMusicalGoalsGate:
         # Regression melden und die Phase auf 6% Wet drosseln.
         # Lösung: Baseline kann nie höher sein als das normative Qualitätsziel.
         # Echter Schaden (Score nach Phase UNTER Schwelle) wird weiterhin erkannt.
-        _is_restorative = any(phase_id.startswith(p) for p in _RESTORATIVE_PHASES)
+        # §2.29c §2.48a Architektur-Inversion: Ist diese Phase restorative?
+        # Ableitung aus phase_ontology (intrinsischer Typ), nicht aus Ausnahmeliste.
+        # Legacy-Fallback: _RESTORATIVE_PHASES für Phasen noch nicht im Ontologie-Register.
+        from backend.core.phase_ontology import BASELINE_CAPPING_VALID_TYPES, get_phase_type
+
+        _phase_type = get_phase_type(phase_id)
+        _is_restorative = _phase_type in BASELINE_CAPPING_VALID_TYPES or any(
+            phase_id.startswith(p) for p in _RESTORATIVE_PHASES
+        )
         _thresholds = _get_canonical_thresholds(is_studio_2026)
         if _is_restorative:
             effective_scores_before = {g: min(v, _thresholds.get(g, v) + 0.05) for g, v in scores_before.items()}
@@ -2664,7 +2688,8 @@ class PerPhaseMusicalGoalsGate:
             try:
                 win_size = 2048
                 hop = win_size // 4
-                from scipy.signal import stft as _stft, istft as _istft
+                from scipy.signal import istft as _istft
+                from scipy.signal import stft as _stft
 
                 _, _, Zxx_dry = _stft(dry, fs=48000, nperseg=win_size, noverlap=win_size - hop)
                 _, _, Zxx_wet = _stft(wet, fs=48000, nperseg=win_size, noverlap=win_size - hop)

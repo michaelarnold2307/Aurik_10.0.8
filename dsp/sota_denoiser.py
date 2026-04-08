@@ -101,9 +101,7 @@ class SotaDenoiser:
             if not check_budget("sota_denoiser_dccrn", 0.15):
                 _logger.warning("Memory budget exceeded for sota_denoiser DCCRN — using DSP fallback")
             else:
-                self.dccrn_session = ort.InferenceSession(
-                    dccrn_path, providers=["CPUExecutionProvider"]
-                )
+                self.dccrn_session = ort.InferenceSession(dccrn_path, providers=["CPUExecutionProvider"])
 
     def log_contract(self) -> None:
         """

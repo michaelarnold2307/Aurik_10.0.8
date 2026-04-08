@@ -51,11 +51,7 @@ def sample_audio() -> tuple[np.ndarray, int]:
     rng = np.random.default_rng(2026)
 
     # Base vocal signal (low/mid frequencies)
-    vocal = (
-        0.18 * np.sin(2 * np.pi * 220 * t)
-        + 0.10 * np.sin(2 * np.pi * 440 * t)
-        + 0.06 * np.sin(2 * np.pi * 660 * t)
-    )
+    vocal = 0.18 * np.sin(2 * np.pi * 220 * t) + 0.10 * np.sin(2 * np.pi * 440 * t) + 0.06 * np.sin(2 * np.pi * 660 * t)
 
     # Light broadband bed to avoid unrealistically sparse synthetic content
     vocal += 0.015 * rng.standard_normal(len(t))
@@ -315,7 +311,7 @@ def test_safety_post_check(sample_audio):
 
     # Should have correlation metric
     assert "correlation" in post_result.metrics
-    assert "intelligibility_preservation" in post_result.metrics or True  # noqa: SIM222  # May not be computed if no baseline
+    assert "intelligibility_preservation" in post_result.metrics or True  # May not be computed if no baseline
 
 
 @pytest.mark.skipif(not CONTEXT_AWARE_DEESSER_AVAILABLE, reason="Context-Aware De-Esser not available")

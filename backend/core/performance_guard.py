@@ -220,6 +220,10 @@ class PerformanceGuard:
         self.audio_duration: float | None = None
         self.current_rt_factor: float = 0.0
         self.warnings: list[str] = []
+        # Runtime-Set für verpflichtende Phasen (z. B. §6.2a Material-Pflichtphasen),
+        # die auch unter RT-Druck niemals deferred/geskippt werden dürfen.
+        self._runtime_never_skip_phase_ids: set[str] = set()
+        self._runtime_never_skip_short_ids: set[str] = set()
         # Accumulated analytics overhead (goal measurements, PMGG checks, etc.)
         # This time is excluded from the RT calculation so quality checks do not
         # inflate the RT factor and cause unnecessary phase skipping.
@@ -274,6 +278,17 @@ class PerformanceGuard:
                 seconds,
                 self._analytics_overhead_s,
             )
+
+    def set_never_skip_phases(self, phase_ids: list[str] | tuple[str, ...] | set[str]) -> None:
+        """Setzt Phasen, die zur Laufzeit niemals geskippt werden dürfen.
+
+        Verwendet sowohl volle Phase-IDs (``phase_09_crackle_removal``) als auch
+        normalisierte Kurznamen (``crackle_removal``), damit Aufrufer flexibel
+        bleiben und §6.2a-Pflichtphasen robust geschützt sind.
+        """
+        cleaned = {str(pid) for pid in phase_ids if pid}
+        self._runtime_never_skip_phase_ids = cleaned
+        self._runtime_never_skip_short_ids = {self._normalize_phase_id(pid) for pid in cleaned}
 
     def start_phase(self, phase_id: str) -> float:
         """
@@ -383,10 +398,17 @@ class PerformanceGuard:
         if self._is_phase_critical(phase_id):
             return False
 
+        short_id = self._normalize_phase_id(phase_id)
+        if phase_id in self._runtime_never_skip_phase_ids or short_id in self._runtime_never_skip_short_ids:
+            logger.debug(
+                "§6.2a Runtime-Guard: Phase '%s' als Pflichtphase markiert — Skip verhindert",
+                phase_id,
+            )
+            return False
+
         # Musikalische Exzellenz — Priorität 1 (§MusEx-P1): niemals überspringen.
         # Doppelter Schutz: Priority-Dict UND Namens-Set verhindern Skip.
         # RT×32-Kompatibilität garantiert: alle Excellence-Phasen < 15 ms/s (§9.5).
-        short_id = self._normalize_phase_id(phase_id)
         if short_id in self.MUSICAL_EXCELLENCE_PHASES:
             logger.debug(
                 f"🎵 Phase '{phase_id}' ist Musikalische-Exzellenz-Phase (§MusEx-P1) "
@@ -608,9 +630,9 @@ if __name__ == "__main__":
     # Setup Logging
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    logger.debug("\n%s", '=' * 60)
+    logger.debug("\n%s", "=" * 60)
     logger.debug("PERFORMANCE GUARD TEST")
-    logger.debug("%s\n", '=' * 60)
+    logger.debug("%s\n", "=" * 60)
 
     # Simuliere 3:45 Audio (225 Sekunden)
     audio_duration = 225.0
@@ -668,9 +690,9 @@ if __name__ == "__main__":
     report2 = guard2.get_performance_report()
 
     # Zusammenfassung
-    logger.debug("\n\n%s", '=' * 60)
+    logger.debug("\n\n%s", "=" * 60)
     logger.debug("SUMMARY")
-    logger.debug("%s", '=' * 60)
+    logger.debug("%s", "=" * 60)
     logger.debug(
         f"Balanced Mode: {report1.total_rt_factor:.2f}× RT, "
         f"{len(report1.skipped_phases)} skipped, "

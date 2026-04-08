@@ -401,8 +401,7 @@ class LyricsGuidedTimeline:
         if audio_duration_s <= 0 or widget_width_px <= 0:
             return
         try:
-            from PyQt5.QtCore import QRectF, Qt
-            from PyQt5.QtCore import QPointF
+            from PyQt5.QtCore import QPointF, QRectF, Qt
             from PyQt5.QtGui import QBrush, QColor, QPen, QPolygonF
 
             OVERLAY_H = 44  # px height of overlay band at top of waveform

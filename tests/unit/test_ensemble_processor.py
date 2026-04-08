@@ -268,4 +268,4 @@ def test_25_frame_voting_attribution():
 
     ep = get_ensemble_processor()
     # Kein AttributeError beim Zugriff auf FRAME_DURATION_S
-    assert hasattr(ep, "FRAME_DURATION_S") or hasattr(ep, "frame_duration_s") or True  # noqa: SIM222
+    assert hasattr(ep, "FRAME_DURATION_S") or hasattr(ep, "frame_duration_s") or True

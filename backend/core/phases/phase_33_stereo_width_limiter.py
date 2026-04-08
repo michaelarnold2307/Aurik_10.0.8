@@ -168,6 +168,8 @@ class StereoWidthLimiterPhaseV2(PhaseInterface):
                     "width_limiting_applied": False,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"width_before": 0.0, "width_after": 0.0, "mono_compatibility": 1.0},
             )
@@ -186,6 +188,8 @@ class StereoWidthLimiterPhaseV2(PhaseInterface):
                     "reason": "mono_audio",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Width limiting requires stereo audio"],
             )
@@ -253,6 +257,8 @@ class StereoWidthLimiterPhaseV2(PhaseInterface):
                 "band_splits_hz": self.BAND_SPLITS,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "width_before": float(width_before),
@@ -593,9 +599,9 @@ if __name__ == "__main__":
     phase = StereoWidthLimiterPhaseV2()
 
     for material in test_materials:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Testing with material: %s", material.name)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(audio, sample_rate, material)
 
@@ -604,10 +610,10 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
             )
-            logger.debug("   Width Before: %.2f", result.metrics['width_before'])
-            logger.debug("   Width After: %.2f", result.metrics['width_after'])
-            logger.debug("   Width Reduction: %.1f%%", result.metrics['width_reduction_percent'])
-            logger.debug("   Mono Compatibility: %.3f", result.metrics['mono_compatibility'])
+            logger.debug("   Width Before: %.2f", result.metrics["width_before"])
+            logger.debug("   Width After: %.2f", result.metrics["width_after"])
+            logger.debug("   Width Reduction: %.1f%%", result.metrics["width_reduction_percent"])
+            logger.debug("   Mono Compatibility: %.3f", result.metrics["mono_compatibility"])
             logger.debug("\n   Per-Band Width Limits:")
             logger.debug(
                 f"     Band 0 (Bass):     {result.metrics['band_0_width_limit']:.2f} (reduced {result.metrics['band_0_reduction_db']:.1f} dB)"
@@ -621,13 +627,13 @@ if __name__ == "__main__":
             logger.debug(
                 f"     Band 3 (High):     {result.metrics['band_3_width_limit']:.2f} (reduced {result.metrics['band_3_reduction_db']:.1f} dB)"
             )
-            logger.debug("\n   Soft-Knee Threshold: %.2f", result.modifications['soft_knee_threshold'])
-            logger.debug("   Transient Preservation: %.2f", result.modifications['transient_preservation'])
+            logger.debug("\n   Soft-Knee Threshold: %.2f", result.modifications["soft_knee_threshold"])
+            logger.debug("   Transient Preservation: %.2f", result.modifications["transient_preservation"])
             logger.debug(
                 f"   Attack/Release: {result.modifications['attack_ms']:.0f}ms / {result.modifications['release_ms']:.0f}ms"
             )
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Stereo Width Limiter v2.0 Test Complete!")
     logger.debug("=" * 80)
     logger.debug("Algorithm: psychoacoustic_multiband_limiting_v2")

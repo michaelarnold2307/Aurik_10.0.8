@@ -444,8 +444,8 @@ if __name__ == "__main__":
     # Statistics
     logger.debug("Statistics:")
     stats = regulator.get_statistics()
-    logger.debug("   Allow: %s", stats['allow_count'])
-    logger.debug("   Adjust Down: %s", stats['adjust_down_count'])
-    logger.debug("   Hard Stop: %s", stats['hard_stop_count'])
+    logger.debug("   Allow: %s", stats["allow_count"])
+    logger.debug("   Adjust Down: %s", stats["adjust_down_count"])
+    logger.debug("   Hard Stop: %s", stats["hard_stop_count"])
 
     logger.debug("\n=== Test complete ===")

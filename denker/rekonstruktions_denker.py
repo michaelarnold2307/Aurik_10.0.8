@@ -275,10 +275,10 @@ class RekonstruktionsDenker:
     # Tape-Dropouts sind typischerweise länger (bis 2 s) und gradueller.
     _MATERIAL_GAP_CONFIGS: dict[str, dict[str, float]] = {
         "shellac": {
-            "silence_threshold_db": -55.0,   # Shellac: höherer Grundrausch → höhere Schwelle
-            "min_gap_duration_ms": 0.3,      # Sehr kurze Nadelsprünge
-            "max_gap_duration_ms": 200.0,    # Physische Nadelsprünge selten > 200 ms
-            "blend_ms": 1.0,                 # Kurzes Blending, da scharfe Kanten
+            "silence_threshold_db": -55.0,  # Shellac: höherer Grundrausch → höhere Schwelle
+            "min_gap_duration_ms": 0.3,  # Sehr kurze Nadelsprünge
+            "max_gap_duration_ms": 200.0,  # Physische Nadelsprünge selten > 200 ms
+            "blend_ms": 1.0,  # Kurzes Blending, da scharfe Kanten
         },
         "wax_cylinder": {
             "silence_threshold_db": -50.0,
@@ -287,19 +287,19 @@ class RekonstruktionsDenker:
             "blend_ms": 1.0,
         },
         "vinyl": {
-            "silence_threshold_db": -65.0,   # Vinyl: mittlerer Grundrausch
+            "silence_threshold_db": -65.0,  # Vinyl: mittlerer Grundrausch
             "min_gap_duration_ms": 0.5,
             "max_gap_duration_ms": 400.0,
             "blend_ms": 1.5,
         },
         "tape": {
-            "silence_threshold_db": -70.0,   # Tape: niedrigerer Grundrausch
-            "min_gap_duration_ms": 1.0,      # Tape-Dropouts sind gradueller
-            "max_gap_duration_ms": 2000.0,   # Tape-Dropouts können bis 2 s dauern
-            "blend_ms": 2.5,                 # Längeres Blending für natürlicheren Übergang
+            "silence_threshold_db": -70.0,  # Tape: niedrigerer Grundrausch
+            "min_gap_duration_ms": 1.0,  # Tape-Dropouts sind gradueller
+            "max_gap_duration_ms": 2000.0,  # Tape-Dropouts können bis 2 s dauern
+            "blend_ms": 2.5,  # Längeres Blending für natürlicheren Übergang
         },
         "reel_tape": {
-            "silence_threshold_db": -72.0,   # Pro-Tape: sehr niedrig
+            "silence_threshold_db": -72.0,  # Pro-Tape: sehr niedrig
             "min_gap_duration_ms": 1.0,
             "max_gap_duration_ms": 2000.0,
             "blend_ms": 2.5,
@@ -307,7 +307,7 @@ class RekonstruktionsDenker:
         "cassette": {
             "silence_threshold_db": -65.0,
             "min_gap_duration_ms": 0.5,
-            "max_gap_duration_ms": 1000.0,   # Kassette: Band-Dropouts bis 1 s
+            "max_gap_duration_ms": 1000.0,  # Kassette: Band-Dropouts bis 1 s
             "blend_ms": 2.0,
         },
     }
@@ -342,8 +342,11 @@ class RekonstruktionsDenker:
                 logger.info(
                     "RekonstruktionsDenker: material-adaptive GapConfig '%s' — "
                     "silence=%.0f dB, min_gap=%.1f ms, max_gap=%.0f ms, blend=%.1f ms",
-                    mat_key, cfg.silence_threshold_db, cfg.min_gap_duration_ms,
-                    cfg.max_gap_duration_ms, cfg.blend_ms,
+                    mat_key,
+                    cfg.silence_threshold_db,
+                    cfg.min_gap_duration_ms,
+                    cfg.max_gap_duration_ms,
+                    cfg.blend_ms,
                 )
             else:
                 # Default-Config (bisheriges Verhalten)

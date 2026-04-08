@@ -194,6 +194,8 @@ class TapeSaturation(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -239,6 +241,8 @@ class TapeSaturation(PhaseInterface):
                     "algorithm": "skipped_low_drive_or_mix",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -558,12 +562,12 @@ if __name__ == "__main__":
         result = phase.process(test_signal, sample_rate, material)
 
         logger.debug("✅ Professional Tape Saturation:")
-        logger.debug("   THD: %.2f%%", result.metrics['thd_percent'])
-        logger.debug("   Harmonic Increase: %.2f dB", result.metrics['harmonic_increase_db'])
-        logger.debug("   Drive: %.2f", result.metrics['drive'])
-        logger.debug("   Mix Amount: %s", format(result.metrics['mix_amount'], '.0%'))
-        logger.debug("   Tape Speed: %s", result.metrics['tape_speed'])
-        logger.debug("   Hysteresis: %.2f", result.metrics['hysteresis'])
+        logger.debug("   THD: %.2f%%", result.metrics["thd_percent"])
+        logger.debug("   Harmonic Increase: %.2f dB", result.metrics["harmonic_increase_db"])
+        logger.debug("   Drive: %.2f", result.metrics["drive"])
+        logger.debug("   Mix Amount: %s", format(result.metrics["mix_amount"], ".0%"))
+        logger.debug("   Tape Speed: %s", result.metrics["tape_speed"])
+        logger.debug("   Hysteresis: %.2f", result.metrics["hysteresis"])
         logger.debug(
             f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
         )

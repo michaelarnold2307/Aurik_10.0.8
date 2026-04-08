@@ -379,6 +379,8 @@ class DeEsserPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "sibilance_reduction_db": 0.0,
@@ -447,10 +449,17 @@ class DeEsserPhase(PhaseInterface):
         _hf_energy = float(np.sum(_spec[_freqs >= 4000.0] ** 2))
         _hf_ratio = _hf_energy / _total_energy
         _signal_has_sibilant_content = _hf_ratio > 0.05
+        _signal_long_enough_for_aurik8 = len(audio_mono) >= int(sample_rate * 2.0)
+        if not _signal_long_enough_for_aurik8:
+            logger.debug(
+                "Stage 2-6 gate: audio too short for Aurik-8 stack (len=%.2fs)",
+                len(audio_mono) / float(sample_rate),
+            )
         logger.debug(
-            "Stage 2-6 gate: HF-ratio=%.3f, sibilant_content=%s",
+            "Stage 2-6 gate: HF-ratio=%.3f, sibilant_content=%s, long_enough=%s",
             _hf_ratio,
             _signal_has_sibilant_content,
+            _signal_long_enough_for_aurik8,
         )
 
         # ==============================================================
@@ -465,6 +474,7 @@ class DeEsserPhase(PhaseInterface):
             and self.spectral_inpainting is not None
             and self.vocal_dynamics is not None
             and _signal_has_sibilant_content
+            and _signal_long_enough_for_aurik8
         ):
             try:
                 breath_intelligence = self.breath_intelligence
@@ -521,7 +531,7 @@ class DeEsserPhase(PhaseInterface):
                 _stage_audio, inpaint_report = spectral_inpainting.process(_stage_audio, sample_rate)
                 self.stats["spectral_gaps_repaired"] = inpaint_report.get("gaps_repaired", 0)
                 if self.stats["spectral_gaps_repaired"] > 0:
-                    logger.debug("  ✅ %s spectral gaps repaired", self.stats['spectral_gaps_repaired'])
+                    logger.debug("  ✅ %s spectral gaps repaired", self.stats["spectral_gaps_repaired"])
 
                 # STAGE 6: Vocal Dynamics (Micro-Compression)
                 logger.debug("🎵 Stage 6: Vocal Dynamics Intelligence")
@@ -613,6 +623,8 @@ class DeEsserPhase(PhaseInterface):
                     "aurik_8_enhancement": AURIK_8_AVAILABLE,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["De-Esser übersprungen (max_reduction <1.0 dB)"],
             )
@@ -672,7 +684,7 @@ class DeEsserPhase(PhaseInterface):
                 lookahead_samples,
             )
 
-        logger.debug("  ✅ Sibilance reduced: %.1f dB", self.stats['max_gain_reduction_db'])
+        logger.debug("  ✅ Sibilance reduced: %.1f dB", self.stats["max_gain_reduction_db"])
 
         # ==============================================================
         # STAGE 8: PRESERVATION & QUALITY GATES
@@ -873,6 +885,8 @@ class DeEsserPhase(PhaseInterface):
                 "fricative_snr_after_chain_db": round(_snr_after_chain, 2),
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "sibilance_reduction_db": float(sibilance_reduction_db),
@@ -1711,9 +1725,9 @@ if __name__ == "__main__":
 
     # Test für alle 3 Gender-Profile
     for gender in [VocalGender.FEMALE, VocalGender.MALE, VocalGender.CHILD]:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Testing %s Vocal Profile", gender.upper())
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
         logger.debug("Profile Settings: %s", VOCAL_PROFILES[gender])
 
         processor = DeEsserPhase(gender=gender)
@@ -1759,20 +1773,20 @@ if __name__ == "__main__":
 
         if result.success:
             logger.debug("\n✅ Processing Successful!")
-            logger.debug("   Algorithm: %s", result.metadata.get('algorithm', 'unknown'))
-            logger.debug("   Gender Profile: %s", result.metadata.get('gender', 'none'))
+            logger.debug("   Algorithm: %s", result.metadata.get("algorithm", "unknown"))
+            logger.debug("   Gender Profile: %s", result.metadata.get("gender", "none"))
 
             # 🏆 Aurik 8.0 Enhancement Stats
             if result.metadata.get("aurik_8_enhancement"):
                 logger.debug("\n   🏆 Aurik 8.0 Enhancement Stack:")
-                logger.debug("      ✅ Breath Events: %s", result.metadata.get('breath_events_detected', 0))
-                logger.debug("      ✅ Formants Tracked: %s frames", result.metadata.get('formants_corrected', 0))
-                logger.debug("      ✅ Spectral Gaps Repaired: %s", result.metadata.get('spectral_gaps_repaired', 0))
+                logger.debug("      ✅ Breath Events: %s", result.metadata.get("breath_events_detected", 0))
+                logger.debug("      ✅ Formants Tracked: %s frames", result.metadata.get("formants_corrected", 0))
+                logger.debug("      ✅ Spectral Gaps Repaired: %s", result.metadata.get("spectral_gaps_repaired", 0))
 
             # 🎯 Musical Goals Status
             logger.debug("\n   🎯 Musical Goals Compliance:")
-            logger.debug("      ✅ Brillanz: %.2f (HF preserved)", result.metadata.get('brilliance_preservation', 0.9))
-            logger.debug("      ✅ Wärme: Formants %s Hz protected", VOCAL_PROFILES[gender]['formant_range'])
+            logger.debug("      ✅ Brillanz: %.2f (HF preserved)", result.metadata.get("brilliance_preservation", 0.9))
+            logger.debug("      ✅ Wärme: Formants %s Hz protected", VOCAL_PROFILES[gender]["formant_range"])
             logger.debug(
                 f"      ✅ Natürlichkeit: Soft-Knee {processor.SOFT_KNEE_DB}dB + Look-ahead {processor.LOOKAHEAD_MS}ms"
             )
@@ -1787,10 +1801,10 @@ if __name__ == "__main__":
             if gender == VocalGender.MALE:
                 logger.debug("      ✅ Bass-Kraft: Chest resonance (100-250 Hz) protected @ 0.95 blend")
             else:
-                logger.debug("      ✅ Bass-Kraft: Chest range %s Hz monitored", VOCAL_PROFILES[gender]['chest_range'])
+                logger.debug("      ✅ Bass-Kraft: Chest range %s Hz monitored", VOCAL_PROFILES[gender]["chest_range"])
 
             logger.debug("\n   📊 De-Essing Metrics:")
-            logger.debug("      Sibilance Reduction: %.2f dB", result.metrics.get('sibilance_reduction_db', 0))
+            logger.debug("      Sibilance Reduction: %.2f dB", result.metrics.get("sibilance_reduction_db", 0))
             logger.debug(
                 f"      Max Gain Reduction: {result.metrics.get('max_gain_reduction_db', 0):.2f} dB (target: {VOCAL_PROFILES[gender]['max_depth_db']} dB)"
             )
@@ -1799,9 +1813,9 @@ if __name__ == "__main__":
             logger.debug("   ❌ Processing failed: %s", result.warnings)
 
     # Auto-Detection Test
-    logger.debug("\n%s", '─' * 80)
+    logger.debug("\n%s", "─" * 80)
     logger.debug("Testing AUTO Gender Detection")
-    logger.debug("%s", '─' * 80)
+    logger.debug("%s", "─" * 80)
     processor_auto = DeEsserPhase(gender=VocalGender.AUTO)
 
     # Male voice test signal (low F0)
@@ -1818,7 +1832,7 @@ if __name__ == "__main__":
     logger.debug("   F0=120Hz → Detected: %s (expected: MALE)", detected.upper())
     logger.debug("   ✅ Auto-detection functional")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("🏆 Phase 19 v4.0: Gender-Aware De-Esser - Test Complete!")
     logger.debug("\n📊 Gender Profiles:")
     logger.debug("  🎤 FEMALE: F0~220Hz | Sibilance 7-11kHz | Formants 2-3kHz | Chest 150-300Hz")

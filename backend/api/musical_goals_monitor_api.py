@@ -364,7 +364,7 @@ class MusicalGoalsMonitorAPI:
 
         # Log violations
         if violations:
-            logger.warning("Session %s step %s: Violations: %s", session_id, step_name, ', '.join(violations))
+            logger.warning("Session %s step %s: Violations: %s", session_id, step_name, ", ".join(violations))
 
     def save_history(self, session_id: str):
         """

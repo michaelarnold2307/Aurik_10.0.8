@@ -149,6 +149,8 @@ class StereoBalancePhaseV2(PhaseInterface):
                     "correction_applied": False,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Stereo Balance skipped (mono audio)"],
             )
@@ -166,6 +168,8 @@ class StereoBalancePhaseV2(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "stereo": True,
@@ -233,6 +237,8 @@ class StereoBalancePhaseV2(PhaseInterface):
                 "band_splits_hz": self.BAND_SPLITS,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "stereo": True,
@@ -473,9 +479,9 @@ if __name__ == "__main__":
     phase = StereoBalancePhaseV2()
 
     for material in materials:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Testing with material: %s", material.name)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(audio, sample_rate, material)
 
@@ -484,21 +490,21 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
             )
-            logger.debug("   Correction Applied: %s", result.metadata['correction_applied'])
+            logger.debug("   Correction Applied: %s", result.metadata["correction_applied"])
             if result.metadata["correction_applied"]:
-                logger.debug("   Global Imbalance Before: %.2f dB", result.metrics['imbalance_db_before'])
-                logger.debug("   Global Imbalance After: %.2f dB", result.metrics['imbalance_db_after'])
-                logger.debug("   Imbalance Reduction: %.2f dB", result.metrics['imbalance_reduction_db'])
-                logger.debug("   Band 0 (Bass) Before: %.2f dB", result.metrics['band_0_imbalance_before'])
-                logger.debug("   Band 0 (Bass) After: %.2f dB", result.metrics['band_0_imbalance_after'])
-                logger.debug("   Band 1 (Mid) Before: %.2f dB", result.metrics['band_1_imbalance_before'])
-                logger.debug("   Band 1 (Mid) After: %.2f dB", result.metrics['band_1_imbalance_after'])
-                logger.debug("   Band 2 (High) Before: %.2f dB", result.metrics['band_2_imbalance_before'])
-                logger.debug("   Band 2 (High) After: %.2f dB", result.metrics['band_2_imbalance_after'])
+                logger.debug("   Global Imbalance Before: %.2f dB", result.metrics["imbalance_db_before"])
+                logger.debug("   Global Imbalance After: %.2f dB", result.metrics["imbalance_db_after"])
+                logger.debug("   Imbalance Reduction: %.2f dB", result.metrics["imbalance_reduction_db"])
+                logger.debug("   Band 0 (Bass) Before: %.2f dB", result.metrics["band_0_imbalance_before"])
+                logger.debug("   Band 0 (Bass) After: %.2f dB", result.metrics["band_0_imbalance_after"])
+                logger.debug("   Band 1 (Mid) Before: %.2f dB", result.metrics["band_1_imbalance_before"])
+                logger.debug("   Band 1 (Mid) After: %.2f dB", result.metrics["band_1_imbalance_after"])
+                logger.debug("   Band 2 (High) Before: %.2f dB", result.metrics["band_2_imbalance_before"])
+                logger.debug("   Band 2 (High) After: %.2f dB", result.metrics["band_2_imbalance_after"])
         else:
             logger.debug("❌ Processing failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Stereo Balance v2.0 Test Complete!")
     logger.debug("=" * 80)
     logger.debug("Algorithm: multiband_spectral_balance_v2")

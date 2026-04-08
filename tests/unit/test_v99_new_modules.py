@@ -1,5 +1,5 @@
 """
-Tests für alle neuen Module (v9.9.5) — §5 Aurik-9-Spec
+Tests für alle neuen Module — §5 Aurik-9-Spec
 =======================================================
 
 Testet:
@@ -276,7 +276,7 @@ class TestMicroDynamicsMetric:
 
 
 class TestMusicalGoalsChecker14:
-    """Sicherstellt, dass MusicalGoalsChecker jetzt 14 Ziele misst (v9.9.9)."""
+    """Sicherstellt, dass MusicalGoalsChecker 14 Ziele misst."""
 
     def test_01_has_14_metrics(self):
         from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker

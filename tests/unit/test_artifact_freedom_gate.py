@@ -4,7 +4,6 @@ Alle Tests synthetisch, kein ML-Modell erforderlich.
 """
 
 import numpy as np
-import pytest
 
 SR = 48_000
 
@@ -27,12 +26,14 @@ def _stereo(mono: np.ndarray) -> np.ndarray:
 
 def test_00_import():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate, get_artifact_freedom_gate
+
     assert ArtifactFreedomGate is not None
     assert get_artifact_freedom_gate is not None
 
 
 def test_01_singleton():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     g1 = get_artifact_freedom_gate()
     g2 = get_artifact_freedom_gate()
     assert g1 is g2
@@ -40,6 +41,7 @@ def test_01_singleton():
 
 def test_02_clean_audio_perfect_score():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio()
     result = gate.evaluate(audio, audio.copy(), SR)
@@ -48,6 +50,7 @@ def test_02_clean_audio_perfect_score():
 
 def test_03_identical_audio_no_artifacts():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio()
     result = gate.evaluate(audio, audio, SR)
@@ -57,6 +60,7 @@ def test_03_identical_audio_no_artifacts():
 
 def test_04_short_audio_returns_perfect():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     short = np.zeros(100, dtype=np.float32)
     result = gate.evaluate(short, short, SR)
@@ -65,6 +69,7 @@ def test_04_short_audio_returns_perfect():
 
 def test_05_material_type_normalization():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate
+
     gate = ArtifactFreedomGate()
     assert gate._normalize_material("VINYL") == "vinyl"
     assert gate._normalize_material("MaterialType.tape") == "tape"
@@ -75,6 +80,7 @@ def test_05_material_type_normalization():
 
 def test_06_material_thresholds_differ():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate
+
     gate = ArtifactFreedomGate()
     digital = gate._get_thresholds("digital")
     shellac = gate._get_thresholds("shellac")
@@ -85,13 +91,14 @@ def test_06_material_thresholds_differ():
 
 def test_07_musical_noise_detection_in_silence():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     original = _silence(2.0)
     restored = _silence(2.0)
     # Add strong tonal peak in restored silence
     n = len(restored)
     for i in range(0, n - 1440, 1440):
-        segment = restored[i:i + 1440]
+        segment = restored[i : i + 1440]
         # Strong tone at ~1 kHz in silence
         t = np.arange(len(segment)) / SR
         segment += 0.01 * np.sin(2 * np.pi * 1000 * t).astype(np.float32)
@@ -102,6 +109,7 @@ def test_07_musical_noise_detection_in_silence():
 
 def test_08_spectral_holes_detection():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate
+
     gate = ArtifactFreedomGate()
     # Create harmonic-rich broadband signal with clear passband
     np.random.seed(42)
@@ -121,11 +129,12 @@ def test_08_spectral_holes_detection():
     restored = np.fft.irfft(fft_restored, n=n).astype(np.float32)
     thresholds = gate._get_thresholds("digital")
     artifacts = gate._detect_spectral_holes(original, restored, SR, thresholds)
-    assert len(artifacts) > 0, f"Should detect spectral hole in 2-4 kHz band"
+    assert len(artifacts) > 0, "Should detect spectral hole in 2-4 kHz band"
 
 
 def test_09_phase_cancellation_detection():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate
+
     gate = ArtifactFreedomGate()
     # Create stereo with GENUINE anti-phase R ≈ -L (lr_corr < -0.20).
     # Independent noise with lr_corr ≈ 0 is NOT phase cancellation.
@@ -138,13 +147,12 @@ def test_09_phase_cancellation_detection():
     stereo = np.stack([left, right], axis=0)
     thresholds = gate._get_thresholds("digital")
     artifacts = gate._detect_phase_cancellation(stereo, SR, thresholds)
-    assert len(artifacts) > 0, (
-        "Should detect genuine phase cancellation (R ≈ −L, lr_corr < −0.20)"
-    )
+    assert len(artifacts) > 0, "Should detect genuine phase cancellation (R ≈ −L, lr_corr < −0.20)"
 
 
 def test_10_no_phase_cancellation_mono():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio()
     result = gate.evaluate(audio, audio, SR)
@@ -154,6 +162,7 @@ def test_10_no_phase_cancellation_mono():
 
 def test_11_metallic_ringing_detection():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     original = _audio(2.0, amp=0.1)
     restored = original.copy()
@@ -169,6 +178,7 @@ def test_11_metallic_ringing_detection():
 
 def test_12_salience_frequency_weighting():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate, DetectedArtifact
+
     gate = ArtifactFreedomGate()
     # Mid-frequency artifact (200-5000 Hz)
     art_mid = DetectedArtifact("test", 0, 5000, 10.0, 1000.0, -30.0)
@@ -181,6 +191,7 @@ def test_12_salience_frequency_weighting():
 
 def test_13_salience_context_weighting():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate, DetectedArtifact
+
     gate = ArtifactFreedomGate()
     # Artifact in silence
     art_silence = DetectedArtifact("test", 0, 5000, 10.0, 1000.0, -50.0)
@@ -193,6 +204,7 @@ def test_13_salience_context_weighting():
 
 def test_14_salience_duration_weighting():
     from backend.core.artifact_freedom_gate import ArtifactFreedomGate, DetectedArtifact
+
     gate = ArtifactFreedomGate()
     # Long artifact (> 100 ms)
     dur_long = int(0.15 * SR)
@@ -207,6 +219,7 @@ def test_14_salience_duration_weighting():
 
 def test_15_noise_texture_identical():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _silence(1.0)
     dev, penalty = gate._check_noise_texture(audio, audio, SR)
@@ -216,6 +229,7 @@ def test_15_noise_texture_identical():
 
 def test_16_noise_texture_no_silence():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0, amp=0.5)  # loud, no silence segments
     dev, penalty = gate._check_noise_texture(audio, audio, SR)
@@ -224,6 +238,7 @@ def test_16_noise_texture_no_silence():
 
 def test_17_result_dataclass_fields():
     from backend.core.artifact_freedom_gate import ArtifactFreedomResult
+
     result = ArtifactFreedomResult(artifact_freedom=0.92)
     assert result.artifact_freedom == 0.92
     assert result.detected_artifacts == []
@@ -233,12 +248,14 @@ def test_17_result_dataclass_fields():
 
 def test_18_type_weights_complete():
     from backend.core.artifact_freedom_gate import _TYPE_WEIGHTS
+
     expected_types = {"musical_noise", "pre_echo", "spectral_hole", "phase_cancellation", "metallic_ringing"}
     assert set(_TYPE_WEIGHTS.keys()) == expected_types
 
 
 def test_19_material_factors_complete():
     from backend.core.artifact_freedom_gate import _MATERIAL_FACTORS
+
     assert "digital" in _MATERIAL_FACTORS
     assert "tape" in _MATERIAL_FACTORS
     assert "vinyl" in _MATERIAL_FACTORS
@@ -247,6 +264,7 @@ def test_19_material_factors_complete():
 
 def test_20_evaluate_returns_material_type():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     result = gate.evaluate(audio, audio, SR, material_type="vinyl")
@@ -255,6 +273,7 @@ def test_20_evaluate_returns_material_type():
 
 def test_21_pre_echo_no_false_positive_clean():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     thresholds = gate._get_thresholds("digital")
@@ -264,6 +283,7 @@ def test_21_pre_echo_no_false_positive_clean():
 
 def test_22_spectral_holes_no_false_positive():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     thresholds = gate._get_thresholds("digital")
@@ -273,6 +293,7 @@ def test_22_spectral_holes_no_false_positive():
 
 def test_23_metallic_ringing_no_false_positive():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     thresholds = gate._get_thresholds("digital")
@@ -282,6 +303,7 @@ def test_23_metallic_ringing_no_false_positive():
 
 def test_24_evaluate_with_nan_input():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     nan_audio = audio.copy()
@@ -293,19 +315,25 @@ def test_24_evaluate_with_nan_input():
 
 def test_25_detail_report_keys():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     result = gate.evaluate(audio, audio, SR)
     expected_keys = {
-        "n_musical_noise", "n_pre_echo", "n_spectral_holes",
-        "n_phase_cancellation", "n_metallic_ringing",
-        "weighted_artifact_sum", "noise_texture_deviation_db_oct",
+        "n_musical_noise",
+        "n_pre_echo",
+        "n_spectral_holes",
+        "n_phase_cancellation",
+        "n_metallic_ringing",
+        "weighted_artifact_sum",
+        "noise_texture_deviation_db_oct",
     }
     assert expected_keys.issubset(set(result.detail_report.keys()))
 
 
 def test_26_artifact_freedom_clips_to_0_1():
     from backend.core.artifact_freedom_gate import ArtifactFreedomResult
+
     # verify score range assumption
     r = ArtifactFreedomResult(artifact_freedom=0.0)
     assert 0.0 <= r.artifact_freedom <= 1.0
@@ -315,6 +343,7 @@ def test_27_veto_threshold_is_095():
     """§2.49: artifact_freedom < 0.95 → veto."""
     # This is a contract test — the threshold is hard-coded in the pipeline
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     audio = _audio(1.0)
     result = gate.evaluate(audio, audio, SR)
@@ -328,18 +357,20 @@ def test_28_per_phase_mode_disables_musical_noise_and_ringing():
     produces a non-zero residual; in pipeline mode that would fire both detectors —
     in per-phase mode it must not."""
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     original = _audio(2.0, amp=0.2, freq=220.0)
     # Simulate an enhancement phase: add harmonics (residual has sustained tones > 50 ms)
-    harmonics = (_audio(2.0, amp=0.05, freq=440.0)
-                 + _audio(2.0, amp=0.03, freq=660.0)
-                 + _audio(2.0, amp=0.02, freq=880.0))
+    harmonics = (
+        _audio(2.0, amp=0.05, freq=440.0) + _audio(2.0, amp=0.03, freq=660.0) + _audio(2.0, amp=0.02, freq=880.0)
+    )
     restored = np.clip(original + harmonics, -1.0, 1.0)
     # Without phase_id → residual-based detectors active → may detect sustained peaks
     result_pipeline = gate.evaluate(original, restored, SR, material_type="digital", phase_id="")
     # With phase_id → residual-based detectors disabled → must not penalise musical content
-    result_per_phase = gate.evaluate(original, restored, SR, material_type="digital",
-                                     phase_id="phase_07_harmonic_enhancement")
+    result_per_phase = gate.evaluate(
+        original, restored, SR, material_type="digital", phase_id="phase_07_harmonic_enhancement"
+    )
     # Per-phase mode must produce higher (or equal) artifact_freedom — sustained harmonics
     # are musical content, not artefacts.
     assert result_per_phase.artifact_freedom >= result_pipeline.artifact_freedom, (
@@ -347,10 +378,10 @@ def test_28_per_phase_mode_disables_musical_noise_and_ringing():
         f"pipeline={result_pipeline.artifact_freedom:.3f} vs per_phase={result_per_phase.artifact_freedom:.3f}"
     )
     # detail_report must show 0 musical_noise and 0 metallic_ringing in per-phase mode
-    assert result_per_phase.detail_report.get("n_musical_noise", -1) == 0, \
-        "musical_noise must be 0 in per-phase mode"
-    assert result_per_phase.detail_report.get("n_metallic_ringing", -1) == 0, \
+    assert result_per_phase.detail_report.get("n_musical_noise", -1) == 0, "musical_noise must be 0 in per-phase mode"
+    assert result_per_phase.detail_report.get("n_metallic_ringing", -1) == 0, (
         "metallic_ringing must be 0 in per-phase mode"
+    )
 
 
 def test_29_pipeline_mode_still_detects_ringing():
@@ -358,6 +389,7 @@ def test_29_pipeline_mode_still_detects_ringing():
     When the *same* sustained-tone residual is evaluated without a phase_id,
     the gate must detect it (demonstrating the detector is actually active)."""
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     # Pure silence original → sustained tones in output = clear metallic ringing
     original = _silence(2.0)
@@ -375,31 +407,28 @@ def test_30_loudness_normalization_no_pre_echo_false_positive():
     Pre-echo detector must NOT fire when the only change is a proportional gain
     increase (simulated by 2.5× boost ≈ +8 dB LUFS from −22 to −14 LUFS)."""
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
     # Build a signal with a sharp transient (drum-like attack)
     t = np.linspace(0, 3.0, int(3.0 * SR), endpoint=False)
     audio = np.zeros_like(t)
     # Add a sharp transient at 1 s
     attack_start = SR  # 1 s
-    audio[attack_start:attack_start + 480] = (
-        np.exp(-np.arange(480) / 60.0) * 0.8
-    ).astype(np.float32)
+    audio[attack_start : attack_start + 480] = (np.exp(-np.arange(480) / 60.0) * 0.8).astype(np.float32)
     # Add low-level pre-transient content (realistic, below -35 dB relative to attack)
-    audio[attack_start - 240:attack_start] = (
-        np.sin(2 * np.pi * 440 * np.arange(240) / SR) * 0.005
-    ).astype(np.float32)
+    audio[attack_start - 240 : attack_start] = (np.sin(2 * np.pi * 440 * np.arange(240) / SR) * 0.005).astype(
+        np.float32
+    )
     audio = audio.astype(np.float32)
     # Simulate phase_40: uniform 2.5× gain boost
     boosted = np.clip(audio * 2.5, -1.0, 1.0).astype(np.float32)
-    result = gate.evaluate(audio, boosted, SR, material_type="tape",
-                           phase_id="phase_40_loudness_normalization")
+    result = gate.evaluate(audio, boosted, SR, material_type="tape", phase_id="phase_40_loudness_normalization")
     assert result.detail_report.get("n_pre_echo", -1) == 0, (
         f"Gain-only loudness normalisation must not trigger pre_echo; "
         f"got n_pre_echo={result.detail_report.get('n_pre_echo')}"
     )
     assert result.artifact_freedom >= 0.95, (
-        f"phase_40 must pass §2.49 gate after level_scale fix; "
-        f"got artifact_freedom={result.artifact_freedom:.3f}"
+        f"phase_40 must pass §2.49 gate after level_scale fix; got artifact_freedom={result.artifact_freedom:.3f}"
     )
 
 
@@ -410,6 +439,7 @@ def test_31_stereo_collapse_r_channel_detected():
     kollabiert (> 40 dB Abfall), muss artifact_freedom < 0.95.
     """
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
 
     mono = _audio(dur=3.0, amp=0.4, freq=330.0)
@@ -418,14 +448,12 @@ def test_31_stereo_collapse_r_channel_detected():
     # After the phase: R-Kanal komplett stumm (Mono-Kollaps)
     restored = np.stack([mono, np.zeros_like(mono)], axis=0).astype(np.float32)
 
-    result = gate.evaluate(orig, restored, SR, material_type="tape",
-                           phase_id="phase_34_mid_side_processing")
+    result = gate.evaluate(orig, restored, SR, material_type="tape", phase_id="phase_34_mid_side_processing")
     assert result.detail_report.get("n_phase_cancellation", 0) >= 1, (
         "Stereo collapse (R-channel silent after phase) must produce ≥1 phase_cancellation artifact"
     )
     assert result.artifact_freedom < 0.95, (
-        f"artifact_freedom must be < 0.95 when R-channel collapses; "
-        f"got {result.artifact_freedom:.3f}"
+        f"artifact_freedom must be < 0.95 when R-channel collapses; got {result.artifact_freedom:.3f}"
     )
 
 
@@ -436,6 +464,7 @@ def test_32_stereo_collapse_preexisting_not_flagged():
     darf die AFG das NICHT als neu eingeführten Stereo-Kollaps werten.
     """
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
 
     mono = _audio(dur=3.0, amp=0.4, freq=440.0)
@@ -443,8 +472,7 @@ def test_32_stereo_collapse_preexisting_not_flagged():
     orig = np.stack([mono, np.zeros_like(mono)], axis=0).astype(np.float32)
     restored = np.stack([mono * 0.95, np.zeros_like(mono)], axis=0).astype(np.float32)
 
-    result = gate.evaluate(orig, restored, SR, material_type="tape",
-                           phase_id="phase_03_denoise")
+    result = gate.evaluate(orig, restored, SR, material_type="tape", phase_id="phase_03_denoise")
     # No NEW collapse introduced — gate must pass
     assert result.artifact_freedom >= 0.95, (
         f"Pre-existing mono (R already silent) must not trigger collapse detector; "
@@ -461,6 +489,7 @@ def test_33_near_mono_input_guard_not_flagged():
     mono_compat ~ 0.55 (von 0.70) verschieben — nicht hörbar, kein Artefakt.
     """
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
 
     sr = 48_000
@@ -478,8 +507,7 @@ def test_33_near_mono_input_guard_not_flagged():
     sig_r[4800:9600] = sig[4800:9600] * 0.6
     restored = np.stack([sig, sig_r], axis=0)
 
-    result = gate.evaluate(orig, restored, SR, material_type="tape",
-                           phase_id="phase_18_noise_gate")
+    result = gate.evaluate(orig, restored, SR, material_type="tape", phase_id="phase_18_noise_gate")
 
     assert result.artifact_freedom >= 0.95, (
         f"Near-mono source (orig_compat ≈ 0.70) with minor gate asymmetry "
@@ -495,6 +523,7 @@ def test_34_near_mono_guard_still_catches_severe_collapse():
     muss der Detektor trotzdem feuern.
     """
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
     gate = get_artifact_freedom_gate()
 
     sr = 48_000
@@ -511,8 +540,7 @@ def test_34_near_mono_guard_still_catches_severe_collapse():
     sig_r[4800:19200] = -sig[4800:19200]  # 3 frames (300ms) with inverted R
     restored = np.stack([sig, sig_r], axis=0)
 
-    result = gate.evaluate(orig, restored, SR, material_type="tape",
-                           phase_id="phase_07_harmonic_restoration")
+    result = gate.evaluate(orig, restored, SR, material_type="tape", phase_id="phase_07_harmonic_restoration")
 
     assert result.artifact_freedom < 0.95, (
         f"Severe stereo collapse (R inverted, mono_compat ~0.10) must still trigger "

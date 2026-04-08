@@ -195,6 +195,8 @@ class DynamicRangeExpansion(PhaseInterface):
                     "effective_strength": _effective_strength,
                     "processing": "skipped_zero_strength",
                     "rt_factor": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -239,6 +241,8 @@ class DynamicRangeExpansion(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "rt_factor": float(rt_factor),
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.3 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

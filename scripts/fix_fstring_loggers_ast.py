@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 fix_fstring_loggers_ast.py
 ===========================
 Second-pass AST-based transformer for complex f-string logger calls that the
@@ -21,6 +21,7 @@ Limitations (still skipped):
 Usage:
     python scripts/fix_fstring_loggers_ast.py [--apply] [path ...]
 """
+
 import argparse
 import ast
 import re
@@ -39,7 +40,7 @@ def _conversion_to_fmt(conv: int) -> str:
         return "%r"
     if conv == 115:  # 's'
         return "%s"
-    if conv == 97:   # 'a'
+    if conv == 97:  # 'a'
         return "%s"  # ascii() — no direct % equivalent, use %s
     return "%s"
 

@@ -292,8 +292,9 @@ class MultibandCompressorStudio:
             mid_c = compress(mid, self.thresholds[1], self.ratios[1])
             high_c = compress(high, self.thresholds[2], self.ratios[2])
             out = low_c + mid_c + high_c
-            if np.max(np.abs(out)) > 0:
-                out = out / np.max(np.abs(out))
+            _peak_p99 = float(np.percentile(np.abs(out), 99.9)) if out.size > 0 else 0.0
+            if _peak_p99 > 0:
+                out = out / _peak_p99
             self._audit_log({"bands": 3, "shape": out.shape, "success": True})
             return np.clip(np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(orig_dtype)
         except Exception as e:

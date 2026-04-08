@@ -443,8 +443,9 @@ class BanquetVinylPlugin:
     def process_files(self, input_wav: str, output_wav: str, strength: float = 1.0) -> None:
         """Verarbeite WAV-Datei direkt (kompatibel mit alter Docker-API)."""
         try:
-            from backend.file_import import load_audio_file
             import soundfile as sf
+
+            from backend.file_import import load_audio_file
 
             _res = load_audio_file(input_wav, do_carrier_analysis=False)
             audio = np.asarray(_res["audio"], dtype=np.float32)

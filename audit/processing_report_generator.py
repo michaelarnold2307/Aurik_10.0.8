@@ -447,22 +447,33 @@ class ReportExporter:
             with PdfPages(str(output_path)) as pdf:
                 # ── Page 1: Header + Summary + Detected Issues + Modules ──
                 fig, axes = plt.subplots(
-                    3, 1, figsize=(8.27, 11.69),
+                    3,
+                    1,
+                    figsize=(8.27, 11.69),
                     gridspec_kw={"height_ratios": [1.2, 1.8, 2.0]},
                 )
                 fig.patch.set_facecolor("#0d1117")
                 plt.subplots_adjust(top=0.92, bottom=0.04, left=0.06, right=0.94, hspace=0.35)
 
                 fig.text(
-                    0.5, 0.96,
+                    0.5,
+                    0.96,
                     "AURIK — Audio-Restaurierungsbericht",
-                    ha="center", va="top", fontsize=16, fontweight="bold", color="#c9d1d9",
+                    ha="center",
+                    va="top",
+                    fontsize=16,
+                    fontweight="bold",
+                    color="#c9d1d9",
                 )
                 fig.text(
-                    0.5, 0.935,
+                    0.5,
+                    0.935,
                     f"Version {report.aurik_version}  ·  {report.timestamp[:19]}  ·  "
                     f"Verarbeitung: {report.processing_time_sec:.1f} s",
-                    ha="center", va="top", fontsize=8, color="#8b949e",
+                    ha="center",
+                    va="top",
+                    fontsize=8,
+                    color="#8b949e",
                 )
 
                 # Summary table
@@ -478,7 +489,8 @@ class ReportExporter:
                 tbl0 = ax0.table(
                     cellText=summary_data,
                     colLabels=["Eigenschaft", "Wert"],
-                    loc="center", cellLoc="left",
+                    loc="center",
+                    cellLoc="left",
                 )
                 _style_pdf_table(tbl0)
 
@@ -494,25 +506,44 @@ class ReportExporter:
                             if isinstance(iss, str):
                                 issue_rows.append([iss, "—", "—"])
                             else:
-                                issue_rows.append([
-                                    str(iss.get("type", "?")),
-                                    str(iss.get("severity", "?")),
-                                    f"{iss.get('confidence', 0):.0%}"
-                                    if isinstance(iss.get("confidence"), (int, float))
-                                    else "—",
-                                ])
+                                issue_rows.append(
+                                    [
+                                        str(iss.get("type", "?")),
+                                        str(iss.get("severity", "?")),
+                                        (
+                                            f"{iss.get('confidence', 0):.0%}"
+                                            if isinstance(iss.get("confidence"), (int, float))
+                                            else "—"
+                                        ),
+                                    ]
+                                )
                         tbl1 = ax1.table(
                             cellText=issue_rows,
                             colLabels=["Defekt", "Schwere", "Konfidenz"],
-                            loc="center", cellLoc="left",
+                            loc="center",
+                            cellLoc="left",
                         )
                         _style_pdf_table(tbl1)
                     else:
-                        ax1.text(0.5, 0.5, "Keine signifikanten Defekte erkannt ✓",
-                                 ha="center", va="center", fontsize=10, color="#82B89A")
+                        ax1.text(
+                            0.5,
+                            0.5,
+                            "Keine signifikanten Defekte erkannt ✓",
+                            ha="center",
+                            va="center",
+                            fontsize=10,
+                            color="#82B89A",
+                        )
                 else:
-                    ax1.text(0.5, 0.5, "Defektanalyse nicht verfügbar",
-                             ha="center", va="center", fontsize=10, color="#8b949e")
+                    ax1.text(
+                        0.5,
+                        0.5,
+                        "Defektanalyse nicht verfügbar",
+                        ha="center",
+                        va="center",
+                        fontsize=10,
+                        color="#8b949e",
+                    )
 
                 # Applied Modules
                 ax2 = axes[2]
@@ -524,19 +555,24 @@ class ReportExporter:
                         mod_rows = []
                         for m in mods[:15]:
                             if isinstance(m, dict):
-                                mod_rows.append([
-                                    str(m.get("name", "?")),
-                                    str(m.get("reason", ""))[:50],
-                                    f"{m.get('strength', 0):.0%}"
-                                    if isinstance(m.get("strength"), (int, float))
-                                    else "—",
-                                ])
+                                mod_rows.append(
+                                    [
+                                        str(m.get("name", "?")),
+                                        str(m.get("reason", ""))[:50],
+                                        (
+                                            f"{m.get('strength', 0):.0%}"
+                                            if isinstance(m.get("strength"), (int, float))
+                                            else "—"
+                                        ),
+                                    ]
+                                )
                             else:
                                 mod_rows.append([str(m), "", "—"])
                         tbl2 = ax2.table(
                             cellText=mod_rows,
                             colLabels=["Modul", "Grund", "Stärke"],
-                            loc="center", cellLoc="left",
+                            loc="center",
+                            cellLoc="left",
                         )
                         _style_pdf_table(tbl2)
 
@@ -550,8 +586,14 @@ class ReportExporter:
                 fig2 = plt.figure(figsize=(11.69, 8.27))
                 fig2.patch.set_facecolor("#0d1117")
                 fig2.text(
-                    0.5, 0.97, "Musical Goals & Metriken",
-                    ha="center", va="top", fontsize=14, fontweight="bold", color="#c9d1d9",
+                    0.5,
+                    0.97,
+                    "Musical Goals & Metriken",
+                    ha="center",
+                    va="top",
+                    fontsize=14,
+                    fontweight="bold",
+                    color="#c9d1d9",
                 )
 
                 # Radar chart for Musical Goals
@@ -575,12 +617,15 @@ class ReportExporter:
                         ax_radar.set_xticks(angles[:-1])
                         ax_radar.set_xticklabels(
                             [la.replace("_", "\n") for la in labels],
-                            fontsize=6, color="#c9d1d9",
+                            fontsize=6,
+                            color="#c9d1d9",
                         )
                         ax_radar.set_ylim(0, 1.0)
                         ax_radar.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
                         ax_radar.set_yticklabels(
-                            ["0.2", "0.4", "0.6", "0.8", "1.0"], fontsize=6, color="#8b949e",
+                            ["0.2", "0.4", "0.6", "0.8", "1.0"],
+                            fontsize=6,
+                            color="#8b949e",
                         )
                         ax_radar.spines["polar"].set_color("#30363d")
                         ax_radar.grid(color="#30363d", linewidth=0.5)
@@ -606,16 +651,25 @@ class ReportExporter:
                         tbl_m = ax_metrics.table(
                             cellText=met_rows,
                             colLabels=["Metrik", "Vorher", "Nachher", "Δ"],
-                            loc="center", cellLoc="left",
+                            loc="center",
+                            cellLoc="left",
                         )
                         _style_pdf_table(tbl_m)
                         ax_metrics.set_title(
-                            "Vorher / Nachher", fontsize=10, color="#c9d1d9", pad=10,
+                            "Vorher / Nachher",
+                            fontsize=10,
+                            color="#c9d1d9",
+                            pad=10,
                         )
                 else:
                     ax_metrics.text(
-                        0.5, 0.5, "Keine Metriken verfügbar",
-                        ha="center", va="center", fontsize=10, color="#8b949e",
+                        0.5,
+                        0.5,
+                        "Keine Metriken verfügbar",
+                        ha="center",
+                        va="center",
+                        fontsize=10,
+                        color="#8b949e",
                     )
 
                 plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.94])

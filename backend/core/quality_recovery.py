@@ -382,7 +382,7 @@ class QualityRecoverySystem:
                 elif action.strategy == RecoveryStrategy.SWITCH_MODE:
                     # Return to original with recommendation to switch mode
                     recovered_audio = original_audio.copy()
-                    logger.info("  → Recommendation: Switch to %s mode", action.parameters.get('new_mode'))
+                    logger.info("  → Recommendation: Switch to %s mode", action.parameters.get("new_mode"))
 
                 elif action.strategy == RecoveryStrategy.INCREMENTAL_PROCESSING:
                     recovered_audio = self._incremental_processing(original_audio, current_audio, action.parameters)
@@ -451,8 +451,8 @@ class QualityRecoverySystem:
         logger.info("=" * 60)
         logger.info("QUALITY RECOVERY: Complete")
         logger.info("=" * 60)
-        logger.info("Status: %s", 'SUCCESS' if success else 'FAILED')
-        logger.info("Strategy Used: %s", strategy_used.value if strategy_used else 'None')
+        logger.info("Status: %s", "SUCCESS" if success else "FAILED")
+        logger.info("Strategy Used: %s", strategy_used.value if strategy_used else "None")
         logger.info("Quality Improvement: %+.1f points", improvement)
         logger.info("Final Score: %.1f/100", final_quality.overall_score)
 

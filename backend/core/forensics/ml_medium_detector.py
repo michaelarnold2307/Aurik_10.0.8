@@ -430,7 +430,7 @@ class MLMediumDetector:
         self.is_trained = True
 
         logger.info("✅ Model loaded from %s", filepath)
-        logger.info("   Version: %s", model_data.get('version', 'unknown'))
+        logger.info("   Version: %s", model_data.get("version", "unknown"))
         logger.info("   Classes: %s", self.n_classes)
         logger.info("   CV Accuracy: %.4f", self.cv_accuracy)
 
@@ -462,11 +462,11 @@ def train_ml_detector_from_dataset(
     labels = []
 
     if verbose:
-        logger.info("📊 Extracting features from %s samples...", len(dataset['samples']))
+        logger.info("📊 Extracting features from %s samples...", len(dataset["samples"]))
 
     for i, sample in enumerate(dataset["samples"]):
         if verbose and (i + 1) % 50 == 0:
-            logger.info("   Processed %s/%s...", i + 1, len(dataset['samples']))
+            logger.info("   Processed %s/%s...", i + 1, len(dataset["samples"]))
 
         features = extractor.extract_all(sample.audio, sample.sample_rate, verbose=False)
         features_list.append(features)

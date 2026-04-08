@@ -5,7 +5,6 @@ Dieses Modul entfernt grobe Klicks/Knackser von Schellackplatten (Stub).
 """
 
 import logging
-import warnings
 from typing import Any
 
 import numpy as np
@@ -41,9 +40,7 @@ class ShellacDeclicker:
                     logger.warning("Memory budget exceeded for shellac_declicker ONNX — using DSP fallback")
                 else:
                     try:
-                        self.model = ort.InferenceSession(
-                            model_path, providers=["CPUExecutionProvider"]
-                        )
+                        self.model = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
                         self.backend = "onnx"
                     except Exception as e:
                         logger.warning("ONNX-Modell konnte nicht geladen werden: %s", e)

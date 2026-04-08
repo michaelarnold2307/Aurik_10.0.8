@@ -13,12 +13,12 @@ Validation: MediumDetector.detect() is invoked exactly once (during pre-analysis
 not again during restoration start (UV3 restore phase).
 """
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock, call
 
-from backend.core.pre_analysis import run_pre_analysis, PreAnalysisResult
-from backend.core.defect_scanner import DefectScanner
+from backend.core.pre_analysis import run_pre_analysis
 
 
 @pytest.fixture
@@ -39,13 +39,14 @@ def test_pre_analysis_result_cached_then_passed_to_denker(audio_48k_mono):
         def detect(self, audio, sr, file_ext=None):
             call_count["detect"] += 1
             from dataclasses import dataclass
+
             @dataclass
             class FakeMediumResult:
                 primary_material: str = "vinyl"
                 confidence: float = 0.9
                 transfer_chain: list = None
                 chain_label: str = "vinyl"
-            
+
             if call_count["detect"] == 1:
                 return FakeMediumResult(transfer_chain=["vinyl", "mp3_low"])
             else:
@@ -68,7 +69,9 @@ def test_pre_analysis_result_cached_then_passed_to_denker(audio_48k_mono):
     # Verify call count after pre-analysis
     assert call_count["detect"] == 1, f"Expected 1 detect call during pre-analysis, got {call_count['detect']}"
     assert result.medium is not None, "PreAnalysisResult.medium should not be None"
-    assert result.medium.primary_material == "vinyl", f"Material should be 'vinyl', got {result.medium.primary_material}"
+    assert result.medium.primary_material == "vinyl", (
+        f"Material should be 'vinyl', got {result.medium.primary_material}"
+    )
 
     # Phase 2: Simulate denker receiving the pre-analysis result as kwarg
     # (without cache lookup, without second detect call)
@@ -77,8 +80,7 @@ def test_pre_analysis_result_cached_then_passed_to_denker(audio_48k_mono):
     # Simulate UV3 trying to use this directly
     # The key invariant: no second detect() call should happen
     assert call_count["detect"] == 1, (
-        f"Second MediumDetector.detect() call detected after passing to denker! "
-        f"Total calls: {call_count['detect']}"
+        f"Second MediumDetector.detect() call detected after passing to denker! Total calls: {call_count['detect']}"
     )
 
     # Verify the material was preserved through handover
@@ -107,12 +109,14 @@ def test_cache_first_then_direct_handover_flow():
             if call_count["detect"] > 1:
                 raise AssertionError(f"BUG: MediumDetector called {call_count['detect']} times")
             from dataclasses import dataclass
+
             @dataclass
             class Result:
                 primary_material: str = "tape"
                 confidence: float = 0.95
                 transfer_chain: list = None
                 chain_label: str = "tape"
+
             return Result(transfer_chain=["tape", "mp3_high"])
 
     with patch("forensics.medium_detector.get_medium_detector") as mock_get_md:
@@ -121,8 +125,7 @@ def test_cache_first_then_direct_handover_flow():
         # Step 1: Pre-analysis (first detect call)
         audio = np.zeros(48000, dtype=np.float32)
         result = run_pre_analysis(
-            audio, sr_native=48000, audio_48k=audio,
-            file_path="/tmp/test.mp3", store_in_bridge_cache=False
+            audio, sr_native=48000, audio_48k=audio, file_path="/tmp/test.mp3", store_in_bridge_cache=False
         )
 
     assert call_count["detect"] == 1

@@ -242,7 +242,7 @@ class TestAudioForensicsAnalyzer:
         audio = np.random.randn(self.sr * 2) * 0.1
         audio += np.sin(2 * np.pi * 440 * np.linspace(0, 2, len(audio)))
 
-        report = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        report = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         # Should have recommendation (content varies based on detection)
         assert isinstance(report.studio_recommendation, str)
@@ -253,7 +253,7 @@ class TestAudioForensicsAnalyzer:
         # Highly synthetic audio
         audio = np.random.randn(self.sr * 2) * 0.8
 
-        report = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        report = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         # Should mention risk or verification need for synthetic audio
         if report.authenticity_score < 0.3:
@@ -356,7 +356,7 @@ class TestAudioForensicsAnalyzer:
         t = np.linspace(0, 3, self.sr * 3)
         audio = np.sin(2 * np.pi * 440 * t) + np.random.randn(len(t)) * 0.02
 
-        report = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        report = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         # Verify all fields populated
         assert report.authenticity_score is not None

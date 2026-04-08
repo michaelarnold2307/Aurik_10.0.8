@@ -17,6 +17,7 @@ Exzellenz zu erreichen.
 **Integration:** Phase 7.2 (nach LUFS-Normalisierung)
 
 **Features:**
+
 - 4x Oversampling für Inter-Sample-Peak-Detektion (ITU-R BS.1770-4)
 - Lookahead (5ms) für transparente Limitierung
 - Safety-Margin (0.5 dB) für garantierte Compliance
@@ -26,6 +27,7 @@ Exzellenz zu erreichen.
 **Default-Ceiling:** -1.0 dBTP (EBU R128 broadcast/streaming standard)
 
 **Konfiguration:**
+
 ```python
 ProcessingConfig(
     true_peak_ceiling_dbtp=-1.0  # EBU R128 standard
@@ -33,6 +35,7 @@ ProcessingConfig(
 ```
 
 **Test-Ergebnisse:**
+
 - ✅ Basic Limiting: 1.96 → -1.37 dBTP
 - ✅ Stereo Limiting: -1.05 dBTP  
 - ✅ No Limiting Needed: Automatische Detektion
@@ -45,6 +48,7 @@ ProcessingConfig(
 **Integration:** Phase 5.4 (nach De-Reverb)
 
 **Features:**
+
 - Mid-Side Encoding/Decoding
 - Verstellbarer Width-Factor (0.0-3.0x)
 - Mono-Kompatibilitätsprüfung (-40 dB threshold)
@@ -52,10 +56,12 @@ ProcessingConfig(
 - Safe-Mode (intelligente Limitierung, max S/M ratio 2.0)
 
 **Modi:**
+
 - RESTORATION: 1.0x (original width, Authentizität)
 - STUDIO_2026: 1.5x (modern wide, competitive sound)
 
 **Konfiguration:**
+
 ```python
 ProcessingConfig(
     stereo_width_factor=1.5  # 50% wider
@@ -63,6 +69,7 @@ ProcessingConfig(
 ```
 
 **Test-Ergebnisse:**
+
 - ✅ Width Enhancement: 1.50x
 - ✅ Phase Correlation: 0.707 → 0.443
 - ✅ Mono Compatible: Ja (-1.4 dB loss)
@@ -76,21 +83,25 @@ ProcessingConfig(
 **Integration:** Phase 5.3 (nach Spektraler Refinement)
 
 **Features:**
+
 - Wiener Filtering (statistische Reverb-Schätzung)
 - Late Reflection Cancellation (adaptive Filterung)
 - Spectral-Temporal Analysis (Direct vs Reflected Sound)
 - Multi-band Processing (frequenzselektive Kontrolle)
 
 **Modi:**
+
 - `mild`: Light reverb reduction (preserve ambience) → 0-35% strength
 - `balanced`: Moderate reverb reduction → 35-70% strength
 - `aggressive`: Maximum reverb removal → 70-100% strength
 
 **Auto-Detection:**
+
 - RT60 Schätzung
 - Überspringt automatisch bei minimaler Reverb
 
 **Konfiguration:**
+
 ```python
 ProcessingConfig(
     dereverb_strength=0.50  # Balanced mode
@@ -98,10 +109,12 @@ ProcessingConfig(
 ```
 
 **Modi-Spezifisch:**
+
 - RESTORATION: 0.0 (preserve natural ambience)
 - STUDIO_2026: 0.50 (moderate de-reverb for clarity)
 
 **Test-Ergebnisse:**
+
 - ✅ Mild Mode: RT60 1.02s detected, processed
 - ✅ Balanced Mode: RT60 1.02s detected, processed
 - ✅ Aggressive Mode: RT60 1.02s detected, processed
@@ -116,6 +129,7 @@ ProcessingConfig(
 **70% Complete** vs. iZotope RX 11
 
 **Fehlende Kritische Features:**
+
 1. ❌ True Peak Limiting
 2. ❌ Stereo Width Enhancement
 3. ❌ Advanced De-Reverb Integration
@@ -127,6 +141,7 @@ ProcessingConfig(
 **85% Complete** vs. iZotope RX 11 🎉
 
 **Implementiert:**
+
 1. ✅ True Peak Limiting (EBU R128 compliant)
 2. ✅ Stereo Width Enhancement (Mid-Side based)
 3. ✅ Advanced De-Reverb Integration (3 modes)
@@ -160,6 +175,7 @@ class ProcessingConfig:
 ```
 
 **Validation:**
+
 - `dereverb_strength`: [0.0, 1.0]
 - `stereo_width_factor`: [0.0, 3.0]
 - `true_peak_ceiling_dbtp`: [-6.0, 0.0]
@@ -227,6 +243,7 @@ ProcessingConfig(
 ## 📈 Performance Impact
 
 **Processing Pipeline:**
+
 - Phase 5.3: De-Reverb (+5-10% processing time, nur bei dereverb_strength > 0)
 - Phase 5.4: Stereo Width (+1-2% processing time, nur bei width ≠ 1.0)
 - Phase 7.2: True Peak Limiter (+3-5% processing time, 4x oversampling)
@@ -242,6 +259,7 @@ ProcessingConfig(
 ### EBU R128 (Broadcasting)
 
 ✅ **COMPLIANT**
+
 - True Peak < -1.0 dBTP ✅
 - Loudness: -23 LUFS (via LUFS normalization) ✅
 - Measurement: ITU-R BS.1770-4 ✅
@@ -249,6 +267,7 @@ ProcessingConfig(
 ### Streaming Platforms
 
 ✅ **COMPLIANT**
+
 - Spotify: -14 LUFS, True Peak < -1.0 dBTP ✅
 - YouTube: -14 LUFS, True Peak < -1.0 dBTP ✅
 - Apple Music: -16 LUFS, True Peak < -1.0 dBTP ✅
@@ -256,6 +275,7 @@ ProcessingConfig(
 ### Mastering Standards
 
 ✅ **MEETS PROFESSIONAL STANDARDS**
+
 - Stereo Width: Mid-Side based ✅
 - Phase Coherence: Monitored ✅
 - Mono Compatibility: Checked ✅
@@ -287,6 +307,7 @@ ProcessingConfig(
 ## 📝 Changelog
 
 **v8.1 (10. Februar 2026)**
+
 - ✅ True Peak Limiter implementiert (EBU R128 compliant)
 - ✅ Stereo Width Enhancement implementiert (Mid-Side based)
 - ✅ Advanced De-Reverb integriert (3 modes)

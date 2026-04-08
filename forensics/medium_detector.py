@@ -1376,7 +1376,7 @@ class MediumDetector:
         if primary in _tape_types or any(m in _tape_types for m in chain):
             try:
                 from backend.core.dolby_nr_detector import get_dolby_nr_detector as _get_dolby
-                era_decade = None
+
                 _dolby_det = _get_dolby().detect(audio, sr, material_type=primary)
                 if _dolby_det.detected:
                     result.dolby_nr_type = _dolby_det.nr_type
@@ -1388,7 +1388,9 @@ class MediumDetector:
                     )
                     logger.info(
                         "MediumDetector: Dolby NR detected type=%s conf=%.2f hf_excess=%.1f dB",
-                        _dolby_det.nr_type, _dolby_det.confidence, _dolby_det.hf_excess_db,
+                        _dolby_det.nr_type,
+                        _dolby_det.confidence,
+                        _dolby_det.hf_excess_db,
                     )
             except Exception as exc:
                 logger.debug("MediumDetector: Dolby NR detection skipped (%s)", exc)

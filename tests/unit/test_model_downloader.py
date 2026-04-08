@@ -19,7 +19,6 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
-import logging
 import math
 import threading
 import time
@@ -225,7 +224,7 @@ class TestLoadBundled:
         result = dl.load_bundled(entry)
         assert result is None
 
-    def test_13_german_log_message_on_missing(self, tmp_path: Path, caplog):
+    def test_13_german_log_message_on_missing(self, tmp_path: Path):
         dl = self._make_downloader(tmp_path)
         entry = {
             "name": "mein_modell",
@@ -236,10 +235,12 @@ class TestLoadBundled:
             "required": False,
             "fallback": "dsp",
         }
-        with caplog.at_level(logging.INFO, logger="backend.core.model_downloader"):
+        with patch.object(_md_module.logger, "info") as info_mock:
             dl.load_bundled(entry)
-        assert any("mein_modell" in rec.message for rec in caplog.records)
-        assert any("klassische Methode" in rec.message for rec in caplog.records)
+
+        joined = "\n".join(" ".join(map(str, c.args)) for c in info_mock.call_args_list)
+        assert "mein_modell" in joined
+        assert "klassische Methode" in joined
 
     def test_14_model_entry_dataclass_accepted(self, tmp_path: Path, fake_model_file):
         path, sha = fake_model_file

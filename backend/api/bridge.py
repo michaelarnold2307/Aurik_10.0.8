@@ -135,6 +135,7 @@ __all__ = [
     "get_stem_remix_balancer_fn",
     "normalize_pipeline_health_state",
     "resolve_pipeline_fail_reason",
+    "get_experience_insights",
     # Hintergrund-Vorwärmung
     "warmup_models_background",
     # §2.38 KMV / §2.39 OOM-Recovery / §2.37 RAM-Budget
@@ -652,6 +653,66 @@ def resolve_pipeline_fail_reason(
         stage_notes=stage_notes,
         fail_reasons=fail_reasons,
     )
+
+
+def get_experience_insights(result: Any) -> dict[str, Any]:
+    """Extract normalized joy/fatigue/recommendation insights from a result object.
+
+    Frontend-safe helper for AurikErgebnis/RestorationResult-like objects.
+    Returns stable keys even if metadata is partially missing.
+    """
+    _meta = getattr(result, "metadata", None)
+    if not isinstance(_meta, dict):
+        _meta = {}
+
+    _joy = _meta.get("joy_runtime_index") if isinstance(_meta.get("joy_runtime_index"), dict) else {}
+    _auto = (
+        _meta.get("auto_improvement_recommendations")
+        if isinstance(_meta.get("auto_improvement_recommendations"), dict)
+        else {}
+    )
+    _song_cal = _meta.get("song_calibration") if isinstance(_meta.get("song_calibration"), dict) else {}
+    _cluster = _song_cal.get("cluster_policy") if isinstance(_song_cal.get("cluster_policy"), dict) else {}
+
+    _recommendations = _auto.get("recommendations") if isinstance(_auto.get("recommendations"), list) else []
+
+    def _safe01(v: Any) -> float:
+        try:
+            vf = float(v)
+        except Exception:
+            return 0.0
+        if not np.isfinite(vf):
+            return 0.0
+        return float(np.clip(vf, 0.0, 1.0))
+
+    _normalized_recommendations: list[dict[str, Any]] = []
+    for _r in _recommendations:
+        if not isinstance(_r, dict):
+            continue
+        _normalized_recommendations.append(
+            {
+                "priority": str(_r.get("priority", "info") or "info"),
+                "focus": str(_r.get("focus", "") or ""),
+                "reason": str(_r.get("reason", "") or ""),
+                "action": str(_r.get("action", "") or ""),
+            }
+        )
+
+    _cnt_raw = _auto.get("count", len(_normalized_recommendations))
+    try:
+        _cnt = int(_cnt_raw)
+    except Exception:
+        _cnt = len(_normalized_recommendations)
+    _cnt = max(_cnt, len(_normalized_recommendations), 0)
+
+    return {
+        "joy_index": _safe01(_joy.get("joy_index", 0.0)),
+        "fatigue_index": _safe01(_joy.get("fatigue_index", 0.0)),
+        "cluster_key": str(_song_cal.get("cluster_key", "") or ""),
+        "cluster_policy": dict(_cluster) if isinstance(_cluster, dict) else {},
+        "recommendations": _normalized_recommendations,
+        "recommendation_count": _cnt,
+    }
 
 
 def get_stem_remix_balancer_fn():

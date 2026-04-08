@@ -356,7 +356,9 @@ class ModuleCoordinator:
                 critical_path_modules=critical_path,
             )
 
-            logger.info("Execution plan: %s stages, %s parallel opportunities", len(stages), plan.parallel_opportunities)
+            logger.info(
+                "Execution plan: %s stages, %s parallel opportunities", len(stages), plan.parallel_opportunities
+            )
 
             return plan
 
@@ -633,7 +635,7 @@ class ModuleCoordinator:
                                         f"✓ MUSIKALISCHE EXZELLENZ erreicht: {recovery_result.improvement:+.1f} points"
                                     )
                                     logger.info("  Strategie: %s", recovery_result.strategy_used.value)
-                                    logger.info("  Maßnahmen: %s", ', '.join(recovery_result.actions_taken))
+                                    logger.info("  Maßnahmen: %s", ", ".join(recovery_result.actions_taken))
 
                                     current_audio = recovery_result.recovered_audio
                                     self._recovery_attempts += 1

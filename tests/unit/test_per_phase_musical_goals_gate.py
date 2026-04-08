@@ -1891,8 +1891,18 @@ class TestRestorativeBaselineCapping:
         """
         from backend.core.per_phase_musical_goals_gate import _RESTORATIVE_PHASES
 
-        for phase in ("phase_01", "phase_02", "phase_03", "phase_09",
-                      "phase_18", "phase_20", "phase_23", "phase_24", "phase_29", "phase_49"):
+        for phase in (
+            "phase_01",
+            "phase_02",
+            "phase_03",
+            "phase_09",
+            "phase_18",
+            "phase_20",
+            "phase_23",
+            "phase_24",
+            "phase_29",
+            "phase_49",
+        ):
             assert phase in _RESTORATIVE_PHASES, (
                 f"{phase} must be in _RESTORATIVE_PHASES — it removes defects that may inflate baselines"
             )
@@ -1902,10 +1912,20 @@ class TestRestorativeBaselineCapping:
         from backend.core.per_phase_musical_goals_gate import _CANONICAL_THRESHOLDS_RESTORATION
 
         required_goals = {
-            "natuerlichkeit", "authentizitaet", "tonal_center", "timbre_authentizitaet",
-            "artikulation", "emotionalitaet", "micro_dynamics", "groove",
-            "transparenz", "waerme", "bass_kraft", "separation_fidelity",
-            "brillanz", "spatial_depth",
+            "natuerlichkeit",
+            "authentizitaet",
+            "tonal_center",
+            "timbre_authentizitaet",
+            "artikulation",
+            "emotionalitaet",
+            "micro_dynamics",
+            "groove",
+            "transparenz",
+            "waerme",
+            "bass_kraft",
+            "separation_fidelity",
+            "brillanz",
+            "spatial_depth",
         }
         for goal in required_goals:
             assert goal in _CANONICAL_THRESHOLDS_RESTORATION, (
@@ -1958,9 +1978,17 @@ class TestRestorativeBaselineCapping:
             _CANONICAL_THRESHOLDS_STUDIO2026,
         )
 
-        for goal in ("emotionalitaet", "micro_dynamics", "groove",
-                     "transparenz", "waerme", "bass_kraft", "separation_fidelity",
-                     "brillanz", "spatial_depth"):
+        for goal in (
+            "emotionalitaet",
+            "micro_dynamics",
+            "groove",
+            "transparenz",
+            "waerme",
+            "bass_kraft",
+            "separation_fidelity",
+            "brillanz",
+            "spatial_depth",
+        ):
             assert _CANONICAL_THRESHOLDS_STUDIO2026[goal] >= _CANONICAL_THRESHOLDS_RESTORATION[goal], (
                 f"Studio 2026 '{goal}' threshold must be ≥ Restoration threshold (§9.10.77 Pareto)"
             )
@@ -2010,7 +2038,7 @@ class TestRestorativeBaselineCapping:
         inflated_scores = {
             "authentizitaet": 0.96,  # above threshold 0.88 → must be capped
             "natuerlichkeit": 0.95,  # above threshold 0.90 → must be capped
-            "groove": 0.72,          # below threshold 0.83 → must NOT be capped
+            "groove": 0.72,  # below threshold 0.83 → must NOT be capped
         }
 
         # Apply the exact capping formula used in wrap_phase() for restorative phases
@@ -2027,9 +2055,7 @@ class TestRestorativeBaselineCapping:
         )
         # All capped values must be ≤ their respective canonical thresholds
         for g, v in effective.items():
-            assert v <= thresholds[g] + 1e-9, (
-                f"{g}: effective value {v} exceeds canonical threshold {thresholds[g]}"
-            )
+            assert v <= thresholds[g] + 1e-9, f"{g}: effective value {v} exceeds canonical threshold {thresholds[g]}"
 
     def test_118_non_restorative_baseline_not_capped(self):
         """§2.29c: non-restorative phases must NOT apply capping to scores_before.
@@ -2060,9 +2086,7 @@ class TestRestorativeBaselineCapping:
         assert effective["natuerlichkeit"] == 0.95, "non-restorative: natuerlichkeit must not be capped"
         # Values exceed their canonical thresholds — that is correct and expected
         for g, v in effective.items():
-            assert v > thresholds[g], (
-                f"{g}: non-restorative score {v} should exceed threshold {thresholds[g]}"
-            )
+            assert v > thresholds[g], f"{g}: non-restorative score {v} should exceed threshold {thresholds[g]}"
 
     def test_119_canonical_thresholds_all_values_in_valid_range(self):
         """All canonical threshold values must be in (0, 1] (strict lower bound)."""
@@ -2076,9 +2100,7 @@ class TestRestorativeBaselineCapping:
             ("Studio2026", _CANONICAL_THRESHOLDS_STUDIO2026),
         ]:
             for goal, value in thresholds.items():
-                assert 0.0 < value <= 1.0, (
-                    f"[{mode_label}] threshold for '{goal}' out of range: {value}"
-                )
+                assert 0.0 < value <= 1.0, f"[{mode_label}] threshold for '{goal}' out of range: {value}"
 
     def test_120_restorative_phases_nonempty_and_strings(self):
         """_RESTORATIVE_PHASES must be a non-empty frozenset of non-empty strings."""

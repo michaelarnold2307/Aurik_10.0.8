@@ -65,6 +65,7 @@ Date: February 2026
 """
 
 import logging
+import os
 import time
 
 import numpy as np
@@ -201,6 +202,8 @@ class WowFlutterFix(PhaseInterface):
                     "version": "4.1_locality",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -213,7 +216,7 @@ class WowFlutterFix(PhaseInterface):
         mono = np.mean(audio, axis=1) if is_stereo else audio.copy()
 
         # ML-Hybrid Mode Routing (v3.0)
-        quality_mode = kwargs.get("quality_mode", "balanced")
+        quality_mode = kwargs.get("quality_mode", "quality")
 
         # Check resource availability for ML-Hybrid (fallback to lightweight if needed)
         use_lightweight = False
@@ -368,6 +371,8 @@ class WowFlutterFix(PhaseInterface):
                     "polyphonic": _poly_applied,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -429,6 +434,8 @@ class WowFlutterFix(PhaseInterface):
                     **metadata,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -599,6 +606,8 @@ class WowFlutterFix(PhaseInterface):
                 **metadata,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -625,35 +634,42 @@ class WowFlutterFix(PhaseInterface):
             (pitch_trajectory, confidence): Pitch Hz and confidence [0,1] per frame
         """
         # -----------------------------------------------------------------
-        # Fast path: librosa.pyin (C-accelerated, ~10 ms for 225 s audio)
+        # Optional fast path: librosa.pyin (C-accelerated)
+        # Disabled by default because some environments show native segfaults
+        # in librosa.sequence.viterbi/pyin. Opt-in with:
+        #   AURIK_ENABLE_LIBROSA_PYIN=1
         # -----------------------------------------------------------------
-        try:
-            import librosa  # always available in .venv_aurik
+        _enable_librosa_pyin = os.environ.get("AURIK_ENABLE_LIBROSA_PYIN", "0").strip() == "1"
+        if _enable_librosa_pyin:
+            try:
+                import librosa  # always available in .venv_aurik
 
-            hop_samples = max(1, int(self.PITCH_WINDOW_MS * sample_rate / 1000) // self.PITCH_HOP_FACTOR)
-            f0, voiced_flag, voiced_prob = librosa.pyin(
-                audio.astype(np.float32),
-                fmin=float(librosa.note_to_hz("C2")),  # ~65 Hz
-                fmax=float(librosa.note_to_hz("C7")),  # ~2093 Hz
-                sr=sample_rate,
-                hop_length=hop_samples,
-                fill_na=0.0,
-            )
-            # voiced_prob gives per-frame confidence; unvoiced → 0
-            f0 = np.nan_to_num(f0, nan=0.0)
-            confidence = np.where(voiced_flag, voiced_prob, 0.0).astype(np.float64)
-            pitch_trajectory = f0.astype(np.float64)
+                hop_samples = max(1, int(self.PITCH_WINDOW_MS * sample_rate / 1000) // self.PITCH_HOP_FACTOR)
+                f0, voiced_flag, voiced_prob = librosa.pyin(
+                    audio.astype(np.float32),
+                    fmin=float(librosa.note_to_hz("C2")),  # ~65 Hz
+                    fmax=float(librosa.note_to_hz("C7")),  # ~2093 Hz
+                    sr=sample_rate,
+                    hop_length=hop_samples,
+                    fill_na=0.0,
+                )
+                # voiced_prob gives per-frame confidence; unvoiced → 0
+                f0 = np.nan_to_num(f0, nan=0.0)
+                confidence = np.where(voiced_flag, voiced_prob, 0.0).astype(np.float64)
+                pitch_trajectory = f0.astype(np.float64)
 
-            logger.debug(
-                "pYIN (librosa): %d frames, μ_pitch=%.1f Hz, μ_conf=%.3f",
-                len(pitch_trajectory),
-                float(np.mean(pitch_trajectory[pitch_trajectory > 0]) or 0),
-                float(np.mean(confidence)),
-            )
-            return pitch_trajectory, confidence
+                logger.debug(
+                    "pYIN (librosa): %d frames, μ_pitch=%.1f Hz, μ_conf=%.3f",
+                    len(pitch_trajectory),
+                    float(np.mean(pitch_trajectory[pitch_trajectory > 0]) or 0),
+                    float(np.mean(confidence)),
+                )
+                return pitch_trajectory, confidence
 
-        except Exception as _lib_exc:
-            logger.debug("librosa.pyin unavailable (%s) — falling back to Python pYIN (30 s cap)", _lib_exc)
+            except Exception as _lib_exc:
+                logger.debug("librosa.pyin unavailable (%s) — falling back to Python pYIN (30 s cap)", _lib_exc)
+        else:
+            logger.debug("librosa.pyin disabled (AURIK_ENABLE_LIBROSA_PYIN!=1) — using Python pYIN fallback")
 
         # -----------------------------------------------------------------
         # Fallback: pure-Python pYIN with 30 s centre cap
@@ -1731,19 +1747,19 @@ if __name__ == "__main__":
         if result.metrics["wow_flutter_detected"]:
             logger.debug("✅ Professional Wow & Flutter Correction:")
             logger.debug("   Detected: YES")
-            logger.debug("   Max Deviation: %.3f%%", result.metrics['max_deviation_percent'])
-            logger.debug("   Wow Magnitude: %.3f%%", result.metrics['wow_magnitude_percent'])
-            logger.debug("   Flutter Magnitude: %.3f%%", result.metrics['flutter_magnitude_percent'])
-            logger.debug("   Residual Deviation: %.3f%% (target <0.3%%)", result.metrics['residual_deviation_percent'])
-            logger.debug("   Correction Strength: %s", result.metrics['correction_strength'])
-            logger.debug("   Mean Confidence: %.2f", result.metrics['mean_confidence'])
+            logger.debug("   Max Deviation: %.3f%%", result.metrics["max_deviation_percent"])
+            logger.debug("   Wow Magnitude: %.3f%%", result.metrics["wow_magnitude_percent"])
+            logger.debug("   Flutter Magnitude: %.3f%%", result.metrics["flutter_magnitude_percent"])
+            logger.debug("   Residual Deviation: %.3f%% (target <0.3%%)", result.metrics["residual_deviation_percent"])
+            logger.debug("   Correction Strength: %s", result.metrics["correction_strength"])
+            logger.debug("   Mean Confidence: %.2f", result.metrics["mean_confidence"])
             logger.debug(
                 f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
             )
             logger.debug("")
         else:
             logger.debug("⚠️  No significant wow/flutter detected")
-            logger.debug("   Max Deviation: %.3f%%", result.metrics['max_deviation_percent'])
+            logger.debug("   Max Deviation: %.3f%%", result.metrics["max_deviation_percent"])
             logger.debug("   Threshold: %s%%", phase.DETECTION_THRESHOLD[material])
             logger.debug("")
 

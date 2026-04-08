@@ -137,5 +137,3 @@ class AurikAutonomousPipeline:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("Audit-Log konnte nicht geschrieben werden: %s", exc)
-
-

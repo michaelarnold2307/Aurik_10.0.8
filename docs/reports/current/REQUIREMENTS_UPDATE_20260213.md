@@ -202,6 +202,7 @@ ZUSAMMENFASSUNG
    • scipy 1.15.3 durchgehend
 
 ⚠️  WICHTIGE HINWEISE:
+
    1. Modelle mit sehr alten Original-Versionen (z.B. torch 1.11.0)
       könnten Kompatibilitätsprobleme haben
    2. Bei Problemen: Backup-Dateien verwenden

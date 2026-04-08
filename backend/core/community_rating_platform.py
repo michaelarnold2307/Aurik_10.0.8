@@ -33,9 +33,7 @@ class CommunityRatingPlatform:
         if not self._ratings:
             return CommunityAggregate()
         keys = self._ratings[0].keys()
-        return CommunityAggregate(
-            {k: sum(r.get(k, 0.0) for r in self._ratings) / len(self._ratings) for k in keys}
-        )
+        return CommunityAggregate({k: sum(r.get(k, 0.0) for r in self._ratings) / len(self._ratings) for k in keys})
 
 
 # ---------------------------------------------------------------------------

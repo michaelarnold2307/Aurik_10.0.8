@@ -707,7 +707,8 @@ class TestProposeParetaMOO:
 
     def test_71_material_similarity_diagonal(self):
         """Diagonale der Ähnlichkeitsmatrix muss 1.0 sein."""
-        from backend.core.gp_parameter_optimizer import _material_similarity, _MATERIAL_SIMILARITY_KEYS
+        from backend.core.gp_parameter_optimizer import _MATERIAL_SIMILARITY_KEYS, _material_similarity
+
         for mat in _MATERIAL_SIMILARITY_KEYS:
             sim = _material_similarity(mat, mat)
             assert sim == pytest.approx(1.0), f"Self-similarity of {mat} should be 1.0, got {sim}"
@@ -715,13 +716,14 @@ class TestProposeParetaMOO:
     def test_72_material_similarity_matrix_values(self):
         """Spezifische Spec-Werte aus §2.47 prüfen."""
         from backend.core.gp_parameter_optimizer import _material_similarity
+
         cases = [
-            ("shellac",  "wax_cyl",  0.85),
+            ("shellac", "wax_cyl", 0.85),
             ("vinyl_78", "vinyl_std", 0.65),
-            ("tape_std", "tape_stu",  0.85),
-            ("tape_std", "cassette",  0.70),
-            ("digital",  "mp3_lossy", 0.55),
-            ("shellac",  "digital",   0.05),
+            ("tape_std", "tape_stu", 0.85),
+            ("tape_std", "cassette", 0.70),
+            ("digital", "mp3_lossy", 0.55),
+            ("shellac", "digital", 0.05),
         ]
         for m1, m2, expected in cases:
             got = _material_similarity(m1, m2)
@@ -732,38 +734,42 @@ class TestProposeParetaMOO:
     def test_73_material_similarity_alias_tape(self):
         """tape-Alias soll zu tape_std gemappt werden (Ähnlichkeit mit tape_stu = 0.85)."""
         from backend.core.gp_parameter_optimizer import _material_similarity
+
         sim = _material_similarity("tape", "tape_stu")
         assert sim == pytest.approx(0.85, abs=1e-3)
 
     def test_74_material_similarity_alias_vinyl(self):
         """vinyl-Alias → vinyl_std (Ähnlichkeit mit vinyl_78 = 0.65)."""
         from backend.core.gp_parameter_optimizer import _material_similarity
+
         sim = _material_similarity("vinyl", "vinyl_78")
         assert sim == pytest.approx(0.65, abs=1e-3)
 
     def test_75_material_similarity_unknown_returns_zero(self):
         """Unbekanntes Material → keine Ähnlichkeit (0.0)."""
         from backend.core.gp_parameter_optimizer import _material_similarity
+
         sim = _material_similarity("xyz_unknown_material", "shellac")
         assert sim == pytest.approx(0.0)
 
     def test_76_material_similarity_symmetric(self):
         """Ähnlichkeitsmatrix muss symmetrisch sein."""
         from backend.core.gp_parameter_optimizer import (
-            _material_similarity, _MATERIAL_SIMILARITY_KEYS,
+            _MATERIAL_SIMILARITY_KEYS,
+            _material_similarity,
         )
+
         keys = _MATERIAL_SIMILARITY_KEYS
         for i, m1 in enumerate(keys):
-            for m2 in keys[i + 1:]:
+            for m2 in keys[i + 1 :]:
                 a = _material_similarity(m1, m2)
                 b = _material_similarity(m2, m1)
-                assert a == pytest.approx(b, abs=1e-6), (
-                    f"Asymmetry: {m1}↔{m2}: {a:.4f} vs {b:.4f}"
-                )
+                assert a == pytest.approx(b, abs=1e-6), f"Asymmetry: {m1}↔{m2}: {a:.4f} vs {b:.4f}"
 
     def test_77_augment_cross_material_no_augment_if_enough_obs(self, tmp_path, monkeypatch):
         """Bei ≥ 10 eigenen Beobachtungen: kein Cross-Material-Transfer."""
         import backend.core.gp_parameter_optimizer as gp_mod
+
         monkeypatch.setattr(gp_mod, "_MEMORY_DIR", tmp_path)
         opt = GPParameterOptimizer(rng_seed=30)
 
@@ -780,7 +786,9 @@ class TestProposeParetaMOO:
     def test_78_augment_cross_material_augments_few_obs(self, tmp_path, monkeypatch):
         """Bei < 10 eigenen Obs und ähnlichem Material vorhanden → Cross-Transfer aktiv."""
         import json
+
         import backend.core.gp_parameter_optimizer as gp_mod
+
         monkeypatch.setattr(gp_mod, "_MEMORY_DIR", tmp_path)
         opt = GPParameterOptimizer(rng_seed=31)
 
@@ -790,10 +798,7 @@ class TestProposeParetaMOO:
         own_y = [0.6, 0.7]
 
         # wax_cyl (Ähnlichkeit 0.85 mit shellac) hat 3 Einträge im Memory
-        wax_entries = [
-            {"params": rng.random(opt._dim).tolist(), "score": 0.65, "ts": float(i)}
-            for i in range(3)
-        ]
+        wax_entries = [{"params": rng.random(opt._dim).tolist(), "score": 0.65, "ts": float(i)} for i in range(3)]
         (tmp_path / "wax_cyl.json").write_text(json.dumps(wax_entries))
 
         augmented_X, augmented_y = opt._augment_with_cross_material("shellac", own_X, own_y)
@@ -805,7 +810,9 @@ class TestProposeParetaMOO:
     def test_79_augment_cross_material_score_damped_by_similarity(self, tmp_path, monkeypatch):
         """Cross-Material-Scores werden mit Ähnlichkeit multipliziert."""
         import json
+
         import backend.core.gp_parameter_optimizer as gp_mod
+
         monkeypatch.setattr(gp_mod, "_MEMORY_DIR", tmp_path)
         opt = GPParameterOptimizer(rng_seed=32)
 
@@ -814,9 +821,7 @@ class TestProposeParetaMOO:
         own_y = [0.9]
 
         # tape_std hat Ähnlichkeit 0.85 zu tape_stu
-        tape_stu_entries = [
-            {"params": rng.random(opt._dim).tolist(), "score": 1.0, "ts": 0.0}
-        ]
+        tape_stu_entries = [{"params": rng.random(opt._dim).tolist(), "score": 1.0, "ts": 0.0}]
         (tmp_path / "tape_stu.json").write_text(json.dumps(tape_stu_entries))
 
         augmented_X, augmented_y = opt._augment_with_cross_material("tape_std", own_X, own_y)
@@ -828,6 +833,7 @@ class TestProposeParetaMOO:
     def test_80_propose_uses_cross_material_with_few_obs(self, tmp_path, monkeypatch):
         """propose() mit 2 eigenen Obs gibt keinen Fehler (Cross-Transfer greift)."""
         import backend.core.gp_parameter_optimizer as gp_mod
+
         monkeypatch.setattr(gp_mod, "_MEMORY_DIR", tmp_path)
         opt = GPParameterOptimizer(rng_seed=33)
 

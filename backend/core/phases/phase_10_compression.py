@@ -176,6 +176,8 @@ class CompressionPhase(PhaseInterface):
                     "processing": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "rms_change_db": 0.0,
@@ -479,12 +481,12 @@ if __name__ == "__main__":
         dr_out = 20 * np.log10(peak_out / (rms_out + 1e-10))
 
         logger.debug("  Multi-band parallel compression:")
-        logger.debug("    RMS change: %.2f dB", meta['rms_change_db'])
+        logger.debug("    RMS change: %.2f dB", meta["rms_change_db"])
         logger.debug(
             f"    Dynamic range: {dr_in:.1f} dB → {dr_out:.1f} dB (reduced {meta['dynamic_range_reduction_db']:.1f} dB)"
         )
-        logger.debug("    Parallel blend: %.0f%% wet", meta['parallel_blend'] * 100)
-        logger.debug("    Detection mode: %s", meta['detection_mode'])
+        logger.debug("    Parallel blend: %.0f%% wet", meta["parallel_blend"] * 100)
+        logger.debug("    Detection mode: %s", meta["detection_mode"])
         logger.debug("")
         logger.debug("  Per-Band Compression:")
         for band_name, metrics in meta["band_metrics"].items():
@@ -495,7 +497,7 @@ if __name__ == "__main__":
                 f"RMS {metrics['rms_change_db']:+5.2f} dB"
             )
         logger.debug("")
-        logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta['processing_time_s'], meta['realtime_factor'])
-        logger.debug("  Quality impact: %.2f", meta['quality_impact'])
+        logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta["processing_time_s"], meta["realtime_factor"])
+        logger.debug("  Quality impact: %.2f", meta["quality_impact"])
         logger.debug("  ✅")
         logger.debug("")

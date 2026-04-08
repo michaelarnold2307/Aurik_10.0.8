@@ -689,15 +689,15 @@ if __name__ == "__main__":
 
     logger.info("\n✅ NORMATIVE COMPLIANCE:")
     logger.info(str("-" * 80))
-    logger.info("  Analysis only: %s", report['metadata']['analysis_only'])
-    logger.info("  No audio modification: %s", report['metadata']['no_audio_modification'])
+    logger.info("  Analysis only: %s", report["metadata"]["analysis_only"])
+    logger.info("  No audio modification: %s", report["metadata"]["no_audio_modification"])
     logger.info("  Audio unchanged: %s", np.array_equal(audio, audio_original))
 
     logger.info("\n📋 REGION RECOMMENDATIONS (for Pipeline):")
     logger.info(str("-" * 80))
     for region in report["regions"][:5]:  # Show first 5
-        logger.info("Region %s: %s (%.2fs)", region['region_id'], region['type'], region['duration_s'])
-        logger.info("  Recommendation: %s", region['recommendation']['reasoning'])
+        logger.info("Region %s: %s (%.2fs)", region["region_id"], region["type"], region["duration_s"])
+        logger.info("  Recommendation: %s", region["recommendation"]["reasoning"])
         logger.info(
             "  Enhancement: %.1f, Noise Reduction: %.1f",
             region["recommendation"]["enhancement_strength"],

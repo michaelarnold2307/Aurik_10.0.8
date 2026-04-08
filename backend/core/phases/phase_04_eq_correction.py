@@ -379,11 +379,11 @@ class EQCorrectionPhase(PhaseInterface):
     # Format: { speed_ips: (f_hz, gain_db_cut, Q) }  — gain_db_cut > 0 = cut
     # ---------------------------------------------------------------------------
     HEAD_BUMP_PROFILES: dict[float, tuple[float, float, float]] = {
-        1.875: (70,  2.5, 1.2),   # Cassette / 4.75 cm/s
-        3.75:  (90,  2.5, 1.2),   # Slow reel / cassette hi-speed
-        7.5:   (130, 2.0, 1.3),   # Consumer reel standard
-        15.0:  (180, 1.5, 1.4),   # Semi-professional reel
-        30.0:  (250, 1.0, 1.5),   # Professional master reel
+        1.875: (70, 2.5, 1.2),  # Cassette / 4.75 cm/s
+        3.75: (90, 2.5, 1.2),  # Slow reel / cassette hi-speed
+        7.5: (130, 2.0, 1.3),  # Consumer reel standard
+        15.0: (180, 1.5, 1.4),  # Semi-professional reel
+        30.0: (250, 1.0, 1.5),  # Professional master reel
     }
 
     # Material-adaptive Parameters (Professional-tuned)
@@ -498,6 +498,31 @@ class EQCorrectionPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
+        # §2.47 PMGG-Retry: locality_factor skaliert finale Intensität bei Retries
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "eq_applied": False,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["EQ correction skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
+
         # Resolve decade-aware shellac variant before fetching params
         decade = kwargs.get("decade")
         effective_material = material_type
@@ -548,6 +573,8 @@ class EQCorrectionPhase(PhaseInterface):
                     "algorithm": "none",
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -563,7 +590,8 @@ class EQCorrectionPhase(PhaseInterface):
         eq_audio = self._apply_parametric_eq_professional(audio, adjusted_curve, params)
 
         # Step 3: Parallel Blend (preserve character)
-        result_audio = self._parallel_blend(audio, eq_audio, params["blend"])
+        _blend = float(np.clip(params["blend"] * _effective_strength, 0.0, 1.0))
+        result_audio = self._parallel_blend(audio, eq_audio, _blend)
 
         # ── Head-Bump compensation (tape/reel_tape) ──────────────────────────
         tape_speed_ips: float | None = kwargs.get("tape_speed_ips")
@@ -580,6 +608,7 @@ class EQCorrectionPhase(PhaseInterface):
         if dolby_nr_type and dolby_nr_type != "none":
             try:
                 from backend.core.dolby_nr_detector import apply_inverse_filter as _dolby_inv
+
                 result_audio = _dolby_inv(result_audio, dolby_nr_type, sr=sample_rate, confidence=dolby_nr_conf)  # type: ignore[arg-type]
                 dolby_nr_applied = True
                 logger.info("phase_04: Dolby/DBX NR inverse applied type=%s conf=%.2f", dolby_nr_type, dolby_nr_conf)
@@ -597,6 +626,11 @@ class EQCorrectionPhase(PhaseInterface):
         result_audio = np.nan_to_num(result_audio, nan=0.0, posinf=0.0, neginf=0.0)
         result_audio = np.clip(result_audio, -1.0, 1.0)
 
+        # §2.47 PMGG-Retry: phase_locality_factor als finaler Wet/Dry-Regler
+        if _effective_strength < 1.0:
+            result_audio = audio + _effective_strength * (result_audio - audio)
+            result_audio = np.clip(result_audio, -1.0, 1.0)
+
         return create_phase_result(
             audio=result_audio,
             modifications={
@@ -605,8 +639,10 @@ class EQCorrectionPhase(PhaseInterface):
                 "total_correction_db": total_correction,
                 "max_boost_db": max_boost,
                 "max_cut_db": max_cut,
-                "blend_ratio": params["blend"],
+                "blend_ratio": _blend,
                 "phase_mode": params["phase_mode"],
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
                 "material_type": material_type,
                 "riaa_variant": detected_variant,
                 "head_bump_applied": head_bump_applied,
@@ -628,6 +664,10 @@ class EQCorrectionPhase(PhaseInterface):
                 "benchmark": "FabFilter Pro-Q 3, iZotope Ozone EQ, Waves Renaissance EQ",
                 "algorithm_version": "2.1_carrier_chain_aware",
                 "execution_time_seconds": execution_time,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -973,9 +1013,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = EQCorrectionPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material)
@@ -985,23 +1025,23 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Bands: %s", result.modifications['num_bands'])
-            logger.debug("   Total Correction: %.1f dB", result.modifications['total_correction_db'])
-            logger.debug("   Max Boost: %.1f dB", result.modifications['max_boost_db'])
-            logger.debug("   Max Cut: %.1f dB", result.modifications['max_cut_db'])
-            logger.debug("   Blend: %.2f", result.modifications['blend_ratio'])
-            logger.debug("   Phase Mode: %s", result.modifications['phase_mode'])
-            logger.debug("   RIAA Standard: %s", result.metadata.get('riaa_standard', False))
-            logger.debug("   NAB Standard: %s", result.metadata.get('nab_standard', False))
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Bands: %s", result.modifications["num_bands"])
+            logger.debug("   Total Correction: %.1f dB", result.modifications["total_correction_db"])
+            logger.debug("   Max Boost: %.1f dB", result.modifications["max_boost_db"])
+            logger.debug("   Max Cut: %.1f dB", result.modifications["max_cut_db"])
+            logger.debug("   Blend: %.2f", result.modifications["blend_ratio"])
+            logger.debug("   Phase Mode: %s", result.modifications["phase_mode"])
+            logger.debug("   RIAA Standard: %s", result.metadata.get("riaa_standard", False))
+            logger.debug("   NAB Standard: %s", result.metadata.get("nab_standard", False))
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("⏭️  EQ Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional EQ Correction v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata.get('algorithm', 'N/A'))
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata.get("algorithm", "N/A"))
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.96 (Professional-Grade)")

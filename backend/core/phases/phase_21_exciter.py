@@ -185,6 +185,8 @@ class Exciter(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=[],
                 modifications={},
@@ -216,6 +218,8 @@ class Exciter(PhaseInterface):
                     "algorithm": "skip_soft_saturation_guard",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Phase 21 übersprungen: SOFT_SATURATION-Material erkannt — Röhren-Charakter wird bewahrt."],
                 modifications={},
@@ -227,11 +231,18 @@ class Exciter(PhaseInterface):
             config[band_name]["intensity"] = float(config[band_name]["intensity"] * _effective_strength)
         config["mix"] = float(config["mix"] * _effective_strength)
 
-        # Process each channel
+        # §2.51: M/S domain — excite Mid only, Side untouched
         if is_stereo:
-            excited_left = self._excite_channel(audio[:, 0], sample_rate, config)
-            excited_right = self._excite_channel(audio[:, 1], sample_rate, config)
-            excited_audio = np.column_stack((excited_left, excited_right))
+            _inv_sqrt2 = 1.0 / np.sqrt(2.0)
+            mid = (audio[:, 0] + audio[:, 1]) * _inv_sqrt2
+            side = (audio[:, 0] - audio[:, 1]) * _inv_sqrt2
+            excited_mid = self._excite_channel(mid, sample_rate, config)
+            excited_audio = np.column_stack(
+                (
+                    (excited_mid + side) * _inv_sqrt2,
+                    (excited_mid - side) * _inv_sqrt2,
+                )
+            )
         else:
             excited_audio = self._excite_channel(audio, sample_rate, config)
 
@@ -257,8 +268,11 @@ class Exciter(PhaseInterface):
                 "hf_boost_db": float(hf_boost_db),
                 "mix_amount": float(config["mix"]),
                 "rt_factor": float(rt_factor),
+                "stereo_mode": "ms_mid_only" if is_stereo else "mono",
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.15 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

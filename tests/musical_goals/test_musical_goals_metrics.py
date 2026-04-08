@@ -26,9 +26,9 @@ Datum: 8. Februar 2026
 from typing import Any, Literal
 
 import numpy as np
+import pytest
 from numpy import floating
 from numpy._typing._array_like import NDArray
-import pytest
 
 from backend.core.musical_goals import (
     AuthentizitaetMetric,
@@ -68,25 +68,33 @@ class TestBassKraftMetric:
         audio = 0.1 * np.sin(2 * np.pi * 100 * t) + 0.9 * np.sin(2 * np.pi * 5000 * t)
         return audio, sr
 
-    def test_bass_kraft_score_range(self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_bass_kraft_score_range(
+        self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that bass kraft score is in valid range [0.0, 1.0]."""
         audio, sr = bass_heavy_audio
         score = metric.measure(audio, sr)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range"
 
-    def test_bass_heavy_high_score(self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_bass_heavy_high_score(
+        self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that bass-heavy audio gets high score."""
         audio, sr = bass_heavy_audio
         score = metric.measure(audio, sr)
         assert score > 0.7, f"Bass-heavy audio should score >0.7, got {score}"
 
-    def test_bass_light_low_score(self, metric: BassKraftMetric, bass_light_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_bass_light_low_score(
+        self, metric: BassKraftMetric, bass_light_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that bass-light audio gets low score."""
         audio, sr = bass_light_audio
         score = metric.measure(audio, sr)
         assert score < 0.5, f"Bass-light audio should score <0.5, got {score}"
 
-    def test_bass_preservation_check(self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_bass_preservation_check(
+        self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test bass preservation check."""
         audio, sr = bass_heavy_audio
         # Simulate processing that reduces bass
@@ -97,7 +105,9 @@ class TestBassKraftMetric:
         assert "original_score" in details
         assert "processed_score" in details
 
-    def test_measurement_stability(self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_measurement_stability(
+        self, metric: BassKraftMetric, bass_heavy_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that multiple measurements are consistent."""
         audio, sr = bass_heavy_audio
         scores = [metric.measure(audio, sr) for _ in range(5)]
@@ -132,25 +142,33 @@ class TestBrillanzMetric:
         audio = rng.standard_normal(sr).astype(np.float32) * 0.3
         return audio, sr
 
-    def test_brillanz_score_range(self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_brillanz_score_range(
+        self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that brillanz score is in valid range."""
         audio, sr = bright_audio
         score = metric.measure(audio, sr)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range"
 
-    def test_bright_audio_high_score(self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_bright_audio_high_score(
+        self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that bright audio gets high score."""
         audio, sr = bright_audio
         score = metric.measure(audio, sr)
         assert score > 0.6, f"Bright audio should score >0.6, got {score}"
 
-    def test_dull_audio_low_score(self, metric: BrillanzMetric, dull_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_dull_audio_low_score(
+        self, metric: BrillanzMetric, dull_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that dull audio gets low score."""
         audio, sr = dull_audio
         score = metric.measure(audio, sr)
         assert score < 0.5, f"Dull audio should score <0.5, got {score}"
 
-    def test_measurement_stability(self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_measurement_stability(
+        self, metric: BrillanzMetric, bright_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test measurement consistency."""
         audio, sr = bright_audio
         scores = [metric.measure(audio, sr) for _ in range(5)]
@@ -179,7 +197,9 @@ class TestWaermeMetric:
         score = metric.measure(audio, sr)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range"
 
-    def test_warm_audio_high_score(self, metric: WaermeMetric, warm_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_warm_audio_high_score(
+        self, metric: WaermeMetric, warm_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that warm audio gets high score."""
         audio, sr = warm_audio
         score = metric.measure(audio, sr)
@@ -211,19 +231,25 @@ class TestNatuerlichkeitMetric:
         audio = np.random.randn(sr)
         return audio, sr
 
-    def test_natuerlichkeit_score_range(self, metric: NatuerlichkeitMetric, natural_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_natuerlichkeit_score_range(
+        self, metric: NatuerlichkeitMetric, natural_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that natürlichkeit score is in valid range."""
         audio, sr = natural_audio
         score = metric.measure(audio, sr)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range"
 
-    def test_natural_audio_high_score(self, metric: NatuerlichkeitMetric, natural_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_natural_audio_high_score(
+        self, metric: NatuerlichkeitMetric, natural_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that natural audio gets high score."""
         audio, sr = natural_audio
         score = metric.measure(audio, sr)
         assert score > 0.7, f"Natural audio should score >0.7, got {score}"
 
-    def test_unnatural_audio_low_score(self, metric: NatuerlichkeitMetric, unnatural_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_unnatural_audio_low_score(
+        self, metric: NatuerlichkeitMetric, unnatural_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that unnatural audio gets low score."""
         audio, sr = unnatural_audio
         score = metric.measure(audio, sr)
@@ -244,7 +270,9 @@ class TestAuthentizitaetMetric:
         audio = np.sin(2 * np.pi * 440 * t)
         return audio, sr
 
-    def test_authentizitaet_score_range(self, metric: AuthentizitaetMetric, test_audio: tuple[NDArray[Any], Literal[48000]]):
+    def test_authentizitaet_score_range(
+        self, metric: AuthentizitaetMetric, test_audio: tuple[NDArray[Any], Literal[48000]]
+    ):
         """Test that authentizität score is in valid range."""
         audio, sr = test_audio
         score = metric.measure(audio, sr)
@@ -284,19 +312,25 @@ class TestEmotionalitaetMetric:
         audio = 0.5 * np.sin(2 * np.pi * 440 * t)  # Constant amplitude
         return audio, sr
 
-    def test_emotionalitaet_score_range(self, metric: EmotionalitaetMetric, dynamic_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_emotionalitaet_score_range(
+        self, metric: EmotionalitaetMetric, dynamic_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that emotionalität score is in valid range."""
         audio, sr = dynamic_audio
         score = metric.measure(audio, sr)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range"
 
-    def test_dynamic_audio_high_score(self, metric: EmotionalitaetMetric, dynamic_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_dynamic_audio_high_score(
+        self, metric: EmotionalitaetMetric, dynamic_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that dynamic audio gets high score."""
         audio, sr = dynamic_audio
         score = metric.measure(audio, sr)
         assert score > 0.5, f"Dynamic audio should score >0.5, got {score}"
 
-    def test_flat_audio_low_score(self, metric: EmotionalitaetMetric, flat_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_flat_audio_low_score(
+        self, metric: EmotionalitaetMetric, flat_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that flat audio gets low score."""
         audio, sr = flat_audio
         score = metric.measure(audio, sr)
@@ -321,7 +355,9 @@ class TestTransparenzMetric:
         )
         return audio, sr
 
-    def test_transparenz_score_range(self, metric: TransparenzMetric, clear_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_transparenz_score_range(
+        self, metric: TransparenzMetric, clear_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that transparenz score is in valid range."""
         audio, sr = clear_audio
         score = metric.measure(audio, sr)
@@ -348,8 +384,10 @@ class TestMusicalGoalsChecker:
         )
         return audio, sr
 
-    def test_measure_all_returns_all_goals(self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
-        """Test that measure_all returns all 14 goals (v9.9.9 Spec)."""
+    def test_measure_all_returns_all_goals(
+        self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
+        """Test that measure_all returns all 14 goals (current spec baseline)."""
         audio, sr = test_audio
         scores = checker.measure_all(audio, sr)
 
@@ -362,19 +400,21 @@ class TestMusicalGoalsChecker:
             "authentizitaet",
             "emotionalitaet",
             "transparenz",
-            "groove",  # v9.9 Groove-Metrik
-            "spatial_depth",  # v9.9 Raumtiefe
-            "timbre_authentizitaet",  # v9.9 Timbre-Authentizität (deutsch)
-            "tonal_center",  # v9.9.5 Tonales Zentrum
-            "micro_dynamics",  # v9.9.5 Mikro-Dynamik
-            "separation_fidelity",  # v9.9.9 Separation-Treue
-            "artikulation",  # v9.9.9 Artikulation
+            "groove",  # Groove metric
+            "spatial_depth",  # Spatial depth
+            "timbre_authentizitaet",  # Timbre authenticity (German key)
+            "tonal_center",  # Tonal center
+            "micro_dynamics",  # Micro dynamics
+            "separation_fidelity",  # Separation fidelity
+            "artikulation",  # Articulation
         }
         assert set(scores.keys()) == expected_goals, (
             f"Missing or extra goals. \nGot: {sorted(scores.keys())}\nExpected: {sorted(expected_goals)}"
         )
 
-    def test_all_scores_in_valid_range(self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_all_scores_in_valid_range(
+        self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test that all scores are in [0.0, 1.0]."""
         audio, sr = test_audio
         scores = checker.measure_all(audio, sr)
@@ -382,7 +422,9 @@ class TestMusicalGoalsChecker:
         for goal, score in scores.items():
             assert 0.0 <= score <= 1.0, f"{goal} score {score} out of range"
 
-    def test_check_all_preserved(self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_check_all_preserved(
+        self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test check_all_preserved with minimal degradation."""
         audio, sr = test_audio
 
@@ -394,7 +436,9 @@ class TestMusicalGoalsChecker:
         assert isinstance(passed, bool)
         assert isinstance(violations, dict)
 
-    def test_measure_single_goal(self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]):
+    def test_measure_single_goal(
+        self, checker: MusicalGoalsChecker, test_audio: tuple[NDArray[floating[Any]], Literal[48000]]
+    ):
         """Test measuring single goal."""
         audio, sr = test_audio
         result = checker.measure_single("brillanz", audio, sr)
@@ -1318,6 +1362,81 @@ class TestTransparenzMetricV913Calibration:
         for seed in range(4):
             score = m.measure(self._broadband_audio(seed), self.SR)
             assert 0.0 <= score <= 1.0, f"Score out of range: {score:.4f} for seed={seed}"
+
+
+# ---------------------------------------------------------------------------
+# §perf-v9.11.0 Audio-Cap-Performanz-Tests
+# ---------------------------------------------------------------------------
+
+
+class TestMetricAudioCapPerformance:
+    """Validiert §perf-v9.11.0: NatuerlichkeitMetric und BassKraftMetric
+    verarbeiten lange Signale innerhalb des Performance-Budgets (< 5 s)."""
+
+    SR = 48_000
+
+    def _long_audio(self, duration_s: float = 30.0) -> np.ndarray:
+        t = np.linspace(0, duration_s, int(self.SR * duration_s), endpoint=False)
+        sig = (
+            0.4 * np.sin(2 * np.pi * 440 * t)
+            + 0.3 * np.sin(2 * np.pi * 880 * t)
+            + 0.02 * np.random.default_rng(42).standard_normal(len(t))
+        ).astype(np.float32)
+        return sig
+
+    def test_natuerlichkeit_audio_cap_is_5s(self):
+        """_MAX_NAT_SAMPLES = sr*5 — §perf-v9.11.0 konstantenprüfung."""
+        import inspect
+        import re
+
+        from backend.core.musical_goals.musical_goals_metrics import NatuerlichkeitMetric
+
+        src = inspect.getsource(NatuerlichkeitMetric.measure)
+        m = re.search(r"_MAX_NAT_SAMPLES\s*=\s*int\(sr\s*\*\s*(\d+)\)", src)
+        assert m, "_MAX_NAT_SAMPLES = int(sr * N) nicht in NatuerlichkeitMetric.measure() gefunden"
+        cap_s = int(m.group(1))
+        assert cap_s <= 5, f"_MAX_NAT_SAMPLES muss ≤ 5 s sein (§perf-v9.11.0), gefunden: {cap_s} s"
+
+    def test_bass_kraft_audio_cap_is_5s(self):
+        """_MAX_BASS_STFT_SAMPLES = sr*5 — §perf-v9.11.0 konstantenprüfung."""
+        import inspect
+        import re
+
+        from backend.core.musical_goals.musical_goals_metrics import BassKraftMetric
+
+        src = inspect.getsource(BassKraftMetric.measure)
+        m = re.search(r"_MAX_BASS_STFT_SAMPLES\s*=\s*int\(sr\s*\*\s*(\d+)\)", src)
+        assert m, "_MAX_BASS_STFT_SAMPLES = int(sr * N) nicht in BassKraftMetric.measure() gefunden"
+        cap_s = int(m.group(1))
+        assert cap_s <= 5, f"_MAX_BASS_STFT_SAMPLES muss ≤ 5 s sein (§perf-v9.11.0), gefunden: {cap_s} s"
+
+    def test_natuerlichkeit_long_audio_inside_budget(self):
+        """NatuerlichkeitMetric(30s input) terminiert in < 5 s nach Cap-Reduktion."""
+        import time
+
+        from backend.core.musical_goals.musical_goals_metrics import NatuerlichkeitMetric
+
+        audio = self._long_audio(30.0)
+        m = NatuerlichkeitMetric()
+        t0 = time.perf_counter()
+        score = m.measure(audio, self.SR)
+        elapsed = time.perf_counter() - t0
+        assert 0.0 <= score <= 1.0
+        assert elapsed < 5.0, f"NatuerlichkeitMetric zu langsam: {elapsed:.2f} s (Budget: 5 s) — §perf-v9.11.0 verletzt"
+
+    def test_bass_kraft_long_audio_inside_budget(self):
+        """BassKraftMetric(30s input) terminiert in < 3 s nach Cap-Reduktion."""
+        import time
+
+        from backend.core.musical_goals.musical_goals_metrics import BassKraftMetric
+
+        audio = self._long_audio(30.0)
+        m = BassKraftMetric()
+        t0 = time.perf_counter()
+        score = m.measure(audio, self.SR)
+        elapsed = time.perf_counter() - t0
+        assert 0.0 <= score <= 1.0
+        assert elapsed < 3.0, f"BassKraftMetric zu langsam: {elapsed:.2f} s (Budget: 3 s) — §perf-v9.11.0 verletzt"
 
 
 if __name__ == "__main__":

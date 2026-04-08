@@ -55,7 +55,17 @@ Erlaubte Musikmetriken: **PEAQ, FAD, PQS-MOS, ViSQOL v3 (`--audio` Mode), Musica
 | Good (B) | ≥ 80 | **[RELEASE_MUST] Pflicht für jede neue Phase / Plugin** |
 | Fair (C) | ≥ 60 | — |
 
-**[TARGET_2026]** Studio-2026-Modus-Ziel: OQS ≥ **88** (zwischen Good und Excellent). Kein Release-Blocker, aber Roadmap-Zielvorgabe für 2026.
+### §8.1.1a [RELEASE_MUST] Studio-2026 OQS-Gate (v9.10.130)
+
+Für `mode="studio2026"` gilt ein dediziertes End-Gate:
+
+- OQS ≥ **88** ist verpflichtend (vormals TARGET_2026).
+- Bei OQS < 88 darf kein finaler Studio-2026-Export freigegeben werden.
+- Fallback-Verhalten: kontrollierter Rollback auf bestes artefaktfreies Checkpoint-Audio
+    oder Modus-Rückfall auf konservative Qualitätskette mit dokumentiertem `fail_reason`.
+
+**Rationale:** Studio-2026 ist ein Qualitätsversprechen („modern, frisch, kräftig").
+Ein optionales Roadmap-Ziel ist dafür normativ zu weich.
 
 ---
 
@@ -144,6 +154,22 @@ item_seed = _sid_offset(scenario_id)  # RICHTIG
 - Phasenfamilien-Skalierung MUSS P1/P2-Hörtreue priorisieren; P3–P5 dürfen nie zu Lasten von Natürlichkeit/Authentizität erzwungen werden.
 - Variationen in Tonträgerketten/Material/Defektbildern müssen zu unterschiedlichen, aber deterministischen Profilen führen.
 - Pflichtartefakt für Tests/Analysen: `RestorationResult.metadata["song_calibration"]`.
+
+### §8.3.2 [RELEASE_MUST] Experience-Propagation-Testpflicht (v9.11.1)
+
+Zusätzlich zur Song-Selbstkalibrierung sind folgende Tests verpflichtend:
+
+1. **Metadata-Contract Test**:
+    - `RestorationResult.metadata["joy_runtime_index"]` vorhanden und finite.
+    - `RestorationResult.metadata["auto_improvement_recommendations"]` schema-stabil.
+    - `RestorationResult.metadata["song_calibration"]["cluster_key"]` vorhanden.
+2. **Bridge-Contract Test**:
+    - `backend.api.bridge.get_experience_insights()` liefert stabile Rückgabe auch bei fehlenden Feldern.
+3. **Orchestrator-Propagation Test**:
+    - `AurikDenker` propagiert `RestaurierErgebnis.metadata` bis `AurikErgebnis.metadata` unverändert (bis auf defensive Defaults).
+
+**Invariante:** Änderungen an Bridge/Denker/UI, die Experience-Telemetrie betreffen,
+dürfen ohne diese drei Testklassen nicht als release-fähig gelten.
 
 ---
 
@@ -453,6 +479,62 @@ Pflichtanforderungen:
 2. mindestens 8 Hoerer
 3. Szenario-Score, Konfidenzintervall, Delta zur Vorversion
 4. Bericht als Release-Artefakt versioniert abgelegt
+
+### §5.7a [RELEASE_MUST] Modusgetrennte Hörvalidierungs-Checkliste (v9.10.130)
+
+Die externe Hörvalidierung MUSS beide Modi getrennt ausweisen. Ein kombinierter
+Gesamtwert ohne Modus-Trennung ist unzulässig.
+
+**Pflicht-Checkliste Restoration (`mode=restoration`):**
+
+1. Blindvergleich `Input` vs `Restored` vs `Reference/Needledrop-Best-Available` dokumentiert
+2. Bewertungsachsen enthalten mindestens:
+    `Natürlichkeit`, `Authentizität`, `Artefaktfreiheit`, `Tonale Treue`
+3. Keine hörbare Verschlechterung bei P1/P2-Achsen gegenüber Input
+4. Carrier-Chain-Inversion ist nachvollziehbar pro Szenario dokumentiert
+5. **Szenarien-Pflicht**: Alle 3 mandatory Szenarien (`docs/reports/hearing_test_scenarios_restoration.yaml`) müssen als Validierungsbasis durchlaufen werden:
+    - `RESTORATION_SCENARIO_1`: Vinyl Wear + Surface Noise (Rock Vocal)
+    - `RESTORATION_SCENARIO_2`: Tape Hiss + Oxide Dropout (Jazz Vocal)
+    - `RESTORATION_SCENARIO_3`: Shellac Brittleness + Click Storm (Classical Vocal)
+6. Jedes Szenario muss die dokumentierten `mandatory_validation_points` erfüllen
+7. GO/NO-GO-Entscheidung folgt Restoration-Entscheidungslogik in `docs/guides/GO_NO_GO_DECISION_PROTOCOL.md` (Phase 1–3)
+
+**Pflicht-Checkliste Studio 2026 (`mode=studio2026`):**
+
+1. Blindvergleich `Input` vs `Restored` vs `Modern Reference` dokumentiert
+2. Bewertungsachsen enthalten mindestens:
+    `Frische/Presence`, `Punch/Bass-Kraft`, `Klarheit`, `Artefaktfreiheit`
+3. OQS-Gate (§8.1.1a) und Hörurteil dürfen sich nicht widersprechen
+4. Bei Widerspruch gilt Hörurteil als Release-Blocker bis Root-Cause-Analyse vorliegt
+5. **Szenarien-Pflicht**: Alle 3 mandatory Szenarien (`docs/reports/hearing_test_scenarios_studio2026.yaml`) müssen als Validierungsbasis durchlaufen werden:
+    - `STUDIO2026_SCENARIO_1`: Compressed Pop Mix + Thin Vocal (Pop/Dance Vocal)
+    - `STUDIO2026_SCENARIO_2`: Lo-Fi Hip-Hop Muddy Mix + Weak Vocal (Hip-Hop Vocal)
+    - `STUDIO2026_SCENARIO_3`: Acoustic Folk Thin + Narrow Stereo (Folk Vocal)
+6. Jedes Szenario muss die dokumentierten `mandatory_validation_points` erfüllen (OQS ≥ 86–88, PQS MOS ≥ 4.3–4.5)
+7. GO/NO-GO-Entscheidung folgt Studio-2026-Entscheidungslogik in `docs/guides/GO_NO_GO_DECISION_PROTOCOL.md` (Phase 1–4)
+
+**PR-Artefakt-Pflicht:**
+
+- Pro Kernänderung muss ein ausgefülltes Template abgelegt werden:
+  `docs/guides/PR_HOERVALIDIERUNG_TEMPLATE.md`
+- Pflichtfelder: Szenarien, Hörerzahl, Ergebnis je Modus, Blocker/Entscheidung,
+  Link auf Rohdaten/Anhang.
+
+**Verfahren für großflächige Validierung (6-Szenario-Suite):**
+
+1. **Input**: Hörvalidierung durchlaufen mit ≥ 8 Hörern pro Szenario (total 48 Hörer × Scenario-Datum)
+2. **Prozess**: Folge dem **Structured GO/NO-GO Decision Protocol** (`docs/guides/GO_NO_GO_DECISION_PROTOCOL.md`)
+3. **Decision Flow**:
+    - Restoration-Modi: Pre-Review Checks → Aggregate Gates → Per-Scenario Thresholds → Summary Decision
+    - Studio2026-Modi: Pre-Review Checks → Objective Metric Gates (OQS, PQS, Artifacts) → Listener MOS → Mode-Goals → Per-Scenario Fine-Grained → Summary Decision
+4. **Output**: Go/No-Go Entscheidung mit vollständiger Audit-Dokumentation in PR
+5. **Escalation**: Bei NO-GO oder Conditional-GO siehe Protocol §VI (Remediation & Re-Test)
+
+**Verboten:**
+
+- rein algorithmische Freigabe ohne externes Hörvalidierungsartefakt
+- Vermischung von Restoration- und Studio-2026-Ergebnissen in einer Einzelnote
+- Verwendung von Hörer-Scores aus der falschen Szenario-Spur (Restoration × Studio2026 nicht mischen)
 
 ### Mindestanforderungen pro neuem Modul
 

@@ -186,6 +186,7 @@ class TestExcellenceOptimizerMaterials:
     def test_21b_reel_tape_alias_uses_tape_profile(self):
         """ExcellenceOptimizer: 'reel_tape' must resolve to 'tape' profile without warning."""
         from backend.core.excellence_optimizer import MATERIAL_PROFILES
+
         opt = ExcellenceOptimizer(sample_rate=SR, material="reel_tape")
         # Should not fall back to 'auto' — profile must equal 'tape'
         assert opt._profile == MATERIAL_PROFILES["tape"]

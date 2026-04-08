@@ -138,20 +138,14 @@ class TestDetectSupportedMaterialsInvariant:
         audio = _make_audio()
         result = detector.detect(audio, 48000)
         for key in result.transfer_chain:
-            assert key in SUPPORTED_MATERIALS, (
-                f"transfer_chain enthält '{key}' — nicht in SUPPORTED_MATERIALS"
-            )
+            assert key in SUPPORTED_MATERIALS, f"transfer_chain enthält '{key}' — nicht in SUPPORTED_MATERIALS"
 
     def test_no_cassette_key_in_result(self, detector):
         """Das interne 'cassette'-Key darf nie in detect()-Ergebnissen erscheinen."""
         audio = _make_audio()
         result = detector.detect(audio, 48000)
-        assert "cassette" not in result.transfer_chain, (
-            "transfer_chain enthält 'cassette' (interner Key) statt 'tape'"
-        )
-        assert result.primary_material != "cassette", (
-            "primary_material='cassette' (interner Key) statt 'tape'"
-        )
+        assert "cassette" not in result.transfer_chain, "transfer_chain enthält 'cassette' (interner Key) statt 'tape'"
+        assert result.primary_material != "cassette", "primary_material='cassette' (interner Key) statt 'tape'"
 
     def test_no_reel_wire_key_in_result(self, detector):
         """Das interne 'reel_wire'-Key darf nie in detect()-Ergebnissen erscheinen."""
@@ -178,9 +172,7 @@ class TestDetectSupportedMaterialsInvariant:
         """confidence muss ∈ [0.0, 1.0] sein."""
         audio = _make_audio()
         result = detector.detect(audio, 48000)
-        assert 0.0 <= result.confidence <= 1.0, (
-            f"confidence={result.confidence} außerhalb [0, 1]"
-        )
+        assert 0.0 <= result.confidence <= 1.0, f"confidence={result.confidence} außerhalb [0, 1]"
 
     def test_detect_transfer_chain_nonempty(self, detector):
         """transfer_chain darf nie leer sein."""
@@ -225,14 +217,10 @@ class TestBridgeMediumDetector:
         instance = bridge_fn()
         # None ist akzeptabel (optional module), aber wenn vorhanden muss detect() existieren
         if instance is not None:
-            assert hasattr(instance, "detect"), (
-                "MediumDetector-Instanz muss detect()-Methode haben"
-            )
+            assert hasattr(instance, "detect"), "MediumDetector-Instanz muss detect()-Methode haben"
 
     def test_bridge_in_all_list(self):
         """get_medium_detector muss in bridge.__all__ stehen."""
         from backend.api import bridge
 
-        assert "get_medium_detector" in bridge.__all__, (
-            "get_medium_detector fehlt in bridge.__all__"
-        )
+        assert "get_medium_detector" in bridge.__all__, "get_medium_detector fehlt in bridge.__all__"

@@ -255,21 +255,21 @@ class ONNXConverter:
         results = {}
 
         for name, (model, sample_input, output_path) in models.items():
-            logger.info("\n%s", '=' * 60)
+            logger.info("\n%s", "=" * 60)
             logger.info("Converting: %s", name)
-            logger.info("%s", '=' * 60)
+            logger.info("%s", "=" * 60)
 
             success = self.convert(
                 pytorch_model=model, output_path=output_path, sample_input=sample_input, validate=validate
             )
 
             results[name] = success
-            logger.info("Result: %s", '✓ SUCCESS' if success else '❌ FAILED')
+            logger.info("Result: %s", "✓ SUCCESS" if success else "❌ FAILED")
 
         # Summary
-        logger.info("\n%s", '=' * 60)
+        logger.info("\n%s", "=" * 60)
         logger.info("CONVERSION SUMMARY")
-        logger.info("%s", '=' * 60)
+        logger.info("%s", "=" * 60)
         successful = sum(1 for v in results.values() if v)
         logger.info("Total: %s", len(results))
         logger.info("Successful: %s", successful)

@@ -495,9 +495,9 @@ if __name__ == "__main__":
     sr = 44100
     audio = np.random.randn(int(duration * 60 * sr)).astype(np.float32) * 0.01
 
-    logger.debug("\n%s", '=' * 60)
+    logger.debug("\n%s", "=" * 60)
     logger.debug("ADAPTIVE CORE SCHEDULER TEST")
-    logger.debug("%s", '=' * 60)
+    logger.debug("%s", "=" * 60)
     logger.debug("Audio: %s minutes @ %s Hz", duration, sr)
     logger.debug("Cores: %s available, using %s (optimal)\n", mp.cpu_count(), AdaptiveCoreScheduler.OPTIMAL_CORES)
 
@@ -525,9 +525,9 @@ if __name__ == "__main__":
     # Statistiken
     stats = scheduler.get_statistics()
     if stats:
-        logger.debug("\n%s", '=' * 60)
+        logger.debug("\n%s", "=" * 60)
         logger.debug("PERFORMANCE STATISTICS")
-        logger.debug("%s", '=' * 60)
+        logger.debug("%s", "=" * 60)
         logger.debug("Total Phases:     %s", stats.total_phases)
         logger.debug("Sequential/Parallel: %s/%s", stats.sequential_phases, stats.parallel_phases)
         logger.debug("Total Time:       %.2fs", stats.total_time_seconds)

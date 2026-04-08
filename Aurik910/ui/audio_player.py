@@ -20,8 +20,13 @@ from PyQt5.QtWidgets import (
 )
 
 try:
-    from backend.api.bridge import get_aurik_denker_class, get_aurik_denker_instance
-    from backend.api.bridge import get_load_audio_fn as _bridge_get_load_audio_fn
+    from backend.api.bridge import (
+        get_aurik_denker_class,
+        get_aurik_denker_instance,
+    )
+    from backend.api.bridge import (
+        get_load_audio_fn as _bridge_get_load_audio_fn,
+    )
 
     _BRIDGE_AVAILABLE = True
 except ImportError:
@@ -35,6 +40,7 @@ except ImportError:
 
     def _bridge_get_load_audio_fn() -> Any:  # type: ignore[misc]
         return None
+
 
 # Direct fallback import for when bridge is unavailable
 try:

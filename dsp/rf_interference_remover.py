@@ -344,10 +344,10 @@ if __name__ == "__main__":
     processed, metrics = remover.process(contaminated, sr)
 
     logger.info("RF Interference Removal Results:")
-    logger.info("  Detected %s interference frequencies:", metrics['num_interference'])
+    logger.info("  Detected %s interference frequencies:", metrics["num_interference"])
     for freq in metrics["interference_freqs"]:
         logger.info("    - %.1f Hz", freq)
-    logger.info("  Frequency range: %.1f - %.1f Hz", metrics['frequency_range'][0], metrics['frequency_range'][1])
+    logger.info("  Frequency range: %.1f - %.1f Hz", metrics["frequency_range"][0], metrics["frequency_range"][1])
 
     # Compare RMS
     rms_original = np.sqrt(np.mean(contaminated**2))

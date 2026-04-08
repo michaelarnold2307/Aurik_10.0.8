@@ -554,11 +554,11 @@ if __name__ == "__main__":
     metrics_before = analyzer.analyze(audio, sr)
 
     logger.info("\nAnalysis BEFORE correction:")
-    logger.info("  Phase Correlation (mean): %.3f", metrics_before['phase_correlation_mean'])
-    logger.info("  Phase Correlation (min): %.3f", metrics_before['phase_correlation_min'])
-    logger.info("  Stereo Width: %.3f", metrics_before['stereo_width'])
-    logger.info("  Balance: %.2f dB", metrics_before['balance_db'])
-    logger.info("  Problematic Frames: %.1f%%", metrics_before['problematic_frames_ratio'] * 100)
+    logger.info("  Phase Correlation (mean): %.3f", metrics_before["phase_correlation_mean"])
+    logger.info("  Phase Correlation (min): %.3f", metrics_before["phase_correlation_min"])
+    logger.info("  Stereo Width: %.3f", metrics_before["stereo_width"])
+    logger.info("  Balance: %.2f dB", metrics_before["balance_db"])
+    logger.info("  Problematic Frames: %.1f%%", metrics_before["problematic_frames_ratio"] * 100)
 
     # Fix
     fixer = StereoImagingFixer(target_width=1.0, target_phase_correlation_min=-0.3)
@@ -569,8 +569,8 @@ if __name__ == "__main__":
         logger.info("  - %s", correction)
 
     logger.info("\nAnalysis AFTER correction:")
-    logger.info("  Phase Correlation (mean): %.3f", metrics['after']['phase_correlation_mean'])
-    logger.info("  Phase Correlation (min): %.3f", metrics['after']['phase_correlation_min'])
-    logger.info("  Stereo Width: %.3f", metrics['after']['stereo_width'])
-    logger.info("  Balance: %.2f dB", metrics['after']['balance_db'])
-    logger.info("  Problematic Frames: %.1f%%", metrics['after']['problematic_frames_ratio'] * 100)
+    logger.info("  Phase Correlation (mean): %.3f", metrics["after"]["phase_correlation_mean"])
+    logger.info("  Phase Correlation (min): %.3f", metrics["after"]["phase_correlation_min"])
+    logger.info("  Stereo Width: %.3f", metrics["after"]["stereo_width"])
+    logger.info("  Balance: %.2f dB", metrics["after"]["balance_db"])
+    logger.info("  Problematic Frames: %.1f%%", metrics["after"]["problematic_frames_ratio"] * 100)

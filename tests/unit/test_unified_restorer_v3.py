@@ -855,6 +855,27 @@ class TestFailReasonsMetadata:
             assert r["error_code"] in KNOWN_CODES, f"Unknown error_code: {r['error_code']}"
 
 
+class TestStudioPqsFailFast:
+    """Spec §1.4a/§8.1.1a: no positive placeholder for missing Studio-PQS."""
+
+    def test_52_studio_pqs_unavailable_returns_negative_and_fail_reason(self):
+        fail_reasons: list[dict[str, str]] = []
+
+        val = UnifiedRestorerV3._resolve_studio_pqs_improvement(None, fail_reasons)
+
+        assert val == -1.0
+        assert any(r.get("error_code") == "PQS_UNAVAILABLE_STUDIO" for r in fail_reasons)
+
+    def test_53_studio_pqs_valid_maps_to_expected_range(self):
+        fail_reasons: list[dict[str, str]] = []
+        pqs_result = types.SimpleNamespace(pqs_mos=4.5)
+
+        val = UnifiedRestorerV3._resolve_studio_pqs_improvement(pqs_result, fail_reasons)
+
+        assert val == pytest.approx(0.8)
+        assert fail_reasons == []
+
+
 # ---------------------------------------------------------------------------
 # Klasse: quality_estimate Formel-Invarianten (Spec §8.1.1)
 # VERBOTEN: quality_estimate * 1.15 als fixer Bonus-Faktor
@@ -1154,8 +1175,8 @@ class TestSongCalibrationProfile:
         statt lfilter mit Pol 0.9999 aufgerufen wird.
         """
         import unittest.mock as mock
-        import numpy as np
 
+        import numpy as np
         from scipy.signal import filtfilt as real_filtfilt
 
         # Erzeuge ein Signal mit simuliertem DC-Drift (0.1 Hz Sinusmodulation = typischer Tape-Drift)
@@ -1177,13 +1198,18 @@ class TestSongCalibrationProfile:
         def mock_lfilter(b, a, x):
             lfilter_calls.append((list(b), list(a)))
             from scipy.signal import lfilter as real_lf
+
             return real_lf(b, a, x)
 
-        with mock.patch("scipy.signal.filtfilt", side_effect=mock_filtfilt), \
-             mock.patch("scipy.signal.lfilter", side_effect=mock_lfilter):
+        with (
+            mock.patch("scipy.signal.filtfilt", side_effect=mock_filtfilt),
+            mock.patch("scipy.signal.lfilter", side_effect=mock_lfilter),
+        ):
             # Simuliere _DCOffsetPreRemoval für reel_tape
-            from scipy.signal import filtfilt as _filtfilt
+            pass
+
             from backend.core.defect_scanner import MaterialType as _MatType
+
             _is_reel = _MatType.REEL_TAPE == _MatType.REEL_TAPE  # always True
             _dc_b = [1.0, -1.0]
             _dc_a_tape = [1.0, -0.9995]  # reel_tape Pol (Lücke-H-Fix)
@@ -1210,9 +1236,7 @@ class TestSongCalibrationProfile:
         result = real_lfilter(_dc_b, _dc_a_std, audio.astype(float)).astype(np.float32)
 
         # DC sollte nahe 0 sein nach Standard-HP
-        assert abs(float(np.mean(result))) < 0.05, (
-            f"Standard-DC nicht entfernt: mean={float(np.mean(result)):.6f}"
-        )
+        assert abs(float(np.mean(result))) < 0.05, f"Standard-DC nicht entfernt: mean={float(np.mean(result)):.6f}"
 
     def test_70_phase_calibration_scalar_maps_reverb_family(self):
         profile = {"global_scalar": 1.0, "family_scalars": {"reverb": 0.83, "general": 1.0}}

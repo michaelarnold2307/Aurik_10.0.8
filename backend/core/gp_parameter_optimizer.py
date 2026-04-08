@@ -48,6 +48,37 @@ logger = logging.getLogger(__name__)
 _MEMORY_DIR = Path.home() / ".aurik" / "gp_memory"
 _MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# Warm-Start-Seed: vortrainierte Priors beim ersten Start kopieren
+# ---------------------------------------------------------------------------
+# data/gp_warmstart/<material>.json wird einmalig nach ~/.aurik/gp_memory/
+# kopiert, wenn dort noch keine Datei existiert.  Bestehende echte Lerndata
+# (n ≥ 1 Eintrag) werden NIEMALS überschrieben.
+_WARMSTART_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "gp_warmstart"
+
+
+def _seed_warmstart_memory() -> None:
+    """Kopiert vortrainierte GP-Memory-Dateien einmalig in ~/.aurik/gp_memory/.
+
+    Wird beim Modul-Import ausgeführt. Jede Datei wird nur kopiert wenn
+    ~/.aurik/gp_memory/<material>.json noch nicht existiert — echte Lerndaten
+    werden nie überschrieben.
+    """
+    if not _WARMSTART_DIR.exists():
+        return
+    try:
+        for src in _WARMSTART_DIR.glob("*.json"):
+            dst = _MEMORY_DIR / src.name
+            if not dst.exists():
+                import shutil
+
+                shutil.copy2(src, dst)
+    except Exception as _ws_exc:
+        logger.debug("GP Warm-Start-Seed fehlgeschlagen: %s", _ws_exc)
+
+
+_seed_warmstart_memory()
+
 _MAX_MEMORY_ENTRIES = 200  # Maximale Einträge pro Material
 _UCB_KAPPA = 2.0  # Explorations-Gewicht
 _NOISE_VAR = 1e-3  # Beobachtungsrauschen σ²_n
@@ -142,8 +173,15 @@ MATERIAL_DEFAULTS: dict[str, dict[str, float]] = {
 # Schlüssel entsprechen den cannonical Material-Namen der Carrier-Chain.
 
 _MATERIAL_SIMILARITY_KEYS: list[str] = [
-    "shellac", "wax_cyl", "vinyl_78", "vinyl_std",
-    "tape_std", "tape_stu", "cassette", "digital", "mp3_lossy",
+    "shellac",
+    "wax_cyl",
+    "vinyl_78",
+    "vinyl_std",
+    "tape_std",
+    "tape_stu",
+    "cassette",
+    "digital",
+    "mp3_lossy",
 ]
 
 # Alias-Mapping: kurze Bezeichnungen → normalized keys
@@ -167,15 +205,15 @@ _MATERIAL_ALIAS: dict[str, str] = {
 # Symmetrische Ähnlichkeitsmatrix (Spec 02 §2.47)
 _MATERIAL_SIMILARITY_MATRIX: list[list[float]] = [
     # shl    wax    v78    vst    tst    tsu    cas    dig    mp3
-    [1.00,  0.85,  0.75,  0.40,  0.15,  0.10,  0.10,  0.05,  0.05],  # shellac
-    [0.85,  1.00,  0.70,  0.35,  0.10,  0.10,  0.08,  0.05,  0.05],  # wax_cyl
-    [0.75,  0.70,  1.00,  0.65,  0.20,  0.15,  0.15,  0.08,  0.08],  # vinyl_78
-    [0.40,  0.35,  0.65,  1.00,  0.45,  0.40,  0.35,  0.15,  0.12],  # vinyl_std
-    [0.15,  0.10,  0.20,  0.45,  1.00,  0.85,  0.70,  0.25,  0.20],  # tape_std
-    [0.10,  0.10,  0.15,  0.40,  0.85,  1.00,  0.60,  0.35,  0.25],  # tape_stu
-    [0.10,  0.08,  0.15,  0.35,  0.70,  0.60,  1.00,  0.20,  0.18],  # cassette
-    [0.05,  0.05,  0.08,  0.15,  0.25,  0.35,  0.20,  1.00,  0.55],  # digital
-    [0.05,  0.05,  0.08,  0.12,  0.20,  0.25,  0.18,  0.55,  1.00],  # mp3_lossy
+    [1.00, 0.85, 0.75, 0.40, 0.15, 0.10, 0.10, 0.05, 0.05],  # shellac
+    [0.85, 1.00, 0.70, 0.35, 0.10, 0.10, 0.08, 0.05, 0.05],  # wax_cyl
+    [0.75, 0.70, 1.00, 0.65, 0.20, 0.15, 0.15, 0.08, 0.08],  # vinyl_78
+    [0.40, 0.35, 0.65, 1.00, 0.45, 0.40, 0.35, 0.15, 0.12],  # vinyl_std
+    [0.15, 0.10, 0.20, 0.45, 1.00, 0.85, 0.70, 0.25, 0.20],  # tape_std
+    [0.10, 0.10, 0.15, 0.40, 0.85, 1.00, 0.60, 0.35, 0.25],  # tape_stu
+    [0.10, 0.08, 0.15, 0.35, 0.70, 0.60, 1.00, 0.20, 0.18],  # cassette
+    [0.05, 0.05, 0.08, 0.15, 0.25, 0.35, 0.20, 1.00, 0.55],  # digital
+    [0.05, 0.05, 0.08, 0.12, 0.20, 0.25, 0.18, 0.55, 1.00],  # mp3_lossy
 ]
 
 # Minimale Ähnlichkeit für Cross-Material-Transfer
@@ -188,8 +226,8 @@ def _material_similarity(m1: str, m2: str) -> float:
     Verwendet Alias-Mapping + MATERIAL_SIMILARITY_MATRIX.
     Liefert 0.0 wenn kein Eintrag in der Matrix.
     """
-    n1 = _MATERIAL_ALIAS.get(m1, None)
-    n2 = _MATERIAL_ALIAS.get(m2, None)
+    n1 = _MATERIAL_ALIAS.get(m1)
+    n2 = _MATERIAL_ALIAS.get(m2)
     if n1 is None or n2 is None:
         return 0.0
     try:
@@ -586,9 +624,7 @@ class GPParameterOptimizer:
 
         # §2.47 Cross-Material-Transfer: bei < 10 Beobachtungen ähnliche Materialien einbeziehen
         if n_obs < 10:
-            all_X, all_y = self._augment_with_cross_material(
-                material, all_X, all_y
-            )
+            all_X, all_y = self._augment_with_cross_material(material, all_X, all_y)
 
         if n_obs < n_init:
             # Zufällige Exploration oder Defaults
@@ -1045,10 +1081,7 @@ class GPParameterOptimizer:
             if added >= max_cross_entries:
                 break
             cross_memory = _load_memory(cross_material)
-            cross_entries = [
-                e for e in cross_memory
-                if len(e.params_normalized) == self._dim
-            ]
+            cross_entries = [e for e in cross_memory if len(e.params_normalized) == self._dim]
             if not cross_entries:
                 continue
 
@@ -1064,7 +1097,10 @@ class GPParameterOptimizer:
         if added > 0:
             logger.info(
                 "§2.47 cross-material augmentation: material='%s' own=%d cross=%d total=%d",
-                material, len(all_X), added, len(augmented_X),
+                material,
+                len(all_X),
+                added,
+                len(augmented_X),
             )
 
         return augmented_X, augmented_y

@@ -339,11 +339,9 @@ class MDX23CModel:
                     continue
 
                 # STFT → Magnitude + Phase
-                frames = np.stack([
-                    sig[i * hop: i * hop + n_fft] for i in range(n_frames)
-                ])  # (n_frames, n_fft)
+                frames = np.stack([sig[i * hop : i * hop + n_fft] for i in range(n_frames)])  # (n_frames, n_fft)
                 stft = np.fft.rfft(frames * win, n=n_fft)  # (n_frames, n_fft//2+1)
-                mag = np.abs(stft).astype(np.float32)       # NMF input
+                mag = np.abs(stft).astype(np.float32)  # NMF input
 
                 # NMF Itakura-Saito (β=0): V ≈ W · H, min IS-Divergenz
                 model = _NMF(
@@ -355,13 +353,10 @@ class MDX23CModel:
                     init="nndsvda",
                 )
                 H = model.fit_transform(mag + 1e-8)  # (n_frames, K) — Zeitaktivierungen
-                W = model.components_                 # (K, n_fft//2+1) — Spektralbases
+                W = model.components_  # (K, n_fft//2+1) — Spektralbases
 
                 # Vokal-Ratio pro Komponente: Energie-Anteil im Vokalband 300–3000 Hz
-                component_vocal_ratios = np.array([
-                    np.sum(W[k, vocal_band]) / (np.sum(W[k]) + 1e-8)
-                    for k in range(K)
-                ])
+                component_vocal_ratios = np.array([np.sum(W[k, vocal_band]) / (np.sum(W[k]) + 1e-8) for k in range(K)])
 
                 # Soft-Mask: gewichtete Rekonstruktion nach Vokal-Anteil
                 vocal_spec = np.zeros_like(mag)
@@ -375,13 +370,13 @@ class MDX23CModel:
                 # Soft-Wiener-Maske
                 total = vocal_spec + inst_spec + 1e-8
                 vocal_mask = vocal_spec / total  # (n_frames, freqs) ∈ [0, 1]
-                inst_mask  = inst_spec  / total
+                inst_mask = inst_spec / total
 
                 target_mask = vocal_mask if is_vocals else inst_mask
 
                 # Proxy-SDR: Energie-Kontrast in Vokalband
-                target_in_band  = float(np.mean(target_mask[:, vocal_band]))
-                reject_in_band  = float(np.mean((1.0 - target_mask)[:, vocal_band]))
+                target_in_band = float(np.mean(target_mask[:, vocal_band]))
+                reject_in_band = float(np.mean((1.0 - target_mask)[:, vocal_band]))
                 sdr_proxy_db = 10.0 * np.log10(target_in_band / (reject_in_band + 1e-12) + 1e-12)
                 if sdr_proxy_db < 5.0:
                     logger.debug(
@@ -397,7 +392,7 @@ class MDX23CModel:
                 for i in range(n_frames):
                     frame = np.fft.irfft(masked_stft[i], n=n_fft).real.astype(np.float32)
                     s, e = i * hop, min(i * hop + n_fft, n)
-                    out[s:e]  += frame[: e - s] * win[: e - s]
+                    out[s:e] += frame[: e - s] * win[: e - s]
                     norm[s:e] += win[: e - s] ** 2
                 norm = np.where(norm < 1e-8, 1.0, norm)
                 out /= norm
@@ -555,8 +550,9 @@ class MDX23CPlugin:
     ) -> None:
         """Verarbeite WAV-Datei (kompatibel mit alter Docker-API)."""
         try:
-            from backend.file_import import load_audio_file
             import soundfile as sf
+
+            from backend.file_import import load_audio_file
 
             _res = load_audio_file(input_wav, do_carrier_analysis=False)
             audio = np.asarray(_res["audio"], dtype=np.float32)

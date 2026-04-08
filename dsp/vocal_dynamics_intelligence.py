@@ -434,6 +434,7 @@ if __name__ == "__main__":
 
     # Load audio
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -451,21 +452,21 @@ if __name__ == "__main__":
 
     logger.info("\n[Micro-Compression]")
     comp = report["micro_compression"]
-    logger.info("  Max gain reduction: %.1f dB", comp['max_gain_reduction_db'])
-    logger.info("  Avg gain reduction: %.1f dB", comp['avg_gain_reduction_db'])
-    logger.info("  Ratio:              %.1f:1", comp['ratio'])
+    logger.info("  Max gain reduction: %.1f dB", comp["max_gain_reduction_db"])
+    logger.info("  Avg gain reduction: %.1f dB", comp["avg_gain_reduction_db"])
+    logger.info("  Ratio:              %.1f:1", comp["ratio"])
 
     logger.info("\n[Consonant Enhancement]")
     cons = report["consonant_enhancement"]
-    logger.info("  Transients detected: %s", cons['transients_detected'])
-    logger.info("  Enhancement:         %.1f dB", cons['enhancement_db'])
+    logger.info("  Transients detected: %s", cons["transients_detected"])
+    logger.info("  Enhancement:         %.1f dB", cons["enhancement_db"])
 
     if report["breath_aware_gating"].get("enabled", True):
         logger.info("\n[Breath-Aware Gating]")
         gate = report["breath_aware_gating"]
-        logger.info("  Gate open:    %.1f%%", gate['gate_open_percent'])
-        logger.info("  Threshold:    %.1f dB", gate['threshold_db'])
-        logger.info("  Reduction:    %.1f dB", gate['reduction_db'])
+        logger.info("  Gate open:    %.1f%%", gate["gate_open_percent"])
+        logger.info("  Threshold:    %.1f dB", gate["threshold_db"])
+        logger.info("  Reduction:    %.1f dB", gate["reduction_db"])
 
     logger.info(str("=" * 70))
 

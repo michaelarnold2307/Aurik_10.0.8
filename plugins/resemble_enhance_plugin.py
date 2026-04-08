@@ -107,6 +107,7 @@ class ResembleEnhancePlugin:
         """
         import numpy as np
         import soundfile as sf
+
         from backend.file_import import load_audio_file
 
         try:

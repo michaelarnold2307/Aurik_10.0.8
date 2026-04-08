@@ -6402,9 +6402,9 @@ if __name__ == "__main__":
     scanner = DefectScanner(sample_rate=sr)
     result = scanner.scan(audio, material_type=MaterialType.VINYL)
 
-    logger.debug("\n%s", '=' * 60)
+    logger.debug("\n%s", "=" * 60)
     logger.debug("DEFECT SCAN RESULTS")
-    logger.debug("%s", '=' * 60)
+    logger.debug("%s", "=" * 60)
     logger.debug("Material: %s", result.material_type.value)
     logger.debug("Duration: %.1fs", result.duration_seconds)
     logger.debug(

@@ -828,9 +828,9 @@ if __name__ == "__main__":
     # Save result
     sf.write("test_output/ebu_r128_compliant.wav", result["audio"], sr)
 
-    logger.debug("\n✅ %s Processing Complete", result['standard_name'])
-    logger.debug("   Initial Loudness: %.1f LUFS", result['initial_loudness'])
-    logger.debug("   Final Loudness: %.1f LUFS", result['final_loudness'])
-    logger.debug("   Gain Applied: %.1f dB", result['gain_applied_db'])
-    logger.debug("   True Peak: %.1f dBTP", result['true_peak_dbtp'])
-    logger.debug("   Compliant: %s", result['compliant'])
+    logger.debug("\n✅ %s Processing Complete", result["standard_name"])
+    logger.debug("   Initial Loudness: %.1f LUFS", result["initial_loudness"])
+    logger.debug("   Final Loudness: %.1f LUFS", result["final_loudness"])
+    logger.debug("   Gain Applied: %.1f dB", result["gain_applied_db"])
+    logger.debug("   True Peak: %.1f dBTP", result["true_peak_dbtp"])
+    logger.debug("   Compliant: %s", result["compliant"])

@@ -323,43 +323,43 @@ class MushraProxyResult:
 
 # With MERT embeddings available (confidence = 0.97)
 _WEIGHTS_WITH_MERT: dict[str, float] = {
-    "mert_cosine": 0.07,     # Strongest music-specific predictor (Li et al. 2023)
-    "visqol": 0.07,          # Academic gold standard (Chinen et al. 2020)
-    "nsim": 0.04,            # Gammatone-scale perceptual similarity
-    "artifact": 0.09,        # Artifact penalty — humans punish single artifacts heavily
-    "temporal": 0.03,        # Quality-over-time consistency (w/ primacy/recency attention)
-    "clap": 0.03,            # Semantic audio similarity (DSP-proxy embedding)
-    "mr_stft": 0.03,         # Phase artifacts + transient distortion
-    "iso226": 0.02,          # Psychoacoustic frequency weighting
-    "mcd": 0.03,             # Timbre fidelity
-    "chroma": 0.03,          # Tonal center preservation
-    "lufs": 0.02,            # Loudness invariance
-    "stereo": 0.04,          # Stereo imaging / spatial fidelity (Blauert 1997)
-    "transient": 0.04,       # Transient shape preservation (attack integrity)
-    "nmr": 0.02,             # NMR — PEAQ core MOV (partly subsumed)
-    "emotional_arc": 0.03,   # Emotional arc preservation (Zacharov 2001)
+    "mert_cosine": 0.07,  # Strongest music-specific predictor (Li et al. 2023)
+    "visqol": 0.07,  # Academic gold standard (Chinen et al. 2020)
+    "nsim": 0.04,  # Gammatone-scale perceptual similarity
+    "artifact": 0.09,  # Artifact penalty — humans punish single artifacts heavily
+    "temporal": 0.03,  # Quality-over-time consistency (w/ primacy/recency attention)
+    "clap": 0.03,  # Semantic audio similarity (DSP-proxy embedding)
+    "mr_stft": 0.03,  # Phase artifacts + transient distortion
+    "iso226": 0.02,  # Psychoacoustic frequency weighting
+    "mcd": 0.03,  # Timbre fidelity
+    "chroma": 0.03,  # Tonal center preservation
+    "lufs": 0.02,  # Loudness invariance
+    "stereo": 0.04,  # Stereo imaging / spatial fidelity (Blauert 1997)
+    "transient": 0.04,  # Transient shape preservation (attack integrity)
+    "nmr": 0.02,  # NMR — PEAQ core MOV (partly subsumed)
+    "emotional_arc": 0.03,  # Emotional arc preservation (Zacharov 2001)
     # --- Vocal quality dimensions (18% total; ~40-60% of listener judgment) ---
-    "vocal_formant": 0.05,   # Formant F1-F4 preservation (Peterson & Barney 1952)
-    "vocal_hnr": 0.04,       # HNR preservation (Boersma 1993, Praat)
+    "vocal_formant": 0.05,  # Formant F1-F4 preservation (Peterson & Barney 1952)
+    "vocal_hnr": 0.04,  # HNR preservation (Boersma 1993, Praat)
     "pitch_accuracy": 0.05,  # F0 contour fidelity + vibrato (#1 singing quality, SingMOS 2024)
     "vocal_presence": 0.04,  # CPPS + presence band (Franz & Grewe 2026)
     # --- Perception dynamics (11% total; PEAQ AvgModDiff/EHS-equivalent) ---
-    "modulation": 0.04,      # Amplitude modulation spectrum (Dau et al. 1997) — PEAQ 2nd MOV
-    "harmonic": 0.04,        # Harmonic partial structure (PEAQ EHS; Thiede 2000)
-    "spectral_flux": 0.03,   # Spectral flux correlation (temporal dynamics)
+    "modulation": 0.04,  # Amplitude modulation spectrum (Dau et al. 1997) — PEAQ 2nd MOV
+    "harmonic": 0.04,  # Harmonic partial structure (PEAQ EHS; Thiede 2000)
+    "spectral_flux": 0.03,  # Spectral flux correlation (temporal dynamics)
     # --- Psychoacoustic core (12% total; PEAQ Advanced MOVs) ---
     "perceptual_disturbance": 0.04,  # Masking-weighted distortion (Schroeder 1979, Zwicker 1999)
-    "roughness": 0.02,       # Sensory dissonance delta (Daniel & Weber 1997, Fastl Kap. 11)
+    "roughness": 0.02,  # Sensory dissonance delta (Daniel & Weber 1997, Fastl Kap. 11)
     "specific_loudness": 0.04,  # Specific loudness difference (Zwicker 1958, ISO 532-1, PEAQ primary)
-    "fluctuation": 0.02,     # Fluctuation strength delta (Fastl & Zwicker Kap. 10, Sottek 2016)
+    "fluctuation": 0.02,  # Fluctuation strength delta (Fastl & Zwicker Kap. 10, Sottek 2016)
 }
 
 # DSP-only fallback without MERT (confidence = 0.91)
 _WEIGHTS_DSP_ONLY: dict[str, float] = {
     "mert_cosine": 0.00,
-    "visqol": 0.10,          # Takes over as primary when MERT unavailable
+    "visqol": 0.10,  # Takes over as primary when MERT unavailable
     "nsim": 0.05,
-    "artifact": 0.09,        # Artifact detection is critical — highest single weight
+    "artifact": 0.09,  # Artifact detection is critical — highest single weight
     "temporal": 0.03,
     "clap": 0.03,
     "mr_stft": 0.04,
@@ -367,24 +367,24 @@ _WEIGHTS_DSP_ONLY: dict[str, float] = {
     "mcd": 0.04,
     "chroma": 0.03,
     "lufs": 0.02,
-    "stereo": 0.04,          # Stereo imaging preservation
-    "transient": 0.04,       # Transient shape preservation
-    "nmr": 0.02,             # NMR — partly subsumed
-    "emotional_arc": 0.03,   # Emotional arc
+    "stereo": 0.04,  # Stereo imaging preservation
+    "transient": 0.04,  # Transient shape preservation
+    "nmr": 0.02,  # NMR — partly subsumed
+    "emotional_arc": 0.03,  # Emotional arc
     # --- Vocal quality dimensions (18% total) ---
-    "vocal_formant": 0.05,   # Formant preservation
-    "vocal_hnr": 0.04,       # HNR preservation
+    "vocal_formant": 0.05,  # Formant preservation
+    "vocal_hnr": 0.04,  # HNR preservation
     "pitch_accuracy": 0.05,  # F0 contour fidelity + vibrato
     "vocal_presence": 0.04,  # CPPS + presence band
     # --- Perception dynamics (11% total) ---
-    "modulation": 0.04,      # Amplitude modulation spectrum
-    "harmonic": 0.04,        # Harmonic partial structure
-    "spectral_flux": 0.03,   # Spectral flux correlation
+    "modulation": 0.04,  # Amplitude modulation spectrum
+    "harmonic": 0.04,  # Harmonic partial structure
+    "spectral_flux": 0.03,  # Spectral flux correlation
     # --- Psychoacoustic core (13% total — higher without MERT) ---
     "perceptual_disturbance": 0.05,  # Masking-weighted distortion (more weight w/o MERT)
-    "roughness": 0.02,       # Sensory dissonance delta
+    "roughness": 0.02,  # Sensory dissonance delta
     "specific_loudness": 0.04,  # Specific loudness difference (primary PEAQ MOV)
-    "fluctuation": 0.02,     # Fluctuation strength delta
+    "fluctuation": 0.02,  # Fluctuation strength delta
 }
 
 _CONFIDENCE_WITH_MERT = 0.97
@@ -427,7 +427,8 @@ class MertMushraProxy:
 
     @staticmethod
     def _estimate_vocal_probability(
-        ref: np.ndarray, sr: int,
+        ref: np.ndarray,
+        sr: int,
     ) -> float:
         """Estimate probability of vocal content [0, 1] via PANNs.
 
@@ -441,11 +442,13 @@ class MertMushraProxy:
             panns = get_panns_plugin()
             if panns._session is not None:
                 tags = panns.get_tags(ref, sr)
-                return float(max(
-                    tags.get("Singing voice", 0.0),
-                    tags.get("Vocals", 0.0),
-                    tags.get("Speech", 0.0),
-                ))
+                return float(
+                    max(
+                        tags.get("Singing voice", 0.0),
+                        tags.get("Vocals", 0.0),
+                        tags.get("Speech", 0.0),
+                    )
+                )
         except Exception as _panns_exc:
             logger.debug("PANNs vocal detection unavailable, using spectral heuristic: %s", _panns_exc)
 
@@ -455,7 +458,7 @@ class MertMushraProxy:
             if n < 2048:
                 return 0.5  # Unknown
             center = max(0, len(ref) // 2 - n // 2)
-            seg = ref[center:center + n].astype(np.float64)
+            seg = ref[center : center + n].astype(np.float64)
             ps = np.abs(np.fft.rfft(seg)) ** 2
             freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
             # Vocal formant region: 300-3400 Hz (ITU-T G.711)
@@ -601,7 +604,8 @@ class MertMushraProxy:
         # --- Adaptive vocal weighting (Lücke 4 fix) ---
         vocal_prob = self._estimate_vocal_probability(ref_mono, sr)
         effective_weights = self._adapt_weights_for_vocal_content(
-            weights, vocal_prob,
+            weights,
+            vocal_prob,
         )
 
         # --- Stage 2: Ridge-regression calibrated weights (if available) ---
@@ -637,13 +641,36 @@ class MertMushraProxy:
             "NMR=%.1fdB EmoArc=%.3f VocFormant=%.3f VocHNR=%.3f Pitch=%.3f "
             "VocPres=%.3f Mod=%.3f Harm=%.3f SFlux=%.3f PDist=%.3f Rough=%.3f "
             "SLoud=%.3f Fluct=%.3f Floor=%.3f | conf=%.0f%%",
-            proxy_score, grade, mert_cos if has_mert else -1.0,
-            visqol_mos, nsim, artifact_pen, temporal_con, clap_cos,
-            mr_stft, iso226_dist, mcd, chroma, lufs_diff,
-            stereo_img, transient_sh, nmr_val, emo_arc,
-            voc_formant, voc_hnr, pitch_acc, voc_presence,
-            mod_fidelity, harm_struct, spec_flux, perc_disturb, roughness_val,
-            sloud_val, fluct_val, worst_seg, confidence * 100,
+            proxy_score,
+            grade,
+            mert_cos if has_mert else -1.0,
+            visqol_mos,
+            nsim,
+            artifact_pen,
+            temporal_con,
+            clap_cos,
+            mr_stft,
+            iso226_dist,
+            mcd,
+            chroma,
+            lufs_diff,
+            stereo_img,
+            transient_sh,
+            nmr_val,
+            emo_arc,
+            voc_formant,
+            voc_hnr,
+            pitch_acc,
+            voc_presence,
+            mod_fidelity,
+            harm_struct,
+            spec_flux,
+            perc_disturb,
+            roughness_val,
+            sloud_val,
+            fluct_val,
+            worst_seg,
+            confidence * 100,
         )
 
         return MushraProxyResult(
@@ -773,7 +800,7 @@ class MertMushraProxy:
         Returns:
             Optimized weight dict (24 keys, sum = 1.0, all ≥ 0).
         """
-        global _calibrated_weights, _calibrated_confidence  # noqa: PLW0603
+        global _calibrated_weights, _calibrated_confidence
 
         from sklearn.linear_model import Ridge
 
@@ -795,6 +822,7 @@ class MertMushraProxy:
 
         # Cross-validation correlation estimate
         from sklearn.model_selection import cross_val_score
+
         r2_scores = cross_val_score(model, component_matrix, y, cv=min(5, len(y)), scoring="r2")
         r_est = float(np.sqrt(np.clip(np.mean(r2_scores), 0.0, 1.0)))
         conf = float(np.clip(0.7 + 0.3 * r_est, 0.70, 0.99))
@@ -804,7 +832,10 @@ class MertMushraProxy:
 
         logger.info(
             "MUSHRA-Proxy Stage 2 calibrated: r≈%.3f conf=%.2f (N=%d pairs, α=%.1f)",
-            r_est, conf, len(mushra_scores), alpha,
+            r_est,
+            conf,
+            len(mushra_scores),
+            alpha,
         )
         return optimized
 
@@ -821,6 +852,7 @@ class MertMushraProxy:
         """
         try:
             from plugins.visqol_plugin import get_visqol_plugin
+
             mos = get_visqol_plugin().score(ref, test, sr)
             return float(np.clip(mos, 1.0, 5.0))
         except Exception as exc:
@@ -834,7 +866,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_artifact_penalty(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Detect and quantify restoration artifacts.
 
@@ -861,7 +895,9 @@ class MertMushraProxy:
             kurt = np.mean(((S_res - mu) / sigma) ** 4, axis=1) - 3.0
             # Bins with kurtosis > 6 are likely musical noise artifacts
             musical_noise_frac = float(np.mean(kurt > 6.0))
-            musical_noise_severity = float(np.clip(np.mean(kurt[kurt > 6.0]) / 20.0, 0.0, 1.0)) if musical_noise_frac > 0 else 0.0
+            musical_noise_severity = (
+                float(np.clip(np.mean(kurt[kurt > 6.0]) / 20.0, 0.0, 1.0)) if musical_noise_frac > 0 else 0.0
+            )
 
             # --- 2. Pre-echo detection ---
             # Compute envelope
@@ -872,10 +908,18 @@ class MertMushraProxy:
             if n_env_frames < 4:
                 pre_echo_score = 0.0
             else:
-                ref_env = np.array([np.sqrt(np.mean(ref[i * frame_len:(i + 1) * frame_len] ** 2) + 1e-12)
-                                    for i in range(n_env_frames)])
-                test_env = np.array([np.sqrt(np.mean(test[i * frame_len:(i + 1) * frame_len] ** 2) + 1e-12)
-                                     for i in range(n_env_frames)])
+                ref_env = np.array(
+                    [
+                        np.sqrt(np.mean(ref[i * frame_len : (i + 1) * frame_len] ** 2) + 1e-12)
+                        for i in range(n_env_frames)
+                    ]
+                )
+                test_env = np.array(
+                    [
+                        np.sqrt(np.mean(test[i * frame_len : (i + 1) * frame_len] ** 2) + 1e-12)
+                        for i in range(n_env_frames)
+                    ]
+                )
                 # Detect transients in reference (rising edge > 6 dB)
                 ref_db = 20.0 * np.log10(ref_env + 1e-12)
                 diff_db = np.diff(ref_db)
@@ -907,7 +951,7 @@ class MertMushraProxy:
                 phases = np.zeros((n_fft // 2 + 1, n_frames_p), dtype=np.float64)
                 for i in range(n_frames_p):
                     start = i * hop
-                    frame = res_chunk[start:start + n_fft] * window
+                    frame = res_chunk[start : start + n_fft] * window
                     phases[:, i] = np.angle(np.fft.rfft(frame, n=n_fft))
                 # Unwrap and measure jumps
                 unwrapped = np.unwrap(phases, axis=1)
@@ -935,7 +979,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_temporal_consistency(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
         segment_dur: float = 1.0,
     ) -> float:
         """Measure quality consistency over time with primacy/recency attention.
@@ -981,23 +1027,32 @@ class MertMushraProxy:
                 try:
                     seg_n_fft = _safe_fft_size(min(len(seg_ref), len(seg_test)), target=1024, minimum=64)
                     seg_hop = max(16, seg_n_fft // 4)
-                    S_r = librosa.power_to_db(np.maximum(
-                        librosa.feature.melspectrogram(
-                            y=seg_ref, sr=sr, n_fft=seg_n_fft, hop_length=seg_hop, n_mels=64
-                        ),
-                        1e-10))
-                    S_t = librosa.power_to_db(np.maximum(
-                        librosa.feature.melspectrogram(
-                            y=seg_test, sr=sr, n_fft=seg_n_fft, hop_length=seg_hop, n_mels=64
-                        ),
-                        1e-10))
+                    S_r = librosa.power_to_db(
+                        np.maximum(
+                            librosa.feature.melspectrogram(
+                                y=seg_ref, sr=sr, n_fft=seg_n_fft, hop_length=seg_hop, n_mels=64
+                            ),
+                            1e-10,
+                        )
+                    )
+                    S_t = librosa.power_to_db(
+                        np.maximum(
+                            librosa.feature.melspectrogram(
+                                y=seg_test, sr=sr, n_fft=seg_n_fft, hop_length=seg_hop, n_mels=64
+                            ),
+                            1e-10,
+                        )
+                    )
                     mu_r, mu_t = np.mean(S_r), np.mean(S_t)
                     sig_r, sig_t = np.std(S_r), np.std(S_t)
                     sig_rt = np.mean((S_r - mu_r) * (S_t - mu_t))
                     C1 = (0.01 * 80) ** 2
                     C2 = (0.03 * 80) ** 2
-                    sim = ((2 * mu_r * mu_t + C1) * (2 * sig_rt + C2)
-                           / ((mu_r ** 2 + mu_t ** 2 + C1) * (sig_r ** 2 + sig_t ** 2 + C2)))
+                    sim = (
+                        (2 * mu_r * mu_t + C1)
+                        * (2 * sig_rt + C2)
+                        / ((mu_r**2 + mu_t**2 + C1) * (sig_r**2 + sig_t**2 + C2))
+                    )
                     seg_scores.append(float(np.clip(sim, 0.0, 1.0)))
                 except Exception:
                     seg_scores.append(0.5)
@@ -1046,6 +1101,7 @@ class MertMushraProxy:
         """
         try:
             from backend.core.clap_reference_matcher import compute_dsp_embedding
+
             emb_ref = compute_dsp_embedding(ref, sr)
             emb_test = compute_dsp_embedding(test, sr)
             return _cosine_similarity(emb_ref, emb_test)
@@ -1059,7 +1115,8 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_mr_stft_loss(
-        ref: np.ndarray, test: np.ndarray,
+        ref: np.ndarray,
+        test: np.ndarray,
         fft_sizes: tuple[int, ...] = (2048, 1024, 512, 256),
     ) -> float:
         """Multi-resolution STFT loss (Yamamoto et al. 2019, numpy-only).
@@ -1134,7 +1191,10 @@ class MertMushraProxy:
     # ------------------------------------------------------------------
 
     def _compute_mert_cosine(
-        self, ref: np.ndarray, test: np.ndarray, sr: int,
+        self,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute cosine similarity between MERT embeddings.
 
@@ -1143,6 +1203,7 @@ class MertMushraProxy:
         """
         try:
             from plugins.mert_plugin import get_loaded_mert_plugin
+
             mert = get_loaded_mert_plugin()
             if mert is None:
                 return float("nan")
@@ -1161,7 +1222,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _extract_embedding(
-        mert_plugin: object, audio: np.ndarray, sr: int,
+        mert_plugin: object,
+        audio: np.ndarray,
+        sr: int,
     ) -> np.ndarray | None:
         """Extract a fixed-size embedding vector from a MERT plugin instance.
 
@@ -1227,8 +1290,7 @@ class MertMushraProxy:
             sig_rt = np.mean((S_ref - mu_r) * (S_test - mu_t))
             C1 = (0.01 * 80) ** 2
             C2 = (0.03 * 80) ** 2
-            nsim = ((2 * mu_r * mu_t + C1) * (2 * sig_rt + C2)
-                    / ((mu_r ** 2 + mu_t ** 2 + C1) * (sig_r ** 2 + sig_t ** 2 + C2)))
+            nsim = (2 * mu_r * mu_t + C1) * (2 * sig_rt + C2) / ((mu_r**2 + mu_t**2 + C1) * (sig_r**2 + sig_t**2 + C2))
             return float(np.clip(nsim, 0.0, 1.0))
         except Exception:
             return float(np.clip(1.0 - np.sqrt(np.mean((ref - test) ** 2)), 0.0, 1.0))
@@ -1243,7 +1305,7 @@ class MertMushraProxy:
             mfcc_test = librosa.feature.mfcc(y=test, sr=sr, n_mfcc=13).T
             min_f = min(mfcc_ref.shape[0], mfcc_test.shape[0])
             diff = mfcc_ref[:min_f, 1:] - mfcc_test[:min_f, 1:]
-            frame_dists = np.sqrt(2.0 * np.sum(diff ** 2, axis=1))
+            frame_dists = np.sqrt(2.0 * np.sum(diff**2, axis=1))
             return max(0.0, (10.0 / math.log(10)) * float(np.mean(frame_dists)))
         except Exception:
             return 5.0
@@ -1282,8 +1344,8 @@ class MertMushraProxy:
     def _compute_lufs_diff(ref: np.ndarray, test: np.ndarray) -> float:
         """LUFS difference in LU (simplified K-weighted RMS)."""
         try:
-            rms_ref = float(np.sqrt(np.mean(ref ** 2) + 1e-12))
-            rms_test = float(np.sqrt(np.mean(test ** 2) + 1e-12))
+            rms_ref = float(np.sqrt(np.mean(ref**2) + 1e-12))
+            rms_test = float(np.sqrt(np.mean(test**2) + 1e-12))
             return 20.0 * math.log10(rms_test) - 20.0 * math.log10(rms_ref)
         except Exception:
             return 0.0
@@ -1291,19 +1353,36 @@ class MertMushraProxy:
     @staticmethod
     def _empty_result() -> MushraProxyResult:
         return MushraProxyResult(
-            proxy_score=0.0, grade="Bad", confidence=0.0,
-            mert_cosine=float("nan"), visqol_mos=1.0, nsim=0.0,
-            artifact_penalty=10.0, temporal_consistency=0.0, clap_cosine=0.0,
-            mr_stft_loss=999.0, iso226_distance=999.0,
-            mcd_db=999.0, chroma_corr=0.0, lufs_diff_lu=0.0,
-            stereo_imaging=0.0, transient_shape=0.0, nmr_db=30.0,
+            proxy_score=0.0,
+            grade="Bad",
+            confidence=0.0,
+            mert_cosine=float("nan"),
+            visqol_mos=1.0,
+            nsim=0.0,
+            artifact_penalty=10.0,
+            temporal_consistency=0.0,
+            clap_cosine=0.0,
+            mr_stft_loss=999.0,
+            iso226_distance=999.0,
+            mcd_db=999.0,
+            chroma_corr=0.0,
+            lufs_diff_lu=0.0,
+            stereo_imaging=0.0,
+            transient_shape=0.0,
+            nmr_db=30.0,
             emotional_arc=0.0,
-            vocal_formant=0.0, vocal_hnr=0.0, pitch_accuracy=0.0,
+            vocal_formant=0.0,
+            vocal_hnr=0.0,
+            pitch_accuracy=0.0,
             vocal_presence=0.0,
-            modulation_fidelity=0.0, harmonic_structure=0.0,
-            spectral_flux_corr=0.0, perceptual_disturbance=0.0,
-            roughness=0.0, specific_loudness_diff=0.0,
-            fluctuation_strength=0.0, worst_segment_score=0.0,
+            modulation_fidelity=0.0,
+            harmonic_structure=0.0,
+            spectral_flux_corr=0.0,
+            perceptual_disturbance=0.0,
+            roughness=0.0,
+            specific_loudness_diff=0.0,
+            fluctuation_strength=0.0,
+            worst_segment_score=0.0,
         )
 
     # ------------------------------------------------------------------
@@ -1312,7 +1391,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_stereo_imaging(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute stereo imaging preservation score [0, 1].
 
@@ -1371,7 +1452,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_transient_shape(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute transient shape preservation [0, 1].
 
@@ -1383,9 +1466,7 @@ class MertMushraProxy:
             from backend.core.authenticity_metrics import AuthentizitaetMetric
 
             metric = AuthentizitaetMetric()
-            preservation_rate, _orig_events, _proc_events = (
-                metric.compute_transient_preservation(ref, test, sr)
-            )
+            preservation_rate, _orig_events, _proc_events = metric.compute_transient_preservation(ref, test, sr)
             return float(np.clip(preservation_rate, 0.0, 1.0))
         except Exception as exc:
             logger.debug("Transient shape computation failed: %s", exc)
@@ -1397,7 +1478,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_nmr(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute Noise-to-Mask Ratio in dB (PEAQ core MOV).
 
@@ -1455,7 +1538,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_emotional_arc(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute emotional arc preservation [0, 1].
 
@@ -1498,7 +1583,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_vocal_formant(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute vocal formant preservation [0, 1].
 
@@ -1520,33 +1607,34 @@ class MertMushraProxy:
             # Use center segment (max 3 s) for efficiency
             max_samples = min(n, int(3.0 * sr))
             center = max(0, n // 2 - max_samples // 2)
-            ref_seg = ref[center:center + max_samples].astype(np.float64)
-            test_seg = test[center:center + max_samples].astype(np.float64)
+            ref_seg = ref[center : center + max_samples].astype(np.float64)
+            test_seg = test[center : center + max_samples].astype(np.float64)
 
             def _extract_formants(audio: np.ndarray) -> list[float]:
                 """Extract median F1-F4 via LPC root-finding on voiced frames."""
                 frame_len = int(0.025 * sr)  # 25 ms
-                hop = int(0.010 * sr)         # 10 ms
+                hop = int(0.010 * sr)  # 10 ms
                 order = min(16, frame_len - 2)
                 if order < 4 or frame_len < 32 or len(audio) < frame_len:
                     return [0.0] * 4
                 f_all: list[list[float]] = [[], [], [], []]
                 preemph = np.append(audio[0:1], audio[1:] - 0.97 * audio[:-1])
                 for start in range(0, len(preemph) - frame_len, hop):
-                    frame = preemph[start:start + frame_len]
-                    rms = float(np.sqrt(np.mean(frame ** 2)))
+                    frame = preemph[start : start + frame_len]
+                    rms = float(np.sqrt(np.mean(frame**2)))
                     if rms < 0.005:
                         continue  # Skip silence
                     windowed = frame * np.hanning(frame_len)
                     # Autocorrelation LPC via Levinson-Durbin
                     r = np.correlate(windowed, windowed, mode="full")
-                    r = r[len(r) // 2:]
-                    if r[0] < 1e-12 or not np.isfinite(r[:order + 1]).all():
+                    r = r[len(r) // 2 :]
+                    if r[0] < 1e-12 or not np.isfinite(r[: order + 1]).all():
                         continue
                     try:
                         # Toeplitz solve for LPC coefficients
                         from scipy.linalg import solve_toeplitz
-                        a = solve_toeplitz(r[:order], r[1:order + 1])
+
+                        a = solve_toeplitz(r[:order], r[1 : order + 1])
                     except Exception:
                         continue
                     if not np.isfinite(a).all():
@@ -1597,7 +1685,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_vocal_hnr(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute vocal Harmonics-to-Noise Ratio preservation [0, 1].
 
@@ -1610,6 +1700,7 @@ class MertMushraProxy:
         For non-periodic signals (no voiced content), returns 0.5 (neutral).
         """
         try:
+
             def _hnr_db(audio: np.ndarray) -> float:
                 """HNR estimation via FFT-based autocorrelation (Boersma 1993)."""
                 n = min(len(audio), int(1.0 * sr))  # max 1 s
@@ -1639,8 +1730,8 @@ class MertMushraProxy:
             # Compute on representative segments (avoid very long audio)
             max_samples = min(len(ref), len(test), int(3.0 * sr))
             center = max(0, min(len(ref), len(test)) // 2 - max_samples // 2)
-            ref_hnr = _hnr_db(ref[center:center + max_samples])
-            test_hnr = _hnr_db(test[center:center + max_samples])
+            ref_hnr = _hnr_db(ref[center : center + max_samples])
+            test_hnr = _hnr_db(test[center : center + max_samples])
 
             # Both near-zero → non-vocal content → neutral
             if abs(ref_hnr) < 1.0 and abs(test_hnr) < 1.0:
@@ -1660,7 +1751,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_pitch_accuracy(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute pitch/F0 contour accuracy incl. vibrato fidelity [0, 1].
 
@@ -1674,10 +1767,11 @@ class MertMushraProxy:
         Non-pitched material returns 0.5 (neutral).
         """
         try:
+
             def _f0_track(audio: np.ndarray) -> np.ndarray:
                 """Autocorrelation-based F0 tracking (50–500 Hz)."""
                 frame_len = int(0.030 * sr)  # 30 ms frames
-                hop = int(0.010 * sr)        # 10 ms hop
+                hop = int(0.010 * sr)  # 10 ms hop
                 if frame_len < 32 or len(audio) < frame_len:
                     return np.array([], dtype=np.float64)
                 n_frames = (len(audio) - frame_len) // hop
@@ -1688,7 +1782,7 @@ class MertMushraProxy:
                     return f0_values
                 for i in range(n_frames):
                     start = i * hop
-                    frame = audio[start:start + frame_len]
+                    frame = audio[start : start + frame_len]
                     # Autocorrelation via FFT
                     X = np.fft.rfft(frame, n=2 * frame_len)
                     ac = np.fft.irfft(np.abs(X) ** 2)[:frame_len]
@@ -1766,8 +1860,8 @@ class MertMushraProxy:
             # Extract F0 from center segment (max 5 s)
             max_samples = min(len(ref), len(test), int(5.0 * sr))
             center = max(0, min(len(ref), len(test)) // 2 - max_samples // 2)
-            ref_f0 = _f0_track(ref[center:center + max_samples])
-            test_f0 = _f0_track(test[center:center + max_samples])
+            ref_f0 = _f0_track(ref[center : center + max_samples])
+            test_f0 = _f0_track(test[center : center + max_samples])
 
             min_frames = min(len(ref_f0), len(test_f0))
             if min_frames < 10:
@@ -1808,10 +1902,13 @@ class MertMushraProxy:
             vib_score = _vibrato_fidelity(ref_voiced, test_voiced)
 
             # Combined: 55% correlation, 25% RMSE, 20% vibrato fidelity
-            return float(np.clip(
-                0.55 * corr_score + 0.25 * rmse_score + 0.20 * vib_score,
-                0.0, 1.0,
-            ))
+            return float(
+                np.clip(
+                    0.55 * corr_score + 0.25 * rmse_score + 0.20 * vib_score,
+                    0.0,
+                    1.0,
+                )
+            )
         except Exception as exc:
             logger.debug("Pitch accuracy computation failed: %s", exc)
             return 0.5
@@ -1822,7 +1919,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_vocal_presence(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute vocal presence and CPPS preservation [0, 1].
 
@@ -1845,8 +1944,8 @@ class MertMushraProxy:
             # Use center segment (max 2 s)
             max_samples = min(n, int(2.0 * sr))
             center = max(0, n // 2 - max_samples // 2)
-            ref_seg = ref[center:center + max_samples].astype(np.float64)
-            test_seg = test[center:center + max_samples].astype(np.float64)
+            ref_seg = ref[center : center + max_samples].astype(np.float64)
+            test_seg = test[center : center + max_samples].astype(np.float64)
 
             def _cpps(audio: np.ndarray) -> float:
                 """Cepstral Peak Prominence Smoothed.
@@ -1870,7 +1969,7 @@ class MertMushraProxy:
 
                 for i in range(n_frames):
                     start = i * hop
-                    frame = audio[start:start + frame_len]
+                    frame = audio[start : start + frame_len]
                     if len(frame) < frame_len:
                         break
                     windowed = frame * np.hanning(frame_len)
@@ -1882,13 +1981,13 @@ class MertMushraProxy:
                     if q_max >= len(cepstrum):
                         continue
                     # Find peak in F0 quefrency range
-                    search = cepstrum[q_min:q_max + 1]
+                    search = cepstrum[q_min : q_max + 1]
                     peak_idx = int(np.argmax(search)) + q_min
                     peak_val = float(cepstrum[peak_idx])
 
                     # Regression line through cepstrum in quefrency range
                     q_range = np.arange(q_min, q_max + 1, dtype=np.float64)
-                    cep_range = cepstrum[q_min:q_max + 1]
+                    cep_range = cepstrum[q_min : q_max + 1]
                     if len(q_range) < 3:
                         continue
                     coeffs = np.polyfit(q_range, cep_range, 1)
@@ -1947,7 +2046,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_modulation_fidelity(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute amplitude modulation spectrum preservation [0, 1].
 
@@ -1972,14 +2073,18 @@ class MertMushraProxy:
             # STFT parameters for ~23ms frames at 48 kHz
             n_fft = 2048
             hop = n_fft // 4
-            ref_stft = np.abs(np.fft.rfft(
-                np.lib.stride_tricks.sliding_window_view(ref, n_fft)[::hop],
-                axis=-1,
-            ))
-            test_stft = np.abs(np.fft.rfft(
-                np.lib.stride_tricks.sliding_window_view(test, n_fft)[::hop],
-                axis=-1,
-            ))
+            ref_stft = np.abs(
+                np.fft.rfft(
+                    np.lib.stride_tricks.sliding_window_view(ref, n_fft)[::hop],
+                    axis=-1,
+                )
+            )
+            test_stft = np.abs(
+                np.fft.rfft(
+                    np.lib.stride_tricks.sliding_window_view(test, n_fft)[::hop],
+                    axis=-1,
+                )
+            )
 
             n_frames = min(ref_stft.shape[0], test_stft.shape[0])
             if n_frames < 4:
@@ -1992,9 +2097,32 @@ class MertMushraProxy:
 
             # Bark band edges (simplified 26 bands: 0–15.5 kHz)
             bark_edges = [
-                20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-                1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400,
-                5300, 6400, 7700, 9500, 12000, 15500, 20500,
+                20,
+                100,
+                200,
+                300,
+                400,
+                510,
+                630,
+                770,
+                920,
+                1080,
+                1270,
+                1480,
+                1720,
+                2000,
+                2320,
+                2700,
+                3150,
+                3700,
+                4400,
+                5300,
+                6400,
+                7700,
+                9500,
+                12000,
+                15500,
+                20500,
             ]
 
             band_scores: list[float] = []
@@ -2066,7 +2194,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_harmonic_structure(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute harmonic partial structure preservation [0, 1].
 
@@ -2089,8 +2219,8 @@ class MertMushraProxy:
             # Use center 3 s for analysis
             n_use = min(len(ref), int(3.0 * sr))
             center = max(0, len(ref) // 2 - n_use // 2)
-            ref_seg = ref[center:center + n_use].astype(np.float64)
-            test_seg = test[center:center + n_use].astype(np.float64)
+            ref_seg = ref[center : center + n_use].astype(np.float64)
+            test_seg = test[center : center + n_use].astype(np.float64)
 
             if len(ref_seg) < 2048:
                 return 0.5
@@ -2099,7 +2229,7 @@ class MertMushraProxy:
             def _estimate_f0(sig: np.ndarray, sr_hz: int) -> float:
                 """Estimate F0 via autocorrelation, returns Hz or 0.0."""
                 # Limit to 1 s for speed
-                seg = sig[:min(len(sig), sr_hz)]
+                seg = sig[: min(len(sig), sr_hz)]
                 n = len(seg)
                 if n < 512:
                     return 0.0
@@ -2118,7 +2248,7 @@ class MertMushraProxy:
                 max_lag = min(n - 1, int(sr_hz / 60))
                 if min_lag >= max_lag:
                     return 0.0
-                search = acf[min_lag:max_lag + 1]
+                search = acf[min_lag : max_lag + 1]
                 peak_idx = int(np.argmax(search)) + min_lag
                 if acf[peak_idx] < 0.3:
                     return 0.0  # Not periodic enough
@@ -2131,11 +2261,11 @@ class MertMushraProxy:
             # Extract harmonic amplitudes from magnitude spectrum
             n_fft = min(8192, len(ref_seg))
             ref_spec = np.abs(np.fft.rfft(ref_seg[:n_fft]))
-            test_spec = np.abs(np.fft.rfft(test_seg[:min(n_fft, len(test_seg))]))
+            test_spec = np.abs(np.fft.rfft(test_seg[: min(n_fft, len(test_seg))]))
             freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
 
             n_harmonics = 16
-            max_harmonic_freq = min(f0 * (n_harmonics + 0.5), sr / 2)
+            min(f0 * (n_harmonics + 0.5), sr / 2)
 
             ref_amps: list[float] = []
             test_amps: list[float] = []
@@ -2151,7 +2281,7 @@ class MertMushraProxy:
                     continue
                 ref_amps.append(float(np.max(ref_spec[band])))
                 if len(test_spec) > 0:
-                    test_band = band[:len(test_spec)]
+                    test_band = band[: len(test_spec)]
                     test_amps.append(float(np.max(test_spec[test_band])) if test_band.any() else 0.0)
                 else:
                     test_amps.append(0.0)
@@ -2189,7 +2319,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_spectral_flux_correlation(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute spectral flux correlation [0, 1].
 
@@ -2218,7 +2350,7 @@ class MertMushraProxy:
                     return np.array([0.0])
                 mags = np.zeros((n_frames, n_fft // 2 + 1))
                 for i in range(n_frames):
-                    frame = audio[i * hop:i * hop + n_fft]
+                    frame = audio[i * hop : i * hop + n_fft]
                     if len(frame) < n_fft:
                         break
                     mags[i] = np.abs(np.fft.rfft(frame * win))
@@ -2240,7 +2372,7 @@ class MertMushraProxy:
             # is near zero. Adding noise creates flux that dominates correlation.
             # Detect stationary case: if ref flux is very low relative to signal
             # energy, use SNR-based scoring instead of flux correlation.
-            ref_rms = float(np.sqrt(np.mean(ref[:min(len(ref), int(1.0 * sr))] ** 2)))
+            ref_rms = float(np.sqrt(np.mean(ref[: min(len(ref), int(1.0 * sr))] ** 2)))
             ref_flux_mean = float(np.mean(rf))
             relative_flux = ref_flux_mean / (ref_rms + 1e-20)
 
@@ -2248,9 +2380,9 @@ class MertMushraProxy:
                 # Stationary signal: spectral flux is not meaningful.
                 # Instead, measure how well the stationarity is preserved
                 # using the SNR between test and reference.
-                residual = test[:min(len(ref), len(test))] - ref[:min(len(ref), len(test))]
-                sig_power = float(np.mean(ref[:min(len(ref), int(1.0 * sr))] ** 2))
-                noise_power = float(np.mean(residual ** 2)) + 1e-20
+                residual = test[: min(len(ref), len(test))] - ref[: min(len(ref), len(test))]
+                sig_power = float(np.mean(ref[: min(len(ref), int(1.0 * sr))] ** 2))
+                noise_power = float(np.mean(residual**2)) + 1e-20
                 snr_db = 10.0 * np.log10(max(sig_power, 1e-20) / noise_power)
                 # Mapping: SNR 40 dB → 1.0; 20 dB → 0.8; 0 dB → 0.3; <0 → 0.0
                 flux_score = float(np.clip(snr_db / 50.0, 0.0, 1.0))
@@ -2286,7 +2418,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_worst_segment_score(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute quality score of the worst 1 s segment [0, 1].
 
@@ -2327,14 +2461,14 @@ class MertMushraProxy:
                 corr = max(0.0, corr) if np.isfinite(corr) else 0.5
 
                 # Energy preservation
-                ref_e = float(np.sum(rs ** 2)) + 1e-20
-                test_e = float(np.sum(ts ** 2)) + 1e-20
+                ref_e = float(np.sum(rs**2)) + 1e-20
+                test_e = float(np.sum(ts**2)) + 1e-20
                 e_ratio = test_e / ref_e
                 e_score = float(np.clip(1.0 - abs(1.0 - e_ratio) * 3.0, 0.0, 1.0))
 
                 # Residual distortion
                 residual = ts - rs
-                snr_seg = 10.0 * np.log10(ref_e / (float(np.sum(residual ** 2)) + 1e-20))
+                snr_seg = 10.0 * np.log10(ref_e / (float(np.sum(residual**2)) + 1e-20))
                 snr_score = float(np.clip(snr_seg / 40.0, 0.0, 1.0))
 
                 # Combined: 40% correlation + 30% energy + 30% SNR
@@ -2356,7 +2490,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_perceptual_disturbance(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute masking-weighted perceptual disturbance [0, 1].
 
@@ -2376,8 +2512,8 @@ class MertMushraProxy:
             if n_use < 512:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center:center + n_use].astype(np.float64)
-            t = test[center:center + n_use].astype(np.float64)
+            r = ref[center : center + n_use].astype(np.float64)
+            t = test[center : center + n_use].astype(np.float64)
 
             # STFT parameters
             frame_len = min(2048, n_use)
@@ -2390,11 +2526,36 @@ class MertMushraProxy:
             nyquist = sr / 2.0
 
             # Bark band edges (25 edges → 24 bands)
-            bark_edges = np.array([
-                20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-                1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300,
-                6400, 7700, 9500, 12000, 15500,
-            ], dtype=np.float64)
+            bark_edges = np.array(
+                [
+                    20,
+                    100,
+                    200,
+                    300,
+                    400,
+                    510,
+                    630,
+                    770,
+                    920,
+                    1080,
+                    1270,
+                    1480,
+                    1720,
+                    2000,
+                    2320,
+                    2700,
+                    3150,
+                    3700,
+                    4400,
+                    5300,
+                    6400,
+                    7700,
+                    9500,
+                    12000,
+                    15500,
+                ],
+                dtype=np.float64,
+            )
             n_bark = min(24, int(np.searchsorted(bark_edges, nyquist)))
             if n_bark < 2:
                 return 0.5
@@ -2420,8 +2581,8 @@ class MertMushraProxy:
                 return 0.5
 
             # Batch windowed frames
-            r_frames = np.array([r[s:s + frame_len] * window for s in starts])
-            t_frames = np.array([t[s:s + frame_len] * window for s in starts])
+            r_frames = np.array([r[s : s + frame_len] * window for s in starts])
+            t_frames = np.array([t[s : s + frame_len] * window for s in starts])
 
             # Power spectra (n_frames × n_bins)
             r_power = np.abs(np.fft.rfft(r_frames, axis=1)) ** 2 + 1e-20
@@ -2450,15 +2611,37 @@ class MertMushraProxy:
             r_excitation = r_bark @ spread.T  # (n_frames, n_bark)
 
             # --- Absolute Threshold of Hearing (simplified ISO 226) ---
-            band_center = np.array([
-                50, 150, 250, 350, 450, 570, 700, 840, 1000, 1175,
-                1375, 1600, 1860, 2160, 2510, 2925, 3425, 4050, 4850, 5850,
-                7050, 8600, 10750, 13750,
-            ][:n_bark], dtype=np.float64)
+            band_center = np.array(
+                [
+                    50,
+                    150,
+                    250,
+                    350,
+                    450,
+                    570,
+                    700,
+                    840,
+                    1000,
+                    1175,
+                    1375,
+                    1600,
+                    1860,
+                    2160,
+                    2510,
+                    2925,
+                    3425,
+                    4050,
+                    4850,
+                    5850,
+                    7050,
+                    8600,
+                    10750,
+                    13750,
+                ][:n_bark],
+                dtype=np.float64,
+            )
             f_khz = band_center / 1000.0
-            ath_db = (3.64 * f_khz ** (-0.8)
-                      - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2)
-                      + 1e-3 * f_khz ** 4)
+            ath_db = 3.64 * f_khz ** (-0.8) - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2) + 1e-3 * f_khz**4
             # ATH → relative power scale (small but non-zero floor)
             ath_power = 10.0 ** (ath_db / 10.0) * 1e-12
 
@@ -2502,7 +2685,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_roughness(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute roughness profile preservation [0, 1].
 
@@ -2525,8 +2710,8 @@ class MertMushraProxy:
             if n_use < 2048:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center:center + n_use].astype(np.float64)
-            t = test[center:center + n_use].astype(np.float64)
+            r = ref[center : center + n_use].astype(np.float64)
+            t = test[center : center + n_use].astype(np.float64)
 
             frame_len = 2048
             hop = frame_len // 4  # 75% overlap for smooth envelope
@@ -2534,11 +2719,36 @@ class MertMushraProxy:
             n_bins = len(freqs)
             nyquist = sr / 2.0
 
-            bark_edges = np.array([
-                20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-                1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300,
-                6400, 7700, 9500, 12000, 15500,
-            ], dtype=np.float64)
+            bark_edges = np.array(
+                [
+                    20,
+                    100,
+                    200,
+                    300,
+                    400,
+                    510,
+                    630,
+                    770,
+                    920,
+                    1080,
+                    1270,
+                    1480,
+                    1720,
+                    2000,
+                    2320,
+                    2700,
+                    3150,
+                    3700,
+                    4400,
+                    5300,
+                    6400,
+                    7700,
+                    9500,
+                    12000,
+                    15500,
+                ],
+                dtype=np.float64,
+            )
             n_bark = min(24, int(np.searchsorted(bark_edges, nyquist)))
             if n_bark < 4:
                 return 0.5
@@ -2565,7 +2775,7 @@ class MertMushraProxy:
                     return np.zeros(n_bark, dtype=np.float64)
 
                 # Batch STFT
-                frames = np.array([audio[s:s + frame_len] * window for s in starts])
+                frames = np.array([audio[s : s + frame_len] * window for s in starts])
                 spec_power = np.abs(np.fft.rfft(frames, axis=1)) ** 2 + 1e-20
 
                 # Band envelopes: sqrt(mean energy) per frame per band
@@ -2594,9 +2804,7 @@ class MertMushraProxy:
                     # Only 15–150 Hz modulation range
                     valid_mod = (mod_freqs >= 15) & (mod_freqs <= 150)
                     if valid_mod.any():
-                        roughness_per_band[b] = float(np.sum(
-                            mod_spec[valid_mod] * weight[valid_mod]
-                        ))
+                        roughness_per_band[b] = float(np.sum(mod_spec[valid_mod] * weight[valid_mod]))
 
                 return roughness_per_band
 
@@ -2631,7 +2839,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_specific_loudness_diff(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute specific loudness profile preservation [0, 1].
 
@@ -2654,8 +2864,8 @@ class MertMushraProxy:
             if n_use < 512:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center:center + n_use].astype(np.float64)
-            t = test[center:center + n_use].astype(np.float64)
+            r = ref[center : center + n_use].astype(np.float64)
+            t = test[center : center + n_use].astype(np.float64)
 
             frame_len = min(2048, n_use)
             if frame_len < 256:
@@ -2667,11 +2877,36 @@ class MertMushraProxy:
             nyquist = sr / 2.0
 
             # Bark band edges (25 edges → 24 bands)
-            bark_edges = np.array([
-                20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-                1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300,
-                6400, 7700, 9500, 12000, 15500,
-            ], dtype=np.float64)
+            bark_edges = np.array(
+                [
+                    20,
+                    100,
+                    200,
+                    300,
+                    400,
+                    510,
+                    630,
+                    770,
+                    920,
+                    1080,
+                    1270,
+                    1480,
+                    1720,
+                    2000,
+                    2320,
+                    2700,
+                    3150,
+                    3700,
+                    4400,
+                    5300,
+                    6400,
+                    7700,
+                    9500,
+                    12000,
+                    15500,
+                ],
+                dtype=np.float64,
+            )
             n_bark = min(24, int(np.searchsorted(bark_edges, nyquist)))
             if n_bark < 2:
                 return 0.5
@@ -2686,15 +2921,37 @@ class MertMushraProxy:
                     band_mask[b, sel] = 1.0
 
             # Threshold in quiet per band (simplified ISO 226, power units)
-            band_center = np.array([
-                50, 150, 250, 350, 450, 570, 700, 840, 1000, 1175,
-                1375, 1600, 1860, 2160, 2510, 2925, 3425, 4050, 4850, 5850,
-                7050, 8600, 10750, 13750,
-            ][:n_bark], dtype=np.float64)
+            band_center = np.array(
+                [
+                    50,
+                    150,
+                    250,
+                    350,
+                    450,
+                    570,
+                    700,
+                    840,
+                    1000,
+                    1175,
+                    1375,
+                    1600,
+                    1860,
+                    2160,
+                    2510,
+                    2925,
+                    3425,
+                    4050,
+                    4850,
+                    5850,
+                    7050,
+                    8600,
+                    10750,
+                    13750,
+                ][:n_bark],
+                dtype=np.float64,
+            )
             f_khz = band_center / 1000.0
-            ath_db = (3.64 * f_khz ** (-0.8)
-                      - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2)
-                      + 1e-3 * f_khz ** 4)
+            ath_db = 3.64 * f_khz ** (-0.8) - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2) + 1e-3 * f_khz**4
             e_tq = 10.0 ** (ath_db / 10.0) * 1e-12  # threshold excitation
 
             # Batch STFT
@@ -2706,8 +2963,8 @@ class MertMushraProxy:
             if n_frames < 1:
                 return 0.5
 
-            r_frames = np.array([r[s:s + frame_len] * window for s in starts])
-            t_frames = np.array([t[s:s + frame_len] * window for s in starts])
+            r_frames = np.array([r[s : s + frame_len] * window for s in starts])
+            t_frames = np.array([t[s : s + frame_len] * window for s in starts])
 
             r_power = np.abs(np.fft.rfft(r_frames, axis=1)) ** 2 + 1e-20
             t_power = np.abs(np.fft.rfft(t_frames, axis=1)) ** 2 + 1e-20
@@ -2743,7 +3000,9 @@ class MertMushraProxy:
 
     @staticmethod
     def _compute_fluctuation_strength(
-        ref: np.ndarray, test: np.ndarray, sr: int,
+        ref: np.ndarray,
+        test: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute fluctuation strength profile preservation [0, 1].
 
@@ -2770,8 +3029,8 @@ class MertMushraProxy:
             if n_use < 4096:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center:center + n_use].astype(np.float64)
-            t = test[center:center + n_use].astype(np.float64)
+            r = ref[center : center + n_use].astype(np.float64)
+            t = test[center : center + n_use].astype(np.float64)
 
             frame_len = 2048
             hop = frame_len // 4  # 75% overlap for smooth envelope
@@ -2779,11 +3038,36 @@ class MertMushraProxy:
             n_bins = len(freqs)
             nyquist = sr / 2.0
 
-            bark_edges = np.array([
-                20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-                1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300,
-                6400, 7700, 9500, 12000, 15500,
-            ], dtype=np.float64)
+            bark_edges = np.array(
+                [
+                    20,
+                    100,
+                    200,
+                    300,
+                    400,
+                    510,
+                    630,
+                    770,
+                    920,
+                    1080,
+                    1270,
+                    1480,
+                    1720,
+                    2000,
+                    2320,
+                    2700,
+                    3150,
+                    3700,
+                    4400,
+                    5300,
+                    6400,
+                    7700,
+                    9500,
+                    12000,
+                    15500,
+                ],
+                dtype=np.float64,
+            )
             n_bark = min(24, int(np.searchsorted(bark_edges, nyquist)))
             if n_bark < 4:
                 return 0.5
@@ -2808,7 +3092,7 @@ class MertMushraProxy:
                 if n_frm < 16:
                     return np.zeros(n_bark, dtype=np.float64)
 
-                frames = np.array([audio[s:s + frame_len] * window for s in starts])
+                frames = np.array([audio[s : s + frame_len] * window for s in starts])
                 spec_power = np.abs(np.fft.rfft(frames, axis=1)) ** 2 + 1e-20
 
                 # Band envelopes
@@ -2836,9 +3120,7 @@ class MertMushraProxy:
                     # Only 0.5–20 Hz modulation range
                     valid_mod = (mod_freqs >= 0.5) & (mod_freqs <= 20.0)
                     if valid_mod.any():
-                        fluct_per_band[b] = float(np.sum(
-                            mod_spec[valid_mod] * weight[valid_mod]
-                        ))
+                        fluct_per_band[b] = float(np.sum(mod_spec[valid_mod] * weight[valid_mod]))
 
                 return fluct_per_band
 
@@ -3034,20 +3316,58 @@ def _stft_magnitude(audio: np.ndarray, n_fft: int, hop_length: int) -> np.ndarra
     result = np.zeros((n_bins, n_frames), dtype=np.float64)
     for i in range(n_frames):
         start = i * hop_length
-        frame = audio[start:start + n_fft] * window
+        frame = audio[start : start + n_fft] * window
         result[:, i] = np.abs(np.fft.rfft(frame, n=n_fft))
     return result
 
 
 # ISO 226:2023 equal-loudness data (40 phon) — 19 anchor frequencies
-_ISO226_FREQS = np.array([
-    20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
-    200, 250, 315, 400, 500, 630, 800, 1000, 1250,
-])
-_ISO226_SPL40 = np.array([
-    99.85, 93.94, 88.17, 82.63, 77.78, 73.08, 68.48, 64.37, 60.59, 56.70,
-    53.41, 50.40, 47.58, 44.98, 42.44, 39.73, 37.32, 35.35, 33.31,
-])
+_ISO226_FREQS = np.array(
+    [
+        20,
+        25,
+        31.5,
+        40,
+        50,
+        63,
+        80,
+        100,
+        125,
+        160,
+        200,
+        250,
+        315,
+        400,
+        500,
+        630,
+        800,
+        1000,
+        1250,
+    ]
+)
+_ISO226_SPL40 = np.array(
+    [
+        99.85,
+        93.94,
+        88.17,
+        82.63,
+        77.78,
+        73.08,
+        68.48,
+        64.37,
+        60.59,
+        56.70,
+        53.41,
+        50.40,
+        47.58,
+        44.98,
+        42.44,
+        39.73,
+        37.32,
+        35.35,
+        33.31,
+    ]
+)
 
 
 def _iso226_weights_for_proxy(freqs: np.ndarray) -> np.ndarray:

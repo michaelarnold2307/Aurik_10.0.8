@@ -26,7 +26,7 @@ from backend.core.musical_goals.explainability import (
     GoalTrajectory,
     ProcessingStepImpact,
 )
-from backend.core.musical_goals.processing_modes import ProcessingMode
+from backend.core.musical_goals.processing_modes import PROCESSING_MODE_CONFIGS, ProcessingMode
 
 # =============================================================================
 # Test Fixtures
@@ -36,7 +36,38 @@ from backend.core.musical_goals.processing_modes import ProcessingMode
 @pytest.fixture
 def explainer():
     """Create GoalExplainer instance."""
-    return GoalExplainer()
+
+    class _FastDeterministicChecker:
+        """Lightweight checker for explainability unit tests.
+
+        It preserves relative score changes across steps but avoids expensive
+        model-backed metric evaluation in unit-test context.
+        """
+
+        def __init__(self):
+            self._goals = list(PROCESSING_MODE_CONFIGS[ProcessingMode.RESTORATION].musical_goals.keys())
+
+        def measure_all(self, audio, _sr, reference=None):
+            a = np.asarray(audio, dtype=np.float32)
+            ref = np.asarray(reference, dtype=np.float32) if reference is not None else None
+
+            rms = float(np.sqrt(np.mean(a * a)) + 1e-12)
+            base = 0.70 + 0.20 * np.tanh(6.0 * (rms - 0.18))
+
+            delta = 0.0
+            if ref is not None and len(ref) > 0:
+                ref_rms = float(np.sqrt(np.mean(ref * ref)) + 1e-12)
+                delta = 0.12 * np.tanh(5.0 * (rms - ref_rms))
+
+            out = {}
+            for idx, goal in enumerate(self._goals):
+                # Stable per-goal offset keeps ordering deterministic.
+                goal_offset = (idx - len(self._goals) / 2.0) * 0.004
+                score = float(np.clip(base + delta + goal_offset, 0.0, 1.0))
+                out[goal] = score
+            return out
+
+    return GoalExplainer(checker=_FastDeterministicChecker())
 
 
 @pytest.fixture

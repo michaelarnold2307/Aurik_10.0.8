@@ -250,8 +250,8 @@ if __name__ == "__main__":
         enhancer = create_psychoacoustic_enhancer(bass_freq_range=(20, 80), harmonic_gain_db=6.0, mix=0.5)
         enhanced, metrics = enhancer.process(audio, sr, use_deep_learning=True, audit_log=True)
         logger.info("Psychoacoustic Enhancement applied:")
-        logger.info("  Bass Energy Gain: %.1f dB", metrics['enhancement_db'])
-        logger.info("  Harmonic Gain: %.1f dB", metrics['harmonic_gain_db'])
+        logger.info("  Bass Energy Gain: %.1f dB", metrics["enhancement_db"])
+        logger.info("  Harmonic Gain: %.1f dB", metrics["harmonic_gain_db"])
         if metrics.get("fallback_used"):
             logger.info("[INFO] Fallback auf klassische Methode oder Originalaudio.")
         sf.write("enhanced_psychoacoustic.wav", enhanced, sr)

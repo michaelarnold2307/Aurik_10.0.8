@@ -1458,23 +1458,23 @@ if __name__ == "__main__":
     # Test restoration
     logger.debug("\n2. Testing Audio Restoration...")
     restoration = framework.restore(audio, mode=RestorationMode.BALANCED)
-    logger.debug("   Processes Applied: %s", ', '.join(restoration.processing_applied))
+    logger.debug("   Processes Applied: %s", ", ".join(restoration.processing_applied))
     logger.debug("   Defects Removed: %s", sum(restoration.defects_removed.values()))
     logger.debug("   Quality Improvement: +%.2f", restoration.quality_improvement)
 
     # Test enhancement
     logger.debug("\n3. Testing Audio Enhancement...")
     enhancement = framework.enhance(restoration.audio, target_clarity=0.8)
-    logger.debug("   Enhancements: %s", ', '.join(enhancement.enhancements_applied))
+    logger.debug("   Enhancements: %s", ", ".join(enhancement.enhancements_applied))
     logger.debug("   Clarity Improvement: %.2f", enhancement.clarity_improvement)
 
     # Test Magic Button
     logger.debug("\n4. Testing Magic Button (Studio 2026)...")
     studio_audio, report = framework.magic_button(audio)
     logger.debug("   ✅ Processed to Studio 2026 Standard")
-    logger.debug("   Defects Found: %s", report['detection']['defects_found'])
-    logger.debug("   Total Removed: %s", report['restoration']['defects_removed'])
-    logger.debug("   Quality Before: %.2f", report['detection']['quality_score_before'])
+    logger.debug("   Defects Found: %s", report["detection"]["defects_found"])
+    logger.debug("   Total Removed: %s", report["restoration"]["defects_removed"])
+    logger.debug("   Quality Before: %.2f", report["detection"]["quality_score_before"])
 
     logger.debug("\n" + "=" * 70)
     logger.debug("✅ AI Framework Test Complete!")

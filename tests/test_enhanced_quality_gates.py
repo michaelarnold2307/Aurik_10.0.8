@@ -84,7 +84,7 @@ def mock_perceptual_metrics_poor():
 
 @pytest.fixture
 def mock_musical_goals_good():
-    """Mock Musical Goals scores (good) — 10 Ziele gemäß Spec v9.9.1 §2 / §8.1."""
+    """Mock Musical Goals scores (good) — goal set for quality-gate tests."""
     return {
         "brillanz": 0.92,  # ≥ 0.85
         "waerme": 0.88,  # ≥ 0.80
@@ -101,7 +101,7 @@ def mock_musical_goals_good():
 
 @pytest.fixture
 def mock_musical_goals_poor():
-    """Mock Musical Goals scores (poor) — 10 Ziele gemäß Spec v9.9.1 §2 / §8.1."""
+    """Mock Musical Goals scores (poor) — goal set for quality-gate tests."""
     return {
         "brillanz": 0.65,
         "waerme": 0.60,
@@ -149,7 +149,7 @@ class TestAutoReprocessingEngine:
             "transparenz": 0.40,
             "natuerlichkeit": 0.35,
             "waerme": 0.42,
-            "spatial_depth": 0.39,  # v9.9.1: raeumlichkeit → spatial_depth
+            "spatial_depth": 0.39,  # current naming: raeumlichkeit → spatial_depth
         }
         context = {"medium_type": "vinyl"}
 
@@ -363,6 +363,7 @@ class TestEnhancedQualityGate:
 
         assert decision == QualityGateDecision.PASSED
         assert action is None
+        assert isinstance(recommendation, str)
         assert "passed" in recommendation.lower()
 
     def test_multi_metric_decision_critical_failure(self, mock_musical_goals_poor, mock_perceptual_metrics_poor):
@@ -388,6 +389,7 @@ class TestEnhancedQualityGate:
 
         assert decision == QualityGateDecision.ROLLBACK_REQUIRED
         assert action == "reprocess_or_rollback"
+        assert isinstance(recommendation, str)
         assert "critical" in recommendation.lower()
 
     @patch.object(EnhancedQualityGate, "_measure_perceptual_metrics")

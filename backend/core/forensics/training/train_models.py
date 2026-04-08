@@ -496,9 +496,9 @@ def main() -> None:
     results = pipeline.train_all_models(save_models=True)
 
     logger.info("\n✅ All models trained successfully!")
-    logger.info("   Medium Detector: %s", format(results['reports'][0].accuracy, '.1%'))
-    logger.info("   Era Detector: %s", format(results['reports'][1].accuracy, '.1%'))
-    logger.info("   Defect Detector: %s", format(results['reports'][2].accuracy, '.1%'))
+    logger.info("   Medium Detector: %s", format(results["reports"][0].accuracy, ".1%"))
+    logger.info("   Era Detector: %s", format(results["reports"][1].accuracy, ".1%"))
+    logger.info("   Defect Detector: %s", format(results["reports"][2].accuracy, ".1%"))
 
 
 if __name__ == "__main__":

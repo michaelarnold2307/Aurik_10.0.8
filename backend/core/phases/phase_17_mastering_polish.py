@@ -203,6 +203,8 @@ class MasteringPolishPhase(PhaseInterface):
                     "material": material.name,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "rms_change_db": 0.0,
@@ -281,6 +283,8 @@ class MasteringPolishPhase(PhaseInterface):
                 "pipeline_metrics": pipeline_metrics,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "rms_change_db": float(rms_change_db),
@@ -533,7 +537,7 @@ class MasteringPolishPhase(PhaseInterface):
         # §2.40 Determinismus: content-derived seed ensures bit-exact reproducibility
         lsb = 1.0 / (2**15)
         dither_amplitude = lsb * 0.5  # Half LSB
-        _dith_seed17 = int(abs(float(np.sum(np.abs(polished[:min(len(polished), 1024)])))) * 1e5) % (2**31)
+        _dith_seed17 = int(abs(float(np.sum(np.abs(polished[: min(len(polished), 1024)])))) * 1e5) % (2**31)
         _rng17 = np.random.default_rng(seed=_dith_seed17)
         r1 = _rng17.uniform(-1, 1, polished.shape)
         r2 = _rng17.uniform(-1, 1, polished.shape)
@@ -626,15 +630,15 @@ if __name__ == "__main__":
     test_materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.CD_DIGITAL]
 
     for material in test_materials:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Material: %s", material.name)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(test_audio_stereo, sample_rate, material)
 
         if result.success:
             logger.debug("\n✅ Professional Mastering Chain Complete:")
-            logger.debug("   RMS Change: %.2f dB", result.metrics['rms_change_db'])
+            logger.debug("   RMS Change: %.2f dB", result.metrics["rms_change_db"])
             logger.debug(
                 f"   Peak: {result.metrics['peak_before_db']:.1f} → {result.metrics['peak_after_db']:.1f} dBFS"
             )
@@ -673,7 +677,7 @@ if __name__ == "__main__":
                 mono_compat = pm["stereo"]["mono_compatibility"]
                 logger.debug("   4. Stereo Enhancement:")
                 logger.debug("      Width: %.2f×", width)
-                logger.debug("      Mono Compatibility: %.2f (%s)", mono_compat, '✅' if mono_compat > 0.7 else '⚠️')
+                logger.debug("      Mono Compatibility: %.2f (%s)", mono_compat, "✅" if mono_compat > 0.7 else "⚠️")
 
             # 5. Polish
             if "polish" in pm:
@@ -689,6 +693,6 @@ if __name__ == "__main__":
                 f"({result.execution_time_seconds / duration:.2f}× realtime)"
             )
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("Test abgeschlossen")
-    logger.debug("%s", '=' * 80)
+    logger.debug("%s", "=" * 80)

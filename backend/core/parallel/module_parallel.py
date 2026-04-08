@@ -176,7 +176,9 @@ class ModuleParallelProcessor:
         processing_time = time.time() - start_time
         self._processing_stats["total_processed"] += 1
 
-        logger.debug("Module pipeline complete: %.3fs, %s phases, %s modules", processing_time, len(phases), len(modules))
+        logger.debug(
+            "Module pipeline complete: %.3fs, %s phases, %s modules", processing_time, len(phases), len(modules)
+        )
 
         return current_audio
 

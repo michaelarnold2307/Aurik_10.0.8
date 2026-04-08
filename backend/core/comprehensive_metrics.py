@@ -18,7 +18,6 @@ Keine Dummys/Mocks - nur reale, wissenschaftlich fundierte Implementierungen.
 """
 
 import logging
-import warnings
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -1454,5 +1453,5 @@ if __name__ == "__main__":
     logger.debug("\n" + "=" * 70)
     logger.debug("Exporting to dictionary...")
     metrics_dict = result.to_dict()
-    logger.debug("Total metrics computed: %s values", len(str(metrics_dict).split(',')))
+    logger.debug("Total metrics computed: %s values", len(str(metrics_dict).split(",")))
     logger.debug("✅ Comprehensive Metrics System Test Complete!")

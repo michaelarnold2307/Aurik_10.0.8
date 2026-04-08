@@ -38,9 +38,9 @@ import logging
 import os
 import sys
 import time
-from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 # Keep CPU thread fan-out conservative to avoid RAM spikes on desktop systems.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -133,9 +133,7 @@ def _parse_chain_hint(chain_hint: str | None) -> list[str]:
         return []
     invalid = [m for m in chain if m not in _VALID_MEDIA_HINTS]
     if invalid:
-        raise ValueError(
-            f"Ungültiger chain-hint: {invalid}. Gültig: {sorted(_VALID_MEDIA_HINTS)}"
-        )
+        raise ValueError(f"Ungültiger chain-hint: {invalid}. Gültig: {sorted(_VALID_MEDIA_HINTS)}")
     return chain
 
 
@@ -156,7 +154,19 @@ def _infer_input_extension_for_chain(chain: list[str], fallback_material: str) -
         return ".mp3"
     if terminal == "aac":
         return ".m4a"
-    if terminal in {"vinyl", "shellac", "wax_cylinder", "wire_recording", "lacquer_disc", "tape", "reel_tape", "dat", "cd_digital", "streaming", "minidisc"}:
+    if terminal in {
+        "vinyl",
+        "shellac",
+        "wax_cylinder",
+        "wire_recording",
+        "lacquer_disc",
+        "tape",
+        "reel_tape",
+        "dat",
+        "cd_digital",
+        "streaming",
+        "minidisc",
+    }:
         return ".wav"
     return ".wav"
 
@@ -340,13 +350,9 @@ def _run(args: argparse.Namespace) -> int:
                 f"restore_exceptions={restoration_exceptions} > {args.max_restoration_exceptions}"
             )
         if mushra_fallbacks > args.max_mushra_fallbacks:
-            pre_listening_fail_reasons.append(
-                f"mushra_fallbacks={mushra_fallbacks} > {args.max_mushra_fallbacks}"
-            )
+            pre_listening_fail_reasons.append(f"mushra_fallbacks={mushra_fallbacks} > {args.max_mushra_fallbacks}")
         if elapsed > args.max_runtime_seconds:
-            pre_listening_fail_reasons.append(
-                f"runtime={elapsed:.1f}s > {args.max_runtime_seconds:.1f}s"
-            )
+            pre_listening_fail_reasons.append(f"runtime={elapsed:.1f}s > {args.max_runtime_seconds:.1f}s")
 
     # Print summary
     print("\n" + "=" * 60)
@@ -472,8 +478,7 @@ def main() -> None:
     parser.add_argument(
         "--chain-hint",
         help=(
-            "Fixiert exakte Tonträgerkette (beliebige Länge), z.B. "
-            "vinyl>tape>mp3_low oder wax_cylinder,tape,mp3_high"
+            "Fixiert exakte Tonträgerkette (beliebige Länge), z.B. vinyl>tape>mp3_low oder wax_cylinder,tape,mp3_high"
         ),
     )
     parser.add_argument(

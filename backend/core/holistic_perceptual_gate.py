@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -34,11 +33,11 @@ _EMA_ALPHA: float = 0.15
 _MIN_OBS_CALIBRATED: int = 3  # < 3 obs → Bootstrap mit erhöhter Unsicherheit
 
 # ── Singleton ──────────────────────────────────────────────────────────────
-_instance: "HolisticPerceptualGate | None" = None
+_instance: HolisticPerceptualGate | None = None
 _lock = threading.Lock()
 
 
-def get_holistic_gate() -> "HolisticPerceptualGate":
+def get_holistic_gate() -> HolisticPerceptualGate:
     """Thread-safe Singleton accessor."""
     global _instance
     if _instance is None:
@@ -51,14 +50,16 @@ def get_holistic_gate() -> "HolisticPerceptualGate":
 @dataclass
 class _RefEntry:
     """One entry in the reference memory (spectral embedding + EMA state)."""
-    embedding: np.ndarray        # shape (n_mels,) — spectral prototype
-    obs_count: int = 0           # number of successful updates
-    calibrated: bool = False     # True once obs_count >= _MIN_OBS_CALIBRATED
+
+    embedding: np.ndarray  # shape (n_mels,) — spectral prototype
+    obs_count: int = 0  # number of successful updates
+    calibrated: bool = False  # True once obs_count >= _MIN_OBS_CALIBRATED
 
 
 @dataclass
 class HPIResult:
     """Result of HPI evaluation."""
+
     hpi: float
     passed: bool
     mert_similarity: float = 1.0
@@ -76,7 +77,7 @@ class HolisticPerceptualGate:
 
     def __init__(self) -> None:
         # §2.44 MERT-Reference-Memory: key = (genre, material, era_bin)
-        self._ref_memory: Dict[Tuple[str, str, str], _RefEntry] = {}
+        self._ref_memory: dict[tuple[str, str, str], _RefEntry] = {}
         self._ref_lock = threading.Lock()
         # MERT similarity path is optional and must never break the gate.
         self._mert_path_disabled: bool = False
@@ -117,9 +118,7 @@ class HolisticPerceptualGate:
             ref_vec = self._get_reference_vector(genre, material, era_bin)
             if ref_vec is not None:
                 rest_embed = self._compute_embedding(restored, sr)
-                timbral_ref = float(np.clip(
-                    self._cosine_similarity(ref_vec, rest_embed), 0.0, 1.0
-                ))
+                timbral_ref = float(np.clip(self._cosine_similarity(ref_vec, rest_embed), 0.0, 1.0))
             else:
                 # Fallback-Kaskade §2.44 Stufe 5: kein Ref-Vektor → rein gegen Input
                 timbral_ref = timbral_input
@@ -139,8 +138,17 @@ class HolisticPerceptualGate:
         logger.info(
             "§2.44 HPI(Restoration)=%.4f passed=%s "
             "(mert=%.3f timbral=%.3f[in=%.3f ref=%.3f w=%.1f/%.1f] artifact=%.3f emotional=%.3f restorability=%.1f)",
-            hpi, passed, mert_sim, timbral, timbral_input, timbral_ref,
-            input_weight, ref_weight, artifact_freedom, emotional_arc_score, restorability_score,
+            hpi,
+            passed,
+            mert_sim,
+            timbral,
+            timbral_input,
+            timbral_ref,
+            input_weight,
+            ref_weight,
+            artifact_freedom,
+            emotional_arc_score,
+            restorability_score,
         )
 
         return HPIResult(
@@ -190,9 +198,7 @@ class HolisticPerceptualGate:
             if key in self._ref_memory:
                 entry = self._ref_memory[key]
                 # §2.44 EMA: α=0.15 → new_ref = 0.85 * old + 0.15 * new_embedding
-                entry.embedding = (
-                    (1.0 - _EMA_ALPHA) * entry.embedding + _EMA_ALPHA * embedding
-                )
+                entry.embedding = (1.0 - _EMA_ALPHA) * entry.embedding + _EMA_ALPHA * embedding
                 entry.obs_count += 1
                 entry.calibrated = entry.obs_count >= _MIN_OBS_CALIBRATED
             else:
@@ -204,12 +210,12 @@ class HolisticPerceptualGate:
 
         logger.info(
             "§2.44 ReferenceMemory updated key=%s obs=%d calibrated=%s",
-            key, self._ref_memory[key].obs_count, self._ref_memory[key].calibrated,
+            key,
+            self._ref_memory[key].obs_count,
+            self._ref_memory[key].calibrated,
         )
 
-    def _get_reference_vector(
-        self, genre: str, material: str, era_bin: str
-    ) -> Optional[np.ndarray]:
+    def _get_reference_vector(self, genre: str, material: str, era_bin: str) -> np.ndarray | None:
         """§2.44 Fallback-Kaskade (5 Stufen).
 
         Stufe 1: Gleiche Genre-Familie + nächstliegende Ära → GP-Memory
@@ -225,26 +231,19 @@ class HolisticPerceptualGate:
             return entry.embedding
 
         # Stufe 2: Same era, any material (nächstliegendes Genre)
-        era_entries = [
-            self._ref_memory[k] for k in self._ref_memory
-            if k[2] == era_bin and k[0] == genre
-        ]
+        era_entries = [self._ref_memory[k] for k in self._ref_memory if k[2] == era_bin and k[0] == genre]
         if era_entries:
             embeddings = np.stack([e.embedding for e in era_entries])
             return np.mean(embeddings, axis=0)
 
         # Stufe 3: Same genre, any material, any era
-        genre_entries = [
-            self._ref_memory[k] for k in self._ref_memory if k[0] == genre
-        ]
+        genre_entries = [self._ref_memory[k] for k in self._ref_memory if k[0] == genre]
         if genre_entries:
             embeddings = np.stack([e.embedding for e in genre_entries])
             return np.mean(embeddings, axis=0)
 
         # Stufe 4: Genre-agnostischer Ära-Median
-        all_era = [
-            self._ref_memory[k] for k in self._ref_memory if k[2] == era_bin
-        ]
+        all_era = [self._ref_memory[k] for k in self._ref_memory if k[2] == era_bin]
         if all_era:
             embeddings = np.stack([e.embedding for e in all_era])
             return np.mean(embeddings, axis=0)
@@ -268,9 +267,7 @@ class HolisticPerceptualGate:
         # Mel filterbank
         mel_freqs = np.linspace(0, 2595 * np.log10(1 + (sr / 2.0) / 700.0), n_mels + 2)
         hz_freqs = 700.0 * (10.0 ** (mel_freqs / 2595.0) - 1.0)
-        bin_freqs = np.clip(
-            np.floor((n_fft + 1) * hz_freqs / sr).astype(int), 0, n_fft // 2
-        )
+        bin_freqs = np.clip(np.floor((n_fft + 1) * hz_freqs / sr).astype(int), 0, n_fft // 2)
         filterbank = np.zeros((n_mels, n_fft // 2 + 1), dtype=np.float32)
         for m in range(n_mels):
             f_s, f_c, f_e = bin_freqs[m], bin_freqs[m + 1], bin_freqs[m + 2]
@@ -328,9 +325,13 @@ class HolisticPerceptualGate:
         passed = hpi > 0.0 and artifact_freedom >= 0.95
 
         logger.info(
-            "§2.44 HPI(Studio2026)=%.4f passed=%s "
-            "(studio_gain=%.3f pqs_signed=%.3f artifact=%.3f emotional=%.3f)",
-            hpi, passed, studio_gain, pqs_signed, artifact_freedom, emotional_arc_score,
+            "§2.44 HPI(Studio2026)=%.4f passed=%s (studio_gain=%.3f pqs_signed=%.3f artifact=%.3f emotional=%.3f)",
+            hpi,
+            passed,
+            studio_gain,
+            pqs_signed,
+            artifact_freedom,
+            emotional_arc_score,
         )
 
         return HPIResult(
@@ -346,7 +347,10 @@ class HolisticPerceptualGate:
     # ── Component computations ─────────────────────────────────────────────
 
     def _compute_mert_similarity(
-        self, original: np.ndarray, restored: np.ndarray, sr: int,
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
     ) -> float:
         """Compute MERT-based musical similarity (melody, harmony, rhythm).
 
@@ -395,15 +399,12 @@ class HolisticPerceptualGate:
                 tonal_sim = 1.0 - abs(t1 - t2)
                 flux_sim = 1.0 - abs(f1 - f2)
 
-                plugin_sim = (
-                    0.35 * harm_sim
-                    + 0.35 * tonal_sim
-                    + 0.20 * flux_sim
-                    + 0.10 * f0_sim
-                )
-                # Blend with spectral proxy to keep frequency discrimination robust.
+                plugin_sim = 0.35 * harm_sim + 0.35 * tonal_sim + 0.20 * flux_sim + 0.10 * f0_sim
+                # §2.44 Blend: 65% Plugin-Score + 35% Spektral-Proxy.
+                # min() war zu konservativ und zog valide Ergebnisse systematisch nach unten
+                # (proxy ~0.7 bei Breitband-Änderungen → false rollback auch bei plugin=0.95).
                 proxy_sim = self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr)
-                sim = min(float(plugin_sim), float(proxy_sim))
+                sim = 0.65 * float(plugin_sim) + 0.35 * float(proxy_sim)
                 return float(np.clip(sim, 0.0, 1.0))
             except Exception as exc:
                 logger.debug("§2.44 MERT similarity fallback to spectral proxy: %s", exc)
@@ -414,7 +415,10 @@ class HolisticPerceptualGate:
         return self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr)
 
     def _compute_mert_similarity_spectral_proxy(
-        self, original: np.ndarray, restored: np.ndarray, sr: int,
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
     ) -> float:
         """Spectral proxy for musical similarity when MERT plugin is unavailable."""
         orig_mono = original if original.ndim == 1 else np.mean(original, axis=0)
@@ -462,7 +466,10 @@ class HolisticPerceptualGate:
         return float(np.clip(np.mean(correlations), 0.0, 1.0))
 
     def _compute_timbral_fidelity(
-        self, original: np.ndarray, restored: np.ndarray, sr: int,
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
     ) -> float:
         """Structural timbral coherence — not mere input similarity.
 
@@ -480,37 +487,43 @@ class HolisticPerceptualGate:
         return float(np.clip(self._cosine_similarity(orig_embed, rest_embed), 0.0, 1.0))
 
     def _compute_studio_quality_gain(
-        self, original: np.ndarray, restored: np.ndarray, sr: int,
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
     ) -> float:
-        """Studio 2026: distance to studio reference level.
+        """Studio 2026: improvement in studio quality relative to input.
 
-        Target: -14 LUFS, noise ≤ -72 dBFS.
+        Compares how much closer the *restored* signal is to the studio reference
+        (−14 LUFS, noise ≤ −72 dBFS) compared to the *original* input.
+        A restored signal that is closer → gain > 0.5; same or worse → gain ≤ 0.5.
+        Always returns ≥ 0.1 to avoid killing HPI when improvement is ambiguous.
         """
-        rest_mono = restored if restored.ndim == 1 else np.mean(restored, axis=0)
-        if len(rest_mono) < 1024:
-            return 0.5
 
-        # Approximate LUFS (simplified — true LUFS needs K-weighting)
-        rms = float(np.sqrt(np.mean(rest_mono**2) + 1e-12))
-        lufs_approx = 20.0 * np.log10(rms + 1e-12)
+        def _score(audio: np.ndarray) -> float:
+            mono = audio if audio.ndim == 1 else np.mean(audio, axis=0)
+            if len(mono) < 1024:
+                return 0.5
+            rms = float(np.sqrt(np.mean(mono**2) + 1e-12))
+            lufs_approx = 20.0 * np.log10(rms + 1e-12)
+            lufs_error = abs(lufs_approx - (-14.0))
+            lufs_score = max(0.0, 1.0 - lufs_error / 30.0)
 
-        # Distance to -14 LUFS target
-        lufs_error = abs(lufs_approx - (-14.0))
-        lufs_score = max(0.0, 1.0 - lufs_error / 30.0)
-
-        # Noise floor estimate (lowest-energy 5% frames)
-        frame_len = int(0.03 * sr)
-        hop = frame_len // 2
-        n_frames = max(1, (len(rest_mono) - frame_len) // hop)
-        energies = []
-        for i in range(min(n_frames, 500)):
-            s = i * hop
-            e = s + frame_len
-            energies.append(float(np.mean(rest_mono[s:e]**2) + 1e-12))
-        if energies:
-            noise_floor = 10.0 * np.log10(np.percentile(energies, 5))
+            frame_len = int(0.03 * sr)
+            hop = frame_len // 2
+            n_frames = max(1, (len(mono) - frame_len) // hop)
+            energies = [
+                float(np.mean(mono[i * hop : i * hop + frame_len] ** 2) + 1e-12) for i in range(min(n_frames, 500))
+            ]
+            noise_floor = 10.0 * np.log10(np.percentile(energies, 5)) if energies else -72.0
             noise_score = 1.0 if noise_floor <= -72.0 else max(0.0, 1.0 - (noise_floor + 72.0) / 30.0)
-        else:
-            noise_score = 0.5
+            return float((lufs_score + noise_score) / 2.0)
 
-        return float(np.clip((lufs_score + noise_score) / 2.0, 0.0, 1.0))
+        in_score = _score(original)
+        out_score = _score(restored)
+
+        # Improvement ratio mapped to [0.1, 1.0].
+        # out/in > 1 → improved → gain → 1.0; equal → 0.5; worse → down to 0.1.
+        ratio = out_score / max(in_score, 1e-4)
+        gain = float(np.clip(0.5 * ratio, 0.1, 1.0))
+        return gain

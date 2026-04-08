@@ -1,9 +1,9 @@
 """Integration-Contracts für Musical-Goals-Verdrahtung (Low-Effort, High-Signal).
 
 Diese Tests sichern gezielt die reparierten Integrationspunkte ab:
-- FeedbackChain Legacy-Kompatibilität (max_retries)
+- FeedbackChain Konstruktor-/Iterations-Vertrag
 - FeedbackChain GoalPriority-Callback-Pfad
-- UnifiedRestorerV3-FeedbackChain-Wiring (max_iterations statt max_retries)
+- UnifiedRestorerV3-FeedbackChain-Wiring (max_iterations)
 - UnifiedRestorerV3 GoalApplicability/AdaptiveThresholds-Verdrahtung
 """
 
@@ -26,9 +26,9 @@ def _silence(secs: float = 1.0) -> np.ndarray:
 
 
 class TestFeedbackChainIntegrationContracts:
-    def test_01_legacy_max_retries_supported(self) -> None:
-        """Legacy-API aus UnifiedRestorer darf keinen TypeError erzeugen."""
-        fc = FeedbackChain(max_retries=2)
+    def test_01_max_iterations_supported(self) -> None:
+        """Current FeedbackChain API must accept max_iterations without TypeError."""
+        fc = FeedbackChain(max_iterations=2)
         res = fc.run(_silence(), lambda a, sr: a)
         assert res.iterations >= 1
         assert res.total_retries == res.iterations

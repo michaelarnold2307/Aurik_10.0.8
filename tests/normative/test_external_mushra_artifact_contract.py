@@ -503,7 +503,9 @@ class TestArtifactPathContract:
                     "mushra_artifact.json nicht vorhanden — STRICT MODE aktiv. "
                     "Für Release-Audits muss reports/mushra_artifact.json vorhanden sein (§8.4)."
                 )
-            pytest.skip("mushra_artifact.json nicht vorhanden — SKIP: Artefakt nur bei Kern-Änderungen erforderlich (§8.4).")
+            pytest.skip(
+                "mushra_artifact.json nicht vorhanden — SKIP: Artefakt nur bei Kern-Änderungen erforderlich (§8.4)."
+            )
 
         content = _MUSHRA_ARTIFACT_PATH.read_text(encoding="utf-8")
         artifact = json.loads(content)

@@ -174,6 +174,8 @@ class BassEnhancement(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=[],
             )
@@ -246,6 +248,8 @@ class BassEnhancement(PhaseInterface):
                 "virtual_pitch_active": True,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[],
         )

@@ -83,9 +83,9 @@ _SIGMA_MAX = 0.3  # Maximale Rausch-Standardabweichung
 # beim Inpainting historischer Träger (wax_cylinder BW ≤ 5 kHz, wire_rec. ≤ 6 kHz).
 # Ohne Cap generiert AR/Diffusion synthetische Obertöne, die nie vorhanden waren.
 _MATERIAL_BW_CAP_HZ: dict[str, float] = {
-    "wax_cylinder": 5000.0,   # Mechanische Aufzeichnung 1900–1930
-    "wire_recording": 6000.0, # Stahlbandfone 1940–1955
-    "lacquer_disc": 8000.0,   # Acetat-Lackfolien 1930–1950 (konservativ)
+    "wax_cylinder": 5000.0,  # Mechanische Aufzeichnung 1900–1930
+    "wire_recording": 6000.0,  # Stahlbandfone 1940–1955
+    "lacquer_disc": 8000.0,  # Acetat-Lackfolien 1930–1950 (konservativ)
 }
 
 
@@ -101,6 +101,7 @@ def _apply_bw_cap(segment: np.ndarray, sample_rate: int, cap_hz: float) -> np.nd
     nyq = sample_rate / 2.0
     norm_cut = min(cap_hz / nyq, 0.99)
     from scipy import signal as _sps
+
     sos = _sps.butter(4, norm_cut, btype="low", output="sos")
     # filtfilt for zero-phase; fall back to sosfilt for very short segments
     if len(segment) > 20:
@@ -220,9 +221,7 @@ def _inpaint_gap_dsp(
 
     # §v9.10.113: Adaptive AR order — order 64 diverges for gaps > 50 ms (2 400 samples).
     # AR(192) covers 3× more spectral modes; safe as long as context length > order.
-    _AR_ORDER_ADAPTIVE = (
-        min(192, max(16, len(left_ctx) - 1)) if gap_len > 2400 else _AR_ORDER
-    )
+    _AR_ORDER_ADAPTIVE = min(192, max(16, len(left_ctx) - 1)) if gap_len > 2400 else _AR_ORDER
 
     # AR-Vorhersage von links und von rechts (gespiegelt)
     ar_left = _burg_ar_predict(left_ctx, _AR_ORDER_ADAPTIVE, gap_len)
@@ -246,7 +245,7 @@ def _inpaint_gap_dsp(
 
     # §2.40 Determinismus: Seeded RNG, derived from left-context fingerprint + gap position.
     # Ensures bit-exact reproducibility for identical inputs (same audio, same position).
-    _ctx_seed = int(abs(float(np.sum(np.abs(left_ctx[:min(len(left_ctx), 64)])))) * 1e5 + start) % (2**31)
+    _ctx_seed = int(abs(float(np.sum(np.abs(left_ctx[: min(len(left_ctx), 64)])))) * 1e5 + start) % (2**31)
     _rng55 = np.random.default_rng(seed=_ctx_seed)
 
     # Reverse Diffusion (iteratives Denoising, T=n_steps Steps, adaptiv)
@@ -497,7 +496,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
         effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
 
         # §0 BW-Cap: prevent hallucination of HF content on bandwidth-limited carriers
-        _material = kwargs.get("material_type", None)
+        _material = kwargs.get("material_type")
         _mat_key = str(_material).lower() if _material is not None else ""
         # Accept both enum value strings like "MaterialType.WAX_CYLINDER" and plain keys
         for _mk, _cap in _MATERIAL_BW_CAP_HZ.items():
@@ -518,6 +517,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -588,5 +589,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
                 "bw_cap_hz": _bw_cap_hz,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )

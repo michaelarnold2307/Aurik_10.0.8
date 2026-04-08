@@ -33,9 +33,7 @@ class ExpertFeedbackSystem:
         if not self._feedback:
             return ExpertAggregate()
         keys = self._feedback[0].keys()
-        return ExpertAggregate(
-            {k: sum(f.get(k, 0.0) for f in self._feedback) / len(self._feedback) for k in keys}
-        )
+        return ExpertAggregate({k: sum(f.get(k, 0.0) for f in self._feedback) / len(self._feedback) for k in keys})
 
 
 # ---------------------------------------------------------------------------

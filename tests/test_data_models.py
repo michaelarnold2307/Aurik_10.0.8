@@ -70,7 +70,7 @@ def test_audio_file_created_at_auto():
 
 def test_audio_file_invalid_sample_rate():
     """Test AudioFile rejects invalid sample rate"""
-    with pytest.raises(Exception):  # noqa: B017  # Pydantic ValidationError
+    with pytest.raises(Exception):  # Pydantic ValidationError
         AudioFile(
             file_path="/test/audio.wav",
             file_hash="hash",
@@ -85,7 +85,7 @@ def test_audio_file_invalid_sample_rate():
 
 def test_audio_file_invalid_channels():
     """Test AudioFile rejects invalid channel count"""
-    with pytest.raises(Exception):  # noqa: B017  # Pydantic ValidationError
+    with pytest.raises(Exception):  # Pydantic ValidationError
         AudioFile(
             file_path="/test/audio.wav",
             file_hash="hash",
@@ -100,7 +100,7 @@ def test_audio_file_invalid_channels():
 
 def test_audio_file_invalid_duration():
     """Test AudioFile rejects negative duration"""
-    with pytest.raises(Exception):  # noqa: B017  # Pydantic ValidationError
+    with pytest.raises(Exception):  # Pydantic ValidationError
         AudioFile(
             file_path="/test/audio.wav",
             file_hash="hash",

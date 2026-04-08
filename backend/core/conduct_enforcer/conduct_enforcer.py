@@ -600,7 +600,7 @@ if __name__ == "__main__":
     # Statistics
     logger.debug("=== Statistics ===")
     stats = enforcer.get_statistics()
-    logger.debug("Total validations: %s", stats['total'])
-    logger.debug("Allowed: %s", stats['allowed'])
-    logger.debug("Blocked: %s", stats['blocked'])
-    logger.debug("Block rate: %s", format(stats['block_rate'], '.1%'))
+    logger.debug("Total validations: %s", stats["total"])
+    logger.debug("Allowed: %s", stats["allowed"])
+    logger.debug("Blocked: %s", stats["blocked"])
+    logger.debug("Block rate: %s", format(stats["block_rate"], ".1%"))

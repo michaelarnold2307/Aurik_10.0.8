@@ -619,9 +619,9 @@ class TestVocalLanguageDetection:
 # ---------------------------------------------------------------------------
 
 
-def _build_non_schlager_clf(monkeypatch, *, accordion=0.05, hsi=0.45, rhythm=0.20,
-                            vocal_prior=0.20, melodic=0.20, lang_de=0.20,
-                            clap=0.05):
+def _build_non_schlager_clf(
+    monkeypatch, *, accordion=0.05, hsi=0.45, rhythm=0.20, vocal_prior=0.20, melodic=0.20, lang_de=0.20, clap=0.05
+):
     """Setzt alle Schlager-Tier-Scores auf Non-Schlager-Werte.
 
     Patcht zusätzlich alle 12 seit v9.10.x ergänzten Genre-Scorer auf 0.10,
@@ -645,9 +645,18 @@ def _build_non_schlager_clf(monkeypatch, *, accordion=0.05, hsi=0.45, rhythm=0.2
     # artefacts (e.g. onset_rate spikes on pure tones).  Tests that deliberately
     # verify one of these genres must override the corresponding patch afterward.
     for _method in (
-        "_score_pop", "_score_blues", "_score_soul_rnb", "_score_country",
-        "_score_folk", "_score_funk", "_score_electronic", "_score_hiphop",
-        "_score_metal", "_score_latin", "_score_gospel", "_score_reggae",
+        "_score_pop",
+        "_score_blues",
+        "_score_soul_rnb",
+        "_score_country",
+        "_score_folk",
+        "_score_funk",
+        "_score_electronic",
+        "_score_hiphop",
+        "_score_metal",
+        "_score_latin",
+        "_score_gospel",
+        "_score_reggae",
     ):
         monkeypatch.setattr(clf, _method, lambda *_a, **_k: 0.10)
     return clf
@@ -738,10 +747,7 @@ class TestNonSchlagerGoldenSamples:
         r = clf.classify(_white_noise(secs=10.0), sr=48000)
         assert r.genre_label == "Klassik"
         profile = get_restoration_profile(r.genre_label)
-        has_dereverb_key = (
-            "phase_20_dereverb_enabled" in profile
-            or "phase_49_dereverb_enabled" in profile
-        )
+        has_dereverb_key = "phase_20_dereverb_enabled" in profile or "phase_49_dereverb_enabled" in profile
         assert has_dereverb_key
 
     def test_72_jazz_high_hsi_blocked(self, monkeypatch):
@@ -751,9 +757,7 @@ class TestNonSchlagerGoldenSamples:
         monkeypatch.setattr(clf, "_onset_rate", lambda _a, _sr: 2.0)
         monkeypatch.setattr(clf, "_dynamic_range_db", lambda _a, _sr: 44.0)
         r = clf.classify(_white_noise(secs=10.0), sr=48000)
-        assert r.genre_label != "Jazz", (
-            f"Jazz bei hsi=0.72 ist ein Mislabel — bekommen: {r.genre_label!r}"
-        )
+        assert r.genre_label != "Jazz", f"Jazz bei hsi=0.72 ist ein Mislabel — bekommen: {r.genre_label!r}"
 
     def test_73_non_schlager_score_below_min_gives_unbekannt(self, monkeypatch):
         """Alle Non-Schlager-Scores < 0.35 → genre_label='Unbekannt', kein Absturz."""
@@ -794,7 +798,7 @@ class TestNonSchlagerGoldenSamples:
         mod = 1.0 + 0.7 * np.sin(2 * np.pi * 8.0 * t)
         # Breites Signal mit Energy über alle drei Sub-Bänder
         carrier = (
-            np.sin(2 * np.pi * 300.0 * t)    # sub-band 1
+            np.sin(2 * np.pi * 300.0 * t)  # sub-band 1
             + np.sin(2 * np.pi * 900.0 * t)  # sub-band 2
             + np.sin(2 * np.pi * 2000.0 * t)  # sub-band 3
         )
@@ -802,8 +806,7 @@ class TestNonSchlagerGoldenSamples:
         score = clf._compute_accordion_score(coherent_am, sr)
         # Ein kohärentes AM darf nach Diskriminator-Penalty nicht volle Akkordeon-Confidence erreichen
         assert score <= 0.80, (
-            f"Kohärentes AM (Tremolo) sollte nach Diskriminator reduziert sein, "
-            f"aber accordion_score={score:.3f}"
+            f"Kohärentes AM (Tremolo) sollte nach Diskriminator reduziert sein, aber accordion_score={score:.3f}"
         )
 
     def test_75_levinson_durbin_matches_vocal_prior_bounds(self):
@@ -813,12 +816,12 @@ class TestNonSchlagerGoldenSamples:
         # Synthetisches Vokal-Signal mit F1=400, F2=1800 Hz
         t = np.linspace(0, 0.025, int(sr * 0.025), endpoint=False)
         frame = (
-            np.sin(2 * np.pi * 120 * t)    # Grundton
-            + 0.5 * np.sin(2 * np.pi * 400 * t)   # F1
+            np.sin(2 * np.pi * 120 * t)  # Grundton
+            + 0.5 * np.sin(2 * np.pi * 400 * t)  # F1
             + 0.3 * np.sin(2 * np.pi * 1800 * t)  # F2
         ).astype(np.float64)
         r = np.correlate(frame, frame, mode="full")
-        r = r[len(r) // 2:]
+        r = r[len(r) // 2 :]
         r[0] = max(r[0], 1e-10)
         coefs = clf._lpc_levinson(r, order=16)
         assert len(coefs) == 16
@@ -837,6 +840,7 @@ class TestNonSchlagerGoldenSamples:
 # ---------------------------------------------------------------------------
 # Klasse 10: Jazz-Veto-Guard — n_active >= 1 Invariante
 # ---------------------------------------------------------------------------
+
 
 class TestJazzVetoGuard:
     """Jazz-Veto darf nur feuern, wenn mindestens ein Schlager-Tier aktiv ist.
@@ -899,9 +903,18 @@ class TestJazzVetoGuard:
         monkeypatch.setattr(clf, "_score_classical", lambda *_a, **_k: 0.10)
         # Isolate the 12 new genre scorers: Jazz must win so the Veto triggers.
         for _method in (
-            "_score_pop", "_score_blues", "_score_soul_rnb", "_score_country",
-            "_score_folk", "_score_funk", "_score_electronic", "_score_hiphop",
-            "_score_metal", "_score_latin", "_score_gospel", "_score_reggae",
+            "_score_pop",
+            "_score_blues",
+            "_score_soul_rnb",
+            "_score_country",
+            "_score_folk",
+            "_score_funk",
+            "_score_electronic",
+            "_score_hiphop",
+            "_score_metal",
+            "_score_latin",
+            "_score_gospel",
+            "_score_reggae",
         ):
             monkeypatch.setattr(clf, _method, lambda *_a, **_k: 0.10)
 
@@ -909,6 +922,5 @@ class TestJazzVetoGuard:
 
         # Veto darf feuern: n_active >= 1, alt_genre="Jazz", lang_de=0.35>=0.30
         assert r.is_schlager is True, (
-            f"Jazz-Veto sollte bei n_active>=1 + alt_genre=Jazz + lang_de>=0.30 feuern, "
-            f"is_schlager={r.is_schlager}"
+            f"Jazz-Veto sollte bei n_active>=1 + alt_genre=Jazz + lang_de>=0.30 feuern, is_schlager={r.is_schlager}"
         )

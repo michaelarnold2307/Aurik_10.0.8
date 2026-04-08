@@ -220,7 +220,9 @@ class MusicalGoalsMonitor:
         self.checkpoints.append(checkpoint)
 
         if violations:
-            logger.warning("Checkpoint '%s': %s violations detected - %s", step_name, len(violations), ', '.join(violations))
+            logger.warning(
+                "Checkpoint '%s': %s violations detected - %s", step_name, len(violations), ", ".join(violations)
+            )
         else:
             logger.info("Checkpoint '%s': All goals OK", step_name)
 
@@ -417,7 +419,7 @@ if __name__ == "__main__":
     report = monitor.finalize(final_goals)
 
     logger.debug("   Checkpoints: %s", len(report.checkpoints))
-    logger.debug("   Violations: %s", report.violations if report.violations else 'None')
+    logger.debug("   Violations: %s", report.violations if report.violations else "None")
     logger.debug("   Recommendations:")
     for rec in report.recommendations:
         logger.debug("      - %s", rec)

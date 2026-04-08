@@ -241,7 +241,11 @@ class PianoRestorationV1(PhaseInterface):
         return 0.005  # MIDI 72–108: short stiff treble strings
 
     def process(
-        self, audio: np.ndarray, sample_rate: int = 48000, material_type: MaterialType = MaterialType.CD_DIGITAL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: MaterialType = MaterialType.CD_DIGITAL,
+        **kwargs,
     ) -> PhaseResult:
         """
         Restore piano recordings with material-adaptive processing.
@@ -274,6 +278,8 @@ class PianoRestorationV1(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -301,6 +307,8 @@ class PianoRestorationV1(PhaseInterface):
                     "piano_confidence": piano_confidence,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -492,6 +500,8 @@ class PianoRestorationV1(PhaseInterface):
                 "instrument_formant_frames": igt_frames,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 

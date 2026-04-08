@@ -31,6 +31,7 @@ Version: 1.0.0
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -329,6 +330,9 @@ class MertPlugin:
         self._model: Any = None
         self._processor: Any = None
         self._model_type: str = "dsp_fallback"
+        self._analysis_cache: dict[str, MertAnalysis] = {}
+        self._analysis_cache_lock = threading.Lock()
+        self._analysis_cache_max_entries = 64
         self._try_load_model()
 
     def _try_load_model(self) -> None:
@@ -619,13 +623,38 @@ class MertPlugin:
             _off = (len(resampled) - _MAX_MERT_SAMPLES) // 2
             resampled = resampled[_off : _off + _MAX_MERT_SAMPLES]
 
+        # Very short clips are unreliable for transformer context and can spike
+        # latency on CPU; prefer deterministic DSP fallback for <= 3 s.
+        if self._model_type in ("mert_hf", "mert_fairseq") and len(resampled) <= int(3 * self._target_sr):
+            dsp_short = _dsp_analyze(resampled, self._target_sr)
+            dsp_short.model_used = "dsp_fallback"
+            return dsp_short
+
+        cache_key = (
+            f"{self._model_type}:{len(resampled)}:"
+            f"{hashlib.blake2b(np.ascontiguousarray(resampled).tobytes(), digest_size=16).hexdigest()}"
+        )
+        with self._analysis_cache_lock:
+            cached = self._analysis_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if self._model_type == "mert_hf":
-            return self._analyze_hf(resampled)
-        if self._model_type == "mert_fairseq":
-            return self._analyze_fairseq(resampled)
-        if self._model_type == "mert_onnx":
-            return self._analyze_onnx(resampled)
-        return _dsp_analyze(resampled, self._target_sr)
+            result = self._analyze_hf(resampled)
+        elif self._model_type == "mert_fairseq":
+            result = self._analyze_fairseq(resampled)
+        elif self._model_type == "mert_onnx":
+            result = self._analyze_onnx(resampled)
+        else:
+            result = _dsp_analyze(resampled, self._target_sr)
+
+        with self._analysis_cache_lock:
+            self._analysis_cache[cache_key] = result
+            if len(self._analysis_cache) > self._analysis_cache_max_entries:
+                oldest_key = next(iter(self._analysis_cache), None)
+                if oldest_key is not None:
+                    self._analysis_cache.pop(oldest_key, None)
+        return result
 
     def _analyze_hf(self, audio: np.ndarray) -> MertAnalysis:
         """HuggingFace MERT Inferenz."""
@@ -634,9 +663,9 @@ class MertPlugin:
 
             inputs = self._processor(audio, sampling_rate=self._target_sr, return_tensors="pt")
             with torch.no_grad():
-                outputs = self._model(**inputs, output_hidden_states=True)
-            # Letzter Hidden State als Embedding
-            last_hidden = outputs.hidden_states[-1]  # (batch, time, dim)
+                # Request only the final hidden state to keep metric inference bounded.
+                outputs = self._model(**inputs, output_hidden_states=False)
+            last_hidden = outputs.last_hidden_state  # (batch, time, dim)
             # NAT-Score aus L2-Norm der Embeddings (Proxy für tonale Stärke)
             embedding_norm = float(torch.norm(last_hidden, dim=-1).mean().item())
             norm_score = float(np.clip(embedding_norm / 50.0, 0.0, 1.0))

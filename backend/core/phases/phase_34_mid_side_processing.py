@@ -228,6 +228,8 @@ class MidSideProcessing(PhaseInterface):
                     "processing": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"mid_change_db": 0.0, "side_change_db": 0.0, "mono_compatibility": 1.0},
             )
@@ -554,9 +556,9 @@ if __name__ == "__main__":
         elapsed = time.time() - start
 
         logger.debug("  Multi-band M/S dynamics:")
-        logger.debug("    Overall Mid change: %.2f dB", meta['mid_change_db'])
-        logger.debug("    Overall Side change: %.2f dB", meta['side_change_db'])
-        logger.debug("    Mono compatibility: %.3f", meta['mono_compatibility'])
+        logger.debug("    Overall Mid change: %.2f dB", meta["mid_change_db"])
+        logger.debug("    Overall Side change: %.2f dB", meta["side_change_db"])
+        logger.debug("    Mono compatibility: %.3f", meta["mono_compatibility"])
         logger.debug("")
         logger.debug("  Per-Band Dynamics:")
         for band_name, metrics in meta["band_metrics"].items():
@@ -566,7 +568,7 @@ if __name__ == "__main__":
                 f"Side {metrics['side_reduction_db']:+5.1f} dB"
             )
         logger.debug("")
-        logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta['processing_time_s'], meta['realtime_factor'])
-        logger.debug("  Quality impact: %.2f", meta['quality_impact'])
+        logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta["processing_time_s"], meta["realtime_factor"])
+        logger.debug("  Quality impact: %.2f", meta["quality_impact"])
         logger.debug("  ✅")
         logger.debug("")

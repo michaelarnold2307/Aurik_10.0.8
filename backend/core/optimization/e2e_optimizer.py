@@ -478,7 +478,7 @@ class E2EOptimizationFramework:
             epoch_losses.append(losses)
 
             if batch_idx % 100 == 0:
-                logger.info("Epoch %s, Batch %s: Loss = %.4f", epoch, batch_idx, losses['total_perceptual_loss'])
+                logger.info("Epoch %s, Batch %s: Loss = %.4f", epoch, batch_idx, losses["total_perceptual_loss"])
 
         # Average losses
         avg_losses = {}
@@ -545,8 +545,8 @@ class E2EOptimizationFramework:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         logger.info("Checkpoint loaded: %s", checkpoint_path)
-        logger.info("  Epoch: %s", checkpoint['epoch'])
-        logger.info("  Metrics: %s", checkpoint['metrics'])
+        logger.info("  Epoch: %s", checkpoint["epoch"])
+        logger.info("  Metrics: %s", checkpoint["metrics"])
 
         return checkpoint["epoch"], checkpoint["metrics"]
 
@@ -614,6 +614,6 @@ if __name__ == "__main__":
     # Export parameters
     params = framework.export_optimized_parameters()
     logger.debug("\nOptimized Parameters:")
-    logger.debug("  EQ bands: %s", len(params['eq']['frequencies']))
-    logger.debug("  Compressor ratio: %.2f", params['compressor']['ratio'])
-    logger.debug("  Gate threshold: %.1f dB", params['gate']['threshold_db'])
+    logger.debug("  EQ bands: %s", len(params["eq"]["frequencies"]))
+    logger.debug("  Compressor ratio: %.2f", params["compressor"]["ratio"])
+    logger.debug("  Gate threshold: %.1f dB", params["gate"]["threshold_db"])

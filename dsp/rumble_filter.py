@@ -52,7 +52,6 @@ Dieses Modul entfernt tieffrequente Rumpelstörungen (Rumble) aus Audiosignalen 
 """
 
 import logging
-import warnings
 
 import numpy as np
 
@@ -89,9 +88,7 @@ class RumbleFilter:
                     logger.warning("Memory budget exceeded for rumble_filter ONNX — using DSP fallback")
                 else:
                     try:
-                        self.model = ort.InferenceSession(
-                            model_path, providers=["CPUExecutionProvider"]
-                        )
+                        self.model = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
                         self.backend = "onnx"
                     except Exception as e:
                         logger.warning("ONNX-Modell konnte nicht geladen werden: %s", e)

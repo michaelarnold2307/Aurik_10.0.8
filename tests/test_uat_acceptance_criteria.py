@@ -476,7 +476,12 @@ def test_restoration_criteria(criterion: dict[str, Any]):
         elif criterion["id"] == "R6":
             assert_code_contract(
                 "R6 Tonal Center",
-                [("backend/core/musical_goals/musical_goals_metrics.py", [r"class\s+TonalCenterMetric", r"tonal_center"])],
+                [
+                    (
+                        "backend/core/musical_goals/musical_goals_metrics.py",
+                        [r"class\s+TonalCenterMetric", r"tonal_center"],
+                    )
+                ],
             )
             result["evidence"] = "TonalCenterMetric im Musical-Goals-System vorhanden"
 
@@ -484,7 +489,10 @@ def test_restoration_criteria(criterion: dict[str, Any]):
             assert_code_contract(
                 "R7 Mikro-Dynamik",
                 [
-                    ("backend/core/unified_restorer_v3.py", [r"MicroDynamicsEnvelopeMorphing", r"correct_emotional_arc"]),
+                    (
+                        "backend/core/unified_restorer_v3.py",
+                        [r"MicroDynamicsEnvelopeMorphing", r"correct_emotional_arc"],
+                    ),
                 ],
             )
             result["evidence"] = "MDEM + Emotional-Arc-Korrektur in UV3 verdrahtet"
@@ -549,7 +557,10 @@ def test_restoration_criteria(criterion: dict[str, Any]):
                 "R14 Material-Klassifikation",
                 [
                     ("backend/core/era_classifier.py", [r"class\s+EraClassifier", r"def\s+get_era_classifier"]),
-                    ("backend/core/medium_classifier.py", [r"class\s+MediumClassifier", r"def\s+get_medium_classifier"]),
+                    (
+                        "backend/core/medium_classifier.py",
+                        [r"class\s+MediumClassifier", r"def\s+get_medium_classifier"],
+                    ),
                 ],
             )
             result["evidence"] = "EraClassifier + MediumClassifier implementiert"
@@ -641,7 +652,10 @@ def test_studio_2026_criteria(criterion: dict[str, Any]):
             assert_code_contract(
                 "S6 Brillanz/Waerme",
                 [
-                    ("backend/core/musical_goals/musical_goals_metrics.py", [r"class\s+BrillanzMetric", r"class\s+WaermeMetric"]),
+                    (
+                        "backend/core/musical_goals/musical_goals_metrics.py",
+                        [r"class\s+BrillanzMetric", r"class\s+WaermeMetric"],
+                    ),
                 ],
             )
             result["evidence"] = "Brillanz- und Wärme-Metriken vorhanden"
@@ -687,7 +701,10 @@ def test_studio_2026_criteria(criterion: dict[str, Any]):
             assert_code_contract(
                 "S11 Emotional Arc",
                 [
-                    ("backend/core/emotional_arc_preservation.py", [r"def\s+correct_emotional_arc", r"measure_emotional_arc"]),
+                    (
+                        "backend/core/emotional_arc_preservation.py",
+                        [r"def\s+correct_emotional_arc", r"measure_emotional_arc"],
+                    ),
                     ("backend/core/unified_restorer_v3.py", [r"correct_emotional_arc"]),
                 ],
             )
@@ -698,7 +715,10 @@ def test_studio_2026_criteria(criterion: dict[str, Any]):
                 "S12 Artifact Detection",
                 [
                     ("plugins/artifact_detection_plugin.py", [r"detect_artifacts", r"ArtifactDetectionPlugin"]),
-                    ("backend/core/introduced_artifact_detector.py", [r"class\s+IntroducedArtifactDetector|def\s+get_iad"]),
+                    (
+                        "backend/core/introduced_artifact_detector.py",
+                        [r"class\s+IntroducedArtifactDetector|def\s+get_iad"],
+                    ),
                 ],
             )
             result["evidence"] = "Artefakt-Detektion über Plugin + Core-Detector vorhanden"
@@ -833,9 +853,38 @@ def test_pmgg_no_rollback_skipping():
         pytest.fail(f"PMGG rollback check failed: {e}")
 
 
+@pytest.mark.ml
+@pytest.mark.slow
+@pytest.mark.timeout(600)
 def test_amrb_minimum_oqs_80():
-    """Gate G6: AMRB achieves OQS >= 80 on at least 1 scenario."""
-    pytest.skip("Gate G6: Requires full AMRB benchmark run (heavy test)")
+    """Gate G6: AMRB achieves OQS >= 80 on at least one scenario.
+
+    This is intentionally classified as heavy (`ml` + `slow`), so default test
+    runs deselect it via root `conftest.py`. In heavy runs it executes a real
+    AMRB benchmark instead of using a hard skip.
+    """
+    from benchmarks.musical_restoration_benchmark import BenchmarkConfig, run_benchmark
+
+    def _aurik_restoration_fn(audio, sr):
+        from backend.core.unified_restorer_v3 import get_restorer
+
+        restorer = get_restorer()
+        result = restorer.restore(audio, sr)
+        return result.audio
+
+    report = run_benchmark(
+        BenchmarkConfig(
+            restoration_fn=_aurik_restoration_fn,
+            system_name="Aurik 9 UAT Gate G6",
+            n_items_per_scenario=1,
+            verbose=False,
+        )
+    )
+    best_oqs = max((res.mushra_mean for res in report.scenario_results.values()), default=0.0)
+    assert best_oqs >= 80.0, (
+        f"Gate G6 failed: best scenario OQS={best_oqs:.1f} < 80.0 "
+        f"(overall={report.overall_score:.1f}, passed={report.n_passed}/{report.n_scenarios})"
+    )
 
 
 def test_hybrid_release_mode_determinism():

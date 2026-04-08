@@ -1,7 +1,3 @@
-import logging
-
-logger = logging.getLogger(__name__)
-
 """
 vocal_spectral_inpainting.py - Intelligent Spectral Gap Filling (Phase 2.2)
 
@@ -16,11 +12,13 @@ Version: 1.0.0
 Date: 9. Februar 2026
 """
 
+import logging
 import warnings
 
 import numpy as np
 from scipy.signal import istft, stft
 
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
@@ -240,6 +238,9 @@ class SpectralGapFiller:
         elif len(audio_filled) > len(audio):
             audio_filled = audio_filled[: len(audio)]
 
+        audio_filled = np.clip(np.nan_to_num(audio_filled, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(
+            audio.dtype
+        )
         return audio_filled
 
     def _fill_harmonic_aware(
@@ -380,6 +381,9 @@ class VocalSpectralInpainting:
             "f0_detected": harmonic_info["f0"] if harmonic_info else 0.0,
         }
 
+        audio_inpainted = np.clip(np.nan_to_num(audio_inpainted, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(
+            audio.dtype
+        )
         return audio_inpainted, report
 
 
@@ -400,6 +404,7 @@ if __name__ == "__main__":
 
     # Load audio
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -416,8 +421,8 @@ if __name__ == "__main__":
     logger.info(str("\n" + "=" * 70))
     logger.info("VOCAL SPECTRAL INPAINTING REPORT")
     logger.info(str("=" * 70))
-    logger.info("Gaps detected: %s", report['gaps_detected'])
-    logger.info("Gaps filled:   %s", report['gaps_filled'])
+    logger.info("Gaps detected: %s", report["gaps_detected"])
+    logger.info("Gaps filled:   %s", report["gaps_filled"])
 
     if report["gaps_detected"] > 0:
         logger.info("\nGap Ranges:")
@@ -426,7 +431,7 @@ if __name__ == "__main__":
 
     if report["harmonic_awareness"]:
         logger.info("\nHarmonic Awareness: Enabled")
-        logger.info("  F0 detected: %.1f Hz", report['f0_detected'])
+        logger.info("  F0 detected: %.1f Hz", report["f0_detected"])
 
     logger.info(str("=" * 70))
 

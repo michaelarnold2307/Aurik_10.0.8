@@ -8,20 +8,23 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ".")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── Enable full DEBUG logging BEFORE any aurik import ─────────────────────
-_LOG_FILE = "logs/debug_restoration_run.log"
-os.makedirs("logs", exist_ok=True)
+_LOG_FILE = PROJECT_ROOT / "logs" / "debug_restoration_run.log"
+_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 root = logging.getLogger()
 root.setLevel(logging.DEBUG)
 
 fmt = logging.Formatter("[%(asctime)s] %(levelname)-7s %(name)s:%(lineno)d  %(message)s")
 
-fh = logging.FileHandler(_LOG_FILE, mode="w", encoding="utf-8")
+fh = logging.FileHandler(str(_LOG_FILE), mode="w", encoding="utf-8")
 fh.setLevel(logging.DEBUG)
 fh.setFormatter(fmt)
 root.addHandler(fh)
@@ -37,8 +40,13 @@ for noisy in ("matplotlib", "PIL", "urllib3", "numba", "filelock"):
 
 logger = logging.getLogger("debug_run")
 
-INPUT_FILE = "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3"
-OUTPUT_FILE = "output/Elke_Best_debug_restored.wav"
+_input_candidates = [
+    os.environ.get("AURIK_DEBUG_INPUT", "").strip(),
+    str(PROJECT_ROOT / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3"),
+    str(PROJECT_ROOT / "temp_repro" / "repro_input.mp3"),
+]
+INPUT_FILE = next((p for p in _input_candidates if p and os.path.exists(p)), _input_candidates[-1])
+OUTPUT_FILE = str(PROJECT_ROOT / "output" / "Elke_Best_debug_restored.wav")
 MODE = "Restoration"
 
 logger.info("=" * 80)
@@ -108,4 +116,4 @@ import soundfile as sf
 os.makedirs(os.path.dirname(os.path.abspath(OUTPUT_FILE)), exist_ok=True)
 sf.write(OUTPUT_FILE, result.audio, _TARGET_SR, subtype="PCM_24")
 logger.info("Saved: %s", OUTPUT_FILE)
-logger.info("Full debug log: %s", os.path.abspath(_LOG_FILE))
+logger.info("Full debug log: %s", str(_LOG_FILE.resolve()))

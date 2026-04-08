@@ -99,6 +99,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.lyrics_load_file_first": "🎵 Lyrics-Timeline: Bitte zuerst eine Audiodatei laden.",
         "status.lyrics_transcribing": "🎵 Lyrics-Timeline-Overlay: Transkription läuft …",
         "status.lyrics_unavailable": "🎵 Lyrics-Timeline: Transkription nicht verfügbar.",
+        "status.lyrics_overlay_shown": "🎵 Lautanalyse eingeblendet  ·  {count} Abschnitte  ·  via {source}",
         "status.drop_release_to_load": "🎵  Datei loslassen, um sie zu laden …",
         "status.analyzing_short": "🔍 Analysiere…",
         "status.analyzing_wait": "Wird analysiert …",
@@ -118,6 +119,24 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.processing_reassure_analysis": "Aurik prüft die Aufnahme weiter sorgfältig",
         "status.processing_reassure_long_phase": "Rechenintensive Phase aktiv - Fortschritt läuft stabil weiter",
         "status.processing_reassure_finalize": "Aurik finalisiert das Ergebnis und sichert alle Qualitätsprüfungen",
+        "status.stopping_safely": "Stoppe sicher …",
+        "status.stopping_processing": "Stoppe laufende Verarbeitung …",
+        "status.analysis_finalizing": "⏳ Analyse wird finalisiert …",
+        "status.defect_scan_progress_text": "Schadensanalyse: {percent}\u202f%",
+        "status.era_genre_detecting": "Ära & Genre werden erkannt …",
+        "status.saved_prefix": "✅ Gespeichert",
+        "status.saved_file": "✅ Gespeichert: {file}",
+        "status.kmv_refinement_step": "KI-Nachbearbeitung: Schritt {step} von {total}  ·  {phase}",
+        "status.processing_limited": "⚠ Verarbeitung mit Einschränkungen: {reason}",
+        "status.phase_active_icon": "⚙️ {phase}",
+        "status.open_folder_failed": "Ordner konnte nicht geöffnet werden: {folder}",
+        "status.help_open_failed": "Hilfe-Datei konnte nicht geöffnet werden: {file}",
+        "status.help_not_found": "Dokumentation nicht gefunden: {file}",
+        "status.playback_stop_failed": "⚠ Wiedergabe konnte nicht gestoppt werden.",
+        "status.processing_transition_wait": "Bitte kurz warten — Aurik wechselt gerade den Verarbeitungszustand.",
+        "status.mode_selected_studio": "🎯 Studio 2026 gewählt: moderner Klang, etwas längere Laufzeit.",
+        "status.mode_selected_restoration": "💿 Restoration gewählt: sichere Standardwahl, originalgetreu und schonend.",
+        "status.mode_recommendation_override": "Aurik hätte {recommended} empfohlen. Deine Auswahl {selected} wird wie gewünscht genutzt.",
         "status.processing_files": "Verarbeite {count} Datei(en) …",
         "status.processing_item": "Verarbeite: {file}",
         "status.completed": "Abgeschlossen",
@@ -127,7 +146,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.completed_failed_summary": "❌  {failed} konnten nicht verarbeitet werden – Protokoll prüfen",
         "status.loading_file": "📂  Wird geladen: {file} …",
         "status.invalid_file": "⚠️ Ungültige Datei: {file}",
-        "status.load_failed_with_reason": "⚠️ Datei konnte nicht geladen werden: {file}\n{error}",
+        "status.load_failed_with_reason": "⚠️ Datei konnte nicht geladen werden: {file}\nUrsache: {error}\n→ Prüfen Sie, ob die Datei beschädigt ist oder ein unterstütztes Format hat (WAV, FLAC, MP3, OGG, AIFF, M4A).",
         "status.import_done": "✅  Import abgeschlossen",
         "status.defect_scan_done": "✅  Schadensanalyse abgeschlossen",
         "status.load_error_short": "⚠️ Ladefehler: {error}",
@@ -138,6 +157,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.processing_error_short": "❌  Verarbeitungsfehler – {file}",
         "status.analysis_done_prompt": "✅ Analyse abgeschlossen: {file}  –  Jetzt einen der Buttons drücken!",
         "status.export_summary": "Export: {count} Datei(en) → {ext}",
+        "status.export_failed": "⚠ Export fehlgeschlagen",
         # UI / Tabs
         "ui.tab_waveform": "Wellenform",
         "ui.tab_spectrogram": "Spektrogramm",
@@ -171,8 +191,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.defect_status_done": "✓ BEREINIGT",
         "ui.export_format": "Ausgabe-Format:",
         "ui.export_pick_folder": "Zielordner wählen →",
-        "ui.settings_mode_restoration": "💿  Restoration — original-getreu",
-        "ui.settings_mode_studio": "🎯  Studio 2026 — moderner Highend-Klang",
+        "ui.settings_mode_restoration": "💿  Restoration — sicher & originalgetreu",
+        "ui.settings_mode_studio": "🎯  Studio 2026 — modern & kraftvoll",
         "ui.defects_detected_title": "erkannte Schäden:",
         "ui.export_dialog_title": "💾 Speicher-Einstellungen",
         "ui.export_dialog_intro": "<b>{count} Datei(en) werden gespeichert.</b><br><small>Wählen Sie Format und Qualität:</small>",
@@ -187,8 +207,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.album_import_confirm_body": "Gefunden: {count} Audiodatei(en)\nUnterordner: {subdirs}\n\nAlle Dateien zur Warteschlange hinzufügen?",
         "ui.album_mode_title": "Verarbeitungsmodus für Album",
         "ui.album_mode_question": "<b>Welchen Modus für alle Album-Tracks verwenden?</b>",
-        "ui.album_mode_restoration": "💿  Restoration – original-getreu, behutsam",
-        "ui.album_mode_studio": "🎯  Studio 2026 – moderner Highend-Klang",
+        "ui.album_mode_restoration": "💿  Restoration – sicher, originalgetreu, behutsam",
+        "ui.album_mode_studio": "🎯  Studio 2026 – modern, klar, kraftvoll",
         "ui.export_cfg_title": "💾  Exporteinstellungen",
         "ui.export_cfg_pick_file": "💾  Exportdatei festlegen",
         "ui.export_cfg_source": "Quelldatei: {name}",
@@ -199,7 +219,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.export_cfg_cancel": "Abbrechen",
         "ui.export_cfg_continue": "✅  Los geht's!",
         "dialog.export_done_body": "✅ {exported} Datei(en) als {fmt} nach\n{output_dir}\nexportiert.",
-        "dialog.export_done_errors": "⚠️ {count} Fehler:",
+        "dialog.export_done_errors": "⚠️ {count} Datei(en) konnten nicht exportiert werden:\nUrsache: Siehe Details unten. Prüfen Sie den Ausgabeordner und den verfügbaren Speicherplatz.",
         "ui.export_cfg_choose_storage": "Speicherort wählen",
         "ui.export_cfg_output": "➡️  Ausgabedatei: {path}",
         "ui.waveform_loading_title": "📂  Datei wird geladen …",
@@ -371,17 +391,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.no_files_title": "Keine Dateien",
         "dialog.no_files_body": "Bitte fügen Sie zuerst Dateien zur Warteschlange hinzu.",
         "dialog.processing_running_title": "Verarbeitung läuft",
-        "dialog.processing_running_body": "Verarbeitung läuft bereits!",
+        "dialog.processing_running_body": "Aurik restauriert gerade eine Audiodatei.\nBitte warten Sie, bis der aktuelle Vorgang abgeschlossen ist, bevor Sie einen neuen starten.",
         "dialog.no_pending_title": "Keine ausstehenden Dateien",
-        "dialog.no_pending_body": "Alle Dateien wurden bereits verarbeitet.",
+        "dialog.no_pending_body": "Alle Dateien in der Warteschlange wurden bereits verarbeitet.\n→ Fügen Sie neue Dateien hinzu, um weitere Restaurierungen zu starten.",
         "dialog.low_ram_title": "Zu wenig Arbeitsspeicher",
         "dialog.low_ram_body": "Es stehen nur {avail} GB freier RAM zur Verfügung.\n\nAurik benötigt mindestens 6 GB freien RAM für die Restaurierung.\n\nBitte schließen Sie andere Programme (Browser, VS Code …) und versuchen Sie es erneut.",
         "dialog.timeout_title": "Zeitüberschreitung",
         "dialog.timeout_body": "Die Verarbeitung hat das Zeitlimit überschritten und wurde abgebrochen.\n\nBitte starten Sie Aurik neu und versuchen Sie es erneut.",
         "dialog.queue_busy_title": "Verarbeitung läuft",
-        "dialog.queue_busy_body": "Die Warteschlange kann während der Verarbeitung nicht geleert werden.",
+        "dialog.queue_busy_body": "Die Warteschlange wird gerade verarbeitet und kann jetzt nicht geleert werden.\n→ Warten Sie bis zur Fertigstellung oder brechen Sie die Verarbeitung zuerst ab (Stopp-Button).",
         "dialog.no_processed_title": "Keine verarbeiteten Dateien",
         "dialog.no_processed_body": "Es wurden noch keine Dateien verarbeitet.\nBitte zuerst eine Datei restaurieren, dann exportieren.",
+        # Startfehler-Dialog
+        "dialog.start_error_title": "Aurik \u2014 Startfehler",
+        "dialog.start_error_text": "\u26a0 Aurik konnte nicht vollst\u00e4ndig starten.",
+        "dialog.start_error_label": "\u26a0 Aurik konnte nicht vollst\u00e4ndig starten.\n\u2192 Anwendung neu starten oder erneut installieren.",
+        "dialog.start_error_info": (
+            "Die Restaurierungs-Funktion ist nicht verf\u00fcgbar.\n\n"
+            "Ursache: Ein internes Modul konnte nicht geladen werden.\n\n"
+            "Was Sie jetzt tun k\u00f6nnen:\n"
+            "  \u2022 Starten Sie Aurik neu.\n"
+            "  \u2022 Falls das Problem bleibt: Installieren Sie Aurik erneut.\n"
+            "  \u2022 Wenden Sie sich an den Support, falls das Problem weiterhin auftritt.\n\n"
+            "Die Klang-Analyse und Restaurierung sind bis zum Neustart deaktiviert."
+        ),
+        # OOM-Recovery-Dialog
+        "dialog.oom_recovery_title": "Aurik \u2014 Unterbrochene Restaurierung gefunden",
+        "dialog.oom_recovery_text": "Eine unterbrochene Restaurierung wurde gefunden.",
+        "dialog.oom_recovery_info": (
+            "Datei: {file}\n"
+            "Fortschritt: {n_done} von {n_total} Phasen abgeschlossen\n"
+            "Fehlgeschlagene Phase: {fail_phase}\n"
+            "Ursache: Speicher\u00fcberlauf\n\n"
+            "M\u00f6chten Sie die Restaurierung fortsetzen?\n"
+            "Die bisherige Arbeit bleibt erhalten."
+        ),
+        "dialog.oom_recovery_btn_resume": "Fortsetzen",
+        "dialog.oom_recovery_btn_discard": "Verwerfen",
+        # Schlie\u00dfen w\u00e4hrend Verarbeitung
+        "dialog.close_while_processing_title": "Verarbeitung l\u00e4uft noch",
+        "dialog.close_while_processing_body": (
+            "Aurik verarbeitet gerade Audio.\n\n"
+            "Beim Schlie\u00dfen wird der laufende Job sicher beendet \u2014 das Zwischenergebnis geht verloren.\n\n"
+            "Trotzdem schlie\u00dfen?"
+        ),
         # Materialerkennung
         "material.tape": "Kassette (Band)",
         "material.reel_tape": "Spulenband",
@@ -401,6 +454,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         # Fehler
         "error.file_unreadable": "Diese Datei kann nicht geöffnet werden. Möglicherweise ist sie beschädigt oder das Format wird nicht unterstützt.",
         "error.export_failed": "Die Datei konnte nicht gespeichert werden. Bitte prüfen Sie, ob genügend Speicherplatz vorhanden ist.",
+        "error.cause_audio_loader_none": "Audio-Lader hat keine Daten zurückgegeben.",
+        "error.cause_audio_loader_error": "Audio-Lader lieferte einen internen Fehler.",
+        "error.cause_bridge_symbol_unavailable": "Backend-Schnittstelle ist nicht vollständig verfügbar.",
+        "error.cause_audio_loader_missing": "Kein Audio-Lader verfügbar (Bridge und file_import fehlen).",
         "error.model_unavailable": "Die KI-Unterstützung ist gerade nicht verfügbar. Die klassische Methode wird genutzt — das Ergebnis ist trotzdem sehr gut.",
         "error.ml_model_unavailable": "Die KI-Unterstützung ist gerade nicht verfügbar. Die klassische Methode wird genutzt — das Ergebnis ist trotzdem sehr gut.",
         "error.ram_low": "Die Datei ist sehr groß. Verarbeitung wird in Abschnitten durchgeführt — das dauert etwas länger.",
@@ -503,6 +560,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.lyrics_load_file_first": "🎵 Lyrics timeline: Please load an audio file first.",
         "status.lyrics_transcribing": "🎵 Lyrics timeline overlay: Transcribing …",
         "status.lyrics_unavailable": "🎵 Lyrics timeline: Transcription unavailable.",
+        "status.lyrics_overlay_shown": "🎵 Loudness analysis shown  ·  {count} sections  ·  via {source}",
         "status.drop_release_to_load": "🎵  Release file to load …",
         "status.analyzing_short": "🔍 Analyzing…",
         "status.analyzing_wait": "Analyzing …",
@@ -519,9 +577,27 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.path_copied": "📋 Path copied: {file}",
         "status.processing_running": "Processing in progress …",
         "status.processing_running_spinner": "Processing in progress  {spin}",
-        "status.processing_reassure_analysis": "Aurik is still carefully analyzing the recording",
-        "status.processing_reassure_long_phase": "A compute-intensive phase is active - progress is continuing steadily",
-        "status.processing_reassure_finalize": "Aurik is finalizing the result and completing all quality checks",
+        "status.processing_reassure_analysis": "Analysis running — please wait a moment",
+        "status.processing_reassure_long_phase": "AI model computing — this may take a while",
+        "status.processing_reassure_finalize": "Almost done — quality check running",
+        "status.stopping_safely": "Stopping safely …",
+        "status.stopping_processing": "Stopping active processing …",
+        "status.analysis_finalizing": "⏳ Finalizing analysis …",
+        "status.defect_scan_progress_text": "Defect scan: {percent}\u202f%",
+        "status.era_genre_detecting": "Detecting era & genre …",
+        "status.saved_prefix": "✅ Saved",
+        "status.saved_file": "✅ Saved: {file}",
+        "status.kmv_refinement_step": "AI refinement: step {step} of {total}  ·  {phase}",
+        "status.processing_limited": "⚠ Processing with limitations: {reason}",
+        "status.phase_active_icon": "⚙️ {phase}",
+        "status.open_folder_failed": "Could not open folder: {folder}",
+        "status.help_open_failed": "Could not open help file: {file}",
+        "status.help_not_found": "Documentation not found: {file}",
+        "status.playback_stop_failed": "⚠ Playback could not be stopped.",
+        "status.processing_transition_wait": "Please wait — Aurik is switching processing state.",
+        "status.mode_selected_studio": "🎯 Studio 2026 selected: modern sound, slightly longer runtime.",
+        "status.mode_selected_restoration": "💿 Restoration selected: safe default, original-faithful and gentle.",
+        "status.mode_recommendation_override": "Aurik would have recommended {recommended}. Your selection {selected} will be used as requested.",
         "status.processing_files": "Processing {count} file(s) …",
         "status.processing_item": "Processing: {file}",
         "status.completed": "Completed",
@@ -531,7 +607,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.completed_failed_summary": "❌  {failed} file(s) could not be processed – check log",
         "status.loading_file": "📂  Loading: {file} …",
         "status.invalid_file": "⚠️ Invalid file: {file}",
-        "status.load_failed_with_reason": "⚠️ File could not be loaded: {file}\n{error}",
+        "status.load_failed_with_reason": "⚠️ File could not be loaded: {file}\nReason: {error}\n→ Check that the file is not corrupted and uses a supported format (WAV, FLAC, MP3, OGG, AIFF, M4A).",
         "status.import_done": "✅  Import completed",
         "status.defect_scan_done": "✅  Defect analysis completed",
         "status.load_error_short": "⚠️ Load error: {error}",
@@ -542,6 +618,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.processing_error_short": "❌  Processing error – {file}",
         "status.analysis_done_prompt": "✅ Analysis complete: {file}  –  Press one of the buttons now!",
         "status.export_summary": "Export: {count} file(s) → {ext}",
+        "status.export_failed": "⚠ Export failed",
         # UI / Tabs
         "ui.tab_waveform": "Waveform",
         "ui.tab_spectrogram": "Spectrogram",
@@ -603,7 +680,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.export_cfg_cancel": "Cancel",
         "ui.export_cfg_continue": "✅  Let's go!",
         "dialog.export_done_body": "✅ {exported} file(s) exported as {fmt} to\n{output_dir}.",
-        "dialog.export_done_errors": "⚠️ {count} errors:",
+        "dialog.export_done_errors": "⚠️ {count} file(s) could not be exported:\nReason: See details below. Check the output folder and available disk space.",
         "ui.export_cfg_choose_storage": "Select storage location",
         "ui.export_cfg_output": "➡️  Output file: {path}",
         "ui.waveform_loading_title": "📂  Loading file …",
@@ -775,17 +852,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.no_files_title": "No files",
         "dialog.no_files_body": "Please add files to the queue first.",
         "dialog.processing_running_title": "Processing in progress",
-        "dialog.processing_running_body": "Processing is already running!",
+        "dialog.processing_running_body": "Aurik is currently restoring an audio file.\nPlease wait until the current operation is finished before starting a new one.",
         "dialog.no_pending_title": "No pending files",
-        "dialog.no_pending_body": "All files have already been processed.",
+        "dialog.no_pending_body": "All files in the queue have already been processed.\n→ Add new files to start further restorations.",
         "dialog.low_ram_title": "Insufficient memory",
         "dialog.low_ram_body": "Only {avail} GB of free RAM is available.\n\nAurik requires at least 6 GB of free RAM for restoration.\n\nPlease close other applications (browser, VS Code …) and try again.",
         "dialog.timeout_title": "Timeout",
         "dialog.timeout_body": "Processing exceeded the time limit and was aborted.\n\nPlease restart Aurik and try again.",
         "dialog.queue_busy_title": "Processing in progress",
-        "dialog.queue_busy_body": "Queue cannot be cleared while processing is running.",
+        "dialog.queue_busy_body": "The queue is currently being processed and cannot be cleared now.\n→ Wait for completion or stop the current processing first (Stop button).",
         "dialog.no_processed_title": "No processed files",
         "dialog.no_processed_body": "No files have been processed yet.\nPlease restore a file first, then export.",
+        # Start-error dialog
+        "dialog.start_error_title": "Aurik \u2014 Startup Error",
+        "dialog.start_error_text": "\u26a0 Aurik could not start completely.",
+        "dialog.start_error_label": "\u26a0 Aurik could not start completely.\n\u2192 Restart the application or reinstall.",
+        "dialog.start_error_info": (
+            "The restoration function is unavailable.\n\n"
+            "Cause: An internal module could not be loaded.\n\n"
+            "What you can do:\n"
+            "  \u2022 Restart Aurik.\n"
+            "  \u2022 If the problem persists: Reinstall Aurik.\n"
+            "  \u2022 Contact support if the issue continues.\n\n"
+            "Audio analysis and restoration are disabled until restart."
+        ),
+        # OOM-Recovery dialog
+        "dialog.oom_recovery_title": "Aurik \u2014 Interrupted Restoration Found",
+        "dialog.oom_recovery_text": "An interrupted restoration was found.",
+        "dialog.oom_recovery_info": (
+            "File: {file}\n"
+            "Progress: {n_done} of {n_total} phases completed\n"
+            "Failed phase: {fail_phase}\n"
+            "Cause: Memory overflow\n\n"
+            "Would you like to resume the restoration?\n"
+            "Your previous progress will be preserved."
+        ),
+        "dialog.oom_recovery_btn_resume": "Resume",
+        "dialog.oom_recovery_btn_discard": "Discard",
+        # Close while processing
+        "dialog.close_while_processing_title": "Processing Still Running",
+        "dialog.close_while_processing_body": (
+            "Aurik is currently processing audio.\n\n"
+            "Closing will safely stop the running job \u2014 intermediate results will be lost.\n\n"
+            "Close anyway?"
+        ),
         # Material
         "material.tape": "Cassette Tape",
         "material.reel_tape": "Reel-to-Reel Tape",
@@ -805,6 +915,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         # Errors
         "error.file_unreadable": "This file cannot be opened. It may be corrupted or the format is not supported.",
         "error.export_failed": "The file could not be saved. Please check if there is enough disk space.",
+        "error.cause_audio_loader_none": "Audio loader returned no data.",
+        "error.cause_audio_loader_error": "Audio loader returned an internal error.",
+        "error.cause_bridge_symbol_unavailable": "Backend bridge interface is not fully available.",
+        "error.cause_audio_loader_missing": "No audio loader available (bridge and file_import missing).",
         "error.model_unavailable": "AI support is currently unavailable. The classical method is used — the result is still very good.",
         "error.ml_model_unavailable": "AI support is currently unavailable. The classical method is used — the result is still very good.",
         "error.musical_goal_regression": "Restoration degraded audio quality in one area. The best intermediate result is used.",

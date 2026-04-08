@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import soundfile as sf
 from scipy import signal as scipy_signal
 
 from backend.core.forensics.signatures import ERA_SIGNATURES, EraType, MediaType
@@ -170,6 +169,7 @@ class DatasetGenerator:
         for audio_file in audio_files[:100]:  # Limit auf 100 für Performance
             try:
                 from backend.file_import import load_audio_file
+
                 _af_res = load_audio_file(str(audio_file))
                 if _af_res is None or _af_res.get("error") or _af_res["audio"] is None:
                     continue

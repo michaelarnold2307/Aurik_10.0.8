@@ -204,10 +204,10 @@ if __name__ == "__main__":
         perf = QualityModeConfig.get_expected_performance()
 
         logger.debug("\nMode: %s", mode.value.upper())
-        logger.debug("  RT Factor: %s×", perf['realtime_factor'])
-        logger.debug("  Score: %s", perf['expected_score'])
-        logger.debug("  Natürlichkeit: %s", perf['natuerlichkeit'])
-        logger.debug("  %s", perf['description'])
+        logger.debug("  RT Factor: %s×", perf["realtime_factor"])
+        logger.debug("  Score: %s", perf["expected_score"])
+        logger.debug("  Natürlichkeit: %s", perf["natuerlichkeit"])
+        logger.debug("  %s", perf["description"])
 
         # Test phase decisions
         logger.debug("\n  ML-Enabled Phases:")
@@ -216,7 +216,7 @@ if __name__ == "__main__":
             if config:
                 enabled = is_phase_ml_enabled(phase_num)
                 status = "✓" if enabled else "✗"
-                logger.debug("    %s Phase %d: %s", status, phase_num, config['ml_model'])
+                logger.debug("    %s Phase %d: %s", status, phase_num, config["ml_model"])
 
     logger.debug("\n" + "=" * 50)
     logger.debug("✅ Quality Mode System initialized")

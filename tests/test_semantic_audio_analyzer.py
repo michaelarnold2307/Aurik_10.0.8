@@ -209,6 +209,18 @@ class TestSemanticAudioAnalyzer:
 
         assert 0.0 <= profile.sustained_percentage <= 1.0
 
+    def test_mode_alias_studio2026_is_accepted(self):
+        """studio2026 alias must be accepted in side semantic path."""
+        audio = np.random.randn(self.sr * 2)
+        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
+        assert isinstance(profile, SemanticProfile)
+
+    def test_mode_studio2026_is_accepted(self):
+        """studio2026 mode must be accepted in semantic path."""
+        audio = np.random.randn(self.sr * 2)
+        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
+        assert isinstance(profile, SemanticProfile)
+
     # ========================================================================
     # FREQUENCY ANALYSIS TESTS
     # ========================================================================
@@ -307,7 +319,7 @@ class TestSemanticAudioAnalyzer:
         """Test studio notes are generated."""
         audio = np.random.randn(self.sr * 2)
 
-        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         assert isinstance(profile.studio_notes, str)
         assert len(profile.studio_notes) > 0
@@ -318,7 +330,7 @@ class TestSemanticAudioAnalyzer:
         audio = np.random.randn(self.sr * 2)
 
         profile_rest = self.analyzer.analyze(audio, self.sr, aurik_mode="restoration")
-        profile_studio = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        profile_studio = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         # Notes should mention different concepts
         assert "RESTORATION" in profile_rest.restoration_notes
@@ -446,7 +458,7 @@ class TestSemanticAudioAnalyzer:
         t = np.linspace(0, 3, self.sr * 3)
         audio = np.random.randn(len(t)) * 0.3
 
-        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="highend_studio")
+        profile = self.analyzer.analyze(audio, self.sr, aurik_mode="studio2026")
 
         # Verify all components work together
         assert len(profile.detected_instruments) > 0
@@ -488,7 +500,7 @@ class TestConvenienceFunction:
         audio = np.random.randn(self.sr * 2)
 
         profile_rest = analyze_semantic_content(audio, self.sr, aurik_mode="restoration")
-        profile_studio = analyze_semantic_content(audio, self.sr, aurik_mode="highend_studio")
+        profile_studio = analyze_semantic_content(audio, self.sr, aurik_mode="studio2026")
 
         assert isinstance(profile_rest, SemanticProfile)
         assert isinstance(profile_studio, SemanticProfile)

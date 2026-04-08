@@ -165,6 +165,8 @@ class StereoEnhancementPhaseV2(PhaseInterface):
                     "reason": "mono_signal",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Stereo Enhancement skipped (Mono signal)"],
             )
@@ -182,6 +184,8 @@ class StereoEnhancementPhaseV2(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "stereo_width_before": 0.0,
@@ -262,6 +266,8 @@ class StereoEnhancementPhaseV2(PhaseInterface):
                 "band_splits_hz": self.BAND_SPLITS,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "stereo_width_before": float(initial_width),
@@ -576,9 +582,9 @@ if __name__ == "__main__":
     phase = StereoEnhancementPhaseV2()
 
     for material in materials:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("Testing with material: %s", material.name)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(test_audio, sample_rate, material)
 
@@ -587,19 +593,19 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
             )
-            logger.debug("   Stereo Width Before: %.3f", result.metrics['stereo_width_before'])
-            logger.debug("   Stereo Width After: %.3f", result.metrics['stereo_width_after'])
-            logger.debug("   Width Increase: %.1f%%", result.metrics['width_increase_percent'])
-            logger.debug("   Correlation Before: %.3f", result.metrics['correlation_before'])
-            logger.debug("   Correlation After: %.3f", result.metrics['correlation_after'])
-            logger.debug("   Band 0 (Bass) Width Increase: %.1f%%", result.metrics['band_0_width_increase'])
-            logger.debug("   Band 1 (Low-Mid) Width Increase: %.1f%%", result.metrics['band_1_width_increase'])
-            logger.debug("   Band 2 (Mid) Width Increase: %.1f%%", result.metrics['band_2_width_increase'])
-            logger.debug("   Band 3 (High) Width Increase: %.1f%%", result.metrics['band_3_width_increase'])
+            logger.debug("   Stereo Width Before: %.3f", result.metrics["stereo_width_before"])
+            logger.debug("   Stereo Width After: %.3f", result.metrics["stereo_width_after"])
+            logger.debug("   Width Increase: %.1f%%", result.metrics["width_increase_percent"])
+            logger.debug("   Correlation Before: %.3f", result.metrics["correlation_before"])
+            logger.debug("   Correlation After: %.3f", result.metrics["correlation_after"])
+            logger.debug("   Band 0 (Bass) Width Increase: %.1f%%", result.metrics["band_0_width_increase"])
+            logger.debug("   Band 1 (Low-Mid) Width Increase: %.1f%%", result.metrics["band_1_width_increase"])
+            logger.debug("   Band 2 (Mid) Width Increase: %.1f%%", result.metrics["band_2_width_increase"])
+            logger.debug("   Band 3 (High) Width Increase: %.1f%%", result.metrics["band_3_width_increase"])
         else:
             logger.debug("❌ Processing failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Stereo Enhancement v2.0 Test Complete!")
     logger.debug("=" * 80)
     logger.debug("Algorithm: multiband_ms_processing_v2")

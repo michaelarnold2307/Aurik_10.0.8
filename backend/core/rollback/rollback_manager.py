@@ -317,8 +317,8 @@ if __name__ == "__main__":
     # List snapshots
     logger.debug("\n2. List snapshots:")
     for i, snapshot_info in enumerate(manager.list_snapshots()):
-        logger.debug("   [%s] %s - %s", i, snapshot_info['name'], snapshot_info['timestamp'])
-        logger.debug("       Musical goals: %s", snapshot_info['musical_goals'])
+        logger.debug("   [%s] %s - %s", i, snapshot_info["name"], snapshot_info["timestamp"])
+        logger.debug("       Musical goals: %s", snapshot_info["musical_goals"])
 
     # Rollback to 'after_noise_reduction' (violations detected)
     logger.debug("\n3. Rollback (violation detected in 'after_enhancement'):")
@@ -334,6 +334,6 @@ if __name__ == "__main__":
     # Rollback history
     logger.debug("\n4. Rollback history:")
     for entry in manager.get_rollback_history():
-        logger.debug("   %s → %s: %s", entry['from_snapshot'], entry['to_snapshot'], entry['reason'])
+        logger.debug("   %s → %s: %s", entry["from_snapshot"], entry["to_snapshot"], entry["reason"])
 
     logger.debug("\n=== Test complete ===")

@@ -196,7 +196,7 @@ def export_audio(
         if metadata:
             _write_metadata_sidecar(export_path, metadata)
 
-        logger.debug("✓ Exported: %s (%s)", export_path, fmt_info['description'])
+        logger.debug("✓ Exported: %s (%s)", export_path, fmt_info["description"])
         return export_path
 
     except Exception as e:
@@ -252,7 +252,9 @@ def export_multi_version(
             logger.debug("⚠️ Export failed for format '%s': %s", fmt, e)
             results[fmt] = None
 
-    logger.debug("✓ Multi-version export complete: %s / %s formats", len([p for p in results.values() if p]), len(formats))
+    logger.debug(
+        "✓ Multi-version export complete: %s / %s formats", len([p for p in results.values() if p]), len(formats)
+    )
     return results
 
 
@@ -341,7 +343,7 @@ def export_stems(
     stems = separator.separate(audio, sr)
 
     backend_info = separator.get_backend_info()
-    logger.debug("✓ Separated using %s (%s quality)", backend_info['backend'], backend_info['quality'])
+    logger.debug("✓ Separated using %s (%s quality)", backend_info["backend"], backend_info["quality"])
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -384,7 +386,7 @@ def export_stems(
     # Print metrics
     metrics = separator.get_metrics()
     if metrics:
-        logger.debug("  Backend: %s", metrics.get('backend', 'unknown'))
-        logger.debug("  Quality: %s", metrics.get('quality', 'unknown'))
+        logger.debug("  Backend: %s", metrics.get("backend", "unknown"))
+        logger.debug("  Quality: %s", metrics.get("quality", "unknown"))
 
     return results

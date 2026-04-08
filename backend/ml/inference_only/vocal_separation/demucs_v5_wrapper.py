@@ -397,6 +397,6 @@ if __name__ == "__main__":
     stems = separator.separate(audio, sr=sr, stems=["vocals", "drums"])
 
     logger.info("✓ Demucs separation test passed")
-    logger.info("  Vocals shape: %s", stems['vocals'].shape)
-    logger.info("  Drums shape: %s", stems['drums'].shape)
+    logger.info("  Vocals shape: %s", stems["vocals"].shape)
+    logger.info("  Drums shape: %s", stems["drums"].shape)
     logger.info("  Metrics: %s", separator.get_separation_metrics())

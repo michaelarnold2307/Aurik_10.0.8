@@ -55,7 +55,7 @@ def main() -> None:
         logger.debug("  %s %s tests", name, count)
 
     logger.debug("-" * 70)
-    logger.debug("  %s %s tests", 'TOTAL', total_tests)
+    logger.debug("  %s %s tests", "TOTAL", total_tests)
     logger.debug("=" * 70)
 
     logger.debug("\nBased on previous test runs:")

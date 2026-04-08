@@ -708,4 +708,4 @@ if __name__ == "__main__":
     logger.debug("  Dropout: %s detected (%s)", result.dropout.count, result.dropout.severity)
     logger.debug("  Noise Bursts: %s detected (%s)", result.noise_burst.count, result.noise_burst.severity)
     logger.debug("\nOverall Quality: %.2f", result.overall_quality)
-    logger.debug("Priority Defects: %s", ', '.join(result.priority_defects) if result.priority_defects else 'None')
+    logger.debug("Priority Defects: %s", ", ".join(result.priority_defects) if result.priority_defects else "None")

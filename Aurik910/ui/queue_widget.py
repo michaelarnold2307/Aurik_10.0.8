@@ -103,7 +103,7 @@ class QueueWidget(QWidget):
     process_queue_requested = pyqtSignal()
     clear_queue_requested = pyqtSignal()
     remove_item_requested = pyqtSignal(str)  # item_id
-    reorder_requested = pyqtSignal(list)     # list[str] — new ID order (v9.10.111)
+    reorder_requested = pyqtSignal(list)  # list[str] — new ID order (v9.10.111)
 
     def __init__(self, queue_manager: QueueManager, parent=None):
         super().__init__(parent)

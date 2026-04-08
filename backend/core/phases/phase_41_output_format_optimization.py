@@ -197,6 +197,8 @@ class OutputFormatOptimization(PhaseInterface):
                     "version": "2.0",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -318,6 +320,8 @@ class OutputFormatOptimization(PhaseInterface):
                 "output_guard_reason": guard.reason,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -431,7 +435,7 @@ class OutputFormatOptimization(PhaseInterface):
         order = len(_coeffs)
 
         # Content-derived seed for deterministic reproducibility (§2.40)
-        _seed = int(abs(float(np.sum(np.abs(audio[:min(len(audio.ravel()), 1024)])))) * 1e5 + bit_depth) % (2**31)
+        _seed = int(abs(float(np.sum(np.abs(audio[: min(len(audio.ravel()), 1024)])))) * 1e5 + bit_depth) % (2**31)
         _rng = np.random.default_rng(seed=_seed)
 
         def _shape_channel(ch: np.ndarray) -> np.ndarray:
@@ -476,7 +480,7 @@ class OutputFormatOptimization(PhaseInterface):
 
         # Two uniform random variables summed = triangular PDF (true TPDF)
         # §2.40 Determinismus: content-derived seed for bit-exact reproducibility
-        _d41_seed = int(abs(float(np.sum(np.abs(audio[:min(len(audio.ravel()), 1024)])))) * 1e5 + bit_depth) % (2**31)
+        _d41_seed = int(abs(float(np.sum(np.abs(audio[: min(len(audio.ravel()), 1024)])))) * 1e5 + bit_depth) % (2**31)
         _rng41 = np.random.default_rng(seed=_d41_seed)
         dither1 = _rng41.uniform(-dither_amplitude, dither_amplitude, audio.shape)
         dither2 = _rng41.uniform(-dither_amplitude, dither_amplitude, audio.shape)
@@ -494,7 +498,7 @@ class OutputFormatOptimization(PhaseInterface):
         dither_amplitude = 1.0 / (2**15)
 
         # White dither — §2.40 Determinismus: content-derived seed
-        _dns_seed = int(abs(float(np.sum(np.abs(audio[:min(len(audio.ravel()), 1024)])))) * 1e5 + 1) % (2**31)
+        _dns_seed = int(abs(float(np.sum(np.abs(audio[: min(len(audio.ravel()), 1024)])))) * 1e5 + 1) % (2**31)
         _rng_ns = np.random.default_rng(seed=_dns_seed)
         dither1 = _rng_ns.uniform(-dither_amplitude, dither_amplitude, audio.shape)
         dither2 = _rng_ns.uniform(-dither_amplitude, dither_amplitude, audio.shape)
@@ -597,15 +601,17 @@ if __name__ == "__main__":
         result = phase.process(test_signal_stereo, sample_rate, material)
 
         logger.debug("✅ Professional Output Format Optimization:")
-        logger.debug("   Input: %s Hz", result.metrics['input_sample_rate'])
-        logger.debug("   Output: %s Hz, %s-bit", result.metrics['output_sample_rate'], result.metrics['output_bit_depth'])
-        logger.debug("   Resampled: %s", result.metrics['resampled'])
+        logger.debug("   Input: %s Hz", result.metrics["input_sample_rate"])
+        logger.debug(
+            "   Output: %s Hz, %s-bit", result.metrics["output_sample_rate"], result.metrics["output_bit_depth"]
+        )
+        logger.debug("   Resampled: %s", result.metrics["resampled"])
         logger.debug(
             f"   LUFS: {result.metrics['lufs_before']:.1f} → {result.metrics['lufs_after']:.1f} (target: {phase.LUFS_TARGET[material]:.1f})"
         )
-        logger.debug("   Peak Reduction: %.2f dB", result.metrics['peak_reduction_db'])
-        logger.debug("   Dithered: %s (%s)", result.metrics['dithered'], result.metrics['dither_type'])
-        logger.debug("   SNR Improvement: %.2f dB", result.metrics['snr_improvement_db'])
+        logger.debug("   Peak Reduction: %.2f dB", result.metrics["peak_reduction_db"])
+        logger.debug("   Dithered: %s (%s)", result.metrics["dithered"], result.metrics["dither_type"])
+        logger.debug("   SNR Improvement: %.2f dB", result.metrics["snr_improvement_db"])
         logger.debug(
             f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
         )

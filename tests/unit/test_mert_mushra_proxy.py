@@ -33,7 +33,6 @@ import pytest
 
 from backend.core.mert_mushra_proxy import (
     MertMushraProxy,
-    MushraProxyResult,
     _cosine_similarity,
     _extract_dsp_embedding,
     _grade,
@@ -71,7 +70,7 @@ def _make_harmonic(f0: float = 220.0, n_harmonics: int = 5, duration: float = DU
 def _add_noise(audio: np.ndarray, snr_db: float = 20.0) -> np.ndarray:
     """Add white noise at a specified SNR."""
     rng = np.random.default_rng(42)
-    rms_signal = np.sqrt(np.mean(audio ** 2) + 1e-12)
+    rms_signal = np.sqrt(np.mean(audio**2) + 1e-12)
     rms_noise = rms_signal / (10 ** (snr_db / 20))
     noise = rng.standard_normal(len(audio)).astype(np.float32) * rms_noise
     return np.clip(audio + noise, -1.0, 1.0).astype(np.float32)
@@ -187,13 +186,32 @@ class TestComponentMetrics:
         ref = _make_harmonic()
         result = estimate_mushra_proxy(ref, ref, SR)
         expected_keys = {
-            "mert_cosine", "visqol", "nsim", "artifact", "temporal",
-            "clap", "mr_stft", "iso226", "mcd", "chroma", "lufs",
-            "stereo", "transient", "nmr", "emotional_arc",
-            "vocal_formant", "vocal_hnr", "pitch_accuracy", "vocal_presence",
-            "modulation", "harmonic", "spectral_flux",
-            "perceptual_disturbance", "roughness",
-            "specific_loudness", "fluctuation",
+            "mert_cosine",
+            "visqol",
+            "nsim",
+            "artifact",
+            "temporal",
+            "clap",
+            "mr_stft",
+            "iso226",
+            "mcd",
+            "chroma",
+            "lufs",
+            "stereo",
+            "transient",
+            "nmr",
+            "emotional_arc",
+            "vocal_formant",
+            "vocal_hnr",
+            "pitch_accuracy",
+            "vocal_presence",
+            "modulation",
+            "harmonic",
+            "spectral_flux",
+            "perceptual_disturbance",
+            "roughness",
+            "specific_loudness",
+            "fluctuation",
         }
         assert expected_keys == set(result.component_scores.keys())
 
@@ -349,10 +367,22 @@ class TestSerialization:
         ref = _make_harmonic()
         result = estimate_mushra_proxy(ref, ref, SR)
         d = result.as_dict()
-        for key in ["proxy_score", "grade", "confidence", "calibration_stage",
-                    "nsim", "visqol_mos", "mr_stft_loss", "iso226_distance",
-                    "mcd_db", "chroma_corr", "lufs_diff_lu",
-                    "artifact_penalty", "temporal_consistency", "clap_cosine"]:
+        for key in [
+            "proxy_score",
+            "grade",
+            "confidence",
+            "calibration_stage",
+            "nsim",
+            "visqol_mos",
+            "mr_stft_loss",
+            "iso226_distance",
+            "mcd_db",
+            "chroma_corr",
+            "lufs_diff_lu",
+            "artifact_penalty",
+            "temporal_consistency",
+            "clap_cosine",
+        ]:
             assert key in d, f"{key} missing from as_dict()"
 
     def test_as_dict_types(self):
@@ -749,7 +779,7 @@ class TestStereoImaging:
 
     def test_swapped_channels_lower(self):
         """Collapsed stereo (mono mix) should reduce stereo imaging score vs wide stereo."""
-        rng = np.random.default_rng(42)
+        np.random.default_rng(42)
         ref_left = _make_harmonic()
         # Different frequency in right channel for wide stereo image
         ref_right = _make_harmonic(f0=330.0) * 0.7
@@ -807,7 +837,7 @@ class TestTransientShape:
 
     def test_transient_rich_signal(self):
         """Signal with clicks should detect transients."""
-        rng = np.random.default_rng(42)
+        np.random.default_rng(42)
         ref = np.zeros(int(SR * 1.0), dtype=np.float32)
         # Add clicks
         for pos in [4000, 12000, 24000, 36000]:
@@ -1205,6 +1235,7 @@ class TestVocalPresence:
     def test_presence_band_removed_lower(self):
         """Removing 1-4 kHz should reduce vocal presence score."""
         from scipy import signal as sig
+
         ref = _make_vocal_like(duration=2.0)
         # Notch out presence band
         sos = sig.butter(4, [1000, 4000], btype="bandstop", fs=SR, output="sos")
@@ -1263,13 +1294,32 @@ class TestFullEvaluateVocalComponents:
         ref = _make_harmonic()
         result = estimate_mushra_proxy(ref, ref, SR)
         expected_keys = {
-            "mert_cosine", "visqol", "nsim", "artifact", "temporal",
-            "clap", "mr_stft", "iso226", "mcd", "chroma", "lufs",
-            "stereo", "transient", "nmr", "emotional_arc",
-            "vocal_formant", "vocal_hnr", "pitch_accuracy", "vocal_presence",
-            "modulation", "harmonic", "spectral_flux",
-            "perceptual_disturbance", "roughness",
-            "specific_loudness", "fluctuation",
+            "mert_cosine",
+            "visqol",
+            "nsim",
+            "artifact",
+            "temporal",
+            "clap",
+            "mr_stft",
+            "iso226",
+            "mcd",
+            "chroma",
+            "lufs",
+            "stereo",
+            "transient",
+            "nmr",
+            "emotional_arc",
+            "vocal_formant",
+            "vocal_hnr",
+            "pitch_accuracy",
+            "vocal_presence",
+            "modulation",
+            "harmonic",
+            "spectral_flux",
+            "perceptual_disturbance",
+            "roughness",
+            "specific_loudness",
+            "fluctuation",
         }
         assert expected_keys == set(result.component_scores.keys())
 
@@ -1314,13 +1364,15 @@ class TestFullEvaluateVocalComponents:
 
     def test_weights_sum_to_one(self):
         """Weight tables must sum to 1.0."""
-        from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT, _WEIGHTS_DSP_ONLY
+        from backend.core.mert_mushra_proxy import _WEIGHTS_DSP_ONLY, _WEIGHTS_WITH_MERT
+
         assert abs(sum(_WEIGHTS_WITH_MERT.values()) - 1.0) < 1e-6
         assert abs(sum(_WEIGHTS_DSP_ONLY.values()) - 1.0) < 1e-6
 
     def test_26_weight_keys(self):
         """Both weight dicts must have exactly 26 keys."""
-        from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT, _WEIGHTS_DSP_ONLY
+        from backend.core.mert_mushra_proxy import _WEIGHTS_DSP_ONLY, _WEIGHTS_WITH_MERT
+
         assert len(_WEIGHTS_WITH_MERT) == 26
         assert len(_WEIGHTS_DSP_ONLY) == 26
 
@@ -1336,6 +1388,7 @@ class TestAdaptiveVocalWeighting:
     def test_sum_always_one(self):
         """Adapted weights must always sum to 1.0 regardless of vocal_prob."""
         from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         for vp in [0.0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1.0]:
             w = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, vp)
@@ -1344,6 +1397,7 @@ class TestAdaptiveVocalWeighting:
     def test_neutral_zone_unchanged(self):
         """Vocal prob in [0.35, 0.65] should return unchanged weights."""
         from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         for vp in [0.35, 0.45, 0.5, 0.65]:
             w = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, vp)
@@ -1352,9 +1406,8 @@ class TestAdaptiveVocalWeighting:
 
     def test_low_vocal_shrinks_vocal_pool(self):
         """Low vocal probability should reduce vocal component weights."""
-        from backend.core.mert_mushra_proxy import (
-            _WEIGHTS_WITH_MERT, _VOCAL_COMPONENT_KEYS
-        )
+        from backend.core.mert_mushra_proxy import _VOCAL_COMPONENT_KEYS, _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         w_instrumental = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, 0.0)
         orig_vocal = sum(_WEIGHTS_WITH_MERT[k] for k in _VOCAL_COMPONENT_KEYS)
@@ -1363,9 +1416,8 @@ class TestAdaptiveVocalWeighting:
 
     def test_high_vocal_grows_vocal_pool(self):
         """High vocal probability should increase vocal component weights."""
-        from backend.core.mert_mushra_proxy import (
-            _WEIGHTS_WITH_MERT, _VOCAL_COMPONENT_KEYS
-        )
+        from backend.core.mert_mushra_proxy import _VOCAL_COMPONENT_KEYS, _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         w_vocal = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, 1.0)
         orig_vocal = sum(_WEIGHTS_WITH_MERT[k] for k in _VOCAL_COMPONENT_KEYS)
@@ -1375,6 +1427,7 @@ class TestAdaptiveVocalWeighting:
     def test_all_keys_preserved(self):
         """All 26 weight keys must be present after adaptation."""
         from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         w = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, 0.1)
         assert set(w.keys()) == set(_WEIGHTS_WITH_MERT.keys())
@@ -1382,6 +1435,7 @@ class TestAdaptiveVocalWeighting:
     def test_no_negative_weights(self):
         """No weight should ever go negative."""
         from backend.core.mert_mushra_proxy import _WEIGHTS_WITH_MERT
+
         evaluator = get_proxy_evaluator()
         for vp in [0.0, 0.5, 1.0]:
             w = evaluator._adapt_weights_for_vocal_content(_WEIGHTS_WITH_MERT, vp)
@@ -1474,7 +1528,7 @@ class TestTemporalAttention:
         # Degrade middle 2 seconds (affects low-weight segments)
         degraded_mid = ref.copy()
         mid_start = n // 2 - noise_len // 2
-        degraded_mid[mid_start:mid_start + noise_len] += rng.standard_normal(noise_len).astype(np.float32) * 0.3
+        degraded_mid[mid_start : mid_start + noise_len] += rng.standard_normal(noise_len).astype(np.float32) * 0.3
         degraded_mid = np.clip(degraded_mid, -1.0, 1.0)
 
         evaluator = get_proxy_evaluator()
@@ -1557,6 +1611,7 @@ class TestRidgeCalibration:
     def test_uncalibrated_is_stage_1(self):
         """Without calibration, evaluate() returns stage 1."""
         import backend.core.mert_mushra_proxy as mod
+
         mod._calibrated_weights = None
         mod._calibrated_confidence = None
 
@@ -1901,8 +1956,7 @@ class TestFloorPenalty:
         ref = _make_harmonic()
         result = estimate_mushra_proxy(ref, ref, SR)
         d = result.as_dict()
-        for k in ["modulation_fidelity", "harmonic_structure",
-                  "spectral_flux_corr", "worst_segment_score"]:
+        for k in ["modulation_fidelity", "harmonic_structure", "spectral_flux_corr", "worst_segment_score"]:
             assert k in d
 
 
@@ -2041,7 +2095,7 @@ class TestFluctuationStrength:
         t = np.linspace(0, DURATION, int(SR * DURATION), dtype=np.float32)
         ref = _make_harmonic()
         # Strong 4 Hz AM (peak fluctuation frequency)
-        tremolo = 0.5 * (1.0 + 0.8 * np.sin(2 * np.pi * 4.0 * t[:len(ref)]))
+        tremolo = 0.5 * (1.0 + 0.8 * np.sin(2 * np.pi * 4.0 * t[: len(ref)]))
         test_trem = (ref * tremolo).astype(np.float32)
         s_same = get_proxy_evaluator()._compute_fluctuation_strength(ref, ref, SR)
         s_trem = get_proxy_evaluator()._compute_fluctuation_strength(ref, test_trem, SR)
@@ -2091,7 +2145,7 @@ class TestFluctuationStrength:
         t = np.linspace(0, DURATION, int(SR * DURATION), dtype=np.float32)
         ref = _make_harmonic()
         # 2 Hz pump modulation (within fluctuation range 0.5–20 Hz)
-        pump = 0.5 * (1.0 + 0.6 * np.sin(2 * np.pi * 2.0 * t[:len(ref)]))
+        pump = 0.5 * (1.0 + 0.6 * np.sin(2 * np.pi * 2.0 * t[: len(ref)]))
         test_pump = (ref * pump).astype(np.float32)
         s_same = get_proxy_evaluator()._compute_fluctuation_strength(ref, ref, SR)
         s_pump = get_proxy_evaluator()._compute_fluctuation_strength(ref, test_pump, SR)

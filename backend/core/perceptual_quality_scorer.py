@@ -103,6 +103,8 @@ class PerceptualQualityScorer:
 
         # Auf gleiche Länge bringen
         min_len = min(len(reference), len(degraded))
+        if min_len < 8:
+            return PQSResult(mos=3.0, nsim=0.5, mcd_db=25.0, spectral_coherence=0.5, referenced=True)
         ref = np.nan_to_num(reference[:min_len], nan=0.0, posinf=0.0, neginf=0.0)
         deg = np.nan_to_num(degraded[:min_len], nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -112,6 +114,8 @@ class PerceptualQualityScorer:
         # from ERB scale: more weight on 300–4000 Hz (speech/music fundamentals),
         # less on sub-bass and extreme HF.
         _n_fft_pqs = min(2048, len(ref))
+        if _n_fft_pqs < 64:
+            _n_fft_pqs = 64
         _ref_mag = np.abs(np.fft.rfft(ref[:_n_fft_pqs], n=_n_fft_pqs))
         _deg_mag = np.abs(np.fft.rfft(deg[:_n_fft_pqs], n=_n_fft_pqs))
         _freqs_pqs = np.fft.rfftfreq(_n_fft_pqs, d=1.0 / sr)
@@ -134,15 +138,16 @@ class PerceptualQualityScorer:
         try:
             if librosa is None:
                 raise ImportError("librosa not available")
-            _n_mels = 40
+            _n_mels = int(min(40, max(8, _n_fft_pqs // 2)))
             _mel_basis = librosa.filters.mel(sr=sr, n_fft=_n_fft_pqs, n_mels=_n_mels)
             _ref_stft = np.abs(librosa.stft(ref.astype(np.float32), n_fft=_n_fft_pqs, hop_length=512))
             _deg_stft = np.abs(librosa.stft(deg.astype(np.float32), n_fft=_n_fft_pqs, hop_length=512))
             _ref_mel = np.dot(_mel_basis, _ref_stft) + 1e-10
             _deg_mel = np.dot(_mel_basis, _deg_stft) + 1e-10
             from scipy.fft import dct
-            _ref_mfcc = dct(np.log(_ref_mel), type=2, axis=0, norm='ortho')[:13, :]
-            _deg_mfcc = dct(np.log(_deg_mel), type=2, axis=0, norm='ortho')[:13, :]
+
+            _ref_mfcc = dct(np.log(_ref_mel), type=2, axis=0, norm="ortho")[:13, :]
+            _deg_mfcc = dct(np.log(_deg_mel), type=2, axis=0, norm="ortho")[:13, :]
             _min_t = min(_ref_mfcc.shape[1], _deg_mfcc.shape[1])
             _mcd_frames = np.sqrt(np.sum((_ref_mfcc[:, :_min_t] - _deg_mfcc[:, :_min_t]) ** 2, axis=0))
             # MCD in dB: (10/ln10) × sqrt(2) × mean_euclidean ≈ 6.14 × mean
@@ -155,7 +160,12 @@ class PerceptualQualityScorer:
         # Spectral Coherence: Korrelation im Frequenzbereich
         ref_fft = np.abs(np.fft.rfft(ref))
         deg_fft = np.abs(np.fft.rfft(deg))
-        coh = float(np.corrcoef(ref_fft, deg_fft)[0, 1])
+        _ref_std = float(np.std(ref_fft))
+        _deg_std = float(np.std(deg_fft))
+        if _ref_std < 1e-12 or _deg_std < 1e-12:
+            coh = 1.0 if np.allclose(ref_fft, deg_fft, atol=1e-12, rtol=1e-6) else 0.0
+        else:
+            coh = float(np.corrcoef(ref_fft, deg_fft)[0, 1])
         coh = np.clip(coh, 0, 1)
 
         # MOS-Mapping (§2.6 Spec-Formel: W_NSIM=0.40, W_MCD=0.30, W_LUFS=0.15, W_COH=0.15)

@@ -19,6 +19,7 @@ Date: 8. Februar 2026
 """
 
 # Import Musical Goals integration
+import hashlib
 from collections.abc import Callable
 from typing import Any
 
@@ -79,6 +80,35 @@ class GenericNoiseReductionSafety(BaseSafetyWrapper):
         )
         self.processing_mode = processing_mode
         self.musical_goals = MusicalGoalsChecker()
+        self._goals_cache: dict[tuple[Any, ...], dict[str, float]] = {}
+        self._goals_cache_order: list[tuple[Any, ...]] = []
+        self._goals_cache_max_entries: int = 16
+
+    def _goals_cache_key(self, audio: np.ndarray, sr: int) -> tuple[Any, ...]:
+        arr = np.asarray(audio, dtype=np.float32)
+        flat = arr.reshape(-1)
+        head = flat[:4096]
+        tail = flat[-4096:] if flat.size > 4096 else flat
+        h = hashlib.blake2b(digest_size=12)
+        h.update(np.asarray([int(sr), int(flat.size)], dtype=np.int64).tobytes())
+        h.update(head.tobytes())
+        h.update(tail.tobytes())
+        return (int(sr), tuple(arr.shape), str(arr.dtype), h.hexdigest())
+
+    def _measure_goals_cached(self, audio: np.ndarray, sr: int) -> dict[str, float]:
+        key = self._goals_cache_key(audio, sr)
+        cached = self._goals_cache.get(key)
+        if cached is not None:
+            return dict(cached)
+
+        measured = self.musical_goals.measure_all(audio, sr)
+        normalized = {str(k): float(np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)) for k, v in measured.items()}
+        self._goals_cache[key] = normalized
+        self._goals_cache_order.append(key)
+        if len(self._goals_cache_order) > self._goals_cache_max_entries:
+            old = self._goals_cache_order.pop(0)
+            self._goals_cache.pop(old, None)
+        return dict(normalized)
 
     def _validate_pre_conditions(self, audio: np.ndarray, sr: int, **params) -> PreCheckResult:
         """Validate pre-conditions for noise reduction."""
@@ -180,8 +210,8 @@ class GenericNoiseReductionSafety(BaseSafetyWrapper):
 
         # 5. Musical Goals validation
         try:
-            orig_goals = self.musical_goals.measure_all(original, sr)
-            proc_goals = self.musical_goals.measure_all(processed, sr)
+            orig_goals = self._measure_goals_cached(original, sr)
+            proc_goals = self._measure_goals_cached(processed, sr)
 
             # Check for goal violations
             mode_config = PROCESSING_MODE_CONFIGS.get(self.processing_mode)

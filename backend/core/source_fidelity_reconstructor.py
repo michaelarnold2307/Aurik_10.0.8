@@ -119,10 +119,10 @@ class SourceFidelityTarget:
 # Aufnahmequell-Bandbreite (Mikrofon → Preamp → Master) bei −3 dB.
 # Quellen: Eargle 2004, Katz & Milner 2007 (Mastering Audio), Clark 1998 (Tapehead)
 _ERA_BANDWIDTH_HZ: dict[int, float] = {
-    1900: 3500.0,   # Mechanisch-akustische Aufnahme (Grammophontrichter, kein Mikrofon)
-    1910: 4000.0,   # Frühe elektrische Versuche (Lee de Forest, Audion)
-    1920: 6000.0,   # Western Electric 394 (1925+), frühe Kondensatoren
-    1930: 9000.0,   # RCA 44B Ribbon (1932), Neumann CMV3 (1928), AEG Magnetophon (1935)
+    1900: 3500.0,  # Mechanisch-akustische Aufnahme (Grammophontrichter, kein Mikrofon)
+    1910: 4000.0,  # Frühe elektrische Versuche (Lee de Forest, Audion)
+    1920: 6000.0,  # Western Electric 394 (1925+), frühe Kondensatoren
+    1930: 9000.0,  # RCA 44B Ribbon (1932), Neumann CMV3 (1928), AEG Magnetophon (1935)
     1940: 12000.0,  # Neumann U47 (1947), frühe Ampex-Bandmaschinen, BBC/EMI Studios
     1950: 14500.0,  # Telefunken ELA M251 (1957), Ampex 350 (15 ips → −3 dB @15 kHz)
     1960: 16500.0,  # Neumann U67 (1960), EMI TG12345, Studer A62, Beatles-Ära
@@ -147,9 +147,9 @@ _ERA_DYNAMIC_RANGE_DB: dict[int, float] = {
     1960: 58.0,
     1970: 62.0,
     1980: 65.0,
-    1990: 60.0,   # CD-Ära: gut, aber Loudness-War beginnt
-    2000: 50.0,   # Loudness-War-Peak
-    2010: 52.0,   # leichte Entspannung (Streaming-Normalisierung)
+    1990: 60.0,  # CD-Ära: gut, aber Loudness-War beginnt
+    2000: 50.0,  # Loudness-War-Peak
+    2010: 52.0,  # leichte Entspannung (Streaming-Normalisierung)
     2020: 56.0,
 }
 
@@ -157,7 +157,7 @@ _ERA_DYNAMIC_RANGE_DB: dict[int, float] = {
 # Röhrenelektronik erzeugt H2/H4 (geradzahlig, «warm»).
 # Transistor/IC erzeugt H3/H5 (ungeradzahlig, «kühl», aber mehr Obertöne insgesamt).
 _ERA_HARMONIC_DENSITY: dict[int, float] = {
-    1900: 0.6,   # Mechanisch, mono, wenig Obertöne im Signal
+    1900: 0.6,  # Mechanisch, mono, wenig Obertöne im Signal
     1910: 0.65,
     1920: 0.70,
     1930: 0.75,  # Erste Röhren-Amps, Western Electric warm
@@ -176,27 +176,27 @@ _ERA_HARMONIC_DENSITY: dict[int, float] = {
 # Je mehr Generationen, desto mehr akkumulierter Verlust (HF, Dynamik, Rauschen).
 # Quelle: Copeland 2008, IEC 60094-Kassetten-Norm
 _MATERIAL_GENERATION_COUNT: dict[str, int] = {
-    "shellac":        4,  # Aufnahme → Muttermatrize → Galvano → Pressung → ggf. Kassettendub
+    "shellac": 4,  # Aufnahme → Muttermatrize → Galvano → Pressung → ggf. Kassettendub
     "wire_recording": 4,  # Selten direkt — meist über Zwischen-Drahtspule
-    "wax_cylinder":   5,  # Wachszylinder-Dub-Ketten besonders lang
-    "vinyl":          3,  # Aufnahme (Band) → Schnitt (Lacquer) → Pressung
-    "tape":           3,  # Masterband → Studio-Kopie → Kassette (Consumerband)
-    "reel_tape":      2,  # Masterband → Archiv-Kopie (oft 1:1 an Profi-Maschine)
-    "cassette":       3,
-    "cd_digital":     1,  # Direkte Digitalisierung vom Masterband
-    "dat":            1,
-    "digital":        1,
-    "mp3_low":        1,  # Bereits digital, nur Codec-Verlust
-    "mp3_high":       1,
-    "aac":            1,
-    "streaming":      1,
-    "minidisc":       2,  # MD = ATRAC-Kompression + häufiger 2. analog-Schritt
+    "wax_cylinder": 5,  # Wachszylinder-Dub-Ketten besonders lang
+    "vinyl": 3,  # Aufnahme (Band) → Schnitt (Lacquer) → Pressung
+    "tape": 3,  # Masterband → Studio-Kopie → Kassette (Consumerband)
+    "reel_tape": 2,  # Masterband → Archiv-Kopie (oft 1:1 an Profi-Maschine)
+    "cassette": 3,
+    "cd_digital": 1,  # Direkte Digitalisierung vom Masterband
+    "dat": 1,
+    "digital": 1,
+    "mp3_low": 1,  # Bereits digital, nur Codec-Verlust
+    "mp3_high": 1,
+    "aac": 1,
+    "streaming": 1,
+    "minidisc": 2,  # MD = ATRAC-Kompression + häufiger 2. analog-Schritt
 }
 
 # HF-Verlust pro analoger Überspielgeneration bei 8 kHz (in dB):
 # Cassette-Norm IEC 60094 Part 1: Kopierverlust 1,5–2,5 dB bei 10 kHz je Generation
 # Studer-Interne Messung (Helical Scan 1982): 1,8 dB @ 8 kHz je 1st-gen open-reel copy
-_HF_LOSS_PER_GENERATION_DB = 1.8   # bei 8 kHz Referenzfrequenz
+_HF_LOSS_PER_GENERATION_DB = 1.8  # bei 8 kHz Referenzfrequenz
 
 # Dynamik-Verlust pro analoger Überspielgeneration (in dB DR-Reduction):
 # Eada 1992 (SMPTE): Kassettendub-Verlust 2–4 dB DR je Generation
@@ -211,13 +211,13 @@ _MAX_CORRECTION_DB = 12.0
 # ---------------------------------------------------------------------------
 
 _ERA_MIC_TYPE: dict[int, str] = {
-    1900: "acoustic",          # Mechanisch-akustischer Trichter — kein Mikrofon
+    1900: "acoustic",  # Mechanisch-akustischer Trichter — kein Mikrofon
     1910: "acoustic",
-    1920: "carbon",            # Western Electric 394, Bell Labs carbon button
-    1930: "ribbon",            # RCA 44B Ribbon (1932), Neumann CMV3
+    1920: "carbon",  # Western Electric 394, Bell Labs carbon button
+    1930: "ribbon",  # RCA 44B Ribbon (1932), Neumann CMV3
     1940: "ribbon_condenser",  # Übergangsära: RCA + frühe Kondensatoren (BK5, Neumann M7)
-    1950: "condenser_early",   # Neumann U47 (1947), Telefunken ELA M251 (1957)
-    1960: "condenser_mid",     # Neumann U67 (1960), AKG C12, Sony C37A
+    1950: "condenser_early",  # Neumann U47 (1947), Telefunken ELA M251 (1957)
+    1960: "condenser_mid",  # Neumann U67 (1960), AKG C12, Sony C37A
     1970: "condenser_modern",  # Neumann U87, AKG 414, SM57 — Standards bis heute
     1980: "condenser_modern",
     1990: "condenser_modern",
@@ -230,13 +230,13 @@ _ERA_MIC_TYPE: dict[int, str] = {
 # Lower/upper Presence center frequencies für Phase 38.
 # Quellen: Katz 2007 "Mastering Audio", Moylan 2002 "The Art of Recording"
 _MIC_PRESENCE_CENTER_HZ: dict[str, tuple[float, float]] = {
-    "acoustic":          (2000.0, 3500.0),  # Horn-Resonanz 1–3 kHz
-    "carbon":            (2500.0, 4000.0),  # Carbon-Presence-Peak 2–4 kHz
-    "ribbon":            (2800.0, 4300.0),  # Ribbon flat — warmth zone
-    "ribbon_condenser":  (3000.0, 4800.0),  # Mix: ribbon warmth + condenser clarity
-    "condenser_early":   (3200.0, 5500.0),  # U47 presence peak 5–8 kHz → upper zieht hoch
-    "condenser_mid":     (3500.0, 6000.0),  # U67/C12: klassische Presence-Zone
-    "condenser_modern":  (4000.0, 6500.0),  # Moderner Standard (Pultec, API 550A-Referenz)
+    "acoustic": (2000.0, 3500.0),  # Horn-Resonanz 1–3 kHz
+    "carbon": (2500.0, 4000.0),  # Carbon-Presence-Peak 2–4 kHz
+    "ribbon": (2800.0, 4300.0),  # Ribbon flat — warmth zone
+    "ribbon_condenser": (3000.0, 4800.0),  # Mix: ribbon warmth + condenser clarity
+    "condenser_early": (3200.0, 5500.0),  # U47 presence peak 5–8 kHz → upper zieht hoch
+    "condenser_mid": (3500.0, 6000.0),  # U67/C12: klassische Presence-Zone
+    "condenser_modern": (4000.0, 6500.0),  # Moderner Standard (Pultec, API 550A-Referenz)
 }
 
 # ---------------------------------------------------------------------------
@@ -249,47 +249,103 @@ _MIC_PRESENCE_CENTER_HZ: dict[str, tuple[float, float]] = {
 _GENERATION_LOSS_DB_PER_GEN: dict[str, dict[int, float]] = {
     "shellac": {
         # Acetat-Scheibe → Galvano → Pressen: exponentieller Rolloff ab 5 kHz
-        500:  0.10, 1000: 0.20, 2000: 0.50, 3000: 0.90,
-        5000: 2.00, 6000: 3.50, 8000: 5.50, 10000: 7.50, 12000: 10.0,
+        500: 0.10,
+        1000: 0.20,
+        2000: 0.50,
+        3000: 0.90,
+        5000: 2.00,
+        6000: 3.50,
+        8000: 5.50,
+        10000: 7.50,
+        12000: 10.0,
     },
     "wax_cylinder": {
         # Wachszylinder-Dub: sehr steiler Verlust
-        500:  0.20, 1000: 0.50, 2000: 1.00, 3000: 2.00,
-        5000: 4.00, 6000: 6.00, 8000: 9.00, 10000: 12.0, 12000: 12.0,
+        500: 0.20,
+        1000: 0.50,
+        2000: 1.00,
+        3000: 2.00,
+        5000: 4.00,
+        6000: 6.00,
+        8000: 9.00,
+        10000: 12.0,
+        12000: 12.0,
     },
     "wire_recording": {
-        500:  0.15, 1000: 0.35, 2000: 0.70, 3000: 1.40,
-        5000: 3.00, 6000: 5.00, 8000: 7.00, 10000: 10.0, 12000: 12.0,
+        500: 0.15,
+        1000: 0.35,
+        2000: 0.70,
+        3000: 1.40,
+        5000: 3.00,
+        6000: 5.00,
+        8000: 7.00,
+        10000: 10.0,
+        12000: 12.0,
     },
     "vinyl": {
         # Lacquer-Schnitt + Abtastung: moderater Verlust ab 8 kHz
-        500:  0.05, 1000: 0.10, 2000: 0.20, 3000: 0.35,
-        5000: 0.60, 6000: 1.00, 8000: 2.00, 10000: 3.50, 12000: 5.50,
+        500: 0.05,
+        1000: 0.10,
+        2000: 0.20,
+        3000: 0.35,
+        5000: 0.60,
+        6000: 1.00,
+        8000: 2.00,
+        10000: 3.50,
+        12000: 5.50,
     },
     "tape": {
         # Consumer-Cassette (IEC 60094 Typ II): signifikanter Verlust ab 6 kHz
-        500:  0.05, 1000: 0.10, 2000: 0.30, 3000: 0.60,
-        5000: 1.00, 6000: 1.50, 8000: 3.00, 10000: 5.00, 12000: 7.50,
+        500: 0.05,
+        1000: 0.10,
+        2000: 0.30,
+        3000: 0.60,
+        5000: 1.00,
+        6000: 1.50,
+        8000: 3.00,
+        10000: 5.00,
+        12000: 7.50,
     },
     "cassette": {
-        500:  0.05, 1000: 0.10, 2000: 0.30, 3000: 0.60,
-        5000: 1.00, 6000: 1.50, 8000: 3.00, 10000: 5.00, 12000: 7.50,
+        500: 0.05,
+        1000: 0.10,
+        2000: 0.30,
+        3000: 0.60,
+        5000: 1.00,
+        6000: 1.50,
+        8000: 3.00,
+        10000: 5.00,
+        12000: 7.50,
     },
     "reel_tape": {
         # Professionelles Open-Reel (38 cm/s): sehr geringer Verlust je Kopie
-        500:  0.02, 1000: 0.05, 2000: 0.12, 3000: 0.25,
-        5000: 0.40, 6000: 0.65, 8000: 1.10, 10000: 1.80, 12000: 3.00,
+        500: 0.02,
+        1000: 0.05,
+        2000: 0.12,
+        3000: 0.25,
+        5000: 0.40,
+        6000: 0.65,
+        8000: 1.10,
+        10000: 1.80,
+        12000: 3.00,
     },
     "cd_digital": {},  # Direkt digital: kein Generationsverlust
-    "dat":            {},
-    "digital":        {},
-    "mp3_low":        {},
-    "mp3_high":       {},
-    "aac":            {},
-    "streaming":      {},
-    "minidisc":       {          # MiniDisc ATRAC: leichter Hochton-Verlust durch Codec
-        500: 0.0, 1000: 0.0, 2000: 0.10, 3000: 0.20,
-        5000: 0.50, 6000: 0.80, 8000: 1.50, 10000: 2.50, 12000: 4.00,
+    "dat": {},
+    "digital": {},
+    "mp3_low": {},
+    "mp3_high": {},
+    "aac": {},
+    "streaming": {},
+    "minidisc": {  # MiniDisc ATRAC: leichter Hochton-Verlust durch Codec
+        500: 0.0,
+        1000: 0.0,
+        2000: 0.10,
+        3000: 0.20,
+        5000: 0.50,
+        6000: 0.80,
+        8000: 1.50,
+        10000: 2.50,
+        12000: 4.00,
     },
 }
 
@@ -458,12 +514,8 @@ class SourceFidelityReconstructor:
 
         # -- 11. Ära-Mikrofon-Typ und Presence-Center -------------------------
         _mic_type = _lookup_era_str(_ERA_MIC_TYPE, decade)
-        _lower_center, _upper_center = _MIC_PRESENCE_CENTER_HZ.get(
-            _mic_type, (4000.0, 6500.0)
-        )
-        notes.append(
-            f"mic_type={_mic_type} presence={_lower_center:.0f}/{_upper_center:.0f}Hz"
-        )
+        _lower_center, _upper_center = _MIC_PRESENCE_CENTER_HZ.get(_mic_type, (4000.0, 6500.0))
+        notes.append(f"mic_type={_mic_type} presence={_lower_center:.0f}/{_upper_center:.0f}Hz")
 
         logger.info(
             "SourceFidelityReconstructor: era=%s mat=%s bw_gap=%.0fHz gen=%d "
@@ -546,8 +598,7 @@ class SourceFidelityReconstructor:
                     _bw_fade_start = target.original_bandwidth_hz * 0.80
                     _bw_fade_end = target.original_bandwidth_hz * 1.00
                     _fade = np.clip(
-                        1.0 - (freqs_hz - _bw_fade_start)
-                        / max(_bw_fade_end - _bw_fade_start, 1.0),
+                        1.0 - (freqs_hz - _bw_fade_start) / max(_bw_fade_end - _bw_fade_start, 1.0),
                         0.0,
                         1.0,
                     )
@@ -555,9 +606,7 @@ class SourceFidelityReconstructor:
                 correction += np.maximum(0.0, loss_interp)
 
         # --- Skalierung mit Konfidenz × Rekonstruktionsstärke ---
-        scale = float(
-            np.clip(target.confidence * target.reconstruction_strength, 0.0, 1.0)
-        )
+        scale = float(np.clip(target.confidence * target.reconstruction_strength, 0.0, 1.0))
         correction *= scale
 
         # --- Sicherheits-Cap ---
@@ -568,7 +617,7 @@ class SourceFidelityReconstructor:
 # EQ Processor
 # ---------------------------------------------------------------------------
 
-_eq_instance: "SourceFidelityEQProcessor | None" = None
+_eq_instance: SourceFidelityEQProcessor | None = None
 _eq_lock = threading.Lock()
 
 
@@ -627,9 +676,7 @@ class SourceFidelityEQProcessor:
         try:
             from scipy.signal import fftconvolve, firwin2
         except ImportError:
-            logger.debug(
-                "SourceFidelityEQProcessor: scipy nicht verfügbar, übersprungen"
-            )
+            logger.debug("SourceFidelityEQProcessor: scipy nicht verfügbar, übersprungen")
             return audio
 
         sfr = get_source_fidelity_reconstructor()
@@ -640,8 +687,7 @@ class SourceFidelityEQProcessor:
         max_corr = float(np.max(correction_db))
         if max_corr < self._MIN_CORRECTION_DB:
             logger.debug(
-                "SourceFidelityEQProcessor: Korrektur vernachlässigbar "
-                "(max=%.2f dB), übersprungen",
+                "SourceFidelityEQProcessor: Korrektur vernachlässigbar (max=%.2f dB), übersprungen",
                 max_corr,
             )
             return audio
@@ -659,9 +705,7 @@ class SourceFidelityEQProcessor:
                 antisymmetric=False,
             )
         except Exception as _fir_exc:
-            logger.debug(
-                "SourceFidelityEQProcessor: firwin2 fehlgeschlagen: %s", _fir_exc
-            )
+            logger.debug("SourceFidelityEQProcessor: firwin2 fehlgeschlagen: %s", _fir_exc)
             return audio
 
         orig_dtype = audio.dtype
@@ -670,18 +714,14 @@ class SourceFidelityEQProcessor:
             result = fftconvolve(audio_f64, fir, mode="same")
         else:
             result = np.stack(
-                [
-                    fftconvolve(audio_f64[ch], fir, mode="same")
-                    for ch in range(audio_f64.shape[0])
-                ],
+                [fftconvolve(audio_f64[ch], fir, mode="same") for ch in range(audio_f64.shape[0])],
                 axis=0,
             )
 
         result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         result = np.clip(result, -1.0, 1.0)
         logger.debug(
-            "SourceFidelityEQProcessor: max_corr=%.1f dB mat=%s gen=%d "
-            "conf=%.2f str=%.2f",
+            "SourceFidelityEQProcessor: max_corr=%.1f dB mat=%s gen=%d conf=%.2f str=%.2f",
             max_corr,
             target.material_key,
             target.transfer_generation_count,
@@ -694,6 +734,7 @@ class SourceFidelityEQProcessor:
 # ---------------------------------------------------------------------------
 # Singleton-Zugriffsfunktionen (thread-safe, double-checked locking)
 # ---------------------------------------------------------------------------
+
 
 def get_source_fidelity_eq_processor() -> SourceFidelityEQProcessor:
     """Thread-safe Singleton-Zugriff auf SourceFidelityEQProcessor."""

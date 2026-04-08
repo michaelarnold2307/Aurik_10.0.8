@@ -328,6 +328,223 @@ class ExzellenzDenker:
             logger.warning("ExzellenzDenker: Goal-Messung fehlgeschlagen: %s", exc)
             return {}
 
+    def messe_und_repariere(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        *,
+        mode: str = "restoration",
+        material: str = "auto",
+        reference_audio: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        """Misst Goals und führt konservative Ziel-Reparatur für P3-P5-Verletzungen durch.
+
+        Strategie (§0 + §2.45):
+          1. Goals messen — sofort zurück wenn alle ≥ 0.75 (Minimal-Interventions-Prinzip).
+          2. Nur P3-P5-Verletzungen mit Defizit ≥ 0.03 adressieren.
+          3. Zeit-Domain-Reparatur (ExcellenceOptimizer, micro_dynamics + ola_edges):
+             Kein STFT-Roundtrip-Fehler — sicher nach beliebig vielen Pipeline-STFT-Phasen
+             (Ephraim & Malah 1984 gilt nur für spektrale Subtraktion, nicht für
+             Hüllkurven-Modulation oder Overlap-Add-Crossfade).
+          4. Frequenz-Blend-Reparatur (α ≥ 0.95, falls reference_audio vorhanden):
+             Für waerme/brillanz/bass_kraft ohne neue STFT-Kaskade.
+             Minimalste Rückmischung (max. 7 % Originalanteil).
+          5. Bestes Kandidaten-Audio nur übernehmen wenn:
+             goals_passed_after ≥ goals_passed_before UND
+             kein Ziel um mehr als 0.02 schlechter als vor der Reparatur (§0).
+
+        Warum sicher nach UV3-FeedbackChain (Abgrenzung zu v9.10.72):
+          - v9.10.72 deaktivierte den ExcellenceOptimizer *global* nach UV3, weil alle
+            vier Schritte auf STFT-Basis liefen und kaskadieren würden.
+          - Hier werden *ausschließlich* Zeit-Domain-Schritte (micro_dynamics, ola_edges)
+            verwendet — diese akkumulieren per Definition keine STFT-Rundungsfehler.
+          - Der Blend-Schritt mischt Linear-PCM (kein Spektrum) → ebenfalls STFT-frei.
+
+        Args:
+            audio:           Verarbeitetes Audio (nach UV3 + FeedbackChain), float32.
+            sr:              Sample-Rate (muss 48000 sein).
+            material:        Trägermedium für ExcellenceOptimizer-Profile.
+            reference_audio: Original-Audio vor der Restaurierung (für Blend-Reparatur).
+
+        Returns:
+            (audio_out, goals_dict): Im Erfolgsfall ggf. verbessertes Audio + Goals.
+            Im Fehlerfall: (audio unverändert, ursprüngliche Goals oder {}).
+        """
+        # Mode-adaptive PMGG-Canonical-Schwellen (§9.10.77) — ersetzen den
+        # vereinfachten 0.75-Floor. P1-Verletzungen (z.B. natuerlichkeit=0.82 < 0.90)
+        # werden jetzt korrekt erkannt. P2: tonal_center < 0.95 wird als Verletzung
+        # klassifiziert; Zeit-Domain-Ops helfen nur begrenzt, aber Erkennung ist Pflicht.
+        _is_studio = str(mode).lower() in {"studio", "studio_2026", "studio2026"}
+        _FALLBACK_MIN: float = 0.75  # Fallback für unbekannte Goals
+        try:
+            from backend.core.per_phase_musical_goals_gate import _get_canonical_thresholds as _gct
+
+            _thresholds: dict[str, float] = _gct(is_studio_2026=_is_studio)
+        except Exception:
+            _thresholds = {}  # Import-Fehler → Fallback
+        _MIN_DEFICIT: float = 0.03  # Reparatur nur wenn Score < threshold − 0.03
+        _REPAIR_TRIGGER_FLOOR: float = 0.75  # §2.45: Borderline nahe 0.75 nicht nachbearbeiten
+
+        # P3-P5 goals addressable by time-domain or blend repair (not P1/P2 — those
+        # are already protected by UV3's P1/P2 blend cascade §9.8)
+        _P3P5_REPAIR_TARGETS: frozenset[str] = frozenset(
+            {
+                # P3 — time-domain micro_dynamics helps directly
+                "micro_dynamics",
+                "groove",
+                "emotionalitaet",
+                # P4 — frequency blend helps (spectral envelope closer to reference)
+                "waerme",
+                "bass_kraft",
+                "transparenz",
+                "separation_fidelity",
+                # P5 — frequency blend helps
+                "brillanz",
+                "spatial_depth",
+            }
+        )
+        # Goals that benefit from micro_dynamics injection (time-domain envelope)
+        _MICRO_DYN_GOALS: frozenset[str] = frozenset({"micro_dynamics", "groove", "emotionalitaet"})
+        # Goals that benefit from OLA-crossfade edge smoothing (time-domain)
+        _OLA_GOALS: frozenset[str] = frozenset({"artikulation", "natuerlichkeit"})
+        # Goals that benefit from blend with reference (restores spectral warmth/brightness)
+        _BLEND_GOALS: frozenset[str] = frozenset({"waerme", "bass_kraft", "brillanz", "transparenz"})
+
+        # NaN/Inf-Schutz
+        audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        if audio.size == 0:
+            return audio, {}
+
+        # Step 1: Basis-Messung
+        goals_initial = self.messe_ziele(audio, sr)
+        if not goals_initial:
+            return audio, {}
+
+        _passed_initial = sum(
+            1 for k, v in goals_initial.items() if math.isfinite(v) and v >= _thresholds.get(k, _FALLBACK_MIN)
+        )
+        _total = len(goals_initial)
+
+        # P3-P5 violations with meaningful deficit (avoids micro-adjustments on borderline goals)
+        _p35_violations: set[str] = {
+            k
+            for k, v in goals_initial.items()
+            if k in _P3P5_REPAIR_TARGETS
+            and math.isfinite(v)
+            and v < min(_thresholds.get(k, _FALLBACK_MIN), _REPAIR_TRIGGER_FLOOR) - _MIN_DEFICIT
+        }
+        if not _p35_violations:
+            # §2.45: Minimal-Intervention — kein Eingriff wenn Goals erfüllt / Grenzfall
+            return audio, goals_initial
+
+        logger.info(
+            "ExzellenzDenker messe_und_repariere: %d/%d Goals | %d P3-P5-Verletzungen: %s",
+            _passed_initial,
+            _total,
+            len(_p35_violations),
+            ", ".join(sorted(_p35_violations)),
+        )
+
+        _best_audio: np.ndarray = audio
+        _best_goals: dict[str, float] = dict(goals_initial)
+        _best_passed: int = _passed_initial
+
+        def _is_improvement(candidate_goals: dict[str, float]) -> bool:
+            """Accept only if goals_passed ≥ before AND no goal regresses > 0.02 (§0)."""
+            _cand_passed = sum(
+                1 for k, v in candidate_goals.items() if math.isfinite(v) and v >= _thresholds.get(k, _FALLBACK_MIN)
+            )
+            if _cand_passed < _best_passed:
+                return False
+            # Regression guard for ALL goals (not just P1/P2)
+            for _g, _v_init in goals_initial.items():
+                if math.isfinite(_v_init):
+                    _v_cand = candidate_goals.get(_g, _v_init)
+                    if math.isfinite(_v_cand) and _v_cand < _v_init - 0.02:
+                        return False
+            return True
+
+        # Step 2: Zeit-Domain-Reparatur (micro_dynamics + ola_edges — kein STFT)
+        _needs_td = bool(_p35_violations & (_MICRO_DYN_GOALS | _OLA_GOALS))
+        if _needs_td:
+            try:
+                from backend.core.excellence_optimizer import ExcellenceOptimizer
+
+                _apply_md = bool(_p35_violations & _MICRO_DYN_GOALS)
+                _apply_ola = bool(_p35_violations & _OLA_GOALS)
+                _opt_td = ExcellenceOptimizer(
+                    sample_rate=sr,
+                    apply_continuity=False,  # Kein STFT — Ephraim & Malah 1984
+                    apply_micro_dynamics=_apply_md,
+                    apply_harmonic_boost=False,  # Kein STFT — Ephraim & Malah 1984
+                    apply_ola_edges=_apply_ola,
+                    material=material,
+                )
+                # Konservative Stärke: §0 Minimal-Intervention
+                _opt_td._modulation_strength = getattr(_opt_td, "_modulation_strength", 0.3) * 0.55
+                _td_out, _ = _opt_td.optimize(_best_audio)
+                _td_out = np.clip(
+                    np.nan_to_num(_td_out.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0),
+                    -1.0,
+                    1.0,
+                )
+                _td_goals = self.messe_ziele(_td_out, sr)
+                if _td_goals and _is_improvement(_td_goals):
+                    _td_passed = sum(1 for v in _td_goals.values() if math.isfinite(v) and v >= _FALLBACK_MIN)
+                    _best_audio = _td_out
+                    _best_goals = _td_goals
+                    _best_passed = _td_passed
+                    logger.info(
+                        "ExzellenzDenker Goal-Repair (Zeit-Domain): %d → %d Goals bestanden",
+                        _passed_initial,
+                        _best_passed,
+                    )
+                else:
+                    logger.debug(
+                        "ExzellenzDenker Goal-Repair (Zeit-Domain): keine Verbesserung (%d Goals)",
+                        _passed_initial,
+                    )
+            except Exception as _td_exc:
+                logger.debug("ExzellenzDenker Goal-Repair (Zeit-Domain) fehlgeschlagen: %s", _td_exc)
+
+        # Step 3: Frequenz-Blend-Reparatur für waerme/brillanz/bass_kraft/transparenz
+        _needs_blend = bool(_p35_violations & _BLEND_GOALS)
+        # §0: Rauschbehaftetes Original NICHT remischen — Blend hebt Träger-Rauschen zurück.
+        # shellac/wax_cylinder/wire_recording haben SNR < 20 dB → max. 4 % remixte Rauschenergie
+        # wäre hörbarer Qualitätsverlust (Primum non nocere).
+        _HIGH_NOISE_MATERIALS: frozenset[str] = frozenset({"shellac", "wax_cylinder", "wire_recording"})
+        if str(material).lower() in _HIGH_NOISE_MATERIALS:
+            _needs_blend = False
+            logger.debug("ExzellenzDenker Blend-Reparatur übersprungen — Hochrausch-Träger: %s", material)
+        if _needs_blend and reference_audio is not None and reference_audio.shape == _best_audio.shape:
+            try:
+                _ref_f32 = np.nan_to_num(reference_audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+                for _alpha in (0.96, 0.93):
+                    _blended = np.clip(
+                        _alpha * _best_audio + (1.0 - _alpha) * _ref_f32,
+                        -1.0,
+                        1.0,
+                    )
+                    _blend_goals = self.messe_ziele(_blended, sr)
+                    if not _blend_goals:
+                        continue
+                    _blend_passed = sum(1 for v in _blend_goals.values() if math.isfinite(v) and v >= _FALLBACK_MIN)
+                    if _is_improvement(_blend_goals) and _blend_passed > _best_passed:
+                        _best_audio = _blended
+                        _best_goals = _blend_goals
+                        _best_passed = _blend_passed
+                        logger.info(
+                            "ExzellenzDenker Goal-Repair (Blend α=%.2f): %d → %d Goals bestanden",
+                            _alpha,
+                            _passed_initial,
+                            _best_passed,
+                        )
+                        break  # Erste Verbesserung genügt (§2.45 Minimal-Intervention)
+            except Exception as _bl_exc:
+                logger.debug("ExzellenzDenker Goal-Repair (Blend) fehlgeschlagen: %s", _bl_exc)
+
+        return _best_audio, _best_goals
+
     # ── Interne Hilfsmethoden ────────────────────────────────────────────────
 
     def _get_optimizer(self, sr: int = 48_000, material: str = "auto") -> object:

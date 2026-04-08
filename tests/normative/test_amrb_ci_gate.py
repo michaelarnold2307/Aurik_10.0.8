@@ -184,22 +184,16 @@ class TestAMRBSeedingInvariant:
         import ast
         import pathlib
 
-        bench_path = (
-            pathlib.Path(__file__).parents[2] / "benchmarks" / "musical_restoration_benchmark.py"
-        )
+        bench_path = pathlib.Path(__file__).parents[2] / "benchmarks" / "musical_restoration_benchmark.py"
         assert bench_path.exists(), f"Benchmark-Datei nicht gefunden: {bench_path}"
 
         source = bench_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
 
         # Verify MD5 usage is present
-        md5_calls = [
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute) and node.attr == "md5"
-        ]
+        md5_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "md5"]
         assert md5_calls, (
-            "benchmarks/musical_restoration_benchmark.py muss hashlib.md5() für "
-            "_sid_offset verwenden — nicht hash()"
+            "benchmarks/musical_restoration_benchmark.py muss hashlib.md5() für _sid_offset verwenden — nicht hash()"
         )
 
         # Verify that raw hash(sid) is NOT used for seeding (_sid_offset context)
@@ -207,12 +201,13 @@ class TestAMRBSeedingInvariant:
         # with a single arg that looks like a seed-related variable
         source_lines = source.splitlines()
         suspicious_hash_lines = [
-            (i + 1, line) for i, line in enumerate(source_lines)
+            (i + 1, line)
+            for i, line in enumerate(source_lines)
             if "hash(sid)" in line and not line.strip().startswith("#")
         ]
         assert not suspicious_hash_lines, (
-            f"[RELEASE_MUST] VERBOTENE hash(sid)-Verwendung in "
-            f"benchmarks/musical_restoration_benchmark.py gefunden:\n"
+            "[RELEASE_MUST] VERBOTENE hash(sid)-Verwendung in "
+            "benchmarks/musical_restoration_benchmark.py gefunden:\n"
             + "\n".join(f"  Zeile {ln}: {text}" for ln, text in suspicious_hash_lines)
         )
 
@@ -259,9 +254,7 @@ class TestAMRBSeedingInvariant:
             "AMRB-05-VOCAL",
         ]
         offsets = [int(hashlib.md5(s.encode()).hexdigest()[:8], 16) for s in sids]
-        assert len(set(offsets)) == len(offsets), (
-            f"Kollision in AMRB _sid_offset: sids={sids}, offsets={offsets}"
-        )
+        assert len(set(offsets)) == len(offsets), f"Kollision in AMRB _sid_offset: sids={sids}, offsets={offsets}"
 
     def test_amrb_run_seed_modulo_stays_in_numpy_range(self):
         """run_seed + _sid_offset muss nach % (2**31) im gültigen np.random.seed()-Bereich sein."""
@@ -271,8 +264,6 @@ class TestAMRBSeedingInvariant:
         for sid in ["AMRB-01-TAPE", "AMRB-10-COMPOSITE"]:
             offset = int(hashlib.md5(sid.encode()).hexdigest()[:8], 16)
             final_seed = (run_seed + offset) % (2**31)
-            assert 0 <= final_seed < 2**31, (
-                f"Seed für '{sid}' außerhalb numpy-Bereich [0, 2^31): {final_seed}"
-            )
+            assert 0 <= final_seed < 2**31, f"Seed für '{sid}' außerhalb numpy-Bereich [0, 2^31): {final_seed}"
             # numpy must accept this seed without error
             np.random.seed(final_seed)  # raises if invalid

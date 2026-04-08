@@ -41,6 +41,9 @@ class TestAMRBAuditability:
             verbose=False,
             run_seed=99,
             aurik_version="9.10.57-test",
+            enable_mushra_proxy=False,
+            enable_musical_goals=False,
+            enable_formal_session=False,
         )
         return run_benchmark(config)
 
@@ -79,6 +82,9 @@ class TestAMRBAuditability:
                 verbose=False,
                 run_seed=7,
                 aurik_version="9.10.57-repro",
+                enable_mushra_proxy=False,
+                enable_musical_goals=False,
+                enable_formal_session=False,
             )
             return run_benchmark(config)
 
@@ -103,6 +109,9 @@ class TestAMRBAuditability:
                 verbose=False,
                 run_seed=seed,
                 aurik_version="9.10.57-seed",
+                enable_mushra_proxy=False,
+                enable_musical_goals=False,
+                enable_formal_session=False,
             )
             return run_benchmark(config)
 
@@ -142,12 +151,8 @@ class TestAMRBAuditability:
         d = report.as_dict()
         for sid, scenario_data in d["scenarios"].items():
             for idx, item in enumerate(scenario_data.get("items", [])):
-                assert "mushra_fallback_used" in item, (
-                    f"Szenario '{sid}' Item {idx} fehlt: mushra_fallback_used"
-                )
-                assert "restoration_exception" in item, (
-                    f"Szenario '{sid}' Item {idx} fehlt: restoration_exception"
-                )
+                assert "mushra_fallback_used" in item, f"Szenario '{sid}' Item {idx} fehlt: mushra_fallback_used"
+                assert "restoration_exception" in item, f"Szenario '{sid}' Item {idx} fehlt: restoration_exception"
                 assert isinstance(item["mushra_fallback_used"], bool), (
                     f"Szenario '{sid}' Item {idx}: mushra_fallback_used muss bool sein"
                 )

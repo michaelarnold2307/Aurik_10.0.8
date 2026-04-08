@@ -299,13 +299,13 @@ class TestLoadCheckpointAudio:
         np.testing.assert_allclose(loaded_audio, audio, atol=1e-5)
 
     def test_original_audio_is_preferred_over_checkpoint_audio(self, sessions_tmp, sample_mono_audio, tmp_path):
+        import soundfile as sf
+
         from backend.core.recovery_checkpoint import (
             RecoveryCheckpoint,
             load_checkpoint_audio,
             save_checkpoint,
         )
-
-        import soundfile as sf
 
         checkpoint_audio, sr = sample_mono_audio
         t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float32)

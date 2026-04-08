@@ -132,6 +132,7 @@ class DropoutRepairPhase(PhaseInterface):
             "detection_threshold": 0.25,  # >75% energy drop
             "min_dropout_ms": 0.5,
             "max_dropout_ms": 200,
+            "max_coverage_ratio": 0.08,
             "repair_strength": 0.9,
             "phase_preserve": 0.95,  # Strong phase preservation
             "spectral_smoothing": 0.8,
@@ -141,6 +142,7 @@ class DropoutRepairPhase(PhaseInterface):
             "detection_threshold": 0.20,
             "min_dropout_ms": 0.5,
             "max_dropout_ms": 150,
+            "max_coverage_ratio": 0.07,
             "repair_strength": 0.95,
             "phase_preserve": 0.90,
             "spectral_smoothing": 0.7,
@@ -150,6 +152,7 @@ class DropoutRepairPhase(PhaseInterface):
             "detection_threshold": 0.15,  # Very sensitive (frequent)
             "min_dropout_ms": 0.5,
             "max_dropout_ms": 250,
+            "max_coverage_ratio": 0.10,
             "repair_strength": 0.98,  # Aggressive repair
             "phase_preserve": 0.85,
             "spectral_smoothing": 0.9,  # More smoothing
@@ -159,6 +162,7 @@ class DropoutRepairPhase(PhaseInterface):
             "detection_threshold": 0.10,  # >90% energy drop
             "min_dropout_ms": 0.3,
             "max_dropout_ms": 100,
+            "max_coverage_ratio": 0.04,
             "repair_strength": 0.85,
             "phase_preserve": 0.98,  # Preserve precise phase
             "spectral_smoothing": 0.5,
@@ -168,6 +172,7 @@ class DropoutRepairPhase(PhaseInterface):
             "detection_threshold": 0.20,
             "min_dropout_ms": 0.5,
             "max_dropout_ms": 150,
+            "max_coverage_ratio": 0.06,
             "repair_strength": 0.90,
             "phase_preserve": 0.90,
             "spectral_smoothing": 0.7,
@@ -779,6 +784,14 @@ class DropoutRepairPhase(PhaseInterface):
                     _merged.append((_ds, _de))
             linked_dropouts = _merged
             linked_dropouts, _sk_linked = _filter_pre_repaired(linked_dropouts)
+            _before_sanitize = len(linked_dropouts)
+            linked_dropouts = self._sanitize_dropout_regions(_mid_sc, linked_dropouts, params)
+            if len(linked_dropouts) < _before_sanitize:
+                logger.info(
+                    "Dropout sanitizer (stereo): %d → %d Regionen",
+                    _before_sanitize,
+                    len(linked_dropouts),
+                )
             _pre_repaired_skipped = _sk_linked
 
             # Repair both channels at the same (linked) boundaries
@@ -795,6 +808,14 @@ class DropoutRepairPhase(PhaseInterface):
         else:
             all_dropouts = self._detect_dropouts_multimodal(audio, params)
             all_dropouts, _sk = _filter_pre_repaired(all_dropouts)
+            _before_sanitize = len(all_dropouts)
+            all_dropouts = self._sanitize_dropout_regions(audio, all_dropouts, params)
+            if len(all_dropouts) < _before_sanitize:
+                logger.info(
+                    "Dropout sanitizer (mono): %d → %d Regionen",
+                    _before_sanitize,
+                    len(all_dropouts),
+                )
             _pre_repaired_skipped += _sk
             repaired_audio, ml_repaired_count = self._repair_dropouts_professional(audio, all_dropouts, params, use_ml)
 
@@ -829,6 +850,58 @@ class DropoutRepairPhase(PhaseInterface):
 
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
 
+        # Hard loudness guard (§2.45a): prevent catastrophic early-level collapse.
+        # Phase 24 can over-attenuate when many dropout candidates are repaired;
+        # enforce a material-adaptive max RMS drop with peak-safe makeup and
+        # limited dry rescue.
+        def _rms_db(x: np.ndarray) -> float:
+            arr = np.asarray(x, dtype=np.float64)
+            return float(20.0 * np.log10(np.sqrt(np.mean(arr * arr) + 1e-12)))
+
+        _max_drop_db = {
+            "shellac": 2.2,
+            "wax_cylinder": 2.2,
+            "wire_recording": 2.3,
+            "vinyl": 2.8,
+            "reel_tape": 3.0,
+            "tape": 3.0,
+            "cassette": 3.0,
+            "cd_digital": 4.0,
+            "dat": 4.0,
+            "mp3_low": 4.5,
+            "mp3_high": 4.0,
+            "aac": 4.0,
+            "streaming": 4.0,
+            "unknown": 3.5,
+        }.get(str(self._current_material), 3.5)
+
+        _rms_in = _rms_db(audio)
+        _rms_out = _rms_db(repaired_audio)
+        _drop_db = _rms_in - _rms_out
+        if _drop_db > _max_drop_db:
+            _target_rms = _rms_in - _max_drop_db
+            _need_db = max(0.0, _target_rms - _rms_out)
+            if _need_db > 0.01:
+                _g = float(10.0 ** (_need_db / 20.0))
+                _p999 = float(np.percentile(np.abs(repaired_audio), 99.9))
+                if _p999 > 1e-9:
+                    _g = min(_g, float(0.995 / _p999))
+                if _g > 1.0005:
+                    repaired_audio = np.clip(repaired_audio * _g, -1.0, 1.0)
+
+            _rms_after_makeup = _rms_db(repaired_audio)
+            _residual = (_rms_in - _rms_after_makeup) - _max_drop_db
+            if _residual > 0.20:
+                _alpha = float(np.clip(0.06 + (_residual / 8.0), 0.06, 0.24))
+                repaired_audio = np.clip((1.0 - _alpha) * repaired_audio + _alpha * audio, -1.0, 1.0)
+                logger.warning(
+                    "Phase 24 hard loudness rescue: material=%s rms_drop=%.2f dB > %.2f dB, dry_blend=%.3f",
+                    self._current_material,
+                    _drop_db,
+                    _max_drop_db,
+                    _alpha,
+                )
+
         return create_phase_result(
             audio=repaired_audio,
             modifications={
@@ -842,6 +915,7 @@ class DropoutRepairPhase(PhaseInterface):
                 "material_type": material_type,
                 "algorithm_version": "2.0_ml_hybrid" if use_ml else "2.0_professional",
                 "pre_repaired_gaps_skipped": _pre_repaired_skipped,
+                "rms_drop_db": float(_rms_in - _rms_db(repaired_audio)),
             },
             warnings=warnings,
             metadata={
@@ -1005,6 +1079,107 @@ class DropoutRepairPhase(PhaseInterface):
                 merged.append((start, end))
 
         return merged
+
+    def _safe_stft_params(
+        self,
+        context_lengths: tuple[int, ...],
+        default_nperseg: int = 512,
+        overlap_ratio: float = 0.75,
+        min_nperseg: int = 64,
+    ) -> tuple[int, int, int]:
+        """Derive valid STFT parameters for short contexts.
+
+        Prevents scipy errors like "noverlap must be less than nperseg" when
+        before/after snippets are shorter than the default window.
+        """
+        valid_lengths = [int(x) for x in context_lengths if int(x) > 0]
+        if not valid_lengths:
+            return min_nperseg, max(1, min_nperseg // 2), max(1, min_nperseg // 2)
+
+        max_allowed = max(8, min(valid_lengths))
+        nperseg = int(min(default_nperseg, max_allowed))
+        nperseg = max(min_nperseg, nperseg)
+        nperseg = min(nperseg, max_allowed)
+        if nperseg < 8:
+            nperseg = 8
+
+        noverlap = int(round(nperseg * overlap_ratio))
+        noverlap = max(1, min(noverlap, nperseg - 1))
+        hop = max(1, nperseg - noverlap)
+        return nperseg, noverlap, hop
+
+    def _sanitize_dropout_regions(
+        self,
+        audio: np.ndarray,
+        dropouts: list[tuple[int, int]],
+        params: dict[str, Any],
+    ) -> list[tuple[int, int]]:
+        """Filter dropout candidates by severity and cap total repaired coverage.
+
+        Prevents over-detection from multimodal union, which can cause broad
+        program attenuation and early perceived loudness collapse.
+        """
+        if not dropouts:
+            return []
+
+        x = np.asarray(audio, dtype=np.float64)
+        n = int(len(x))
+        if n <= 0:
+            return []
+
+        det_thr = float(params.get("detection_threshold", 0.20))
+        max_cov = float(params.get("max_coverage_ratio", 0.06))
+        ctx = max(64, int(0.06 * self.sample_rate))
+
+        scored: list[tuple[float, int, int]] = []
+        for start, end in dropouts:
+            s = max(0, int(start))
+            e = min(n, int(end))
+            if e - s < 2:
+                continue
+
+            seg = x[s:e]
+            seg_rms = float(np.sqrt(np.mean(seg * seg) + 1e-12))
+
+            l0 = max(0, s - ctx)
+            l1 = s
+            r0 = e
+            r1 = min(n, e + ctx)
+            left = x[l0:l1]
+            right = x[r0:r1]
+            if left.size == 0 and right.size == 0:
+                continue
+
+            ref = np.concatenate([left, right]) if left.size and right.size else (left if left.size else right)
+            ref_rms = float(np.sqrt(np.mean(ref * ref) + 1e-12))
+            ratio = seg_rms / max(ref_rms, 1e-9)
+            severity = float(np.clip(1.0 - ratio, 0.0, 1.0))
+
+            # Keep only severe level-dip candidates.
+            if ratio <= (det_thr * 1.35):
+                scored.append((severity, s, e))
+
+        if not scored:
+            return []
+
+        scored.sort(key=lambda t: t[0], reverse=True)
+        allowed = int(max(1, n * max_cov))
+        kept: list[tuple[int, int]] = []
+        used = 0
+        for _, s, e in scored:
+            seg_len = e - s
+            if seg_len <= 0:
+                continue
+            if used + seg_len > allowed:
+                continue
+            kept.append((s, e))
+            used += seg_len
+
+        if not kept:
+            _, s0, e0 = scored[0]
+            kept = [(s0, e0)]
+
+        return self._merge_dropout_regions(kept)
 
     def _repair_dropouts_professional(
         self, audio: np.ndarray, dropouts: list[tuple[int, int]], params: dict[str, Any], use_ml: bool = False
@@ -1453,9 +1628,12 @@ class DropoutRepairPhase(PhaseInterface):
         if gap_length <= 0:
             return np.zeros(0)
 
-        nperseg = 512
-        noverlap = nperseg * 3 // 4
-        hop = nperseg - noverlap
+        nperseg, noverlap, hop = self._safe_stft_params(
+            (len(before), len(after)),
+            default_nperseg=512,
+            overlap_ratio=0.75,
+            min_nperseg=64,
+        )
         TOP_K = 20  # Top-Sinusoide pro Frame
 
         try:
@@ -1542,8 +1720,12 @@ class DropoutRepairPhase(PhaseInterface):
         if gap_length <= 0:
             return np.zeros(0)
 
-        nperseg = 512
-        noverlap = nperseg * 3 // 4
+        nperseg, noverlap, hop = self._safe_stft_params(
+            (len(before), len(after), len(before) + len(after)),
+            default_nperseg=512,
+            overlap_ratio=0.75,
+            min_nperseg=64,
+        )
         K = 8  # NMF-Rang
         N_ITER = 30  # IS-NMF Iterationen
         EPS = 1e-10
@@ -1583,7 +1765,7 @@ class DropoutRepairPhase(PhaseInterface):
             h_mean_end = np.mean(h_end, axis=1, keepdims=True)  # (K,1)
             h_mean_start = np.mean(h_start, axis=1, keepdims=True)
 
-            n_frames_fill = max(1, int(np.ceil(gap_length / (nperseg - noverlap))))
+            n_frames_fill = max(1, int(np.ceil(gap_length / hop)))
             H_fill = np.zeros((K, n_frames_fill))
             for fi in range(n_frames_fill):
                 alpha = float(fi) / max(n_frames_fill - 1, 1)
@@ -1617,7 +1799,7 @@ class DropoutRepairPhase(PhaseInterface):
             context = np.concatenate([before, after])
             noise_std = float(np.std(context)) + 1e-10
             # §2.40 Determinismus: content-derived seed for reproducible noise synthesis
-            _fb_seed = int(abs(float(np.sum(np.abs(context[:min(len(context), 64)])))) * 1e5 + gap_length) % (2**31)
+            _fb_seed = int(abs(float(np.sum(np.abs(context[: min(len(context), 64)])))) * 1e5 + gap_length) % (2**31)
             _rng_fb = np.random.default_rng(seed=_fb_seed)
             synthesized = noise_std * _rng_fb.standard_normal(gap_length)
             return np.clip(synthesized, -1.0, 1.0)
@@ -1672,9 +1854,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = DropoutRepairPhase()
         result = phase.process(audio.copy(), sample_rate=sr, material_type=material)
@@ -1684,19 +1866,19 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Dropouts Repaired: %s", result.modifications['dropouts_repaired'])
-            logger.debug("   Avg Duration: %.1fms", result.modifications['avg_dropout_duration_ms'])
-            logger.debug("   Max Duration: %.1fms", result.modifications['max_dropout_duration_ms'])
-            logger.debug("   Repair Strength: %.2f", result.modifications['repair_strength'])
-            logger.debug("   Phase Continuity: %.2f", result.metadata['phase_continuity'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Dropouts Repaired: %s", result.modifications["dropouts_repaired"])
+            logger.debug("   Avg Duration: %.1fms", result.modifications["avg_dropout_duration_ms"])
+            logger.debug("   Max Duration: %.1fms", result.modifications["max_dropout_duration_ms"])
+            logger.debug("   Repair Strength: %.2f", result.modifications["repair_strength"])
+            logger.debug("   Phase Continuity: %.2f", result.metadata["phase_continuity"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("❌ Processing Failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Dropout Repair v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata['scientific_ref'])
-    logger.debug("Benchmark: %s", result.metadata['benchmark'])
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", result.metadata["benchmark"])
     logger.debug("Quality Imp: 0.94 (Professional-Grade)")

@@ -82,7 +82,7 @@ class ONNXPluginManager:
         self.total_inferences = 0
         self.total_inference_time_ms = 0.0
 
-        logger.info("ONNX Plugin Manager initialized with %s models", len(self.registry['models']))
+        logger.info("ONNX Plugin Manager initialized with %s models", len(self.registry["models"]))
 
     def get_available_models(self) -> list[str]:
         """
@@ -165,10 +165,10 @@ class ONNXPluginManager:
                 )
 
                 onnx_models[onnx_config["name"]] = onnx_model
-                logger.info("Loaded ONNX model: %s/%s", model_id, onnx_config['name'])
+                logger.info("Loaded ONNX model: %s/%s", model_id, onnx_config["name"])
 
             except Exception as e:
-                logger.error("Failed to load %s/%s: %s", model_id, onnx_config['name'], e)
+                logger.error("Failed to load %s/%s: %s", model_id, onnx_config["name"], e)
                 continue
 
         if not onnx_models:

@@ -357,8 +357,8 @@ class TestSelfLearningOptimizer:
             assert stats["total_pulls"] == 1
             assert opt.total_pulls() == 1
 
-    def test_legacy_api_still_works(self):
-        """Legacy-API (update_from_feedback, predict, optimize) bleibt funktional."""
+    def test_public_feedback_api_still_works(self):
+        """Public feedback API (update_from_feedback, predict, optimize) remains functional."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "state.json")
             opt = SelfLearningOptimizer(mode=ProcessingMode.RESTORATION, state_path=path)

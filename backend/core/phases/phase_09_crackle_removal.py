@@ -236,6 +236,21 @@ class CrackleRemovalPhase(PhaseInterface):
         super().__init__(sample_rate=sample_rate, **kwargs)
         self._banquet_plugin = None  # Lazy loading (vinyl-specific)
 
+    # §2.45a material-adaptive max allowed RMS drop per phase execution.
+    # Crackle removal removes impulsive energy; on vinyl/shellac RMS drop can reach
+    # 2–3 dB for heavily crackled recordings (crackle IS energy). Cap to prevent
+    # audible level collapse.
+    _MAX_RMS_DROP_DB: dict[str, float] = {
+        "vinyl": 2.5,
+        "shellac": 3.0,  # heavier broadband crackle
+        "tape": 1.5,
+        "reel_tape": 1.5,
+        "cassette": 1.5,
+        "cd_digital": 0.5,
+        "dat": 0.5,
+        "unknown": 2.0,
+    }
+
     def get_metadata(self) -> PhaseMetadata:
         return PhaseMetadata(
             phase_id="phase_09_crackle_removal",
@@ -440,7 +455,10 @@ class CrackleRemovalPhase(PhaseInterface):
                 from backend.file_import import load_audio_file
 
                 _res = load_audio_file(tmp_out_path, do_carrier_analysis=False)
-                restored = np.asarray(_res["audio"], dtype=np.float32)
+                _audio_loaded = _res.get("audio") if isinstance(_res, dict) else None
+                if _audio_loaded is None:
+                    raise RuntimeError("BANQUET output could not be loaded")
+                restored = np.asarray(_audio_loaded, dtype=np.float32)
 
                 # Blend with original based on texture_preserve parameter
                 texture_preserve = params.get("texture_preserve", 0.85)
@@ -502,12 +520,13 @@ class CrackleRemovalPhase(PhaseInterface):
         _crackle_sev_p09 = 0.0
         try:
             from backend.core.defect_scanner import DefectType as _DT9
+
             _ds_cr = _defect_scores_p09.get(_DT9.CRACKLE)
             if _ds_cr is not None:
                 _crackle_sev_p09 = float(getattr(_ds_cr, "severity", 0.0))
         except Exception as _sev_exc:
             logger.debug("Crackle severity lookup failed, using default 0.0: %s", _sev_exc)
-        if _crackle_sev_p09 >= 0.60:   # heavy crackle → +35 % more ML output, min preserve 0.30
+        if _crackle_sev_p09 >= 0.60:  # heavy crackle → +35 % more ML output, min preserve 0.30
             params["texture_preserve"] = float(np.clip(params["texture_preserve"] - 0.35, 0.30, 1.0))
         elif _crackle_sev_p09 >= 0.35:  # moderate crackle → +15 % more ML output, min preserve 0.40
             params["texture_preserve"] = float(np.clip(params["texture_preserve"] - 0.15, 0.40, 1.0))
@@ -529,6 +548,9 @@ class CrackleRemovalPhase(PhaseInterface):
             )
 
         # ML-Hybrid Decision: BANQUET for Vinyl only
+        # §2.45a — capture input RMS BEFORE processing (after early-return guard passed)
+        _rms_in_09 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+
         use_banquet = QUALITY_MODE_AVAILABLE and material_type == "vinyl" and is_phase_ml_enabled(9)
 
         if use_banquet:
@@ -653,6 +675,27 @@ class CrackleRemovalPhase(PhaseInterface):
         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
         restored = np.clip(restored, -1.0, 1.0)
 
+        # §2.45a Loudness-Drift-Guard: prevent broadband crackle removal from collapsing level
+        _rms_out_09 = float(np.sqrt(np.mean(np.asarray(restored, dtype=np.float64) ** 2) + 1e-12))
+        _rms_drop_09 = 20.0 * np.log10(max(_rms_out_09 / _rms_in_09, 1e-30)) if _rms_in_09 > 1e-8 else 0.0
+        _makeup_09 = 0.0
+        _max_drop_09 = float(self._MAX_RMS_DROP_DB.get(material_type, self._MAX_RMS_DROP_DB["unknown"]))
+        if _rms_in_09 > 1e-8 and _rms_drop_09 < -_max_drop_09:
+            _req_gain_db = -_max_drop_09 - _rms_drop_09
+            _peak_09 = float(np.percentile(np.abs(restored), 99.9) + 1e-12)
+            _max_safe_09 = max(0.0, -1.5 - 20.0 * np.log10(_peak_09))
+            _makeup_09 = float(np.clip(_req_gain_db, 0.0, _max_safe_09))
+            if _makeup_09 > 0.0:
+                restored = np.clip(restored * (10.0 ** (_makeup_09 / 20.0)), -1.0, 1.0).astype(np.float32)
+                _rms_out_09 = float(np.sqrt(np.mean(np.asarray(restored, dtype=np.float64) ** 2) + 1e-12))
+                _rms_drop_09 = 20.0 * np.log10(max(_rms_out_09 / _rms_in_09, 1e-30))
+                logger.info(
+                    "Phase 09 loudness-preservation: material=%s rms_drop=%.2f dB via makeup %.2f dB",
+                    material_type,
+                    _rms_drop_09,
+                    _makeup_09,
+                )
+
         return create_phase_result(
             audio=restored,
             modifications={
@@ -676,6 +719,8 @@ class CrackleRemovalPhase(PhaseInterface):
                 "execution_time_seconds": execution_time,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": round(float(_rms_drop_09), 3),
+                "loudness_makeup_db": round(float(_makeup_09), 3),
             },
         )
 
@@ -752,7 +797,7 @@ class CrackleRemovalPhase(PhaseInterface):
                 # Yule-Walker hier bewusst NUR für Prädiktorkoeffizienten
                 # (nicht als primärer Reparatur-Algorithmus)
                 # Nur Lags 0..AR_ORDER berechnen — O(n) statt O(n²)
-                R = np.array([np.dot(filtered[:n_audio - k], filtered[k:]) for k in range(AR_ORDER + 1)])
+                R = np.array([np.dot(filtered[: n_audio - k], filtered[k:]) for k in range(AR_ORDER + 1)])
                 R_mat = np.array([[R[abs(i - j)] for j in range(AR_ORDER)] for i in range(AR_ORDER)])
                 r_vec = R[1 : AR_ORDER + 1]
                 try:
@@ -1197,9 +1242,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = CrackleRemovalPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material)
@@ -1209,20 +1254,20 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Transients Short: %s", result.modifications['transients_short'])
-            logger.debug("   Transients Medium: %s", result.modifications['transients_medium'])
-            logger.debug("   Crackle Regions: %s", result.modifications['crackle_regions_found'])
-            logger.debug("   Crackle Reduction: %.1f dB", result.modifications['crackle_reduction_db'])
-            logger.debug("   Texture Preserved: %.2f", result.modifications['texture_preserved'])
-            logger.debug("   Interpolation: %s", result.metadata['interpolation_method'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Transients Short: %s", result.modifications["transients_short"])
+            logger.debug("   Transients Medium: %s", result.modifications["transients_medium"])
+            logger.debug("   Crackle Regions: %s", result.modifications["crackle_regions_found"])
+            logger.debug("   Crackle Reduction: %.1f dB", result.modifications["crackle_reduction_db"])
+            logger.debug("   Texture Preserved: %.2f", result.modifications["texture_preserved"])
+            logger.debug("   Interpolation: %s", result.metadata["interpolation_method"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("❌ Processing Failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Crackle Removal v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata['scientific_ref'])
-    logger.debug("Benchmark: %s", result.metadata['benchmark'])
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", result.metadata["benchmark"])
     logger.debug("Quality Impact: 0.91 (Professional-Grade)")

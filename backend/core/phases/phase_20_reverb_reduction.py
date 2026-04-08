@@ -262,7 +262,7 @@ class ReverbReduction(PhaseInterface):
             logger.debug("Phase 20: decade=%d → reverb strength capped to %.2f", decade, strength)
 
         # ML-Hybrid Mode Routing (v3.0)
-        quality_mode = kwargs.get("quality_mode", "balanced")
+        quality_mode = kwargs.get("quality_mode", "quality")
 
         # Check resource availability for ML-Hybrid (fallback to lightweight if needed)
         use_lightweight = False
@@ -511,7 +511,6 @@ class ReverbReduction(PhaseInterface):
         _c80_guard_triggered = False
         _early_blend_triggered = False
         _delta_c80 = 0.0
-        _d50_guard_triggered = False
         _delta_d50 = 0.0
         try:
             _mono_in = audio[0] if audio.ndim == 2 else audio
@@ -519,26 +518,24 @@ class ReverbReduction(PhaseInterface):
             _e80 = int(sample_rate * 0.080)
             _e50 = int(sample_rate * 0.050)
             if len(_mono_in) > _e80:
-                _c80_pre = 10.0 * float(np.log10(
-                    max(np.sum(_mono_in[:_e80] ** 2), 1e-12) / max(np.sum(_mono_in[_e80:] ** 2), 1e-12)
-                ))
-                _c80_post = 10.0 * float(np.log10(
-                    max(np.sum(_mono_out[:_e80] ** 2), 1e-12) / max(np.sum(_mono_out[_e80:] ** 2), 1e-12)
-                ))
+                _c80_pre = 10.0 * float(
+                    np.log10(max(np.sum(_mono_in[:_e80] ** 2), 1e-12) / max(np.sum(_mono_in[_e80:] ** 2), 1e-12))
+                )
+                _c80_post = 10.0 * float(
+                    np.log10(max(np.sum(_mono_out[:_e80] ** 2), 1e-12) / max(np.sum(_mono_out[_e80:] ** 2), 1e-12))
+                )
                 _delta_c80 = _c80_post - _c80_pre
 
                 # D50 measurement
-                _e_total_in = max(float(np.sum(_mono_in ** 2)), 1e-12)
-                _e_total_out = max(float(np.sum(_mono_out ** 2)), 1e-12)
+                _e_total_in = max(float(np.sum(_mono_in**2)), 1e-12)
+                _e_total_out = max(float(np.sum(_mono_out**2)), 1e-12)
                 _d50_pre = float(np.clip(float(np.sum(_mono_in[:_e50] ** 2)) / _e_total_in, 0.0, 1.0))
                 _d50_post = float(np.clip(float(np.sum(_mono_out[:_e50] ** 2)) / _e_total_out, 0.0, 1.0))
                 _delta_d50 = _d50_post - _d50_pre
 
                 if _delta_c80 < -2.0:
                     # C80 degraded → rollback to dry
-                    logger.warning(
-                        "Phase 20 §4.5c C80-guard: ΔC80=%.2f dB < −2 dB → rollback", _delta_c80
-                    )
+                    logger.warning("Phase 20 §4.5c C80-guard: ΔC80=%.2f dB < −2 dB → rollback", _delta_c80)
                     reduced = audio.copy()
                     _c80_guard_triggered = True
                 elif _delta_c80 > 6.0:
@@ -549,7 +546,8 @@ class ReverbReduction(PhaseInterface):
                     _c80_guard_triggered = True
                     logger.info(
                         "Phase 20 §4.5c C80-guard: ΔC80=%.2f dB > 6 dB → wet scaled to %.2f",
-                        _delta_c80, _c80_wet_scale,
+                        _delta_c80,
+                        _c80_wet_scale,
                     )
                 elif _delta_c80 > 4.0:
                     # Moderate boost → blend 35 % early reflections back (spec α=0.35, 50 ms)
@@ -576,10 +574,10 @@ class ReverbReduction(PhaseInterface):
                     _d50_scale = float(np.clip(0.12 / (abs(_delta_d50) + 1e-9), 0.30, 1.0))
                     reduced = audio + _d50_scale * (reduced - audio)
                     reduced = np.clip(reduced, -1.0, 1.0)
-                    _d50_guard_triggered = True
                     logger.info(
                         "Phase 20 §4.5c D50-guard: ΔD50=%.3f > 0.12 → wet scaled to %.2f",
-                        _delta_d50, _d50_scale,
+                        _delta_d50,
+                        _d50_scale,
                     )
         except Exception as _c80_exc:
             logger.debug("Phase 20 C80/D50-guard skipped (non-critical): %s", _c80_exc)
@@ -871,10 +869,10 @@ class ReverbReduction(PhaseInterface):
                 # Per-frame mean energy from reference STFT (linear scale)
                 E_frame = np.mean(np.abs(Zxx_ref) ** 2, axis=0)  # shape (n_t,)
                 E_frame = np.maximum(E_frame, 1e-15)
-                E_log_db = 10.0 * np.log10(E_frame)   # dB per frame
+                E_log_db = 10.0 * np.log10(E_frame)  # dB per frame
 
                 # Frame-to-frame delta energy (positive = rising, negative = decaying)
-                dE = np.diff(E_log_db, prepend=E_log_db[0])   # shape (n_t,)
+                dE = np.diff(E_log_db, prepend=E_log_db[0])  # shape (n_t,)
 
                 # Smooth dE to suppress single-sample noise spikes
                 _sm = max(3, min(7, n_t // 20))
@@ -891,7 +889,7 @@ class ReverbReduction(PhaseInterface):
                 _onset_indices = np.where(dE > 2.0)[0]  # onset = energy rise > 2 dB
                 for _oi in _onset_indices:
                     _end = min(n_t, int(_oi) + _prot)
-                    decay_mask[int(_oi):_end] = 0.0
+                    decay_mask[int(_oi) : _end] = 0.0
 
                 # Extra gain reduction in decay frames; strength-scaled.
                 # Maximum penalty 35 % at full strength → never below -4.4 dB (G_lr ≥ 0.60).
@@ -902,8 +900,7 @@ class ReverbReduction(PhaseInterface):
                 G_combined = np.clip(G_combined * G_lr[np.newaxis, :], 0.0, 1.0)
 
                 logger.debug(
-                    "MRSA Phase 20 late-reverb suppression: penalty=%.2f, "
-                    "decay_frames=%d/%d, onset_protected=%d",
+                    "MRSA Phase 20 late-reverb suppression: penalty=%.2f, decay_frames=%d/%d, onset_protected=%d",
                     _penalty,
                     int(np.sum(decay_mask > 0)),
                     n_t,
@@ -916,7 +913,9 @@ class ReverbReduction(PhaseInterface):
         Zxx_processed = G_combined * np.abs(Zxx_ref) * np.exp(1j * np.angle(Zxx_ref))
         if _PGHI_AVAILABLE_P20:
             try:
-                audio_out = _pghi_p20(Zxx_processed.astype(np.complex64), sr=sample_rate, win_size=REF_WIN, hop=REF_HOP, n_samples=n_audio)
+                audio_out = _pghi_p20(
+                    Zxx_processed.astype(np.complex64), sr=sample_rate, win_size=REF_WIN, hop=REF_HOP, n_samples=n_audio
+                )
             except Exception as pghi_exc:
                 logger.warning("MRSA Phase 20: PGHI failed, using iSTFT fallback: %s", pghi_exc)
                 _, audio_out = signal.istft(
@@ -1028,9 +1027,9 @@ if __name__ == "__main__":
         result = phase.process(reverbed_signal, sample_rate, material)
 
         logger.debug("✅ Professional Reverb Reduction:")
-        logger.debug("   RMS Change: %.2f dB", result.metrics['rms_change_db'])
-        logger.debug("   Reduction Strength: %.2f", result.metrics['reduction_strength'])
-        logger.debug("   Tail Damping: %.2f", result.metrics['tail_damping'])
+        logger.debug("   RMS Change: %.2f dB", result.metrics["rms_change_db"])
+        logger.debug("   Reduction Strength: %.2f", result.metrics["reduction_strength"])
+        logger.debug("   Tail Damping: %.2f", result.metrics["tail_damping"])
         logger.debug(
             f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
         )

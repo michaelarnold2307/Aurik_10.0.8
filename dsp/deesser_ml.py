@@ -62,8 +62,10 @@ class MLDeEsser:
         :param output_path: Pfad zur Ausgabedatei
         :return: output_path
         """
-        from backend.file_import import load_audio_file
         import numpy as np
+
+        from backend.file_import import load_audio_file
+
         _res = load_audio_file(audio_path)
         audio = np.asarray(_res["audio"], dtype=np.float64)
         sr = int(_res["sr"])

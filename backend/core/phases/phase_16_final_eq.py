@@ -182,6 +182,8 @@ class FinalEQ(PhaseInterface):
                     "processing": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -205,6 +207,8 @@ class FinalEQ(PhaseInterface):
                     "eq_applied": False,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Minimal EQ needed - skipped"],
             )
@@ -245,6 +249,8 @@ class FinalEQ(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "rt_factor": float(rt_factor),
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.20 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

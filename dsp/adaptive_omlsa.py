@@ -120,7 +120,7 @@ class AdaptiveOMLSA:
             _silence_threshold_db = kwargs.get("silence_threshold_db", -55.0)
             if noisy_mag.ndim == 2:
                 # 2-D spectrogram: per-frame energy along freq axis
-                _frame_pow = np.mean(noisy_mag ** 2, axis=-1, keepdims=True)
+                _frame_pow = np.mean(noisy_mag**2, axis=-1, keepdims=True)
                 _frame_db = 10.0 * np.log10(_frame_pow + 1e-12)
                 # Scale floor per frame: silent frames get ×0.5 (more suppression)
                 _silence_mask = (_frame_db < _silence_threshold_db).astype(np.float32)
@@ -128,7 +128,7 @@ class AdaptiveOMLSA:
                 psy_floor = psy_floor[np.newaxis, :] * _floor_scale
             else:
                 # 1-D spectrum: single-frame energy check
-                frame_energy_db = float(10.0 * np.log10(np.mean(noisy_mag ** 2) + 1e-12))
+                frame_energy_db = float(10.0 * np.log10(np.mean(noisy_mag**2) + 1e-12))
                 if frame_energy_db < _silence_threshold_db:
                     psy_floor = psy_floor * 0.5
 

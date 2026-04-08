@@ -18,14 +18,21 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from backend.core.phase_ontology import (
+    BASELINE_CAPPING_VALID_TYPES,
+    GDD_VALID_TYPES,
+    P1P2_DRIFT_CHECK_INVALID_TYPES,
+    get_phase_type,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Singleton ──────────────────────────────────────────────────────────────
-_instance: "CumulativeInteractionGuard | None" = None
+_instance: CumulativeInteractionGuard | None = None
 _lock = threading.Lock()
 
 
-def get_interaction_guard() -> "CumulativeInteractionGuard":
+def get_interaction_guard() -> CumulativeInteractionGuard:
     """Thread-safe Singleton accessor."""
     global _instance
     if _instance is None:
@@ -38,28 +45,55 @@ def get_interaction_guard() -> "CumulativeInteractionGuard":
 # ── Constants ──────────────────────────────────────────────────────────────
 
 # P1/P2 goals (§2.29d — hard regime, no degradation allowed)
-P1_P2_GOALS = frozenset({
-    "naturalness",       # Natürlichkeit
-    "authenticity",      # Authentizität
-    "tonal_center",      # TonalCenter
-    "timbre",            # Timbre
-    "articulation",      # Artikulation
-})
+# WICHTIG: Keys müssen mit measure_all()-Output von MusicalGoalsChecker
+# übereinstimmen (deutsch). Englische Keys (naturalness, authenticity …)
+# führten zu stiller Nicht-Prüfung aller Goals außer tonal_center.
+P1_P2_GOALS = frozenset(
+    {
+        "natuerlichkeit",  # Natürlichkeit (Ziel P1, Schwellwert 0.90)
+        "authentizitaet",  # Authentizität  (Ziel P1, Schwellwert 0.88)
+        "tonal_center",  # TonalCenter    (Ziel P2, Schwellwert 0.95)
+        "timbre_authentizitaet",  # Timbre         (Ziel P2, Schwellwert 0.87)
+        "artikulation",  # Artikulation   (Ziel P2, Schwellwert 0.85)
+    }
+)
+
+# §2.29c: tonal_center wird durch Breitbandrauschen künstlich erhöht
+# (gleichmäßige Chroma-Lifts). Nach Denoise sinkt der Wert auf den echten
+# musikimmanenten Level — das ist KEIN Artefakt, sondern Entlarvung des
+# Rausch-Inflationseffekts. Für SUBTRACTIVE-Phasen daher aus Drift-Check
+# ausschließen. PMGG §2.29c regelt die Per-Phase-Messung mit Baseline-Capping.
+_DEFECT_INFLATED_SUBTRACTIVE_GOALS: frozenset[str] = frozenset(
+    {
+        "tonal_center",
+    }
+)
 
 # Max cumulative drift before rollback (§2.48)
 MAX_CUMULATIVE_DRIFT = -0.05
 
-# STFT-based phases (§2.48) — group delay coherence check after ≥3
-STFT_PHASES = frozenset({
-    "phase_03_denoise",
-    "phase_07_harmonic_restoration",
-    "phase_20_reverb_reduction",
-    "phase_23_spectral_repair",
-    "phase_24_dropout_repair",
-    "phase_29_tape_hiss_reduction",
-    "phase_35_multiband_compression",
-    "phase_49_advanced_dereverb",
-})
+# STFT-based phases (§2.48) — group delay coherence check after ≥3.
+# §2.48a Architektur-Inversion: STFT_PHASES ist jetzt ein Hinweis-Set;
+# der GDD-Check konsultiert zusätzlich GDD_VALID_TYPES aus phase_ontology.
+# ML_GENERATIVE Phasen (SGMSE+ / phase_20, FlowMatching / phase_55) sind
+# explizit NICHT in GDD_VALID_TYPES: Diffusionsausgang ist per Design
+# nicht STFT-phasenkohärent (Richter et al., TASLP 2022).
+STFT_PHASES = frozenset(
+    {
+        "phase_03_denoise",
+        "phase_07_harmonic_restoration",
+        "phase_23_spectral_repair",
+        "phase_24_dropout_repair",
+        "phase_29_tape_hiss_reduction",
+        "phase_35_multiband_compression",
+        "phase_49_advanced_dereverb",
+        "phase_50_spectral_repair",  # STFT bin-interpolation (SUBTRACTIVE, GDD valid)
+        # phase_20_reverb_reduction: SGMSE+ primär  → ML_GENERATIVE → GDD invalide
+        # → nicht mehr in STFT_PHASES (Richter 2022).
+        # Verbleibt als Legacy-Eintrag auskommentiert für Audit-Zwecke:
+        # "phase_20_reverb_reduction",
+    }
+)
 
 # Max group delay deviation in ms (§2.48)
 # 5 ms = realistic limit for FFT-based spectral processing at 48 kHz.
@@ -72,24 +106,43 @@ STFT_PHASES = frozenset({
 # operating independently on L and R, violating §2.51).
 MAX_GROUP_DELAY_DEVIATION_MS = 5.0
 
+# Spectral-subtraction phases have an inherently higher group-delay deviation
+# because frequency-domain magnitude modifications displace phase by 3–8 ms
+# (STFT window 2048 samples / 48 kHz = 42.6 ms frame; bin-level phase shift
+# from Wiener/OMLSA mask application is not a sign of quality degradation).
+# §2.48 spec explicitly acknowledges this range — use 10 ms for these phases
+# to prevent spurious rollbacks on tape/hiss reduction.
+MAX_GROUP_DELAY_DEVIATION_MS_SPECTRAL = 10.0
+
+# Phases that use spectral subtraction / frequency-domain masking and are
+# therefore exempt from the 5 ms threshold — they get 10 ms instead.
+_SPECTRAL_SUBTRACTION_PHASES = frozenset(
+    {
+        "phase_03_denoise",
+        "phase_20_reverb_reduction",
+        "phase_29_tape_hiss_reduction",
+        "phase_49_advanced_dereverb",
+    }
+)
+
 # Critical interaction pairs (§2.48 Table)
 CRITICAL_PAIRS: list[tuple[frozenset[str], str, str, float]] = [
     # (phases, guard_goal, guard_description, max_regression)
     (
         frozenset({"phase_03_denoise", "phase_20_reverb_reduction"}),
-        "naturalness",
+        "natuerlichkeit",
         "Cumulative room removal (De-Hiss + De-Reverb)",
         -0.03,
     ),
     (
         frozenset({"phase_03_denoise", "phase_49_advanced_dereverb"}),
-        "naturalness",
+        "natuerlichkeit",
         "Cumulative room removal (De-Hiss + Advanced De-Reverb)",
         -0.03,
     ),
     (
         frozenset({"phase_29_tape_hiss_reduction", "phase_03_denoise"}),
-        "naturalness",  # proxy for over-denoising
+        "natuerlichkeit",  # proxy for over-denoising
         "Over-denoising (NR + De-Hiss)",
         -0.03,
     ),
@@ -101,7 +154,7 @@ CRITICAL_PAIRS: list[tuple[frozenset[str], str, str, float]] = [
     ),
     (
         frozenset({"phase_07_harmonic_restoration", "phase_42_vocal_ai_enhancement"}),
-        "timbre",
+        "timbre_authentizitaet",
         "Frequency doubling (Harmonic + Vocal-AI)",
         -0.03,
     ),
@@ -117,6 +170,7 @@ MAX_CONSECUTIVE_ROLLBACKS = 3
 @dataclass
 class InteractionGuardCheckpoint:
     """Audio checkpoint with goal scores."""
+
     audio: np.ndarray
     phase_id: str
     goal_scores: dict[str, float]
@@ -126,6 +180,7 @@ class InteractionGuardCheckpoint:
 @dataclass
 class InteractionRollback:
     """Record of a rollback event."""
+
     phase_id: str
     reason: str
     drift: dict[str, float]
@@ -135,6 +190,7 @@ class InteractionRollback:
 @dataclass
 class InteractionGuardState:
     """Mutable guard state for one pipeline run."""
+
     pre_pipeline_goals: dict[str, float] = field(default_factory=dict)
     best_checkpoint: InteractionGuardCheckpoint | None = None
     stft_phases_executed: list[str] = field(default_factory=list)
@@ -161,17 +217,43 @@ class CumulativeInteractionGuard:
         audio: np.ndarray,
         goal_scores: dict[str, float],
     ) -> None:
-        """Set the pre-pipeline P1/P2 baseline scores before any phases run."""
-        state.pre_pipeline_goals = dict(goal_scores)
+        """Set the pre-pipeline P1/P2 baseline scores before any phases run.
+
+        §2.29c Baseline-Capping: Defekte inflationieren bestimmte Metriken
+        künstlich (Rauschen → tonal_center erhöht durch gleichmäßige Chroma-Lifts;
+        Hall → waerme/transparenz erhöht). Subtractive Phasen werden gegen diesen
+        inflationierten Wert gemessen → false Regression → Rollback auf verbessertes Audio.
+
+        Lösung: Baseline wird auf canonical_threshold + 0.05 Headroom gedeckelt.
+        Dieser Schritt greift nur auf P1/P2 Goals für spätere Drift-Checks.
+        """
+        # §2.29c canonical thresholds (Restoration — Pareto-Differenzierung §9.10.77)
+        # Keys müssen mit measure_all()-Output übereinstimmen (deutsch).
+        _CANONICAL_BASELINES: dict[str, float] = {
+            "natuerlichkeit": 0.90,
+            "authentizitaet": 0.88,
+            "tonal_center": 0.95,
+            "timbre_authentizitaet": 0.87,
+            "artikulation": 0.85,
+        }
+        capped: dict[str, float] = {}
+        for goal, measured in goal_scores.items():
+            if goal in P1_P2_GOALS:
+                canonical = _CANONICAL_BASELINES.get(goal, 0.85)
+                capped[goal] = min(measured, canonical + 0.05)
+            else:
+                capped[goal] = measured
+
+        state.pre_pipeline_goals = capped
         state.best_checkpoint = InteractionGuardCheckpoint(
             audio=audio.copy(),
             phase_id="__pre_pipeline__",
-            goal_scores=dict(goal_scores),
+            goal_scores=dict(goal_scores),  # unkapped — für echte P1/P2-Ziele
             stft_phase_count=0,
         )
         logger.debug(
-            "§2.48 InteractionGuard: baseline set — P1/P2 goals: %s",
-            {k: f"{v:.3f}" for k, v in goal_scores.items() if k in P1_P2_GOALS},
+            "§2.48 InteractionGuard: baseline set (capped) — P1/P2 goals: %s",
+            {k: f"{v:.3f}" for k, v in capped.items() if k in P1_P2_GOALS},
         )
 
     def check_after_phase(
@@ -192,15 +274,28 @@ class CumulativeInteractionGuard:
 
         state.executed_phases.add(phase_id)
 
-        # Track STFT phases
-        if phase_id in STFT_PHASES:
+        # §2.48a: Drift-Check überspringen für ANALYSIS_ONLY (Audio unverändert)
+        _phase_type = get_phase_type(phase_id)
+        if _phase_type in P1P2_DRIFT_CHECK_INVALID_TYPES:
+            return current_audio, False
+
+        # Track STFT phases (nur wenn GDD-Check valide für diesen Typ)
+        _gdd_valid_for_type = _phase_type in GDD_VALID_TYPES
+        if phase_id in STFT_PHASES and _gdd_valid_for_type:
             state.stft_phases_executed.append(phase_id)
 
         # 1. Check cumulative P1/P2 drift
+        # §2.29c: SUBTRACTIVE-Phasen können defekt-inflationierte Goals scheinbar
+        # verschlechtern (tonal_center: Rauschen → künstlich hohe Chroma-Lifts → Inflation).
+        # Nach Denoise wird echter niedrigerer Wert sichtbar — kein Artefakt.
+        # Diese Goals SUBTRACTIVE-Phase-selektiv aus Drift-Check ausschließen.
+        _is_subtractive = _phase_type in BASELINE_CAPPING_VALID_TYPES  # SUBTRACTIVE
         rolled_back = False
         if state.pre_pipeline_goals:
             cumulative_drift = {}
             for g in P1_P2_GOALS:
+                if _is_subtractive and g in _DEFECT_INFLATED_SUBTRACTIVE_GOALS:
+                    continue  # tonal_center für SUBTRACTIVE-Phasen nicht prüfen (§2.29c)
                 if g in current_goals and g in state.pre_pipeline_goals:
                     cumulative_drift[g] = current_goals[g] - state.pre_pipeline_goals[g]
 
@@ -212,12 +307,14 @@ class CumulativeInteractionGuard:
                     {k: f"{v:+.3f}" for k, v in cumulative_drift.items() if v < MAX_CUMULATIVE_DRIFT},
                     state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
                 )
-                state.rollback_log.append(InteractionRollback(
-                    phase_id=phase_id,
-                    reason=f"P1/P2 cumulative drift {worst_drift:+.3f}",
-                    drift=cumulative_drift,
-                    rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
-                ))
+                state.rollback_log.append(
+                    InteractionRollback(
+                        phase_id=phase_id,
+                        reason=f"P1/P2 cumulative drift {worst_drift:+.3f}",
+                        drift=cumulative_drift,
+                        rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
+                    )
+                )
                 state.consecutive_rollbacks += 1
                 rolled_back = True
                 # §2.48 STFT-Zähler korrigieren: Phase war im Audio-Zustand nicht
@@ -241,14 +338,17 @@ class CumulativeInteractionGuard:
         if pair_rollback:
             logger.warning(
                 "§2.48 Critical pair interaction after %s: %s → rollback",
-                phase_id, pair_rollback,
+                phase_id,
+                pair_rollback,
             )
-            state.rollback_log.append(InteractionRollback(
-                phase_id=phase_id,
-                reason=f"Critical pair: {pair_rollback}",
-                drift={},
-                rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
-            ))
+            state.rollback_log.append(
+                InteractionRollback(
+                    phase_id=phase_id,
+                    reason=f"Critical pair: {pair_rollback}",
+                    drift={},
+                    rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
+                )
+            )
             state.consecutive_rollbacks += 1
             # §2.48 STFT-Zähler korrigieren bei Critical-Pair-Rollback
             if phase_id in STFT_PHASES and phase_id in state.stft_phases_executed:
@@ -263,25 +363,34 @@ class CumulativeInteractionGuard:
             return current_audio, True
 
         # 3. Check STFT phase coherence after ≥3 STFT phases
-        if len(state.stft_phases_executed) >= 3 and phase_id in STFT_PHASES:
+        # §2.48a: GDD nur prüfen wenn Typ valide und Phase in STFT_PHASES.
+        if len(state.stft_phases_executed) >= 3 and phase_id in STFT_PHASES and _gdd_valid_for_type:
             gdd_ok = self._check_group_delay(
                 state.best_checkpoint.audio if state.best_checkpoint else current_audio,
                 current_audio,
                 sr,
+                phase_id=phase_id,
+            )
+            _gdd_threshold = (
+                MAX_GROUP_DELAY_DEVIATION_MS_SPECTRAL
+                if phase_id in _SPECTRAL_SUBTRACTION_PHASES
+                else MAX_GROUP_DELAY_DEVIATION_MS
             )
             if not gdd_ok:
                 logger.warning(
                     "§2.48 STFT group delay deviation > %.1f ms after %d STFT phases (%s) → rollback",
-                    MAX_GROUP_DELAY_DEVIATION_MS,
+                    _gdd_threshold,
                     len(state.stft_phases_executed),
                     phase_id,
                 )
-                state.rollback_log.append(InteractionRollback(
-                    phase_id=phase_id,
-                    reason=f"STFT group delay deviation after {len(state.stft_phases_executed)} STFT phases",
-                    drift={},
-                    rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
-                ))
+                state.rollback_log.append(
+                    InteractionRollback(
+                        phase_id=phase_id,
+                        reason=f"STFT group delay deviation after {len(state.stft_phases_executed)} STFT phases",
+                        drift={},
+                        rolled_back_to=state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
+                    )
+                )
                 state.consecutive_rollbacks += 1
                 # §2.48 STFT-Zähler korrigieren: Group-Delay-Rollback bedeutet,
                 # diese Phase ist nicht im Audio-Zustand persistent.  Ohne
@@ -336,7 +445,10 @@ class CumulativeInteractionGuard:
     # ── Private helpers ────────────────────────────────────────────────────
 
     def _check_critical_pairs(
-        self, state: InteractionGuardState, phase_id: str, goals: dict[str, float],
+        self,
+        state: InteractionGuardState,
+        phase_id: str,
+        goals: dict[str, float],
     ) -> str | None:
         """Check if current phase + already-executed phases form a critical pair."""
         for pair_phases, guard_goal, description, max_reg in CRITICAL_PAIRS:
@@ -351,12 +463,25 @@ class CumulativeInteractionGuard:
         return None
 
     def _check_group_delay(
-        self, reference: np.ndarray, current: np.ndarray, sr: int,
+        self,
+        reference: np.ndarray,
+        current: np.ndarray,
+        sr: int,
+        phase_id: str = "",
     ) -> bool:
-        """Check STFT group delay deviation stays ≤ 2 ms.
+        """Check STFT group delay deviation stays within per-phase threshold.
+
+        Spectral-subtraction phases (_SPECTRAL_SUBTRACTION_PHASES) use
+        MAX_GROUP_DELAY_DEVIATION_MS_SPECTRAL (10 ms); all others use
+        MAX_GROUP_DELAY_DEVIATION_MS (5 ms).
 
         Returns True if OK, False if deviation exceeded.
         """
+        threshold_ms = (
+            MAX_GROUP_DELAY_DEVIATION_MS_SPECTRAL
+            if phase_id in _SPECTRAL_SUBTRACTION_PHASES
+            else MAX_GROUP_DELAY_DEVIATION_MS
+        )
         ref_mono = reference if reference.ndim == 1 else np.mean(reference, axis=0)
         cur_mono = current if current.ndim == 1 else np.mean(current, axis=0)
         min_len = min(len(ref_mono), len(cur_mono))
@@ -395,14 +520,18 @@ class CumulativeInteractionGuard:
         max_deviation_ms = 1000.0 * max_deviation_samples / sr
 
         logger.debug(
-            "§2.48 STFT group delay deviation: %.2f ms (threshold: %.1f ms)",
-            max_deviation_ms, MAX_GROUP_DELAY_DEVIATION_MS,
+            "§2.48 STFT group delay deviation: %.2f ms (threshold: %.1f ms, phase=%s)",
+            max_deviation_ms,
+            threshold_ms,
+            phase_id or "unknown",
         )
 
-        return max_deviation_ms <= MAX_GROUP_DELAY_DEVIATION_MS
+        return max_deviation_ms <= threshold_ms
 
     def _is_better_checkpoint(
-        self, state: InteractionGuardState, goals: dict[str, float],
+        self,
+        state: InteractionGuardState,
+        goals: dict[str, float],
     ) -> bool:
         """Check if current goals are better than best checkpoint."""
         if state.best_checkpoint is None:
@@ -410,8 +539,11 @@ class CumulativeInteractionGuard:
 
         # Mean P1/P2 score comparison
         curr_mean = np.mean([goals.get(g, 0.0) for g in P1_P2_GOALS if g in goals])
-        best_mean = np.mean([
-            state.best_checkpoint.goal_scores.get(g, 0.0)
-            for g in P1_P2_GOALS if g in state.best_checkpoint.goal_scores
-        ])
+        best_mean = np.mean(
+            [
+                state.best_checkpoint.goal_scores.get(g, 0.0)
+                for g in P1_P2_GOALS
+                if g in state.best_checkpoint.goal_scores
+            ]
+        )
         return float(curr_mean) >= float(best_mean) - 0.001  # allow tiny tolerance

@@ -494,10 +494,23 @@ class TestNewGenreProfiles:
     def test_82_genre_restoration_profiles_has_all_17_genres(self):
         """GENRE_RESTORATION_PROFILES hat alle 17 Genres (5 alt + 12 neu)."""
         expected = [
-            "Pop", "Blues", "Soul/R&B", "Country", "Folk",
-            "Funk", "Electronic", "Hip-Hop", "Metal", "Latin",
-            "Gospel", "Reggae",
-            "Schlager", "Jazz", "Klassik", "Oper", "Rock",
+            "Pop",
+            "Blues",
+            "Soul/R&B",
+            "Country",
+            "Folk",
+            "Funk",
+            "Electronic",
+            "Hip-Hop",
+            "Metal",
+            "Latin",
+            "Gospel",
+            "Reggae",
+            "Schlager",
+            "Jazz",
+            "Klassik",
+            "Oper",
+            "Rock",
         ]
         for genre in expected:
             assert genre in GENRE_RESTORATION_PROFILES, f"'{genre}' fehlt in GENRE_RESTORATION_PROFILES"
@@ -575,15 +588,25 @@ class TestNewGenreProfiles:
     def test_91_compute_non_schlager_scores_has_16_keys(self):
         """_compute_non_schlager_scores() gibt Dict mit 16 Genre-Keys zurück."""
         clf = get_genre_classifier()
-        scores = clf._compute_non_schlager_scores(
-            centroid_hz=2500.0, onset_rate=3.0, hsi=0.60, dr_db=25.0, bpm=110.0
-        )
+        scores = clf._compute_non_schlager_scores(centroid_hz=2500.0, onset_rate=3.0, hsi=0.60, dr_db=25.0, bpm=110.0)
         assert len(scores) == 16
         expected_keys = [
-            "Rock", "Jazz", "Klassik", "Oper",
-            "Pop", "Blues", "Soul/R&B", "Country", "Folk",
-            "Funk", "Electronic", "Hip-Hop", "Metal",
-            "Latin", "Gospel", "Reggae",
+            "Rock",
+            "Jazz",
+            "Klassik",
+            "Oper",
+            "Pop",
+            "Blues",
+            "Soul/R&B",
+            "Country",
+            "Folk",
+            "Funk",
+            "Electronic",
+            "Hip-Hop",
+            "Metal",
+            "Latin",
+            "Gospel",
+            "Reggae",
         ]
         for k in expected_keys:
             assert k in scores, f"Key '{k}' fehlt"
@@ -602,12 +625,28 @@ class TestNewGenreProfiles:
         audio = np.random.randn(96000).astype(np.float32) * 0.1
         result = classify_genre(audio, sr=48000)
         valid_labels = {
-            "Schlager", "Walzer", "Marsch", "Disco-Schlager", "Volksmusik",
+            "Schlager",
+            "Walzer",
+            "Marsch",
+            "Disco-Schlager",
+            "Volksmusik",
             "Deutscher Schlager",
-            "Jazz", "Klassik", "Oper", "Rock",
-            "Pop", "Blues", "Soul/R&B", "Country", "Folk",
-            "Funk", "Electronic", "Hip-Hop", "Metal",
-            "Latin", "Gospel", "Reggae",
+            "Jazz",
+            "Klassik",
+            "Oper",
+            "Rock",
+            "Pop",
+            "Blues",
+            "Soul/R&B",
+            "Country",
+            "Folk",
+            "Funk",
+            "Electronic",
+            "Hip-Hop",
+            "Metal",
+            "Latin",
+            "Gospel",
+            "Reggae",
             "Unbekannt",
         }
         assert result.genre_label in valid_labels, f"Unbekanntes genre_label: '{result.genre_label}'"
@@ -639,14 +678,22 @@ class TestNewGenreProfiles:
     def test_100_all_17_profiles_have_groove_dtw_max_ms(self):
         """Alle 17 Profiles (außer OPER) haben groove_dtw_max_ms."""
         profiles_with_groove = [
-            SCHLAGER_RESTORATION_PROFILE, JAZZ_RESTORATION_PROFILE,
-            KLASSIK_RESTORATION_PROFILE, ROCK_RESTORATION_PROFILE,
-            POP_RESTORATION_PROFILE, BLUES_RESTORATION_PROFILE,
-            SOUL_RNB_RESTORATION_PROFILE, COUNTRY_RESTORATION_PROFILE,
-            FOLK_RESTORATION_PROFILE, FUNK_RESTORATION_PROFILE,
-            ELECTRONIC_RESTORATION_PROFILE, HIPHOP_RESTORATION_PROFILE,
-            METAL_RESTORATION_PROFILE, LATIN_RESTORATION_PROFILE,
-            GOSPEL_RESTORATION_PROFILE, REGGAE_RESTORATION_PROFILE,
+            SCHLAGER_RESTORATION_PROFILE,
+            JAZZ_RESTORATION_PROFILE,
+            KLASSIK_RESTORATION_PROFILE,
+            ROCK_RESTORATION_PROFILE,
+            POP_RESTORATION_PROFILE,
+            BLUES_RESTORATION_PROFILE,
+            SOUL_RNB_RESTORATION_PROFILE,
+            COUNTRY_RESTORATION_PROFILE,
+            FOLK_RESTORATION_PROFILE,
+            FUNK_RESTORATION_PROFILE,
+            ELECTRONIC_RESTORATION_PROFILE,
+            HIPHOP_RESTORATION_PROFILE,
+            METAL_RESTORATION_PROFILE,
+            LATIN_RESTORATION_PROFILE,
+            GOSPEL_RESTORATION_PROFILE,
+            REGGAE_RESTORATION_PROFILE,
         ]
         for p in profiles_with_groove:
             assert "groove_dtw_max_ms" in p

@@ -4,19 +4,16 @@ Covers: tag extraction, tag application, provenance hash, round-trip transfer,
 edge cases (missing file, unsupported format, empty tags).
 """
 
-import io
-import struct
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_test_wav(path: Path, sr: int = 48000, duration_s: float = 0.1) -> None:
     """Write a short sine WAV for testing."""
@@ -56,9 +53,9 @@ def _write_test_mp3(path: Path, sr: int = 48000, duration_s: float = 0.5) -> Pat
 
 try:
     from backend.core.metadata_preserver import (
+        _MUTAGEN_AVAILABLE,
         AudioMetadata,
         MetadataPreserver,
-        _MUTAGEN_AVAILABLE,
         get_metadata_preserver,
     )
 except ImportError:
@@ -156,9 +153,7 @@ class TestFlacRoundTrip:
     def test_provenance_comment_in_flac(self, tmp_path):
         p = tmp_path / "prov.flac"
         _write_test_flac(p)
-        ok = get_metadata_preserver().apply(
-            p, AudioMetadata(), aurik_version="9.10.99", original_hash="abc123"
-        )
+        ok = get_metadata_preserver().apply(p, AudioMetadata(), aurik_version="9.10.99", original_hash="abc123")
         assert ok
         from mutagen.flac import FLAC
 
@@ -273,10 +268,7 @@ class TestCoverArt:
         _write_test_flac(p)
 
         # Minimal 1x1 JPEG bytes (valid header)
-        fake_jpeg = (
-            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01"
-            b"\x00\x01\x00\x00\xff\xd9"
-        )
+        fake_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
         meta_in = AudioMetadata(cover_art=fake_jpeg, cover_mime="image/jpeg")
         ok = get_metadata_preserver().apply(p, meta_in)
         assert ok

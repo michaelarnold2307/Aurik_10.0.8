@@ -161,6 +161,8 @@ class BrassEnhancementPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"gain_h2": 0.0, "presence_db": 0.0, "air_db": 0.0},
             )
@@ -301,6 +303,8 @@ class BrassEnhancementPhase(PhaseInterface):
                 "instrument_formant_frames": igt_frames,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={"gain_h2": gain_h2, "presence_db": presence_db, "air_db": air_db},
         )

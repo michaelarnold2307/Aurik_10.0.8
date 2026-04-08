@@ -361,13 +361,31 @@ class DenoisePhase(PhaseInterface):
         # PMGG passes strength via kwargs to control retry intensity (§2.29).
         # If not provided, fall back to material-specific default.
         effective_strength = kwargs.get("strength", params["strength"])
-        effective_strength = max(0.01, min(1.0, float(effective_strength)))
+        effective_strength = float(np.clip(float(effective_strength), 0.0, 1.0))
 
         # Locality-aware modulation from UV3.
         # For sparse defects keep denoising gentler to avoid global timbre flattening.
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        effective_strength = max(0.01, min(1.0, effective_strength * phase_locality_factor))
+        effective_strength = float(np.clip(effective_strength * phase_locality_factor, 0.0, 1.0))
+
+        if effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "noise_reduction_db": 0.0,
+                    "effective_strength": 0.0,
+                },
+                warnings=["Denoise skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
 
         # §2.14+ Era-adaptive NR: smooth interpolation across decades.
         # Older recordings have higher noise floors and tolerate stronger
@@ -411,7 +429,7 @@ class DenoisePhase(PhaseInterface):
 
         # ML-Hybrid Mode Routing (v3.0)
         # quality_mode from UnifiedRestorerV3: 'fast', 'balanced', 'maximum'
-        quality_mode = kwargs.get("quality_mode", "balanced")
+        quality_mode = kwargs.get("quality_mode", "quality")
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
 
@@ -429,6 +447,45 @@ class DenoisePhase(PhaseInterface):
                     f"(CPU: {adaptive_resource_manager.get_cpu_usage():.1f}%, "
                     f"Memory: {adaptive_resource_manager.get_memory_usage():.1f}%)"
                 )
+
+        # §Hebel-2 SGMSE+ Tier-0: Score-Based Generative Speech Enhancement
+        # Applied BEFORE ML-Hybrid for vocal-dominant material (singing, speech, opera).
+        # SGMSE+ (Richter et al. 2022) uses diffusion posterior sampling P(x|y) in the
+        # complex STFT domain — superior to deterministic filters for structured vocal noise.
+        # Only active when:
+        #   a) quality_mode in ["quality", "maximum"] (not balanced — too slow)
+        #   b) vocal content detected (genre Klassik/Oper or panns_singing >= 0.30)
+        #   c) material is NOT clean_digital (SGMSE trains on degraded recordings)
+        #   d) available RAM > 0.5 GB (SGMSE+ TorchScript is ~251 MB loaded)
+        _sgmse_applied = False
+        _vocal_genres = {"Klassik", "Oper", "Jazz", "Singer-Songwriter", "Chanson", "Folk"}
+        _genre_is_vocal = genre_label in _vocal_genres
+        _panns_singing = float(kwargs.get("panns_singing", 0.0))
+        _is_vocal_material = _genre_is_vocal or _panns_singing >= 0.30
+        _is_non_digital = material_type not in ("cd_digital", "streaming", "mp3_high")
+        _sgmse_eligible = (
+            quality_mode in ("quality", "maximum") and _is_vocal_material and _is_non_digital and not use_lightweight
+        )
+        if _sgmse_eligible:
+            try:
+                from plugins.sgmse_plugin import get_sgmse_plus_plugin
+
+                _sgmse = get_sgmse_plus_plugin()
+                # sigma adaptive: stronger for low-SR tape recordings, gentler for vinyl
+                _sgmse_sigma = 0.6 if material_type in ("tape", "reel_tape", "shellac") else 0.4
+                _sgmse_result = _sgmse.enhance(audio, sr=sample_rate, sigma=_sgmse_sigma)
+                if _sgmse_result is not None and np.isfinite(_sgmse_result.audio).all():
+                    audio = np.nan_to_num(_sgmse_result.audio, nan=0.0, posinf=0.0, neginf=0.0)
+                    audio = np.clip(audio, -1.0, 1.0)
+                    _sgmse_applied = True
+                    logger.info(
+                        "§Hebel-2 SGMSE+: vocal speech enhancement applied (sigma=%.2f, material=%s, model=%s)",
+                        _sgmse_sigma,
+                        material_type,
+                        _sgmse_result.model_used,
+                    )
+            except Exception as _sgmse_exc:
+                logger.debug("SGMSE+ Tier-0 nicht verfügbar, weiter mit OMLSA: %s", _sgmse_exc)
 
         # ML-Hybrid only if resources available and quality mode permits
         # "quality" (10×RT) and "maximum" (15×RT) both use full ML-Hybrid; "balanced" (8×RT) uses adaptive
@@ -483,6 +540,44 @@ class DenoisePhase(PhaseInterface):
 
                 ml_result.audio = np.nan_to_num(ml_result.audio, nan=0.0, posinf=0.0, neginf=0.0)
                 ml_result.audio = np.clip(ml_result.audio, -1.0, 1.0)
+
+                # §8.2 Energy-Preservation Guard (ML-Hybrid path).
+                # Resemble Enhance can produce near-silence (e_ratio < 20%) when it mis-treats
+                # clean audio or low-noise signals as pure noise.  In that case fall back to the
+                # OMLSA-preprocessed audio stored in the ml_result pipeline (re-run DSP path).
+                # Using a blend-back here would destroy the PMGG Wet/Dry delta contrast
+                # (_run_phase computes delta_full vs delta_half — both would collapse to ~audio).
+                _ml_e_in = float(np.sum(audio.astype(np.float64) ** 2))
+                _ml_e_out = float(np.sum(ml_result.audio.astype(np.float64) ** 2))
+                if _ml_e_in > 1e-6 and _ml_e_out / _ml_e_in < 0.20:
+                    # Resemble output is near-silence: fall back to DSP-OMLSA path
+                    logger.info(
+                        "Phase 03 ML Energy-Preservation Guard: Resemble e_ratio=%.4f < 0.20 → DSP fallback",
+                        _ml_e_out / _ml_e_in,
+                    )
+                    warnings.append(
+                        f"ML energy-preservation: Resemble near-silence (ratio={_ml_e_out / _ml_e_in:.3f}) → DSP fallback"
+                    )
+                    # Re-run DSP path (OMLSA/IMCRA) which has its own §8.2 guard
+                    dsp_params_fb = dict(params)
+                    dsp_params_fb["strength"] = effective_strength
+                    if audio.ndim == 2:
+                        _fb_l, _fb_stats_l = self._denoise_mono_professional(
+                            audio[:, 0], dsp_params_fb, noise_profile_start, noise_profile_end
+                        )
+                        _fb_r, _fb_stats_r = self._denoise_mono_professional(
+                            audio[:, 1], dsp_params_fb, noise_profile_start, noise_profile_end
+                        )
+                        ml_result.audio = np.column_stack([_fb_l, _fb_r]).astype(np.float32)
+                        noise_reduction_db = (_fb_stats_l["reduction_db"] + _fb_stats_r["reduction_db"]) / 2
+                    else:
+                        ml_result.audio, _fb_stats = self._denoise_mono_professional(
+                            audio, dsp_params_fb, noise_profile_start, noise_profile_end
+                        )
+                        noise_reduction_db = _fb_stats["reduction_db"]
+                    ml_result.audio = np.nan_to_num(ml_result.audio, nan=0.0, posinf=0.0, neginf=0.0)
+                    ml_result.audio = np.clip(ml_result.audio, -1.0, 1.0)
+
                 ml_result.audio, loudness_stats = self._apply_material_loudness_preservation(
                     audio,
                     ml_result.audio,
@@ -521,7 +616,9 @@ class DenoisePhase(PhaseInterface):
                 )
 
             except Exception as e:
-                logger.warning("ML-Hybrid denoising failed: %s, falling back to DSP. Error type: %s", e, type(e).__name__)
+                logger.warning(
+                    "ML-Hybrid denoising failed: %s, falling back to DSP. Error type: %s", e, type(e).__name__
+                )
                 # Fall through to DSP path below
 
         # DSP-Only Path (Fast mode or ML fallback)
@@ -587,6 +684,7 @@ class DenoisePhase(PhaseInterface):
                 "algorithm": "omlsa_imcra_v3",
                 "multi_band": True,
                 "adaptive_noise_tracking": True,
+                "sgmse_plus_tier0_applied": _sgmse_applied,
                 "scientific_ref": "Cohen & Berdugo IMCRA (2002), Cohen OMLSA (2003), Cappé (1994)",
                 "benchmark": "iZotope RX Voice De-noise Pro, CEDAR DNS One",
                 "algorithm_version": "3.0_omlsa_imcra",
@@ -1527,9 +1625,9 @@ if __name__ == "__main__":
     materials = ["tape", "vinyl", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = DenoisePhase(sample_rate=sr)
         result = phase.process(audio_with_noise.copy(), material_type=material)
@@ -1539,19 +1637,19 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Noise Reduction: %.1f dB", result.modifications['noise_reduction_db'])
-            logger.debug("   Musical Noise Suppression: %.2f", result.modifications['musical_noise_suppression'])
-            logger.debug("   Strength: %s", result.modifications['strength'])
-            logger.debug("   Multi-Band: %s", result.metadata['multi_band'])
-            logger.debug("   Adaptive Tracking: %s", result.metadata['adaptive_noise_tracking'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Noise Reduction: %.1f dB", result.modifications["noise_reduction_db"])
+            logger.debug("   Musical Noise Suppression: %.2f", result.modifications["musical_noise_suppression"])
+            logger.debug("   Strength: %s", result.modifications["strength"])
+            logger.debug("   Multi-Band: %s", result.metadata["multi_band"])
+            logger.debug("   Adaptive Tracking: %s", result.metadata["adaptive_noise_tracking"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("❌ Processing Failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Denoise v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata['scientific_ref'])
-    logger.debug("Benchmark: %s", result.metadata['benchmark'])
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", result.metadata["benchmark"])
     logger.debug("Quality Impact: 0.93 (Professional-Grade)")

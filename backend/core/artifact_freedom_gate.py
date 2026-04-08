@@ -15,14 +15,21 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from backend.core.phase_ontology import (
+    NOISE_TEXTURE_VALID_TYPES,
+    PRE_ECHO_VALID_TYPES,
+    PhaseOperationType,
+    get_phase_type,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Singleton ──────────────────────────────────────────────────────────────
-_instance: "ArtifactFreedomGate | None" = None
+_instance: ArtifactFreedomGate | None = None
 _lock = threading.Lock()
 
 
-def get_artifact_freedom_gate() -> "ArtifactFreedomGate":
+def get_artifact_freedom_gate() -> ArtifactFreedomGate:
     """Thread-safe Singleton accessor (§ Pflicht-Pattern)."""
     global _instance
     if _instance is None:
@@ -34,25 +41,28 @@ def get_artifact_freedom_gate() -> "ArtifactFreedomGate":
 
 # ── Data classes ───────────────────────────────────────────────────────────
 
+
 @dataclass
 class DetectedArtifact:
     """Single detected artifact event."""
-    artifact_type: str          # musical_noise | pre_echo | spectral_hole | phase_cancellation | metallic_ringing
+
+    artifact_type: str  # musical_noise | pre_echo | spectral_hole | phase_cancellation | metallic_ringing
     start_sample: int
     end_sample: int
-    severity_db: float          # raw severity in dB or correlation
-    frequency_hz: float         # centre frequency of artifact (0.0 if broadband)
-    context_rms_dbfs: float     # RMS of surrounding context segment
+    severity_db: float  # raw severity in dB or correlation
+    frequency_hz: float  # centre frequency of artifact (0.0 if broadband)
+    context_rms_dbfs: float  # RMS of surrounding context segment
     salience_weighted_score: float = 0.0  # after freq * context * duration weighting
 
 
 @dataclass
 class ArtifactFreedomResult:
     """Result of artifact freedom evaluation."""
-    artifact_freedom: float     # ∈ [0.0, 1.0] — < 0.95 → veto
+
+    artifact_freedom: float  # ∈ [0.0, 1.0] — < 0.95 → veto
     detected_artifacts: list[DetectedArtifact] = field(default_factory=list)
     noise_texture_deviation_db_oct: float = 0.0  # spectral tilt deviation
-    noise_texture_penalty: float = 0.0           # 0.0 or -0.05
+    noise_texture_penalty: float = 0.0  # 0.0 or -0.05
     material_type: str = "digital"
     detail_report: dict = field(default_factory=dict)
 
@@ -65,14 +75,15 @@ class SourceMaterialBaseline:
     Used by all subsequent gate evaluations to distinguish pre-existing
     carrier-chain artifacts from pipeline-introduced artifacts.
     """
+
     # Stereo field health
-    phase_cancellation_ratio: float = 0.0   # fraction of 100ms frames already mono-incompatible
-    stereo_mono_compat_mean: float = 1.0    # mean mono_compat across all frames in source
-    stereo_lr_corr_mean: float = 1.0        # mean L/R Pearson correlation in source
+    phase_cancellation_ratio: float = 0.0  # fraction of 100ms frames already mono-incompatible
+    stereo_mono_compat_mean: float = 1.0  # mean mono_compat across all frames in source
+    stereo_lr_corr_mean: float = 1.0  # mean L/R Pearson correlation in source
     has_critical_stereo_issue: bool = False  # True when > 20 % frames mono-incompatible
-    has_anti_phase_region: bool = False      # True when any frame has lr_corr < 0
+    has_anti_phase_region: bool = False  # True when any frame has lr_corr < 0
     # Spectral health
-    hf_loss_db: float = 0.0                 # estimated HF loss vs. broadband reference (0 = none)
+    hf_loss_db: float = 0.0  # estimated HF loss vs. broadband reference (0 = none)
     material_type: str = "digital"
 
 
@@ -89,12 +100,48 @@ _BASE_THRESHOLDS = {
 
 # Tolerance factors per material (multiplied with base)
 _MATERIAL_FACTORS = {
-    "digital":  {"musical_noise_peak_db": 1.0,  "pre_echo_rel_attack_db": 1.0,   "spectral_hole_hz": 1.0,  "phase_cancellation_corr": 1.0,   "metallic_ringing_peak_db": 1.0},
-    "cd":       {"musical_noise_peak_db": 1.0,  "pre_echo_rel_attack_db": 1.0,   "spectral_hole_hz": 1.0,  "phase_cancellation_corr": 1.0,   "metallic_ringing_peak_db": 1.0},
-    "tape":     {"musical_noise_peak_db": 1.25, "pre_echo_rel_attack_db": 0.875, "spectral_hole_hz": 1.5,  "phase_cancellation_corr": 0.667, "metallic_ringing_peak_db": 1.333},
-    "vinyl":    {"musical_noise_peak_db": 1.5,  "pre_echo_rel_attack_db": 0.75,  "spectral_hole_hz": 2.0,  "phase_cancellation_corr": 0.667, "metallic_ringing_peak_db": 1.667},
-    "shellac":  {"musical_noise_peak_db": 1.833, "pre_echo_rel_attack_db": 0.625, "spectral_hole_hz": 3.0,  "phase_cancellation_corr": 0.5,   "metallic_ringing_peak_db": 2.333},
-    "wax":      {"musical_noise_peak_db": 1.833, "pre_echo_rel_attack_db": 0.625, "spectral_hole_hz": 3.0,  "phase_cancellation_corr": 0.5,   "metallic_ringing_peak_db": 2.333},
+    "digital": {
+        "musical_noise_peak_db": 1.0,
+        "pre_echo_rel_attack_db": 1.0,
+        "spectral_hole_hz": 1.0,
+        "phase_cancellation_corr": 1.0,
+        "metallic_ringing_peak_db": 1.0,
+    },
+    "cd": {
+        "musical_noise_peak_db": 1.0,
+        "pre_echo_rel_attack_db": 1.0,
+        "spectral_hole_hz": 1.0,
+        "phase_cancellation_corr": 1.0,
+        "metallic_ringing_peak_db": 1.0,
+    },
+    "tape": {
+        "musical_noise_peak_db": 1.25,
+        "pre_echo_rel_attack_db": 0.875,
+        "spectral_hole_hz": 1.5,
+        "phase_cancellation_corr": 0.667,
+        "metallic_ringing_peak_db": 1.333,
+    },
+    "vinyl": {
+        "musical_noise_peak_db": 1.5,
+        "pre_echo_rel_attack_db": 0.75,
+        "spectral_hole_hz": 2.0,
+        "phase_cancellation_corr": 0.667,
+        "metallic_ringing_peak_db": 1.667,
+    },
+    "shellac": {
+        "musical_noise_peak_db": 1.833,
+        "pre_echo_rel_attack_db": 0.625,
+        "spectral_hole_hz": 3.0,
+        "phase_cancellation_corr": 0.5,
+        "metallic_ringing_peak_db": 2.333,
+    },
+    "wax": {
+        "musical_noise_peak_db": 1.833,
+        "pre_echo_rel_attack_db": 0.625,
+        "spectral_hole_hz": 3.0,
+        "phase_cancellation_corr": 0.5,
+        "metallic_ringing_peak_db": 2.333,
+    },
 }
 
 # Artifact type weights (§2.49)
@@ -132,28 +179,44 @@ class ArtifactFreedomGate:
     # metallic-ringing (the artefact types that genuine processing errors introduce
     # even in corrective phases).  Pre-echo, musical-noise, and spectral-hole
     # detectors are all DISABLED for restorative phases.
-    _RESTORATIVE_PHASE_IDS: frozenset[str] = frozenset({
-        # Noise / artefact removal
-        "phase_02", "phase_03", "phase_05", "phase_09",
-        "phase_18", "phase_20", "phase_23", "phase_24",
-        "phase_29", "phase_49",
-        # EQ / frequency correction (intentional spectrum changes)
-        "phase_04", "phase_06",
-        # Timing / tape-path correction (residual = corrected drift)
-        "phase_12", "phase_25", "phase_30", "phase_31",
-        # Click / pop / DC removal
-        "phase_01", "phase_27",
-        # Loudness / format / dither (intentional level shifts and LSB-noise — no real artefacts)
-        "phase_40", "phase_41", "phase_17",
-        # Additive harmonic synthesis: no transient delay structure; pre-echo check
-        # is semantically undefined for sine-based overtone generators.
-        "phase_07",
-        # Multiband compression with gain makeup: uniform gain increase is applied to
-        # all frames including pre-attack periods, which inflates pre_energy
-        # numerically beyond the 1.5× threshold even when no temporal smearing occurs.
-        # Pre-echo is causally impossible in a strictly feed-forward compressor.
-        "phase_35",
-    })
+    _RESTORATIVE_PHASE_IDS: frozenset[str] = frozenset(
+        {
+            # Noise / artefact removal
+            "phase_02",
+            "phase_03",
+            "phase_05",
+            "phase_09",
+            "phase_18",
+            "phase_20",
+            "phase_23",
+            "phase_24",
+            "phase_29",
+            "phase_49",
+            # EQ / frequency correction (intentional spectrum changes)
+            "phase_04",
+            "phase_06",
+            # Timing / tape-path correction (residual = corrected drift)
+            "phase_12",
+            "phase_25",
+            "phase_30",
+            "phase_31",
+            # Click / pop / DC removal
+            "phase_01",
+            "phase_27",
+            # Loudness / format / dither (intentional level shifts and LSB-noise — no real artefacts)
+            "phase_40",
+            "phase_41",
+            "phase_17",
+            # Additive harmonic synthesis: no transient delay structure; pre-echo check
+            # is semantically undefined for sine-based overtone generators.
+            "phase_07",
+            # Multiband compression with gain makeup: uniform gain increase is applied to
+            # all frames including pre-attack periods, which inflates pre_energy
+            # numerically beyond the 1.5× threshold even when no temporal smearing occurs.
+            # Pre-echo is causally impossible in a strictly feed-forward compressor.
+            "phase_35",
+        }
+    )
 
     def evaluate(
         self,
@@ -190,21 +253,16 @@ class ArtifactFreedomGate:
         mat_key = self._normalize_material(material_type)
         thresholds = self._get_thresholds(mat_key)
 
-        # Determine whether this is a restorative phase.
-        # Restorative phases (denoise, dereverb, declip, hum/crackle removal) SUBTRACT
-        # noise/artefacts.  Their per-phase residual = removed noise, which:
-        #   • Has spectral peaks in silence → musical-noise detector false-fires
-        #   • Drops noise-floor frequencies > 15 dB → spectral-hole detector false-fires
-        # Enhancement phases (harmonic boost, bass, transients) ADD energy, so their
-        # residual = added harmonics → musical-noise detector also false-fires.
+        # §2.48a Architektur-Inversion: Guards feuern nur wenn ihre Voraussetzung
+        # strukturell erfüllt ist — abgeleitet aus dem intrinsischen Phase-Typ
+        # (phase_ontology.py), nicht aus Ausnahmelisten.
         #
-        # Decision: musical-noise detector is disabled in per-phase mode (phase_id set).
-        # It was designed for whole-pipeline output evaluation (residual = output minus
-        # original degraded input), not per-phase deltas.
-        # Spectral-hole detection is kept only for non-restorative phases (additive
-        # processing should not REMOVE frequency content from the pre-phase snapshot).
+        # Kompatibilität: _RESTORATIVE_PHASE_IDS bleibt als Legacy-Fallback für Phasen,
+        # die noch nicht im Ontologie-Register eingetragen sind.
+        _phase_type = get_phase_type(phase_id) if phase_id else PhaseOperationType.ENHANCEMENT
         _is_restorative = (
-            phase_id in self._RESTORATIVE_PHASE_IDS
+            _phase_type in (PhaseOperationType.SUBTRACTIVE, PhaseOperationType.CORRECTIVE)
+            or phase_id in self._RESTORATIVE_PHASE_IDS
             or any(phase_id.startswith(p) for p in self._RESTORATIVE_PHASE_IDS)
         )
         _per_phase_mode = bool(phase_id)
@@ -216,28 +274,23 @@ class ArtifactFreedomGate:
         if not _per_phase_mode:
             all_artifacts.extend(self._detect_musical_noise(orig_mono, rest_mono, sr, thresholds))
 
-        # 2. Pre-Echo — run in per-phase mode only for additive/enhancement phases.
-        #    Restorative phases (denoise, dereverb, EQ, timing correction) subtract
-        #    or correct the signal.  Their modificationto the pre-transient window
-        #    (removing noise, correcting WOW flutter, applying EQ) changes pre-attack
-        #    energy in ways that mimic pre-echo numerically but are musically correct.
-        #    For restorative phases, skip pre-echo entirely.
-        #    For enhancement phases (harmonic synthesis, bass, spectral repair),
-        #    allow the −60 dBFS absolute floor guard to filter false positives.
-        #    Phase_40 (loudness normalisation) amplifies the whole signal: orig_pre_energy×gain
-        #    then exceeds 1.5×orig_pre_energy, triggering spurious pre-echo events.
-        #    Fix: pass the global input→output RMS ratio so the detector can normalise
-        #    absolute-level comparisons without masking real temporal pre-echo artefacts.
+        # 2. Pre-Echo — §2.48a: Nur valide für Typen in PRE_ECHO_VALID_TYPES.
+        #    SUBTRACTIVE: Residual = entferntes Rauschen ≠ Prä-Transient-Energie.
+        #    CORRECTIVE: Timing-Korrektur ändert Prä-Attack-Energie intentional.
+        #    ML_GENERATIVE: Diffusionsausgang hat keine MDCT-Quantisierungsstruktur.
+        #    ADDITIVE: Harmonik-Synthese erzeugt keine kausale Prä-Echo-Struktur.
+        #    (Richter et al. 2022; Brandenburg & Johnston 1994)
+        _pre_echo_valid = _phase_type in PRE_ECHO_VALID_TYPES
         _level_scale = 1.0
-        if not _is_restorative:
+        if _pre_echo_valid:
             if _per_phase_mode:
-                _rms_orig = float(np.sqrt(np.mean(orig_mono ** 2) + 1e-12))
-                _rms_rest = float(np.sqrt(np.mean(rest_mono ** 2) + 1e-12))
+                _rms_orig = float(np.sqrt(np.mean(orig_mono**2) + 1e-12))
+                _rms_rest = float(np.sqrt(np.mean(rest_mono**2) + 1e-12))
                 if _rms_orig > 1e-10:
                     _level_scale = _rms_rest / _rms_orig
             all_artifacts.extend(self._detect_pre_echo(orig_mono, rest_mono, sr, thresholds, _level_scale))
 
-        # 3. Spectral Holes — skip for restorative phases (intentional noise-floor drop)
+        # 3. Spectral Holes — skip für restorative/corrective Phasen (intentionaler Rauschboden-Abfall)
         if not _is_restorative:
             all_artifacts.extend(self._detect_spectral_holes(orig_mono, rest_mono, sr, thresholds))
 
@@ -246,14 +299,9 @@ class ArtifactFreedomGate:
         #   a) detect stereo collapse (channel disappeared > 40 dB drop) at any eval stage
         #   b) in per-phase mode: skip frames already broken before this phase ran
         # Without original: detector falls back to absolute corr/mono-compat check.
-        _orig_stereo_for_pc = (
-            original if (original.ndim == 2 and original.shape[0] >= 2)
-            else None
-        )
+        _orig_stereo_for_pc = original if (original.ndim == 2 and original.shape[0] >= 2) else None
         if restored.ndim == 2 and restored.shape[0] >= 2:
-            all_artifacts.extend(
-                self._detect_phase_cancellation(restored, sr, thresholds, _orig_stereo_for_pc)
-            )
+            all_artifacts.extend(self._detect_phase_cancellation(restored, sr, thresholds, _orig_stereo_for_pc))
 
         # 5. Metallic Ringing — residual-based (persistent peaks in restored-original).
         #    In per-phase mode the residual = processing delta (added harmonics, EQ boosts, etc.)
@@ -266,14 +314,17 @@ class ArtifactFreedomGate:
         for art in all_artifacts:
             art.salience_weighted_score = self._compute_salience_weight(art, sr)
 
-        # Noise texture coherence (Restoration only — checked by caller)
-        noise_dev, noise_penalty = self._check_noise_texture(orig_mono, rest_mono, sr)
+        # Noise texture coherence — §2.48a: Nur valide für SUBTRACTIVE Phasen.
+        # (Schwarz & Grill 2004: BW-Erweiterung ändert Spektral-Tilt intentional.)
+        # ADDITIVE, CORRECTIVE, ML_GENERATIVE: Tilt-Änderung ist kein Artefakt.
+        _noise_texture_valid = _phase_type in NOISE_TEXTURE_VALID_TYPES
+        if _noise_texture_valid:
+            noise_dev, noise_penalty = self._check_noise_texture(orig_mono, rest_mono, sr)
+        else:
+            noise_dev, noise_penalty = 0.0, 0.0
 
         # Score calculation
-        weighted_sum = sum(
-            _TYPE_WEIGHTS.get(a.artifact_type, 1.0) * a.salience_weighted_score
-            for a in all_artifacts
-        )
+        weighted_sum = sum(_TYPE_WEIGHTS.get(a.artifact_type, 1.0) * a.salience_weighted_score for a in all_artifacts)
         artifact_freedom = float(np.clip(1.0 - (weighted_sum / _MAX_TOLERANCE), 0.0, 1.0))
         artifact_freedom = artifact_freedom + noise_penalty  # penalty is negative or 0
         artifact_freedom = float(np.clip(artifact_freedom, 0.0, 1.0))
@@ -300,7 +351,11 @@ class ArtifactFreedomGate:
     # ── Detector: Musical Noise ────────────────────────────────────────────
 
     def _detect_musical_noise(
-        self, orig: np.ndarray, restored: np.ndarray, sr: int, thresholds: dict,
+        self,
+        orig: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+        thresholds: dict,
     ) -> list[DetectedArtifact]:
         """Detect isolated tonal peaks in silence segments of the residual."""
         artifacts: list[DetectedArtifact] = []
@@ -316,7 +371,7 @@ class ArtifactFreedomGate:
             start = i * hop
             end = start + frame_len
             frame = restored[start:end]
-            rms = float(np.sqrt(np.mean(frame ** 2) + 1e-12))
+            rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
             rms_db = 20.0 * np.log10(rms + 1e-12)
 
             if rms_db > -40.0:  # not a silence segment
@@ -333,7 +388,7 @@ class ArtifactFreedomGate:
             # residuals ≈ −100 dBFS; their spectra contain random peaks that
             # statistically exceed the musical-noise threshold, causing thousands
             # of false positives.  Real DSP artefacts are ≥ −60 dBFS.
-            _res_rms = float(np.sqrt(np.mean(res_frame ** 2) + 1e-12))
+            _res_rms = float(np.sqrt(np.mean(res_frame**2) + 1e-12))
             _res_rms_db = 20.0 * np.log10(_res_rms + 1e-12)
             if _res_rms_db < -70.0:
                 continue  # quantisation-noise only — no genuine artefact
@@ -352,7 +407,7 @@ class ArtifactFreedomGate:
 
             # Median neighbor comparison: peak must exceed neighbors by threshold
             for j in range(2, len(mag_db) - 2):
-                neighbors = np.median(mag_db[max(0, j - 5):j + 6])
+                neighbors = np.median(mag_db[max(0, j - 5) : j + 6])
                 excess = mag_db[j] - neighbors
                 if excess > threshold_db:
                     # Directional guard: skip if restored energy ≤ original energy
@@ -360,14 +415,16 @@ class ArtifactFreedomGate:
                     if rest_spectrum[j] <= orig_spectrum[j] * 1.05:
                         continue
                     freq_hz = float(j * sr / (2 * len(spectrum)))
-                    artifacts.append(DetectedArtifact(
-                        artifact_type="musical_noise",
-                        start_sample=start,
-                        end_sample=end,
-                        severity_db=float(excess),
-                        frequency_hz=freq_hz,
-                        context_rms_dbfs=rms_db,
-                    ))
+                    artifacts.append(
+                        DetectedArtifact(
+                            artifact_type="musical_noise",
+                            start_sample=start,
+                            end_sample=end,
+                            severity_db=float(excess),
+                            frequency_hz=freq_hz,
+                            context_rms_dbfs=rms_db,
+                        )
+                    )
                     break  # one per frame
 
         return artifacts
@@ -375,7 +432,11 @@ class ArtifactFreedomGate:
     # ── Detector: Pre-Echo ─────────────────────────────────────────────────
 
     def _detect_pre_echo(
-        self, orig: np.ndarray, restored: np.ndarray, sr: int, thresholds: dict,
+        self,
+        orig: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+        thresholds: dict,
         level_scale: float = 1.0,
     ) -> list[DetectedArtifact]:
         """Detect energy before transient attacks that wasn't in the original.
@@ -414,7 +475,7 @@ class ArtifactFreedomGate:
             if pre_start >= attack_sample:
                 continue
 
-            attack_peak = float(np.max(np.abs(restored[attack_sample:attack_sample + frame_len])) + 1e-12)
+            attack_peak = float(np.max(np.abs(restored[attack_sample : attack_sample + frame_len])) + 1e-12)
             pre_energy = float(np.max(np.abs(restored[pre_start:attack_sample])) + 1e-12)
             orig_pre_energy = float(np.max(np.abs(orig[pre_start:attack_sample])) + 1e-12)
 
@@ -439,21 +500,27 @@ class ArtifactFreedomGate:
             if rel_db > threshold_db:  # threshold is negative, e.g. -40 dB
                 rms = float(np.sqrt(np.mean(restored[pre_start:attack_sample] ** 2) + 1e-12))
                 rms_db = 20.0 * np.log10(rms + 1e-12)
-                artifacts.append(DetectedArtifact(
-                    artifact_type="pre_echo",
-                    start_sample=pre_start,
-                    end_sample=attack_sample,
-                    severity_db=float(rel_db),
-                    frequency_hz=0.0,  # broadband
-                    context_rms_dbfs=rms_db,
-                ))
+                artifacts.append(
+                    DetectedArtifact(
+                        artifact_type="pre_echo",
+                        start_sample=pre_start,
+                        end_sample=attack_sample,
+                        severity_db=float(rel_db),
+                        frequency_hz=0.0,  # broadband
+                        context_rms_dbfs=rms_db,
+                    )
+                )
 
         return artifacts
 
     # ── Detector: Spectral Holes ───────────────────────────────────────────
 
     def _detect_spectral_holes(
-        self, orig: np.ndarray, restored: np.ndarray, sr: int, thresholds: dict,
+        self,
+        orig: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+        thresholds: dict,
     ) -> list[DetectedArtifact]:
         """Detect frequency gaps in the restored passband that weren't in original."""
         artifacts: list[DetectedArtifact] = []
@@ -520,14 +587,16 @@ class ArtifactFreedomGate:
                 centre_bin = group[len(group) // 2]
                 centre_hz = float(centre_bin * freq_res)
                 avg_drop = float(np.mean(drop_db[group]))
-                artifacts.append(DetectedArtifact(
-                    artifact_type="spectral_hole",
-                    start_sample=0,
-                    end_sample=len(restored),
-                    severity_db=avg_drop,
-                    frequency_hz=centre_hz,
-                    context_rms_dbfs=-30.0,  # global artefact
-                ))
+                artifacts.append(
+                    DetectedArtifact(
+                        artifact_type="spectral_hole",
+                        start_sample=0,
+                        end_sample=len(restored),
+                        severity_db=avg_drop,
+                        frequency_hz=centre_hz,
+                        context_rms_dbfs=-30.0,  # global artefact
+                    )
+                )
 
         return artifacts
 
@@ -535,19 +604,20 @@ class ArtifactFreedomGate:
 
     @staticmethod
     def _lr_corr_and_compat(
-        left: np.ndarray, right: np.ndarray,
+        left: np.ndarray,
+        right: np.ndarray,
     ) -> tuple[float, float]:
         """Return (lr_corr, mono_compat) for a pair of channel frames."""
-        l_rms = float(np.sqrt(np.mean(left ** 2) + 1e-12))
-        r_rms = float(np.sqrt(np.mean(right ** 2) + 1e-12))
+        l_rms = float(np.sqrt(np.mean(left**2) + 1e-12))
+        r_rms = float(np.sqrt(np.mean(right**2) + 1e-12))
 
         l_norm = left - np.mean(left)
         r_norm = right - np.mean(right)
-        denom = float(np.sqrt(np.sum(l_norm ** 2) * np.sum(r_norm ** 2)) + 1e-12)
+        denom = float(np.sqrt(np.sum(l_norm**2) * np.sum(r_norm**2)) + 1e-12)
         lr_corr = float(np.sum(l_norm * r_norm) / denom) if denom > 1e-12 else 0.0
 
         mid_rms = float(np.sqrt(np.mean(((left + right) / 2.0) ** 2) + 1e-12))
-        lr_energy = float(np.sqrt(l_rms ** 2 + r_rms ** 2) + 1e-12)
+        lr_energy = float(np.sqrt(l_rms**2 + r_rms**2) + 1e-12)
         mono_compat = mid_rms / lr_energy
         return lr_corr, mono_compat
 
@@ -589,10 +659,10 @@ class ArtifactFreedomGate:
         # The frame-loop below cannot catch this: a silent R-channel has l_rms+r_rms
         # dominated by L, so rms-silence-filter skips and mono-compat = 0.5 passes.
         if orig_left is not None and orig_right is not None:
-            _orig_l_rms = float(np.sqrt(np.mean(orig_left ** 2) + 1e-12))
-            _orig_r_rms = float(np.sqrt(np.mean(orig_right ** 2) + 1e-12))
-            _rest_l_rms = float(np.sqrt(np.mean(left ** 2) + 1e-12))
-            _rest_r_rms = float(np.sqrt(np.mean(right ** 2) + 1e-12))
+            _orig_l_rms = float(np.sqrt(np.mean(orig_left**2) + 1e-12))
+            _orig_r_rms = float(np.sqrt(np.mean(orig_right**2) + 1e-12))
+            _rest_l_rms = float(np.sqrt(np.mean(left**2) + 1e-12))
+            _rest_r_rms = float(np.sqrt(np.mean(right**2) + 1e-12))
             _r_collapsed = _orig_r_rms > 1e-4 and _rest_r_rms < _orig_r_rms * 0.01
             _l_collapsed = _orig_l_rms > 1e-4 and _rest_l_rms < _orig_l_rms * 0.01
             # Absolute stereo imbalance guard: catches cumulative drift where each single-phase
@@ -604,26 +674,30 @@ class ArtifactFreedomGate:
                 if _abs_out_imb > 20.0 and _abs_in_imb < 6.0:
                     _weaker_out = _rest_r_rms if _rest_l_rms >= _rest_r_rms else _rest_l_rms
                     _weaker_orig = _orig_r_rms if _rest_l_rms >= _rest_r_rms else _orig_l_rms
-                    artifacts.append(DetectedArtifact(
-                        artifact_type="phase_cancellation",
-                        start_sample=0,
-                        end_sample=len(left),
-                        severity_db=float(20.0 * np.log10(_weaker_out / (_weaker_orig + 1e-12) + 1e-12)),
-                        frequency_hz=0.0,
-                        context_rms_dbfs=20.0 * np.log10(max(_orig_l_rms, _orig_r_rms) + 1e-12),
-                    ))
+                    artifacts.append(
+                        DetectedArtifact(
+                            artifact_type="phase_cancellation",
+                            start_sample=0,
+                            end_sample=len(left),
+                            severity_db=float(20.0 * np.log10(_weaker_out / (_weaker_orig + 1e-12) + 1e-12)),
+                            frequency_hz=0.0,
+                            context_rms_dbfs=20.0 * np.log10(max(_orig_l_rms, _orig_r_rms) + 1e-12),
+                        )
+                    )
                     return artifacts  # cumulative stereo collapse — skip frame loop
             if _r_collapsed or _l_collapsed:
                 _lost = _rest_r_rms if _r_collapsed else _rest_l_rms
                 _orig = _orig_r_rms if _r_collapsed else _orig_l_rms
-                artifacts.append(DetectedArtifact(
-                    artifact_type="phase_cancellation",
-                    start_sample=0,
-                    end_sample=len(left),
-                    severity_db=float(20.0 * np.log10(_lost / (_orig + 1e-12) + 1e-12)),
-                    frequency_hz=0.0,
-                    context_rms_dbfs=20.0 * np.log10(max(_orig_l_rms, _orig_r_rms) + 1e-12),
-                ))
+                artifacts.append(
+                    DetectedArtifact(
+                        artifact_type="phase_cancellation",
+                        start_sample=0,
+                        end_sample=len(left),
+                        severity_db=float(20.0 * np.log10(_lost / (_orig + 1e-12) + 1e-12)),
+                        frequency_hz=0.0,
+                        context_rms_dbfs=20.0 * np.log10(max(_orig_l_rms, _orig_r_rms) + 1e-12),
+                    )
+                )
                 return artifacts  # whole-channel loss dominates — skip frame loop
 
         # ── Frame-level L/R cross-correlation analysis ────────────────────
@@ -640,8 +714,8 @@ class ArtifactFreedomGate:
             l_frame = left[s:e]
             r_frame = right[s:e]
 
-            l_rms = float(np.sqrt(np.mean(l_frame ** 2) + 1e-12))
-            r_rms = float(np.sqrt(np.mean(r_frame ** 2) + 1e-12))
+            l_rms = float(np.sqrt(np.mean(l_frame**2) + 1e-12))
+            r_rms = float(np.sqrt(np.mean(r_frame**2) + 1e-12))
 
             if l_rms < 1e-6 and r_rms < 1e-6:
                 continue  # silence
@@ -690,25 +764,35 @@ class ArtifactFreedomGate:
                     logger.debug(
                         "_detect_phase_cancellation frame=%d orig_compat=%.3f "
                         "mono_compat=%.3f is_anti=%s delta=%.3f FLAGGED",
-                        i, _orig_compat, mono_compat, str(is_anti_corr), _orig_compat - mono_compat,
+                        i,
+                        _orig_compat,
+                        mono_compat,
+                        str(is_anti_corr),
+                        _orig_compat - mono_compat,
                     )
 
             rms_db = 20.0 * np.log10((l_rms + r_rms) / 2.0 + 1e-12)
-            artifacts.append(DetectedArtifact(
-                artifact_type="phase_cancellation",
-                start_sample=s,
-                end_sample=e,
-                severity_db=float(mono_compat),  # mono compatibility ratio
-                frequency_hz=0.0,
-                context_rms_dbfs=rms_db,
-            ))
+            artifacts.append(
+                DetectedArtifact(
+                    artifact_type="phase_cancellation",
+                    start_sample=s,
+                    end_sample=e,
+                    severity_db=float(mono_compat),  # mono compatibility ratio
+                    frequency_hz=0.0,
+                    context_rms_dbfs=rms_db,
+                )
+            )
 
         return artifacts
 
     # ── Detector: Metallic Ringing ─────────────────────────────────────────
 
     def _detect_metallic_ringing(
-        self, orig: np.ndarray, restored: np.ndarray, sr: int, thresholds: dict,
+        self,
+        orig: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+        thresholds: dict,
     ) -> list[DetectedArtifact]:
         """Detect resonant peaks in CQT that persist > 50 ms."""
         artifacts: list[DetectedArtifact] = []
@@ -742,7 +826,7 @@ class ArtifactFreedomGate:
             # Find peaks exceeding neighbors by threshold
             frame_peaks: set[int] = set()
             for j in range(3, len(mag_db) - 3):
-                local_med = float(np.median(mag_db[max(0, j - 5):j + 6]))
+                local_med = float(np.median(mag_db[max(0, j - 5) : j + 6]))
                 excess = mag_db[j] - local_med
                 if excess > threshold_db:
                     frame_peaks.add(j)
@@ -759,16 +843,18 @@ class ArtifactFreedomGate:
             for b, count in peak_tracker.items():
                 if count >= min_frames:
                     freq_hz = float(b * sr / n_fft)
-                    rms = float(np.sqrt(np.mean(frame ** 2) + 1e-12))
+                    rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
                     rms_db = 20.0 * np.log10(rms + 1e-12)
-                    artifacts.append(DetectedArtifact(
-                        artifact_type="metallic_ringing",
-                        start_sample=max(0, s - count * hop),
-                        end_sample=e,
-                        severity_db=peak_severity.get(b, float(threshold_db)),
-                        frequency_hz=freq_hz,
-                        context_rms_dbfs=rms_db,
-                    ))
+                    artifacts.append(
+                        DetectedArtifact(
+                            artifact_type="metallic_ringing",
+                            start_sample=max(0, s - count * hop),
+                            end_sample=e,
+                            severity_db=peak_severity.get(b, float(threshold_db)),
+                            frequency_hz=freq_hz,
+                            context_rms_dbfs=rms_db,
+                        )
+                    )
                     # Reset to avoid duplicate reports
                     peak_tracker[b] = 0
 
@@ -777,14 +863,17 @@ class ArtifactFreedomGate:
     # ── Noise Texture Coherence (§2.49) ────────────────────────────────────
 
     def _check_noise_texture(
-        self, orig: np.ndarray, restored: np.ndarray, sr: int,
+        self,
+        orig: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
     ) -> tuple[float, float]:
         """Compare spectral tilt of noise floor in silence segments.
 
         Returns:
             (tilt_deviation_db_oct, penalty): deviation and score penalty (0 or -0.05)
         """
-        min_silence_samples = int(self.SILENCE_MIN_MS / 1000.0 * sr)
+        int(self.SILENCE_MIN_MS / 1000.0 * sr)
 
         # Find silence segments in original
         frame_len = int(0.03 * sr)
@@ -815,16 +904,19 @@ class ArtifactFreedomGate:
         deviation = abs(rest_tilt - orig_tilt)
 
         if deviation <= 3.0:
-            return deviation, 0.0       # OK
+            return deviation, 0.0  # OK
         elif deviation <= 6.0:
-            return deviation, -0.05     # warning penalty
+            return deviation, -0.05  # warning penalty
         else:
-            return deviation, -0.05     # rollback signaled (caller handles)
+            return deviation, -0.05  # rollback signaled (caller handles)
 
     def _compute_spectral_tilt(
-        self, audio: np.ndarray, sr: int,
+        self,
+        audio: np.ndarray,
+        sr: int,
         silence_frame_indices: list[int],
-        frame_len: int, hop: int,
+        frame_len: int,
+        hop: int,
     ) -> float | None:
         """Compute average spectral tilt (dB/octave) in silence frames."""
         n_fft = max(256, frame_len)
@@ -856,7 +948,7 @@ class ArtifactFreedomGate:
             return None
 
         log2_freq = np.log2(freqs + 1e-12)
-        mag_slice = mag_db[1:len(freqs) + 1]
+        mag_slice = mag_db[1 : len(freqs) + 1]
 
         # Linear regression: tilt in dB per octave
         A = np.vstack([log2_freq, np.ones(len(log2_freq))]).T
@@ -973,8 +1065,8 @@ class ArtifactFreedomGate:
                 e = s + frame_len
                 l_f = left[s:e]
                 r_f = right[s:e]
-                l_rms = float(np.sqrt(np.mean(l_f ** 2) + 1e-12))
-                r_rms = float(np.sqrt(np.mean(r_f ** 2) + 1e-12))
+                l_rms = float(np.sqrt(np.mean(l_f**2) + 1e-12))
+                r_rms = float(np.sqrt(np.mean(r_f**2) + 1e-12))
                 if l_rms < 1e-6 and r_rms < 1e-6:
                     continue  # silence frames don't count
 
@@ -1006,8 +1098,7 @@ class ArtifactFreedomGate:
                     )
                 else:
                     logger.debug(
-                        "§2.50 Quellmaterial-Baseline: stereo OK "
-                        "(ratio=%.2f, mean_compat=%.3f, mat=%s)",
+                        "§2.50 Quellmaterial-Baseline: stereo OK (ratio=%.2f, mean_compat=%.3f, mat=%s)",
                         baseline.phase_cancellation_ratio,
                         baseline.stereo_mono_compat_mean,
                         mat_key,

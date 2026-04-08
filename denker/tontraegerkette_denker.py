@@ -472,7 +472,7 @@ class TontraegerketteDenker:
             logger.warning("MediumDetector fehlgeschlagen: %s", exc)
             return {}
 
-    def _aufbereiten_from_cached(self, cached_medium_result: object) -> "KettenErgebnis":
+    def _aufbereiten_from_cached(self, cached_medium_result: object) -> KettenErgebnis:
         """Baut KettenErgebnis aus einem gecachten MediumDetectionResult.
 
         §2.47a: Wird aufgerufen wenn cached_medium_result übergeben wurde,

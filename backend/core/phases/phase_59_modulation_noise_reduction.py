@@ -170,9 +170,35 @@ class ModulationNoiseReductionPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR must be 48000 Hz, got: {sample_rate}"
 
         _defect_scores = defect_scores or kwargs.get("defect_analysis", {})
-        result_audio = apply(audio, sample_rate, strength=strength, defect_scores=_defect_scores)
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", strength))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return PhaseResult(
+                audio=passthrough,
+                success=True,
+                execution_time_seconds=_time.perf_counter() - t0,
+                metrics={
+                    "modulation_noise_score": float((_defect_scores or {}).get("modulation_noise", 0.0)),
+                    "strength": strength,
+                    "effective_strength": 0.0,
+                },
+                metadata={
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=["Modulation noise reduction skipped due to zero effective strength"],
+            )
+        _rms_in = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+        result_audio = apply(audio, sample_rate, strength=_effective_strength, defect_scores=_defect_scores)
         elapsed = _time.perf_counter() - t0
 
+        _rms_out = float(np.sqrt(np.mean(np.asarray(result_audio, dtype=np.float64) ** 2) + 1e-12))
+        _rms_drop = 20.0 * np.log10(max(_rms_out / _rms_in, 1e-30)) if _rms_in > 1e-8 else 0.0
         return PhaseResult(
             audio=result_audio,
             success=True,
@@ -180,5 +206,12 @@ class ModulationNoiseReductionPhase(PhaseInterface):
             metrics={
                 "modulation_noise_score": float((_defect_scores or {}).get("modulation_noise", 0.0)),
                 "strength": strength,
+                "effective_strength": _effective_strength,
+            },
+            metadata={
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
+                "rms_drop_db": round(float(min(0.0, _rms_drop)), 3),
+                "loudness_makeup_db": 0.0,
             },
         )

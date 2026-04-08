@@ -195,6 +195,8 @@ class SpectralRepairPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": 0.0},
             )
@@ -204,19 +206,24 @@ class SpectralRepairPhase(PhaseInterface):
         threshold_factor_eff = threshold_factor / max(effective_strength, 0.1)
 
         n_channels = 1 if audio.ndim == 1 else audio.shape[1]
+        is_stereo = audio.ndim == 2
         total_bins = 0
 
-        if audio.ndim == 1:
+        if not is_stereo:
             repaired_c, n_rep = _repair_channel(audio.astype(np.float64), sample_rate, threshold_factor_eff)
             repaired_audio = repaired_c.astype(audio.dtype)
             total_bins = n_rep
         else:
-            channels_out = []
-            for ch in range(n_channels):
-                c_rep, n_rep = _repair_channel(audio[:, ch].astype(np.float64), sample_rate, threshold_factor_eff)
-                channels_out.append(c_rep)
-                total_bins += n_rep
-            repaired_audio = np.column_stack(channels_out).astype(audio.dtype)
+            # §2.51: M/S domain — repair Mid fully, Side conservatively
+            _inv_sqrt2 = 1.0 / np.sqrt(2.0)
+            mid = (audio[:, 0] + audio[:, 1]).astype(np.float64) * _inv_sqrt2
+            side = (audio[:, 0] - audio[:, 1]).astype(np.float64) * _inv_sqrt2
+            repaired_mid, n_mid = _repair_channel(mid, sample_rate, threshold_factor_eff)
+            repaired_side, n_side = _repair_channel(side, sample_rate, threshold_factor_eff * 2.0)
+            total_bins = n_mid + n_side
+            left = (repaired_mid + repaired_side) * _inv_sqrt2
+            right = (repaired_mid - repaired_side) * _inv_sqrt2
+            repaired_audio = np.column_stack([left, right]).astype(audio.dtype)
 
         if 0.0 < effective_strength < 1.0:
             repaired_audio = audio + effective_strength * (repaired_audio - audio)
@@ -238,6 +245,9 @@ class SpectralRepairPhase(PhaseInterface):
 
         repaired_audio = np.nan_to_num(repaired_audio, nan=0.0, posinf=0.0, neginf=0.0)
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
+        _rms_in_50 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+        _rms_out_50 = float(np.sqrt(np.mean(np.asarray(repaired_audio, dtype=np.float64) ** 2) + 1e-12))
+        _rms_drop_50 = 20.0 * np.log10(max(_rms_out_50 / _rms_in_50, 1e-30)) if _rms_in_50 > 1e-8 else 0.0
         return PhaseResult(
             success=True,
             audio=repaired_audio,
@@ -246,8 +256,11 @@ class SpectralRepairPhase(PhaseInterface):
                 "threshold_factor": threshold_factor,
                 "threshold_factor_effective": threshold_factor_eff,
                 "n_channels": n_channels,
+                "stereo_mode": "ms_domain" if is_stereo else "mono",
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": round(float(min(0.0, _rms_drop_50)), 3),
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "n_repaired_bins": total_bins,

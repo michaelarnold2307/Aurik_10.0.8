@@ -70,7 +70,7 @@ def batch_evaluate(audio_dir, label_csv, out_csv, sr=16000) -> None:
     logger.debug("Confusion Matrix:")
     logger.debug("\t" + "\t".join(classes))
     for i, c in enumerate(classes):
-        logger.debug("%s\t", c, + "\t".join(str(matrix[i, j])  for j in range(len(classes))))
+        logger.debug("%s\t", c, +"\t".join(str(matrix[i, j]) for j in range(len(classes))))
 
     # Scatterplot f0 vs. f1, farbcodiert nach true label
     try:
@@ -86,7 +86,7 @@ def batch_evaluate(audio_dir, label_csv, out_csv, sr=16000) -> None:
         plt.legend()
         plt.tight_layout()
         plt.savefig(out_csv.replace(".csv", "_f0f1.png"))
-        logger.debug("Scatterplot gespeichert: %s", out_csv.replace('.csv', '_f0f1.png'))
+        logger.debug("Scatterplot gespeichert: %s", out_csv.replace(".csv", "_f0f1.png"))
     except Exception as e:
         logger.debug("[Warnung] Scatterplot nicht erzeugt: %s", e)
 

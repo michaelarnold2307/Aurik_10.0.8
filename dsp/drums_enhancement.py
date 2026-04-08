@@ -155,6 +155,7 @@ class KickDrumEnhancer:
             "attack_enhancement_applied": self.attack_enhancement > 0,
         }
 
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return result, report
 
     def _detect_kick_events(self, kick_band: np.ndarray, sr: int) -> list[int]:
@@ -314,6 +315,7 @@ class SnareCrackEnhancer:
             "articulation_applied": self.articulation > 0,
         }
 
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return result, report
 
     def _detect_snare_events(self, detect_band: np.ndarray, sr: int) -> list[int]:
@@ -467,6 +469,7 @@ class HiHatClarifier:
             "bleed_reduction_applied": self.reduce_bleed,
         }
 
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return result, report
 
 
@@ -596,6 +599,7 @@ class CymbalShimmerEnhancer:
             "decay_preservation_applied": self.decay_preservation > 0,
         }
 
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return result, report
 
 
@@ -681,6 +685,7 @@ class DrumsEnhancementSystem:
             kick_report["kick_energy_change_db"] + snare_report["snare_crack_energy_change_db"]
         ) / 2.0
 
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return result, report
 
 
@@ -713,6 +718,7 @@ def main():
     # Load audio
     logger.info("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -737,21 +743,21 @@ def main():
     # Print report
     logger.info("\n📊 Processing Report:")
     logger.info("-" * 60)
-    logger.info("Kick Drum: %.1f dB", report['kick']['kick_energy_change_db'])
-    logger.info("  Events detected: %s", report['kick']['kick_events_detected'])
+    logger.info("Kick Drum: %.1f dB", report["kick"]["kick_energy_change_db"])
+    logger.info("  Events detected: %s", report["kick"]["kick_events_detected"])
 
-    logger.info("\nSnare Crack: %.1f dB", report['snare']['snare_crack_energy_change_db'])
-    logger.info("  Body: %.1f dB", report['snare']['snare_body_energy_change_db'])
-    logger.info("  Events detected: %s", report['snare']['snare_events_detected'])
+    logger.info("\nSnare Crack: %.1f dB", report["snare"]["snare_crack_energy_change_db"])
+    logger.info("  Body: %.1f dB", report["snare"]["snare_body_energy_change_db"])
+    logger.info("  Events detected: %s", report["snare"]["snare_events_detected"])
 
-    logger.info("\nHi-Hat: %.1f dB", report['hihat']['hihat_energy_change_db'])
-    logger.info("  Transient sharpening: %s", 'Yes' if report['hihat']['transient_sharpening_applied'] else 'No')
+    logger.info("\nHi-Hat: %.1f dB", report["hihat"]["hihat_energy_change_db"])
+    logger.info("  Transient sharpening: %s", "Yes" if report["hihat"]["transient_sharpening_applied"] else "No")
 
-    logger.info("\nCymbal: %.1f dB", report['cymbal']['cymbal_energy_change_db'])
-    logger.info("  Air enhancement: %s", 'Yes' if report['cymbal']['air_enhancement_applied'] else 'No')
+    logger.info("\nCymbal: %.1f dB", report["cymbal"]["cymbal_energy_change_db"])
+    logger.info("  Air enhancement: %s", "Yes" if report["cymbal"]["air_enhancement_applied"] else "No")
 
-    logger.info("\nTransient Enhancement: %.1f dB", report['transient_energy_change_db'])
-    logger.info("Stages applied: %s", report['stages_applied'])
+    logger.info("\nTransient Enhancement: %.1f dB", report["transient_energy_change_db"])
+    logger.info("Stages applied: %s", report["stages_applied"])
 
     # Save
     logger.info("\nSaving: %s", args.output)

@@ -78,31 +78,31 @@ EMOJI_TO_SVG: dict[str, str] = {
     "harmonic": "harmonic",
     "declip": "declip",
     # ML model icons
-    "🧠": "ml_brain",         # DeepFilterNet / neural AI
-    "🔬": "ml_microscope",    # MDX23C analysis
-    "🌊": "ml_wave",          # SGMSE+ diffusion
-    "🚀": "ml_rocket",        # Apollo
-    "🎶": "ml_notes",         # CREPE pitch
-    "🎼": "ml_score",         # FCPE
-    "📡": "ml_satellite",     # AudioSR bandwidth
-    "💎": "ml_gem",           # Vocos neural vocoder
+    "🧠": "ml_brain",  # DeepFilterNet / neural AI
+    "🔬": "ml_microscope",  # MDX23C analysis
+    "🌊": "ml_wave",  # SGMSE+ diffusion
+    "🚀": "ml_rocket",  # Apollo
+    "🎶": "ml_notes",  # CREPE pitch
+    "🎼": "ml_score",  # FCPE
+    "📡": "ml_satellite",  # AudioSR bandwidth
+    "💎": "ml_gem",  # Vocos neural vocoder
     "🔊": "ml_speaker_loud",  # BigVGAN
-    "👂": "ml_ear",           # PANNs audio tagging
-    "🌀": "ml_swirl",         # Flow-Matching / CQTdiff+
-    "🔮": "ml_crystal",       # CQTdiff+ crystal
-    "🔉": "ml_deesser",       # ML-DeEsser
+    "👂": "ml_ear",  # PANNs audio tagging
+    "🌀": "ml_swirl",  # Flow-Matching / CQTdiff+
+    "🔮": "ml_crystal",  # CQTdiff+ crystal
+    "🔉": "ml_deesser",  # ML-DeEsser
     # DSP algorithm icons
-    "🏛": "dsp_columns",      # WPE reverb
-    "🔽": "dsp_lowpass",      # Hochpass/Lowpass filter
-    "📉": "dsp_trending",     # Noise profiling
-    "🚪": "dsp_gate",         # Noise gate
-    "🔄": "dsp_rotate",       # Phase align
-    "📐": "ruler",            # LMS-Adaptive / TruePeak / LUFS
-    "📏": "ruler",            # LUFS-Norm (same ruler SVG)
-    "🛡": "dsp_shield",       # Transient guard
-    "⚔": "dsp_transient",    # Transient shaper
-    "🌈": "dsp_spectrum",     # Spectral coherence
-    "➖": "dsp_dc",           # DC offset
+    "🏛": "dsp_columns",  # WPE reverb
+    "🔽": "dsp_lowpass",  # Hochpass/Lowpass filter
+    "📉": "dsp_trending",  # Noise profiling
+    "🚪": "dsp_gate",  # Noise gate
+    "🔄": "dsp_rotate",  # Phase align
+    "📐": "ruler",  # LMS-Adaptive / TruePeak / LUFS
+    "📏": "ruler",  # LUFS-Norm (same ruler SVG)
+    "🛡": "dsp_shield",  # Transient guard
+    "⚔": "dsp_transient",  # Transient shaper
+    "🌈": "dsp_spectrum",  # Spectral coherence
+    "➖": "dsp_dc",  # DC offset
 }
 
 

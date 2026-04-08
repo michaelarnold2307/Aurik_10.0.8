@@ -43,6 +43,27 @@ result = denker.denke(audio, sr, mode="quality")
 result = denker.denke(audio, sr, mode="quality", no_rt_limit=True)
 ```
 
+### §11.1a [RELEASE_MUST] Bridge-Experience-Insights-Kontrakt (v9.11.1)
+
+`backend/api/bridge.py` MUSS eine stabile Extraktionsfunktion bereitstellen:
+
+```python
+get_experience_insights(result) -> {
+    "joy_index": float,
+    "fatigue_index": float,
+    "cluster_key": str,
+    "cluster_policy": dict,
+    "recommendations": list,
+    "recommendation_count": int,
+}
+```
+
+**Invarianten:**
+
+- Frontend nutzt diese Funktion statt ad-hoc-Metadata-Parsen.
+- Rückgabe bleibt bei fehlenden Feldern schema-stabil (`0.0`, `""`, `{}`, `[]`).
+- NaN/Inf sind in Rückgabe verboten.
+
 ---
 
 ## §3 Code-Standards
@@ -410,7 +431,7 @@ except Exception as exc:
 > **Audio-Import-Kaskade (kanonisch, Stand April 2026):** Alle Einstiegspunkte (`batch_processor.py`, `backend/aurik_restore.py`, `backend/meta_router.py`, `Aurik910/ui/modern_window.py`) MÜSSEN `load_audio_file(filepath)` aus `backend.file_import` verwenden — **nicht** `sf.read(path)` oder `librosa.load(path)` direkt. Die Kaskade: `soundfile` (WAV/FLAC/OGG) → `pedalboard/FFmpeg` (MP3/AAC/WMA/Opus) → `pydub` (universell). `sf.read(io.BytesIO(...))` auf interne PCM-Puffer ist zulässig.
 
 ```python
-MAX_AUDIO_BYTES_RAM: int = 2 * 1024**3  # 2 GB absolutes RAM-Limit für einen Audio-Buffer
+MAX_AUDIO_BYTES_RAM: int = 4 * 1024**3  # 4 GB absolutes RAM-Limit für einen Audio-Buffer
 
 def _check_audio_buffer_size(audio: np.ndarray, file_path: str) -> None:
     """Raises AudioTooLargeError if audio array exceeds RAM guard."""
@@ -428,6 +449,9 @@ def _check_audio_buffer_size(audio: np.ndarray, file_path: str) -> None:
 - Prüfung erfolgt nach Laden, VOR `resample_poly` (Resampling vergrößert Buffer weiter).
 - `AudioTooLargeError` → `item_error`-Signal mit verständlicher deutscher Fehlermeldung.
 - `MAX_AUDIO_BYTES_RAM` als Konfigurationskonstante in `backend/core/audio_validator.py`.
+
+**Code-Sync v9.10.130:** Das normative Limit ist auf 4 GB harmonisiert und entspricht
+dem aktuellen UV3-Guard in `backend/core/unified_restorer_v3.py`.
 
 ### §3.9.8 Lock-Acquisition-Order — Deadlock-Prävention zwischen ARM und PLM
 
@@ -636,6 +660,19 @@ self.btn_magic_restoration.setStyleSheet(f"""
 
 **A/B-Sync-Loop** (v9.10.112): Checkable `btn_ab_sync`-Button — bei aktiviertem Sync wechseln A/B die Quelle im aktuellen Loop-Punkt, kein Reset auf Anfang. Queue-Drag-&-Drop-Reordering für Batch-Liste.
 
+### §11.4c [RELEASE_MUST] Experience-UI-Propagation (v9.11.1)
+
+Nach `item_finished_with_result` MUSS die Frontend-Oberfläche die neuen Runtime-Signale darstellen:
+
+1. `status_text`: Freude-/Ermüdungsindex (z. B. „Freude 78 % · Ermüdung 14 %“).
+2. `info_banner`: Cluster-Policy (inkl. Schlüssel) + Top-Auto-Improve-Empfehlungen.
+3. Darstellung ist advisory-only; fehlende Signale dürfen UI nicht blockieren.
+
+**Verboten:**
+
+- Direkter Core-Zugriff aus UI zur Berechnung dieser Signale.
+- Stilles Verwerfen vorhandener Experience-Telemetrie im UI-Endpfad.
+
 ---
 
 ## §11.4a Echtzeit-UX-Features (ab 9.10.57 — bindend)
@@ -721,17 +758,31 @@ Das visuelle Feedback teilt sich auf zwei Anzeigebereiche auf:
 
 ```bash
 # Pflicht-Argumente:
---input FILE   --output FILE   --mode {restoration,studio2026}
+--input FILE   --output FILE   --mode {Restoration,"Studio 2026"}
 
 # Optionale Argumente:
---material MATERIAL   --verbose   --no-goals-check
---pre-assess          # Nur Restorability-Score ausgeben, dann abbrechen
---no-phase-gate       # PMGG deaktivieren (nur Debugging)
---no-transient-decouple  # TDP deaktivieren (nur Debugging)
+-q, --quiet
 
 # Exit-Codes:
-# 0 = Erfolg | 1 = Verarbeitungsfehler | 2 = Musical Goal Regression
+# 0 = Erfolg
+# 1 = Argument/CLI-Fehler
+# 2 = Input-Datei fehlt
+# 3 = Audio-Import fehlgeschlagen
+# 4 = Pipeline-Fehler
+# 5 = Export/Speicher-Fehler
+# 6 = SR-Normierung fehlgeschlagen
+# 7 = quality_estimate-Gate verletzt
+# 8 = P1/P2 Goal-Gate verletzt
+# 9 = Loudness-Drift > 2.5 dB (Pegel-Einbruchsschutz)
+# 10 = Pre-Analysis-Fehler
 ```
+
+### Normative CLI-Invarianten (§11.5a)
+
+- CLI nutzt den gleichen Pfad wie GUI/Batch: `run_pre_analysis(...)` genau 1x vor `AurikDenker.denke(...)`.
+- Übergabe an Denker erfolgt per `pre_analysis_result` (direktes Handover, kein redundant zweiter MediumDetect).
+- Audio-Import erfolgt kanonisch über Bridge/`load_audio_file` (kein lokales `sf.read`/`librosa.load`-Forking).
+- Export ist nur zulässig, wenn neben Goal-/Quality-Gates auch der Pegelabfallschutz besteht (`loudness_drop_db <= 2.5`).
 
 ---
 

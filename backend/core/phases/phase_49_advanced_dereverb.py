@@ -193,9 +193,7 @@ class AdvancedDereverbPhase(PhaseInterface):
         _max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(self._current_material, self._MAX_RMS_DROP_DB["unknown"]))
         if rms_drop_db < -_max_rms_drop_db and wet_mix > 0.0:
             attenuation_guard_triggered = True
-            attenuation_guard_factor = float(
-                np.clip(_max_rms_drop_db / (abs(rms_drop_db) + 1e-9), 0.35, 1.0)
-            )
+            attenuation_guard_factor = float(np.clip(_max_rms_drop_db / (abs(rms_drop_db) + 1e-9), 0.35, 1.0))
             wet_mix *= attenuation_guard_factor
 
         # --- §4.5c Early-Reflection-Guard: C80/D50 clarity-based wet-mix limiting ---
@@ -212,7 +210,6 @@ class AdvancedDereverbPhase(PhaseInterface):
         d50_pre = self._measure_d50_proxy(audio, sample_rate)
         d50_post = self._measure_d50_proxy(processed, sample_rate)
         delta_d50 = d50_post - d50_pre
-        d50_guard_triggered = False
 
         if delta_c80 < -2.0:
             # C80 degraded — full rollback to original dry signal
@@ -252,10 +249,10 @@ class AdvancedDereverbPhase(PhaseInterface):
         if abs(delta_d50) > 0.12 and not c80_guard_triggered:
             _d50_scale = float(np.clip(0.12 / (abs(delta_d50) + 1e-9), 0.30, 1.0))
             wet_mix *= _d50_scale
-            d50_guard_triggered = True
             logger.info(
                 "Phase 49 D50-guard: ΔD50=%.3f > 0.12 → wet_mix scaled to %.3f",
-                delta_d50, wet_mix,
+                delta_d50,
+                wet_mix,
             )
 
         if wet_mix < 1.0:
@@ -266,7 +263,9 @@ class AdvancedDereverbPhase(PhaseInterface):
         rms_after_blend = float(np.sqrt(np.mean(processed**2)))
         rms_drop_after_blend_db = 20.0 * np.log10(max(rms_after_blend / (rms_before + 1e-10), 1e-30))
         if rms_drop_after_blend_db < -_max_rms_drop_db and wet_mix > 0.0:
-            _rescue_wet = float(np.clip(wet_mix * (_max_rms_drop_db / (abs(rms_drop_after_blend_db) + 1e-9)), 0.20, wet_mix))
+            _rescue_wet = float(
+                np.clip(wet_mix * (_max_rms_drop_db / (abs(rms_drop_after_blend_db) + 1e-9)), 0.20, wet_mix)
+            )
             processed = audio + _rescue_wet * (processed - audio)
             wet_mix = _rescue_wet
 
@@ -302,6 +301,8 @@ class AdvancedDereverbPhase(PhaseInterface):
                 "attenuation_guard_triggered": attenuation_guard_triggered,
                 "attenuation_guard_factor": attenuation_guard_factor,
                 "rms_change_db": rms_change_db,
+                "rms_drop_db": round(float(min(0.0, rms_change_db)), 3),  # §2.45a telemetry
+                "loudness_makeup_db": 0.0,  # phase_49 uses wet-rescue, not makeup gain
                 "protect_transients": protect_transients,
                 "c80_pre": float(c80_pre),
                 "c80_post": float(c80_post),
@@ -398,7 +399,7 @@ class AdvancedDereverbPhase(PhaseInterface):
             # reverb bursts.  Tape material has a longer reverb tail and gentler room
             # impulse; alpha=0.93 averages over more frames, preventing over-dereverb
             # that strips authentic Tape room character (§0 Authenticity).
-            _ema_alpha = 0.93 if getattr(self, '_current_material', '') in ('tape', 'reel_tape') else 0.90
+            _ema_alpha = 0.93 if getattr(self, "_current_material", "") in ("tape", "reel_tape") else 0.90
             smoothed_power = self._smooth_power(power, alpha=_ema_alpha)
 
             reverb_estimate = np.zeros_like(stft_matrix)

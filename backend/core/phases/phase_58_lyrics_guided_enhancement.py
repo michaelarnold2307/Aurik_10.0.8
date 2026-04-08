@@ -76,6 +76,31 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
     ) -> PhaseResult:
         assert sample_rate == 48_000, f"phase_58: expected sr=48000, got {sample_rate}"
 
+        # §2.47 PMGG-Retry: locality_factor skaliert LGE-Intensität bei Retries
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            return create_phase_result(
+                audio=audio,
+                modifications={
+                    "lge_skipped": True,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["LGE skipped: zero effective strength"],
+                metadata={
+                    "lge_active": False,
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                ml_used=False,
+                quality_estimate=1.0,
+                execution_time_seconds=0.0,
+            )
+
         # §2.36 Pre-computed transcription from original audio (passed by UV3 via phase_kwargs).
         # If available and not a fallback, use saliency path instead of full re-transcription.
         pre_transcription: Any = kwargs.get("pre_transcription")
@@ -184,6 +209,11 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
             1.0,
         ).astype(np.float32)
 
+        # §2.47 PMGG-Retry: phase_locality_factor als Post-hoc-Wet/Dry-Regler
+        if _effective_strength < 1.0:
+            audio_out = audio + _effective_strength * (audio_out - audio)
+            audio_out = np.clip(audio_out, -1.0, 1.0).astype(np.float32)
+
         # §2.36 Privacy-Pflicht: word count only — no text in metadata.
         n_words: int = len(transcription.words) if transcription is not None else 0
 
@@ -195,6 +225,8 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
                 "n_phoneme_segments": n_words,
                 "latency_s": round(elapsed, 3),
                 "latency_budget_s": round(latency_budget_s, 3),
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
             },
             warnings=warnings,
             metadata={
@@ -202,6 +234,10 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
                 "vocal_probability": vocal_prob,
                 "n_phoneme_segments": n_words,
                 # §2.36 Datenschutz: no lyrics text stored here
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
             },
             ml_used=True,
             quality_estimate=min(1.0, 0.90 + 0.10 * min(1.0, vocal_prob)),

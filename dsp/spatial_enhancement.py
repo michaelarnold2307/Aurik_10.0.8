@@ -609,6 +609,7 @@ def main():
     # Load audio
     logger.info("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -631,21 +632,21 @@ def main():
     # Print report
     logger.info("\n📊 Processing Report:")
     logger.info("-" * 60)
-    logger.info("Depth: %.1f dB", report['depth']['depth_enhancement_db'])
-    logger.info("  Early reflections: %s", 'Yes' if report['depth']['early_reflections_enhanced'] else 'No')
+    logger.info("Depth: %.1f dB", report["depth"]["depth_enhancement_db"])
+    logger.info("  Early reflections: %s", "Yes" if report["depth"]["early_reflections_enhanced"] else "No")
 
-    logger.info("\nWidth: %.2fx", report['width']['width_change'])
-    logger.info("  Original: %.2f", report['width']['original_width'])
-    logger.info("  New: %.2f", report['width']['new_width'])
+    logger.info("\nWidth: %.2fx", report["width"]["width_change"])
+    logger.info("  Original: %.2f", report["width"]["original_width"])
+    logger.info("  New: %.2f", report["width"]["new_width"])
 
-    logger.info("\nTexture: %.1f dB", report['texture']['texture_enhancement_db'])
-    logger.info("  Atmosphere: %s", 'Yes' if report['texture']['atmosphere_enhanced'] else 'No')
+    logger.info("\nTexture: %.1f dB", report["texture"]["texture_enhancement_db"])
+    logger.info("  Atmosphere: %s", "Yes" if report["texture"]["atmosphere_enhanced"] else "No")
 
-    logger.info("\nSpatial Clarity: %s", 'Applied' if report['spatial']['spatial_clarity_applied'] else 'Not applied')
-    logger.info("  Haas enhancement: %s", 'Yes' if report['spatial']['haas_enhancement_applied'] else 'No')
+    logger.info("\nSpatial Clarity: %s", "Applied" if report["spatial"]["spatial_clarity_applied"] else "Not applied")
+    logger.info("  Haas enhancement: %s", "Yes" if report["spatial"]["haas_enhancement_applied"] else "No")
 
-    logger.info("\nSpatial Quality: %.1f", report['spatial_quality'])
-    logger.info("Stages applied: %s", report['stages_applied'])
+    logger.info("\nSpatial Quality: %.1f", report["spatial_quality"])
+    logger.info("Stages applied: %s", report["stages_applied"])
 
     # Save
     logger.info("\nSaving: %s", args.output)

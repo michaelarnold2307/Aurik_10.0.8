@@ -117,13 +117,13 @@ class ReparaturDenker:
     # CD/Digital = sauberes Signal → konservativere Detektion (weniger False Positives).
     _MATERIAL_PROFILES: dict[str, dict[str, float]] = {
         "shellac": {
-            "click_iqr": 4.0,       # Shellac: viele Klicks, niedrigere Schwelle
+            "click_iqr": 4.0,  # Shellac: viele Klicks, niedrigere Schwelle
             "click_kernel_ms": 1.0,  # Schmalerer Kernel für kurze Impulse
             "clip_threshold": 0.990,
             "hum_detect_db": -45.0,  # Grammophon-Motoren erzeugen hörbaren Brumm
         },
         "wax_cylinder": {
-            "click_iqr": 3.5,        # Wachszylinder: extremer Verschleiß
+            "click_iqr": 3.5,  # Wachszylinder: extremer Verschleiß
             "click_kernel_ms": 1.0,
             "clip_threshold": 0.985,
             "hum_detect_db": -42.0,
@@ -135,13 +135,13 @@ class ReparaturDenker:
             "hum_detect_db": -45.0,
         },
         "vinyl": {
-            "click_iqr": 5.0,        # Vinyl: moderater Verschleiß, weniger Clicks als Shellac
+            "click_iqr": 5.0,  # Vinyl: moderater Verschleiß, weniger Clicks als Shellac
             "click_kernel_ms": 1.5,
             "clip_threshold": 0.993,
             "hum_detect_db": -48.0,
         },
         "tape": {
-            "click_iqr": 7.0,        # Tape: wenig Clicks, hauptsächlich Hiss/Flutter
+            "click_iqr": 7.0,  # Tape: wenig Clicks, hauptsächlich Hiss/Flutter
             "click_kernel_ms": 2.0,
             "clip_threshold": 0.992,  # Tape-Sättigung beginnt sanfter
             "hum_detect_db": -50.0,
@@ -153,16 +153,16 @@ class ReparaturDenker:
             "hum_detect_db": -50.0,
         },
         "reel_tape": {
-            "click_iqr": 8.0,        # Pro-Tape: fast keine Clicks, hauptsächlich Print-Through
+            "click_iqr": 8.0,  # Pro-Tape: fast keine Clicks, hauptsächlich Print-Through
             "click_kernel_ms": 2.0,
             "clip_threshold": 0.995,
             "hum_detect_db": -52.0,
         },
         "cd_digital": {
-            "click_iqr": 9.0,        # CD: fast keine Clicks, nur Encoding-Artefakte
+            "click_iqr": 9.0,  # CD: fast keine Clicks, nur Encoding-Artefakte
             "click_kernel_ms": 2.0,
             "clip_threshold": 0.998,
-            "hum_detect_db": -55.0,   # Digitaler Brumm nur bei sehr hohem Pegel erkennbar
+            "hum_detect_db": -55.0,  # Digitaler Brumm nur bei sehr hohem Pegel erkennbar
         },
         "dat": {
             "click_iqr": 9.0,
@@ -201,8 +201,12 @@ class ReparaturDenker:
             self._CLICK_KERNEL_MS = profile["click_kernel_ms"]
             self._CLIP_THRESHOLD = profile["clip_threshold"]
             self._HUM_DETECT_DB = profile["hum_detect_db"]
-            logger.debug("ReparaturDenker: material-profile '%s' applied: iqr=%.1f, hum_db=%.0f",
-                         mat_key, self._CLICK_IQR_MULTIPLIER, self._HUM_DETECT_DB)
+            logger.debug(
+                "ReparaturDenker: material-profile '%s' applied: iqr=%.1f, hum_db=%.0f",
+                mat_key,
+                self._CLICK_IQR_MULTIPLIER,
+                self._HUM_DETECT_DB,
+            )
         else:
             # Reset to defaults for unknown materials
             self._CLICK_IQR_MULTIPLIER = 6.0

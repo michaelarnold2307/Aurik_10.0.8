@@ -255,11 +255,11 @@ class TestTransientDecoupledProcessor:
         assert "phase_27_click_pop_removal" in PERCUSSIVE_ONLY_PHASES
 
     def test_22_hpss_kernel_constants(self):
-        """HPSS-Kernel-Konstanten entsprechen Spec (31 Frames)."""
+        """HPSS-Kernel-Konstanten entsprechen Spec (v9.10.119: Harmonic=17, Percussive=13)."""
         from backend.core.transient_decoupled_processor import (
             HPSS_HARMONIC_KERNEL,
             HPSS_PERCUSSIVE_KERNEL,
         )
 
-        assert HPSS_HARMONIC_KERNEL == 31
-        assert HPSS_PERCUSSIVE_KERNEL == 31
+        assert HPSS_HARMONIC_KERNEL == 17
+        assert HPSS_PERCUSSIVE_KERNEL == 13

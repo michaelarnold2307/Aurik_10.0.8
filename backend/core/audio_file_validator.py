@@ -32,7 +32,7 @@ class AudioLoadError(Exception):
     technische Ursache (cause) für das Log.
     """
 
-    def __init__(self, message_user: str, cause: str = "") -> None:  # noqa: B042
+    def __init__(self, message_user: str, cause: str = "") -> None:
         self.message_user = message_user
         self.cause = cause
         super().__init__(f"{message_user} | tech: {cause}" if cause else message_user)

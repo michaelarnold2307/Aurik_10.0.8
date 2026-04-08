@@ -311,8 +311,7 @@ def load_checkpoint_audio(checkpoint: RecoveryCheckpoint) -> np.ndarray | None:
                     sr,
                 )
             logger.info(
-                "Recovery: Original-Datei als Primärquelle geladen "
-                "(Checkpoint nur Notfall-Fallback gemäß §2.39)."
+                "Recovery: Original-Datei als Primärquelle geladen (Checkpoint nur Notfall-Fallback gemäß §2.39)."
             )
             return audio
         orig_exc = RuntimeError(str((_res or {}).get("error", "load_audio_file returned invalid result")))
@@ -320,8 +319,7 @@ def load_checkpoint_audio(checkpoint: RecoveryCheckpoint) -> np.ndarray | None:
         orig_exc = _exc
 
     logger.warning(
-        "Recovery: Original-Datei konnte nicht geladen werden (%s) — "
-        "Notfall-Fallback auf Checkpoint-Audio: %s",
+        "Recovery: Original-Datei konnte nicht geladen werden (%s) — Notfall-Fallback auf Checkpoint-Audio: %s",
         type(orig_exc).__name__ if orig_exc is not None else "UnknownError",
         checkpoint.audio_wav_path,
     )

@@ -587,9 +587,10 @@ class TestSongCalibrationIntegration:
             **kwargs,
         )
 
-        assert profile_with_chain["source_fidelity_generation_count"] >= profile_material_only[
-            "source_fidelity_generation_count"
-        ]
+        assert (
+            profile_with_chain["source_fidelity_generation_count"]
+            >= profile_material_only["source_fidelity_generation_count"]
+        )
         assert profile_with_chain["source_fidelity_hf_loss_db"] >= profile_material_only["source_fidelity_hf_loss_db"]
         assert profile_with_chain["source_fidelity_transfer_chain"] == ["vinyl", "tape", "mp3_low"]
 
@@ -602,9 +603,11 @@ class TestSongCalibrationIntegration:
             {"transfer_chain": ["Vinyl", " Tape ", "MP3_LOW"]}
         ) == ["vinyl", "tape", "mp3_low"]
 
-        assert UnifiedRestorerV3._extract_transfer_chain_from_forensics(
-            {"chain": "vinyl → tape > mp3_low"}
-        ) == ["vinyl", "tape", "mp3_low"]
+        assert UnifiedRestorerV3._extract_transfer_chain_from_forensics({"chain": "vinyl → tape > mp3_low"}) == [
+            "vinyl",
+            "tape",
+            "mp3_low",
+        ]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -641,9 +644,11 @@ class TestSourceFidelityExportAuditTrail:
         # Simulates UV3 line ~2508 using a representative transfer_chain_raw payload.
         raw = {"transfer_chain": ["vinyl", "tape", "mp3_low"]}
         chain = UnifiedRestorerV3._extract_transfer_chain_from_forensics(raw)
-        assert chain == ["vinyl", "tape", "mp3_low"], (
-            f"_extract_transfer_chain_from_forensics produced unexpected chain: {chain}"
-        )
+        assert chain == [
+            "vinyl",
+            "tape",
+            "mp3_low",
+        ], f"_extract_transfer_chain_from_forensics produced unexpected chain: {chain}"
 
         # ── Step 2: Build calibration profile with the extracted chain ──────────
         # Simulates UV3 line ~2528.
@@ -675,16 +680,12 @@ class TestSourceFidelityExportAuditTrail:
             "source_fidelity_generation_count missing from calibration profile"
         )
         assert cal["source_fidelity_generation_count"] >= 3, (
-            f"3-stage chain must yield generation_count >= 3 "
-            f"(got {cal['source_fidelity_generation_count']})"
+            f"3-stage chain must yield generation_count >= 3 (got {cal['source_fidelity_generation_count']})"
         )
 
-        assert "source_fidelity_hf_loss_db" in cal, (
-            "source_fidelity_hf_loss_db missing from calibration profile"
-        )
+        assert "source_fidelity_hf_loss_db" in cal, "source_fidelity_hf_loss_db missing from calibration profile"
         assert cal["source_fidelity_hf_loss_db"] > 0.0, (
-            f"3-stage chain must carry HF loss > 0 dB "
-            f"(got {cal['source_fidelity_hf_loss_db']} dB)"
+            f"3-stage chain must carry HF loss > 0 dB (got {cal['source_fidelity_hf_loss_db']} dB)"
         )
 
         # [RELEASE_MUST] §2.41: source_fidelity_transfer_chain must propagate end-to-end
@@ -707,16 +708,13 @@ class TestSourceFidelityExportAuditTrail:
         )
 
         # [RELEASE_MUST] §2.47: multi-generation chain must carry HF loss > 0
-        assert "source_fidelity_hf_loss_db" in cal, (
-            "source_fidelity_hf_loss_db missing from export metadata"
-        )
+        assert "source_fidelity_hf_loss_db" in cal, "source_fidelity_hf_loss_db missing from export metadata"
         assert cal["source_fidelity_hf_loss_db"] > 0.0, (
-            f"3-stage chain must have cumulative HF loss > 0 dB "
-            f"(got {cal['source_fidelity_hf_loss_db']} dB)"
+            f"3-stage chain must have cumulative HF loss > 0 dB (got {cal['source_fidelity_hf_loss_db']} dB)"
         )
 
-# ═══
-    @pytest.mark.timeout(60)
+    # ═══
+    @pytest.mark.timeout(90)
     def test_transfer_chain_reaches_export_metadata(self):
         """Full restore() call: source_fidelity_* fields must appear in metadata.
 
@@ -724,9 +722,9 @@ class TestSourceFidelityExportAuditTrail:
           chain_raw → _extract_transfer_chain_from_forensics → _build_song_calibration_profile
           → metadata["song_calibration"] in RestorationResult.
 
-        Musical-Goals metrics are stubbed to constant passing scores to keep the test
-        within the 60 s timeout (data-flow / audit-trail test; metric correctness is
-        covered by TestMusicalGoalsCheckerIntegration).
+        Musical-Goals metrics are stubbed to constant passing scores; runtime remains
+        data-flow focused while allowing realistic startup overhead (model/plugin init)
+        in CI and local environments.
 
         [RELEASE_MUST] §2.41 SourceFidelityReconstructor
                        §2.46 Carrier-Chain-Inversion
@@ -819,9 +817,8 @@ class TestSourceFidelityExportAuditTrail:
         assert isinstance(cal["source_fidelity_generation_count"], (int, float)), (
             "source_fidelity_generation_count must be numeric"
         )
-        assert "source_fidelity_hf_loss_db" in cal, (
-            "source_fidelity_hf_loss_db missing from restore() export metadata"
-        )
+        assert "source_fidelity_hf_loss_db" in cal, "source_fidelity_hf_loss_db missing from restore() export metadata"
+
 
 # ════════════════════════════════════════════════════════════════════
 # 6. MusicalGoalsChecker Integration

@@ -251,7 +251,7 @@ def quality_gates(audio: np.ndarray, sr: int) -> bool:
     mos_score = results["UTMOS"] if isinstance(results["UTMOS"], float) else results["UTMOS"].get("mos", 0.0)
     if mos_score < 3.5:
         passed = False
-    logger.info("        [Quality-Gate] GACELA_MSE: %s", results.get('GACELA_MSE', 'n/a'))
+    logger.info("        [Quality-Gate] GACELA_MSE: %s", results.get("GACELA_MSE", "n/a"))
     return passed
 
 
@@ -333,7 +333,7 @@ def main(importfile_path: str, out_path: str) -> None:
         if choir > 0.3:
             detected.append("Chor")
         if detected:
-            logger.info("    Erkannt: %s", ', '.join(detected))
+            logger.info("    Erkannt: %s", ", ".join(detected))
         else:
             logger.info("    Keine dominante Gesangsart erkannt.")
         # Sibilanten-Score (sofern vorhanden)

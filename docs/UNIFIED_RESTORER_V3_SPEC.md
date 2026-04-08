@@ -9,6 +9,7 @@
 ## 1. Purpose
 
 The **UnifiedRestorerV3** is the **main orchestrator** for Aurik 9.0's audio restoration pipeline. It coordinates:
+
 - **DefectScanner:** Material detection + 11 defect types analysis
 - **Adaptive Phase Selection:** Only run phases needed for detected defects
 - **PerformanceGuard:** Enforce 3× RT limit with adaptive skipping
@@ -108,6 +109,7 @@ class PhasePriority:
 ```
 
 **Example Phase Priorities:**
+
 - `click_removal` (shellac): **CRITICAL** (9)
 - `hum_removal`: **HIGH** (8)
 - `denoise`: **MEDIUM** (6)
@@ -143,15 +145,16 @@ def _select_phases(self, defect_result: DefectAnalysisResult) -> List[PhaseInter
 
 Phase priorities are **adjusted based on material type:**
 
-| Phase              | Shellac | Vinyl | Tape | CD  |
-|--------------------|---------|-------|------|-----|
-| click_removal      | 9 (CRIT)| 8 (HIGH)| 6 (MED) | 3 (LOW) |
-| hum_removal        | 8       | 8     | 9    | 6   |
-| denoise            | 6       | 6     | 9    | 3   |
-| wow_flutter_fix    | 8       | 7     | 9    | 3   |
-| stereo_enhancement | 3       | 5     | 5    | 6   |
+| Phase              | Shellac | Vinyl    |   Tape  | CD      |
+|--------------------|---------|----------|---------|---------|
+| click_removal      | 9 (CRIT)| 8 (HIGH) | 6 (MED) | 3 (LOW) |
+| hum_removal        | 8       | 8        | 9       | 6       |
+| denoise            | 6       | 6        | 9       | 3       |
+| wow_flutter_fix    | 8       | 7        | 9       | 3       |
+| stereo_enhancement | 3       | 5        | 5       | 6       |
 
 **Rationale:**
+
 - Shellac: Clicks are most visible defect → CRITICAL priority
 - Tape: Wow/flutter and hiss most critical → HIGH priority
 - CD: Digital artifacts more critical than analog defects
@@ -159,6 +162,7 @@ Phase priorities are **adjusted based on material type:**
 ### 4.3 Dependency Resolution
 
 Phases can declare dependencies:
+
 ```python
 class HumRemovalPhase(PhaseInterface):
     def get_metadata(self) -> PhaseMetadata:
@@ -170,6 +174,7 @@ class HumRemovalPhase(PhaseInterface):
 ```
 
 **Execution order determined by dependency graph:**
+
 ```
 phase_1.1_click_removal (no deps)
   ↓
@@ -224,6 +229,7 @@ def should_skip_phase(current_rt_factor: float, priority: int, mode: QualityMode
 ### 5.3 Performance Report
 
 After restoration completes:
+
 ```python
 report = perf_guard.get_report()
 
@@ -265,21 +271,22 @@ def _estimate_quality(self, defect_result: DefectAnalysisResult,
 
 ### 6.2 Defect Impact Weights
 
-| Defect Type          | Weight | Impact on Perceived Quality |
-|----------------------|--------|-----------------------------|
+| Defect Type          | Weight | Impact on Perceived Quality   |
+|----------------------|--------|-------------------------------|
 | clicks               | 15     | Very noticeable (high impact) |
-| crackle              | 12     | Highly annoying              |
-| hum                  | 10     | Very distracting             |
-| wow_flutter          | 14     | Extremely distracting        |
-| stereo_imbalance     | 6      | Subtle issue                 |
-| digital_artifacts    | 11     | Highly annoying              |
-| rumble               | 7      | Noticeable if present        |
-| high_freq_noise      | 8      | Noticeable (hiss)            |
-| compression          | 9      | Noticeable (artifacts)       |
-| phase_issues         | 5      | Subtle (stereo imaging)      |
-| dropouts             | 13     | Very noticeable              |
+| crackle              | 12     | Highly annoying               |
+| hum                  | 10     | Very distracting              |
+| wow_flutter          | 14     | Extremely distracting         |
+| stereo_imbalance     | 6      | Subtle issue                  |
+| digital_artifacts    | 11     | Highly annoying               |
+| rumble               | 7      | Noticeable if present         |
+| high_freq_noise      | 8      | Noticeable (hiss)             |
+| compression          | 9      | Noticeable (artifacts)        |
+| phase_issues         | 5      | Subtle (stereo imaging)       |
+| dropouts             | 13     | Very noticeable               |
 
 **Degradation Calculation:**
+
 ```python
 degradation = sum(
     defect_severity * DEFECT_WEIGHTS[defect_type]
@@ -304,6 +311,7 @@ degradation = sum(
 | frequency_restore  | 7             | Restores missing highs         |
 
 **Improvement Calculation:**
+
 ```python
 improvement = sum(PHASE_EFFECTIVENESS[phase_id] for phase_id in phases_executed)
 
@@ -316,6 +324,7 @@ improvement = sum(PHASE_EFFECTIVENESS[phase_id] for phase_id in phases_executed)
 ### 6.4 Psychoacoustic Boost
 
 **Material-specific perceived quality bonus:**
+
 ```python
 PSYCHOACOUSTIC_BOOST = {
     MaterialType.SHELLAC: 15,   # Users expect defects, so cleaned shellac sounds "amazing"
@@ -470,16 +479,19 @@ Phases Skipped: 0
 ### 8.4 Analysis
 
 **Performance:**
+
 - ✅ Both modes **far exceed** RT targets (0.10× vs 2.4× = 24× faster)
 - ✅ DefectScanner overhead: **8.9%** (below 10% target)
 - ✅ Room for 38 additional phases while maintaining <2.4× RT
 
 **Quality:**
+
 - 71.4% with only 3 phases implemented (click, hum, denoise)
 - Expected: **~92% technical, ~107% perceived** with all 41 phases
 - Current limitation: Only hum_removal ran (clicks/noise below thresholds)
 
 **Material Detection:**
+
 - Correctly identified shellac from audio characteristics
 - High confidence: 0.82 (>0.8 threshold)
 
@@ -564,7 +576,7 @@ result = restorer.restore(audio, sr)
 
 | Aspect               | v8.0 (Medium-First)          | v9.0 (Defect-First)            |
 |----------------------|------------------------------|--------------------------------|
-| **Material Input**   | Required (manual selection)   | Auto-detected by DefectScanner |
+| **Material Input**   | Required (manual selection)  | Auto-detected by DefectScanner |
 | **Phase Selection**  | Fixed set per material       | Adaptive per detected defects  |
 | **Performance**      | No guarantees                | 3× RT enforced                 |
 | **Quality Modes**    | Presets (fast/balanced/etc.) | Modes (FAST/BALANCED/QUALITY)  |
@@ -584,16 +596,19 @@ result = restorer.restore(audio, sr)
 ### 11.2 Future Optimizations
 
 **Phase 1 (Post-Launch):**
+
 - Enable AdaptiveCoreScheduler for parallel execution → **~3× speedup**
 - Optimize DefectScanner with Cython/Numba → **~2× speedup**
 - In-place processing where possible → **30% memory reduction**
 
 **Phase 2 (Advanced):**
+
 - GPU acceleration for FFT-heavy phases (denoise, frequency restore) → **~5× speedup**
 - JIT compilation of phase algorithms → **~1.5× speedup**
 - Streaming processing (process in chunks, not entire file) → **Unlimited file size**
 
 **Expected Final Performance:**
+
 - Current: 0.10× RT (BALANCED mode, 3 phases)
 - With 41 phases: ~1.5× RT (estimated)
 - After optimizations: **~0.5× RT** (2× faster than realtime) ✅

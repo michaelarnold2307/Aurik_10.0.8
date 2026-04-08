@@ -180,6 +180,8 @@ class DCOffsetRemoval(PhaseInterface):
                     "effective_strength": _effective_strength,
                     "processing": "skipped_zero_strength",
                     "rt_factor": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -234,6 +236,8 @@ class DCOffsetRemoval(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "rt_factor": float(rt_factor),
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.08 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
@@ -331,11 +335,11 @@ if __name__ == "__main__":
 
         # Display results
         meta = result.metadata
-        logger.debug("  HP cutoff: %.1f Hz (%s)", meta['hp_cutoff_hz'], meta['filter_type'].upper())
-        logger.debug("  DC before: %s", meta['dc_offset_before'])
-        logger.debug("  DC after: %s", meta['dc_offset_after'])
-        logger.debug("  DC reduction: %s", meta['dc_reduction'])
-        logger.debug("  Subsonic reduction: %.2f dB", meta['subsonic_reduction_db'])
+        logger.debug("  HP cutoff: %.1f Hz (%s)", meta["hp_cutoff_hz"], meta["filter_type"].upper())
+        logger.debug("  DC before: %s", meta["dc_offset_before"])
+        logger.debug("  DC after: %s", meta["dc_offset_after"])
+        logger.debug("  DC reduction: %s", meta["dc_reduction"])
+        logger.debug("  Subsonic reduction: %.2f dB", meta["subsonic_reduction_db"])
         logger.debug("  Processing time: %.4fs", elapsed)
-        logger.debug("  RT factor: %.4f×", meta['rt_factor'])
+        logger.debug("  RT factor: %.4f×", meta["rt_factor"])
         logger.debug("  ✅\n")

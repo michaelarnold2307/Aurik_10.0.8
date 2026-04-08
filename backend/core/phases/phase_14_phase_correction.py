@@ -155,6 +155,8 @@ class PhaseCorrection(PhaseInterface):
                     "version": "2.0",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -175,6 +177,8 @@ class PhaseCorrection(PhaseInterface):
                     "version": "2.0",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -260,6 +264,8 @@ class PhaseCorrection(PhaseInterface):
                 "crossovers_hz": self.CROSSOVER_FREQS,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -498,9 +504,9 @@ if __name__ == "__main__":
         result = phase.process(test_audio, sample_rate, material)
 
         logger.debug("✅ Professional Phase Correction:")
-        logger.debug("   Correlation Before: %.4f", result.metrics['correlation_before'])
-        logger.debug("   Correlation After: %.4f", result.metrics['correlation_after'])
-        logger.debug("   Improvement: %.4f", result.metrics['correlation_improvement'])
+        logger.debug("   Correlation Before: %.4f", result.metrics["correlation_before"])
+        logger.debug("   Correlation After: %.4f", result.metrics["correlation_after"])
+        logger.debug("   Improvement: %.4f", result.metrics["correlation_improvement"])
         logger.debug("")
         logger.debug(
             f"   Per-Band Correlation Before: {[f'{c:.3f}' for c in result.metrics['per_band_correlation_before']]}"
@@ -508,12 +514,12 @@ if __name__ == "__main__":
         logger.debug(
             f"   Per-Band Correlation After:  {[f'{c:.3f}' for c in result.metrics['per_band_correlation_after']]}"
         )
-        logger.debug("   Delays Corrected (samples):  %s", result.metrics['delays_corrected_samples'])
+        logger.debug("   Delays Corrected (samples):  %s", result.metrics["delays_corrected_samples"])
         logger.debug("")
         logger.debug(
             f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
         )
-        logger.debug("   Correction strength: %s", result.metrics['correction_strength'])
+        logger.debug("   Correction strength: %s", result.metrics["correction_strength"])
         logger.debug("")
 
     logger.debug("=" * 80)

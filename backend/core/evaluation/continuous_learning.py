@@ -554,7 +554,7 @@ class ContinuousLearningSystem:
         calibration_analysis = self.calibrator.analyze_calibration()
         calibration_recommendations = self.calibrator.generate_calibration_recommendations(calibration_analysis)
 
-        logger.info("✓ Confidence calibration: %s", calibration_analysis.get('status', 'unknown'))
+        logger.info("✓ Confidence calibration: %s", calibration_analysis.get("status", "unknown"))
 
         # 5. Aggregate performance metrics
         self.aggregator.aggregate_from_reports(self.analyzer.raw_data)

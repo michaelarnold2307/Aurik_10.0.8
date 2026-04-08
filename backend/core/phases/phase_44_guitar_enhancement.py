@@ -134,6 +134,8 @@ class GuitarEnhancementPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"spectral_centroid": 0.0},
             )
@@ -314,6 +316,8 @@ class GuitarEnhancementPhase(PhaseInterface):
                 "instrument_formant_frames": igt_frames,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={"genre": genre, "spectral_centroid": centroid},
         )

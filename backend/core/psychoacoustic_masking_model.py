@@ -204,9 +204,7 @@ class PsychoacousticMaskingModel:
         _max_samples = sr * 10  # 480 000 samples @ 48 kHz
         if mono.size > _max_samples:
             _start = (mono.size - _max_samples) // 2
-            mono = np.ascontiguousarray(
-                mono[_start : _start + _max_samples], dtype=np.float32
-            )
+            mono = np.ascontiguousarray(mono[_start : _start + _max_samples], dtype=np.float32)
 
         n_frames = max(1, (mono.size - frame) // hop + 1)
 
@@ -223,11 +221,7 @@ class PsychoacousticMaskingModel:
         # Prevents OpenBLAS worker threads from racing → eliminates SIGSEGV
         # (crash at _wrapreduction documented 2026-04-05).
         with self._compute_lock:
-            _ctx = (
-                _threadpool_limits(limits=1, user_api="blas")
-                if _THREADPOOL_AVAILABLE
-                else None
-            )
+            _ctx = _threadpool_limits(limits=1, user_api="blas") if _THREADPOOL_AVAILABLE else None
             try:
                 if _ctx is not None:
                     _ctx.__enter__()
@@ -263,9 +257,7 @@ class PsychoacousticMaskingModel:
                 band_energy = np.einsum("ij,kj->ik", spec_sq, band_mask, optimize=False)
 
                 # Masking threshold: ISO 11172-3 — slope attenuation per band
-                slope_atten = np.array(
-                    [10.0 ** (-s / 10.0) for s in _MASKING_SLOPE_DB], dtype=np.float32
-                )
+                slope_atten = np.array([10.0 ** (-s / 10.0) for s in _MASKING_SLOPE_DB], dtype=np.float32)
                 mask_thr = np.maximum(0.0, band_energy * slope_atten[np.newaxis, :])
 
                 # Gain modifier: relative band energy → gain

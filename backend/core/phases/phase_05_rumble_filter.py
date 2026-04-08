@@ -189,6 +189,9 @@ class RumbleFilterPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
+        # §2.45a: RMS-Referenz vor Verarbeitung
+        _rms_in_05 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+
         # Get material-specific parameters
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
 
@@ -282,6 +285,28 @@ class RumbleFilterPhase(PhaseInterface):
             filtered = (audio + _effective_strength * (filtered - audio)).astype(audio.dtype)
             filtered = np.clip(filtered, -1.0, 1.0)
 
+        # §2.45a Mid-Pipeline-Loudness-Drift-Guard
+        _rms_out_05 = float(np.sqrt(np.mean(np.asarray(filtered, dtype=np.float64) ** 2) + 1e-12))
+        _rms_drop_05 = 20.0 * np.log10(max(_rms_out_05 / _rms_in_05, 1e-30)) if _rms_in_05 > 1e-8 else 0.0
+        _max_drop_05 = 3.0  # Rumble-HP: max 3 dB Pegelabfall erlaubt
+        _makeup_05 = 0.0
+        if _rms_in_05 > 1e-8 and _rms_drop_05 < -_max_drop_05:
+            _required_gain_db = -_max_drop_05 - _rms_drop_05
+            _makeup_05 = float(np.clip(_required_gain_db, 0.0, 6.0))
+            if _makeup_05 > 0.0:
+                _peak99_05 = float(np.percentile(np.abs(filtered), 99.9)) + 1e-10
+                _headroom_05 = min(1.0, 0.95 / _peak99_05)
+                _actual_gain_05 = min(10.0 ** (_makeup_05 / 20.0), _headroom_05)
+                filtered = np.clip(filtered * _actual_gain_05, -1.0, 1.0)
+                _rms_out_05 = float(np.sqrt(np.mean(np.asarray(filtered, dtype=np.float64) ** 2) + 1e-12))
+                _rms_drop_05 = 20.0 * np.log10(max(_rms_out_05 / _rms_in_05, 1e-30))
+                logger.info(
+                    "Phase 05 loudness-guard: cutoff=%d Hz, rms_drop=%.2f dB → makeup %.2f dB",
+                    adapted_cutoff,
+                    _rms_drop_05,
+                    _makeup_05,
+                )
+
         return create_phase_result(
             audio=filtered,
             modifications={
@@ -306,6 +331,8 @@ class RumbleFilterPhase(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "execution_time_seconds": execution_time,
+                "rms_drop_db": round(float(min(0.0, _rms_drop_05)), 3),
+                "loudness_makeup_db": round(float(_makeup_05), 3),
             },
         )
 
@@ -538,9 +565,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = RumbleFilterPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material)
@@ -550,24 +577,24 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Cutoff: %.1f Hz", result.modifications['cutoff_hz'])
-            logger.debug("   Filter Order: %s", result.modifications['filter_order'])
-            logger.debug("   Phase Mode: %s", result.modifications['phase_mode'])
-            logger.debug("   Transient Preserved: %s", result.modifications['transient_preserved'])
-            logger.debug("   Rumble Reduction: %.1f dB", result.modifications['rumble_reduction_db'])
-            logger.debug("   Rumble Energy Before: %.3f", result.metadata['rumble_energy_before'])
-            logger.debug("   Rumble Energy After: %.3f", result.metadata['rumble_energy_after'])
-            logger.debug("   Rumble Frequencies: %s Hz", result.metadata['rumble_frequencies_hz'])
-            logger.debug("   Transient Locations: %s", result.metadata['transient_locations'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Cutoff: %.1f Hz", result.modifications["cutoff_hz"])
+            logger.debug("   Filter Order: %s", result.modifications["filter_order"])
+            logger.debug("   Phase Mode: %s", result.modifications["phase_mode"])
+            logger.debug("   Transient Preserved: %s", result.modifications["transient_preserved"])
+            logger.debug("   Rumble Reduction: %.1f dB", result.modifications["rumble_reduction_db"])
+            logger.debug("   Rumble Energy Before: %.3f", result.metadata["rumble_energy_before"])
+            logger.debug("   Rumble Energy After: %.3f", result.metadata["rumble_energy_after"])
+            logger.debug("   Rumble Frequencies: %s Hz", result.metadata["rumble_frequencies_hz"])
+            logger.debug("   Transient Locations: %s", result.metadata["transient_locations"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("⏭️  Rumble Filter Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Rumble Filter v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata.get('algorithm', 'N/A'))
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata.get("algorithm", "N/A"))
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.93 (Professional-Grade)")

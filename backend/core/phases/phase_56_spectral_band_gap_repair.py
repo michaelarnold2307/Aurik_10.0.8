@@ -307,8 +307,14 @@ def _harmonic_interpolate_gap(
                     )
                     # Zufällige Phase — PGHI wird danach aufgerufen
                     # §2.40 Determinismus: seed from current partial bin + magnitude context
-                    _ph_seed56 = int(abs(float(np.sum(np.abs(stft_mag[bin_n, :min(stft_mag.shape[1], 4)])))) * 1e5 + bin_n) % (2**31)
-                    phase_out[b_fill] = np.random.default_rng(seed=_ph_seed56).uniform(-np.pi, np.pi, size=stft_mag.shape[1]).astype(np.float32)
+                    _ph_seed56 = int(
+                        abs(float(np.sum(np.abs(stft_mag[bin_n, : min(stft_mag.shape[1], 4)])))) * 1e5 + bin_n
+                    ) % (2**31)
+                    phase_out[b_fill] = (
+                        np.random.default_rng(seed=_ph_seed56)
+                        .uniform(-np.pi, np.pi, size=stft_mag.shape[1])
+                        .astype(np.float32)
+                    )
 
         n_partial += 1
         if n_partial > 40:  # Sicherheits-Stop
@@ -369,7 +375,7 @@ def _pghi_phase_reconstruction(mag: np.ndarray, n_fft: int, hop: int) -> np.ndar
     freq_per_bin = 2.0 * np.pi / n_fft  # normiert
 
     # §2.40 Determinismus: content-derived seed for IF-fallback phase init
-    _if_seed = int(abs(float(np.sum(np.abs(mag[:, :min(n_frames, 4)])))) * 1e5 + n_fft) % (2**31)
+    _if_seed = int(abs(float(np.sum(np.abs(mag[:, : min(n_frames, 4)])))) * 1e5 + n_fft) % (2**31)
     _rng_if = np.random.default_rng(seed=_if_seed)
     phase = np.zeros_like(mag)
     phase[:, 0] = _rng_if.uniform(-np.pi, np.pi, size=n_bins)
@@ -537,6 +543,8 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -549,6 +557,8 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                 metadata={
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -591,6 +601,9 @@ class SpectralBandGapRepairPhase(PhaseInterface):
             metadata={
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "execution_time_seconds": elapsed,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 

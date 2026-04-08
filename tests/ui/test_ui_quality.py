@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 GUI_FILE = Path("Aurik910/ui/modern_window.py")
 I18N_FILE = Path("Aurik910/i18n/__init__.py")
 DEFECT_SCANNER_FILE = Path("backend/core/defect_scanner.py")
@@ -12,17 +11,17 @@ def test_ui_heartbeat_reassures_during_long_processing_phases() -> None:
     assert 't("status.processing_reassure_long_phase")' in src
     assert 't("status.processing_reassure_finalize")' in src
     assert "_time_since_cb >= 8.0" in src
-    assert "_user_phase_text = _expl.lstrip(\" ·\").strip() if _expl else \"\"" in src
+    assert '_user_phase_text = _expl.lstrip(" ·").strip() if _expl else ""' in src
     assert '"Jetzt: {_base}' in src
-    assert 'Danach: {_next_hint}' in src
+    assert "Danach: {_next_hint}" in src
 
 
 def test_ui_status_and_phase_labels_use_eliding_labels() -> None:
     src = GUI_FILE.read_text(encoding="utf-8")
     assert "class _ElidingLabel(QLabel):" in src
-    assert "self._phase_step_label = _ElidingLabel(\"\")" in src
-    assert "self.status_text = _ElidingLabel(t(\"status.ready\"))" in src
-    assert "self.stats_label = _ElidingLabel(t(\"status.stats\", pending=0, completed=0, failed=0))" in src
+    assert 'self._phase_step_label = _ElidingLabel("")' in src
+    assert 'self.status_text = _ElidingLabel(t("status.ready"))' in src
+    assert 'self.stats_label = _ElidingLabel(t("status.stats", pending=0, completed=0, failed=0))' in src
 
 
 def test_ui_top_row_refresh_prevents_collisions_on_narrow_widths() -> None:
@@ -45,9 +44,9 @@ def test_ui_load_progress_switches_to_finalize_mode_near_98_percent() -> None:
 
 def test_defect_scanner_emits_fine_grained_tail_progress() -> None:
     src = DEFECT_SCANNER_FILE.read_text(encoding="utf-8")
-    assert "progress_callback: Optional[\"Callable[[float, str], None]\"]" in src
-    assert "def _prog(pct: float, name: str = \"\") -> None:" in src
-    assert "def _tail_tick(name: str = \"\") -> None:" in src
+    assert 'progress_callback: Optional["Callable[[float, str], None]"]' in src
+    assert 'def _prog(pct: float, name: str = "") -> None:' in src
+    assert 'def _tail_tick(name: str = "") -> None:' in src
     assert "_DIGITAL_FAST_TAIL" in src
     assert "_ANALOG_DEEP_TAIL" in src
     assert "_tail_start = 93.0" in src
@@ -58,5 +57,11 @@ def test_defect_scanner_emits_fine_grained_tail_progress() -> None:
 def test_ui_i18n_contains_reassuring_processing_messages() -> None:
     src = I18N_FILE.read_text(encoding="utf-8")
     assert '"status.processing_reassure_analysis": "Aurik prüft die Aufnahme weiter sorgfältig"' in src
-    assert '"status.processing_reassure_long_phase": "Rechenintensive Phase aktiv - Fortschritt läuft stabil weiter"' in src
-    assert '"status.processing_reassure_finalize": "Aurik finalisiert das Ergebnis und sichert alle Qualitätsprüfungen"' in src
+    assert (
+        '"status.processing_reassure_long_phase": "Rechenintensive Phase aktiv - Fortschritt läuft stabil weiter"'
+        in src
+    )
+    assert (
+        '"status.processing_reassure_finalize": "Aurik finalisiert das Ergebnis und sichert alle Qualitätsprüfungen"'
+        in src
+    )

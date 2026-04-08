@@ -92,3 +92,26 @@ class TestPerformanceGuardSpecCompliance:
             remaining_phases=1,
         )
         assert should_skip is False
+
+    def test_runtime_mandatory_phase_never_skipped_under_rt_pressure(self) -> None:
+        guard = PerformanceGuard(mode=QualityMode.QUALITY, enforce_limit=True, enable_adaptive_skipping=True)
+        guard.start_monitoring(10.0)
+        guard.start_time = time.perf_counter() - 315.0
+        guard.audio_duration = 10.0
+
+        # Baseline: heavy non-mandatory phase is deferred near the RT budget.
+        should_skip_non_mandatory = guard.should_skip_phase(
+            phase_id="phase_55_diffusion_inpainting",
+            estimated_time_seconds=8.0,
+            remaining_phases=2,
+        )
+        assert should_skip_non_mandatory is True
+
+        # §6.2a runtime guard: material mandatory phase must never be skipped.
+        guard.set_never_skip_phases(["phase_09_crackle_removal"])
+        should_skip_mandatory = guard.should_skip_phase(
+            phase_id="phase_09_crackle_removal",
+            estimated_time_seconds=8.0,
+            remaining_phases=2,
+        )
+        assert should_skip_mandatory is False

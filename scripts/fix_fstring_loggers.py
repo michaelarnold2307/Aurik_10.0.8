@@ -20,6 +20,7 @@ Usage:
 
     Default path: backend/ dsp/ plugins/ denker/
 """
+
 import argparse
 import re
 import sys
@@ -27,17 +28,16 @@ from pathlib import Path
 
 # logger.LEVEL(f"...", ...) — capture the full argument list as one group
 _LOG_RE = re.compile(
-    r"""(logger\s*\.\s*(?:debug|info|warning|error|critical|exception)\s*\()"""
-    r"""(f['"])(.*?['"])(\s*\))""",
+    r"""(logger\s*\.\s*(?:debug|info|warning|error|critical|exception)\s*\()""" r"""(f['"])(.*?['"])(\s*\))""",
     re.DOTALL,
 )
 
 # One {expr} or {expr:fmt} or {expr!conv} or {expr!conv:fmt}
 _FEXPR_RE = re.compile(
     r"""\{"""
-    r"""([^{}!:]+?)"""           # the expression (no nested braces)
-    r"""(?:!([rsa]))?"""         # optional conversion
-    r"""(?::([^{}]*))?"""        # optional format spec
+    r"""([^{}!:]+?)"""  # the expression (no nested braces)
+    r"""(?:!([rsa]))?"""  # optional conversion
+    r"""(?::([^{}]*))?"""  # optional format spec
     r"""\}""",
 )
 
@@ -53,9 +53,7 @@ def _fspec_to_percent(spec: str, conv: str | None) -> str:
     # Simple numeric specs: d, f, .2f, 05d, +.3e, etc.
     # We only handle the common subset; exotic specs fall back to %s.
     # Remove fill/align (not supported by %-format in most cases).
-    _numeric = re.fullmatch(
-        r"""([+-]?)(\d*)(\.(\d+))?([dioxXeEfFgG%])""", spec.strip()
-    )
+    _numeric = re.fullmatch(r"""([+-]?)(\d*)(\.(\d+))?([dioxXeEfFgG%])""", spec.strip())
     if _numeric:
         sign, width, _prec_full, prec, typ = _numeric.groups()
         parts = "%" + sign
@@ -119,9 +117,7 @@ def _transform_fstring(fstr: str) -> tuple[str, list[str]] | None:
 
         inner = fstr[start + 1 : end - 1]
         # Parse inner: expr [!conv] [:spec]
-        m = re.fullmatch(
-            r"""([^!:{}]+?)(?:!([rsa]))?(?::([^{}]*))?""", inner.strip()
-        )
+        m = re.fullmatch(r"""([^!:{}]+?)(?:!([rsa]))?(?::([^{}]*))?""", inner.strip())
         if m is None:
             return None  # complex inner expression
         expr = m.group(1).strip()
@@ -165,11 +161,11 @@ def _process_line(line: str) -> str | None:
     if m is None:
         return None
 
-    prefix = m.group(1)      # "logger.info("
+    prefix = m.group(1)  # "logger.info("
     # group 2: "f"
-    quote = m.group(3)       # " or '
-    fstr_body = m.group(4)   # content of the f-string
-    suffix = m.group(5)      # possible ", extra, args)" or ")"
+    quote = m.group(3)  # " or '
+    fstr_body = m.group(4)  # content of the f-string
+    suffix = m.group(5)  # possible ", extra, args)" or ")"
 
     result = _transform_fstring(fstr_body)
     if result is None:
@@ -201,9 +197,9 @@ def _process_line(line: str) -> str | None:
 
     if all_args:
         args_str = ", ".join(all_args)
-        new_call = f'{prefix}{q}{fmt_str}{q}, {args_str})'
+        new_call = f"{prefix}{q}{fmt_str}{q}, {args_str})"
     else:
-        new_call = f'{prefix}{q}{fmt_str}{q})'
+        new_call = f"{prefix}{q}{fmt_str}{q})"
 
     # Preserve original indentation
     indent = len(line) - len(line.lstrip())

@@ -262,8 +262,7 @@ class RestorabilityEstimator:
         _elapsed = time.perf_counter() - _t0
         if _elapsed > 5.0:
             logger.warning(
-                "RestorabilityEstimator: time budget exceeded (%.2fs > 5.0s) "
-                "— result may be partial. material=%s",
+                "RestorabilityEstimator: time budget exceeded (%.2fs > 5.0s) — result may be partial. material=%s",
                 _elapsed,
                 material,
             )

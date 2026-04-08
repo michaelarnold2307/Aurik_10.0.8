@@ -167,13 +167,13 @@ class EmotionalArcPreservationMetric:
                 for i, start in enumerate(range(0, len(rest_mono) - seg_len + 1, hop_len)):
                     if i >= len(arousal_rest):
                         break
-                    seg = rest_mono[start:start + seg_len]
+                    seg = rest_mono[start : start + seg_len]
                     rms = float(np.sqrt(np.mean(seg**2) + 1e-12))
                     _c_hz = _centroids_rest[i] * _centroid_correction if i < len(_centroids_rest) else 0.0
                     _c_norm = float(np.clip(_c_hz / max(sr / 2.0, 1.0), 0.0, 1.0))
                     _arousal_corr.append(rms * 0.55 + _c_norm * 0.45)
                 if _arousal_corr:
-                    arousal_rest = np.array(_arousal_corr[:len(arousal_rest)], dtype=np.float32)
+                    arousal_rest = np.array(_arousal_corr[: len(arousal_rest)], dtype=np.float32)
 
         n_segs = min(len(arousal_orig), len(arousal_rest))
         if n_segs < 3:

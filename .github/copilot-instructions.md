@@ -2,11 +2,11 @@
 
 > **Systemidentität**: Aurik 9.x.x ist ein *weltweit erstmaliges intelligentes,
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
-> Rekonstruktions-Denkersystem.* Stand: April 2026 — Version **9.10.124**
+> Rekonstruktions-Denkersystem.* Stand: April 2026 — Version **9.11.0**
 >
-> **instructions_version: 6.7** — §2.51 Stereo-Kohärenz-Invariante (M/S + Linked Stereo) normiert 08.04.2026
+> **instructions_version: 6.9** — §2.53 Experience Closed Loop + Bridge/Frontend-Propagation normiert 08.04.2026
 >
-> Aktuelle Testzahl: **~9990+ `def test_`-Funktionen** (375 Testdateien; alle grün)
+> Aktuelle Testzahl: **~10022+ `def test_`-Funktionen** (376 Testdateien; alle grün)
 >
 > **§2.36 `LyricsGuidedEnhancement`** ist ab Version **9.10.x Pflicht**.
 
@@ -79,6 +79,8 @@ Detailwissen liegt in **aufgabenspezifischen Skills** unter `.github/skills/*/SK
 | Frontend/UI | `Aurik910/` (kein `frontend/`!) |
 | i18n | `from Aurik910.i18n import t, set_language` |
 | Audio-Import | `from backend.file_import import load_audio_file` |
+| GUI-Launcher | `./run_aurik.sh` (Legacy: `start_aurik_90.py` delegiert auf `Aurik910/main.py`) |
+| CLI-Entry | `cli/aurik_cli.py` via Bridge (`get_load_audio_fn`, `run_pre_analysis`, `get_aurik_denker_instance`) |
 
 ## Universelle Codierregeln (immer gültig)
 
@@ -129,6 +131,9 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | Head-Bump Tape | Kein LF-Kerbfilter bei Tape-Material | `phase_04(tape_speed_ips=X)` → HEAD_BUMP_PROFILES[nearest_speed] parametrischer Dip |
 | Inpainting HF-Halluzination | AR/Diffusion ohne BW-Begrenzung | `_MATERIAL_BW_CAP_HZ` in phase_55 — wax_cylinder ≤ 5kHz, wire_recording ≤ 6kHz (§0) |
 | Phase_63 Stereo IMD | Unabhängiges L/R-IMD-Notch | M/S-Domain: Notch-Maske aus Mid berechnen, symmetrisch auf Mid+Side anwenden (§2.51) |
+| Phase-Wetness ohne Feedback | Feste `strength` ohne Mess-Feedback zwischen Phasen | `PhaseConductor.recommend()` (§2.52) — 4D-State-Vektor → adaptiver Strength-Hint |
+| PhaseSkipper rohe Severity | `defect_score.severity` direkt ohne Salience-Gewichtung | `_salience_adjusted_severity()` (§2.47) — ERB-maskierte Severity; fully-masked (n_masked≥3, n_salient=0) → -50 % |
+| Carrier-Formant-Inversion | Phase 42 ohne Material-Kontext in `_enhance_channel` | `_restore_carrier_formant_decay(audio, sr, material_type)` Stage 0.5 (§2.52, Hebel 4) |
 
 ### Sprachkonvention
 - **UI-Texte, Fehlermeldungen**: Deutsch (Ursache + Lösungsvorschlag)
@@ -262,13 +267,19 @@ Jede Eingabe ist ein einzigartiges Musikstück. Das System passt sich **vor** de
 
 **Adaptions-Kaskade (8 Schritte, kanonische Reihenfolge):**
 1. `MediumDetector.detect(audio, sr, file_ext=...)` → transfer_chain, primary_material (§6.7)
-2. `EraClassifier.classify()` → decade, era_profile
-3. `GenreClassifier` → genre_label, RESTORATION_PROFILE
-4. `RestorabilityEstimator` → 0–100, tier (GOOD/FAIR/POOR), scale_factor
-5. `DefectScanner.scan_all()` → 32 DefektTypen × severity × locations
+2. `EraClassifier.classify()` → decade, era_profile **+ ERB-Salience-Annotation** (v9.11.0)
+3. `GenreClassifier.classify()` → genre_label, genre_profile
+4. `RestorabilityEstimator.estimate()` → restorability_score, tier
+5. `DefectScanner.scan_all()` → 32 DefectTypes × Severity × Locations
 6. `CausalDefectReasoner` → 35 Ursachen → Phase-Selektion
 7. `SongCalibrationProfile` → `global_scalar∈[0.50,1.50]`, `family_scalars[*]∈[0.30,1.80]`
 8. `GPOptimizer.propose()` → Pareto-optimale Hyperparameter
+
+**Adaptions-Erweiterungen (v9.11.0):**
+- **Salience-aware Phase-Skipping**: `_apply_phase_skipping` liest ERB-adjustierte `DefectScore.severity`; fully-masked Defekte (n_masked≥3, n_salient=0) erhalten zusätzlich 50 % Reduktion — vermeidet Phasenaktivierung für unhörbare Schäden ohne §0-Verletzung.
+- **PhaseConductor** (§2.52): misst nach jeder Phase einen 4D-State-Vektor und gibt adaptive `strength`-Empfehlung für die nächste Phase.
+- **SGMSE+ Tier-0** in `phase_03_denoise`: Diffusionsbasiertes Denoising (Richter et al. 2022) als erster Pfad für Vokal-Material bei `quality_mode in (quality, maximum)` — vor ML-Hybrid-Pfad.
+- **Carrier-Formant-Decay-Inversion** in `phase_42`: `_restore_carrier_formant_decay(audio, sr, material_type)` als Stage 0.5 invertiert trägertypische F1–F4-Unterdrückung (vinyl/reel_tape/tape/shellac/minidisc) via zero-phase Bell-EQ.
 
 **Edge-Cases**: < 10 s → Groove/MicroDyn off | > 60 min → segmentweise | Restorability < 20 + Shellac → Scale 0.65, P3–P5 ≥ 0.50
 
@@ -288,6 +299,74 @@ Jede Eingabe ist ein einzigartiges Musikstück. Das System passt sich **vor** de
 **GP-Wissenstransfer**: Pro `gp_memory_key` (Genre × Material); Cross-Material via Ähnlichkeitsmatrix bei < 10 Beobachtungen.
 
 > Details (Kaskade, Ähnlichkeitsmatrix, Edge-Cases): Spec 02 §2.47 + Spec 05
+
+### [RELEASE_MUST] §2.52 PhaseConductor — Inter-Phase Adaptive Feedback (v9.11.0)
+
+Nach jeder Phase misst `PhaseConductor` (Singleton `get_phase_conductor()` in `backend/core/phase_conductor.py`) einen **4D-State-Vektor** und empfiehlt die optimale `strength` für die nächste Phase:
+
+| Dimension | Beschreibung | Normierung |
+|---|---|---|
+| `noise_floor_db` | 5. Perzentil PSD (Rauschboden) | dBFS, ≤ 0 |
+| `hf_energy_ratio` | Energie 8 kHz–Nyquist / Breitband | [0, 1] |
+| `transient_density` | Onset-Rate [Events/s] | roh; as_vec() → /20 |
+| `harmonic_coherence` | Autocorrelation-Peak-Ratio | [0, 1] |
+
+**Workflow in `_execute_pipeline`:**
+1. Vor Phase-Loop: `_conductor = get_phase_conductor(); _conductor.reset()`
+2. Nach jeder erfolgreichen Phase: `_conductor.measure_state(current_audio, sr, phase_id)`
+3. Look-Ahead: `_conductor.recommend(next_phase_id, state, material_type)` → `_conductor_strength_hints[next_pid]`
+4. `_profiled_phase_call`: injiziert hint als `strength` kwarg (nur wenn `strength` nicht explizit gesetzt)
+
+**Invarianten:**
+- Advisory-only: PMGG-Strength hat immer Vorrang (explizit gesetzt = explizit gewinnt)
+- `_NEVER_SKIP` frozenset (phase_01, phase_09, phase_12, phase_14, phase_15) — nie `skip_recommended=True`
+- `_MIN_STRENGTH` Dict: Untergrenzen je kritischer Phase (z. B. phase_03 ≥ 0.35)
+- Jede Exception → `logger.debug`, Pipeline läuft unverändert weiter
+- Rein DSP, kein ML, < 50 ms pro `measure_state()` für 1 min Audio
+
+> Implementierung: `backend/core/phase_conductor.py` — `PhaseConductor`, `get_phase_conductor()`
+> Aufruf: `backend/core/unified_restorer_v3.py` — sequentieller Phase-Loop, nach §2.31a MidCalibrate-Block
+
+### [RELEASE_MUST] §2.53 Experience-Closed-Loop + Bridge/UI-Propagation (v9.11.1)
+
+Neue Zielpriorität: **maximales Hörerlebnis** wird im Produktionslauf als explizite Laufzeit-Telemetrie geführt und bis in die UI propagiert.
+
+**Normative Invarianten:**
+
+1. `UnifiedRestorerV3.restore()` MUSS folgende Felder in `RestorationResult.metadata` befüllen:
+    - `song_calibration.cluster_key`
+    - `song_calibration.cluster_policy`
+    - `joy_runtime_index` (`joy_index`, `fatigue_index`, `components`)
+    - `auto_improvement_recommendations` (`count`, `recommendations[*].focus/action/reason`)
+2. `backend/api/bridge.py` MUSS `get_experience_insights(result)` bereitstellen.
+    - Rückgabe ist frontend-sicher, NaN/Inf-frei und fehlertolerant.
+3. `RestaurierDenker` und `AurikDenker` MÜSSEN `metadata` end-to-end propagieren.
+    - VERBOTEN: Metadaten beim Konvertieren nach `AurikErgebnis` verwerfen.
+4. Frontend (`Aurik910/ui/modern_window.py`) MUSS die Runtime-Signale sichtbar machen:
+    - Statuszeile: Freude-/Ermüdungsindex.
+    - Info-Banner: Cluster-Policy + Top Auto-Improve-Empfehlungen.
+5. Fehlerverhalten ist **non-blocking**: fehlende Experience-Telemetrie darf den Export nicht stoppen,
+    MUSS aber als degrade-hinweis protokolliert werden (kein stilles Ignorieren).
+
+### [RELEASE_MUST] §2.53a Exzellenz-API-Kompatibilitätsvertrag (v9.11.1)
+
+`AurikDenker` MUSS mit beiden Exzellenz-APIs kompatibel sein:
+
+- Primär: `ExzellenzDenker.messe_und_repariere(audio, sr, ...) -> (audio, goals)`
+- Legacy-Fallback: `ExzellenzDenker.messe_ziele(audio, sr, ...)`
+
+**Verboten:** Harte Annahme, dass nur eine der beiden Methoden existiert.
+Bei Fallback MUSS ein konsistenter Stage-Note-Eintrag (`Legacy-Goal-Messpfad`) gesetzt werden.
+
+### §0b Konfliktauflösung / Anti-Widerspruch (v6.9)
+
+Wenn Vorgaben kollidieren, gilt strikt:
+
+1. `§0` Klangwahrheit + RELEASE_MUST-Invarianten
+2. Neuere versionsmarkierte Abschnitte (höhere `v9.x` / `instructions_version`)
+3. Spezifische Feld-/Kontrakt-Regeln vor generischen Stilregeln
+
+Damit darf älterer Text nie die neuen Experience-/Propagation-Invarianten außer Kraft setzen.
 
 ### [RELEASE_MUST] §2.47a Frontend-Backend-PreAnalysis-Handover (v9.10.127)
 
@@ -402,13 +481,17 @@ Jede Phase mit Stereo-Audio **MUSS** M/S-Domain oder Linked-Stereo verwenden. Ve
 |---|---|
 | `phase_07` Harmonic Restoration | **M/S**: Obertöne nur auf Mid |
 | `phase_18` Noise Gate | **Linked**: Gate öffnet wenn `max(L_rms, R_rms) > threshold` |
+| `phase_21` Harmonic Exciter | **M/S**: Excitation nur auf Mid, Side unverändert |
 | `phase_23` Spectral Repair | **M/S**: Reparatur auf Mid; Side minimal |
 | `phase_24` Dropout Repair | **Linked**: kohärente L/R-Grenze + Füllung |
+| `phase_27` Click/Pop Removal | **Linked**: Detektion auf Mono-Mix `(L+R)/2`, Repair synchronisiert auf L+R |
+| `phase_29` Tape Hiss Reduction | **Linked**: OMLSA-Gain aus Mid-Sidechain `(L+R)/√2`, identisch auf L+R |
 | `phase_35` Multiband Compression | **Linked**: Gain auf `√(L²+R²)/√2` |
+| `phase_50` Spectral Repair (Inpainting) | **M/S**: Reparatur auf Mid voll, Side konservativ (×2 Threshold) |
 
 Verletzung → §2.49 flaggt 2–5 Phase-Cancellation-Artefakte → Rollback → OQS-Einbuße.
 
-> Details + Code-Patterns: Spec 02 §2.51, Spec 06 §7.1a
+> Details + Code-Patterns: Spec 08 — instructions_version 6.9
 
 **DSP-Invariante (Peak-Guards)**: Gain-Berechnungen, die einen Peak-Schwellwert schützen (Headroom-Guard, True-Peak-Limiter-Vorberechnung), müssen `np.percentile(np.abs(audio), 99.9)` statt `np.max()` verwenden. Ein einzelnes Impuls-Artefakt (Crackle, Click) darf die Normalisierung des gesamten Musiksignals nicht blockieren.
 
@@ -442,4 +525,4 @@ Vor Pipeline-Beginn misst das System die Artefakt-Charakteristik des degradierte
 
 *Diese Richtlinien gelten für alle KI-Agenten (GitHub Copilot, Claude, GPT) die an Aurik 9 arbeiten.*
 *Vollständige normative Spezifikation: `.github/specs/01–08`.*
-*Stand: April 2026 — Aurik 9.10.125 — instructions_version 6.5*
+*Stand: April 2026 — Aurik 9.11.0 — instructions_version 6.9*

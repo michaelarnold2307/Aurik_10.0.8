@@ -220,6 +220,8 @@ class TransparentDynamicsV1(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -293,6 +295,8 @@ class TransparentDynamicsV1(PhaseInterface):
                 "mix": mix,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 

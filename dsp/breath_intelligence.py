@@ -641,6 +641,7 @@ if __name__ == "__main__":
 
     # Load audio
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -655,12 +656,12 @@ if __name__ == "__main__":
     logger.info(str("\n" + "=" * 70))
     logger.info("BREATH INTELLIGENCE REPORT")
     logger.info(str("=" * 70))
-    logger.info("Events Detected:     %s", report['events_detected'])
-    logger.info("Events Processed:    %s", report['events_processed'])
-    logger.info("Average Reduction:   %.1f dB", report['average_reduction_db'])
-    logger.info("Genre:               %s", report['genre'])
-    logger.info("Era:                 %s", report['era'])
-    logger.info("Aggressiveness:      %.2f", report['aggressive'])
+    logger.info("Events Detected:     %s", report["events_detected"])
+    logger.info("Events Processed:    %s", report["events_processed"])
+    logger.info("Average Reduction:   %.1f dB", report["average_reduction_db"])
+    logger.info("Genre:               %s", report["genre"])
+    logger.info("Era:                 %s", report["era"])
+    logger.info("Aggressiveness:      %.2f", report["aggressive"])
     logger.info(str("=" * 70))
 
     # Save

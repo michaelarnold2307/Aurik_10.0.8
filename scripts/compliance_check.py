@@ -12,14 +12,13 @@ Verwendung:
 """
 
 import argparse
-import ast
+import io as _io
 import re
 import sys
 import tokenize
-import io as _io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 # ---------------------------------------------------------------------------
 # Zieldirectories (Produktion) — Tests, Scripts, Models werden nie geprüft
@@ -34,9 +33,20 @@ DEFAULT_SRC_DIRS = [
 ]
 
 EXCLUDE_DIRS = {
-    "models", ".venv_aurik", "build", "dist", "__pycache__",
-    "output_audio", "sessions", "logs", "data", "golden_samples",
-    "tests", "scripts", "benchmarks", "audit",
+    "models",
+    ".venv_aurik",
+    "build",
+    "dist",
+    "__pycache__",
+    "output_audio",
+    "sessions",
+    "logs",
+    "data",
+    "golden_samples",
+    "tests",
+    "scripts",
+    "benchmarks",
+    "audit",
 }
 
 # ---------------------------------------------------------------------------
@@ -153,10 +163,7 @@ RULES: list[Rule] = [
     Rule(
         id="R13",
         description="RMS/Peak-Normalisierung verboten — LUFS ITU-R BS.1770-5 verwenden",
-        pattern=re.compile(
-            r"normalize_rms\s*\(|normalize_peak\s*\(|rms_normalize\s*\("
-            r"|peak_normalize\s*\("
-        ),
+        pattern=re.compile(r"normalize_rms\s*\(|normalize_peak\s*\(|rms_normalize\s*\(" r"|peak_normalize\s*\("),
         severity="warning",
     ),
     # R15 — MediumClassifier.classify_medium() (statt MediumDetector.detect())
@@ -178,7 +185,9 @@ RULES: list[Rule] = [
     Rule(
         id="R17",
         description="SongCal np.clip(scalar, 0.0, 2.0) verboten — global_scalar∈[0.50,1.50], family_scalar∈[0.30,1.80]",
-        pattern=re.compile(r"np\.clip\s*\(.*scalar.*,\s*0\.0\s*,\s*2\.0\s*\)|np\.clip\s*\(.*,\s*0\.0\s*,\s*2\.0\s*\).*scalar"),
+        pattern=re.compile(
+            r"np\.clip\s*\(.*scalar.*,\s*0\.0\s*,\s*2\.0\s*\)|np\.clip\s*\(.*,\s*0\.0\s*,\s*2\.0\s*\).*scalar"
+        ),
         allow_in=["backend/core/song_calibration"],
         severity="warning",
     ),
@@ -187,19 +196,22 @@ RULES: list[Rule] = [
         id="R18",
         description="warnings.warn() verboten — logger.warning(...) verwenden (DeprecationWarning-Aufrufe ausgenommen)",
         pattern=re.compile(r"\bwarnings\.warn\s*\((?!.*DeprecationWarning)(?!.*FutureWarning)(?!.*PendingDeprecation)"),
-        allow_in=["scripts/", "tests/", "audit/", "benchmarks/",
-                  "backend/core/ab_test_manager.py",           # DeprecationWarning (multiline)
-                  "backend/core/evaluation/quality_control.py",  # DeprecationWarning (module-level)
-                  "dsp/gpu_pipeline.py"],                       # DeprecationWarning (module-level)
+        allow_in=[
+            "scripts/",
+            "tests/",
+            "audit/",
+            "benchmarks/",
+            "backend/core/ab_test_manager.py",  # DeprecationWarning (multiline)
+            "backend/core/evaluation/quality_control.py",  # DeprecationWarning (module-level)
+            "dsp/gpu_pipeline.py",
+        ],  # DeprecationWarning (module-level)
         severity="warning",
     ),
     # R14 — f-string in logger-Aufrufen (Performance + Lazy-Evaluation)
     Rule(
         id="R14",
         description='logger.*(f"...") — %-Formatierung verwenden: logger.info("%s", val)',
-        pattern=re.compile(
-            r'\blogger\.(debug|info|warning|error|critical)\s*\(\s*f["\']'
-        ),
+        pattern=re.compile(r'\blogger\.(debug|info|warning|error|critical)\s*\(\s*f["\']'),
         severity="warning",
     ),
 ]
@@ -293,14 +305,16 @@ def scan_file(path: Path, rules: list[Rule], check_fstrings: bool = True) -> lis
             # Docstrings / Kommentar nach Code (Heuristik)
             if rule.skip_in_strings and _is_in_comment_or_string(line, m.start()):
                 continue
-            violations.append(Violation(
-                rule_id=rule.id,
-                severity=rule.severity,
-                file=path_str,
-                line=lineno,
-                text=line.rstrip(),
-                description=rule.description,
-            ))
+            violations.append(
+                Violation(
+                    rule_id=rule.id,
+                    severity=rule.severity,
+                    file=path_str,
+                    line=lineno,
+                    text=line.rstrip(),
+                    description=rule.description,
+                )
+            )
 
     return violations
 
@@ -371,6 +385,7 @@ def report(violations: list[Violation], show_warnings: bool = True) -> int:
 # ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Aurik 9 Compliance-Check (VERBOTEN-Regeln)")

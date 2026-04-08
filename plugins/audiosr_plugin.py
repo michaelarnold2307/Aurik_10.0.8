@@ -554,8 +554,9 @@ class AudioSRPlugin:
             target_sr : Ziel-Sample-Rate (Standard 48 000 Hz)
         """
         try:
-            from backend.file_import import load_audio_file
             import soundfile as sf
+
+            from backend.file_import import load_audio_file
 
             _res = load_audio_file(input_wav, do_carrier_analysis=False)
             audio = np.asarray(_res["audio"], dtype=np.float32)

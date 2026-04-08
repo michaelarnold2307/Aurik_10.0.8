@@ -154,6 +154,8 @@ bash scripts/install_ml_plugins.sh
 ### GUI starten
 
 ```bash
+./run_aurik.sh
+# alternativ (Legacy-Kompatibilitaet):
 python start_aurik_90.py
 ```
 
@@ -166,17 +168,20 @@ Datei laden → **Magic Button** wählen:
 
 ```bash
 # Restoration-Modus
-python aurik_cli.py --input aufnahme.wav --output restauriert.wav \
-  --mode restoration --material vinyl
+PYTHONPATH=. ./.venv_aurik/bin/python cli/aurik_cli.py \
+  --input aufnahme.wav --output restauriert.wav --mode Restoration
 
 # Studio 2026-Modus
-python aurik_cli.py --input aufnahme.wav --output studio.wav \
-  --mode studio2026 --material tape
+PYTHONPATH=. ./.venv_aurik/bin/python cli/aurik_cli.py \
+  --input aufnahme.wav --output studio.wav --mode "Studio 2026"
 
-# Optionale Parameter: --verbose  --no-goals-check
+# Optionale Parameter: -q/--quiet
 ```
 
-**Exit-Codes:** 0 = Erfolg · 1 = Fehler · 2 = Musical-Goal-Regression
+**Exit-Codes (CLI):**
+0 = Erfolg · 1 = Argumentfehler · 2 = Input fehlt · 3 = Importfehler · 4 = Pipelinefehler ·
+5 = Exportfehler · 6 = Resamplingfehler · 7 = Quality-Gate · 8 = P1/P2-Gate ·
+9 = Pegelabfall > 2.5 dB · 10 = Pre-Analysis-Fehler
 
 ### Python API
 

@@ -172,6 +172,8 @@ class SpatialEnhancementPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": 0.0},
             )
@@ -192,6 +194,8 @@ class SpatialEnhancementPhase(PhaseInterface):
                     "skipped": "mono_input",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": effective_strength},
             )
@@ -265,6 +269,8 @@ class SpatialEnhancementPhase(PhaseInterface):
                 "side_reduction": side_reduction,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "dry_wet": dry_wet,

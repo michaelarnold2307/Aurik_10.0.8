@@ -172,15 +172,15 @@ class QualityFeedbackLoop:
             # Reduce reduction amounts
             if "reduction_db" in adapted:
                 adapted["reduction_db"] = adapted["reduction_db"] * 0.7
-                logger.debug("  reduction_db: %s → %s", params.get('reduction_db'), adapted['reduction_db'])
+                logger.debug("  reduction_db: %s → %s", params.get("reduction_db"), adapted["reduction_db"])
 
             if "repair_strength" in adapted:
                 adapted["repair_strength"] = adapted["repair_strength"] * 0.8
-                logger.debug("  repair_strength: %s → %s", params.get('repair_strength'), adapted['repair_strength'])
+                logger.debug("  repair_strength: %s → %s", params.get("repair_strength"), adapted["repair_strength"])
 
             if "threshold" in adapted:
                 adapted["threshold"] = adapted["threshold"] * 1.2
-                logger.debug("  threshold: %s → %s", params.get('threshold'), adapted['threshold'])
+                logger.debug("  threshold: %s → %s", params.get("threshold"), adapted["threshold"])
 
             # If temporal smoothness is low, reduce attack speed
             if temporal_smoothness < 0.6 and "attack_ms" in adapted:
@@ -264,7 +264,7 @@ class QualityFeedbackLoop:
 
         # If temporal smoothness is low, defects likely present
         if initial_quality["temporal_smoothness"] < 0.7:
-            logger.debug("Defects detected (smoothness: %.2f), using feedback", initial_quality['temporal_smoothness'])
+            logger.debug("Defects detected (smoothness: %.2f), using feedback", initial_quality["temporal_smoothness"])
             return True
 
         return False

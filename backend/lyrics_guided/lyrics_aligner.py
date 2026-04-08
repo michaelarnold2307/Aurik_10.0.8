@@ -220,7 +220,7 @@ class LyricsAligner:
                     model_name = models["acoustic"].lower()
                     if model_name in output:
                         self._mfa_models_available.add(lang_code)
-                        logger.info("  ✅ MFA model for %s: %s", models['name'], models['acoustic'])
+                        logger.info("  ✅ MFA model for %s: %s", models["name"], models["acoustic"])
 
                 if not self._mfa_models_available:
                     logger.warning("  ⚠️ No MFA acoustic models found. Install with:")
@@ -418,7 +418,7 @@ class LyricsAligner:
             raise ValueError(f"Language '{language}' not supported for MFA. Supported: {list(self.MFA_MODELS.keys())}")
 
         models = self.MFA_MODELS[language]
-        logger.info("Running MFA phoneme-level alignment for %s...", models['name'])
+        logger.info("Running MFA phoneme-level alignment for %s...", models["name"])
 
         # Create temporary directory for MFA
         with tempfile.TemporaryDirectory() as temp_dir:

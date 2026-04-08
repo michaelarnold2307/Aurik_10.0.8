@@ -1,11 +1,10 @@
-import logging
-
 """
 cd_deemphasis.py - CD-Deemphasis für Aurik 6.0
 
 Dieses Modul entfernt Pre-Emphasis von frühen Audio-CDs (Stub) und ist jetzt mit DSPContract für Auditierbarkeit und SOTA-Konformität ausgestattet.
 """
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -97,5 +96,7 @@ class CDDeemphasis:
         b = np.array([b0 / a0, b1 / a0])
         a = np.array([1.0, a1 / a0])
         if audio.ndim == 1:
-            return lfilter(b, a, audio).astype(audio.dtype)
-        return np.stack([lfilter(b, a, ch) for ch in audio], axis=0).astype(audio.dtype)
+            out = lfilter(b, a, audio)
+            return np.clip(np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(audio.dtype)
+        out = np.stack([lfilter(b, a, ch) for ch in audio], axis=0)
+        return np.clip(np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(audio.dtype)

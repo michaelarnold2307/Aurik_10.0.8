@@ -387,7 +387,7 @@ class SafetyWrapperFactory:
         logger.info(str("=" * 70))
         logger.info("HIPS SAFETY WRAPPER DEPLOYMENT REPORT")
         logger.info(str("=" * 70))
-        logger.info("Total Modules Wrapped: %s", stats['total_wrapped'])
+        logger.info("Total Modules Wrapped: %s", stats["total_wrapped"])
         logger.info("")
         logger.info("Coverage by Type:")
         for wrapper_type, coverage in stats["coverage"].items():

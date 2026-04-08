@@ -315,8 +315,7 @@ class RestaurierDenker:
         # §2.39 OOM-Recovery: explicit resume path via persisted checkpoint.
         if recovery_checkpoint is not None:
             logger.info(
-                "RestaurierDenker: OOM-Recovery-Wiederaufnahme aktiv "
-                "(remaining_phases=%d, failure_phase=%s)",
+                "RestaurierDenker: OOM-Recovery-Wiederaufnahme aktiv (remaining_phases=%d, failure_phase=%s)",
                 len(getattr(recovery_checkpoint, "phases_remaining", []) or []),
                 getattr(recovery_checkpoint, "failure_phase", "?"),
             )

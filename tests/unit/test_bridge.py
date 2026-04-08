@@ -103,6 +103,7 @@ PFLICHT_FUNKTIONEN = [
     "get_pipeline_health_state_enum",
     "normalize_pipeline_health_state",
     "resolve_pipeline_fail_reason",
+    "get_experience_insights",
     # Audio-Verarbeitung
     "get_audio_exporter_class",
     "get_stem_remix_balancer_fn",
@@ -295,6 +296,67 @@ class TestMlMemoryBudgetStatus:
         assert isinstance(result.get("allocated_gb", 0), (int, float))
         assert isinstance(result.get("free_gb", 0), (int, float))
         assert isinstance(result.get("models", {}), dict)
+
+
+# ---------------------------------------------------------------------------
+# 6b. get_experience_insights — Contract & Robustness (§11.1a Spec 08)
+# ---------------------------------------------------------------------------
+
+
+class _DummyResult:
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+
+class TestExperienceInsights:
+    def test_defaults_when_metadata_missing(self, bridge):
+        res = bridge.get_experience_insights(object())
+        assert res["joy_index"] == 0.0
+        assert res["fatigue_index"] == 0.0
+        assert res["cluster_key"] == ""
+        assert res["cluster_policy"] == {}
+        assert res["recommendations"] == []
+        assert res["recommendation_count"] == 0
+
+    def test_clamps_and_sanitizes_invalid_values(self, bridge):
+        r = _DummyResult(
+            {
+                "joy_runtime_index": {"joy_index": float("nan"), "fatigue_index": 2.5},
+                "song_calibration": {"cluster_key": "warm_vocal", "cluster_policy": {"x": 1}},
+                "auto_improvement_recommendations": {
+                    "count": -3,
+                    "recommendations": [
+                        {
+                            "priority": "high",
+                            "focus": "transparenz",
+                            "reason": "masking",
+                            "action": "reduce phase_03",
+                        },
+                        "invalid-entry",
+                    ],
+                },
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        assert res["joy_index"] == 0.0
+        assert res["fatigue_index"] == 1.0
+        assert res["cluster_key"] == "warm_vocal"
+        assert res["cluster_policy"] == {"x": 1}
+        assert len(res["recommendations"]) == 1
+        assert res["recommendations"][0]["focus"] == "transparenz"
+        assert res["recommendation_count"] == 1
+
+    def test_count_never_below_recommendation_length(self, bridge):
+        r = _DummyResult(
+            {
+                "auto_improvement_recommendations": {
+                    "count": 0,
+                    "recommendations": [{"focus": "fatigue", "action": "lower air"}],
+                }
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        assert res["recommendation_count"] == 1
 
 
 # ---------------------------------------------------------------------------

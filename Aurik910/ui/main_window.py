@@ -33,8 +33,13 @@ from PyQt5.QtWidgets import (
 from scipy.signal import resample_poly as _resample_poly
 
 try:
-    from backend.api.bridge import get_aurik_denker_class, get_aurik_denker_instance
-    from backend.api.bridge import get_load_audio_fn as _bridge_get_load_audio_fn
+    from backend.api.bridge import (
+        get_aurik_denker_class,
+        get_aurik_denker_instance,
+    )
+    from backend.api.bridge import (
+        get_load_audio_fn as _bridge_get_load_audio_fn,
+    )
 
     _BRIDGE_AVAILABLE = True
 except ImportError:
@@ -48,6 +53,7 @@ except ImportError:
 
     def _bridge_get_load_audio_fn() -> Any:  # type: ignore[misc]
         return None
+
 
 # Direct fallback import for when bridge is unavailable
 try:
@@ -191,7 +197,9 @@ class BatchProcessingThread(QThread):
                 else:
                     # Bridge nicht verfügbar — load_audio_file direkt
                     if _direct_load_audio_file is not None:
-                        _loaded = _direct_load_audio_file(item.input_file, target_sr=_TARGET_SR, do_carrier_analysis=False)
+                        _loaded = _direct_load_audio_file(
+                            item.input_file, target_sr=_TARGET_SR, do_carrier_analysis=False
+                        )
                         if _loaded is None or _loaded.get("error"):
                             raise RuntimeError(f"Audio-Datei konnte nicht geladen werden: {item.input_file}")
                         audio = np.asarray(_loaded["audio"], dtype=np.float32)

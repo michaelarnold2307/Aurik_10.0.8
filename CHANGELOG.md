@@ -2,6 +2,220 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.2 — Konsistenz-Update: CLI/Frontend/Bridge/Backend (Apr 2026)
+
+### Zusammenfassung
+
+- Einheitlicher Startpfad für GUI und Legacy-Kompatibilität:
+  - Neuer Wrapper `start_aurik_90.py` delegiert auf `Aurik910.main`.
+  - Dokumentation zeigt kanonisch `./run_aurik.sh`.
+- CLI auf denselben Analyse-/Restaurierungsfluss wie Frontend/Bridge gehoben:
+  - Audio-Import über Bridge (`get_load_audio_fn`) statt lokaler Loader-Forks.
+  - `run_pre_analysis()` vor `AurikDenker.denke()` mit direktem `pre_analysis_result`-Handover.
+  - Robustere Mode-Normalisierung (`Restoration`, `Studio 2026`, Alias-Eingaben).
+- Zusätzlicher Pegel-Sicherheits-Gate im CLI-Export:
+  - Exportabbruch bei Loudness-Drift > 2.5 dB, um starke Pegel-Einbrüche zu verhindern.
+
+### Geänderte Dateien
+
+- `cli/aurik_cli.py`
+- `start_aurik_90.py` (neu)
+- `README.md`
+- `Aurik910/README_PREMIUM_GUI.md`
+
+## Version 9.11.1 — §perf-v9.11.0: measure_all-Speedup (4–9×) + FC-Proxy-Guard (Apr 2026)
+
+### Zusammenfassung
+
+Reduziert die Pipeline-Laufzeit durch zwei gezielte Performance-Fixes:
+
+1. **Audio-Cap-Reduktion** in `NatuerlichkeitMetric` (15 s → 5 s) und `BassKraftMetric` (30 s → 5 s):
+   — `natuerlichkeit` pro `measure_all`: 14–17 s → **~2 s** (8×). `bass_kraft`: 5 s → **~0.4 s** (13×).
+   — Gesamtes `measure_all` (14 Goals, 3:45-min-Track): 27 s → **~11 s**.
+
+2. **FeedbackChain GPP-Callback**: `MusicalGoalsChecker.measure_all()` (CREPE/librosa, 14–17 s/Iter.)
+   ersetzt durch `_measure_quick()` (DSP-Proxy, < 0.5 s/Iter.).
+   — `check_iteration_abort` prüft nur P1/P2-Ziele — alle davon korrekt in `_measure_quick` abgebildet.
+   — Einsparung bei 10 FC-Iterationen: ~140 s → ~5 s.
+
+### Geänderte Dateien
+
+- **`backend/core/musical_goals/musical_goals_metrics.py`**
+  - `NatuerlichkeitMetric.measure()`: `_MAX_NAT_SAMPLES = int(sr * 15)` → `int(sr * 5)` (§perf-v9.11.0)
+  - `BassKraftMetric.measure()`: `_MAX_BASS_STFT_SAMPLES = int(sr * 30)` → `int(sr * 5)` (§perf-v9.11.0)
+
+- **`backend/core/unified_restorer_v3.py`**
+  - FeedbackChain GPP-Callback: `MusicalGoalsChecker.measure_all()` → `_measure_quick()` (§perf-v9.11.0)
+  - Import: `from backend.core.per_phase_musical_goals_gate import _measure_quick as _gpp_quick`
+
+### Neue Tests
+
+- **`tests/musical_goals/test_musical_goals_metrics.py`** — `TestMetricAudioCapPerformance` (4 Tests, alle grün)
+  - `test_natuerlichkeit_audio_cap_is_5s`: Quellcode-Regex prüft `_MAX_NAT_SAMPLES ≤ 5`
+  - `test_bass_kraft_audio_cap_is_5s`: Quellcode-Regex prüft `_MAX_BASS_STFT_SAMPLES ≤ 5`
+  - `test_natuerlichkeit_long_audio_inside_budget`: 30-s-Input terminiert in < 5 s
+  - `test_bass_kraft_long_audio_inside_budget`: 30-s-Input terminiert in < 3 s
+
+### Klangliche Auswirkung
+
+Kein Einfluss auf Restaurierungsqualität. Nur die Analyselänge für Messung sinkt;
+die Phase-Loop-Verarbeitung und der FeedbackChain-Klangprozess bleiben unverändert.
+Die finalen export-gate `MusicalGoalsChecker.measure_all()`-Aufrufe laufen ebenfalls 2× schneller.
+
+---
+
+### Zusammenfassung
+
+Vier strategische Intelligenz-Erweiterungen zur Maximierung von Klangtreue und Natürlichkeit:
+
+1. **Hebel 1** — PhaseSkipper nutzt ERB-Auditory-Masking-Salience aus DefectScanner statt roher Severity.
+2. **Hebel 2** — SGMSE+ diffusionsbasierter Tier-0-Pfad in Phase 03 für Vokal-Material.
+3. **Hebel 3** — PhaseConductor: DSP-basierter inter-phase Controller mit 4D-State-Vektor + per-Material-Referenzgitter.
+4. **Hebel 4** — Carrier-Formant-Decay-Inversion in Phase 42: invertiert trägertypische Formant-Unterdrückung (Vinyl/Tape/Shellac/Cassette).
+
+### Neue Dateien
+
+- **`backend/core/phase_conductor.py`** — PhaseConductor-Singleton (Hebel 3)
+
+### Geänderte Dateien
+
+- **`backend/core/unified_restorer_v3.py`**
+  - `_apply_phase_skipping`: `_salience_adjusted_severity()` closure — ERB-maskierte Severity + fully-masked-Guard (Hebel 1)
+  - `_execute_pipeline`: PhaseConductor-Initialisierung + `_conductor_strength_hints`-Dict (Hebel 3)
+  - `_execute_pipeline`: Inter-phase `measure_state()` + `recommend()` nach jeder erfolgreichen Phase (Hebel 3)
+  - `_profiled_phase_call`: `_conductor_strength_hints[phase_id]` → `strength` kwarg (Hebel 3)
+
+- **`backend/core/phases/phase_03_denoise.py`**
+  - SGMSE+ Tier-0 Block vor ML-Hybrid-Pfad (Bedingung: `quality_mode in (quality, maximum)` + Vokal-Material + nicht `use_lightweight`)
+  - Metadata-Return erweitert um `sgmse_plus_tier0_applied` (Hebel 2)
+
+- **`backend/core/phases/phase_42_vocal_enhancement.py`**
+  - `_enhance_channel()`: neuer `material_type`-Parameter + Stage 0.5 (`_restore_carrier_formant_decay`-Aufruf)
+  - Neue Methode `_restore_carrier_formant_decay()`: LPC-basierte Formant-Messung, defizitkorrigierte Bell-EQ (filtfilt, zero-phase), Profiltabellen für vinyl/reel_tape/tape/shellac/minidisc (Hebel 4)
+  - Alle 5 `_enhance_channel`-Aufrufe erhalten `material_type=material`
+
+### Neue Tests
+
+- **`tests/unit/test_hebel_intelligence_levers.py`** — 32 Unit-Tests (alle grün)
+  - `TestPhaseConductor` (13 Tests): Import, Singleton, measure_state (Mono/Stereo/Short/NaN), recommend (vinyl/tape/never-skip/skip-on-clean), as_vec(), reset, unknown-material, min-strength
+  - `TestCarrierFormantDecayInversion` (11 Tests): Mono/Stereo/Nan/Short/Dtype/Passthrough-Digital/Energy-Boost
+  - `TestSalienceAwarePhaseSkipping` (3 Tests): UV3-Quellprüfungen
+  - `TestSGMSETier0Conditioning` (2 Tests): phase_03 Quellprüfungen
+  - `TestEnhanceChannelMaterialType` (2 Tests): Rückwärtskompatibilität + material_type-Param
+
+### Technische Details
+
+#### Hebel 1: ERB-Salience-aware PhaseSkipper
+
+- `_salience_adjusted_severity()` liest `DefectScore.severity` (bereits ERB-adjustiert durch `PerceptualSalienceEstimator.annotate_defect_scores()`)
+- Fully-masked-Guard: `n_masked_events >= 3` UND `n_salient_events == 0` → zusätzlich 50 % Reduktion
+- Betroffene Defekttypen in `_apply_phase_skipping`: CLICKS, CRACKLE, BROADBAND_NOISE, TAPE_HUM
+
+#### Hebel 2: SGMSE+ Tier-0 in Phase 03
+
+- `get_sgmse_plus_plugin().enhance(audio, sr=sample_rate, sigma=_sgmse_sigma)` vor ML-Hybrid
+- sigma-Adaption: 0.6 für tape/reel_tape/shellac, 0.4 für vinyl
+- Eligibility: `quality_mode in (quality, maximum)` AND (`_genre_is_vocal` OR `panns_singing >= 0.30`) AND non-digital AND not `use_lightweight`
+
+#### Hebel 3: PhaseConductor (4D-State-Vektor)
+
+- State: `noise_floor_db`, `hf_energy_ratio`, `transient_density`, `harmonic_coherence`, `rms_db`
+- Referenzgitter: 5 Materialtypen × N Referenz-Zustände mit idealer strength
+- Nearest-Neighbor via inverse Mahalanobis-Distanz (approximiert durch L2 auf normiertem Vektor)
+- Advisory-only: empfohlene strength wird injiziert, PMGG kann überschreiben
+- `_NEVER_SKIP` frozenset für sicherheitskritische Phasen (phase_01, phase_09, phase_12, phase_14, phase_15)
+
+#### Hebel 4: Carrier-Formant-Decay-Inversion
+
+- Profiltabellen: vinyl, reel_tape, tape, shellac, minidisc (4 Formant-Bänder je Träger)
+- Deficit = canonical_ceiling_dbfs − measured_dbfs; correction = clip(deficit × 0.6, 0, max_corr_db)
+- Bell-EQ via `scipy.signal.filtfilt` (zero-phase, §2.51 M/S-kompatibel)
+- Max-Gain-Caps: 2.0–4.5 dB je Formant-Band (material-adaptiv)
+- cd_digital/dat/mp3: passthrough (kein Carrier-Decay)
+
+---
+
+## Version 9.10.130 — Normative Härtung: Studio-OQS-Gate + Fail-Fast + RAM-Guard-Sync (Apr 2026)
+
+### Zusammenfassung
+
+Schließt drei strategische Soll-Ist-Lücken zwischen Qualitätsvorgaben und Implementierung:
+
+1. Studio-2026 OQS-Ziel wird von TARGET_2026 zu RELEASE_MUST angehoben.
+2. Kritische Qualitätsmodule erhalten einen verbindlichen Fail-Fast-/Safe-Mode-Kontrakt.
+3. Audio-Buffer-RAM-Grenze wird zwischen Spec und UV3-Code auf 4 GB synchronisiert.
+
+### Spec-Änderungen
+
+- **`.github/specs/07_quality_and_tests.md`**
+  - Neuer Abschnitt **§8.1.1a [RELEASE_MUST] Studio-2026 OQS-Gate (v9.10.130)**
+  - OQS ≥ 88 im Studio-2026-Endpfad ist nun verpflichtend.
+
+- **`.github/specs/02_pipeline_architecture.md`**
+  - Neuer Abschnitt **§1.4a [RELEASE_MUST] Fail-Fast-Kontrakt für kritische Qualitätsmodule (v9.10.130)**
+  - Verbot stiller positiver Platzhalter im finalen Exportpfad.
+
+- **`.github/specs/08_architecture_and_distribution.md`**
+  - **§3.9.7**: `MAX_AUDIO_BYTES_RAM` normativ auf 4 GB angehoben.
+  - Expliziter Code-Sync-Vermerk zu `backend/core/unified_restorer_v3.py` ergänzt.
+
+### Implementierungs-Folgen (Paket B)
+
+- **`backend/core/unified_restorer_v3.py`**
+  - Neuer Helper: `_resolve_studio_pqs_improvement(...)`.
+  - Studio-2026-HPI-Pfad nutzt keinen positiven PQS-Platzhalter mehr bei fehlendem/ungültigem PQS.
+  - Strukturierte Fail-Reasons ergänzt:
+    - `PQS_UNAVAILABLE_STUDIO`
+    - `PQS_INVALID_STUDIO`
+  - Fallback-Semantik: konservatives `pqs_improvement=-1.0` für kontrollierten Rollback/Safe-Mode.
+
+- **`tests/unit/test_unified_restorer_v3.py`**
+  - Neue Tests für Studio-PQS-Fail-Fast-Verhalten:
+    - fehlendes PQS → negativer Improvement-Wert + strukturierter Fail-Reason
+    - gültiges PQS → erwartete normierte Improvement-Berechnung
+
+### Governance-Folgen (Paket C, Schritt 1)
+
+- **`.github/specs/07_quality_and_tests.md`**
+  - Neuer Abschnitt **§5.7a [RELEASE_MUST] Modusgetrennte Hörvalidierungs-Checkliste (v9.10.130)**.
+  - Verbindliche Trennung der externen Hörvalidierung nach `restoration` und `studio2026`.
+  - Konsistenzpflicht zwischen OQS-Gate und Hörurteil für Studio-2026.
+
+- **`docs/guides/PR_HOERVALIDIERUNG_TEMPLATE.md`**
+  - Neues minimales PR-Artefakt-Template für Mini-MUSHRA/Blindtest.
+  - Pflichtfelder für Szenarienmatrix, Bewertungsachsen, Modus-Ergebnisse und GO/NO-GO-Entscheidung.
+
+### Validierungs-Folgen (Paket C, Schritte 2–3)
+
+**Versionabstieg: Paket C Schritte 2–3 bleiben in v9.10.130 Changelog zwecks Sequenzklarheit.**
+
+- **`docs/reports/hearing_test_scenarios_restoration.yaml`**
+  - **Schritt 2**: Seed 3 mandatory Restoration-Szenarien mit vollständiger Hörstrategie:
+    - `RESTORATION_SCENARIO_1`: Vinyl Wear + Surface Noise (Rock Vocal) — Crackle & Vinyl-Charakter-Erhalt
+    - `RESTORATION_SCENARIO_2`: Tape Hiss + Oxide Dropout (Jazz Vocal) — Hiss-Reduktion & Dropout-Nahtlosigkeit
+    - `RESTORATION_SCENARIO_3`: Shellac Brittleness + Click Storm (Classical Vocal) — Click-Removal & Frequenz-Erweiterung
+  - Jedes Szenario definiert: `expected_defects_scanner`, `restoration_objectives`, `listening_focus_areas`, `mandatory_validation_points`, `mushra_reference_setup`, `go_no_go_criteria`
+  - Alle mit ≥1 Vocal-Track (Lyrics-Guided Enhancement §2.36, §2.44)
+
+- **`docs/reports/hearing_test_scenarios_studio2026.yaml`**
+  - **Schritt 2**: Seed 3 mandatory Studio2026-Szenarien:
+    - `STUDIO2026_SCENARIO_1`: Compressed Pop Mix + Thin Vocal — Dynamik-Wiederherstellung & Vocal-Presence
+    - `STUDIO2026_SCENARIO_2`: Lo-Fi Hip-Hop Muddy Mix + Weak Vocal — Klarheit & Stereo-Imaging (Lo-Fi-Charakter bewahrt)
+    - `STUDIO2026_SCENARIO_3`: Acoustic Folk Thin + Narrow Stereo — Wärme & Raumtiefe (Intimität bewahrt)
+  - Jedes Szenario definiert: `source_defects_present`, `studio2026_enhancement_objectives`, `listening_focus_areas`, `mandatory_validation_points`, `pqs_mos_target`, `mushra_reference_setup`, `go_no_go_criteria`
+  - OQS-Gate (≥ 86–88 modus-/szenario-adaptiv), PQS-MOS-Gate (≥ 4.3–4.5), Hörer-Konsens-Gate (≥ 6/8 Listeners ≥ 3.5–4.0/5.0)
+  - Alle mit ≥1 Vocal-Track
+
+- **`docs/guides/GO_NO_GO_DECISION_PROTOCOL.md`**
+  - **Schritt 3**: Strukturiertes Entscheidungs-Framework für PR-Reviewer zur Hörvalidierungs-Resultat-Bewertung.
+  - Umfasst:
+    - **Pre-Review Checkliste**: Metadaten-Validierung, Hörer-Demografie, Scoring-Vollständigkeit
+    - **Restoration Mode Decision Flow** (3 Phasen): Aggregate Gate Checks → Per-Scenario Thresholds → Summary GO/NO-GO
+    - **Studio2026 Mode Decision Flow** (4 Phasen): Objective Metrics Gates (OQS, PQS, Artifact Veto) → Listener MOS & Mode-Goals → Per-Scenario Fine-Grained → Summary GO/NO-GO
+    - **Cross-Mode Consistency Check**: Kombinierte Qualitätsgates für beide Modi
+    - **Remediation Protocol**: Root-Cause-Analyse + Targeted Re-Test bei NO-GO
+    - **Sign-Off Template**: PR-Dokumentations-Pflicht mit Metriken, Entscheidung, Listener-Konsenspunkten
+
 ## Version 9.10.129 — Pytest-Teardown-Stabilität + Background-Monitor-Lifecycle (Apr 2026)
 
 ### Zusammenfassung

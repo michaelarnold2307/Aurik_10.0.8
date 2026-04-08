@@ -15,8 +15,8 @@ Deckt ab:
 - Shortcuts (keine Duplikate)
 """
 
-import sys
 import importlib.util
+import sys
 
 import pytest
 

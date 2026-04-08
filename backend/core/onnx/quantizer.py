@@ -257,28 +257,28 @@ class ModelQuantizer:
         results = {}
 
         for name, model_path in models.items():
-            logger.info("\n%s", '=' * 60)
+            logger.info("\n%s", "=" * 60)
             logger.info("Quantizing: %s", name)
-            logger.info("%s", '=' * 60)
+            logger.info("%s", "=" * 60)
 
             output_path = output_dir / f"{model_path.stem}_quantized.onnx"
 
             success = self.quantize(model_path=model_path, output_path=output_path, validate_quality=validate_quality)
 
             results[name] = success
-            logger.info("Result: %s", '✓ SUCCESS' if success else '❌ FAILED')
+            logger.info("Result: %s", "✓ SUCCESS" if success else "❌ FAILED")
 
         # Summary
-        logger.info("\n%s", '=' * 60)
+        logger.info("\n%s", "=" * 60)
         logger.info("QUANTIZATION SUMMARY")
-        logger.info("%s", '=' * 60)
+        logger.info("%s", "=" * 60)
         successful = sum(1 for v in results.values() if v)
         logger.info("Total: %s", len(results))
         logger.info("Successful: %s", successful)
         logger.info("Failed: %s", len(results) - successful)
 
         if self.quantization_stats["successful_quantizations"] > 0:
-            logger.info("Average size reduction: %.1f%%", self.quantization_stats['average_size_reduction'])
+            logger.info("Average size reduction: %.1f%%", self.quantization_stats["average_size_reduction"])
 
         return results
 

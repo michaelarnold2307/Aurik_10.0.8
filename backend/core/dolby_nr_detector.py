@@ -79,20 +79,20 @@ DolbyType = Literal["dolby_b", "dolby_c", "dolby_s", "dbx_i", "dbx_ii", "none"]
 # Derived from analysis of ~2000 correctly decoded tapes across genres.
 # Format: { material_key: expected_hf_minus_lf_db }
 _EXPECTED_HF_OFFSET_DB: dict[str, float] = {
-    "tape": -8.5,       # cassette (avg. Type I, 70s–90s pop)
+    "tape": -8.5,  # cassette (avg. Type I, 70s–90s pop)
     "reel_tape": -7.0,  # professional reel (better HF retention)
-    "cassette": -8.5,   # alias
-    "dat": -5.0,        # digital, flat-ish
-    "unknown": -9.0,    # conservative
+    "cassette": -8.5,  # alias
+    "dat": -5.0,  # digital, flat-ish
+    "unknown": -9.0,  # conservative
 }
 
 # Threshold above expected: if hf_excess exceeds this, flag as potential NR
 _THRESHOLD_DB: dict[str, float] = {
-    "dolby_b": 2.5,   # ~3-5 dB average, trigger at 2.5
-    "dolby_c": 5.0,   # ~7-10 dB average, trigger at 5.0
-    "dolby_s": 3.5,   # ~4-6 dB average
-    "dbx_i":   4.0,
-    "dbx_ii":  3.0,
+    "dolby_b": 2.5,  # ~3-5 dB average, trigger at 2.5
+    "dolby_c": 5.0,  # ~7-10 dB average, trigger at 5.0
+    "dolby_s": 3.5,  # ~4-6 dB average
+    "dbx_i": 4.0,
+    "dbx_ii": 3.0,
 }
 
 # Signature slope: how the excess is distributed across octaves.
@@ -103,14 +103,15 @@ _HF_SLOPE_SIGNATURE: dict[str, tuple[float, float]] = {
     "dolby_b": (1.5, 3.0),  # grows toward HF
     "dolby_c": (3.0, 6.0),  # steeper growth
     "dolby_s": (2.0, 4.0),
-    "dbx_i":   (5.0, 5.0),  # uniform slope (wideband)
-    "dbx_ii":  (3.5, 3.5),
+    "dbx_i": (5.0, 5.0),  # uniform slope (wideband)
+    "dbx_ii": (3.5, 3.5),
 }
 
 
 @dataclass
 class DolbyDetectionResult:
     """Result of Dolby / DBX NR detection."""
+
     detected: bool
     nr_type: DolbyType
     confidence: float
@@ -119,6 +120,7 @@ class DolbyDetectionResult:
 
 
 # ─── Detection ─────────────────────────────────────────────────────────────────
+
 
 def _band_rms(audio_mono: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> float:
     """Band-limited RMS via Butterworth 4th-order bandpass."""
@@ -129,7 +131,7 @@ def _band_rms(audio_mono: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> fl
         return 0.0
     sos = sps.butter(2, [lo_n, hi_n], btype="band", output="sos")
     filt = sps.sosfiltfilt(sos, audio_mono)
-    return float(np.sqrt(np.mean(filt ** 2) + 1e-30))
+    return float(np.sqrt(np.mean(filt**2) + 1e-30))
 
 
 def detect_dolby_encoding(
@@ -159,9 +161,13 @@ def detect_dolby_encoding(
             mat = t
             break
     else:
-        return DolbyDetectionResult(detected=False, nr_type="none", confidence=0.0,
-                                    hf_excess_db=0.0,
-                                    evidence=["material not tape — Dolby NR N/A"])
+        return DolbyDetectionResult(
+            detected=False,
+            nr_type="none",
+            confidence=0.0,
+            hf_excess_db=0.0,
+            evidence=["material not tape — Dolby NR N/A"],
+        )
 
     # Use mono mix, limit to 20 s excerpt (centre of file for representative content)
     if audio.ndim == 2:
@@ -171,29 +177,32 @@ def detect_dolby_encoding(
     n_max = int(20 * sr)
     if len(mono) > n_max:
         start = max(0, len(mono) // 2 - n_max // 2)
-        mono = mono[start: start + n_max]
+        mono = mono[start : start + n_max]
 
     # Energy guard: very quiet material below -50 dBFS broadband
-    rms_global = float(np.sqrt(np.mean(mono ** 2) + 1e-30))
+    rms_global = float(np.sqrt(np.mean(mono**2) + 1e-30))
     if rms_global < 1e-5:
-        return DolbyDetectionResult(detected=False, nr_type="none", confidence=0.0,
-                                    hf_excess_db=0.0, evidence=["signal too quiet"])
+        return DolbyDetectionResult(
+            detected=False, nr_type="none", confidence=0.0, hf_excess_db=0.0, evidence=["signal too quiet"]
+        )
 
     # Resample to 48 kHz for consistent filter behaviour
     if sr != 48000:
         from fractions import Fraction
+
         ratio = Fraction(48000, sr).limit_denominator(100)
         mono = sps.resample_poly(mono, ratio.numerator, ratio.denominator)
     sr_p = 48000
 
     # ── Band RMS measurements ─────────────────────────────────────────────
-    lf_rms  = _band_rms(mono, sr_p, 300,   1000)   # fundamentals — NR-independent
-    hf1_rms = _band_rms(mono, sr_p, 800,   4000)   # lower HF — Dolby B/C onset
-    hf2_rms = _band_rms(mono, sr_p, 4000, 12000)   # upper HF — Dolby C / DBX heavy
+    lf_rms = _band_rms(mono, sr_p, 300, 1000)  # fundamentals — NR-independent
+    hf1_rms = _band_rms(mono, sr_p, 800, 4000)  # lower HF — Dolby B/C onset
+    hf2_rms = _band_rms(mono, sr_p, 4000, 12000)  # upper HF — Dolby C / DBX heavy
 
     if lf_rms < 1e-9:
-        return DolbyDetectionResult(detected=False, nr_type="none", confidence=0.0,
-                                    hf_excess_db=0.0, evidence=["LF band silent"])
+        return DolbyDetectionResult(
+            detected=False, nr_type="none", confidence=0.0, hf_excess_db=0.0, evidence=["LF band silent"]
+        )
 
     hf_rms = float(np.sqrt((hf1_rms**2 + hf2_rms**2) / 2.0 + 1e-30))
     expected_offset = _EXPECTED_HF_OFFSET_DB.get(mat, -8.5)
@@ -210,7 +219,7 @@ def detect_dolby_encoding(
     era_ok_dolby_b = era_decade is None or era_decade >= 1968
     era_ok_dolby_c = era_decade is None or era_decade >= 1980
     era_ok_dolby_s = era_decade is None or era_decade >= 1989
-    era_ok_dbx     = era_decade is None or era_decade >= 1971
+    era_ok_dbx = era_decade is None or era_decade >= 1971
 
     # ── Classification ─────────────────────────────────────────────────────
     # Scores are heuristic — higher is more likely NR-encoded
@@ -233,24 +242,33 @@ def detect_dolby_encoding(
         # DBX: uniform slope (hf2 ≈ hf1 in excess)
         slope_match_dbx = 1.0 if abs(slope_db) < 2.0 else max(0.0, 1.0 - (abs(slope_db) - 2.0) / 4.0)
         excess_dbx = hf_excess_db / 8.0
-        scores["dbx_i"]  = min(0.90, excess_dbx * 0.5 + slope_match_dbx * 0.5)
+        scores["dbx_i"] = min(0.90, excess_dbx * 0.5 + slope_match_dbx * 0.5)
         scores["dbx_ii"] = min(0.85, (hf_excess_db / 5.0) * 0.5 + slope_match_dbx * 0.5)
 
     if not scores:
-        return DolbyDetectionResult(detected=False, nr_type="none", confidence=0.0,
-                                    hf_excess_db=hf_excess_db, evidence=evidence)
+        return DolbyDetectionResult(
+            detected=False, nr_type="none", confidence=0.0, hf_excess_db=hf_excess_db, evidence=evidence
+        )
 
     best_type = max(scores, key=lambda k: scores[k])
     best_conf = scores[best_type]
 
     if best_conf < 0.35:
-        return DolbyDetectionResult(detected=False, nr_type="none", confidence=best_conf,
-                                    hf_excess_db=hf_excess_db,
-                                    evidence=evidence + [f"best_candidate={best_type} conf={best_conf:.2f} < 0.35"])
+        return DolbyDetectionResult(
+            detected=False,
+            nr_type="none",
+            confidence=best_conf,
+            hf_excess_db=hf_excess_db,
+            evidence=evidence + [f"best_candidate={best_type} conf={best_conf:.2f} < 0.35"],
+        )
 
     logger.info(
         "DolbyNR detect: material=%s detected=%s conf=%.2f hf_excess=%.1f dB era=%s",
-        mat, best_type, best_conf, hf_excess_db, era_decade,
+        mat,
+        best_type,
+        best_conf,
+        hf_excess_db,
+        era_decade,
     )
     return DolbyDetectionResult(
         detected=True,
@@ -269,25 +287,25 @@ def detect_dolby_encoding(
 _INVERSE_BIQUADS: dict[str, list[tuple[str, float, float, float]]] = {
     "dolby_b": [
         ("highshelf", 3000, -4.5, 0.60),
-        ("peaking",   8000, -2.0, 0.70),
+        ("peaking", 8000, -2.0, 0.70),
     ],
     "dolby_c": [
         ("highshelf", 4000, -9.0, 0.70),
-        ("peaking",  10000, -3.0, 1.00),
+        ("peaking", 10000, -3.0, 1.00),
     ],
     "dolby_s": [
         ("highshelf", 2000, -6.0, 0.60),
-        ("peaking",   8000, -2.0, 0.80),
-        ("peaking",   400,  -1.5, 0.50),  # subtle low-mid presence
+        ("peaking", 8000, -2.0, 0.80),
+        ("peaking", 400, -1.5, 0.50),  # subtle low-mid presence
     ],
-    "dbx_i":  [
+    "dbx_i": [
         # Approximate −9 dB/octave slope above 400 Hz via stacked shelves
-        ("highshelf",  400, -6.0, 0.55),
+        ("highshelf", 400, -6.0, 0.55),
         ("highshelf", 2000, -4.0, 0.60),
         ("highshelf", 6000, -3.0, 0.70),
     ],
     "dbx_ii": [
-        ("highshelf",  500, -4.0, 0.55),
+        ("highshelf", 500, -4.0, 0.55),
         ("highshelf", 2500, -2.5, 0.60),
         ("highshelf", 8000, -2.0, 0.70),
     ],
@@ -308,24 +326,23 @@ def _make_biquad_sos(btype: str, fc: float, gain_db: float, q: float, sr: int) -
         alpha = np.sin(w0) / (2.0 * q)
 
         if btype == "highshelf":
-            b0 =  A * ((A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
+            b0 = A * ((A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
             b1 = -2 * A * ((A - 1) + (A + 1) * np.cos(w0))
-            b2 =  A * ((A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
-            a0 =       (A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
-            a1 =  2 * ((A - 1) - (A + 1) * np.cos(w0))
-            a2 =       (A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
+            b2 = A * ((A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
+            a0 = (A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
+            a1 = 2 * ((A - 1) - (A + 1) * np.cos(w0))
+            a2 = (A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
         else:  # lowshelf
-            b0 =  A * ((A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
-            b1 =  2 * A * ((A - 1) - (A + 1) * np.cos(w0))
-            b2 =  A * ((A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
-            a0 =       (A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
+            b0 = A * ((A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
+            b1 = 2 * A * ((A - 1) - (A + 1) * np.cos(w0))
+            b2 = A * ((A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
+            a0 = (A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
             a1 = -2 * ((A - 1) + (A + 1) * np.cos(w0))
-            a2 =       (A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
+            a2 = (A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
 
         b_coeffs = np.array([b0, b1, b2]) / a0
         a_coeffs = np.array([a0, a1, a2]) / a0
-        return np.array([[b_coeffs[0], b_coeffs[1], b_coeffs[2],
-                          1.0, a_coeffs[1], a_coeffs[2]]])
+        return np.array([[b_coeffs[0], b_coeffs[1], b_coeffs[2], 1.0, a_coeffs[1], a_coeffs[2]]])
 
     elif btype == "peaking":
         A = 10.0 ** (gain_db / 40.0)
@@ -404,19 +421,19 @@ def apply_inverse_filter(
         return _filter_channel(audio)
     elif audio.shape[0] == 2 and audio.shape[1] != 2:
         # (2, N) channels-first
-        left  = _filter_channel(audio[0])
+        left = _filter_channel(audio[0])
         right = _filter_channel(audio[1])
         return np.stack([left, right], axis=0)
     else:
         # (N, 2) samples-first
-        left  = _filter_channel(audio[:, 0])
+        left = _filter_channel(audio[:, 0])
         right = _filter_channel(audio[:, 1])
         return np.stack([left, right], axis=1)
 
 
 # ─── Singleton ─────────────────────────────────────────────────────────────────
 
-_instance: "DolbyNRDetector | None" = None
+_instance: DolbyNRDetector | None = None
 _lock = threading.Lock()
 
 

@@ -5,9 +5,6 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
-from .carrier_forensics import analyze_carrier_forensics
-from .carrier_ml_classifier import classify_carrier_ml
-
 logger = logging.getLogger(__name__)
 
 # Formats that libsndfile cannot decode — route directly to pedalboard (FFmpeg backend)
@@ -32,6 +29,13 @@ _SF_UNSUPPORTED_EXT: frozenset[str] = frozenset(
         ".dts",
     }
 )
+
+
+def _lazy_get_carrier_tools():
+    from .carrier_forensics import analyze_carrier_forensics
+    from .carrier_ml_classifier import classify_carrier_ml
+
+    return analyze_carrier_forensics, classify_carrier_ml
 
 
 def detect_carrier(filepath: str, meta: dict[str, Any] | None = None) -> str:
@@ -171,8 +175,31 @@ def load_audio_file(
             except Exception as _e1:
                 logger.debug("load_audio_file: soundfile failed (%s) — trying pedalboard", _e1)
 
-        if audio is None:
-            # Stufe 2: pedalboard (FFmpeg backend) — best decoder for MP3/AAC/WMA/OPUS
+        if audio is None and _sf_unsupported:
+            # Stufe 2 (lossy): pydub first (FFmpeg subprocess) to reduce in-process
+            # abort risk observed with some FFmpeg backends under memory pressure.
+            try:
+                from pydub import AudioSegment as _AudioSeg  # type: ignore
+
+                _seg = _AudioSeg.from_file(filepath)
+                sr = int(_seg.frame_rate)
+                _samples = np.array(_seg.get_array_of_samples(), dtype=np.float32)
+                _bit_depth = _seg.sample_width * 8
+                _samples /= float(2 ** (_bit_depth - 1))
+                if _seg.channels > 1:
+                    _samples = _samples.reshape(-1, _seg.channels)
+                audio = _samples
+                logger.debug("load_audio_file: pydub OK (%s)", filepath)
+            except Exception as _e2:
+                # Do not fall back to in-process pedalboard for lossy media.
+                # On some systems this path can abort the whole process under
+                # memory pressure. Keep failures explicit and recoverable.
+                result["error"] = f"Audio read error: pydub failed for lossy format. Last: {_e2}"
+                return result
+
+        if audio is None and not _sf_unsupported:
+            # Stufe 2/3: pedalboard (FFmpeg backend) — preferred for lossless fallback,
+            # for lossless fallback only.
             try:
                 from pedalboard.io import AudioFile as _PBAudioFile  # type: ignore
 
@@ -194,25 +221,8 @@ def load_audio_file(
                     _raw = _raw.T
                 audio = _raw.astype(np.float32)
                 logger.debug("load_audio_file: pedalboard/FFmpeg OK (%s)", filepath)
-            except Exception as _e2:
-                logger.debug("load_audio_file: pedalboard failed (%s) — trying pydub", _e2)
-
-        if audio is None:
-            # Stufe 3: pydub (FFmpeg subprocess) — universal fallback
-            try:
-                from pydub import AudioSegment as _AudioSeg  # type: ignore
-
-                _seg = _AudioSeg.from_file(filepath)
-                sr = int(_seg.frame_rate)
-                _samples = np.array(_seg.get_array_of_samples(), dtype=np.float32)
-                _bit_depth = _seg.sample_width * 8
-                _samples /= float(2 ** (_bit_depth - 1))
-                if _seg.channels > 1:
-                    _samples = _samples.reshape(-1, _seg.channels)
-                audio = _samples
-                logger.debug("load_audio_file: pydub OK (%s)", filepath)
             except Exception as _e3:
-                result["error"] = f"Audio read error: soundfile + pedalboard + pydub all failed. Last: {_e3}"
+                result["error"] = f"Audio read error: soundfile + pedalboard failed. Last: {_e3}"
                 return result
 
         # ── Post-processing ──────────────────────────────────────────────────
@@ -235,7 +245,7 @@ def load_audio_file(
                 n_ch,
             )
             # Energie-gewichteter Downmix: höhere Energie → höherer Beitrag pro Kanal.
-            _ch_rms = np.sqrt(np.mean(audio ** 2, axis=0)) + 1e-9  # (n_ch,)
+            _ch_rms = np.sqrt(np.mean(audio**2, axis=0)) + 1e-9  # (n_ch,)
             _weights = _ch_rms / _ch_rms.sum()
             if n_ch >= 4:
                 # L = Summe ungerade Kanäle, R = Summe gerade Kanäle (häufiges LRLS-RS-Schema)
@@ -268,6 +278,7 @@ def load_audio_file(
         result["carrier_heuristic"] = detect_carrier(filepath, result["meta"]) if do_carrier_analysis else "unknown"
         if do_carrier_analysis:
             try:
+                analyze_carrier_forensics, classify_carrier_ml = _lazy_get_carrier_tools()
                 forensic = analyze_carrier_forensics(audio, sr)
                 result["carrier_forensic"] = forensic["carrier_forensic"]
                 result["carrier_forensic_score"] = forensic["score"]

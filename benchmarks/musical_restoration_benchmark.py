@@ -358,6 +358,10 @@ class BenchmarkConfig:
     report_path: Path | None = None
     system_name: str = "Aurik 9.9"
     verbose: bool = True
+    # Optional heavy-evaluation toggles for CI/normative audit runs.
+    enable_mushra_proxy: bool = True
+    enable_musical_goals: bool = True
+    enable_formal_session: bool = True
     # P2-1: reproducibility — fixed seed for deterministic stimulus generation
     run_seed: int = 42
     # P2-1: version pinning for audit trail
@@ -577,8 +581,9 @@ class MusicalRestorationBenchmark:
         )
         report.sign()  # P2-1: compute SHA-256 for audit-trail
 
-        # Formal ITU-R BS.1534-3-style session across all scenarios (uses cached audio pairs)
-        self.run_formal_session()
+        # Formal ITU-R BS.1534-3-style session across all scenarios (optional).
+        if self.config.enable_formal_session:
+            self.run_formal_session()
 
         if self.config.report_path:
             self._save_report(report)
@@ -658,23 +663,10 @@ class MusicalRestorationBenchmark:
             mushra_r, mushra_fallback_used = self._mushra_score(ref_t, res_t, sr)
             mushra_scores.append(mushra_r)
 
-            # MERT-MUSHRA-Proxy (embedding-based fidelity estimate)
-            proxy_r = self._mushra_proxy_score(ref_t, res_t, sr)
-
-            # PQS-MOS (abgekürzt)
-            pqs_r = self._quick_pqs(ref_t, res_t, sr)
-            pqs_scores.append(pqs_r)
-
-            # Musical Goals
-            goals = self._musical_goals(res_t, sr)
-            for k, v in goals.items():
-                goal_sum[k] = goal_sum.get(k, 0.0) + v
-
-            items.append(
-                {
-                    "mushra": mushra_r,
-                    "mushra_fallback_used": mushra_fallback_used,
-                    "restoration_exception": restoration_exception,
+            # MERT-MUSHRA-Proxy (embedding-based fidelity estimate, optional)
+            if self.config.enable_mushra_proxy:
+                proxy_r = self._mushra_proxy_score(ref_t, res_t, sr)
+                proxy_payload = {
                     "mushra_proxy": proxy_r.proxy_score,
                     "mushra_proxy_confidence": proxy_r.confidence,
                     "mushra_proxy_mert_cosine": proxy_r.as_dict().get("mert_cosine"),
@@ -700,6 +692,51 @@ class MusicalRestorationBenchmark:
                     "mushra_proxy_specific_loudness_diff": proxy_r.specific_loudness_diff,
                     "mushra_proxy_fluctuation_strength": proxy_r.fluctuation_strength,
                     "mushra_proxy_worst_segment_score": proxy_r.worst_segment_score,
+                }
+            else:
+                proxy_payload = {
+                    "mushra_proxy": 0.0,
+                    "mushra_proxy_confidence": 0.0,
+                    "mushra_proxy_mert_cosine": float("nan"),
+                    "mushra_proxy_visqol_mos": 0.0,
+                    "mushra_proxy_mr_stft": 0.0,
+                    "mushra_proxy_iso226": 0.0,
+                    "mushra_proxy_artifact_penalty": 0.0,
+                    "mushra_proxy_temporal_consistency": 0.0,
+                    "mushra_proxy_clap_cosine": 0.0,
+                    "mushra_proxy_stereo_imaging": 0.0,
+                    "mushra_proxy_transient_shape": 0.0,
+                    "mushra_proxy_nmr_db": 0.0,
+                    "mushra_proxy_emotional_arc": 0.0,
+                    "mushra_proxy_vocal_formant": 0.0,
+                    "mushra_proxy_vocal_hnr": 0.0,
+                    "mushra_proxy_pitch_accuracy": 0.0,
+                    "mushra_proxy_vocal_presence": 0.0,
+                    "mushra_proxy_modulation_fidelity": 0.0,
+                    "mushra_proxy_harmonic_structure": 0.0,
+                    "mushra_proxy_spectral_flux_corr": 0.0,
+                    "mushra_proxy_perceptual_disturbance": 0.0,
+                    "mushra_proxy_roughness": 0.0,
+                    "mushra_proxy_specific_loudness_diff": 0.0,
+                    "mushra_proxy_fluctuation_strength": 0.0,
+                    "mushra_proxy_worst_segment_score": 0.0,
+                }
+
+            # PQS-MOS (abgekürzt)
+            pqs_r = self._quick_pqs(ref_t, res_t, sr)
+            pqs_scores.append(pqs_r)
+
+            # Musical Goals
+            goals = self._musical_goals(res_t, sr) if self.config.enable_musical_goals else {}
+            for k, v in goals.items():
+                goal_sum[k] = goal_sum.get(k, 0.0) + v
+
+            items.append(
+                {
+                    "mushra": mushra_r,
+                    "mushra_fallback_used": mushra_fallback_used,
+                    "restoration_exception": restoration_exception,
+                    **proxy_payload,
                     "pqs_mos": pqs_r,
                     **{f"mg_{k}": v for k, v in goals.items()},
                 }
@@ -798,9 +835,14 @@ class MusicalRestorationBenchmark:
             from backend.core.mert_mushra_proxy import MushraProxyResult
 
             return MushraProxyResult(
-                proxy_score=0.0, grade="Bad", confidence=0.0,
-                mert_cosine=float("nan"), nsim=0.0, mcd_db=999.0,
-                chroma_corr=0.0, lufs_diff_lu=0.0,
+                proxy_score=0.0,
+                grade="Bad",
+                confidence=0.0,
+                mert_cosine=float("nan"),
+                nsim=0.0,
+                mcd_db=999.0,
+                chroma_corr=0.0,
+                lufs_diff_lu=0.0,
             )
 
     def _quick_pqs(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:

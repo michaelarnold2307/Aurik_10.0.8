@@ -447,7 +447,9 @@ class TestPhase20ReverbReduction:
                 raise RuntimeError("Sizes of tensors must match except in dimension 1")
 
         monkeypatch.setattr(phase20_mod, "ML_HYBRID_AVAILABLE", True)
-        monkeypatch.setattr(phase20_mod, "RESOURCE_MANAGER_AVAILABLE", False)  # ensure ML path is taken regardless of machine load
+        monkeypatch.setattr(
+            phase20_mod, "RESOURCE_MANAGER_AVAILABLE", False
+        )  # ensure ML path is taken regardless of machine load
         monkeypatch.setattr(phase20_mod, "HybridDereverb", _ExplodingHybrid)
 
         # First call hits ML failure once and should switch phase instance to DSP-only.
@@ -506,6 +508,25 @@ class TestPhase21Exciter:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_stereo_ms_mid_only_coherence(self):
+        """§2.51: Stereo exciter applies harmonics to Mid only — preserves stereo image."""
+        rng = np.random.default_rng(42)
+        t = np.arange(_N) / SR
+        left = (rng.normal(0, 0.1, _N) + 0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        right = (rng.normal(0, 0.1, _N) + 0.2 * np.sin(2 * np.pi * 440 * t + 0.5)).astype(np.float32)
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, SR, MaterialType.VINYL)
+        assert result.success
+        assert result.metadata.get("stereo_mode") == "ms_mid_only"
+        assert result.audio.shape == stereo_in.shape
+
+    def test_stereo_output_shape_preserved(self):
+        """Stereo input → stereo output with correct shape."""
+        rng = np.random.default_rng(99)
+        stereo_in = rng.normal(0, 0.1, (_N, 2)).astype(np.float32)
+        result = self.phase.process(stereo_in, SR, MaterialType.CD_DIGITAL)
+        assert result.audio.shape == stereo_in.shape
 
 
 # ===========================================================================
@@ -734,6 +755,28 @@ class TestPhase27ClickPopRemoval:
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
 
+    def test_stereo_linked_detection_coherence(self):
+        """§2.51: Stereo click detection is linked — same positions repaired in both channels."""
+        rng = np.random.default_rng(42)
+        base = rng.normal(0, 0.05, _N).astype(np.float32)
+        left = base.copy()
+        right = base.copy() + rng.normal(0, 0.01, _N).astype(np.float32)
+        # Same click in both channels
+        left[_N // 3] = 1.0
+        right[_N // 3] = 0.9
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, SR, MaterialType.VINYL)
+        assert result.success
+        assert result.metadata.get("stereo_mode") == "linked_detection"
+        assert result.audio.shape == stereo_in.shape
+
+    def test_stereo_output_shape_preserved(self):
+        """Stereo input → stereo output with correct shape."""
+        rng = np.random.default_rng(99)
+        stereo_in = rng.normal(0, 0.1, (_N, 2)).astype(np.float32)
+        result = self.phase.process(stereo_in, SR, MaterialType.CD_DIGITAL)
+        assert result.audio.shape == stereo_in.shape
+
 
 # ===========================================================================
 # Phase 28 – Surface Noise Profiling
@@ -813,6 +856,58 @@ class TestPhase29TapeHissReduction:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_stereo_linked_sidechain_coherence(self):
+        """§2.51: Stereo-Audio muss identische Gain-Maske auf L und R erhalten
+        (Mid-Linked-Sidechain), sodass asymmetrisches Kanalrauschen nicht zu
+        unterschiedlichen Reduktionsraten führt (Phantom-Mitte-Instabilität)."""
+        sr = self._SR
+        n = sr // 4  # 0.25 s
+        rng = np.random.default_rng(42)
+        # L channel: clean sine + moderate noise
+        sine = 0.3 * np.sin(2 * np.pi * 440 * np.arange(n, dtype=np.float32) / sr)
+        noise_l = 0.04 * rng.standard_normal(n).astype(np.float32)
+        # R channel: same sine + MUCH MORE noise (asymmetric hiss)
+        noise_r = 0.15 * rng.standard_normal(n).astype(np.float32)
+        stereo = np.column_stack([sine + noise_l, sine + noise_r]).astype(np.float32)
+
+        result = self.phase.process(stereo, sr, MaterialType.TAPE)
+        _assert_phase_result(result, stereo, check_clipping=False)
+
+        # §2.51 check: stereo_mode should be linked
+        assert result.metadata.get("stereo_mode") == "linked_mid_sidechain"
+
+        # Key invariant: L and R should receive the SAME gain mask from Mid sidechain.
+        # Therefore the HF reduction ratio (dB) must be similar for both channels.
+        from scipy.signal import butter, sosfilt
+
+        sos_hp = butter(4, 8000, btype="high", fs=sr, output="sos")
+
+        hf_in_l = sosfilt(sos_hp, stereo[:, 0])
+        hf_in_r = sosfilt(sos_hp, stereo[:, 1])
+        hf_out_l = sosfilt(sos_hp, result.audio[:, 0])
+        hf_out_r = sosfilt(sos_hp, result.audio[:, 1])
+
+        rms = lambda x: float(np.sqrt(np.mean(x**2) + 1e-12))
+        reduction_l_db = 20 * np.log10(max(rms(hf_out_l) / rms(hf_in_l), 1e-12))
+        reduction_r_db = 20 * np.log10(max(rms(hf_out_r) / rms(hf_in_r), 1e-12))
+
+        # With linked sidechain: Both channels get same gain → similar reduction ratio.
+        # Allow 4 dB tolerance (psychoacoustic masking model still per-channel).
+        delta = abs(reduction_l_db - reduction_r_db)
+        assert delta < 4.0, (
+            f"§2.51 Stereo HF reduction divergence: L={reduction_l_db:.1f} dB, "
+            f"R={reduction_r_db:.1f} dB, delta={delta:.1f} dB"
+        )
+
+    def test_stereo_output_shape_preserved(self):
+        """Stereo input → stereo output, same shape."""
+        sr = self._SR
+        n = sr // 4
+        rng = np.random.default_rng(99)
+        stereo = 0.1 * rng.standard_normal((n, 2)).astype(np.float32)
+        result = self.phase.process(stereo, sr, MaterialType.TAPE)
+        assert result.audio.shape == stereo.shape
 
 
 # ===========================================================================

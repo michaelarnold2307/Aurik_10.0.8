@@ -221,6 +221,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -244,11 +246,13 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
         # ML-Hybrid Mode Routing (v3.0)
-        quality_mode = kwargs.get("quality_mode", "balanced")
+        quality_mode = kwargs.get("quality_mode", "quality")
         use_ml_hybrid = ML_HYBRID_AVAILABLE and quality_mode in ["balanced", "quality", "maximum"]
 
         # Step 1: Robuste Pitch-Detektion (ML-Hybrid oder pYIN)
@@ -289,6 +293,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "effective_strength": _effective_strength,
                     **ml_metadata,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -321,6 +327,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "effective_strength": _effective_strength,
                     **ml_metadata,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -385,6 +393,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "execution_time_seconds": execution_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
         else:
@@ -411,6 +421,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     **ml_metadata,
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -586,7 +598,9 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         # Direkt iSTFT würde IPD-Relationen zerstören → Phantom-Center-Zusammenbruch (Spec §8.3)
         if _PGHI_AVAILABLE_P31:
             try:
-                audio_shifted = _pghi_p31(Zxx_shifted, sr=self.sample_rate, win_size=nperseg, hop=noverlap, n_samples=len(audio))
+                audio_shifted = _pghi_p31(
+                    Zxx_shifted, sr=self.sample_rate, win_size=nperseg, hop=noverlap, n_samples=len(audio)
+                )
             except Exception as _pghi_exc:
                 logger.debug("phase_31 PGHI failed, fallback to istft: %s", _pghi_exc)
                 _, audio_shifted = signal.istft(Zxx_shifted, self.sample_rate, nperseg=nperseg, noverlap=noverlap)
@@ -966,9 +980,9 @@ if __name__ == "__main__":
     materials = ["tape", "vinyl", "shellac"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = SpeedPitchCorrectionPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material, reference_pitch=true_pitch)
@@ -978,22 +992,22 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Detected Pitch: %.2f Hz", result.modifications['detected_pitch'])
-            logger.debug("   Confidence: %.2f", result.modifications['confidence'])
-            logger.debug("   Speed Error: %.2f%%", result.modifications['speed_error_percent'])
-            logger.debug("   Correction Ratio: %.4f", result.modifications['correction_ratio'])
-            logger.debug("   Algorithm: %s", result.metadata['algorithm'])
+            logger.debug("   Detected Pitch: %.2f Hz", result.modifications["detected_pitch"])
+            logger.debug("   Confidence: %.2f", result.modifications["confidence"])
+            logger.debug("   Speed Error: %.2f%%", result.modifications["speed_error_percent"])
+            logger.debug("   Correction Ratio: %.4f", result.modifications["correction_ratio"])
+            logger.debug("   Algorithm: %s", result.metadata["algorithm"])
             logger.debug(
                 f"   Samples: {result.modifications['samples_before']} → {result.modifications['samples_after']}"
             )
         else:
             logger.debug("⏭️  Processing Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Speed/Pitch Correction v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.94 (Professional-Grade)")

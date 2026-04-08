@@ -113,7 +113,7 @@ class TestCurrentVersion:
         )
         result = migrate_gp_memory_file(path)
         # best_score sollte erhalten bleiben
-        assert "best_score" not in result or result.get("best_score") == 4.5 or True  # noqa: SIM222  # Optional-Feld
+        assert "best_score" not in result or result.get("best_score") == 4.5 or True  # Optional-Feld
 
     def test_v2_empty_observations(self, tmp_path: pathlib.Path) -> None:
         path = tmp_path / "empty_v2.json"

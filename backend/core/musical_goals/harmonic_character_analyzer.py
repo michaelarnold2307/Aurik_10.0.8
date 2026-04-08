@@ -493,6 +493,7 @@ if __name__ == "__main__":
     audio_path = sys.argv[1]
     logger.debug("Analyzing: %s", audio_path)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(audio_path)
     audio, sr = np.asarray(_res["audio"], dtype=np.float32), int(_res["sr"])
 
@@ -504,7 +505,7 @@ if __name__ == "__main__":
     logger.debug("HARMONIC CHARACTER ANALYSIS")
     logger.debug("=" * 70)
     logger.debug("Harmonic Richness Score:  %.3f (threshold: 0.75)", analysis.harmonic_richness_score)
-    logger.debug("Status: %s", '✅ PASSED' if analysis.passed else '❌ FAILED')
+    logger.debug("Status: %s", "✅ PASSED" if analysis.passed else "❌ FAILED")
     logger.debug("")
     logger.debug("Harmonic Distribution:")
     logger.debug("  Even Harmonics (2f,4f,6f):  %.2f%% (optimal: 3-8%%)", analysis.even_harmonics_ratio * 100)
@@ -526,11 +527,11 @@ if __name__ == "__main__":
     suggestions = analyzer.suggest_enhancement(audio, sr)
 
     if suggestions["recommended_action"] != "none":
-        logger.debug("\n💡 SUGGESTION: %s", suggestions['recommended_action'])
+        logger.debug("\n💡 SUGGESTION: %s", suggestions["recommended_action"])
         if suggestions["recommended_action"] == "add_warmth":
-            logger.debug("   Recommended Saturation Gain: %.2f", suggestions['saturation_gain'])
+            logger.debug("   Recommended Saturation Gain: %.2f", suggestions["saturation_gain"])
         elif suggestions["recommended_action"] == "reduce_harshness":
-            logger.debug("   Recommended De-Harsh Strength: %.2f", suggestions['de_harsh_strength'])
+            logger.debug("   Recommended De-Harsh Strength: %.2f", suggestions["de_harsh_strength"])
 
     # Optional: Enhance
     if "--enhance" in sys.argv and suggestions["recommended_action"] == "add_warmth":
@@ -542,4 +543,4 @@ if __name__ == "__main__":
         logger.debug(
             f"   Even Harmonics: {report['even_harmonics_before']:.2f}% → {report['even_harmonics_after']:.2f}%"
         )
-        logger.debug("   Warmth Improvement: +%.3f", report['warmth_improvement'])
+        logger.debug("   Warmth Improvement: +%.3f", report["warmth_improvement"])

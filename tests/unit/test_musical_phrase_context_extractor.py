@@ -8,7 +8,7 @@ import numpy as np
 np.random.seed(42)  # §5.4 Reproduzierbarkeit
 import pytest
 
-from backend.core.musical_phrase_context_extractor import (
+from backend.core.musical_phrase_context import (
     MAX_CONTEXT_DURATION_S,
     MusicalPhraseContextExtractor,
     PhraseContext,

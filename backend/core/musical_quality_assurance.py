@@ -1026,7 +1026,9 @@ class MusicalQualityAssurance:
         logger.info("Musical Improvement: %+.1f%%", musical_improvement * 100)
         logger.info("Processing Intensity: %.1f%% (%s modules)", processing_intensity * 100, len(modules_applied))
         logger.info("Authenticity Preserved: %s", authenticity_preserved)
-        logger.info("Character Preserved: %s (%.1f%%)", character_preserved, integrity_result.character_preservation * 100)
+        logger.info(
+            "Character Preserved: %s (%.1f%%)", character_preserved, integrity_result.character_preservation * 100
+        )
         logger.info("Natural Sound: %s (naturalness: %.2f)", natural_sound, output_quality.naturalness)
         logger.info("Musical Integrity: %.1f%%", integrity_result.overall_integrity * 100)
         logger.info("")
@@ -1192,7 +1194,7 @@ def map_forensic_to_medium_type(
 # === Example Usage ===
 if __name__ == "__main__":
     # Example: Validate VINYL restoration
-    import soundfile as sf
+    pass
 
     from backend.file_import import load_audio_file
 

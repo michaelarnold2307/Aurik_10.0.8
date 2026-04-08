@@ -286,24 +286,44 @@ class TapeHissReductionPhase(PhaseInterface):
         np.logspace(np.log10(hf_low), np.log10(min(hf_high, nyquist * 0.95)), self.NUM_BANDS + 1)
 
         is_stereo = audio.ndim == 2
-        channels = 2 if is_stereo else 1
 
-        # Process each channel
-        audio_processed = np.zeros_like(audio)
+        if is_stereo:
+            # §2.51 Linked-Sidechain OMLSA: Gain-Maske aus Mid-Kanal berechnen,
+            # identisch auf L und R anwenden. Verhindert stereo-inkohärente HF-Dämpfung
+            # bei kanalasymmetrischem Tape-Rauschen (Phantom-Mitte-Instabilität).
+            mid_channel = (audio[:, 0] + audio[:, 1]) * (1.0 / np.sqrt(2.0))
+            mid_channel = mid_channel.astype(np.float32)
 
-        for ch in range(channels):
-            channel = audio[:, ch] if is_stereo else audio
+            # Psychoacoustic masking from L channel (dominant sidechain for mid)
+            kwargs.get("masking_result")
 
-            # §Psychoacoustic: select pre-computed masking result for this channel.
-            # ch=0 → masking_result (L/mono), ch=1 → masking_result_r (R), fallback to L.
-            if ch == 1:
-                _ch_masking = kwargs.get("masking_result_r") or kwargs.get("masking_result")
-            else:
-                _ch_masking = kwargs.get("masking_result")
+            # Compute OMLSA gain on Mid sidechain — applied identically to both channels
+            audio_processed = np.zeros_like(audio)
+            for ch in range(2):
+                channel = audio[:, ch]
 
-            # STFT-OMLSA-Verarbeitung (HF-selektiv)
-            processed = self._process_channel_omlsa(
-                channel,
+                # §Psychoacoustic: select pre-computed masking result for this channel.
+                if ch == 1:
+                    _ch_masking = kwargs.get("masking_result_r") or kwargs.get("masking_result")
+                else:
+                    _ch_masking = kwargs.get("masking_result")
+
+                # STFT-OMLSA on this channel but with Mid-linked gain sidechain
+                audio_processed[:, ch] = self._process_channel_omlsa(
+                    channel,
+                    sample_rate,
+                    hf_low,
+                    hf_high,
+                    material,
+                    intensity_scale=_effective_strength,
+                    masking_result=_ch_masking,
+                    linked_sidechain=mid_channel,
+                )
+        else:
+            # Mono: standard processing
+            _ch_masking = kwargs.get("masking_result")
+            audio_processed = self._process_channel_omlsa(
+                audio,
                 sample_rate,
                 hf_low,
                 hf_high,
@@ -311,11 +331,6 @@ class TapeHissReductionPhase(PhaseInterface):
                 intensity_scale=_effective_strength,
                 masking_result=_ch_masking,
             )
-
-            if is_stereo:
-                audio_processed[:, ch] = processed
-            else:
-                audio_processed = processed
 
         # Calculate overall HF noise reduction
         audio_ch0 = audio[:, 0] if is_stereo else audio
@@ -343,7 +358,7 @@ class TapeHissReductionPhase(PhaseInterface):
             hf_detail_blend = float(np.clip((_excess_db / 12.0) * 0.28 * _effective_strength, 0.0, 0.28))
             if hf_detail_blend > 0.0:
                 if is_stereo:
-                    for ch in range(channels):
+                    for ch in range(2):
                         _orig_hf = self._extract_band(audio[:, ch], sample_rate, hf_low, hf_high)
                         _proc_hf = self._extract_band(audio_processed[:, ch], sample_rate, hf_low, hf_high)
                         audio_processed[:, ch] = np.clip(
@@ -363,7 +378,9 @@ class TapeHissReductionPhase(PhaseInterface):
                 # Recompute HF reduction after guard blend.
                 proc_ch0 = audio_processed[:, 0] if is_stereo else audio_processed
                 hf_band_proc = self._extract_band(proc_ch0, sample_rate, hf_low, hf_high)
-                hf_reduction_db = 20 * np.log10(np.maximum(np.std(hf_band_orig) / (np.std(hf_band_proc) + 1e-10), 1e-30))
+                hf_reduction_db = 20 * np.log10(
+                    np.maximum(np.std(hf_band_orig) / (np.std(hf_band_proc) + 1e-10), 1e-30)
+                )
 
         # ML Refinement for HF (>2kHz) - if enabled and significant hiss present
         ml_refined = False
@@ -402,6 +419,7 @@ class TapeHissReductionPhase(PhaseInterface):
                 "ml_refined": ml_refined,
                 "algorithm_version": "3.0_omlsa_ml_hybrid" if ml_refined else "3.0_omlsa",
                 "algorithm": "IMCRA+OMLSA (Cohen 2002/2003)",
+                "stereo_mode": "linked_mid_sidechain" if is_stereo else "mono",
                 "ml_model": "DeepFilterNet v3 II" if ml_refined else None,
                 "rt_factor": float(rt_factor),
                 "phase_locality_factor": phase_locality_factor,
@@ -461,6 +479,7 @@ class TapeHissReductionPhase(PhaseInterface):
         material: "MaterialType",
         intensity_scale: float = 1.0,
         masking_result=None,  # §Psychoacoustic: pre-computed MaskingResult for this channel
+        linked_sidechain: np.ndarray | None = None,  # §2.51: Mid-channel for linked gain computation
     ) -> np.ndarray:
         """STFT-OMLSA-Verarbeitung: HF-selektive Rauschunterdrückung (Cohen 2002/2003).
 
@@ -472,12 +491,17 @@ class TapeHissReductionPhase(PhaseInterface):
             5. Cappé-Glättung: alpha_g = 0.85
             6. ISTFT + NaN/Clip-Schutz
 
+        §2.51 Linked-Sidechain: when ``linked_sidechain`` (Mid) is provided, the
+        IMCRA noise estimation and OMLSA gain are computed from the sidechain signal
+        so that L and R receive the **identical** gain mask — stereo-coherent.
+
         Args:
-            channel:     Mono-Audio (1D float32)
-            sample_rate: Abtastrate in Hz
-            hf_low:      Untere HF-Grenze (Hz), z.B. 8000
-            hf_high:     Obere HF-Grenze (Hz), z.B. 18000
-            material:    MaterialType für G_floor
+            channel:           Mono-Audio (1D float32)
+            sample_rate:       Abtastrate in Hz
+            hf_low:            Untere HF-Grenze (Hz), z.B. 8000
+            hf_high:           Obere HF-Grenze (Hz), z.B. 18000
+            material:          MaterialType für G_floor
+            linked_sidechain:  Optional Mid-channel for linked stereo gain computation
 
         Returns:
             processed: Restauriertes Mono-Audio (gleiche Länge wie channel)
@@ -497,7 +521,17 @@ class TapeHissReductionPhase(PhaseInterface):
         G_floor = float(np.clip(1.0 - intensity_scale * (1.0 - G_floor), 0.0, 1.0))
 
         # STFT + OMLSA via MRSA 5-zone processing (§DSP-Spezialregeln)
-        processed = self._process_channel_omlsa_mrsa(channel, sample_rate, hf_low, hf_high, material, intensity_scale)
+        # §2.51: When linked_sidechain is provided, IMCRA/OMLSA gain is computed on
+        # the sidechain (Mid) but applied to this channel's STFT magnitudes.
+        processed = self._process_channel_omlsa_mrsa(
+            channel,
+            sample_rate,
+            hf_low,
+            hf_high,
+            material,
+            intensity_scale,
+            linked_sidechain=linked_sidechain,
+        )
         processed = processed[: len(channel)]
         if len(processed) < len(channel):
             processed = np.pad(processed, (0, len(channel) - len(processed)))
@@ -540,6 +574,7 @@ class TapeHissReductionPhase(PhaseInterface):
         hf_high: float,
         material: "MaterialType",
         intensity_scale: float = 1.0,
+        linked_sidechain: np.ndarray | None = None,
     ) -> np.ndarray:
         """MRSA 5-zone OMLSA/IMCRA tape-hiss reduction with PGHI phase reconstruction.
 
@@ -547,13 +582,19 @@ class TapeHissReductionPhase(PhaseInterface):
         at its optimal time-frequency resolution. Zones below hf_low receive pass-through
         (gain=1.0), protecting low-frequency content. PGHI replaces plain iSTFT.
 
+        §2.51 Linked-Sidechain: when ``linked_sidechain`` (Mid) is provided, IMCRA noise
+        estimation runs on the sidechain signal, producing a stereo-coherent gain mask
+        that is applied to the actual channel's STFT. This prevents L/R asymmetric
+        gain modulation that causes phantom-center instability on tape material.
+
         Args:
-            channel:       Mono audio [1D float32].
-            sample_rate:   Must be 48000.
-            hf_low:        Lower HF gate boundary (Hz), e.g. 8000.
-            hf_high:       Upper HF gate boundary (Hz), e.g. 18000.
-            material:      MaterialType for G_floor selection.
-            intensity_scale: Locality factor ∈ [0, 1].
+            channel:           Mono audio [1D float32].
+            sample_rate:       Must be 48000.
+            hf_low:            Lower HF gate boundary (Hz), e.g. 8000.
+            hf_high:           Upper HF gate boundary (Hz), e.g. 18000.
+            material:          MaterialType for G_floor selection.
+            intensity_scale:   Locality factor ∈ [0, 1].
+            linked_sidechain:  Optional Mid-channel for linked stereo gain computation.
 
         Returns:
             Processed mono audio, same length as input.
@@ -572,25 +613,37 @@ class TapeHissReductionPhase(PhaseInterface):
         b_min = 1.66
         alpha_g = 0.85
 
-        # Reference STFT (win=2048, 75 % overlap)
+        # Reference STFT (win=2048, 75 % overlap) — on channel (for magnitude application)
         REF_WIN = 2048
         REF_HOP = 512
         REF_NOVERLAP = REF_WIN - REF_HOP
         f_ref, _, Zxx_ref = signal.stft(channel, fs=sample_rate, nperseg=REF_WIN, noverlap=REF_NOVERLAP, window="hann")
         n_bins, n_t = f_ref.shape[0], Zxx_ref.shape[1]
 
+        # §2.51 Linked-Sidechain: compute gain from Mid sidechain for stereo coherence.
+        # If no sidechain is provided, gain is computed from the channel itself (mono path).
+        _gain_source = linked_sidechain if linked_sidechain is not None else channel
+
         G_acc = np.zeros((n_bins, n_t), dtype=np.float64)
         w_acc = np.zeros(n_bins, dtype=np.float64)
 
         for zone_name, zone_win, zone_hop, f_low, f_high in self._MRSA_ZONES:
             try:
+                # §2.51: STFT for gain computation uses _gain_source (Mid sidechain
+                # for stereo, or channel itself for mono).
                 if n >= zone_win * 2:
                     zone_noverlap = zone_win - zone_hop
                     f_z, _, Zxx_z = signal.stft(
-                        channel, fs=sample_rate, nperseg=zone_win, noverlap=zone_noverlap, window="hann"
+                        _gain_source, fs=sample_rate, nperseg=zone_win, noverlap=zone_noverlap, window="hann"
                     )
                 else:
-                    f_z, Zxx_z = f_ref, Zxx_ref
+                    # Fallback to reference STFT — recompute from gain source if linked
+                    if linked_sidechain is not None:
+                        f_z, _, Zxx_z = signal.stft(
+                            _gain_source, fs=sample_rate, nperseg=REF_WIN, noverlap=REF_NOVERLAP, window="hann"
+                        )
+                    else:
+                        f_z, Zxx_z = f_ref, Zxx_ref
                     zone_win, zone_hop = REF_WIN, REF_HOP
 
                 mag_z = np.abs(Zxx_z)
@@ -732,7 +785,9 @@ class TapeHissReductionPhase(PhaseInterface):
         Zxx_proc = G_combined * np.abs(Zxx_ref) * np.exp(1j * np.angle(Zxx_ref))
         if _PGHI_AVAILABLE_P29:
             try:
-                audio_out = _pghi_p29(Zxx_proc.astype(np.complex64), sr=sample_rate, win_size=REF_WIN, hop=REF_HOP, n_samples=n)
+                audio_out = _pghi_p29(
+                    Zxx_proc.astype(np.complex64), sr=sample_rate, win_size=REF_WIN, hop=REF_HOP, n_samples=n
+                )
             except Exception as pghi_exc:
                 logger.warning("MRSA Phase 29: PGHI failed, iSTFT fallback: %s", pghi_exc)
                 _, audio_out = signal.istft(
@@ -749,10 +804,11 @@ class TapeHissReductionPhase(PhaseInterface):
         audio_out = np.clip(audio_out, -1.0, 1.0).astype(np.float32)
 
         logger.debug(
-            "MRSA Phase 29: 5 zones processed, valid_bins=%d/%d, G_mean=%.3f",
+            "MRSA Phase 29: 5 zones processed, valid_bins=%d/%d, G_mean=%.3f, linked_sidechain=%s",
             int(np.sum(valid)),
             n_bins,
             float(np.mean(G_combined)),
+            linked_sidechain is not None,
         )
         return audio_out
 
@@ -1010,11 +1066,11 @@ if __name__ == "__main__":
         hf_reduction = 20 * np.log10(np.std(hf_orig) / (np.std(hf_proc) + 1e-10))
 
         # Display results
-        logger.debug("  Gate threshold: %.1f dB", meta.get('gate_threshold_db', 0))
-        logger.debug("  Reduction depth: %.1f dB", meta.get('reduction_depth_db', 0))
-        logger.debug("  HF focus range: %s Hz", meta.get('hf_focus_range_hz', []))
-        logger.debug("  Num bands: %s", meta.get('num_bands', 0))
-        logger.debug("  HF reduction: %.2f dB", meta.get('hf_reduction_db', 0))
-        logger.debug("  Per-band reduction: %s... (first 3)", meta.get('reduction_per_band_db', [])[:3])
+        logger.debug("  Gate threshold: %.1f dB", meta.get("gate_threshold_db", 0))
+        logger.debug("  Reduction depth: %.1f dB", meta.get("reduction_depth_db", 0))
+        logger.debug("  HF focus range: %s Hz", meta.get("hf_focus_range_hz", []))
+        logger.debug("  Num bands: %s", meta.get("num_bands", 0))
+        logger.debug("  HF reduction: %.2f dB", meta.get("hf_reduction_db", 0))
+        logger.debug("  Per-band reduction: %s... (first 3)", meta.get("reduction_per_band_db", [])[:3])
         logger.debug("  Processing time: %.3fs", elapsed)
         logger.debug("  ✅\n")

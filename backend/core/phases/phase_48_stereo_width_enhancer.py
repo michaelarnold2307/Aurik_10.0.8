@@ -204,6 +204,8 @@ class StereoWidthEnhancerPhase(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": 0.0},
             )
@@ -225,6 +227,8 @@ class StereoWidthEnhancerPhase(PhaseInterface):
                     "width": width,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={"effective_strength": effective_strength},
             )
@@ -287,6 +291,8 @@ class StereoWidthEnhancerPhase(PhaseInterface):
                 "side_reduction": side_reduction,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={"width": width, "iacc": iacc_val, "effective_strength": effective_strength},
         )

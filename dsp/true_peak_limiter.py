@@ -311,6 +311,12 @@ class TruePeakLimiter:
                 "gain_reduction_max_db": gr_max_db,
                 "samples_limited": int(samples_limited),
             }
+            audio_limited = np.clip(np.nan_to_num(audio_limited, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(
+                audio.dtype
+            )
             return audio_limited, metrics
 
+        audio_limited = np.clip(np.nan_to_num(audio_limited, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(
+            audio.dtype
+        )
         return audio_limited, None

@@ -36,6 +36,7 @@ Autor: AI Team
 Datum: 8. Februar 2026
 """
 
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -153,9 +154,52 @@ class MusicalGoalsQualityGate:
         # Report history for auditing
         self.reports: list[QualityGateReport] = []
 
+        # Small bounded cache for repeated score measurements on identical audio.
+        # This avoids redundant heavy metric/model execution in repeated gate runs.
+        self._score_cache: dict[tuple[Any, ...], dict[str, float]] = {}
+        self._score_cache_order: list[tuple[Any, ...]] = []
+        self._score_cache_max_entries: int = 64
+
         logger.info(
             f"MusicalGoalsQualityGate initialized (strict_mode={strict_mode}, critical_threshold={critical_threshold})"
         )
+
+    def _make_score_cache_key(self, audio: np.ndarray, sr: int) -> tuple[Any, ...]:
+        """Build a stable lightweight fingerprint for score-cache lookup."""
+        arr = np.asarray(audio, dtype=np.float32)
+        flat = arr.reshape(-1)
+        n = int(flat.size)
+
+        head = flat[:4096]
+        tail = flat[-4096:] if n > 4096 else flat
+
+        h = hashlib.blake2b(digest_size=16)
+        h.update(np.asarray([sr, n], dtype=np.int64).tobytes())
+        h.update(
+            np.asarray([float(flat.mean()) if n else 0.0, float(flat.std()) if n else 0.0], dtype=np.float32).tobytes()
+        )
+        h.update(head.tobytes())
+        h.update(tail.tobytes())
+
+        return (int(sr), tuple(arr.shape), str(arr.dtype), h.hexdigest())
+
+    def _measure_scores(self, audio: np.ndarray, sr: int) -> dict[str, float]:
+        """Measure goals with bounded cache to avoid redundant expensive calls."""
+        key = self._make_score_cache_key(audio, sr)
+        cached = self._score_cache.get(key)
+        if cached is not None:
+            return dict(cached)
+
+        scores = self.checker.measure_all(audio, sr)
+        normalized = {str(k): float(np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)) for k, v in scores.items()}
+
+        self._score_cache[key] = normalized
+        self._score_cache_order.append(key)
+        if len(self._score_cache_order) > self._score_cache_max_entries:
+            old = self._score_cache_order.pop(0)
+            self._score_cache.pop(old, None)
+
+        return dict(normalized)
 
     def pre_check(
         self,
@@ -194,7 +238,7 @@ class MusicalGoalsQualityGate:
 
         # Measure baseline Musical Goals
         try:
-            baseline = self.checker.measure_all(audio, sr)
+            baseline = self._measure_scores(audio, sr)
         except Exception as e:
             logger.error("Pre-Check failed: %s", e)
             return PreCheckResult(
@@ -301,14 +345,14 @@ class MusicalGoalsQualityGate:
         # Measure baseline if not provided
         if baseline_scores is None:
             try:
-                baseline_scores = self.checker.measure_all(original, sr)
+                baseline_scores = self._measure_scores(original, sr)
             except Exception as e:
                 logger.error("Baseline measurement failed: %s", e)
                 baseline_scores = {}
 
         # Measure achieved goals
         try:
-            achieved_scores = self.checker.measure_all(processed, sr)
+            achieved_scores = self._measure_scores(processed, sr)
         except Exception as e:
             logger.error("Post-Check measurement failed: %s", e)
             return PostCheckResult(
@@ -953,6 +997,7 @@ class EnhancedQualityGate:
             if versa is not None:
                 try:
                     import numpy as _np
+
                     from backend.file_import import load_audio_file as _load_af
 
                     _af_result = _load_af(str(audio_path))

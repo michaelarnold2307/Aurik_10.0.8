@@ -20,11 +20,11 @@ Abgedeckte Änderungen (v9.10.115):
      - max_boost_db wird bei Bandbreiten-Lücke ≥ 1500 Hz konservativ angehoben
      - restoration_strength-Boost bei ≥ 3 Generationen
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
-
 
 # ===========================================================================
 # 1. SourceFidelityReconstructor — Unit-Tests
@@ -341,10 +341,7 @@ class TestUV3SongCalibrationSourceFidelityKeys:
             era_decade=1995,
         )
         # Shellac 1942 should have higher source_fidelity_reconstruction_strength
-        assert (
-            p_shellac["source_fidelity_reconstruction_strength"]
-            >= p_cd["source_fidelity_reconstruction_strength"]
-        )
+        assert p_shellac["source_fidelity_reconstruction_strength"] >= p_cd["source_fidelity_reconstruction_strength"]
 
     def test_28_reconstruction_family_scalar_boosted_for_old_shellac(self, _calibration_deps):
         UV3, QM, MT = _calibration_deps

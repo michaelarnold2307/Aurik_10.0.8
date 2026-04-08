@@ -10,7 +10,7 @@ Anforderungen:
     Audio-Testdatei: audio_examples/Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3
     Fallback:        audio_examples/Elke_Best_Freund.mp3
 
-Spec-Referenz: §2.1, §2.2, §8.1, §8.2 (copilot-instructions.md v9.9.9)
+Spec-Referenz: §0, §2.44, §2.45, §2.49, §8.1, §8.2 (copilot-instructions.md v9.11.x)
 """
 
 from __future__ import annotations
@@ -218,7 +218,7 @@ class TestE2ERestorationQuality:
         # --- PQS-Scores prüfen (Spec §8.1) ---
         from backend.core.perceptual_quality_scorer import score_audio_absolute  # type: ignore
 
-        pqs = score_audio_absolute(result.audio, sample_rate=48_000)
+        pqs = score_audio_absolute(result.audio, sr=48_000)
         assert pqs.pqs_mos >= 4.0, f"Spec §8.1: PQS-MOS {pqs.pqs_mos:.3f} < 4.0"
         assert pqs.nsim >= 0.80, f"Spec §8.1: NSIM {pqs.nsim:.3f} < 0.80"
         assert pqs.mcd_db <= 5.0, f"Spec §8.1: MCD {pqs.mcd_db:.2f} dB > 5.0 dB"
@@ -561,7 +561,7 @@ class TestE2EStudio2026Balanced:
         # Für alle anderen Materialien gelten material-spezifische Erwartungen aus §6.2.
         _HIGH_QUALITY_DIGITAL = {MaterialType.CD_DIGITAL, MaterialType.DAT, MaterialType.MP3_HIGH, MaterialType.AAC}
         _studio_mos_min = 4.5 if result.material_type in _HIGH_QUALITY_DIGITAL else 4.0
-        pqs_max = score_audio_absolute(result.audio, sample_rate=48_000)
+        pqs_max = score_audio_absolute(result.audio, sr=48_000)
         assert pqs_max.pqs_mos >= _studio_mos_min, (
             f"Studio 2026 §1.4: PQS-MOS {pqs_max.pqs_mos:.3f} < {_studio_mos_min} "
             f"(Weltklasse / Material={result.material_type.value})"
@@ -614,7 +614,7 @@ class TestE2EStudio2026Balanced:
 @pytest.mark.e2e
 @pytest.mark.timeout(600)
 class TestE2EMusicalGoals:
-    """Musical Goals Validation — alle 14 Ziele (Spec §1.2 v9.9.9)."""
+    """Musical Goals validation — all 14 goals (current spec baseline)."""
 
     def test_01_musical_goals_nach_quality_mode(self) -> None:
         """Nach Restaurierung (QUALITY) müssen Musical Goals messbar sein."""
@@ -630,9 +630,9 @@ class TestE2EMusicalGoals:
         scores = checker.measure_all(result.audio, sr=48_000)
 
         assert isinstance(scores, dict), "measure_all muss dict zurückgeben"
-        # Spec §1.2 v9.9.9: genau 14 Musical Goals
+        # Current spec baseline: exactly 14 Musical Goals
         assert len(scores) == 14, (
-            f"Erwartet 14 Musical Goals (Spec §1.2 v9.9.9), erhalten {len(scores)}: {sorted(scores.keys())}"
+            f"Erwartet 14 Musical Goals (aktueller Spec-Stand), erhalten {len(scores)}: {sorted(scores.keys())}"
         )
 
         for goal, score in scores.items():
@@ -641,7 +641,7 @@ class TestE2EMusicalGoals:
 
         # Spec §1.2: jede Restaurierungsoperation darf keines der 14 Ziele unterschreiten
         violations = {g: (scores[g], t) for g, t in checker.thresholds.items() if scores[g] < t}
-        assert not violations, "Musical Goals unter Pflicht-Schwellwert (Spec §1.2 v9.9.9):\n" + "\n".join(
+        assert not violations, "Musical Goals unter Pflicht-Schwellwert (aktueller Spec-Stand):\n" + "\n".join(
             f"  {g}: {s:.3f} < {t:.2f}" for g, (s, t) in violations.items()
         )
 

@@ -355,7 +355,7 @@ if __name__ == "__main__":
     # Test 2: Minor change (authentic)
     audio_minor = audio_original * 1.05  # 5% level change
     is_auth, warns, metrics = AuthenticityMetrics.authenticity_check(audio_original, audio_minor, sr)
-    logger.info("Test 2 (Minor Change): Authentic = %s, Spectral Dev = %.3f", is_auth, metrics['spectral_deviation'])
+    logger.info("Test 2 (Minor Change): Authentic = %s, Spectral Dev = %.3f", is_auth, metrics["spectral_deviation"])
 
     # Test 3: Major change (not authentic)
     audio_major = audio_original + np.random.randn(samples) * 0.5

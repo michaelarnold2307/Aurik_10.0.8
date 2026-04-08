@@ -29,6 +29,18 @@ import scipy.signal as signal
 logger = logging.getLogger(__name__)
 
 
+def _normalize_aurik_mode(aurik_mode: str | None) -> str:
+    """Normalize external mode aliases to canonical values.
+
+    Returns:
+        "restoration" or "studio2026" (legacy aliases remain accepted).
+    """
+    _m = str(aurik_mode or "restoration").strip().lower().replace("_", "").replace(" ", "")
+    if _m in {"studio2026", "studio", "highendstudio", "maximum"}:
+        return "studio2026"
+    return "restoration"
+
+
 # ============================================================================
 # ENUMS
 # ============================================================================
@@ -188,11 +200,13 @@ class SemanticAudioAnalyzer:
         Args:
             audio: Input audio (mono or stereo)
             sr: Sample rate
-            aurik_mode: "restoration" or "highend_studio"
+            aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
 
         Returns:
             SemanticProfile with instrument detection and processing guidance
         """
+        aurik_mode = _normalize_aurik_mode(aurik_mode)
+
         # Convert to mono
         if audio.ndim > 1:
             # Auto-detect stereo format: (samples, channels) vs (channels, samples)
@@ -704,8 +718,7 @@ class SemanticAudioAnalyzer:
 
         # Enhance if vocals are present
         return any(
-            inst.instrument in [InstrumentType.VOCALS, InstrumentType.SPEECH]
-            and inst.confidence > 0.4
+            inst.instrument in [InstrumentType.VOCALS, InstrumentType.SPEECH] and inst.confidence > 0.4
             for inst in instruments
         )
 
@@ -807,7 +820,7 @@ def analyze_semantic_content(
     Args:
         audio: Input audio (mono or stereo)
         sr: Sample rate
-        aurik_mode: "restoration" or "highend_studio"
+            aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
 
     Returns:
         SemanticProfile with instrument detection and processing guidance

@@ -705,6 +705,7 @@ if __name__ == "__main__":
     # Load audio
     logger.info("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio = np.asarray(_res["audio"])
     sr = int(_res["sr"])
@@ -729,7 +730,7 @@ if __name__ == "__main__":
 
     # Get metrics
     metrics = processor.get_metrics()
-    logger.info("\n%s", '=' * 60)
+    logger.info("\n%s", "=" * 60)
     logger.info("METRICS:")
     for module_name, module_metrics in metrics.items():
         logger.info("\n%s:", module_name.upper())
@@ -738,7 +739,7 @@ if __name__ == "__main__":
                 logger.info("  %s: %.2f", key, value)
             else:
                 logger.info("  %s: %s", key, value)
-    logger.info("%s\n", '=' * 60)
+    logger.info("%s\n", "=" * 60)
 
     # Save
     # Transpose back if stereo

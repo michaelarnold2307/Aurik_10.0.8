@@ -11,6 +11,7 @@ Das Aurik 9.x.x Vocal AI Enhancement System implementiert die **stimmtyp-adaptiv
 ### 1. Gender Detection (KI-basiert)
 
 **Eigenentwicklung** basierend auf:
+
 - **Formant-Analyse (F1-F4)**: Erkennung geschlechtsspezifischer Vokaltrakt-Resonanzen
 - **Fundamentalfrequenz (F0)**: Pitch-Detection via Autocorrelation
 - **Spektraler Schwerpunkt**: Energieverteilung im Frequenzspektrum
@@ -19,6 +20,7 @@ Das Aurik 9.x.x Vocal AI Enhancement System implementiert die **stimmtyp-adaptiv
 ### WORLD-Vocoder-Quervalidierung
 
 Formant-Kreuzvalidierung via DIO/Harvest f₀ + CheapTrick-Spektralkurve (Morise et al. 2016):
+
 - Abweichung LPC ↔ WORLD > 15 % → WORLD-Wert bevorzugt
 
 ### Pitch-Tracking
@@ -30,7 +32,7 @@ Formant-Kreuzvalidierung via DIO/Harvest f₀ + CheapTrick-Spektralkurve (Morise
 
 - Erkennungskriterium: ZCR > 0.3 + Energie in 4–16 kHz dominant
 - HF-Anhebung ≤ +6 dB im Frikativ-Band (stimmtyp-adaptiv)
-   - MALE: 5–10 kHz | FEMALE: 6–12 kHz | CHILD: 7–14 kHz
+- MALE: 5–10 kHz | FEMALE: 6–12 kHz | CHILD: 7–14 kHz
 - Invariante: SNR_frikativ_after ≥ SNR_frikativ_before + 3 dB
 - Crossfade 5 ms (Hanning) an Voiced/Unvoiced-Übergängen
 
@@ -74,6 +76,7 @@ Release: 30 ms
 ```
 
 **Emotion Preservation Modes:**
+
 1. **MAXIMUM**: Minimale Eingriffe, maximale Authentizität
    - Ratio × 0.5 (weniger Kompression)
    - Threshold -3 dB (höherer Schwellwert)
@@ -130,6 +133,7 @@ reduction_factor = 1.0 - ((1-0.7) × 0.8) = 0.76  # 24% Reduktion
 - **Korrelationsbasierte Verifikation**
 
 **Preservation Score:**
+
 ```python
 formant_preservation_score = correlation(original_formants, processed_formants)
 # Target: > 0.95 (95% Erhalt)
@@ -156,6 +160,7 @@ emotion_preservation_score = 1.0 - emotion_diff
 ```
 
 **Adaptive Processing:**
+
 - Hohe Emotion → Geringere Eingriffe
 - Neutrale Emotion → Stärkere Enhancement möglich
 
@@ -210,7 +215,7 @@ result = framework.enhance_vocals(
 ### Preservation Targets
 
 | Metrik | Zielwert | Bedeutung |
-|--------|----------|-----------|
+| -------- | ---------- | ----------- |
 | **Formant Preservation** | > 95% | Stimm-Identität erhalten |
 | **Emotion Preservation** | > 85% | Emotionale Authentizität |
 | **Breath Preservation** | 70% (konfigurierbar) | Natürlicher Atem |
@@ -220,7 +225,7 @@ result = framework.enhance_vocals(
 ### Gender Detection Accuracy
 
 | Gender | F0 Range (Hz) | Formant F1 (Hz) | Formant F2 (Hz) |
-|--------|---------------|-----------------|-----------------|
+| -------- | --------------- | ----------------- | ----------------- |
 | **Male** | 85-180 | 270-730 | 840-2290 |
 | **Female** | 165-255 | 310-860 | 920-2790 |
 | **Child** | 200-500 | 370-1030 | 1170-3330 |
@@ -315,6 +320,7 @@ result = framework.enhance_vocals(
 Vollständige Test Suite: `tests/test_vocal_ai_enhancement.py`
 
 **Test Coverage:**
+
 - Gender Detection (Male, Female, Child)
 - Formant Detection
 - Breathiness Detection
@@ -329,6 +335,7 @@ Vollständige Test Suite: `tests/test_vocal_ai_enhancement.py`
 - Performance Tests
 
 **Run Tests:**
+
 ```bash
 pytest tests/test_vocal_ai_enhancement.py -v
 ```
@@ -355,7 +362,7 @@ pytest tests/test_vocal_ai_enhancement.py -v
 ## 🎯 Roadmap Status
 
 | Phase | Status | Features |
-|-------|--------|----------|
+| ------- | -------- | ---------- |
 | **Phase 19** | ✅ COMPLETE | Gender-Aware De-Esser |
 | **Phase 42** | ✅ COMPLETE | Vocal Enhancement Pipeline |
 | **AI Integration** | ✅ COMPLETE | Unified Vocal AI Framework |
@@ -367,6 +374,7 @@ pytest tests/test_vocal_ai_enhancement.py -v
 ## 👥 Authoren
 
 **Aurik 9.0 Development Team**
+
 - AI Framework Integration
 - Gender Detection Algorithm
 - Emotion Preservation System
@@ -387,6 +395,7 @@ Musical Excellence First
 ## 🙏 Credits
 
 Basierend auf wissenschaftlichen Erkenntnissen von:
+
 - Fant, Peterson, Barney (Formant Theory)
 - Scherer, Juslin (Emotion in Voice)
 - ITU-T, ANSI Standards (Audio Quality)

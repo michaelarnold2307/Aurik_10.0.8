@@ -475,7 +475,6 @@ def check_microdynamics_preservation(original: np.ndarray, processed: np.ndarray
 if __name__ == "__main__":
     import sys
 
-    import soundfile as sf
 
     if len(sys.argv) < 2:
         logger.debug("Usage: python microdynamics_analyzer.py <audio_file>")
@@ -485,6 +484,7 @@ if __name__ == "__main__":
     audio_path = sys.argv[1]
     logger.debug("Analyzing: %s", audio_path)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(audio_path)
     audio, sr = np.asarray(_res["audio"], dtype=np.float32), int(_res["sr"])
 
@@ -496,7 +496,7 @@ if __name__ == "__main__":
     logger.debug("MICRODYNAMICS ANALYSIS")
     logger.debug("=" * 70)
     logger.debug("Overall Microdynamics Score: %.3f (threshold: 0.70)", analysis.microdynamics_score)
-    logger.debug("Status: %s", '✅ PASSED' if analysis.passed else '❌ FAILED')
+    logger.debug("Status: %s", "✅ PASSED" if analysis.passed else "❌ FAILED")
     logger.debug("")
     logger.debug("Component Scores (1.0 = Perfect):")
     logger.debug("  Frame RMS Variance:         %.3f", analysis.frame_variance_score)

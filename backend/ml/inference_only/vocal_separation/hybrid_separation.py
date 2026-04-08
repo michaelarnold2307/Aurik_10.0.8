@@ -381,6 +381,6 @@ if __name__ == "__main__":
     stems = separator.separate(audio, sr=sr, return_individual=True)
 
     logger.info("✓ Hybrid separation test passed")
-    logger.info("  Vocals shape: %s", stems['vocals'].shape)
-    logger.info("  Instrumental shape: %s", stems['instrumental'].shape)
+    logger.info("  Vocals shape: %s", stems["vocals"].shape)
+    logger.info("  Instrumental shape: %s", stems["instrumental"].shape)
     logger.info("  Metrics: %s", separator.get_metrics())

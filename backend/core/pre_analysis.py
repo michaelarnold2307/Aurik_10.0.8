@@ -42,9 +42,9 @@ import logging
 import math
 import os
 import threading
+from collections.abc import Callable
 from concurrent import futures as _cf
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 import numpy as np
 
@@ -64,19 +64,19 @@ class PreAnalysisResult:
     """
 
     # Carrier / medium chain (forensics.medium_detector)
-    medium: object | None = None            # MediumDetectionResult
+    medium: object | None = None  # MediumDetectionResult
 
     # Recording era (backend.core.era_classifier)
-    era: object | None = None               # EraResult
+    era: object | None = None  # EraResult
 
     # Genre classification (backend.core.genre_classifier)
-    genre: object | None = None             # SchlagerClassificationResult
+    genre: object | None = None  # SchlagerClassificationResult
 
     # Defect scan (backend.core.defect_scanner)
-    defects: object | None = None           # DefectAnalysisResult
+    defects: object | None = None  # DefectAnalysisResult
 
     # Restorability estimate (backend.core.restorability_estimator)
-    restorability: object | None = None     # RestorabilityResult
+    restorability: object | None = None  # RestorabilityResult
 
     # Metadata
     native_sr: int = 0
@@ -85,6 +85,16 @@ class PreAnalysisResult:
 
     # Per-step error messages (populated on exception, step still gets None above)
     errors: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class _FallbackMediumResult:
+    """Compatibility wrapper for legacy medium classifier fallback results."""
+
+    primary_material: str
+    confidence: float
+    transfer_chain: list[str] = field(default_factory=list)
+    chain_label: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -111,13 +121,13 @@ def _to_mono_native(audio: np.ndarray) -> np.ndarray:
     return np.clip(mono, -1.0, 1.0).astype(np.float32)
 
 
-def _resample_for_restorability(audio_native: np.ndarray,
-                                sr_native: int) -> tuple[np.ndarray, int]:
+def _resample_for_restorability(audio_native: np.ndarray, sr_native: int) -> tuple[np.ndarray, int]:
     """Resample to 48 kHz if not already there (restorability estimator requires 48 kHz)."""
     if sr_native == 48_000:
         return audio_native, sr_native
     try:
         from scipy.signal import resample_poly as _rp
+
         gcd = math.gcd(int(sr_native), 48_000)
         audio_48 = _rp(
             audio_native,
@@ -142,8 +152,8 @@ def run_pre_analysis(
     *,
     audio_48k: np.ndarray | None = None,
     file_path: str = "",
-    progress_callback: Optional[Callable[[int, str], None]] = None,
-    scan_progress_callback: Optional[Callable[[float], None]] = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    scan_progress_callback: Callable[[float], None] | None = None,
     store_in_bridge_cache: bool = True,
 ) -> PreAnalysisResult:
     """Run all pre-restoration analyses in parallel and return a PreAnalysisResult.
@@ -195,8 +205,10 @@ def run_pre_analysis(
     # Steps 2-5 run in parallel after medium finishes.
     # ------------------------------------------------------------------
     _medium_result = None
+    _medium_primary_error: str | None = None
     try:
         from forensics.medium_detector import get_medium_detector as _get_md
+
         _medium_result = _get_md().detect(audio_native, sr_native, file_ext=file_ext)
         result.medium = _medium_result
         logger.info(
@@ -206,43 +218,78 @@ def run_pre_analysis(
             _medium_result.chain_label,
         )
     except Exception as exc:
-        result.errors["medium"] = str(exc)
-        logger.warning("pre_analysis: medium detection failed (%s)", exc)
+        _medium_primary_error = str(exc)
+        logger.warning("pre_analysis: primary medium detection failed (%s)", exc)
+
+    # Strict 1+1 cascade:
+    # - Primary detector exactly once
+    # - Secondary fallback exactly once and only if primary failed
+    if _medium_result is None:
+        try:
+            from backend.core.medium_classifier import classify_medium as _classify_medium
+
+            _fallback = _classify_medium(audio_native, sr=sr_native, use_ml=True)
+            _material = str(getattr(_fallback, "material_type", getattr(_fallback, "material", "unknown")))
+            _conf = float(getattr(_fallback, "confidence", 0.0))
+            _chain = list(getattr(_fallback, "transfer_chain", None) or [_material])
+            _chain_label = str(getattr(_fallback, "chain_label", " -> ".join(_chain)))
+            _medium_result = _FallbackMediumResult(
+                primary_material=_material,
+                confidence=_conf,
+                transfer_chain=_chain,
+                chain_label=_chain_label,
+            )
+            result.medium = _medium_result
+            logger.info(
+                "pre_analysis: medium fallback=legacy_classifier material=%s conf=%.2f chain=%s",
+                _material,
+                _conf,
+                _chain_label,
+            )
+        except Exception as fb_exc:
+            _fb_msg = str(fb_exc)
+            if _medium_primary_error is not None:
+                result.errors["medium"] = f"primary_failed={_medium_primary_error}; fallback_failed={_fb_msg}"
+            else:
+                result.errors["medium"] = _fb_msg
+            logger.warning("pre_analysis: medium fallback failed (%s)", fb_exc)
 
     _cb(20, "Tonträger erkannt — analysiere Ära, Genre und Defekte…")
 
     # Material string for downstream modules
     _material_str = "unknown"
     if _medium_result is not None:
-        _material_str = str(
-            getattr(_medium_result, "primary_material", None) or "unknown"
-        )
+        _material_str = str(getattr(_medium_result, "primary_material", None) or "unknown")
 
     # ------------------------------------------------------------------
     # Steps 2–5 — Era, Genre, DefectScan, Restorability in parallel
     # ------------------------------------------------------------------
     def _run_era() -> object:
         from backend.core.era_classifier import get_era_classifier as _gec
+
         return _gec().classify(audio_native, sr_native)
 
     def _run_genre() -> object:
         from backend.core.genre_classifier import get_genre_classifier as _ggc
+
         return _ggc().classify(audio_native, sr_native)
 
     def _run_defects() -> object:
         from backend.core.defect_scanner import DefectScanner as _DS
+
         scanner = _DS(sample_rate=sr_native, material_type=None)
-        _kw: dict = dict(
-            sample_rate=sr_native,
-            file_ext=file_ext,
-            forensic_medium_result=_medium_result,
-        )
+        _kw: dict = {
+            "sample_rate": sr_native,
+            "file_ext": file_ext,
+            "forensic_medium_result": _medium_result,
+        }
         if scan_progress_callback is not None:
             _kw["progress_callback"] = scan_progress_callback
         return scanner.scan(audio_native, **_kw)
 
     def _run_restorability() -> object:
         from backend.core.restorability_estimator import estimate_restorability as _er
+
         return _er(audio_48k, 48_000, material=_material_str)
 
     _step_fns = {
@@ -280,9 +327,11 @@ def run_pre_analysis(
     # BatchProcessingThread loads the audio again prevents SIGABRT (malloc corruption)
     # caused by glibc reusing bloated free-lists when pedalboard calls malloc.
     import gc as _gc_pa
+
     _gc_pa.collect()
     try:
         import ctypes as _ct_pa
+
         _ct_pa.CDLL("libc.so.6").malloc_trim(0)
     except Exception as _trim_exc:
         logger.debug("malloc_trim unavailable (non-glibc platform): %s", _trim_exc)

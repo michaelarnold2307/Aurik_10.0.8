@@ -577,7 +577,13 @@ class SGMSEPlusPlugin:
             F_orig = x_t.shape[2]
             T_orig = x_t.shape[3]
             target_frames = max(32, int(self._num_frames))
-            step = max(16, target_frames // 2)
+
+            # CPU safety: reduce overlap for short clips to avoid test-timeout stalls
+            # in TorchScript inference while keeping overlap-add for longer material.
+            if T_orig <= target_frames * 4:
+                step = target_frames
+            else:
+                step = max(16, target_frames // 2)
 
             # Process with model-native frame windows and overlap-add in STFT domain.
             out_acc = np.zeros((1, 2, F_orig, T_orig), dtype=np.float32)
@@ -585,6 +591,17 @@ class SGMSEPlusPlugin:
             starts = list(range(0, max(1, T_orig), step))
             if starts[-1] != max(0, T_orig - target_frames):
                 starts.append(max(0, T_orig - target_frames))
+
+            # Hard runtime guard: if chunk count explodes, use DSP fallback to preserve
+            # deterministic completion instead of risking long-running TorchScript loops.
+            if len(starts) > 12:
+                logger.warning(
+                    "SGMSE+ TorchScript skipped: chunk_count=%d too high (target_frames=%d, T=%d) — WPE fallback.",
+                    len(starts),
+                    target_frames,
+                    T_orig,
+                )
+                return self._wpe_fallback(mono, _SR)
 
             with torch.no_grad():
                 t_t = torch.tensor([float(sigma)], dtype=torch.float32)

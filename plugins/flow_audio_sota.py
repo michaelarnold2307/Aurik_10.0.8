@@ -323,7 +323,9 @@ def _synthesize_sinusoidal(
     # Robust level match (no RMS normalization)
     peak = np.max(np.abs(output))
     if peak > 0:
-        target_level = float(np.median(np.abs(np.array([a for _, a in partials[:8]], dtype=np.float64)))) if partials else 0.1
+        target_level = (
+            float(np.median(np.abs(np.array([a for _, a in partials[:8]], dtype=np.float64)))) if partials else 0.1
+        )
         current_level = float(np.percentile(np.abs(output), 90)) + 1e-10
         output *= target_level / current_level
 

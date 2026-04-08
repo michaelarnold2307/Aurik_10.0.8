@@ -567,5 +567,5 @@ if __name__ == "__main__":
 
     logger.debug("Mean: %s", metrics.mean.shape)
     logger.debug("Std: %s", metrics.std.shape)
-    logger.debug("Confidence: %s", metrics.confidence.shape if metrics.confidence is not None else 'N/A')
+    logger.debug("Confidence: %s", metrics.confidence.shape if metrics.confidence is not None else "N/A")
     logger.debug("Confident predictions: %s/%s", is_confident.sum().item(), len(is_confident))

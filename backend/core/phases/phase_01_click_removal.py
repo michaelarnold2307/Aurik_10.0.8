@@ -294,6 +294,25 @@ class ClickRemovalPhase(PhaseInterface):
         # damit reduzierte Strength die Verarbeitungsintensität senkt.
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "total_clicks_removed": 0,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["Click removal skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
         if 0.0 < _effective_strength < 1.0:
             result_audio = (audio + _effective_strength * (result_audio - audio)).astype(audio.dtype)
             result_audio = np.clip(result_audio, -1.0, 1.0)
@@ -322,6 +341,8 @@ class ClickRemovalPhase(PhaseInterface):
                 "scientific_ref": "Godsill & Rayner (1998), Välimäki et al. (2007)",
                 "benchmark": "iZotope RX De-click (basic)",
                 "execution_time_seconds": execution_time,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
             },
@@ -887,9 +908,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = ClickRemovalPhase()
         result = phase.process(audio.copy(), material_type=material, preserve_transients=True)
@@ -899,20 +920,20 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Total Clicks Removed: %s", result.modifications['total_clicks_removed'])
-            logger.debug("   - Short: %s", result.modifications['short_clicks'])
-            logger.debug("   - Medium: %s", result.modifications['medium_clicks'])
-            logger.debug("   - Long: %s", result.modifications['long_clicks'])
-            logger.debug("   Transients Preserved: %s", result.modifications['transients_preserved'])
-            logger.debug("   Preservation Ratio: %s", format(result.modifications['preservation_ratio'], '.2%'))
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Total Clicks Removed: %s", result.modifications["total_clicks_removed"])
+            logger.debug("   - Short: %s", result.modifications["short_clicks"])
+            logger.debug("   - Medium: %s", result.modifications["medium_clicks"])
+            logger.debug("   - Long: %s", result.modifications["long_clicks"])
+            logger.debug("   Transients Preserved: %s", result.modifications["transients_preserved"])
+            logger.debug("   Preservation Ratio: %s", format(result.modifications["preservation_ratio"], ".2%"))
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("❌ Processing Failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Click Removal v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata['scientific_ref'])
-    logger.debug("Benchmark: %s", result.metadata['benchmark'])
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", result.metadata["benchmark"])
     logger.debug("Quality Impact: 0.95 (Professional-Grade)")

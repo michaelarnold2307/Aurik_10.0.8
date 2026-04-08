@@ -76,7 +76,7 @@
 
 ### v9.10.123 Nachtrag 2 — Referenz-Paradoxon, Interaktions-Guard, Artefakt-Gate (6. April 2026)
 
-- **§0a Rauschboden**: Nicht nur *Niveau* sondern auch *Textur* des Restrauschens muss dem
+- **§0a Rauschboden**: Nicht nur **Niveau** sondern auch **Textur** des Restrauschens muss dem
   originalen Trägerprofil entsprechen. „Kein weißes Rauschen nach Vinyl-Denoising."
 - **§2.44 HPI-Gate — Referenz-Paradoxon explizit gelöst**: `timbral_fidelity` misst jetzt
   **strukturelle Klangkohärenz** (Spectral-Envelope-Kontinuität, Crest-Factor-Konsistenz,

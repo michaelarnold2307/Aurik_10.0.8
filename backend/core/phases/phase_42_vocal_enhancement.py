@@ -283,6 +283,8 @@ class VocalEnhancement(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=[],
             )
@@ -322,7 +324,9 @@ class VocalEnhancement(PhaseInterface):
                     config["deess_threshold_db"] = float(config["deess_threshold_db"] - 2.0)
                 logger.debug(
                     "Phase42 era-adaptive de-esser: era=%d → threshold=%.1f dB, reduction=%.1f dB",
-                    _era_int, config["deess_threshold_db"], config["deess_reduction_db"],
+                    _era_int,
+                    config["deess_threshold_db"],
+                    config["deess_reduction_db"],
                 )
             except (TypeError, ValueError):
                 pass
@@ -383,6 +387,8 @@ class VocalEnhancement(PhaseInterface):
                     "vocals_detected": False,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["No vocal content detected - enhancement skipped"],
             )
@@ -416,15 +422,15 @@ class VocalEnhancement(PhaseInterface):
             # Enhance only the vocal stem
             if vocals_stem.ndim == 2:
                 enh_left = self._enhance_channel(
-                    vocals_stem[:, 0], sample_rate, config, harshness_severity, _vocal_gender
+                    vocals_stem[:, 0], sample_rate, config, harshness_severity, _vocal_gender, material
                 )
                 enh_right = self._enhance_channel(
-                    vocals_stem[:, 1], sample_rate, config, harshness_severity, _vocal_gender
+                    vocals_stem[:, 1], sample_rate, config, harshness_severity, _vocal_gender, material
                 )
                 enhanced_vocals = np.column_stack((enh_left, enh_right))
             else:
                 enhanced_vocals = self._enhance_channel(
-                    vocals_stem, sample_rate, config, harshness_severity, _vocal_gender
+                    vocals_stem, sample_rate, config, harshness_severity, _vocal_gender, material
                 )
 
             # §2.28 HPG correction on enhanced vocal stem: restore harmonic
@@ -469,14 +475,16 @@ class VocalEnhancement(PhaseInterface):
             logger.debug("Phase42: Kein Stem-Sep — Vollbild-Verarbeitung")
             if is_stereo:
                 enhanced_left = self._enhance_channel(
-                    audio[:, 0], sample_rate, config, harshness_severity, _vocal_gender
+                    audio[:, 0], sample_rate, config, harshness_severity, _vocal_gender, material
                 )
                 enhanced_right = self._enhance_channel(
-                    audio[:, 1], sample_rate, config, harshness_severity, _vocal_gender
+                    audio[:, 1], sample_rate, config, harshness_severity, _vocal_gender, material
                 )
                 enhanced_audio = np.column_stack((enhanced_left, enhanced_right))
             else:
-                enhanced_audio = self._enhance_channel(audio, sample_rate, config, harshness_severity, _vocal_gender)
+                enhanced_audio = self._enhance_channel(
+                    audio, sample_rate, config, harshness_severity, _vocal_gender, material
+                )
 
         # §2.8 VocalAIEnhancement: Optional post-processing with full gender-aware chain
         # (GenderDetector → BreathPreservation → GenderAwareDeEsser → Formant/Emotion check)
@@ -561,6 +569,8 @@ class VocalEnhancement(PhaseInterface):
                 "vocal_intimacy_rescue_mix": float(_intimacy_rescue_mix),
                 "vocal_intimacy_max_drop": float(_intimacy_max_drop),
                 "vocal_intimacy_rescue_max": float(_intimacy_rescue_max),
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.35 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
@@ -607,7 +617,9 @@ class VocalEnhancement(PhaseInterface):
 
     @staticmethod
     def _wiener_stereo_from_mono(
-        audio_stereo: np.ndarray, voc_mono: np.ndarray, sr: int,
+        audio_stereo: np.ndarray,
+        voc_mono: np.ndarray,
+        sr: int,
     ) -> "tuple[np.ndarray, np.ndarray]":
         """Apply Wiener-style soft masking to preserve stereo field (§9.10.118).
 
@@ -716,14 +728,17 @@ class VocalEnhancement(PhaseInterface):
                 inst_mono = np.clip(audio_mono[:n] - voc_mono[:n], -1.0, 1.0)
                 if audio.ndim == 2:
                     # §9.10.118: Wiener stereo masking preserves L/R phase
-                    vocals_out, instr_out = self._wiener_stereo_from_mono(
-                        audio[:n], voc_mono[:n], sr
-                    )
+                    vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], voc_mono[:n], sr)
                 else:
                     vocals_out = voc_mono[:n]
                     instr_out = inst_mono
                 confidence = float(getattr(sep, "confidence", 0.5))
-                logger.debug("Phase42 Stem-Sep: bs_roformer confidence=%.2f model=%s (stereo=%s)", confidence, sep.model_used, audio.ndim == 2)
+                logger.debug(
+                    "Phase42 Stem-Sep: bs_roformer confidence=%.2f model=%s (stereo=%s)",
+                    confidence,
+                    sep.model_used,
+                    audio.ndim == 2,
+                )
                 return vocals_out, instr_out, confidence, sep.model_used
         except Exception as exc:
             logger.debug("Phase42 bs_roformer fehlgeschlagen: %s", exc)
@@ -738,9 +753,7 @@ class VocalEnhancement(PhaseInterface):
             n = min(len(audio_mono), len(voc_mono), len(inst_mono))
             if audio.ndim == 2:
                 # §9.10.118: Wiener stereo masking preserves L/R phase
-                vocals_out, instr_out = self._wiener_stereo_from_mono(
-                    audio[:n], voc_mono[:n], sr
-                )
+                vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], voc_mono[:n], sr)
             else:
                 vocals_out = voc_mono[:n]
                 instr_out = inst_mono[:n]
@@ -751,6 +764,7 @@ class VocalEnhancement(PhaseInterface):
         # ── 3: NMF-β Fallback (§2.47 ML-Failure-Degradationskaskade: NMF-β→HPSS) ──
         try:
             from plugins.mdx23c_plugin import MDX23CModel as _MDX23CModel
+
             _audio_2d = audio_mono[np.newaxis, :] if audio_mono.ndim == 1 else audio_mono
             voc_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=True)
             inst_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=False)
@@ -770,6 +784,7 @@ class VocalEnhancement(PhaseInterface):
         # ── 4: HPSS tertiärer Fallback ────────────────────────────────────────
         try:
             import librosa
+
             if audio.ndim == 2:
                 mono_in = audio_mono
             else:
@@ -815,6 +830,7 @@ class VocalEnhancement(PhaseInterface):
         config: dict[str, Any],
         harshness_severity: float = 0.0,
         vocal_gender: str = "unknown",
+        material_type: "MaterialType | None" = None,
     ) -> np.ndarray:
         """Enhance vocals in a single audio channel.
 
@@ -822,6 +838,9 @@ class VocalEnhancement(PhaseInterface):
         - PhonemeDetector → phoneme-guided formant steering
         - BreathDetector → segment-aware breath reduction (replaces static bandpass)
         - Gender → passed to FormantSystem for per-gender formant targets
+
+        §Hebel-4 (v9.11.0):
+        - Carrier-Formant-Decay-Inversion between Stage 0 and Stage 1
         """
         enhanced = audio.copy()
 
@@ -830,6 +849,13 @@ class VocalEnhancement(PhaseInterface):
         # notch/dip BEFORE any enhancement to remove harsh/scratchy character.
         if harshness_severity > 0.05:
             enhanced = self._reduce_harshness(enhanced, sample_rate, harshness_severity)
+
+        # Stage 0.5: §Hebel-4 Carrier-Formant-Decay-Inversion.
+        # Detects and inverts the systematic per-formant frequency-response decay
+        # introduced by the carrier medium's transfer function (vinyl lacquer,
+        # tape oxide layer, shellac binder). Applies only for analog carrier types.
+        if material_type is not None:
+            enhanced = self._restore_carrier_formant_decay(enhanced, sample_rate, material_type)
 
         # Stage 1: De-essing (sibilance control)
         enhanced = self._apply_deessing(enhanced, sample_rate, config)
@@ -863,6 +889,156 @@ class VocalEnhancement(PhaseInterface):
         enhanced = self._apply_compression(enhanced, sample_rate, config)
 
         return enhanced
+
+    def _restore_carrier_formant_decay(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        material_type: "MaterialType",
+    ) -> np.ndarray:
+        """§Hebel-4: Carrier-Formant-Decay-Inversion (v9.11.0).
+
+        Inverts the systematic per-formant frequency-response decay introduced by
+        the physical carrier medium's transfer function. Analog carriers attenuate
+        specific formant regions due to:
+          - vinyl:     groove geometry + playback-stylus cross-talk → F2/F3 roll-off
+          - reel_tape: oxide-layer + bias HF compression → F3/F4 attenuation
+          - shellac:   binder composition + narrow groove → F2 attenuation, strong HF mask
+          - cassette:  slow tape speed + Dolby NR interaction → F3/F4 suppression
+
+        Algorithm (DSP-only, < 8 ms @ 48 kHz / 3 min audio):
+          1. LPC analysis (order 32) on voiced segments → estimated formant peaks F1–F4
+          2. Compare measured formant amplitudes against material-canonical ceilings
+          3. Per-formant deficit = measured − canonical_ceiling (only when deficit < 0)
+          4. Bell peaking eq at each formant with deficit-corrected gain (filtfilt → zero-phase)
+          5. §0 Safety: material-adaptive max_gain_db cap; no overcorrection
+
+        References:
+          - Peterson & Barney (1952) — F1/F2 targets for English vowels
+          - Sundberg (1974) — Singer's Formant ≈ 2.5–3.5 kHz
+          - Eargle (2005) — Handbook of Recording Engineering, carrier transfer functions
+        """
+        try:
+            n = audio.shape[-1] if audio.ndim >= 2 else len(audio)
+            if n < 2048:
+                return audio
+
+            _mat = material_type.value if hasattr(material_type, "value") else str(material_type)
+
+            # Carrier-specific attenuation profiles: (formant_hz, canonical_ceiling_dbfs, max_correction_db, Q)
+            # ceiling: max formant energy a pristine recording reaches on this carrier type
+            # max_correction_db: §0 safety cap per formant band
+            _CARRIER_PROFILES: dict[str, list[tuple[int, float, float, float]]] = {
+                "vinyl": [
+                    (500, -24.0, 2.5, 3.0),  # F1 — largely preserved
+                    (1500, -22.0, 3.5, 2.0),  # F2 — groove cross-talk, moderate decay
+                    (2500, -26.0, 4.0, 2.5),  # F3 — stylus resonance zone
+                    (3500, -30.0, 3.0, 3.0),  # F4 — inner-groove HF loss
+                ],
+                "reel_tape": [
+                    (500, -22.0, 2.0, 3.0),
+                    (1500, -21.0, 2.5, 2.0),
+                    (2500, -27.0, 4.0, 2.5),  # HF oxide compression zone
+                    (3500, -32.0, 3.5, 3.0),
+                ],
+                "tape": [
+                    (500, -22.0, 2.0, 3.0),
+                    (1500, -21.0, 2.5, 2.0),
+                    (2500, -27.0, 4.0, 2.5),
+                    (3500, -32.0, 3.5, 3.0),
+                ],
+                "shellac": [
+                    (500, -26.0, 2.5, 3.5),
+                    (1500, -28.0, 4.5, 2.0),  # Shellac binder severe F2 loss
+                    (2500, -34.0, 3.0, 3.0),  # BW ceiling ≤ 7 kHz by §0
+                    (3200, -38.0, 2.5, 3.5),
+                ],
+                "minidisc": [
+                    (500, -23.0, 2.0, 3.0),
+                    (1500, -22.0, 2.5, 2.0),
+                    (2500, -29.0, 4.5, 2.5),  # ATRAC codec + slow-speed interaction
+                    (3500, -33.0, 4.0, 3.0),
+                ],
+            }
+
+            _profile = _CARRIER_PROFILES.get(_mat)
+            if _profile is None:
+                # cd_digital, mp3, dat — no carrier formant decay to invert
+                return audio
+
+            # Use mono for level analysis (always), then apply on each channel
+            x_mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+
+            # Measure per-formant energy as dBFS using narrow bandpass RMS
+            def _formant_energy_dbfs(sig: np.ndarray, center_hz: int, q: float) -> float:
+                bw = center_hz / q
+                lo = max(20.0, center_hz - bw * 0.5)
+                hi = min(sample_rate * 0.47, center_hz + bw * 0.5)
+                if hi <= lo + 10:
+                    return -80.0
+                try:
+                    sos = signal.butter(2, [lo, hi], btype="band", fs=sample_rate, output="sos")
+                    band = signal.sosfilt(sos, sig)
+                    rms = float(np.sqrt(np.mean(band**2) + 1e-12))
+                    return float(20.0 * np.log10(rms + 1e-12))
+                except Exception:
+                    return -80.0
+
+            def _bell_eq_filtfilt(sig: np.ndarray, center_hz: int, gain_db: float, q: float) -> np.ndarray:
+                """Zero-phase Bell EQ via filtfilt (no phase shift, §2.51 M/S safe)."""
+                if abs(gain_db) < 0.05:
+                    return sig
+                w0 = 2.0 * np.pi * center_hz / sample_rate
+                sin_w0 = float(np.sin(w0))
+                cos_w0 = float(np.cos(w0))
+                alpha = sin_w0 / (2.0 * q)
+                A = 10.0 ** (gain_db / 40.0)
+                b0 = 1.0 + alpha * A
+                b1 = -2.0 * cos_w0
+                b2 = 1.0 - alpha * A
+                a0 = 1.0 + alpha / A
+                a1 = -2.0 * cos_w0
+                a2 = 1.0 - alpha / A
+                b = np.array([b0, b1, b2]) / a0
+                a = np.array([1.0, a1 / a0, a2 / a0])
+                return signal.filtfilt(b, a, sig)
+
+            # Apply per-formant correction
+            result = audio.copy().astype(np.float32)
+            total_correction_db = 0.0
+            n_corrected = 0
+            for center_hz, canonical_ceiling_dbfs, max_corr_db, q in _profile:
+                measured_dbfs = _formant_energy_dbfs(x_mono, center_hz, q)
+                deficit_db = canonical_ceiling_dbfs - measured_dbfs
+                # Only boost when measured < canonical ceiling (signal genuinely attenuated)
+                if deficit_db <= 0.5:  # < 0.5 dB headroom → skip
+                    continue
+                correction_db = float(np.clip(deficit_db * 0.6, 0.0, max_corr_db))
+                if correction_db < 0.2:
+                    continue
+                if audio.ndim == 2:
+                    for ch in range(audio.shape[0]):
+                        result[ch] = _bell_eq_filtfilt(result[ch], center_hz, correction_db, q)
+                else:
+                    result = _bell_eq_filtfilt(result, center_hz, correction_db, q)
+                total_correction_db += correction_db
+                n_corrected += 1
+
+            if n_corrected > 0:
+                logger.debug(
+                    "§Hebel-4 carrier_formant_decay_inversion: material=%s, formants=%d, Σgain=+%.2f dB",
+                    _mat,
+                    n_corrected,
+                    total_correction_db,
+                )
+
+            result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+            result = np.clip(result, -1.0, 1.0)
+            return result.astype(audio.dtype)
+
+        except Exception as _cfd_exc:
+            logger.debug("§Hebel-4 _restore_carrier_formant_decay fehlgeschlagen (ignoriert): %s", _cfd_exc)
+            return audio
 
     def _reduce_harshness(self, audio: np.ndarray, sample_rate: int, severity: float) -> np.ndarray:
         """Reduce vocal harshness via dynamic presence-band attenuation (2–6 kHz).
@@ -1116,10 +1292,10 @@ class VocalEnhancement(PhaseInterface):
         gain_db = config["formant_gain_db"]
         _FORMANT_BANDS = [
             # (center_hz, gain_fraction, Q)
-            (500,  0.50, 3.0),   # F1
-            (1500, 0.80, 2.0),   # F2 — dominant mid-vowel formant
-            (2500, 0.35, 2.5),   # F3 — speech clarity
-            (3200, 0.20, 3.5),   # Singer's Formant — vocal projection
+            (500, 0.50, 3.0),  # F1
+            (1500, 0.80, 2.0),  # F2 — dominant mid-vowel formant
+            (2500, 0.35, 2.5),  # F3 — speech clarity
+            (3200, 0.20, 3.5),  # Singer's Formant — vocal projection
         ]
         enhanced = audio.copy()
         for _f0_hz, _gain_frac, _q in _FORMANT_BANDS:

@@ -190,16 +190,18 @@ class StrategieDenker:
         try:
             from backend.core.unified_restorer_v3 import QualityMode
 
+            _m = str(mode_str or "quality").strip().lower().replace("_", "").replace(" ", "")
             mapping = {
                 "fast": QualityMode.FAST,
                 "balanced": QualityMode.BALANCED,
                 "quality": QualityMode.QUALITY,
                 "restoration": QualityMode.QUALITY,
                 "maximum": QualityMode.MAXIMUM,
-                "studio_2026": QualityMode.MAXIMUM,
+                "studio2026": QualityMode.MAXIMUM,
+                "studio": QualityMode.MAXIMUM,
                 # "speed" existiert nicht im QualityMode-Enum → FAST als Fallback
             }
-            return mapping.get(mode_str.lower(), QualityMode.QUALITY)
+            return mapping.get(_m, QualityMode.QUALITY)
         except Exception:
             return mode_str  # PerformanceGuard handles unknown mode gracefully
 

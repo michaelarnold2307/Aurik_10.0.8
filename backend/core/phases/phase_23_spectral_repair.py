@@ -324,7 +324,31 @@ class SpectralRepair(PhaseInterface):
         # Sparse defect coverage -> lower inpainting intensity to preserve unaffected texture.
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        repair_strength = float(np.clip(repair_strength * phase_locality_factor, 0.0, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        repair_strength = float(np.clip(repair_strength * _effective_strength, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return PhaseResult(
+                success=True,
+                audio=passthrough,
+                execution_time_seconds=time.time() - start_time,
+                metadata={
+                    "material": material.name,
+                    "defect_reduction_percent": 0.0,
+                    "spectral_coherence": 1.0,
+                    "repair_strength": 0.0,
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "rt_factor": 0.0,
+                    "nperseg": stft_cfg["nperseg"],
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=["Repair skipped due to zero effective strength"],
+            )
 
         if repair_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -339,8 +363,11 @@ class SpectralRepair(PhaseInterface):
                     "spectral_coherence": 1.0,
                     "repair_strength": 0.0,
                     "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": _effective_strength,
                     "rt_factor": 0.0,
                     "nperseg": stft_cfg["nperseg"],
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Repair skipped due to zero effective strength"],
             )
@@ -412,10 +439,12 @@ class SpectralRepair(PhaseInterface):
                 # Side: declip mildly (half strength) to avoid breaking stereo field
                 _side_clip = float(np.clip(_clip_level * 1.05, 0.85, 1.0))
                 _repaired_side = self._admm_declip(_side, _side_clip, sample_rate)
-                repaired_audio = np.column_stack((
-                    (_repaired_mid + _repaired_side) / _sqrt2,
-                    (_repaired_mid - _repaired_side) / _sqrt2,
-                ))
+                repaired_audio = np.column_stack(
+                    (
+                        (_repaired_mid + _repaired_side) / _sqrt2,
+                        (_repaired_mid - _repaired_side) / _sqrt2,
+                    )
+                )
             else:
                 repaired_audio = self._admm_declip(audio, _clip_level, sample_rate)
         else:
@@ -429,10 +458,12 @@ class SpectralRepair(PhaseInterface):
                 # Side: minimal repair at half strength to preserve stereo field
                 _side_strength = repair_strength * 0.5
                 _repaired_side = self._repair_channel(_side, sample_rate, stft_cfg, thresholds, _side_strength)
-                repaired_audio = np.column_stack((
-                    (_repaired_mid + _repaired_side) / _sqrt2,
-                    (_repaired_mid - _repaired_side) / _sqrt2,
-                ))
+                repaired_audio = np.column_stack(
+                    (
+                        (_repaired_mid + _repaired_side) / _sqrt2,
+                        (_repaired_mid - _repaired_side) / _sqrt2,
+                    )
+                )
             else:
                 repaired_audio = self._repair_channel(audio, sample_rate, stft_cfg, thresholds, repair_strength)
 
@@ -455,12 +486,15 @@ class SpectralRepair(PhaseInterface):
                 "spectral_coherence": float(spectral_coherence),
                 "repair_strength": float(repair_strength),
                 "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
                 "rt_factor": float(rt_factor),
                 "nperseg": stft_cfg["nperseg"],
                 "apollo_preproc_applied": _apollo_preproc_applied,
                 "apollo_preproc_hf_gain_db": _apollo_hf_gain_db,
                 "ml_guard_events": list(self._ml_guard_events),
                 "deferred_for_kmv": ["phase_23_spectral_repair"] if self._ml_guard_events else [],
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.6 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

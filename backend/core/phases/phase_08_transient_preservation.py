@@ -209,6 +209,31 @@ class TransientPreservationPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
+        # §2.47 PMGG-Retry: locality_factor skaliert finale Intensität bei Retries
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "transient_preserved": False,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["Transient preservation skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
+
         # Get material-specific parameters
         params = self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"])
 
@@ -233,6 +258,8 @@ class TransientPreservationPhase(PhaseInterface):
                     "algorithm": "none",
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -268,6 +295,11 @@ class TransientPreservationPhase(PhaseInterface):
         enhanced = np.nan_to_num(enhanced, nan=0.0, posinf=0.0, neginf=0.0)
         enhanced = np.clip(enhanced, -1.0, 1.0)
 
+        # §2.47 PMGG-Retry: phase_locality_factor als finaler Wet/Dry-Regler
+        if _effective_strength < 1.0:
+            enhanced = audio + _effective_strength * (enhanced - audio)
+            enhanced = np.clip(enhanced, -1.0, 1.0)
+
         return create_phase_result(
             audio=enhanced,
             modifications={
@@ -277,6 +309,8 @@ class TransientPreservationPhase(PhaseInterface):
                 "peak_enhancement_db": peak_enhancement_db,
                 "num_bands": len(bands),
                 "band_splits_hz": self.BAND_SPLITS,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
                 "material_type": material_type,
             },
             warnings=[f"High transient density: {transient_density:.1f}/sec"] if transient_density > 10 else [],
@@ -291,6 +325,10 @@ class TransientPreservationPhase(PhaseInterface):
                 "benchmark": "SPL Transient Designer, Waves Trans-X, iZotope Neutron Transient Shaper, Softube Transient Shaper",
                 "algorithm_version": "2.0_professional",
                 "execution_time_seconds": execution_time,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -536,9 +574,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = TransientPreservationPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material)
@@ -548,21 +586,21 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Transients Detected: %s", result.modifications['num_transients'])
-            logger.debug("   Transient Density: %.1f/sec", result.modifications['transient_density_per_sec'])
-            logger.debug("   Peak Enhancement: %.1f dB", result.modifications['peak_enhancement_db'])
-            logger.debug("   Num Bands: %s", result.modifications['num_bands'])
-            logger.debug("   Band Splits: %s Hz", result.modifications['band_splits_hz'])
-            logger.debug("   Attack Gain (per band): %s dB", result.metadata['attack_gain_db_per_band'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Transients Detected: %s", result.modifications["num_transients"])
+            logger.debug("   Transient Density: %.1f/sec", result.modifications["transient_density_per_sec"])
+            logger.debug("   Peak Enhancement: %.1f dB", result.modifications["peak_enhancement_db"])
+            logger.debug("   Num Bands: %s", result.modifications["num_bands"])
+            logger.debug("   Band Splits: %s Hz", result.modifications["band_splits_hz"])
+            logger.debug("   Attack Gain (per band): %s dB", result.metadata["attack_gain_db_per_band"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("⏭️  Transient Preservation Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Transient Preservation v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata.get('algorithm', 'N/A'))
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata.get("algorithm", "N/A"))
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.92 (Professional-Grade)")

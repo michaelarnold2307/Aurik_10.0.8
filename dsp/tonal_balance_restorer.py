@@ -569,7 +569,7 @@ class LowEndClarityEnhancer:
 
         self.metrics["correction_db"] = -6.0 * muddiness * self.strength * self.target_tightness
 
-        logger.info("[LowEndClarity] Applied %.1f dB mud reduction", self.metrics['correction_db'])
+        logger.info("[LowEndClarity] Applied %.1f dB mud reduction", self.metrics["correction_db"])
 
         return audio_processed
 
@@ -814,7 +814,7 @@ class FrequencyDeMasker:
         analysis = self.analyze_masking(audio, sr)
         self.metrics = {"masking_detected": analysis["masking_count"], "bands_adjusted": analysis["masking_count"]}
 
-        logger.info("[FrequencyDeMasker] Detected %s masked bands out of %s", analysis['masking_count'], self.n_bands)
+        logger.info("[FrequencyDeMasker] Detected %s masked bands out of %s", analysis["masking_count"], self.n_bands)
 
         if analysis["masking_count"] == 0:
             logger.info("[FrequencyDeMasker] No masking detected, no correction needed")
@@ -1043,6 +1043,7 @@ if __name__ == "__main__":
     # Load audio
     logger.info("\nLoading: %s", input_file)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(input_file)
     audio, sr = _res["audio"], int(_res["sr"])
 

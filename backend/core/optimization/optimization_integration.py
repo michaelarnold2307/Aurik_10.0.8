@@ -421,8 +421,8 @@ class OptimizationIntegration:
         strategy["optimized_params"] = params
 
         logger.info("Processing strategy recommended for %s", material_type)
-        logger.info("  Models: %s", strategy['recommended_models'])
-        logger.info("  DSP chain: %s", strategy['recommended_dsp_chain'])
+        logger.info("  Models: %s", strategy["recommended_models"])
+        logger.info("  DSP chain: %s", strategy["recommended_dsp_chain"])
 
         return strategy
 

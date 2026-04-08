@@ -11,11 +11,9 @@ import soundfile as sf
 # AdaptiveProcessingPipeline initialization (outside our code ownership).
 pytestmark = [
     pytest.mark.filterwarnings(
-        "ignore:torch\.nn\.utils\.weight_norm is deprecated in favor of torch\.nn\.utils\.parametrizations\.weight_norm\.:UserWarning"
+        r"ignore:torch\.nn\.utils\.weight_norm is deprecated in favor of torch\.nn\.utils\.parametrizations\.weight_norm\.:UserWarning"
     ),
-    pytest.mark.filterwarnings(
-        "ignore:pkg_resources is deprecated as an API\.:UserWarning"
-    ),
+    pytest.mark.filterwarnings(r"ignore:pkg_resources is deprecated as an API\.:UserWarning"),
 ]
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

@@ -719,7 +719,6 @@ class AuthenticityMetricsExtended:
 if __name__ == "__main__":
     import argparse
 
-    import soundfile as sf
 
     parser = argparse.ArgumentParser(description="Genre-Specific Authenticity Detector")
     parser.add_argument("input", help="Input audio file")
@@ -732,6 +731,7 @@ if __name__ == "__main__":
     # Load audio
     logger.debug("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio = np.asarray(_res["audio"], dtype=np.float32)
     sr = int(_res["sr"])
@@ -745,9 +745,9 @@ if __name__ == "__main__":
         analyzer = AuthenticityMetricsExtended()
         metrics = analyzer.analyze(audio, sr)
 
-        logger.debug("\n%s", '=' * 60)
+        logger.debug("\n%s", "=" * 60)
         logger.debug("GENRE-SPECIFIC AUTHENTICITY METRICS:")
-        logger.debug("%s", '=' * 60)
+        logger.debug("%s", "=" * 60)
         for key, value in metrics.items():
             if key != "detected_elements":
                 logger.debug("\n%s:", key.upper())
@@ -756,7 +756,7 @@ if __name__ == "__main__":
                         logger.debug("  %s: %.4f", k, v)
                     else:
                         logger.debug("  %s: %s", k, v)
-        logger.debug("%s\n", '=' * 60)
+        logger.debug("%s\n", "=" * 60)
     else:
         # Single detector
         if args.detector == "finger":
@@ -773,12 +773,12 @@ if __name__ == "__main__":
         audio_mono = audio[0] if audio.ndim == 2 else audio
         metrics = detector.detect(audio_mono, sr)
 
-        logger.debug("\n%s", '=' * 60)
+        logger.debug("\n%s", "=" * 60)
         logger.debug("%s DETECTOR METRICS:", args.detector.upper())
-        logger.debug("%s", '=' * 60)
+        logger.debug("%s", "=" * 60)
         for k, v in metrics.items():
             if isinstance(v, float):
                 logger.debug("%s: %.4f", k, v)
             else:
                 logger.debug("%s: %s", k, v)
-        logger.debug("%s\n", '=' * 60)
+        logger.debug("%s\n", "=" * 60)

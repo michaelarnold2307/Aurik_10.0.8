@@ -15,24 +15,25 @@ Abgedeckt:
 
 import threading
 import uuid
-from unittest.mock import MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # Phase 12 — Konstanten-Invarianten
 # ---------------------------------------------------------------------------
+
 
 class TestPhase12QualityConstants:
     """Phase 12 muss 75 % Overlap (factor=4) und 2048er STFT-Fenster verwenden."""
 
     def _load_constants(self):
         from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
+
         inst = WowFlutterFix.__new__(WowFlutterFix)
         return inst
 
     def test_pitch_hop_factor_is_4(self):
         """PITCH_HOP_FACTOR muss 4 sein (75 % Overlap, kein Performance-Cut)."""
         from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
+
         assert WowFlutterFix.PITCH_HOP_FACTOR == 4, (
             "PITCH_HOP_FACTOR wurde auf 2 reduziert — das reicht nicht für 4–100 Hz Flutter! "
             "Nyquist verlangt mindestens 2 Samples pro Flatter-Zyklus. Bei 48 kHz und "
@@ -42,6 +43,7 @@ class TestPhase12QualityConstants:
     def test_stft_window_2048(self):
         """STFT_WINDOW_SIZE == 2048 → 23 Hz/Bin @ 48 kHz."""
         from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
+
         assert WowFlutterFix.STFT_WINDOW_SIZE == 2048, (
             f"STFT_WINDOW_SIZE={WowFlutterFix.STFT_WINDOW_SIZE}, erwartet 2048."
         )
@@ -49,9 +51,10 @@ class TestPhase12QualityConstants:
     def test_stft_hop_is_window_over_4(self):
         """STFT_HOP_SIZE muss 75 % des Fensters entsprechen (window // 4 * 1 = window//4)."""
         from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
+
         # hop = window / factor → window=2048, factor=4 → hop=512
         expected = WowFlutterFix.STFT_WINDOW_SIZE // WowFlutterFix.PITCH_HOP_FACTOR
-        assert WowFlutterFix.STFT_HOP_SIZE == expected, (
+        assert expected == WowFlutterFix.STFT_HOP_SIZE, (
             f"STFT_HOP_SIZE={WowFlutterFix.STFT_HOP_SIZE}, erwartet {expected} "
             f"(= {WowFlutterFix.STFT_WINDOW_SIZE} // {WowFlutterFix.PITCH_HOP_FACTOR})."
         )
@@ -65,6 +68,7 @@ class TestPhase12QualityConstants:
         PITCH_HOP_FACTOR=2 → hop = 4800//2 = 2400 Samples → über Nyquist für 10-20 Hz Flutter.
         """
         from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
+
         window_samples = int(getattr(WowFlutterFix, "PITCH_WINDOW_MS", 100) / 1000 * 48000)
         hop_samples = max(1, window_samples // WowFlutterFix.PITCH_HOP_FACTOR)
         nyquist_for_20hz_flutter = 48000 / (2 * 20)  # = 1200 samples
@@ -78,12 +82,13 @@ class TestPhase12QualityConstants:
 # UV3 — Phase-55-vor-Phase-56-Guard
 # ---------------------------------------------------------------------------
 
+
 class TestUV3Phase55Before56:
     """UV3 muss phase_55_diffusion_inpainting vor phase_56_spectral_band_gap_repair einreihen."""
 
     def _get_uv3_source(self) -> str:
-        import importlib.util
         import os
+
         uv3_path = os.path.join(
             os.path.dirname(__file__),
             "../../backend/core/unified_restorer_v3.py",
@@ -118,11 +123,13 @@ class TestUV3Phase55Before56:
 # QueueManager — reorder_items
 # ---------------------------------------------------------------------------
 
+
 class TestQueueManagerReorder:
     """QueueManager.reorder_items ordnet die interne _items-Dict korrekt um."""
 
     def _make_manager_with_items(self, n: int = 3):
         from Aurik910.core.queue_manager import QueueManager
+
         mgr = QueueManager()
         ids = []
         for i in range(n):
@@ -169,7 +176,7 @@ class TestQueueManagerReorder:
                 for _ in range(50):
                     mgr.reorder_items(list(reversed(ids)))
                     mgr.reorder_items(ids)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=_worker) for _ in range(4)]
@@ -195,6 +202,7 @@ class TestQueueManagerReorder:
 # QueueWidget — reorder_requested Signal + UserRole
 # ---------------------------------------------------------------------------
 
+
 class TestQueueWidgetDragDrop:
     """QueueWidget emittiert reorder_requested nach _on_rows_moved."""
 
@@ -207,10 +215,12 @@ class TestQueueWidgetDragDrop:
             return None, None  # headless CI — Qt würde crashen
         try:
             from PyQt5.QtWidgets import QApplication
+
             if not QApplication.instance():
                 QApplication(sys.argv[:1])
             from Aurik910.core.queue_manager import QueueManager
             from Aurik910.ui.queue_widget import QueueWidget
+
             mgr = QueueManager()
             return QueueWidget(mgr), mgr
         except Exception:
@@ -219,15 +229,14 @@ class TestQueueWidgetDragDrop:
     def test_reorder_requested_signal_exists(self):
         """QueueWidget muss ein reorder_requested-Signal haben."""
         from Aurik910.ui.queue_widget import QueueWidget
-        assert hasattr(QueueWidget, "reorder_requested"), (
-            "QueueWidget fehlt das Signal 'reorder_requested'."
-        )
+
+        assert hasattr(QueueWidget, "reorder_requested"), "QueueWidget fehlt das Signal 'reorder_requested'."
 
     def test_add_item_sets_user_role_in_source(self):
         """add_item-Quelltext muss Qt.UserRole setzen (robust ohne Qt-Display)."""
         import os
-        p = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                             "../../Aurik910/ui/queue_widget.py"))
+
+        p = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../Aurik910/ui/queue_widget.py"))
         with open(p, encoding="utf-8") as f:
             src = f.read()
         assert "Qt.UserRole" in src, "add_item setzt UserRole nicht in queue_widget.py!"
@@ -236,8 +245,8 @@ class TestQueueWidgetDragDrop:
     def test_on_rows_moved_source_emits_reorder_requested(self):
         """_on_rows_moved muss reorder_requested.emit() aufrufen."""
         import os
-        p = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                             "../../Aurik910/ui/queue_widget.py"))
+
+        p = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../Aurik910/ui/queue_widget.py"))
         with open(p, encoding="utf-8") as f:
             src = f.read()
         assert "_on_rows_moved" in src, "_on_rows_moved fehlt in queue_widget.py!"
@@ -246,8 +255,8 @@ class TestQueueWidgetDragDrop:
     def test_queue_list_internal_move_in_source(self):
         """queue_widget.py muss InternalMove-DragDropMode setzen."""
         import os
-        p = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                             "../../Aurik910/ui/queue_widget.py"))
+
+        p = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../Aurik910/ui/queue_widget.py"))
         with open(p, encoding="utf-8") as f:
             src = f.read()
         assert "InternalMove" in src, "InternalMove DragDropMode fehlt in queue_widget.py!"
@@ -258,6 +267,7 @@ class TestQueueWidgetDragDrop:
 # Phase 06 — Adaptive AudioSR-Blend-Alpha (v9.10.112)
 # ---------------------------------------------------------------------------
 
+
 class TestPhase06AdaptiveAlpha:
     """Alpha für AudioSR-Blending muss bei starkem Bandbreitendefizit deutlich größer sein."""
 
@@ -265,6 +275,7 @@ class TestPhase06AdaptiveAlpha:
     def _calc_alpha(quality_mode: str, rolloff_hz: float, restoration_strength: float = 0.7) -> float:
         """Repliziert die Alpha-Berechnung aus Phase 06 ohne ML-Modell zu laden."""
         import numpy as np
+
         alpha_by_mode = {"balanced": 0.25, "quality": 0.38, "maximum": 0.55, "restoration": 0.32}
         _alpha_base = alpha_by_mode.get(quality_mode, 0.25)
         _sample_rate = 48000
@@ -288,7 +299,7 @@ class TestPhase06AdaptiveAlpha:
 
     def test_no_deficit_alpha_at_baseline(self):
         """Rolloff nahe Nyquist → kein Boost, alpha ≈ alpha_base * restoration_strength."""
-        import numpy as np
+
         alpha = self._calc_alpha("quality", 22000.0)
         expected_max = 0.38 * 0.7 + 0.01
         assert alpha <= expected_max, f"Kein Defizit aber alpha={alpha:.3f} > {expected_max:.3f}"
@@ -300,7 +311,7 @@ class TestPhase06AdaptiveAlpha:
 
     def test_alpha_capped_at_0_80(self):
         """Alpha darf 0.80 nie überschreiten."""
-        import numpy as np
+
         for rolloff in [500.0, 1000.0, 2000.0]:
             alpha = self._calc_alpha("maximum", rolloff, restoration_strength=1.0)
             assert alpha <= 0.80, f"alpha={alpha:.3f} > 0.80 für rolloff={rolloff}"
@@ -310,6 +321,7 @@ class TestPhase06AdaptiveAlpha:
 # Phase 42 — Multi-Formant Bell-EQ Fallback (v9.10.112)
 # ---------------------------------------------------------------------------
 
+
 class TestPhase42MultiFormantFallback:
     """Multi-Formant-Fallback muss F1, F2, F3 und Singer's Formant abdecken."""
 
@@ -317,6 +329,7 @@ class TestPhase42MultiFormantFallback:
     def _apply_single_bell(audio, sr, gain_db=3.0):
         import numpy as np
         from scipy import signal
+
         w0 = 2 * np.pi * 1500 / sr
         alpha = np.sin(w0) / (2 * 2.0)
         A = 10 ** (gain_db / 40)
@@ -328,6 +341,7 @@ class TestPhase42MultiFormantFallback:
     def _apply_multi_formant(audio, sr, gain_db=3.0):
         import numpy as np
         from scipy import signal
+
         FORMANT_BANDS = [(500, 0.50, 3.0), (1500, 0.80, 2.0), (2500, 0.35, 2.5), (3200, 0.20, 3.5)]
         enhanced = audio.copy().astype(np.float64)
         for f0_hz, gfrac, q in FORMANT_BANDS:
@@ -348,6 +362,7 @@ class TestPhase42MultiFormantFallback:
     @staticmethod
     def _pink_noise(sr=48000, dur=0.5):
         import numpy as np
+
         t = np.linspace(0, dur, int(sr * dur), endpoint=False)
         sig = sum(np.sin(2 * np.pi * f * t) / f for f in [300, 500, 800, 1200, 1500, 2000, 2500, 3200])
         return (sig / (np.max(np.abs(sig)) + 1e-9) * 0.7).astype(np.float32)
@@ -356,6 +371,7 @@ class TestPhase42MultiFormantFallback:
         """Multi-Formant muss bei 500 Hz mehr anheben als der alte single-Bell."""
         import numpy as np
         from scipy import signal as sp
+
         sr = 48000
         audio = self._pink_noise(sr)
         single = self._apply_single_bell(audio, sr)
@@ -363,13 +379,15 @@ class TestPhase42MultiFormantFallback:
         f, psd_s = sp.welch(single, fs=sr, nperseg=2048)
         _, psd_m = sp.welch(multi, fs=sr, nperseg=2048)
         mask = (f >= 420) & (f <= 580)
-        assert float(np.mean(psd_m[mask])) > float(np.mean(psd_s[mask])), \
+        assert float(np.mean(psd_m[mask])) > float(np.mean(psd_s[mask])), (
             "F1 @ 500 Hz: Multi-Formant nicht stärker als single-Bell"
+        )
 
     def test_singers_formant_present(self):
         """3000–3500 Hz Band muss angehoben werden."""
         import numpy as np
         from scipy import signal as sp
+
         sr = 48000
         audio = self._pink_noise(sr)
         single = self._apply_single_bell(audio, sr)
@@ -382,12 +400,14 @@ class TestPhase42MultiFormantFallback:
 
     def test_no_nan_inf(self):
         import numpy as np
+
         audio = self._pink_noise()
         result = self._apply_multi_formant(audio, 48000)
         assert np.isfinite(result).all()
 
     def test_clipped_to_minus1_plus1(self):
         import numpy as np
+
         audio = self._pink_noise() * 0.9
         result = self._apply_multi_formant(audio, 48000)
         assert np.max(np.abs(result)) <= 1.0
@@ -397,12 +417,14 @@ class TestPhase42MultiFormantFallback:
 # Phase 20 — Late-Reverb Decay-Suppression (v9.10.112)
 # ---------------------------------------------------------------------------
 
+
 class TestPhase20LateReverbSuppression:
     """Late-Reverb-Suppression muss G_combined in Decay-Frames reduzieren."""
 
     @staticmethod
     def _calc_G_lr(E_log_db, strength=0.7, REF_HOP=512, sr=48000):
         import numpy as np
+
         n_t = len(E_log_db)
         dE = np.diff(E_log_db, prepend=E_log_db[0])
         _sm = max(3, min(7, n_t // 20))
@@ -410,13 +432,14 @@ class TestPhase20LateReverbSuppression:
         decay_mask = (dE_smooth < -0.5).astype(np.float32)
         _prot = max(1, int(0.040 * sr / REF_HOP))
         for _oi in np.where(dE > 2.0)[0]:
-            decay_mask[int(_oi):min(n_t, int(_oi) + _prot)] = 0.0
+            decay_mask[int(_oi) : min(n_t, int(_oi) + _prot)] = 0.0
         _penalty = float(np.clip(strength * 0.35, 0.0, 0.35))
         return np.clip(1.0 - _penalty * decay_mask, 0.60, 1.0).astype(np.float32), decay_mask
 
     def test_decay_tail_suppressed(self):
         """Frames mit exponentiell abfallender Energie erhalten G_lr < 1.0."""
         import numpy as np
+
         n_t = 100
         E = np.zeros(n_t)
         E[20] = 10.0
@@ -428,6 +451,7 @@ class TestPhase20LateReverbSuppression:
     def test_onset_protected(self):
         """Onset-Fenster (40 ms) darf nicht supprimiert werden."""
         import numpy as np
+
         n_t = 200
         E = np.zeros(n_t)
         E[10] = 15.0
@@ -441,6 +465,7 @@ class TestPhase20LateReverbSuppression:
     def test_minimum_gain_floor_0_60(self):
         """G_lr darf nie unter 0.60 sinken."""
         import numpy as np
+
         n_t = 50
         E = np.array([10.0 - 2.0 * i for i in range(n_t)])
         G_lr, _ = self._calc_G_lr(E, strength=1.0)
@@ -449,6 +474,7 @@ class TestPhase20LateReverbSuppression:
     def test_low_strength_minimal_penalty(self):
         """Bei strength=0.2 (> threshold) max. penalty ≈ 7 % → G_lr_min ≥ 0.90."""
         import numpy as np
+
         n_t = 80
         E = np.zeros(n_t)
         E[5] = 8.0

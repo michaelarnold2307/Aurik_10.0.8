@@ -707,6 +707,7 @@ def main():
     # Load audio
     logger.info("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -731,22 +732,22 @@ def main():
     # Print report
     logger.info("\n📊 Processing Report:")
     logger.info("-" * 60)
-    logger.info("Pick Attack: %.1f dB", report['pick_attack']['pick_attack_energy_change_db'])
-    logger.info("  Transients detected: %s", report['pick_attack']['transients_detected'])
+    logger.info("Pick Attack: %.1f dB", report["pick_attack"]["pick_attack_energy_change_db"])
+    logger.info("  Transients detected: %s", report["pick_attack"]["transients_detected"])
 
-    logger.info("\nString Resonance: %.1f dB", report['string_resonance']['fundamental_energy_change_db'])
+    logger.info("\nString Resonance: %.1f dB", report["string_resonance"]["fundamental_energy_change_db"])
     logger.info(
         f"  Harmonic enhancement: {'Yes' if report['string_resonance']['harmonic_enhancement_applied'] else 'No'}"
     )
 
-    logger.info("\nFret Noise: %.1f dB", report['fret_noise']['fret_noise_reduction_db'])
-    logger.info("  Reduction: %.1f%%", report['fret_noise']['fret_noise_reduction_percent'])
+    logger.info("\nFret Noise: %.1f dB", report["fret_noise"]["fret_noise_reduction_db"])
+    logger.info("  Reduction: %.1f%%", report["fret_noise"]["fret_noise_reduction_percent"])
 
-    logger.info("\nBody Resonance: %.1f dB", report['body_resonance']['body_resonance_change_db'])
-    logger.info("  Warmth applied: %s", 'Yes' if report['body_resonance']['warmth_applied'] else 'No')
+    logger.info("\nBody Resonance: %.1f dB", report["body_resonance"]["body_resonance_change_db"])
+    logger.info("  Warmth applied: %s", "Yes" if report["body_resonance"]["warmth_applied"] else "No")
 
-    logger.info("\nString Clarity: %.1f dB", report['string_clarity_db'])
-    logger.info("Stages applied: %s", report['stages_applied'])
+    logger.info("\nString Clarity: %.1f dB", report["string_clarity_db"])
+    logger.info("Stages applied: %s", report["stages_applied"])
 
     # Save
     logger.info("\nSaving: %s", args.output)

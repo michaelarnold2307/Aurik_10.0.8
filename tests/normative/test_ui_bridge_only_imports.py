@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 UI_ROOT = Path("Aurik910")
 FORBIDDEN_PREFIXES: tuple[str, ...] = ("backend.core", "plugins", "dsp")
 

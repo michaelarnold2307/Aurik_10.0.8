@@ -166,9 +166,9 @@ def train_e2e_optimization(
     best_val_loss = float("inf")
 
     for epoch in range(1, epochs + 1):
-        logger.info("\n%s", '=' * 80)
+        logger.info("\n%s", "=" * 80)
         logger.info("Epoch %s/%s", epoch, epochs)
-        logger.info("%s", '=' * 80)
+        logger.info("%s", "=" * 80)
 
         # Train
         train_metrics = framework.train_epoch(train_loader, epoch)
@@ -245,7 +245,7 @@ def train_hyperparameter_optimization(
     results = optimizer.optimize(evaluation_dataset=eval_dataset, process_function=process_audio)
 
     logger.info("\nOptimization completed!")
-    logger.info("Best score: %.4f", results['best_score'])
+    logger.info("Best score: %.4f", results["best_score"])
     logger.info("Best params saved to: %s", output_path / material_type)
 
 

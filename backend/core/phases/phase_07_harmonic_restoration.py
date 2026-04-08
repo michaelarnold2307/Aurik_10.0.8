@@ -206,6 +206,31 @@ class HarmonicRestorationPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
+        # §2.47 PMGG-Retry: locality_factor skaliert finale Intensität bei Retries
+        phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        if _effective_strength <= 0.0:
+            passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            passthrough = np.clip(passthrough, -1.0, 1.0)
+            return create_phase_result(
+                audio=passthrough,
+                modifications={
+                    "harmonic_restored": False,
+                    "reason": "zero effective strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                },
+                warnings=["Harmonic restoration skipped due to zero effective strength"],
+                metadata={
+                    "algorithm": "skipped_zero_strength",
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "execution_time_seconds": time.time() - start_time,
+                },
+            )
+
         # Get material-specific parameters
         params = self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"])
 
@@ -213,6 +238,11 @@ class HarmonicRestorationPhase(PhaseInterface):
         if saturation_mode is not None:
             params = params.copy()
             params["saturation_mode"] = saturation_mode
+        else:
+            params = params.copy()
+
+        params["strength"] = float(np.clip(params["strength"] * _effective_strength, 0.0, 1.0))
+        params["blend"] = float(np.clip(params["blend"] * _effective_strength, 0.0, 1.0))
 
         # Check if restoration needed
         if params["strength"] < 0.1:
@@ -228,6 +258,8 @@ class HarmonicRestorationPhase(PhaseInterface):
                     "algorithm": "none",
                     "material_type": material_type,
                     "execution_time_seconds": time.time() - start_time,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
             )
 
@@ -255,10 +287,12 @@ class HarmonicRestorationPhase(PhaseInterface):
             # Blend harmonics into Mid, keep Side intact
             _out_mid = _mid + _harmonics_mid * params["blend"] + fill_gain * additive
             # M/S decode back to L/R
-            restored = np.column_stack((
-                (_out_mid + _side) / _sqrt2,
-                (_out_mid - _side) / _sqrt2,
-            ))
+            restored = np.column_stack(
+                (
+                    (_out_mid + _side) / _sqrt2,
+                    (_out_mid - _side) / _sqrt2,
+                )
+            )
             # Unused variables for unified code path below
             saturated = audio  # not used further
             harmonics = np.zeros_like(audio)  # already applied above
@@ -293,6 +327,11 @@ class HarmonicRestorationPhase(PhaseInterface):
         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
         restored = np.clip(restored, -1.0, 1.0)
 
+        # §2.47 PMGG-Retry: phase_locality_factor als finaler Wet/Dry-Regler
+        if _effective_strength < 1.0:
+            restored = audio + _effective_strength * (restored - audio)
+            restored = np.clip(restored, -1.0, 1.0)
+
         return create_phase_result(
             audio=restored,
             modifications={
@@ -307,6 +346,8 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "thd_percent": thd_percent,
                 "material_type": material_type,
                 "n_pitches_detected": len(f0_info),
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
             },
             warnings=[f"High THD: {thd_percent:.2f}%"] if thd_percent > 2.0 else [],
             metadata={
@@ -319,6 +360,10 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "benchmark": "Waves Aphex Vintage Warmer, SPL Vitalizer, iZotope Ozone Exciter, Softube Saturation Knob",
                 "algorithm_version": "3.0_multi_pitch",
                 "execution_time_seconds": execution_time,
+                "phase_locality_factor": phase_locality_factor,
+                "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
         )
 
@@ -795,9 +840,9 @@ if __name__ == "__main__":
     materials = ["shellac", "vinyl", "tape", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = HarmonicRestorationPhase(sample_rate=sr)
         result = phase.process(audio.copy(), material_type=material)
@@ -807,25 +852,25 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Saturation Mode: %s", result.modifications['saturation_mode'])
-            logger.debug("   Drive: %.1f×", result.modifications['drive'])
-            logger.debug("   Blend: %.2f", result.modifications['blend'])
+            logger.debug("   Saturation Mode: %s", result.modifications["saturation_mode"])
+            logger.debug("   Drive: %.1f×", result.modifications["drive"])
+            logger.debug("   Blend: %.2f", result.modifications["blend"])
             logger.debug(
                 f"   Even/Odd Ratio: {result.modifications['even_harmonic_ratio']:.1f}/{result.modifications['odd_harmonic_ratio']:.1f}"
             )
-            logger.debug("   HF Enhancement: %.1f dB", result.modifications['hf_enhancement_db'])
-            logger.debug("   THD: %.2f%%", result.modifications['thd_percent'])
-            logger.debug("   Missing Harmonics: %s", result.metadata['missing_harmonics'])
-            logger.debug("   Target Range: %s Hz", result.metadata['target_range_hz'])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   HF Enhancement: %.1f dB", result.modifications["hf_enhancement_db"])
+            logger.debug("   THD: %.2f%%", result.modifications["thd_percent"])
+            logger.debug("   Missing Harmonics: %s", result.metadata["missing_harmonics"])
+            logger.debug("   Target Range: %s Hz", result.metadata["target_range_hz"])
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("⏭️  Harmonic Restoration Skipped")
-            logger.debug("   Reason: %s", result.modifications.get('reason', 'unknown'))
+            logger.debug("   Reason: %s", result.modifications.get("reason", "unknown"))
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Harmonic Restoration v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata.get('algorithm', 'N/A'))
-    logger.debug("Scientific Reference: %s", result.metadata.get('scientific_ref', 'N/A'))
-    logger.debug("Benchmark: %s", result.metadata.get('benchmark', 'N/A'))
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata.get("algorithm", "N/A"))
+    logger.debug("Scientific Reference: %s", result.metadata.get("scientific_ref", "N/A"))
+    logger.debug("Benchmark: %s", result.metadata.get("benchmark", "N/A"))
     logger.debug("Quality Impact: 0.94 (Professional-Grade)")

@@ -41,6 +41,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_aurik_mode(aurik_mode: str | None) -> str:
+    """Normalize external mode aliases to canonical values."""
+    _m = str(aurik_mode or "restoration").strip().lower().replace("_", "").replace(" ", "")
+    if _m in {"studio2026", "studio", "highendstudio", "maximum"}:
+        return "studio2026"
+    return "restoration"
+
+
 # ============================================================================
 # ENUMS
 # ============================================================================
@@ -364,7 +372,7 @@ class ContentAwareProcessor:
         Args:
             audio: Input audio (mono or stereo)
             sr: Sample rate
-            aurik_mode: "restoration" or "highend_studio"
+            aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
             language: Language code
 
         Returns:
@@ -375,6 +383,7 @@ class ContentAwareProcessor:
 
         duration = len(audio_mono) / sr
 
+        aurik_mode = _normalize_aurik_mode(aurik_mode)
         logger.info("Creating processing timeline (%s mode, %.2fs)", aurik_mode, duration)
 
         # 1. Get lyrics alignment
@@ -507,7 +516,7 @@ class ContentAwareProcessor:
                 elif segment.content_type == ContentType.SILENCE:
                     segment.processing_intent = ProcessingIntent.NO_PROCESSING
 
-            elif aurik_mode == "highend_studio":
+            elif aurik_mode == "studio2026":
                 # STUDIO: Optimize for modern standards
                 if segment.content_type == ContentType.VOCAL:
                     segment.processing_intent = ProcessingIntent.FULL_PROCESSING
@@ -591,7 +600,7 @@ def create_lyrics_guided_timeline(
     Args:
         audio: Input audio (mono or stereo)
         sr: Sample rate
-        aurik_mode: "restoration" or "highend_studio"
+        aurik_mode: "restoration" or "studio2026" (legacy aliases accepted)
         language: Language code (en, de, es, fr, etc.)
 
     Returns:

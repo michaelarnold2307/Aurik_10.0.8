@@ -389,9 +389,9 @@ def print_mode_comparison(achieved_goals: dict[str, float]) -> None:
 
     for i, result in enumerate(results, 1):
         passed_str = "✅ PASS" if result["passed"] else "❌ FAIL"
-        logger.debug("\n%s. %s | Score: %.2f | %s", i, result['mode_name'], result['overall_score'], passed_str)
+        logger.debug("\n%s. %s | Score: %.2f | %s", i, result["mode_name"], result["overall_score"], passed_str)
 
         if result["violations"]:
-            logger.debug("   Violations: %s", len(result['violations']))
+            logger.debug("   Violations: %s", len(result["violations"]))
             for violation in result["violations"][:3]:
                 logger.debug("   - %s", violation)

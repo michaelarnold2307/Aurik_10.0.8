@@ -570,7 +570,7 @@ class MLEraDetector:
         self.is_trained = True
 
         logger.info("✅ Era Detector model loaded from %s", filepath)
-        logger.info("   Version: %s", model_data.get('version', 'unknown'))
+        logger.info("   Version: %s", model_data.get("version", "unknown"))
         logger.info("   Eras: %s", self.n_classes)
         logger.info("   CV Accuracy: %.4f", self.cv_accuracy)
 
@@ -602,11 +602,11 @@ def train_ml_era_detector_from_dataset(
     labels = []
 
     if verbose:
-        logger.info("📊 Extracting era features from %s samples...", len(dataset['samples']))
+        logger.info("📊 Extracting era features from %s samples...", len(dataset["samples"]))
 
     for i, sample in enumerate(dataset["samples"]):
         if verbose and (i + 1) % 50 == 0:
-            logger.info("   Processed %s/%s...", i + 1, len(dataset['samples']))
+            logger.info("   Processed %s/%s...", i + 1, len(dataset["samples"]))
 
         base_features, era_features = extractor.extract_era_features(sample.audio, sample.sample_rate, verbose=False)
 

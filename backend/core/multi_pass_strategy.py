@@ -1007,9 +1007,9 @@ if __name__ == "__main__":
     # Save best result
     sf.write("test_output/multipass_best.wav", result["audio"], sr)
 
-    logger.debug("\n✅ Best Variant: %s", result['variant_name'])
-    logger.debug("   Composite Score: %.3f", result['composite_score'])
-    logger.debug("   Confidence: %.2f", result['confidence'])
+    logger.debug("\n✅ Best Variant: %s", result["variant_name"])
+    logger.debug("   Composite Score: %.3f", result["composite_score"])
+    logger.debug("   Confidence: %.2f", result["confidence"])
     logger.debug("\n📊 All Scores:")
     for score in result["all_scores"]:
         logger.debug("   %s", score)

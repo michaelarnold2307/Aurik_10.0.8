@@ -1,42 +1,54 @@
 import logging
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-# Canonical entrypoint: AurikDenker (spec §2.2 — no bypass via AdaptiveProcessingPipeline)
-from denker.aurik_denker import get_aurik_denker
+# Ensure repository root is on sys.path when CLI is executed as a script.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from backend.api.bridge import get_aurik_denker_instance, get_load_audio_fn, run_pre_analysis
 
 _TARGET_SR = 48_000
 _VALID_MODES = {"Restoration", "Studio 2026"}
 
 
 def _load_audio(path: str) -> tuple[np.ndarray, int]:
-    """Load audio file using soundfile with pedalboard fallback."""
+    """Load audio file via canonical bridge import cascade."""
     try:
-        audio, sr = sf.read(path, always_2d=True, dtype="float32")
-        return audio, sr
-    except Exception:
-        pass
-    try:
-        import pedalboard.io as _pb_io  # type: ignore[import]
-
-        with _pb_io.AudioFile(path) as f:
-            audio = f.read(f.frames).T.astype(np.float32)
-            sr = int(f.samplerate)
-        return audio, sr
-    except Exception:
-        pass
-    try:
-        import librosa  # type: ignore[import]
-
-        audio, sr = librosa.load(path, sr=None, mono=False)
+        load_audio_file = get_load_audio_fn()
+        loaded = load_audio_file(path, target_sr=None, mono=False, do_carrier_analysis=False)
+        if not isinstance(loaded, dict) or loaded.get("audio") is None or loaded.get("sr") is None:
+            raise RuntimeError(str((loaded or {}).get("error") or "Unbekannter Ladefehler"))
+        audio = np.asarray(loaded["audio"], dtype=np.float32)
         if audio.ndim == 1:
-            audio = audio[np.newaxis, :]
-        return audio.T.astype(np.float32), int(sr)
+            audio = audio[:, np.newaxis]
+        elif audio.ndim == 2 and audio.shape[0] < audio.shape[1]:
+            audio = audio.T
+        return np.clip(np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0), int(loaded["sr"])
     except Exception as exc:
         raise RuntimeError(f"Audio konnte nicht geladen werden: {exc}") from exc
+
+
+def _normalize_mode(mode: str) -> str:
+    raw = str(mode or "Restoration").strip().lower().replace("_", "").replace(" ", "")
+    if raw in {"restoration", "quality"}:
+        return "Restoration"
+    if raw in {"studio2026", "studio"}:
+        return "Studio 2026"
+    return "Restoration"
+
+
+def _rms_dbfs(audio: np.ndarray) -> float:
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim == 2:
+        arr = arr.mean(axis=1)
+    rms = float(np.sqrt(np.mean(arr.astype(np.float64) ** 2) + 1e-12))
+    return 20.0 * np.log10(max(rms, 1e-12))
 
 
 def _resample_to_48k(audio: np.ndarray, sr: int) -> np.ndarray:
@@ -59,6 +71,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s: %(message)s")
     logger = logging.getLogger("aurik_cli")
 
+    mode = _normalize_mode(mode)
     if mode not in _VALID_MODES:
         logger.warning("Unbekannter Modus '%s' — verwende 'Restoration'.", mode)
         mode = "Restoration"
@@ -85,14 +98,33 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         logger.error("Fehler bei der SR-Normierung: %s", exc)
         sys.exit(6)
 
+    try:
+        pre = run_pre_analysis(
+            audio_native=audio_raw,
+            sr_native=sr_raw,
+            audio_48k=audio_48k,
+            file_path=input_path,
+            store_in_bridge_cache=True,
+        )
+    except Exception as exc:
+        logger.error("Fehler in der Voranalyse: %s", exc)
+        sys.exit(10)
+
     if verbose:
         logger.info("🔧 Starte AurikDenker — Modus: %s", mode)
 
     # ── 3. Kanonischer Einstiegspunkt: AurikDenker.denke() (Spec §2.2) ────────
     try:
-        denker = get_aurik_denker()
+        denker = get_aurik_denker_instance()
         # Quality-first policy: prefer full-quality execution over RT budget cuts.
-        result = denker.denke(audio_48k, sr=_TARGET_SR, mode=mode, no_rt_limit=True, input_path=input_path)
+        result = denker.denke(
+            audio_48k,
+            sr=_TARGET_SR,
+            mode=mode,
+            no_rt_limit=True,
+            input_path=input_path,
+            pre_analysis_result=pre,
+        )
     except Exception as exc:
         logger.error("Fehler in der Restaurierungspipeline: %s", exc)
         sys.exit(4)
@@ -148,6 +180,18 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
 
     # ── 5. Ergebnis speichern ─────────────────────────────────────────────────
     restored = result.audio
+    _in_db = _rms_dbfs(audio_48k)
+    _out_db = _rms_dbfs(restored)
+    _drop_db = _in_db - _out_db
+    if _drop_db > 2.5:
+        logger.error(
+            "Export abgebrochen: Pegelabfall %.2f dB > 2.50 dB. "
+            "Ursache: unzulaessiger Loudness-Drift. "
+            "Loesung: Material/Defekte pruefen oder konservativeren Lauf starten.",
+            _drop_db,
+        )
+        sys.exit(9)
+
     try:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         sf.write(output_path, restored, _TARGET_SR, subtype="PCM_24")
@@ -156,6 +200,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         sys.exit(5)
 
     if verbose:
+        logger.info("📈 Pegel-Drift: in=%.2f dBFS out=%.2f dBFS delta=%.2f dB", _in_db, _out_db, -_drop_db)
         logger.info("💾 Gespeichert: %s", output_path)
 
     return result

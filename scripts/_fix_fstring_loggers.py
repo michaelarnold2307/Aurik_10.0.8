@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 
 # ── Pattern: logger.<level>(f"...") — capture the f-string content ─────────
@@ -168,10 +167,8 @@ def _build_template_and_args(
     Reconstruct the format string (%-style) and argument list.
     Returns None if any placeholder can't be cleanly mapped.
     """
-    template = fstring_body
     args: list[str] = []
     # Process placeholders in reverse so index arithmetic stays valid
-    i = 0
     n = len(fstring_body)
     result_parts: list[str] = []
     ph_iter = iter(placeholders)
@@ -241,7 +238,7 @@ def convert_line(line: str) -> str | None:
         return None
     indent = m.group("indent")
     call = m.group("call")
-    q = m.group("q")
+    m.group("q")
     body = m.group("body")
     rest = m.group("rest").strip()  # extra kwargs or trailing comma
     tail = m.group("tail").strip()  # e.g. "  # type: ignore"
@@ -294,10 +291,12 @@ def convert_file(path: Path, dry_run: bool = False) -> int:
         new_source = "".join(new_lines)
         # Syntax guard: only write if the result parses
         import ast as _ast
+
         try:
             _ast.parse(new_source)
         except SyntaxError as e:
             import sys
+
             print(f"  SYNTAX ERROR in {path} after conversion: {e} — SKIPPED", file=sys.stderr)
             return 0
         path.write_text(new_source, encoding="utf-8")

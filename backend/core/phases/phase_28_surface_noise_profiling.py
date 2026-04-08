@@ -336,7 +336,9 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # PGHI bewahrt interaurale Phasendifferenzen → Raumtiefe + Tiefen-Immersion (Spec §8.3)
         if _PGHI_AVAILABLE:
             try:
-                denoised = _pghi_from_stft(cleaned_stft, sr=sample_rate, win_size=nperseg, hop=noverlap, n_samples=len(audio))
+                denoised = _pghi_from_stft(
+                    cleaned_stft, sr=sample_rate, win_size=nperseg, hop=noverlap, n_samples=len(audio)
+                )
             except Exception as _pghi_exc:
                 logger.debug("phase_28 PGHI failed, fallback to istft: %s", _pghi_exc)
                 _, denoised = signal.istft(

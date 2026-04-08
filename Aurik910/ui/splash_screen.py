@@ -71,16 +71,17 @@ class AurikSplashScreen(QWidget):
 
         # App icon
         self._icon: QPixmap | None = None
-        _ip = _RES / "icon.png"
-        if _ip.exists():
-            px = QPixmap(str(_ip))
-            if not px.isNull():
-                self._icon = px.scaled(
-                    88,
-                    88,
-                    Qt.KeepAspectRatio,  # type: ignore[attr-defined]
-                    Qt.SmoothTransformation,  # type: ignore[attr-defined]
-                )
+        for _ip in (_RES / "icon_premium.svg", _RES / "icon.png"):
+            if _ip.exists():
+                px = QPixmap(str(_ip))
+                if not px.isNull():
+                    self._icon = px.scaled(
+                        88,
+                        88,
+                        Qt.KeepAspectRatio,  # type: ignore[attr-defined]
+                        Qt.SmoothTransformation,  # type: ignore[attr-defined]
+                    )
+                    break
 
         self._status: str = "Initialisierung …"
         self._phase: float = 0.0  # equalizer / dot animation phase

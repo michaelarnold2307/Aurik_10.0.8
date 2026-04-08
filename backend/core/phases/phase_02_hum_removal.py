@@ -216,6 +216,9 @@ class HumRemovalPhase(PhaseInterface):
         start_time = time.time()
         self.sample_rate = sample_rate
 
+        # §2.45a: RMS-Referenz vor Verarbeitung
+        _rms_in_02 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+
         # Determine if ML should be used
         use_ml = False
         if QUALITY_MODE_AVAILABLE and quality_mode:
@@ -366,6 +369,28 @@ class HumRemovalPhase(PhaseInterface):
             )
             warnings.append(f"Chroma guard active: blended wet={_wet:.2f} (Pearson={_chroma_p:.3f})")
 
+        # §2.45a Mid-Pipeline-Loudness-Drift-Guard
+        _rms_out_02 = float(np.sqrt(np.mean(np.asarray(result_audio, dtype=np.float64) ** 2) + 1e-12))
+        _rms_drop_02 = 20.0 * np.log10(max(_rms_out_02 / _rms_in_02, 1e-30)) if _rms_in_02 > 1e-8 else 0.0
+        _max_drop_02 = 3.0  # Hum-Notch: max 3 dB Pegelabfall (stärker als Shellac-Spezifikum)
+        _makeup_02 = 0.0
+        if _rms_in_02 > 1e-8 and _rms_drop_02 < -_max_drop_02:
+            _required_gain_db = -_max_drop_02 - _rms_drop_02
+            _makeup_02 = float(np.clip(_required_gain_db, 0.0, 6.0))  # max +6 dB Makeup-Gain
+            if _makeup_02 > 0.0:
+                _peak99 = float(np.percentile(np.abs(result_audio), 99.9)) + 1e-10
+                _headroom = min(1.0, 0.95 / _peak99)
+                _actual_gain = min(10.0 ** (_makeup_02 / 20.0), _headroom)
+                result_audio = np.clip(result_audio * _actual_gain, -1.0, 1.0)
+                _rms_out_02 = float(np.sqrt(np.mean(np.asarray(result_audio, dtype=np.float64) ** 2) + 1e-12))
+                _rms_drop_02 = 20.0 * np.log10(max(_rms_out_02 / _rms_in_02, 1e-30))
+                logger.info(
+                    "Phase 02 loudness-guard: hum_reduction=%.1f dB, rms_drop=%.2f dB → makeup %.2f dB",
+                    total_reduction,
+                    _rms_drop_02,
+                    _makeup_02,
+                )
+
         return create_phase_result(
             audio=result_audio,
             modifications={
@@ -389,6 +414,8 @@ class HumRemovalPhase(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "execution_time_seconds": execution_time,
+                "rms_drop_db": round(float(min(0.0, _rms_drop_02)), 3),
+                "loudness_makeup_db": round(float(_makeup_02), 3),
             },
         )
 
@@ -720,9 +747,9 @@ if __name__ == "__main__":
     materials = ["tape", "vinyl", "cd_digital"]
 
     for material in materials:
-        logger.debug("\n%s", '-' * 80)
+        logger.debug("\n%s", "-" * 80)
         logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", '-' * 80)
+        logger.debug("%s", "-" * 80)
 
         phase = HumRemovalPhase()
         result = phase.process(audio_with_hum.copy(), material_type=material)
@@ -732,23 +759,23 @@ if __name__ == "__main__":
             logger.debug(
                 f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
             )
-            logger.debug("   Hum Detected: %s", result.modifications['hum_detected'])
+            logger.debug("   Hum Detected: %s", result.modifications["hum_detected"])
 
             if result.modifications["hum_detected"]:
-                logger.debug("   Fundamentals: %s Hz", result.modifications['fundamentals'])
-                logger.debug("   Total Harmonics Removed: %s", result.modifications['total_harmonics_removed'])
-                logger.debug("   Hum Reduction: %.1f dB", result.modifications['hum_reduction_db'])
-                logger.debug("   Side-Chain Active: %s", result.metadata['side_chain_active'])
-                logger.debug("   Q-Factor: %s", result.metadata['q_factor'])
+                logger.debug("   Fundamentals: %s Hz", result.modifications["fundamentals"])
+                logger.debug("   Total Harmonics Removed: %s", result.modifications["total_harmonics_removed"])
+                logger.debug("   Hum Reduction: %.1f dB", result.modifications["hum_reduction_db"])
+                logger.debug("   Side-Chain Active: %s", result.metadata["side_chain_active"])
+                logger.debug("   Q-Factor: %s", result.metadata["q_factor"])
 
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else 'None')
+            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
         else:
             logger.debug("❌ Processing Failed!")
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("✅ Professional Hum Removal v2.0 Test Complete!")
-    logger.debug("%s", '=' * 80)
-    logger.debug("Algorithm: %s", result.metadata['algorithm'])
-    logger.debug("Scientific Reference: %s", result.metadata['scientific_ref'])
-    logger.debug("Benchmark: %s", result.metadata['benchmark'])
+    logger.debug("%s", "=" * 80)
+    logger.debug("Algorithm: %s", result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", result.metadata["benchmark"])
     logger.debug("Quality Impact: 0.92 (Professional-Grade)")

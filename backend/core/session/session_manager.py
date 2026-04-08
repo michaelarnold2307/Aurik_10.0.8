@@ -540,7 +540,7 @@ class SessionManager:
                 if name_match or desc_match:
                     matches.append(session_info)
             except Exception as e:
-                logger.warning("Failed to search session %s: %s", session_info['name'], e)
+                logger.warning("Failed to search session %s: %s", session_info["name"], e)
                 continue
 
         return matches
@@ -659,13 +659,13 @@ if __name__ == "__main__":
     sessions = manager.list_sessions()
     logger.debug("\nAll sessions (%s):", len(sessions))
     for s in sessions:
-        logger.debug("  - %s: %s files, status: %s", s['name'], s['file_count'], s['status'])
+        logger.debug("  - %s: %s files, status: %s", s["name"], s["file_count"], s["status"])
 
     # Get recent sessions
     recent = manager.get_recent_sessions()
     logger.debug("\nRecent sessions (%s):", len(recent))
     for s in recent:
-        logger.debug("  - %s", s['name'])
+        logger.debug("  - %s", s["name"])
 
     # Get history
     history = manager.get_session_history(n=5)

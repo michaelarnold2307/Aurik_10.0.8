@@ -7,7 +7,6 @@ neuen psychoakustisch korrekteren PQS-Berechnungen (Gammatone-NSIM, echte MCD).
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,11 +41,11 @@ def _warm_signal(dur: float = 2.0) -> np.ndarray:
     """Signal with strong even harmonics (tube/tape warmth)."""
     t = np.arange(int(SR * dur)) / SR
     f0 = 200.0
-    sig = 0.2 * np.sin(2 * np.pi * f0 * t)          # fundamental
-    sig += 0.15 * np.sin(2 * np.pi * 2 * f0 * t)     # H2 (even)
-    sig += 0.10 * np.sin(2 * np.pi * 4 * f0 * t)     # H4 (even)
-    sig += 0.03 * np.sin(2 * np.pi * 3 * f0 * t)     # H3 (odd, small)
-    sig += 0.02 * np.sin(2 * np.pi * 5 * f0 * t)     # H5 (odd, small)
+    sig = 0.2 * np.sin(2 * np.pi * f0 * t)  # fundamental
+    sig += 0.15 * np.sin(2 * np.pi * 2 * f0 * t)  # H2 (even)
+    sig += 0.10 * np.sin(2 * np.pi * 4 * f0 * t)  # H4 (even)
+    sig += 0.03 * np.sin(2 * np.pi * 3 * f0 * t)  # H3 (odd, small)
+    sig += 0.02 * np.sin(2 * np.pi * 5 * f0 * t)  # H5 (odd, small)
     return np.clip(sig, -1.0, 1.0).astype(np.float32)
 
 
@@ -64,11 +63,13 @@ def _dynamic_music(dur: float = 3.0, seed: int = 99) -> np.ndarray:
 #  1. BRILLANZ — Crest-Divisor 13.5 → 10.5
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestBrillanzRecalibration:
     """§9.10.120: HF Crest Factor scoring must be more generous for clean HF."""
 
     def setup_method(self):
         from backend.core.musical_goals.musical_goals_metrics import BrillanzMetric
+
         self.metric = BrillanzMetric()
 
     def test_01_rich_hf_scores_above_old_ceiling(self):
@@ -113,11 +114,13 @@ class TestBrillanzRecalibration:
 #  2. TRANSPARENZ — Band-Crest-Divisor 8.8 → 7.0
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestTransparenzRecalibration:
     """§9.10.120: 5-band crest factor scoring more sensitive."""
 
     def setup_method(self):
         from backend.core.musical_goals.musical_goals_metrics import TransparenzMetric
+
         self.metric = TransparenzMetric()
 
     def test_07_rich_music_transparency(self):
@@ -148,11 +151,13 @@ class TestTransparenzRecalibration:
 #  3. WÄRME — H2/H4 Divisor 9.0 → 5.0
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestWaermeH2H4Recalibration:
     """§9.10.120: Even-harmonic warmth scoring more generous for tube/tape."""
 
     def setup_method(self):
         from backend.core.musical_goals.musical_goals_metrics import WaermeMetric
+
         self.metric = WaermeMetric()
 
     def test_11_warm_signal_high_score(self):
@@ -183,11 +188,13 @@ class TestWaermeH2H4Recalibration:
 #  4. NATÜRLICHKEIT — 4 Multiplier-Recalibration
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNatuerlichkeitRecalibration:
     """§9.10.120: flatness×2.5, ZCR×60, contrast÷25, onset÷8."""
 
     def setup_method(self):
         from backend.core.musical_goals.musical_goals_metrics import NatuerlichkeitMetric
+
         self.metric = NatuerlichkeitMetric()
 
     def test_15_tonal_music_high_naturalness(self):
@@ -236,11 +243,13 @@ class TestNatuerlichkeitRecalibration:
 #  5. EMOTIONALITÄT — LUFS Pre-Normalization
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestEmotionalitaetLUFS:
     """§9.10.120: LUFS normalization makes dynamics formula loudness-invariant."""
 
     def setup_method(self):
         from backend.core.musical_goals.musical_goals_metrics import EmotionalitaetMetric
+
         self.metric = EmotionalitaetMetric()
 
     def test_20_dynamic_music_emotional(self):
@@ -278,11 +287,13 @@ class TestEmotionalitaetLUFS:
 #  6. PQS — Gammatone-NSIM + True MCD
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPQSRecalibration:
     """§9.10.120: Real MCD and ERB-weighted NSIM for perceptually accurate PQS."""
 
     def setup_method(self):
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         self.scorer = PerceptualQualityScorer()
 
     def test_24_identical_signals_high_mos(self):
@@ -342,29 +353,45 @@ class TestPQSRecalibration:
 #  7. HARMONISIERUNG — Pareto-Konflikte korrekt balanciert
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestHarmonization:
     """Verify that recalibrated metrics harmonize — no single metric dominates."""
 
     def test_31_all_14_goals_produce_valid_scores(self):
         """All 14 Musical Goals must return valid [0, 1] scores."""
         from backend.core.musical_goals.musical_goals_metrics import (
-            NatuerlichkeitMetric, AuthentizitaetMetric,
-            TonalCenterMetric, TimbralAuthenticityMetric,
-            ArticulationMetric, EmotionalitaetMetric,
-            MicroDynamicsMetric, GrooveMetric,
-            TransparenzMetric, WaermeMetric,
-            BassKraftMetric, SeparationFidelityMetric,
-            BrillanzMetric, SpatialDepthMetric,
+            ArticulationMetric,
+            AuthentizitaetMetric,
+            BassKraftMetric,
+            BrillanzMetric,
+            EmotionalitaetMetric,
+            GrooveMetric,
+            MicroDynamicsMetric,
+            NatuerlichkeitMetric,
+            SeparationFidelityMetric,
+            SpatialDepthMetric,
+            TimbralAuthenticityMetric,
+            TonalCenterMetric,
+            TransparenzMetric,
+            WaermeMetric,
         )
+
         audio = _rich_music(dur=2.0)
         metrics = [
-            NatuerlichkeitMetric(), AuthentizitaetMetric(),
-            TonalCenterMetric(), TimbralAuthenticityMetric(),
-            ArticulationMetric(), EmotionalitaetMetric(),
-            MicroDynamicsMetric(), GrooveMetric(),
-            TransparenzMetric(), WaermeMetric(),
-            BassKraftMetric(), SeparationFidelityMetric(),
-            BrillanzMetric(), SpatialDepthMetric(),
+            NatuerlichkeitMetric(),
+            AuthentizitaetMetric(),
+            TonalCenterMetric(),
+            TimbralAuthenticityMetric(),
+            ArticulationMetric(),
+            EmotionalitaetMetric(),
+            MicroDynamicsMetric(),
+            GrooveMetric(),
+            TransparenzMetric(),
+            WaermeMetric(),
+            BassKraftMetric(),
+            SeparationFidelityMetric(),
+            BrillanzMetric(),
+            SpatialDepthMetric(),
         ]
         for m in metrics:
             name = type(m).__name__
@@ -379,6 +406,7 @@ class TestHarmonization:
     def test_32_brillanz_waerme_not_anticorrelated(self):
         """Brillanz and Wärme should both be scoreable (different frequency bands)."""
         from backend.core.musical_goals.musical_goals_metrics import BrillanzMetric, WaermeMetric
+
         audio = _rich_music(dur=2.0)
         b = BrillanzMetric().measure(audio, SR)
         w = WaermeMetric().measure(audio, SR)
@@ -388,6 +416,7 @@ class TestHarmonization:
     def test_33_transparenz_waerme_coexist(self):
         """§2.29: Transparenz (250-8k Hz crest) and Wärme (200-3k Hz ratio) can coexist."""
         from backend.core.musical_goals.musical_goals_metrics import TransparenzMetric, WaermeMetric
+
         audio = _warm_signal(dur=2.0)
         t = TransparenzMetric().measure(audio, SR)
         w = WaermeMetric().measure(audio, SR)
@@ -397,6 +426,7 @@ class TestHarmonization:
     def test_34_natuerlichkeit_above_threshold(self):
         """Clean music signal must exceed natuerlichkeit threshold 0.90."""
         from backend.core.musical_goals.musical_goals_metrics import NatuerlichkeitMetric
+
         audio = _rich_music(dur=2.0)
         score = NatuerlichkeitMetric().measure(audio, SR)
         # Recalibrated multipliers → higher scores for tonal music
@@ -405,6 +435,7 @@ class TestHarmonization:
     def test_35_pqs_and_metrics_consistency(self):
         """PQS MOS for self-comparison should be high, matching high metric scores."""
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         audio = _rich_music(dur=2.0)
         r = PerceptualQualityScorer().score_audio(audio, audio, SR)
         assert r.mos >= 4.0, f"Self-comparison MOS {r.mos}"
@@ -414,13 +445,18 @@ class TestHarmonization:
 #  8. NaN/Inf GUARDS
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNaNInfGuards:
     """Ensure recalibrated metrics handle edge cases without NaN/Inf."""
 
     def test_36_all_zeros(self):
         from backend.core.musical_goals.musical_goals_metrics import (
-            BrillanzMetric, TransparenzMetric, WaermeMetric, NatuerlichkeitMetric,
+            BrillanzMetric,
+            NatuerlichkeitMetric,
+            TransparenzMetric,
+            WaermeMetric,
         )
+
         audio = np.zeros(SR * 2, dtype=np.float32)
         for MetricCls in [BrillanzMetric, TransparenzMetric, WaermeMetric, NatuerlichkeitMetric]:
             score = MetricCls().measure(audio, SR)
@@ -428,8 +464,12 @@ class TestNaNInfGuards:
 
     def test_37_very_short_audio(self):
         from backend.core.musical_goals.musical_goals_metrics import (
-            BrillanzMetric, TransparenzMetric, WaermeMetric, NatuerlichkeitMetric,
+            BrillanzMetric,
+            NatuerlichkeitMetric,
+            TransparenzMetric,
+            WaermeMetric,
         )
+
         audio = np.array([0.1, -0.1, 0.05], dtype=np.float32)
         for MetricCls in [BrillanzMetric, TransparenzMetric, WaermeMetric, NatuerlichkeitMetric]:
             score = MetricCls().measure(audio, SR)
@@ -437,6 +477,7 @@ class TestNaNInfGuards:
 
     def test_38_nan_input_guarded(self):
         from backend.core.musical_goals.musical_goals_metrics import BrillanzMetric
+
         audio = np.array([np.nan, 0.1, -0.1, 0.0] * 24000, dtype=np.float32)
         audio = np.nan_to_num(audio, nan=0.0)
         score = BrillanzMetric().measure(audio, SR)
@@ -444,6 +485,7 @@ class TestNaNInfGuards:
 
     def test_39_pqs_nan_guard(self):
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         audio = np.zeros(SR * 2, dtype=np.float32)
         r = PerceptualQualityScorer().score_audio(audio, audio, SR)
         assert np.isfinite(r.mos)
@@ -452,6 +494,7 @@ class TestNaNInfGuards:
 
     def test_40_pqs_short_audio(self):
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         audio = np.array([0.1, -0.1, 0.05, 0.0], dtype=np.float32)
         r = PerceptualQualityScorer().score_audio(audio, audio, SR)
         assert 1.0 <= r.mos <= 5.0
@@ -461,18 +504,22 @@ class TestNaNInfGuards:
 #  9. REGRESSIONS-SICHERHEIT
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestRegressionGuards:
     """Ensure recalibrations don't break fundamental metric contracts."""
 
     def test_41_brillanz_threshold_achievable(self):
         """Restoration threshold 0.78 must be achievable for HF-rich music."""
         from backend.core.musical_goals.musical_goals_metrics import BrillanzMetric
+
         # Create signal with strong HF presence
         t = np.arange(SR * 2) / SR
-        sig = (0.2 * np.sin(2 * np.pi * 8000 * t) +
-               0.15 * np.sin(2 * np.pi * 12000 * t) +
-               0.1 * np.sin(2 * np.pi * 15000 * t) +
-               0.05 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        sig = (
+            0.2 * np.sin(2 * np.pi * 8000 * t)
+            + 0.15 * np.sin(2 * np.pi * 12000 * t)
+            + 0.1 * np.sin(2 * np.pi * 15000 * t)
+            + 0.05 * np.sin(2 * np.pi * 440 * t)
+        ).astype(np.float32)
         score = BrillanzMetric().measure(sig, SR)
         # With new divisor, HF-rich content should be achievable above threshold
         assert score >= 0.0  # at least valid
@@ -480,6 +527,7 @@ class TestRegressionGuards:
     def test_42_waerme_threshold_achievable(self):
         """Restoration threshold 0.75 must be achievable for warm music."""
         from backend.core.musical_goals.musical_goals_metrics import WaermeMetric
+
         audio = _warm_signal(dur=2.0)
         score = WaermeMetric().measure(audio, SR)
         assert score >= 0.50, f"Warm signal only {score}"
@@ -487,6 +535,7 @@ class TestRegressionGuards:
     def test_43_emotionalitaet_no_crash_on_silence(self):
         """EmotionalitaetMetric must not crash on silent audio."""
         from backend.core.musical_goals.musical_goals_metrics import EmotionalitaetMetric
+
         audio = np.zeros(SR * 3, dtype=np.float32)
         score = EmotionalitaetMetric().measure(audio, SR)
         assert 0.0 <= score <= 1.0
@@ -494,6 +543,7 @@ class TestRegressionGuards:
     def test_44_pqs_ordering_preserved(self):
         """Better degraded signal must still score higher MOS."""
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         scorer = PerceptualQualityScorer()
         ref = _rich_music(dur=2.0)
         rng = np.random.default_rng(42)
@@ -501,18 +551,17 @@ class TestRegressionGuards:
         heavy = (ref * 0.5 + 0.3 * rng.normal(0, 1, len(ref))).astype(np.float32)
         r_mild = scorer.score_audio(ref, mild, SR)
         r_heavy = scorer.score_audio(ref, heavy, SR)
-        assert r_mild.mos >= r_heavy.mos - 0.1, (
-            f"Ordering violated: mild={r_mild.mos:.2f} < heavy={r_heavy.mos:.2f}"
-        )
+        assert r_mild.mos >= r_heavy.mos - 0.1, f"Ordering violated: mild={r_mild.mos:.2f} < heavy={r_heavy.mos:.2f}"
 
     def test_45_gammatone_nsim_perceptual(self):
         """ERB-weighted NSIM should weight mid-frequencies more than extremes."""
         from backend.core.perceptual_quality_scorer import PerceptualQualityScorer
+
         scorer = PerceptualQualityScorer()
         ref = _rich_music(dur=2.0)
         # Corrupt only HF (> 8 kHz) — should have smaller NSIM impact than mid
         deg_hf = ref.copy()
-        rng = np.random.default_rng(42)
+        np.random.default_rng(42)
         t = np.arange(len(ref)) / SR
         deg_hf += (0.1 * np.sin(2 * np.pi * 12000 * t)).astype(np.float32)
         r_hf = scorer.score_audio(ref, np.clip(deg_hf, -1, 1).astype(np.float32), SR)

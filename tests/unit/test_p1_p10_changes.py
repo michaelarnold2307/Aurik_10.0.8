@@ -478,7 +478,7 @@ class TestManifestIntegritaet:
         assert entry.get("bundled") is True, "VERSA ist nicht bundled"
 
     def test_10_utmosv2_declared(self):
-        """P10: UTMOSv2 muss weiterhin im Manifest deklariert sein (legacy/compat Pfad)."""
+        """P10: UTMOSv2 muss im Manifest deklariert bleiben (aktueller Compatibility-Vertrag)."""
         models = _manifest_by_name()
         assert "utmos" in models, "'utmos' Eintrag fehlt im Manifest"
         entry = models["utmos"]

@@ -299,3 +299,14 @@ class TestAdaptiveChunkSize:
         """Überprüft Grenzwert severity=0.3 fällt in 15-s-Bucket."""
         chunk = self._chunk(300.0, severity=0.3)
         assert chunk == pytest.approx(15.0, rel=1e-6)
+
+
+class TestModeAliasNormalization:
+    def test_31_parse_mode_accepts_studio_aliases(self):
+        from denker.strategie_denker import StrategieDenker
+
+        m1 = StrategieDenker._parse_mode("studio2026")
+        m2 = StrategieDenker._parse_mode("studio_2026")
+        m3 = StrategieDenker._parse_mode("Studio 2026")
+
+        assert m1 == m2 == m3

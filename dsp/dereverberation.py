@@ -65,5 +65,7 @@ class AiDereverberation:
             return np.pad(y_out, (0, n - len(y_out)))
 
         if audio.ndim == 1:
-            return _derev_mono(audio).astype(audio.dtype)
-        return np.stack([_derev_mono(ch) for ch in audio], axis=0).astype(audio.dtype)
+            out = _derev_mono(audio)
+            return np.clip(np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(audio.dtype)
+        out = np.stack([_derev_mono(ch) for ch in audio], axis=0)
+        return np.clip(np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(audio.dtype)

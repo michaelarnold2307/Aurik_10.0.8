@@ -183,7 +183,7 @@ class UnifiedForensicAnalyzer:
             if verbose:
                 detected = [d for d, v in defect_result.defects_detected.items() if v]
                 if detected:
-                    logger.info("         Defects: %s", ', '.join(detected))
+                    logger.info("         Defects: %s", ", ".join(detected))
                 else:
                     logger.info("         Defects: None detected")
         else:

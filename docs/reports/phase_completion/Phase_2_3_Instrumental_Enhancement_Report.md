@@ -15,7 +15,7 @@ Phase 2.3 schließt die Qualitätslücke zwischen Vocal Processing (Phase 2.2, 9
 ### 🎯 Projektziele - ERREICHT
 
 | Ziel | Status | Ergebnis |
-|------|--------|----------|
+| ------ | -------- | ---------- |
 | **Qualitätslücke schließen** | ✅ | Von 11% (Vocals 93% vs. Instruments 82%) auf 1% (92%) reduziert |
 | **6 Komponenten implementieren** | ✅ | Bass, Drums, Guitar, Piano, Brass, Spatial - alle funktional |
 | **Integration in UnifiedRestorerV2** | ✅ | Semantisches Routing produktionsbereit |
@@ -25,7 +25,7 @@ Phase 2.3 schließt die Qualitätslücke zwischen Vocal Processing (Phase 2.2, 9
 ### 📊 Erwartete Quality Improvements
 
 | Musical Goal | Vorher | Nachher | Verbesserung |
-|--------------|--------|---------|--------------|
+| -------------- | -------- | --------- | -------------- |
 | **Bass-Kraft** | 70% | **93%** | +23% ⭐ CRITICAL |
 | **Transparenz** | 87% | **93%** | +6% |
 | **Brillanz** | 85% | **93%** | +8% |
@@ -350,6 +350,7 @@ else:  # MIXED, AMBIENT, OTHER
 7. `_mixed_enhancement_pipeline()` - Spatial + Conditional (Bass + Drums)
 
 **Mixed Pipeline Logic:**
+
 ```python
 def _mixed_enhancement_pipeline(self, audio, sr, semantic_profile):
     """Complex routing for mixed content."""
@@ -476,6 +477,7 @@ def _match_lengths(*arrays):
 ```
 
 **Angewendet in:**
+
 - `guitar_enhancement.py`: 8 Stellen (Filter-Rekonstruktionen + Stereo-Channels)
 - `piano_restoration.py`: 10 Stellen (Filter-Rekonstruktionen + Stereo-Channels)
 
@@ -486,7 +488,7 @@ def _match_lengths(*arrays):
 ### 4.1 Umfang
 
 | Komponente | Zeilen | Sub-Komponenten | Parameter |
-|------------|--------|-----------------|-----------|
+| ------------ | -------- | ----------------- | ----------- |
 | Bass Enhancement | 698 | 4 | 5 |
 | Drums Enhancement | 712 | 4 | 5 |
 | Guitar Enhancement | 809 | 4 | 4 |
@@ -509,6 +511,7 @@ def _match_lengths(*arrays):
 ### 4.3 Architektur-Konsistenz
 
 ✅ Alle Komponenten folgen einheitlichem Pattern:
+
 - `__init__()` mit konfigurierbaren Parametern
 - `process(audio, sr)` → (processed_audio, report)
 - Stereo-Handling: `process()` → `_process_channel()`
@@ -522,12 +525,14 @@ def _match_lengths(*arrays):
 ### 5.1 iZotope Ozone 11
 
 **AURIK Vorteile:**
+
 - ✅ Bessere Bass-Enhancement (4 Sub-Komponenten vs. 1 EQ)
 - ✅ Dedizierte Drums-Transient-Verarbeitung
 - ✅ Semantisches Routing (automatisch)
 - ✅ Integriert in volle Restoration-Pipeline
 
 **iZotope Vorteile:**
+
 - GUI mit visuellen Feedback
 - AI-basierte Mastering-Presets
 - Mehr Parameter-Kontrolle
@@ -535,12 +540,14 @@ def _match_lengths(*arrays):
 ### 5.2 FabFilter Pro-Q 3
 
 **AURIK Vorteile:**
+
 - ✅ Instrument-spezifische Verarbeitung
 - ✅ Automatische Instrument-Erkennung
 - ✅ Harmonics Enhancement (nicht nur EQ)
 - ✅ Transient-aware Processing
 
 **FabFilter Vorteile:**
+
 - Präzisere EQ-Kurven
 - Dynamic EQ
 - Spektrum-Analyzer
@@ -548,11 +555,13 @@ def _match_lengths(*arrays):
 ### 5.3 Waves SSL G-Master Buss Compressor
 
 **AURIK Vorteile:**
+
 - ✅ 6 spezialisierte Systeme (nicht nur Kompression)
 - ✅ Instrument-Erkennung
 - ✅ Multi-Band Processing per Instrument
 
 **Waves Vorteile:**
+
 - Analog-Modeling
 - Mix-Bus Character
 
@@ -570,7 +579,7 @@ def _match_lengths(*arrays):
 ### 6.1 Musical Goals Improvement
 
 | Goal | Before Phase 2.3 | After Phase 2.3 | Change |
-|------|------------------|-----------------|--------|
+| ------ | ------------------ | ----------------- | -------- |
 | Bass-Kraft | 70% | **93%** | +23% ⭐⭐⭐ |
 | Transparenz | 87% | **93%** | +6% ⭐ |
 | Brillanz | 85% | **93%** | +8% ⭐ |
@@ -611,16 +620,19 @@ def _match_lengths(*arrays):
 ### 7.1 Broadcasting-Fehler
 
 **Problem:**
+
 ```python
 ValueError: operands could not be broadcast together with shapes (95999,) (96000,)
 ```
 
 **Ursache:**
+
 - `scipy.signal.sosfilt()` kann unterschiedliche Ausgabelängen produzieren
 - `np.convolve(mode='same')` nicht immer exakt gleich lang
 - Filter mit `btype='low'/'high'` können 1-2 Samples Differenz haben
 
 **Lösung:**
+
 ```python
 def _match_lengths(*arrays):
     """Ensure all arrays have the same length (trim to minimum)."""
@@ -639,11 +651,13 @@ result = low_content + mid_content + high_content
 ### 7.2 Stereo-Channel-Mismatches
 
 **Problem:**
+
 ```python
 np.stack([left, right], axis=-1)  # ValueError when left.shape != right.shape
 ```
 
 **Lösung:**
+
 ```python
 left, right = _match_lengths(left, right)
 return np.stack([left, right], axis=-1), report
@@ -654,6 +668,7 @@ return np.stack([left, right], axis=-1), report
 ### 7.3 Parameter-Naming-Fehler
 
 **Problem:**
+
 ```python
 # BassEnhancementSystem.__init__() got unexpected keyword argument 'kick_gain_db'
 self._bass_enhancement = BassEnhancementSystem(
@@ -663,6 +678,7 @@ self._bass_enhancement = BassEnhancementSystem(
 ```
 
 **Lösung:**
+
 ```python
 self._bass_enhancement = BassEnhancementSystem(
     sub_bass_gain_db=3.0,  # CORRECT
@@ -686,7 +702,7 @@ self._bass_enhancement = BassEnhancementSystem(
 ### 8.2 Verarbeitungszeiten (geschätzt)
 
 | Komponente | 1 sec Audio | Real-Time Factor |
-|------------|-------------|------------------|
+| ------------ | ------------- | ------------------ |
 | Bass Enhancement | ~20ms | 0.02x |
 | Drums Enhancement | ~25ms | 0.025x |
 | Guitar Enhancement | ~30ms | 0.03x |
@@ -719,6 +735,7 @@ self._bass_enhancement = BassEnhancementSystem(
 5. Orchestral (Mixed Multi-Instrument)
 
 **Metriken:**
+
 - Musical Goals (empirisch messen)
 - A/B Listening Tests
 - Spectral Analysis (Before/After)
@@ -744,6 +761,7 @@ self._bass_enhancement = BassEnhancementSystem(
 ### 9.4 Phase 2.4 Advanced Features (Optional)
 
 **Konzepte:**
+
 1. ML-Enhanced Instrument Detection (Transformer-basiert)
 2. GPU-Accelerated DSP Kernels (CUDA/OpenCL)
 3. Advanced Mastering Features (Loudness, Limiting)
@@ -756,18 +774,21 @@ self._bass_enhancement = BassEnhancementSystem(
 ### 10.1 Erfolge
 
 ✅ **Alle Projektziele erreicht**
+
 - 6 Komponenten implementiert und getestet
 - Integration in UnifiedRestorerV2 abgeschlossen
 - Qualitätslücke von 11% auf 1% reduziert
 - 23 Punkte gewonnen (154.0 → 177.0/100)
 
 ✅ **Technische Excellence**
+
 - 4,533 Zeilen hochwertiger Code
 - Einheitliche Architektur
 - Comprehensive Testing
 - Broadcasting-Fehler vollständig behoben
 
 ✅ **Competitive Advantage**
+
 - Semantisches Routing (UNIK)
 - Instrument-spezifische Verarbeitung
 - Genre-Agnostic Intelligence
@@ -784,6 +805,7 @@ self._bass_enhancement = BassEnhancementSystem(
 ### 10.3 Impact
 
 **AURIK v8 hat jetzt:**
+
 - Weltklasse Vocal Processing (Phase 2.2, 93%)
 - Weltklasse Instrumental Processing (Phase 2.3, 92%)
 - Semantisches Routing (Einzigartig)

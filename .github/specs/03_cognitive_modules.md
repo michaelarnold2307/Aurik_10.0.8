@@ -40,6 +40,19 @@
 | `CrepePlugin` | `plugins/crepe_plugin.py` | Pitch-Tracking f₀, CNN-basiert |
 | `FormantTracker` | `plugins/formant_tracker.py` | LPC-Formanten F1–F4 |
 
+### §2.1a [RELEASE_MUST] Exzellenz-API-Kompatibilitätsvertrag (v9.11.1)
+
+Der Orchestrator (`AurikDenker`) MUSS mit beiden Exzellenz-Schnittstellen kompatibel bleiben:
+
+1. Primärpfad: `messe_und_repariere(audio, sr, ...) -> (audio_out, goals_dict)`
+2. Legacy-Fallback: `messe_ziele(audio, sr, ...)` (goals-only oder tuple-kompatibel)
+
+**Invarianten:**
+
+- Kein harter Methoden-Bind auf nur eine API.
+- Fallback-Pfad muss Stage-Notes eindeutig markieren (`Legacy-Goal-Messpfad`).
+- Bei fehlender Primärmethode darf die Pipeline nicht abbrechen, solange Legacy-Pfad verfügbar ist.
+
 ### §2.36b Lyrics-Produktivpfad und Datenschutzvertrag (bindend ab v9.10.100)
 
 - Autoritatives Kernmodul für Lyrics-gestützte Verarbeitung ist ausschließlich `backend/core/lyrics_guided_enhancement.py`.

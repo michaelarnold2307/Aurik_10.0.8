@@ -189,9 +189,7 @@ class MicroDynamicsEnvelopeMorphing:
             _tail_len = n - _last_covered
             _last_gain = gain_envelope[_last_covered - 1]
             # Smooth interpolation to 1.0 (unity gain = no modification)
-            gain_envelope[_last_covered:] = np.linspace(
-                _last_gain, 1.0, _tail_len, dtype=np.float32
-            )
+            gain_envelope[_last_covered:] = np.linspace(_last_gain, 1.0, _tail_len, dtype=np.float32)
 
         # Auf Stereo/Mono anwenden
         if is_stereo:
@@ -230,7 +228,9 @@ class MicroDynamicsEnvelopeMorphing:
                     n_s = min(len(res[ch]), len(gain2))
                     out_retry[ch, :n_s] = res[ch, :n_s] * gain2[:n_s]
                     out_retry[ch, n_s:] = res[ch, n_s:]
-                final = np.clip(np.nan_to_num(out_retry), -self.TRUE_PEAK_LIMIT, self.TRUE_PEAK_LIMIT).astype(np.float32)
+                final = np.clip(np.nan_to_num(out_retry), -self.TRUE_PEAK_LIMIT, self.TRUE_PEAK_LIMIT).astype(
+                    np.float32
+                )
             else:
                 final = out2.astype(np.float32)
             # §8.2 Observability: log final pearson after retry (universal guarantee ≥ 0.92)

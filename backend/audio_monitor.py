@@ -334,7 +334,7 @@ class PermanentAudioMonitor:
             file_path: Pfad zur Input-Datei
             metadata: Zusätzliche Metadaten
         """
-        logger.info("📊 Capturing baseline metrics for: %s", file_path or 'unknown')
+        logger.info("📊 Capturing baseline metrics for: %s", file_path or "unknown")
         self.file_path = file_path
         self.metadata = metadata or {}
         self.baseline_metrics = self._compute_metrics(audio, sr)
@@ -490,7 +490,7 @@ class PermanentAudioMonitor:
         logger.info("   ├─ File: %s", report.file_path)
         logger.info("   ├─ Modules: %s", len(report.module_logs))
         logger.info("   ├─ Total Time: %.1f ms", report.total_processing_time_ms)
-        logger.info("   ├─ Quality Gates: %s", 'ALL PASS ✅' if report.overall_quality_passed else 'FAILED ❌')
+        logger.info("   ├─ Quality Gates: %s", "ALL PASS ✅" if report.overall_quality_passed else "FAILED ❌")
         logger.info("   └─ CAS Improvement: %+.2f", report.cas_improvement)
 
     def _export_csv(self, report: AuditReport, csv_path: Path):

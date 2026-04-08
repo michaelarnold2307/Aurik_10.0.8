@@ -10,12 +10,10 @@ Coverage targets:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,6 +72,7 @@ class _StubRestorability:
 class TestPreAnalysisResult:
     def test_default_all_none(self):
         from backend.core.pre_analysis import PreAnalysisResult
+
         r = PreAnalysisResult()
         assert r.medium is None
         assert r.era is None
@@ -85,6 +84,7 @@ class TestPreAnalysisResult:
 
     def test_fields_assignable(self):
         from backend.core.pre_analysis import PreAnalysisResult
+
         r = PreAnalysisResult(
             medium=_StubMedium(),
             era=_StubEra(),
@@ -107,6 +107,7 @@ class TestPreAnalysisResult:
 
     def test_errors_dict_mutable(self):
         from backend.core.pre_analysis import PreAnalysisResult
+
         r = PreAnalysisResult()
         r.errors["medium"] = "import error"
         assert r.errors["medium"] == "import error"
@@ -114,6 +115,7 @@ class TestPreAnalysisResult:
     def test_no_shared_errors_dict(self):
         """Each instance gets its own errors dict (not shared class-level default)."""
         from backend.core.pre_analysis import PreAnalysisResult
+
         r1 = PreAnalysisResult()
         r2 = PreAnalysisResult()
         r1.errors["era"] = "fail"
@@ -167,10 +169,10 @@ class TestRunPreAnalysis:
             t = np.linspace(0.0, 0.5, int(0.5 * sr), endpoint=False)
             audio = (0.05 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
         from backend.core.pre_analysis import run_pre_analysis
+
         return run_pre_analysis(audio, sr, file_path=file_path, store_in_bridge_cache=False, **kwargs)
 
-    def _run(self, audio=None, sr=44100, file_path="/tmp/test.mp3",
-             store_in_bridge_cache=False, **kwargs):
+    def _run(self, audio=None, sr=44100, file_path="/tmp/test.mp3", store_in_bridge_cache=False, **kwargs):
         if audio is None:
             audio = _silence(2.0, sr)
 
@@ -182,6 +184,7 @@ class TestRunPreAnalysis:
             patch("backend.core.restorability_estimator.estimate_restorability", side_effect=_make_mock_restorability),
         ):
             from backend.core.pre_analysis import run_pre_analysis
+
             return run_pre_analysis(
                 audio,
                 sr,
@@ -198,7 +201,8 @@ class TestRunPreAnalysis:
         assert result.elapsed_seconds >= 0.0
         # At least one analyzer should usually populate a sub-result on valid audio.
         assert any(
-            x is not None for x in (
+            x is not None
+            for x in (
                 result.medium,
                 result.era,
                 result.genre,
@@ -252,16 +256,46 @@ class TestRunPreAnalysis:
         """If medium detection fails, other steps still succeed."""
         with (
             patch("forensics.medium_detector.get_medium_detector", side_effect=ImportError("no module")),
+            patch("backend.core.medium_classifier.classify_medium", side_effect=RuntimeError("fallback fail")),
             patch("backend.core.era_classifier.get_era_classifier", return_value=_make_mock_era_cls()),
             patch("backend.core.genre_classifier.get_genre_classifier", return_value=_make_mock_genre_cls()),
             patch("backend.core.defect_scanner.DefectScanner", return_value=_make_mock_defect_scanner()),
             patch("backend.core.restorability_estimator.estimate_restorability", side_effect=_make_mock_restorability),
         ):
             from backend.core.pre_analysis import run_pre_analysis
+
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
         assert result.medium is None
         assert "medium" in result.errors
         assert result.era is not None
+
+    def test_medium_primary_fails_fallback_runs_once(self):
+        """Primary detect is attempted once; fallback exactly once on failure."""
+
+        class _FallbackResult:
+            material_type = "vinyl"
+            confidence = 0.66
+
+        _md = MagicMock()
+        _md.detect.side_effect = RuntimeError("primary down")
+        _fb = MagicMock(return_value=_FallbackResult())
+
+        with (
+            patch("forensics.medium_detector.get_medium_detector", return_value=_md),
+            patch("backend.core.medium_classifier.classify_medium", _fb),
+            patch("backend.core.era_classifier.get_era_classifier", return_value=_make_mock_era_cls()),
+            patch("backend.core.genre_classifier.get_genre_classifier", return_value=_make_mock_genre_cls()),
+            patch("backend.core.defect_scanner.DefectScanner", return_value=_make_mock_defect_scanner()),
+            patch("backend.core.restorability_estimator.estimate_restorability", side_effect=_make_mock_restorability),
+        ):
+            from backend.core.pre_analysis import run_pre_analysis
+
+            result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
+
+        assert _md.detect.call_count == 1
+        assert _fb.call_count == 1
+        assert result.medium is not None
+        assert getattr(result.medium, "primary_material", "") == "vinyl"
 
     def test_single_step_failure_no_exception(self):
         """A failure in one step must not raise — result is returned with errors dict."""
@@ -273,6 +307,7 @@ class TestRunPreAnalysis:
             patch("backend.core.restorability_estimator.estimate_restorability", side_effect=_make_mock_restorability),
         ):
             from backend.core.pre_analysis import run_pre_analysis
+
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
         assert result.era is None
         assert "era" in result.errors
@@ -288,6 +323,7 @@ class TestRunPreAnalysis:
             patch("backend.core.restorability_estimator.estimate_restorability", side_effect=Exception("x")),
         ):
             from backend.core.pre_analysis import run_pre_analysis
+
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
         assert len(result.errors) >= 4
 
@@ -307,8 +343,10 @@ class TestRunPreAnalysis:
             patch("backend.api.bridge.cache_defect_result", _m_defect),
         ):
             from backend.core.pre_analysis import run_pre_analysis
+
             run_pre_analysis(
-                _silence(1.0), 44100,
+                _silence(1.0),
+                44100,
                 file_path="/tmp/song.mp3",
                 store_in_bridge_cache=True,
             )
@@ -321,11 +359,13 @@ class TestRunPreAnalysis:
 # UV3 pre_analysis_result kwarg unpacking
 # ---------------------------------------------------------------------------
 
+
 class TestUV3PreAnalysisUnpacking:
     """Tests that UV3.restore() correctly unpacks pre_analysis_result kwargs."""
 
     def _make_pre(self):
         from backend.core.pre_analysis import PreAnalysisResult
+
         return PreAnalysisResult(
             medium=_StubMedium(),
             era=_StubEra(),
@@ -344,8 +384,8 @@ class TestUV3PreAnalysisUnpacking:
             pytest.skip("UV3 not importable in test environment")
 
         pre = self._make_pre()
-        audio = _silence(0.5, 48_000)
-        uv3 = UnifiedRestorerV3.__new__(UnifiedRestorerV3)
+        _silence(0.5, 48_000)
+        UnifiedRestorerV3.__new__(UnifiedRestorerV3)
         # Simulate the kwarg-popping section only (not full restore())
         kwargs = {"pre_analysis_result": pre}
         _pre = kwargs.pop("pre_analysis_result", None)
@@ -361,6 +401,7 @@ class TestUV3PreAnalysisUnpacking:
     def test_explicit_kwarg_not_overwritten_by_pre_analysis(self):
         """Explicit cached_* kwargs take priority over pre_analysis_result contents."""
         from backend.core.pre_analysis import PreAnalysisResult
+
         explicit_medium = _StubMedium(primary_material="shellac", confidence=0.99)
         pre = PreAnalysisResult(medium=_StubMedium(primary_material="vinyl"))
         kwargs = {
@@ -379,9 +420,11 @@ class TestUV3PreAnalysisUnpacking:
 # _to_mono_native helper
 # ---------------------------------------------------------------------------
 
+
 class TestToMonoNative:
     def test_mono_unchanged(self):
         from backend.core.pre_analysis import _to_mono_native
+
         audio = _silence(1.0, 44100, channels=1)
         out = _to_mono_native(audio)
         assert out.ndim == 1
@@ -389,6 +432,7 @@ class TestToMonoNative:
 
     def test_stereo_n_2_shape(self):
         from backend.core.pre_analysis import _to_mono_native
+
         audio = _silence(1.0, 44100, channels=2)
         assert audio.shape == (44100, 2)
         out = _to_mono_native(audio)
@@ -397,18 +441,21 @@ class TestToMonoNative:
 
     def test_stereo_2_n_shape(self):
         from backend.core.pre_analysis import _to_mono_native
+
         audio = np.zeros((2, 44100), dtype=np.float32)
         out = _to_mono_native(audio)
         assert out.ndim == 1
 
     def test_nan_sanitized(self):
         from backend.core.pre_analysis import _to_mono_native
+
         audio = np.array([np.nan, 0.5, np.inf, -0.3], dtype=np.float32)
         out = _to_mono_native(audio)
         assert np.all(np.isfinite(out))
 
     def test_output_clipped(self):
         from backend.core.pre_analysis import _to_mono_native
+
         audio = np.array([2.0, -3.0, 0.5], dtype=np.float32)
         out = _to_mono_native(audio)
         assert np.max(np.abs(out)) <= 1.0
@@ -418,11 +465,14 @@ class TestToMonoNative:
 # Bridge re-export
 # ---------------------------------------------------------------------------
 
+
 class TestBridgeExport:
     def test_run_pre_analysis_importable_from_bridge(self):
-        from backend.api.bridge import run_pre_analysis  # noqa: F401
+        from backend.api.bridge import run_pre_analysis
+
         assert callable(run_pre_analysis)
 
     def test_pre_analysis_result_importable_from_bridge(self):
-        from backend.api.bridge import PreAnalysisResult  # noqa: F401
+        from backend.api.bridge import PreAnalysisResult
+
         assert PreAnalysisResult is not None

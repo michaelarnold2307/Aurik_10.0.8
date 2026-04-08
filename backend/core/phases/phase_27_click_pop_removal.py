@@ -180,16 +180,21 @@ class ClickPopRemoval(PhaseInterface):
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "processing": "skipped_zero_strength",
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=["Click/pop removal skipped due to zero effective strength"],
             )
 
-        # Process each channel
+        # §2.51: Linked detection — detect on mono mix, repair synchronized
         if is_stereo:
-            cleaned_left, clicks_left = self._process_channel(audio[:, 0], sample_rate, config)
-            cleaned_right, clicks_right = self._process_channel(audio[:, 1], sample_rate, config)
+            mono_mix = (audio[:, 0] + audio[:, 1]) * 0.5
+            click_locations = self._detect_clicks_multiband(mono_mix, config)
+            classified_clicks = self._classify_clicks(mono_mix, click_locations, config)
+            cleaned_left = self._repair_clicks(audio[:, 0], classified_clicks, config)
+            cleaned_right = self._repair_clicks(audio[:, 1], classified_clicks, config)
             cleaned_audio = np.column_stack((cleaned_left, cleaned_right))
-            total_clicks = clicks_left + clicks_right
+            total_clicks = len(classified_clicks)
         else:
             cleaned_audio, total_clicks = self._process_channel(audio, sample_rate, config)
 
@@ -207,8 +212,11 @@ class ClickPopRemoval(PhaseInterface):
                 "clicks_removed": int(total_clicks),
                 "clicks_per_second": float(total_clicks / (len(audio) / sample_rate)),
                 "rt_factor": float(rt_factor),
+                "stereo_mode": "linked_detection" if is_stereo else "mono",
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[] if rt_factor < 0.25 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

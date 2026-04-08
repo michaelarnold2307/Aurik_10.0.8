@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 GUI_FILE = Path("Aurik910/ui/modern_window.py")
 
 
@@ -50,7 +49,7 @@ def test_magic_button_sync_gate_hooks_present() -> None:
 def test_preanalysis_hard_timeout_does_not_bypass_defect_scan_gate() -> None:
     src = _read_gui_source()
     assert "def _preanalysis_hard_timeout() -> None:" in src
-    assert 'QTimer.singleShot(45_000, _preanalysis_hard_timeout)' in src
+    assert "QTimer.singleShot(45_000, _preanalysis_hard_timeout)" in src
     assert 'if "defect_scan" in self._preanalysis_flags:' in src
     assert "Pre-analysis hard-timeout reached, waiting for defect_scan before finalization" in src
 

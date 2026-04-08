@@ -206,7 +206,13 @@ class TFSPreservationGuard:
                 if e > min_len:
                     break
 
-                frame_rms = np.sqrt(np.mean(orig_band[s:e] ** 2) + 1e-15)
+                frame = orig_band[s:e]
+                # Numerically stable RMS to avoid overflow on rare filter bursts.
+                frame_peak = float(np.max(np.abs(frame)))
+                if not np.isfinite(frame_peak) or frame_peak <= 0.0:
+                    continue
+                frame_norm = frame / frame_peak
+                frame_rms = frame_peak * float(np.sqrt(np.mean(frame_norm * frame_norm) + 1e-15))
                 if frame_rms < energy_floor_lin:
                     continue  # silent frame — TFS meaningless
 

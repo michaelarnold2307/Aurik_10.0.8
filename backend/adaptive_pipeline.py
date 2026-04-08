@@ -679,7 +679,7 @@ class AdaptiveProcessingPipeline:
                 f"epistemic_conf={metadata['epistemic_confidence']:.2f}"
             )
         else:
-            self.logger.info("Pitch correction rejected: %s", metadata.get('reason', 'unknown'))
+            self.logger.info("Pitch correction rejected: %s", metadata.get("reason", "unknown"))
 
         # Audio monitor tracking (if available)
         if hasattr(self, "audio_monitor"):
@@ -801,7 +801,9 @@ class AdaptiveProcessingPipeline:
                 media_chain = [
                     {
                         "medium": medium,
-                        "confidence": float(_conf[idx]) if idx < len(_conf) else float(getattr(medium_result, "confidence", 0.0)),
+                        "confidence": (
+                            float(_conf[idx]) if idx < len(_conf) else float(getattr(medium_result, "confidence", 0.0))
+                        ),
                     }
                     for idx, medium in enumerate(_chain)
                 ]
@@ -811,7 +813,9 @@ class AdaptiveProcessingPipeline:
                 media_chain = [
                     {
                         "medium": medium,
-                        "confidence": float(_conf[idx]) if idx < len(_conf) else float(medium_result.get("confidence", 0.0)),
+                        "confidence": (
+                            float(_conf[idx]) if idx < len(_conf) else float(medium_result.get("confidence", 0.0))
+                        ),
                     }
                     for idx, medium in enumerate(_chain)
                 ]
@@ -1088,7 +1092,7 @@ class AdaptiveProcessingPipeline:
             qc_result = self.quality_control.psychoacoustic_score(step["audio"], features.get("sr", 44100))
             results["quality"].append(qc_result)
             self.log.append({"step": step["name"], "quality": qc_result})
-            self.logger.info("Qualitätskontrolle für %s: %s", step['name'], qc_result)
+            self.logger.info("Qualitätskontrolle für %s: %s", step["name"], qc_result)
 
         # 5. Mastering/Postprocessing (immer am Ende, vor Export)
         if results["steps"]:
@@ -1232,7 +1236,7 @@ class AdaptiveProcessingPipeline:
             if model_name in fallback_chain:
                 fallback_chain.remove(model_name)
 
-            self.logger.info("Fallback-Chain: %s", ' → '.join(fallback_chain))
+            self.logger.info("Fallback-Chain: %s", " → ".join(fallback_chain))
 
             # Durchlaufe Fallback-Chain
             for fallback_name in fallback_chain:
@@ -1393,7 +1397,7 @@ class AdaptiveProcessingPipeline:
 
             audio_final = apply_adaptive_eq(audio_wide, sr, context=context, goal=goal)
 
-            self.logger.info("✓ Adaptive EQ applied (genre=%s)", context['genre'])
+            self.logger.info("✓ Adaptive EQ applied (genre=%s)", context["genre"])
 
         except Exception as e:
             logger.warning("Adaptive EQ skipped: %s", e)
@@ -1464,7 +1468,7 @@ class AdaptiveProcessingPipeline:
         audio_original, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
 
         # NUTZE CONTEXT AUS PHASE 1
-        self.logger.info("Repair Pipeline: detected_medium=%s", context.get('detected_medium', 'unknown'))
+        self.logger.info("Repair Pipeline: detected_medium=%s", context.get("detected_medium", "unknown"))
 
         # STAGE 1: ML-Repair (Policy-selected Model)
         model_name = self.policy_engine.select_repair_model(context, goal)
@@ -1478,7 +1482,7 @@ class AdaptiveProcessingPipeline:
         )
         logger.info("Policy-Selektion: %s", model_name)
         logger.info("  Typ: %s", repair_type)
-        self.logger.info("  Vocals: %s", 'Ja' if context.get('has_vocals', False) else 'Nein')
+        self.logger.info("  Vocals: %s", "Ja" if context.get("has_vocals", False) else "Nein")
         self.logger.info("")
 
         # Lade das ausgewählte Plugin
@@ -1495,7 +1499,7 @@ class AdaptiveProcessingPipeline:
             if model_name in fallback_chain:
                 fallback_chain.remove(model_name)
 
-            self.logger.info("Fallback-Chain: %s", ' → '.join(fallback_chain))
+            self.logger.info("Fallback-Chain: %s", " → ".join(fallback_chain))
 
             # Durchlaufe Fallback-Chain
             for fallback_name in fallback_chain:
@@ -1602,11 +1606,11 @@ class AdaptiveProcessingPipeline:
         # Policy-Engine wählt optimales Model
         model_name = self.policy_engine.select_separation_model(context, goal)
 
-        self.logger.info("\n%s", '=' * 80)
+        self.logger.info("\n%s", "=" * 80)
         logger.info("🎶 SOURCE-SEPARATION AUSGEWÄHLT: %s", model_name.upper())
-        self.logger.info("%s", '=' * 80)
-        self.logger.info("   Stems: %s", goal.get('stems', 4))
-        self.logger.info("   Genre: %s", context.get('genre', 'unknown'))
+        self.logger.info("%s", "=" * 80)
+        self.logger.info("   Stems: %s", goal.get("stems", 4))
+        self.logger.info("   Genre: %s", context.get("genre", "unknown"))
 
         if "mdx23c" in model_name:
             self.logger.info("   Model: MDX23C (maximal quality)")
@@ -1615,7 +1619,7 @@ class AdaptiveProcessingPipeline:
         else:
             self.logger.info("   Model: UVR-MDXNet (2-stem)")
 
-        self.logger.info("%s\n", '=' * 80)
+        self.logger.info("%s\n", "=" * 80)
 
         plugin = getattr(self, model_name)
 
@@ -1682,14 +1686,14 @@ class AdaptiveProcessingPipeline:
             _log.warning("MatcheringPlugin nicht verfügbar — Fallback auf mastering_chain")
 
         # NUTZE CONTEXT AUS PHASE 1
-        self.logger.info("Remastering Pipeline: detected_medium=%s", context.get('detected_medium', 'unknown'))
+        self.logger.info("Remastering Pipeline: detected_medium=%s", context.get("detected_medium", "unknown"))
 
-        self.logger.info("\n%s", '=' * 80)
+        self.logger.info("\n%s", "=" * 80)
         self.logger.info("🎼 MASTERING/REMASTERING")
-        self.logger.info("%s", '=' * 80)
+        self.logger.info("%s", "=" * 80)
         self.logger.info("   Method: Matchering 2.0 (AI-powered)")
         self.logger.info("   Target: Professional Mastering Standards")
-        self.logger.info("%s\n", '=' * 80)
+        self.logger.info("%s\n", "=" * 80)
 
         container_info = {
             "container": "matchering2.0",

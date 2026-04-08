@@ -1,5 +1,5 @@
 """
-Unit-Tests für die 6 SOTA-Plugins (v9.9.x) — Aurik 9
+Unit-Tests für die 6 SOTA-Plugins — Aurik 9
 
 Tests nach §5.1 Anforderungen:
   - Shape / Dtype

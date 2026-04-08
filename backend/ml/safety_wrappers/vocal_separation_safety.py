@@ -70,7 +70,9 @@ class VocalSeparationSafetyWrapper:
 
         self.audit_log_path = audit_log_path
 
-        logger.info("VocalSeparationSafetyWrapper initialized: strict_mode=%s, audit_log=%s", strict_mode, audit_log_path)
+        logger.info(
+            "VocalSeparationSafetyWrapper initialized: strict_mode=%s, audit_log=%s", strict_mode, audit_log_path
+        )
 
         self.separation_count = 0
         self.violations_count = 0
@@ -104,7 +106,7 @@ class VocalSeparationSafetyWrapper:
             if self.strict_mode:
                 raise HIPSViolationError(f"Pre-separation HIPS check failed: {pre_check_result['issues']}")
             else:
-                logger.warning("[%s] Pre-separation warnings: %s", separation_id, pre_check_result['issues'])
+                logger.warning("[%s] Pre-separation warnings: %s", separation_id, pre_check_result["issues"])
 
         # STEP 2: Perform separation
         try:
@@ -128,7 +130,7 @@ class VocalSeparationSafetyWrapper:
             if self.strict_mode:
                 raise HIPSViolationError(f"Post-separation HIPS check failed: {post_check_result['issues']}")
             else:
-                logger.warning("[%s] Post-separation warnings: %s", separation_id, post_check_result['issues'])
+                logger.warning("[%s] Post-separation warnings: %s", separation_id, post_check_result["issues"])
 
         # STEP 4: Auditability - Log successful separation
         self._log_success(

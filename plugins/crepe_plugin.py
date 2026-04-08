@@ -337,10 +337,12 @@ class CrepePlugin:
             seg_len = min(len(audio), int(sr * 30.0))
             seg = audio[:seg_len]
 
-            _frame_length = 2048
-            # fmin must allow at least 2 periods to fit in frame_length (librosa requirement)
+            # Ensure at least two fmin periods fit in frame_length to avoid
+            # librosa.pyin warnings on low-pitch material.
             _fmin_floor = float(librosa.note_to_hz("C1"))  # ≈32.7 Hz — ideal lower bound
-            _fmin_safe = max(_fmin_floor, sr / _frame_length * 2)  # ≈46.9 Hz @ 48 kHz/2048
+            _min_frame = int(np.ceil((2.0 * sr) / max(_fmin_floor, 1e-6))) + 1
+            _frame_length = max(2048, _min_frame)
+            _fmin_safe = _fmin_floor
             f0, _, voiced_probs = librosa.pyin(seg, fmin=_fmin_safe, fmax=2_000.0, sr=sr, frame_length=_frame_length)
             f0 = np.nan_to_num(f0.astype(np.float32))
             voiced_probs = np.nan_to_num(voiced_probs.astype(np.float32))
@@ -368,9 +370,10 @@ class CrepePlugin:
             seg_len = min(len(audio), int(sr * 30.0))
             seg = audio[:seg_len]
 
-            _frame_length = 2048
             _fmin_floor = float(librosa.note_to_hz("C1"))
-            _fmin_safe = max(_fmin_floor, sr / _frame_length * 2)
+            _min_frame = int(np.ceil((2.0 * sr) / max(_fmin_floor, 1e-6))) + 1
+            _frame_length = max(2048, _min_frame)
+            _fmin_safe = _fmin_floor
             f0 = librosa.yin(seg, fmin=_fmin_safe, fmax=2_000.0, sr=sr, frame_length=_frame_length)
             f0 = np.nan_to_num(np.asarray(f0, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
             voiced_probs = np.where(f0 > 0.0, 0.55, 0.0).astype(np.float32)

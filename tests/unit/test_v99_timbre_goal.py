@@ -343,7 +343,7 @@ class TestMusicalGoalsIntegration:
 
     def test_33_checker_has_14_goals(self) -> None:
         checker = MusicalGoalsChecker()
-        # v9.9.9: SeparationFidelityMetric + ArticulationMetric → 14 Ziele
+        # SeparationFidelityMetric + ArticulationMetric -> 14 goals
         assert len(checker.metrics) == 14
 
     def test_34_timbre_in_checker_metrics(self) -> None:
@@ -358,7 +358,7 @@ class TestMusicalGoalsIntegration:
         checker = MusicalGoalsChecker()
         audio = _noise(1.0)
         scores = checker.measure_all(audio, SR)
-        # v9.9.9: SeparationFidelityMetric + ArticulationMetric → 14 Ziele
+        # SeparationFidelityMetric + ArticulationMetric -> 14 goals
         assert len(scores) == 14
 
     def test_37_timbre_in_measure_all(self) -> None:

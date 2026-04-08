@@ -16,7 +16,10 @@ import time
 from pathlib import Path
 
 # ── Workspace root ──────────────────────────────────────────────────────────
-_ROOT = Path(__file__).parent
+_HERE = Path(__file__).resolve().parent
+_ROOT = _HERE
+if not (_ROOT / "Aurik910").exists():
+    _ROOT = _HERE.parent
 sys.path.insert(0, str(_ROOT))
 
 # ── Debug-Session-Logfile ────────────────────────────────────────────────────

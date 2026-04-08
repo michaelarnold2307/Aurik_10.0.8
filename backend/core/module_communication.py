@@ -178,7 +178,7 @@ class ModuleCommunicationBus:
         """
         with self._lock:
             if module_name in self._modules:
-                logger.warning("Module already registered: %s", module_name)
+                self.logger.warning("Module already registered: %s", module_name)
                 return
 
             self._modules.add(module_name)
@@ -192,7 +192,7 @@ class ModuleCommunicationBus:
             worker.start()
             self._workers[module_name] = worker
 
-            logger.info("Module registered: %s", module_name)
+            self.logger.info("Module registered: %s", module_name)
 
     def unregister_module(self, module_name: str) -> None:
         """
@@ -218,7 +218,7 @@ class ModuleCommunicationBus:
             if module_name in self._message_queues:
                 del self._message_queues[module_name]
 
-            logger.info("Module unregistered: %s", module_name)
+            self.logger.info("Module unregistered: %s", module_name)
 
     def get_registered_modules(self) -> list[str]:
         """
@@ -250,7 +250,7 @@ class ModuleCommunicationBus:
 
             self._subscriptions[topic][module_name].append(callback)
 
-            logger.debug("%s subscribed to '%s'", module_name, topic)
+            self.logger.debug("%s subscribed to '%s'", module_name, topic)
 
     def unsubscribe(self, module_name: str, topic: str, callback: Callable | None = None) -> None:
         """
@@ -282,7 +282,7 @@ class ModuleCommunicationBus:
             if not self._subscriptions[topic]:
                 del self._subscriptions[topic]
 
-            logger.debug("%s unsubscribed from '%s'", module_name, topic)
+            self.logger.debug("%s unsubscribed from '%s'", module_name, topic)
 
     def get_subscribers(self, topic: str) -> list[str]:
         """
@@ -429,7 +429,7 @@ class ModuleCommunicationBus:
             with self._lock:
                 if correlation_id in self._pending_requests:
                     del self._pending_requests[correlation_id]
-            logger.warning("Request timeout: %s → %s (%s)", sender, recipient, topic)
+            self.logger.warning("Request timeout: %s → %s (%s)", sender, recipient, topic)
             return None
 
     def respond(self, original_message: Message, payload: dict[str, Any]) -> str:
@@ -516,7 +516,7 @@ class ModuleCommunicationBus:
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error("Message processing error (%s): %s", module_name, e)
+                self.logger.error("Message processing error (%s): %s", module_name, e)
 
     def _deliver_message(self, module_name: str, message: Message) -> None:
         """
@@ -540,7 +540,7 @@ class ModuleCommunicationBus:
             try:
                 callback(message)
             except Exception as e:
-                logger.error("Callback error (%s, %s): %s", module_name, message.topic, e)
+                self.logger.error("Callback error (%s, %s): %s", module_name, message.topic, e)
 
     # === Statistics & Monitoring ===
 

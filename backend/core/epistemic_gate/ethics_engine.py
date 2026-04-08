@@ -398,7 +398,7 @@ if __name__ == "__main__":
     report = engine.epistemic_gate(context_vinyl)
     logger.debug("\n=== Example 1: Vinyl mit Clicks ===")
     logger.debug("Decision: %s", report.decision.value)
-    logger.debug("Mode: %s", report.mode.value if report.mode else 'N/A')
+    logger.debug("Mode: %s", report.mode.value if report.mode else "N/A")
     logger.debug("Reasoning: %s", report.reasoning)
     logger.debug("Recommendation: %s", report.recommendation)
 
@@ -432,7 +432,7 @@ if __name__ == "__main__":
     report3 = engine.epistemic_gate(context_modern)
     logger.debug("\n=== Example 3: Modern Reproduction ===")
     logger.debug("Decision: %s", report3.decision.value)
-    logger.debug("Mode: %s", report3.mode.value if report3.mode else 'N/A')
+    logger.debug("Mode: %s", report3.mode.value if report3.mode else "N/A")
     logger.debug("Recommendation: %s", report3.recommendation)
 
     # Example 4: Conduct Regulator Check

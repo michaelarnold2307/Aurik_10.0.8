@@ -162,6 +162,8 @@ class LoudnessNormalizationPhase(PhaseInterface):
                     "material": material.name,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 metrics={
                     "integrated_lufs_before": -70.0,
@@ -295,6 +297,8 @@ class LoudnessNormalizationPhase(PhaseInterface):
                 "output_guard_reason": output_guard_reason,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             metrics={
                 "integrated_lufs_before": float(integrated_lufs),
@@ -656,9 +660,9 @@ if __name__ == "__main__":
     ]
 
     for material, platform, description in test_configs:
-        logger.debug("\n%s", '─' * 80)
+        logger.debug("\n%s", "─" * 80)
         logger.debug("%s", description)
-        logger.debug("%s", '─' * 80)
+        logger.debug("%s", "─" * 80)
 
         result = phase.process(test_audio_stereo, sample_rate, material, platform=platform)
 
@@ -667,32 +671,34 @@ if __name__ == "__main__":
             meta = result.metadata
 
             logger.debug("\n✅ Professional Loudness Normalization:")
-            logger.debug("   Target: %.1f LUFS", meta['target_lufs'])
+            logger.debug("   Target: %.1f LUFS", meta["target_lufs"])
             if meta["platform_preset"]:
-                logger.debug("   Platform: %s", meta['platform_preset'])
+                logger.debug("   Platform: %s", meta["platform_preset"])
 
             logger.debug("\n   Loudness:")
-            logger.debug("     Integrated: %.2f → %.2f LUFS", m['integrated_lufs_before'], m['integrated_lufs_after'])
-            logger.debug("     Tolerance: %.2f LU (%s)", m['lufs_tolerance'], '✅' if m['lufs_tolerance'] < 0.5 else '⚠️')
-            logger.debug("     Momentary Max: %.2f LUFS", m['momentary_max_lufs'])
-            logger.debug("     Short-term Max: %.2f LUFS", m['short_term_max_lufs'])
+            logger.debug("     Integrated: %.2f → %.2f LUFS", m["integrated_lufs_before"], m["integrated_lufs_after"])
+            logger.debug(
+                "     Tolerance: %.2f LU (%s)", m["lufs_tolerance"], "✅" if m["lufs_tolerance"] < 0.5 else "⚠️"
+            )
+            logger.debug("     Momentary Max: %.2f LUFS", m["momentary_max_lufs"])
+            logger.debug("     Short-term Max: %.2f LUFS", m["short_term_max_lufs"])
 
             logger.debug("\n   Loudness Range (LRA):")
-            logger.debug("     Before: %.2f LU", m['lra_before'])
-            logger.debug("     After: %.2f LU", m['lra_after'])
+            logger.debug("     Before: %.2f LU", m["lra_before"])
+            logger.debug("     After: %.2f LU", m["lra_after"])
 
             logger.debug("\n   True Peak:")
-            logger.debug("     Before: %.2f dBTP", m['true_peak_before_db'])
-            logger.debug("     After: %.2f dBTP", m['true_peak_after_db'])
-            logger.debug("     Max Allowed: %.1f dBTP", meta['max_true_peak_db'])
-            logger.debug("     Compliance: %s", '✅' if m['peak_compliance'] else '❌')
+            logger.debug("     Before: %.2f dBTP", m["true_peak_before_db"])
+            logger.debug("     After: %.2f dBTP", m["true_peak_after_db"])
+            logger.debug("     Max Allowed: %.1f dBTP", meta["max_true_peak_db"])
+            logger.debug("     Compliance: %s", "✅" if m["peak_compliance"] else "❌")
 
             logger.debug("\n   Processing:")
-            logger.debug("     Gain Applied: %.2f dB", m['gain_applied_db'])
+            logger.debug("     Gain Applied: %.2f dB", m["gain_applied_db"])
             logger.debug(
                 f"     Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
             )
 
-    logger.debug("\n%s", '=' * 80)
+    logger.debug("\n%s", "=" * 80)
     logger.debug("Test abgeschlossen")
-    logger.debug("%s", '=' * 80)
+    logger.debug("%s", "=" * 80)

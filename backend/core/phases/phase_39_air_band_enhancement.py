@@ -166,6 +166,8 @@ class AirBandEnhancement(PhaseInterface):
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
                 },
                 warnings=[],
             )
@@ -325,6 +327,8 @@ class AirBandEnhancement(PhaseInterface):
                 "stereo_side_ratio": guard.stereo_side_ratio,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "rms_drop_db": 0.0,
+                "loudness_makeup_db": 0.0,
             },
             warnings=[],
         )

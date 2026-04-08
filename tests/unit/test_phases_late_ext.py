@@ -477,6 +477,29 @@ class TestPhase50SpectralRepair:
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
 
+    def test_stereo_ms_domain_coherence(self):
+        """§2.51: Stereo processing uses M/S domain — identical spikes repaired coherently."""
+        rng = np.random.default_rng(42)
+        base = rng.normal(0, 0.05, _N).astype(np.float32)
+        left = base + rng.normal(0, 0.01, _N).astype(np.float32)
+        right = base + rng.normal(0, 0.01, _N).astype(np.float32)
+        # Inject shared impulse spikes
+        for idx in [1000, 3000, 5000]:
+            left[idx] = 0.8
+            right[idx] = 0.8
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, 48000)
+        assert result.success
+        assert result.metadata.get("stereo_mode") == "ms_domain"
+        assert result.audio.shape == stereo_in.shape
+
+    def test_stereo_output_shape_preserved(self):
+        """Stereo input → stereo output with correct shape."""
+        rng = np.random.default_rng(123)
+        stereo_in = rng.normal(0, 0.1, (_N, 2)).astype(np.float32)
+        result = self.phase.process(stereo_in, 48000)
+        assert result.audio.shape == stereo_in.shape
+
 
 # ===========================================================================
 # Phase 53 – Semantic Audio

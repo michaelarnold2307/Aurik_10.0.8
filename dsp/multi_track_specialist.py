@@ -745,7 +745,9 @@ class StereoBalanceCorrector:
 
         # Correct balance
         channel_names = ["Left", "Right"]
-        logger.info("[StereoBalance] %s %.2f dB louder, correcting...", channel_names[louder_channel], abs(imbalance_db))
+        logger.info(
+            "[StereoBalance] %s %.2f dB louder, correcting...", channel_names[louder_channel], abs(imbalance_db)
+        )
         left_corrected, right_corrected = self.correct_balance(left, right, imbalance_db)
 
         self.metrics["correction_applied"] = True
@@ -1341,6 +1343,7 @@ if __name__ == "__main__":
     # Load audio
     logger.info("Loading: %s", args.input)
     from backend.file_import import load_audio_file
+
     _res = load_audio_file(args.input)
     audio, sr = _res["audio"], int(_res["sr"])
 
@@ -1366,7 +1369,7 @@ if __name__ == "__main__":
 
     # Get metrics
     metrics = processor.get_metrics()
-    logger.info("\n%s", '=' * 60)
+    logger.info("\n%s", "=" * 60)
     logger.info("METRICS:")
     for module_name, module_metrics in metrics.items():
         logger.info("\n%s:", module_name.upper())
@@ -1375,7 +1378,7 @@ if __name__ == "__main__":
                 logger.info("  %s: %.2f", key, value)
             else:
                 logger.info("  %s: %s", key, value)
-    logger.info("%s\n", '=' * 60)
+    logger.info("%s\n", "=" * 60)
 
     # Save (transpose back if needed)
     if output.ndim == 2:

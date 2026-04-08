@@ -12,23 +12,25 @@ Abgedeckte Verbesserungen:
 import importlib
 import inspect
 import re
-import numpy as np
 
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # ExcellenceOptimizer — Konstanten und Material-Profile
 # ---------------------------------------------------------------------------
 
+
 class TestExcellenceOptimizerBoostValues:
     """_MODULATION_STRENGTH und _HARM_BOOST_DB müssen deutlich über früheren konservativen Werten liegen."""
 
     def _get_module(self):
-        import importlib
         import sys
+
         mod_name = "backend.core.excellence_optimizer"
         if mod_name in sys.modules:
             importlib.reload(sys.modules[mod_name])
         from backend.core import excellence_optimizer as m
+
         return m
 
     def test_modulation_strength_increased(self):
@@ -63,8 +65,7 @@ class TestExcellenceOptimizerBoostValues:
         vinyl = m.MATERIAL_PROFILES.get("vinyl")
         assert vinyl is not None, "Vinyl-Profil fehlt in MATERIAL_PROFILES"
         assert vinyl.harm_boost_db >= 1.5, (
-            f"Vinyl harm_boost_db={vinyl.harm_boost_db:.2f} < 1.5. "
-            "v9.10.114: Vinyl Obert one-Boost verdoppelt."
+            f"Vinyl harm_boost_db={vinyl.harm_boost_db:.2f} < 1.5. v9.10.114: Vinyl Obert one-Boost verdoppelt."
         )
 
     def test_tape_profile_harm_boost(self):
@@ -73,8 +74,7 @@ class TestExcellenceOptimizerBoostValues:
         tape = m.MATERIAL_PROFILES.get("tape")
         assert tape is not None, "Tape-Profil fehlt in MATERIAL_PROFILES"
         assert tape.harm_boost_db >= 1.2, (
-            f"Tape harm_boost_db={tape.harm_boost_db:.2f} < 1.2. "
-            "v9.10.114: Tape-Sättigung stärker betonen."
+            f"Tape harm_boost_db={tape.harm_boost_db:.2f} < 1.2. v9.10.114: Tape-Sättigung stärker betonen."
         )
 
     def test_shellac_profile_modulation_strength(self):
@@ -91,18 +91,14 @@ class TestExcellenceOptimizerBoostValues:
         m = self._get_module()
         vinyl = m.MATERIAL_PROFILES.get("vinyl")
         assert vinyl is not None
-        assert vinyl.modulation_strength >= 0.25, (
-            f"Vinyl modulation_strength={vinyl.modulation_strength:.3f} < 0.25."
-        )
+        assert vinyl.modulation_strength >= 0.25, f"Vinyl modulation_strength={vinyl.modulation_strength:.3f} < 0.25."
 
     def test_tape_profile_modulation_strength(self):
         """Tape-Profil: modulation_strength muss ≥ 0.20 sein."""
         m = self._get_module()
         tape = m.MATERIAL_PROFILES.get("tape")
         assert tape is not None
-        assert tape.modulation_strength >= 0.20, (
-            f"Tape modulation_strength={tape.modulation_strength:.3f} < 0.20."
-        )
+        assert tape.modulation_strength >= 0.20, f"Tape modulation_strength={tape.modulation_strength:.3f} < 0.20."
 
     def test_cd_digital_profile_conservative(self):
         """CD/Digital-Profil: modulation_strength bleibt niedrig (digitales Material braucht weniger)."""
@@ -120,11 +116,13 @@ class TestExcellenceOptimizerBoostValues:
 # EmotionalArc — Arousal-Formel (ZCR → Spektral-Centroid)
 # ---------------------------------------------------------------------------
 
+
 class TestEmotionalArcArousalFormula:
     """Arousal-Formel muss Spektral-Centroid statt ZCR nutzen (pitch-bewusst)."""
 
     def _get_source(self):
         from backend.core import emotional_arc_preservation as m
+
         return inspect.getsource(m)
 
     def test_zcr_removed_from_arousal(self):
@@ -166,13 +164,12 @@ class TestEmotionalArcArousalFormula:
         match = re.search(r"arousal_list\.append\(.*?rms\s*\*\s*([\d.]+)", src)
         if match:
             rms_weight = float(match.group(1))
-            assert 0.45 <= rms_weight <= 0.70, (
-                f"RMS-Gewicht in Arousal = {rms_weight:.2f}, erwartet 0.45–0.70."
-            )
+            assert 0.45 <= rms_weight <= 0.70, f"RMS-Gewicht in Arousal = {rms_weight:.2f}, erwartet 0.45–0.70."
 
     def test_compute_features_still_returns_two_arrays(self):
         """_compute_features muss nach Refactoring (arousal, valence, centroids) zurückgeben."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         rng = np.random.default_rng(42)
         mono = rng.standard_normal(48000 * 15).astype(np.float32) * 0.3  # 15s — groß genug für seg_len=5s
@@ -182,17 +179,14 @@ class TestEmotionalArcArousalFormula:
         result = eap._compute_features(mono, sr, seg_len, hop_len)
         assert len(result) >= 2, "_compute_features must return at least (arousal, valence)"
         a, v = result[0], result[1]
-        assert isinstance(a, np.ndarray) and isinstance(v, np.ndarray), (
-            "_compute_features returned non-ndarray"
-        )
-        assert a.dtype == np.float32 and v.dtype == np.float32, (
-            "_compute_features should return float32 arrays"
-        )
+        assert isinstance(a, np.ndarray) and isinstance(v, np.ndarray), "_compute_features returned non-ndarray"
+        assert a.dtype == np.float32 and v.dtype == np.float32, "_compute_features should return float32 arrays"
         assert len(a) >= 1 and len(v) >= 1, "_compute_features returned empty arrays"
 
     def test_arousal_values_finite(self):
         """Alle Arousal-Werte müssen endlich und nicht-negativ sein."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         rng = np.random.default_rng(99)
         mono = rng.standard_normal(48000 * 15).astype(np.float32) * 0.4  # 15s
@@ -207,6 +201,7 @@ class TestEmotionalArcArousalFormula:
     def test_centroid_arousal_higher_for_bright_signal(self):
         """Arousal soll für helle (viel HF) Signale höher sein als für dunkle — Nicht-Regression."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         t = np.linspace(0, 3.0, sr * 3)
@@ -231,22 +226,21 @@ class TestEmotionalArcArousalFormula:
 # Phase 37 — Bass Enhancement: mix-Werte
 # ---------------------------------------------------------------------------
 
+
 class TestPhase37BassEnhancementMix:
     """Bass Enhancement mix-Werte müssen für alle Materialien erhöht sein."""
 
     def _get_config(self):
-        from backend.core.phases.phase_37_bass_enhancement import BassEnhancement
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_37_bass_enhancement import BassEnhancement
+
         return BassEnhancement.ENHANCEMENT_CONFIG, MaterialType
 
     def test_shellac_mix_increased(self):
         """Shellac mix muss ≥ 0.60 sein (war 0.50)."""
         cfg, MT = self._get_config()
         val = cfg[MT.SHELLAC]["mix"]
-        assert val >= 0.60, (
-            f"Shellac mix={val:.2f} < 0.60. "
-            "v9.10.114: Shellac-Bass muss deutlich stärker hörbar sein."
-        )
+        assert val >= 0.60, f"Shellac mix={val:.2f} < 0.60. v9.10.114: Shellac-Bass muss deutlich stärker hörbar sein."
 
     def test_vinyl_mix_increased(self):
         """Vinyl mix muss ≥ 0.55 sein (war 0.45)."""
@@ -295,12 +289,14 @@ class TestPhase37BassEnhancementMix:
 # Phase 38 — Presence Boost: BOOST_CONFIG erhöht
 # ---------------------------------------------------------------------------
 
+
 class TestPhase38PresenceBoostConfig:
     """BOOST_CONFIG muss für alle Materialien erhöhte Presence-Werte haben."""
 
     def _get_config(self):
-        from backend.core.phases.phase_38_presence_boost import PresenceBoost
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_38_presence_boost import PresenceBoost
+
         return PresenceBoost.BOOST_CONFIG, MaterialType
 
     def test_shellac_lower_gain_increased(self):
@@ -348,6 +344,7 @@ class TestPhase38PresenceBoostConfig:
     def test_era_cap_increased_in_source(self):
         """Era-Cap für ≤1950-Material muss ≥ 3.5/4.0 dB sein (war 2.5/3.0)."""
         from backend.core.phases import phase_38_presence_boost as m
+
         src = inspect.getsource(m)
         # The vintage cap should be 3.5 or higher (was 2.5)
         assert "3.5" in src or "4.0" in src or "4.5" in src, (
@@ -373,12 +370,14 @@ class TestPhase38PresenceBoostConfig:
 # Phase 39 — Air Band Enhancement: shelf_gain_db erhöht
 # ---------------------------------------------------------------------------
 
+
 class TestPhase39AirBandConfig:
     """shelf_gain_db für Tape und CD_DIGITAL muss erhöht sein."""
 
     def _get_config(self):
-        from backend.core.phases.phase_39_air_band_enhancement import AirBandEnhancement
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_39_air_band_enhancement import AirBandEnhancement
+
         return AirBandEnhancement.AIR_CONFIG, MaterialType
 
     def test_tape_shelf_gain_increased(self):
@@ -395,8 +394,7 @@ class TestPhase39AirBandConfig:
         cfg, MT = self._get_config()
         val = cfg[MT.CD_DIGITAL]["shelf_gain_db"]
         assert val >= 4.5, (
-            f"CD_DIGITAL shelf_gain_db={val:.1f} < 4.5 dB. "
-            "v9.10.114: CD hat klare HF-Basis, mehr Air-Boost sicher."
+            f"CD_DIGITAL shelf_gain_db={val:.1f} < 4.5 dB. v9.10.114: CD hat klare HF-Basis, mehr Air-Boost sicher."
         )
 
     def test_streaming_shelf_gain_increased(self):
@@ -409,10 +407,7 @@ class TestPhase39AirBandConfig:
         """Shellac shelf_gain_db muss ≥ 6.0 bleiben (stark bandwidth-limitiert)."""
         cfg, MT = self._get_config()
         val = cfg[MT.SHELLAC]["shelf_gain_db"]
-        assert val >= 6.0, (
-            f"Shellac shelf_gain_db={val:.1f} < 6.0. "
-            "Shellac braucht maximale HF-Restaurierung."
-        )
+        assert val >= 6.0, f"Shellac shelf_gain_db={val:.1f} < 6.0. Shellac braucht maximale HF-Restaurierung."
 
     def test_vinyl_shelf_gain_preserved(self):
         """Vinyl shelf_gain_db muss ≥ 4.0 bleiben."""
@@ -425,9 +420,7 @@ class TestPhase39AirBandConfig:
         cfg, MT = self._get_config()
         for mat, params in cfg.items():
             val = params["shelf_gain_db"]
-            assert val <= 8.0, (
-                f"shelf_gain_db={val:.1f} > 8.0 für {mat}. §8.2 HF-Kumulativ-Limit."
-            )
+            assert val <= 8.0, f"shelf_gain_db={val:.1f} > 8.0 für {mat}. §8.2 HF-Kumulativ-Limit."
 
     def test_exciter_mix_in_range(self):
         """exciter_mix muss für alle Materialien in [0.0, 1.0] liegen."""

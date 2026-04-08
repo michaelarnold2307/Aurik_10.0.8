@@ -12,7 +12,6 @@ Fix 5: Emotional Arc Centroid — NR-robuste Arousal-Proxy-Normalisierung
 import numpy as np
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # Fix 1: HPSS Kernel-Verkleinerung (schärfere Transienten)
 # ═══════════════════════════════════════════════════════════════════════
@@ -23,15 +22,18 @@ class TestHPSSKernelFix:
 
     def test_01_harmonic_kernel_17(self):
         from backend.core.transient_decoupled_processor import HPSS_HARMONIC_KERNEL
+
         assert HPSS_HARMONIC_KERNEL == 17, f"Expected 17, got {HPSS_HARMONIC_KERNEL}"
 
     def test_02_percussive_kernel_13(self):
         from backend.core.transient_decoupled_processor import HPSS_PERCUSSIVE_KERNEL
+
         assert HPSS_PERCUSSIVE_KERNEL == 13, f"Expected 13, got {HPSS_PERCUSSIVE_KERNEL}"
 
     def test_03_separate_returns_valid_audio(self):
         """HPSS separate must return valid percussive + harmonic components."""
         from backend.core.transient_decoupled_processor import TransientDecoupledProcessing
+
         tdp = TransientDecoupledProcessing()
         sr = 48000
         n = sr  # 1 second
@@ -47,6 +49,7 @@ class TestHPSSKernelFix:
         """With reduced kernel, HPSS should still produce valid H/P decomposition,
         and the sum harmonic+percussive should approximate original energy."""
         from backend.core.transient_decoupled_processor import TransientDecoupledProcessing
+
         tdp = TransientDecoupledProcessing()
         sr = 48000
         n = sr * 2
@@ -58,13 +61,14 @@ class TestHPSSKernelFix:
         assert np.isfinite(perc).all() and np.isfinite(harm).all()
         # Energy conservation: recon = perc + harm should ≈ original
         recon_rms = float(np.sqrt(np.mean((perc + harm) ** 2)))
-        orig_rms = float(np.sqrt(np.mean(audio ** 2)))
+        orig_rms = float(np.sqrt(np.mean(audio**2)))
         ratio = recon_rms / (orig_rms + 1e-8)
         assert 0.5 < ratio < 2.0, f"Energy not conserved: ratio={ratio:.3f}"
 
     def test_05_kernel_values_odd(self):
         """Kernel sizes must be odd for symmetric median filter."""
         from backend.core.transient_decoupled_processor import HPSS_HARMONIC_KERNEL, HPSS_PERCUSSIVE_KERNEL
+
         assert HPSS_HARMONIC_KERNEL % 2 == 1
         assert HPSS_PERCUSSIVE_KERNEL % 2 == 1
 
@@ -75,6 +79,7 @@ class TestHPSSKernelFix:
             HPSS_PERCUSSIVE_KERNEL,
             TransientDecoupledProcessing,
         )
+
         tdp = TransientDecoupledProcessing()
         assert tdp.HPSS_HARMONIC_KERNEL == HPSS_HARMONIC_KERNEL
         assert tdp.HPSS_PERCUSSIVE_KERNEL == HPSS_PERCUSSIVE_KERNEL
@@ -91,11 +96,13 @@ class TestExcellenceOptimizerPGHI:
     def test_07_pghi_import_available(self):
         """PGHI must be importable for excellence optimizer."""
         from backend.core.excellence_optimizer import _PGHI_AVAILABLE_EX
+
         assert _PGHI_AVAILABLE_EX is True, "PGHI not available for ExcellenceOptimizer"
 
     def test_08_spectral_continuity_no_nan(self):
         """_enhance_spectral_continuity must produce finite output with PGHI."""
         from backend.core.excellence_optimizer import _enhance_spectral_continuity, analyze_context
+
         rng = np.random.default_rng(8)
         audio = rng.normal(0, 0.3, 48000).astype(np.float32)
         ctx = analyze_context(audio, 48000)
@@ -106,19 +113,21 @@ class TestExcellenceOptimizerPGHI:
     def test_09_reinforce_harmonics_no_nan(self):
         """_reinforce_harmonics must produce finite output with PGHI."""
         from backend.core.excellence_optimizer import _reinforce_harmonics, analyze_context
+
         rng = np.random.default_rng(9)
         # Musical signal with clear harmonics
         t = np.arange(48000) / 48000.0
-        audio = (0.3 * np.sin(2 * np.pi * 440 * t) +
-                 0.1 * np.sin(2 * np.pi * 880 * t) +
-                 0.05 * rng.normal(0, 1, 48000)).astype(np.float32)
+        audio = (
+            0.3 * np.sin(2 * np.pi * 440 * t) + 0.1 * np.sin(2 * np.pi * 880 * t) + 0.05 * rng.normal(0, 1, 48000)
+        ).astype(np.float32)
         ctx = analyze_context(audio, 48000)
         result = _reinforce_harmonics(audio, ctx)
         assert np.isfinite(result).all()
 
     def test_10_optimize_produces_valid_result(self):
         """Full optimize() call must work without errors."""
-        from backend.core.excellence_optimizer import get_excellence_optimizer, analyze_context
+        from backend.core.excellence_optimizer import analyze_context, get_excellence_optimizer
+
         opt = get_excellence_optimizer()
         rng = np.random.default_rng(10)
         audio = rng.normal(0, 0.3, 48000).astype(np.float32)
@@ -164,26 +173,30 @@ class TestCrossfadeFloat64:
     def test_13_process_in_adaptive_chunks_callable(self):
         """process_in_adaptive_chunks must be importable."""
         from backend.core.adaptive_chunk_processor import process_in_adaptive_chunks
+
         assert callable(process_in_adaptive_chunks)
 
     def test_14_chunk_output_no_energy_bump(self):
         """Processing constant-signal chunks must not create energy variations."""
         from backend.core.adaptive_chunk_processor import process_in_adaptive_chunks
+
         sr = 48000
         n = sr * 5  # 5 seconds
         audio = np.ones(n, dtype=np.float32) * 0.5
         # Identity processing (no modification)
         cpr = process_in_adaptive_chunks(
             phase_fn=lambda chunk, **kw: chunk,
-            audio=audio, sr=sr, max_severity=0.5,
+            audio=audio,
+            sr=sr,
+            max_severity=0.5,
         )
         result = cpr.audio  # ChunkProcessingResult.audio
         # Energy should be uniform (no boundary bumps)
         frame_len = sr // 10  # 100ms frames
         n_frames = len(result) // frame_len
         if n_frames > 2:
-            frames = result[:n_frames * frame_len].reshape(n_frames, frame_len)
-            rms_per_frame = np.sqrt(np.mean(frames ** 2, axis=1))
+            frames = result[: n_frames * frame_len].reshape(n_frames, frame_len)
+            rms_per_frame = np.sqrt(np.mean(frames**2, axis=1))
             max_variation = float(np.max(rms_per_frame) - np.min(rms_per_frame))
             assert max_variation < 0.01, f"Energy variation {max_variation:.4f} at boundaries"
 
@@ -198,21 +211,20 @@ class TestMDEMTailSmooth:
 
     def test_15_mdem_import(self):
         from backend.core.micro_dynamics_envelope_morphing import MicroDynamicsEnvelopeMorphing
+
         mdem = MicroDynamicsEnvelopeMorphing()
         assert mdem is not None
 
     def test_16_tail_gain_not_flat(self):
         """Tail gain envelope should smoothly return to 1.0, not be flat."""
         from backend.core.micro_dynamics_envelope_morphing import MicroDynamicsEnvelopeMorphing
+
         mdem = MicroDynamicsEnvelopeMorphing()
         sr = 48000
         n = sr * 3  # 3 seconds
         rng = np.random.default_rng(16)
         # Original with lots of dynamics
-        original = (
-            rng.normal(0, 0.3, n)
-            * np.sin(2 * np.pi * 0.5 * np.arange(n) / sr)
-        ).astype(np.float32)
+        original = (rng.normal(0, 0.3, n) * np.sin(2 * np.pi * 0.5 * np.arange(n) / sr)).astype(np.float32)
         # Restored: similar but slightly different dynamics
         restored = (original * (1.0 + 0.1 * rng.normal(0, 1, n))).astype(np.float32)
         restored = np.clip(restored, -1.0, 1.0)
@@ -256,6 +268,7 @@ class TestEmotionalArcCentroidFix:
     def test_18_compute_features_returns_centroids(self):
         """_compute_features must return 3 values (arousal, valence, centroids)."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         n = sr * 5  # 5 seconds
@@ -273,21 +286,16 @@ class TestEmotionalArcCentroidFix:
     def test_19_centroid_correction_applied(self):
         """When denoised centroid shifts up, arousal should be corrected."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         n = sr * 10  # 10 seconds
         rng = np.random.default_rng(19)
         t = np.arange(n) / sr
         # Original: tone + noise (lower centroid)
-        original = (
-            0.3 * np.sin(2 * np.pi * 440 * t)
-            + 0.15 * rng.normal(0, 1, n)
-        ).astype(np.float32)
+        original = (0.3 * np.sin(2 * np.pi * 440 * t) + 0.15 * rng.normal(0, 1, n)).astype(np.float32)
         # Restored: same tone, less noise (higher centroid)
-        restored = (
-            0.3 * np.sin(2 * np.pi * 440 * t)
-            + 0.02 * rng.normal(0, 1, n)
-        ).astype(np.float32)
+        restored = (0.3 * np.sin(2 * np.pi * 440 * t) + 0.02 * rng.normal(0, 1, n)).astype(np.float32)
         result = eap.measure(original, restored, sr)
         # Should have reasonably preserved arousal
         assert result.arousal_pearson >= 0.0  # Not perfect but positive
@@ -295,6 +303,7 @@ class TestEmotionalArcCentroidFix:
     def test_20_no_crash_on_short_audio(self):
         """Short audio (< 3 segments) should be handled gracefully."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         short_audio = np.zeros(sr, dtype=np.float32) + 0.01
@@ -304,6 +313,7 @@ class TestEmotionalArcCentroidFix:
     def test_21_identical_audio_no_correction(self):
         """If original and restored are identical, no correction needed."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         n = sr * 5
@@ -315,6 +325,7 @@ class TestEmotionalArcCentroidFix:
     def test_22_centroid_list_type(self):
         """Centroid list must contain floats."""
         from backend.core.emotional_arc_preservation import EmotionalArcPreservationMetric
+
         eap = EmotionalArcPreservationMetric()
         sr = 48000
         rng = np.random.default_rng(22)
@@ -336,6 +347,7 @@ class TestIntegration119:
     def test_23_tdp_recombine_preserves_energy(self):
         """TDP recombine: perc + harmonic should ≈ original energy."""
         from backend.core.transient_decoupled_processor import TransientDecoupledProcessing
+
         tdp = TransientDecoupledProcessing()
         sr = 48000
         n = sr * 2
@@ -343,15 +355,16 @@ class TestIntegration119:
         audio = rng.normal(0, 0.3, n).astype(np.float32)
         perc, harm = tdp.separate(audio, sr)
         recon = perc + harm
-        orig_rms = float(np.sqrt(np.mean(audio ** 2)))
-        recon_rms = float(np.sqrt(np.mean(recon ** 2)))
+        orig_rms = float(np.sqrt(np.mean(audio**2)))
+        recon_rms = float(np.sqrt(np.mean(recon**2)))
         ratio = recon_rms / (orig_rms + 1e-8)
         # Should preserve most energy (soft masking sum ≈ 1)
         assert 0.7 < ratio < 1.5, f"Energy ratio {ratio:.3f}"
 
     def test_24_excellence_optimize_clipped(self):
         """ExcellenceOptimizer output must be in [-1, 1]."""
-        from backend.core.excellence_optimizer import get_excellence_optimizer, analyze_context
+        from backend.core.excellence_optimizer import analyze_context, get_excellence_optimizer
+
         opt = get_excellence_optimizer()
         rng = np.random.default_rng(24)
         audio = rng.normal(0, 0.3, 48000).astype(np.float32)
@@ -362,6 +375,7 @@ class TestIntegration119:
     def test_25_mdem_morph_finite(self):
         """MDEM morph must always return finite audio."""
         from backend.core.micro_dynamics_envelope_morphing import MicroDynamicsEnvelopeMorphing
+
         mdem = MicroDynamicsEnvelopeMorphing()
         sr = 48000
         n = sr * 2
@@ -388,10 +402,14 @@ class TestIntegration119:
     def test_27_emotional_arc_result_fields(self):
         """EmotionalArcResult must have standard fields."""
         from backend.core.emotional_arc_preservation import EmotionalArcResult
+
         r = EmotionalArcResult(
-            arousal_pearson=0.9, valence_pearson=0.85,
-            klimax_peak_deviation=0.1, klimax_level_deviation_db=0.5,
-            arc_preserved=True, reason="ok",
+            arousal_pearson=0.9,
+            valence_pearson=0.85,
+            klimax_peak_deviation=0.1,
+            klimax_level_deviation_db=0.5,
+            arc_preserved=True,
+            reason="ok",
         )
         assert r.arc_preserved
         assert r.arousal_pearson == 0.9

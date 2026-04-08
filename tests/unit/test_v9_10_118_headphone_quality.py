@@ -10,8 +10,6 @@ Fix 5: De-Esser Era-Adaptiv — Ära-abhängige Sibilanz-Schwellwerte
 """
 
 import numpy as np
-import pytest
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Fix 1: Phase 42 Wiener-Stereo-Masking
@@ -23,6 +21,7 @@ class TestWienerStereoMasking:
 
     def _make_phase42(self):
         from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
         return VocalEnhancement()
 
     def test_01_wiener_returns_stereo_shape(self):
@@ -42,7 +41,7 @@ class TestWienerStereoMasking:
         p42 = self._make_phase42()
         sr = 48000
         n = sr * 2
-        rng = np.random.default_rng(118)
+        np.random.default_rng(118)
         # Create stereo with intentional L/R difference
         left = np.sin(2 * np.pi * 440 * np.arange(n) / sr).astype(np.float32) * 0.5
         right = np.sin(2 * np.pi * 660 * np.arange(n) / sr).astype(np.float32) * 0.3
@@ -99,8 +98,8 @@ class TestWienerStereoMasking:
         vocs, instr = p42._wiener_stereo_from_mono(stereo, voc_mono, sr)
         # Reconstruction: vocs + instr should ≈ original (OLA numerical tolerance)
         recon = vocs + instr
-        orig_rms = float(np.sqrt(np.mean(stereo ** 2)))
-        recon_rms = float(np.sqrt(np.mean(recon ** 2)))
+        orig_rms = float(np.sqrt(np.mean(stereo**2)))
+        recon_rms = float(np.sqrt(np.mean(recon**2)))
         ratio = recon_rms / (orig_rms + 1e-8)
         assert 0.5 < ratio < 2.0, f"Energy ratio {ratio:.3f} out of range"
 
@@ -134,6 +133,7 @@ class TestPhaseAwareWetDryBlend:
 
     def _blend(self, dry, wet, strength, phase=None):
         from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
         return PerPhaseMusicalGoalsGate._wet_dry_blend(dry, wet, strength, phase)
 
     def test_09_stft_blend_at_low_strength(self):
@@ -147,8 +147,8 @@ class TestPhaseAwareWetDryBlend:
         blended = self._blend(dry, wet, 0.10)
         assert len(blended) == n
         # Energy should be preserved (no comb-filter cancellation)
-        dry_rms = float(np.sqrt(np.mean(dry ** 2)))
-        blend_rms = float(np.sqrt(np.mean(blended ** 2)))
+        dry_rms = float(np.sqrt(np.mean(dry**2)))
+        blend_rms = float(np.sqrt(np.mean(blended**2)))
         ratio = blend_rms / (dry_rms + 1e-8)
         assert ratio > 0.85, f"Energy ratio {ratio:.3f} — possible comb filtering"
 
@@ -264,6 +264,7 @@ class TestOMLSASilenceGFloor:
 
     def _make_omlsa(self):
         from dsp.adaptive_omlsa import AdaptiveOMLSA
+
         return AdaptiveOMLSA()
 
     def test_22_silence_region_lower_floor(self):
@@ -283,9 +284,7 @@ class TestOMLSASilenceGFloor:
         # Silence gain floor should be lower
         active_min = float(np.min(gain_active))
         silence_min = float(np.min(gain_silence))
-        assert silence_min <= active_min, (
-            f"Silence floor {silence_min:.4f} not ≤ active floor {active_min:.4f}"
-        )
+        assert silence_min <= active_min, f"Silence floor {silence_min:.4f} not ≤ active floor {active_min:.4f}"
 
     def test_23_2d_spectrogram_silence_frames(self):
         """2D input: silence frames should have lower floor than active frames."""
@@ -365,6 +364,7 @@ class TestEraAdaptiveDeEsser:
 
     def _make_phase42(self):
         from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
         return VocalEnhancement()
 
     def _make_audio(self, sr=48000, dur=1.0):
@@ -384,12 +384,12 @@ class TestEraAdaptiveDeEsser:
         """Pre-1940 recordings should have +6 dB higher threshold (less de-essing)."""
         p42 = self._make_phase42()
         from backend.core.defect_scanner import MaterialType
+
         config_base = dict(p42.ENHANCEMENT_CONFIG[MaterialType.SHELLAC])
         base_threshold = config_base["deess_threshold_db"]
 
         # Simulate what process() does with era_decade from song_calibration_profile
         config = dict(config_base)
-        _era_int = 1930
         config["deess_threshold_db"] = float(config["deess_threshold_db"] + 6.0)
         config["deess_reduction_db"] = float(config["deess_reduction_db"] * 0.5)
 
@@ -399,6 +399,7 @@ class TestEraAdaptiveDeEsser:
         """1950s recordings: +3 dB threshold, 0.7× reduction."""
         p42 = self._make_phase42()
         from backend.core.defect_scanner import MaterialType
+
         config = dict(p42.ENHANCEMENT_CONFIG[MaterialType.VINYL])
         base_thr = config["deess_threshold_db"]
         base_red = config["deess_reduction_db"]
@@ -411,6 +412,7 @@ class TestEraAdaptiveDeEsser:
         """Post-2000: -2 dB threshold (more aggressive de-essing)."""
         p42 = self._make_phase42()
         from backend.core.defect_scanner import MaterialType
+
         config = dict(p42.ENHANCEMENT_CONFIG[MaterialType.CD_DIGITAL])
         base_thr = config["deess_threshold_db"]
         config["deess_threshold_db"] = float(config["deess_threshold_db"] - 2.0)
@@ -420,6 +422,7 @@ class TestEraAdaptiveDeEsser:
         """Without era info, thresholds remain at material defaults."""
         p42 = self._make_phase42()
         from backend.core.defect_scanner import MaterialType
+
         config_orig = dict(p42.ENHANCEMENT_CONFIG[MaterialType.CD_DIGITAL])
         config_test = dict(config_orig)
         # era_decade is None → no modification
@@ -455,6 +458,7 @@ class TestIntegrationEdgeCases:
     def test_34_stft_blend_stereo_signal(self):
         """STFT blend should handle multi-channel gracefully (first channel)."""
         from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
         # Blend works on 1D — if caller passes stereo per-channel, verify no crash
         n = 4800
         dry = np.random.default_rng(34).normal(0, 0.3, n).astype(np.float32)
@@ -466,6 +470,7 @@ class TestIntegrationEdgeCases:
     def test_35_omlsa_auto_optimize_still_works(self):
         """auto_optimize should still function after silence G_floor changes."""
         from dsp.adaptive_omlsa import AdaptiveOMLSA
+
         omlsa = AdaptiveOMLSA()
         noisy = np.random.default_rng(35).uniform(0, 0.5, 1025).astype(np.float64)
         noise = np.random.default_rng(36).uniform(0, 0.1, 1025).astype(np.float64)
@@ -476,17 +481,19 @@ class TestIntegrationEdgeCases:
     def test_36_wiener_with_zero_vocal(self):
         """If voc_mono is all-zero, mask should be ~0 → no vocal bleed."""
         from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
         p42 = VocalEnhancement()
         n = 48000
         stereo = np.random.default_rng(36).normal(0, 0.3, (n, 2)).astype(np.float32)
         voc_mono = np.zeros(n, dtype=np.float32)
         vocs, instr = p42._wiener_stereo_from_mono(stereo, voc_mono, 48000)
         # Vocals should be near-zero
-        assert float(np.sqrt(np.mean(vocs ** 2))) < 0.05
+        assert float(np.sqrt(np.mean(vocs**2))) < 0.05
 
     def test_37_wiener_reconstruction_adds_to_original(self):
         """vocals + instruments should ≈ original for unit-energy signals."""
         from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
         p42 = VocalEnhancement()
         sr = 48000
         n = sr
@@ -514,19 +521,21 @@ class TestIntegrationEdgeCases:
     def test_39_stft_blend_preserves_energy_at_boundary(self):
         """At strength=0.29 (just below threshold), STFT blend is used."""
         from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
         n = 48000
         rng = np.random.default_rng(39)
         dry = rng.normal(0, 0.3, n).astype(np.float32)
         wet = rng.normal(0, 0.3, n).astype(np.float32)
         result = PerPhaseMusicalGoalsGate._wet_dry_blend(dry, wet, 0.29)
-        dry_rms = float(np.sqrt(np.mean(dry ** 2)))
-        result_rms = float(np.sqrt(np.mean(result ** 2)))
+        dry_rms = float(np.sqrt(np.mean(dry**2)))
+        result_rms = float(np.sqrt(np.mean(result**2)))
         # Should be close to dry (only 29% wet)
         assert abs(result_rms - dry_rms) / (dry_rms + 1e-8) < 0.5
 
     def test_40_stft_blend_at_030_uses_linear(self):
         """At strength=0.30 (threshold), linear blend should be used."""
         from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
         n = 48000
         rng = np.random.default_rng(40)
         dry = rng.normal(0, 0.3, n).astype(np.float32)

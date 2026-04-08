@@ -1025,7 +1025,8 @@ if __name__ == "__main__":
     vocal += breath
 
     # Normalize
-    vocal = vocal / np.max(np.abs(vocal)) * 0.7
+    _peak_p99 = float(np.percentile(np.abs(vocal), 99.9)) if vocal.size > 0 else 0.0
+    vocal = vocal / _peak_p99 * 0.7 if _peak_p99 > 1e-8 else vocal
 
     # Initialize enhancer
     logger.debug("\nInitializing Vocal AI Enhancer...")
@@ -1037,24 +1038,24 @@ if __name__ == "__main__":
         vocal, emotion_mode=EmotionPreservationMode.BALANCED, breath_preservation=0.7, sibilance_reduction=True
     )
 
-    logger.debug("\n%s", '=' * 70)
+    logger.debug("\n%s", "=" * 70)
     logger.debug("RESULTS:")
-    logger.debug("%s", '=' * 70)
+    logger.debug("%s", "=" * 70)
     logger.debug("Gender Detected: %s", result.characteristics.gender.value)
     if result.characteristics.age_group:
         logger.debug("Age Group: %s", result.characteristics.age_group.value)
     logger.debug("F0: %.1f Hz", result.characteristics.fundamental_freq)
-    logger.debug("Formants: {[f'%.0f Hz' for f in result.characteristics.formants]}", f)
-    logger.debug("\nSibilance Reduced: %.1f dB", result.sibilance_reduced_db)
-    logger.debug("Breath Preserved: %.1%", result.breath_preserved_ratio)
-    logger.debug("Emotion Preservation: %.1%", result.emotion_preservation_score)
+    logger.debug("Formants: %s", [f"{f:.0f} Hz" for f in result.characteristics.formants])
+    logger.debug("Sibilance Reduced: %.1f dB", result.sibilance_reduced_db)
+    logger.debug("Breath Preserved: %.1f%%", result.breath_preserved_ratio)
+    logger.debug("Emotion Preservation: %.1f%%", result.emotion_preservation_score)
     logger.debug("Formant Preservation: %.1%", result.formant_preservation_score)
     logger.debug("Quality Improvement: %+.2f", result.quality_improvement)
     logger.debug("\nProcessing Applied:")
     for proc in result.processing_applied:
         logger.debug("  ✓ %s", proc)
 
-    logger.debug("\n%s", '=' * 70)
+    logger.debug("\n%s", "=" * 70)
     logger.debug("✅ Vocal AI Enhancement Test Complete!")
 
 
