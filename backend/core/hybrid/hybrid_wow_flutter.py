@@ -346,7 +346,12 @@ class HybridWowFlutter:
             self._init_crepe()
 
     def _init_crepe(self) -> None:
-        """Initialize FCPE/CREPE/RMVPE pitch plugin (lazy-loading, FCPE preferred)."""
+        """Initialize pitch plugin: FCPE → RMVPE → CREPE cascade (§4.4 Spec).
+
+        Order: Tier-1 FCPE, Tier-2 RMVPE (Wei et al. ICASSP 2023, ~30 % lower pitch
+        error for vocals), Tier-3 CREPE (legacy fallback only).
+        VERBOTEN: FCPE → CREPE → RMVPE (RMVPE muss vor CREPE stehen — §4.4).
+        """
         try:
             from plugins.fcpe_plugin import get_fcpe_plugin
 
@@ -354,20 +359,22 @@ class HybridWowFlutter:
             logger.info("FCPE pitch plugin loaded for wow/flutter detection (model=%s)", self.crepe.model_used)
             return
         except Exception as e:
-            logger.debug("FCPE-Plugin nicht verfügbar (%s) — CREPE-Fallback", e)
-        try:
-            from plugins.crepe_plugin import get_crepe_plugin
-
-            self.crepe = get_crepe_plugin()
-            logger.info("CREPE plugin geladen für wow/flutter-Detektion")
-            return
-        except Exception as e:
-            logger.debug("CREPE nicht verfügbar (%s) — RMVPE-Fallback (§4.4 Tier-3)", e)
+            logger.debug("FCPE-Plugin nicht verfügbar (%s) — RMVPE-Fallback (§4.4 Tier-2)", e)
+        # Tier-2: RMVPE — before CREPE per §4.4 (30 % lower pitch error, Wei ICASSP 2023)
         try:
             from plugins.rmvpe_plugin import get_rmvpe_plugin
 
             self.crepe = get_rmvpe_plugin()  # type: ignore[assignment]
-            logger.info("RMVPE plugin geladen für wow/flutter-Detektion (§4.4 Fallback2)")
+            logger.info("RMVPE plugin geladen für wow/flutter-Detektion (§4.4 Tier-2)")
+            return
+        except Exception as e:
+            logger.debug("RMVPE nicht verfügbar (%s) — CREPE-Fallback (§4.4 Tier-3)", e)
+        # Tier-3: CREPE (legacy — only if RMVPE unavailable)
+        try:
+            from plugins.crepe_plugin import get_crepe_plugin
+
+            self.crepe = get_crepe_plugin()
+            logger.info("CREPE plugin geladen für wow/flutter-Detektion (§4.4 Tier-3 legacy)")
         except Exception as e:
             logger.warning("Kein Pitch-ML-Plugin verfügbar (%s) — pYIN-Fallback", e)
             self.crepe = None
