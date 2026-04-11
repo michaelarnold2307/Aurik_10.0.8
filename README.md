@@ -56,7 +56,7 @@ vollständig offline, ohne Cloud- oder Netzwerkabhängigkeiten.
 | `GPParameterOptimizer` | RBF-GP + UCB + **MOO Pareto-Front** (14 Objectives) |
 | `PerceptualQualityScorer` | Gammatone-NSIM + MCD + LUFS + MOS |
 | `MusicalGoalsChecker` | **14 musikalische Qualitätsziele** |
-| `MediumClassifier` | CLAP-ML + DSP-Fingerprint, 17 Materialtypen |
+| `MediumDetector` | File-ext-aware Tonträgerketten-Erkennung, autoritatives Materialsystem |
 | `DefectScanner` | 32 DefectTypes, material-adaptive Material-Priors |
 | `TransientDecoupledProcessing` | HPSS-Trennung — Groove-Schutz vor jeder NR |
 | `HarmonicPreservationGuard` | CREPE/pYIN → G_floor 0.85 an Harmonik-Bins |
@@ -225,7 +225,7 @@ print(f"RT Factor: {result.rt_factor:.2f}×")
 
 ```text
 TransientDecoupledProcessing → RestorabilityEstimator → EraClassifier
-→ GermanSchlagerClassifier → MediumClassifier → DefectScanner
+→ GermanSchlagerClassifier → MediumDetector → DefectScanner
 → CausalDefectReasoner → UncertaintyQuantifier → GPParameterOptimizer
 → HarmonicPreservationGuard → Phase 01–56 (mit PerPhaseMusicalGoalsGate)
 → IntroducedArtifactDetector → FeedbackChain → TemporalQualityCoherenceMetric
@@ -285,7 +285,7 @@ TransientDecoupledProcessing → RestorabilityEstimator → EraClassifier
 
 ### 🎯 Material-Adaptive Verarbeitung (17 Typen)
 
-**Auto-Detection** via `MediumClassifier` (CLAP-ML + DSP-Fingerprint) — **17 Material-Typen:**
+**Auto-Detection** via `MediumDetector` (file-ext-aware, DSP + forensische Kettenlogik) — **17 Material-Typen:**
 
 | Material | Hauptdefekte | PQS-Ziel |
 | --- | --- | --- |

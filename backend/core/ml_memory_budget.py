@@ -175,6 +175,15 @@ def _preflight_system_memory(required_mb: float) -> bool:
         required_with_margin,
         available_after_evict_mb,
     )
+    # §DEBUG: Stack-Trace für suspekt große Requests (> 10000 MB) automatisch loggen
+    if required_with_margin > 10_000:
+        import traceback as _tb
+
+        logger.warning(
+            "ml_memory_budget §DEBUG: suspekt große Anfrage (%.0f MB) — Stack-Trace:\n%s",
+            required_with_margin,
+            "".join(_tb.format_stack()),
+        )
     return False
 
 

@@ -77,7 +77,8 @@ class TapeSaturation(PhaseInterface):
     SATURATION_DRIVE = {
         MaterialType.SHELLAC: 0.0,  # No tape (era mismatch)
         MaterialType.VINYL: 0.30,  # Moderate analog warmth
-        MaterialType.TAPE: 0.55,  # Strong (authentic tape)
+        MaterialType.TAPE: 0.55,  # Strong (authentic cassette tape)
+        MaterialType.REEL_TAPE: 0.45,  # Professional reel-to-reel (slightly less than cassette)
         MaterialType.CD_DIGITAL: 0.20,  # Subtle analogizing
         MaterialType.STREAMING: 0.25,  # Light warmth
     }
@@ -86,7 +87,8 @@ class TapeSaturation(PhaseInterface):
     SATURATION_MIX = {
         MaterialType.SHELLAC: 0.0,
         MaterialType.VINYL: 0.40,  # 40% saturated
-        MaterialType.TAPE: 0.60,  # 60% saturated
+        MaterialType.TAPE: 0.60,  # 60% saturated (cassette)
+        MaterialType.REEL_TAPE: 0.50,  # 50% -- pro tape, fuller sound
         MaterialType.CD_DIGITAL: 0.25,  # 25%
         MaterialType.STREAMING: 0.30,  # 30%
     }
@@ -95,7 +97,8 @@ class TapeSaturation(PhaseInterface):
     TAPE_SPEED = {
         MaterialType.SHELLAC: None,
         MaterialType.VINYL: "7.5_ips",  # Standard
-        MaterialType.TAPE: "phase_22_tape_saturation",  # High fidelity
+        MaterialType.TAPE: "3.75_ips",  # Cassette tape: significant HF roll-off
+        MaterialType.REEL_TAPE: "15_ips",  # Professional studio reel-to-reel
         MaterialType.CD_DIGITAL: "15_ips",
         MaterialType.STREAMING: "7.5_ips",
     }
@@ -129,7 +132,8 @@ class TapeSaturation(PhaseInterface):
     HYSTERESIS_AMOUNT = {
         MaterialType.SHELLAC: 0.0,
         MaterialType.VINYL: 0.12,
-        MaterialType.TAPE: 0.25,  # Tape-typical
+        MaterialType.TAPE: 0.25,  # Tape-typical (cassette)
+        MaterialType.REEL_TAPE: 0.20,  # Professional reel: wider tape, less hysteresis
         MaterialType.CD_DIGITAL: 0.08,
         MaterialType.STREAMING: 0.10,
     }
@@ -203,6 +207,13 @@ class TapeSaturation(PhaseInterface):
         mix_amount = self.SATURATION_MIX.get(material, 0.30)
         tape_speed = self.TAPE_SPEED.get(material, "7.5_ips")
         hysteresis = self.HYSTERESIS_AMOUNT.get(material, 0.10)
+
+        # §2.54 tape_speed_ips kwarg override (from UV3 _restoration_context → _infer_tape_speed_ips)
+        _injected_ips = kwargs.get("tape_speed_ips")
+        if _injected_ips is not None:
+            _ips_map = {1.875: "3.75_ips", 3.75: "3.75_ips", 7.5: "7.5_ips", 15.0: "15_ips"}
+            _key = min(_ips_map.keys(), key=lambda k: abs(k - float(_injected_ips)))
+            tape_speed = _ips_map[_key]
 
         # §5 Vintage Aesthetics + §2.14+ Era-adaptive saturation:
         # Pre-1960 recordings → preserve tube warmth (more drive, higher mix).

@@ -790,18 +790,20 @@ class NatuerlichkeitMetric:
         else:
             onset_smoothness = 0.5
 
-        # ---------- CREPE-basierter Natürlichkeits-Indikator ------------------
-        # Natürliche Audio-Signale (Sprache, Musik) haben klar vom Rauschen
-        # getrennte „voiced"-Frames: hohe salience bei niedrigem Flatness-Niveau.
-        # Codec-Artefakte und Rauschen erzeugen unregelmäßige Voicing-Konfidenz.
-        crepe_naturalness: float = 0.5  # Neutral-Prior (kein Modell geladen)
-        # Adaptive Gewichte: CREPE nur bei klar stimmhaften/stimmfreien Signalen einbeziehen.
-        # Instrumentalsignale mit hoher Ambiguität (Mehrtöne-Akkorde, Rauschen) werden
-        # durch den CREPE-Voicing-Detektor fälschlicherweise als unnatürlich gewertet.
-        # Guard: voiced_clear ≥ 0.30 OR unvoiced_clear ≥ 0.30 → CREPE valide.
-        # FIXED v9.10: onset_smoothness was dead code — now included in formula
-        # Default weights (DSP-only, kein CREPE): onset als 4. Komponente (0.24)
-        w_flat, w_zcr, w_cont, w_crepe, w_onset = 0.28, 0.24, 0.24, 0.0, 0.24
+        # ---------- Voicing-Natürlichkeits-Indikator (FIXED v9.11 — stateless) ----------
+        # FIXED v9.11: Previously CREPE load-state changed w_crepe AND w_onset (0.24→0.16),
+        # producing non-deterministic P1 scores for identical audio. Fix: always-identical
+        # 5-component formula with fixed weights; CREPE only refines the voicing component.
+        #
+        # DSP-Fallback: flatness_score ist bereits invertiert (1.0 = tonal, 0.0 = Rauschen).
+        # Tonales Signal → klare Voicing-Struktur → natürlich.
+        # Proxy korreliert hoch mit CREPE-voiced_prob, ist deterministisch.
+        _dsp_voicing_natural: float = max(0.0, min(1.0, float(flatness_score)))
+        voicing_naturalness: float = _dsp_voicing_natural  # DSP-Prior; CREPE kann verfeinern
+
+        # Always-identical weights — stateless regardless of CREPE availability:
+        w_flat, w_zcr, w_cont, w_voice, w_onset = 0.24, 0.21, 0.21, 0.18, 0.16
+
         _MAX_CREPE_NAT_SAMPLES = int(proc_sr * 2)
         try:
             crepe = _get_crepe() if len(proc_audio) <= _MAX_CREPE_NAT_SAMPLES else None
@@ -816,21 +818,20 @@ class NatuerlichkeitMetric:
                 unvoiced_clear = float(np.mean(cr.voiced_prob < 0.20))
                 ambiguous = 1.0 - voiced_clear - unvoiced_clear
                 if voiced_clear >= 0.30 or unvoiced_clear >= 0.30:
-                    # Klare Stimmcharakteristik → CREPE-Voicing-Indikator valide einbeziehen
-                    crepe_naturalness = max(0.0, min(1.0, 1.0 - ambiguous * 1.5))
-                    w_flat, w_zcr, w_cont, w_crepe, w_onset = 0.24, 0.21, 0.21, 0.18, 0.16
+                    # Clear voicing structure → CREPE refines voicing_naturalness component
+                    voicing_naturalness = max(0.0, min(1.0, 1.0 - ambiguous * 1.5))
                     logger.debug(
                         "Natürlichkeit-CREPE [%s]: voiced=%.2f unvoiced=%.2f ambig=%.2f → %.3f",
                         cr.model_used,
                         voiced_clear,
                         unvoiced_clear,
                         ambiguous,
-                        crepe_naturalness,
+                        voicing_naturalness,
                     )
                 else:
-                    # Instrumental/Mehrtöne-Signal: kein klares Voicing → nur DSP-Gewichte
+                    # Instrumental/polyphonic: ambiguous voicing → keep DSP prior
                     logger.debug(
-                        "Natürlichkeit-CREPE [%s]: Instrumental (voiced=%.2f unvoiced=%.2f) → DSP-only",
+                        "Natürlichkeit-CREPE [%s]: Instrumental (voiced=%.2f unvoiced=%.2f) → DSP-fallback",
                         cr.model_used,
                         voiced_clear,
                         unvoiced_clear,
@@ -844,13 +845,12 @@ class NatuerlichkeitMetric:
         except Exception as _exc:
             logger.debug("Operation failed (non-critical): %s", _exc)
 
-        # Final score — adaptiv gewichtet (CREPE nur bei klarer Stimmcharakteristik)
-        # FIXED v9.10: onset_smoothness (w_onset) jetzt in Formel einbezogen
+        # Final score — always same 5-component formula, same weights (FIXED v9.11 stateless)
         score = (
             w_flat * flatness_score
             + w_zcr * zcr_score
             + w_cont * contrast_score
-            + w_crepe * crepe_naturalness
+            + w_voice * voicing_naturalness
             + w_onset * onset_smoothness
         )
 

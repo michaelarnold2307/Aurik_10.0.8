@@ -51,6 +51,7 @@ class GoalPriorityProtocol:
         delta_b: float,
         headroom_a: float = 0.0,
         headroom_b: float = 0.0,
+        goal_weights: dict[str, float] | None = None,
     ) -> ConflictResolutionResult:
         prio_a = self.priority_of(goal_a)
         prio_b = self.priority_of(goal_b)
@@ -59,6 +60,19 @@ class GoalPriorityProtocol:
             return ConflictResolutionResult(goal_a, goal_b, "higher-priority goal wins", prio_a, prio_b)
         if prio_b < prio_a:
             return ConflictResolutionResult(goal_b, goal_a, "higher-priority goal wins", prio_b, prio_a)
+
+        # §2.56: When priorities are equal, use song-specific weights as tiebreaker
+        if goal_weights:
+            w_a = goal_weights.get(goal_a, 1.0)
+            w_b = goal_weights.get(goal_b, 1.0)
+            if abs(w_a - w_b) > 0.05:  # meaningful weight difference
+                if w_a > w_b:
+                    return ConflictResolutionResult(
+                        goal_a, goal_b, "equal priority, higher song-specific weight", prio_a, prio_b
+                    )
+                return ConflictResolutionResult(
+                    goal_b, goal_a, "equal priority, higher song-specific weight", prio_b, prio_a
+                )
 
         if headroom_a > headroom_b:
             return ConflictResolutionResult(goal_a, goal_b, "equal priority, higher headroom", prio_a, prio_b)
@@ -73,11 +87,15 @@ class GoalPriorityProtocol:
         self,
         scores_before: dict[str, float],
         scores_after: dict[str, float],
+        goal_weights: dict[str, float] | None = None,
     ) -> IterationAbortResult:
         degraded: list[str] = []
         for goal, before in scores_before.items():
             after = scores_after.get(goal, before)
-            if before - after > self.REGRESSION_EPSILON and self.priority_of(goal) <= self.ABORT_PRIORITY_THRESHOLD:
+            # §2.56: Weight modulates the effective epsilon — important goals abort sooner
+            w = goal_weights.get(goal, 1.0) if goal_weights else 1.0
+            effective_epsilon = self.REGRESSION_EPSILON / max(w, 0.3)
+            if before - after > effective_epsilon and self.priority_of(goal) <= self.ABORT_PRIORITY_THRESHOLD:
                 degraded.append(goal)
 
         if degraded:
@@ -128,15 +146,19 @@ def resolve_goal_conflict(
     delta_b: float,
     headroom_a: float = 0.0,
     headroom_b: float = 0.0,
+    goal_weights: dict[str, float] | None = None,
 ) -> ConflictResolutionResult:
-    return get_goal_priority_protocol().resolve_conflict(goal_a, goal_b, delta_a, delta_b, headroom_a, headroom_b)
+    return get_goal_priority_protocol().resolve_conflict(
+        goal_a, goal_b, delta_a, delta_b, headroom_a, headroom_b, goal_weights=goal_weights
+    )
 
 
 def check_iteration_abort(
     scores_before: dict[str, float],
     scores_after: dict[str, float],
+    goal_weights: dict[str, float] | None = None,
 ) -> IterationAbortResult:
-    return get_goal_priority_protocol().should_abort_iteration(scores_before, scores_after)
+    return get_goal_priority_protocol().should_abort_iteration(scores_before, scores_after, goal_weights=goal_weights)
 
 
 __all__ = [

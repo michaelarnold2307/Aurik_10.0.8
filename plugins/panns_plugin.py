@@ -149,9 +149,15 @@ class PANNsPlugin:
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
 
+            try:
+                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                _providers = _get_prov("PANNs")
+            except Exception:
+                _providers = ["CPUExecutionProvider"]
             self._session = ort.InferenceSession(
                 str(self._ONNX_PATH),
-                providers=["CPUExecutionProvider"],
+                providers=_providers,
             )
             logger.info(
                 "panns_plugin: CNN14 ONNX model loaded (%s, §4.4 primary genre/tagging)",

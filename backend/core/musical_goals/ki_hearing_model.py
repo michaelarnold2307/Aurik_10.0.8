@@ -400,3 +400,226 @@ def analyze_wow_flutter_audibility(audio: np.ndarray, sr: int) -> float:
     """
     analyzer = KIHörbarkeitsAnalyzer()
     return analyzer.analyze(audio, sr)
+
+
+# ---------------------------------------------------------------------------
+# §2.35b Vocal-Proximity-Score (v9.12.0)
+# Measures spatial/temporal intimacy preservation of vocals through restoration.
+# Three components: consonant onset energy, breathiness in pauses, C80 (clarity).
+# ---------------------------------------------------------------------------
+
+
+def compute_vocal_proximity_score(
+    audio_orig: np.ndarray,
+    audio_restored: np.ndarray,
+    sr: int,
+    vocal_segments: list[tuple[float, float]] | None = None,
+) -> dict[str, float]:
+    """Compute vocal proximity score (§2.35b).
+
+    Measures whether restoration preserved the perceived closeness/intimacy
+    of a vocal performance. Three orthogonal components:
+
+    1. konsonanten_transient_energy_ratio — plosive/fricative onset preservation
+    2. breathiness_ratio — natural breath sounds in pauses preserved
+    3. early_reflection_preservation — room character (C80) not destroyed
+
+    Args:
+        audio_orig: Original (degraded) audio, float32 ∈ [-1, 1].
+        audio_restored: Restored audio, float32 ∈ [-1, 1].
+        sr: Sample rate in Hz.
+        vocal_segments: Optional list of (start_sec, end_sec) vocal time ranges.
+            If None, the entire signal is used.
+
+    Returns:
+        Dict with keys: proximity_score, konsonanten_transient_energy_ratio,
+        breathiness_ratio, early_reflection_preservation.
+    """
+    try:
+        orig = _to_mono(audio_orig)
+        rest = _to_mono(audio_restored)
+        min_len = min(len(orig), len(rest))
+        if min_len < sr:
+            return _fallback_result()
+        orig = orig[:min_len]
+        rest = rest[:min_len]
+
+        # Apply vocal-segment mask if provided
+        if vocal_segments:
+            mask = np.zeros(min_len, dtype=bool)
+            for start_s, end_s in vocal_segments:
+                i0 = max(0, int(start_s * sr))
+                i1 = min(min_len, int(end_s * sr))
+                mask[i0:i1] = True
+            if mask.sum() < sr:
+                mask[:] = True  # too short → use all
+            orig = orig[mask]
+            rest = rest[mask]
+
+        k_ratio = _konsonanten_transient_ratio(orig, rest, sr)
+        b_ratio = _breathiness_ratio(orig, rest, sr)
+        c80_ratio = _early_reflection_preservation(orig, rest, sr)
+
+        proximity = float(np.clip(k_ratio * b_ratio * c80_ratio, 0.0, 1.0))
+
+        return {
+            "proximity_score": proximity,
+            "konsonanten_transient_energy_ratio": float(k_ratio),
+            "breathiness_ratio": float(b_ratio),
+            "early_reflection_preservation": float(c80_ratio),
+        }
+    except Exception as exc:
+        logger.warning("compute_vocal_proximity_score failed: %s", exc)
+        return _fallback_result()
+
+
+def _fallback_result() -> dict[str, float]:
+    return {
+        "proximity_score": 1.0,
+        "konsonanten_transient_energy_ratio": 1.0,
+        "breathiness_ratio": 1.0,
+        "early_reflection_preservation": 1.0,
+    }
+
+
+def _to_mono(audio: np.ndarray) -> np.ndarray:
+    a = np.asarray(audio, dtype=np.float64)
+    if a.ndim == 2:
+        if a.shape[0] == 2 and a.shape[1] > 2:
+            a = a.mean(axis=0)
+        elif a.shape[1] <= 2:
+            a = a.mean(axis=1)
+    return np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _konsonanten_transient_ratio(orig: np.ndarray, rest: np.ndarray, sr: int) -> float:
+    """Ratio of plosive/fricative onset energy (restored / original).
+
+    Consonants have broadband energy above ~2 kHz with sharp onsets.
+    Uses spectral flux in the 2-8 kHz band to detect onsets, then
+    sums the energy at those onset positions.
+    """
+    nyq = sr / 2.0
+    if nyq <= 2200:
+        return 1.0  # can't measure consonant band
+
+    # Bandpass 2-8 kHz (or Nyquist)
+    hi = min(8000, nyq - 100)
+    sos = signal.butter(4, [2000, hi], btype="band", fs=sr, output="sos")
+    orig_bp = signal.sosfilt(sos, orig)
+    rest_bp = signal.sosfilt(sos, rest)
+
+    # Frame-based spectral flux for onset detection
+    frame_len = int(0.010 * sr)  # 10 ms
+    hop = frame_len // 2
+    n_frames = max(1, (len(orig_bp) - frame_len) // hop)
+
+    def _onset_energy(sig: np.ndarray, bp: np.ndarray) -> float:
+        energies = np.array([np.sum(bp[i * hop : i * hop + frame_len] ** 2) for i in range(n_frames)])
+        if len(energies) < 3:
+            return float(np.sum(bp**2))
+        # Spectral flux: positive differences
+        flux = np.maximum(np.diff(energies), 0.0)
+        # Onset = frames where flux > mean + 1.5*std
+        thr = np.mean(flux) + 1.5 * np.std(flux)
+        onset_mask = flux > thr
+        if not np.any(onset_mask):
+            return float(np.sum(bp**2) + 1e-30)
+        # Sum full-band energy at onset frames
+        onset_frames = np.where(onset_mask)[0]
+        total = 0.0
+        for f in onset_frames:
+            s = f * hop
+            total += np.sum(sig[s : s + frame_len] ** 2)
+        return max(total, 1e-30)
+
+    e_orig = _onset_energy(orig, orig_bp)
+    e_rest = _onset_energy(rest, rest_bp)
+    ratio = e_rest / e_orig
+    return float(np.clip(ratio, 0.0, 1.5))
+
+
+def _breathiness_ratio(orig: np.ndarray, rest: np.ndarray, sr: int) -> float:
+    """Ratio of RMS in pauses (restored / original).
+
+    Natural breath sounds in 100 ms inter-phrase pauses should be preserved.
+    Aggressive denoising removes these → ratio drops.
+    """
+    frame_len = int(0.050 * sr)  # 50 ms frames
+    hop = frame_len
+    n_frames = max(1, len(orig) // hop)
+
+    def _rms_frames(sig: np.ndarray) -> np.ndarray:
+        r = np.zeros(n_frames)
+        for i in range(n_frames):
+            chunk = sig[i * hop : i * hop + frame_len]
+            r[i] = np.sqrt(np.mean(chunk**2) + 1e-30)
+        return r
+
+    rms_orig = _rms_frames(orig)
+    rms_rest = _rms_frames(rest)
+
+    # Identify "pause" frames: RMS < 20th percentile AND below -35 dBFS
+    thr_pctl = np.percentile(rms_orig, 20)
+    thr_abs = 10 ** (-35.0 / 20.0)
+    pause_mask = (rms_orig < thr_pctl) & (rms_orig < thr_abs) & (rms_orig > 1e-10)
+
+    # Need >= 2 consecutive pause frames (≥ 100 ms)
+    if pause_mask.sum() < 2:
+        return 1.0  # no pauses detected → assume preserved
+
+    mean_pause_orig = float(np.mean(rms_orig[pause_mask]))
+    mean_pause_rest = float(np.mean(rms_rest[pause_mask]))
+
+    if mean_pause_orig < 1e-10:
+        return 1.0
+    ratio = mean_pause_rest / mean_pause_orig
+    return float(np.clip(ratio, 0.0, 1.5))
+
+
+def _early_reflection_preservation(orig: np.ndarray, rest: np.ndarray, sr: int) -> float:
+    """C80-like clarity ratio (restored / original).
+
+    For each detected onset, measure energy in 0-80 ms (early) vs 80-300 ms (late).
+    C80 = E_early / E_late.  Ratio of C80(restored) / C80(original) ≈ 1.0 means
+    early reflections are preserved.
+    """
+    # Detect onsets via broadband spectral flux
+    frame_len = int(0.020 * sr)  # 20 ms
+    hop = frame_len // 2
+    n_frames = max(1, (len(orig) - frame_len) // hop)
+
+    energies = np.array([np.sum(orig[i * hop : i * hop + frame_len] ** 2) for i in range(n_frames)])
+    if len(energies) < 5:
+        return 1.0
+    flux = np.maximum(np.diff(energies), 0.0)
+    thr = np.mean(flux) + 2.0 * np.std(flux)
+    onset_idx = np.where(flux > thr)[0]
+
+    if len(onset_idx) == 0:
+        return 1.0
+
+    early_ms = int(0.080 * sr)  # 80 ms
+    late_start = early_ms
+    late_end = int(0.300 * sr)  # 300 ms
+
+    def _mean_c80(sig: np.ndarray) -> float:
+        c80_vals = []
+        for oi in onset_idx:
+            s = oi * hop
+            if s + late_end > len(sig):
+                continue
+            e_early = np.sum(sig[s : s + early_ms] ** 2) + 1e-30
+            e_late = np.sum(sig[s + late_start : s + late_end] ** 2) + 1e-30
+            c80_vals.append(e_early / e_late)
+        if not c80_vals:
+            return 1.0
+        return float(np.median(c80_vals))
+
+    c80_orig = _mean_c80(orig)
+    c80_rest = _mean_c80(rest)
+
+    if c80_orig < 1e-10:
+        return 1.0
+    ratio = c80_rest / c80_orig
+    return float(np.clip(ratio, 0.0, 1.5))

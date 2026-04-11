@@ -113,7 +113,7 @@ class RumbleFilterPhase(PhaseInterface):
     # Material-adaptive Parameters (Professional-tuned)
     MATERIAL_PARAMS = {
         "tape": {
-            "cutoff_hz": 35,  # Tape rumble (capstan resonance)
+            "cutoff_hz": 24,  # Conservative: preserve musical low-end, remove rumble only
             "filter_order": 6,  # Moderate slope (36 dB/oct)
             "detection_threshold": 0.20,
             "phase_mode": "minimum",  # IIR for speed
@@ -121,7 +121,7 @@ class RumbleFilterPhase(PhaseInterface):
             "dynamic_adapt": 0.5,
         },
         "vinyl": {
-            "cutoff_hz": 45,  # Vinyl rumble (turntable motor)
+            "cutoff_hz": 26,  # Conservative: avoid bass body loss
             "filter_order": 8,  # Steep slope (48 dB/oct)
             "detection_threshold": 0.18,
             "phase_mode": "minimum",
@@ -129,7 +129,7 @@ class RumbleFilterPhase(PhaseInterface):
             "dynamic_adapt": 0.6,
         },
         "shellac": {
-            "cutoff_hz": 70,  # Shellac 78rpm (extreme rumble)
+            "cutoff_hz": 32,  # Keep musical body while reducing mechanical rumble
             "filter_order": 12,  # Very steep (72 dB/oct)
             "detection_threshold": 0.12,
             "phase_mode": "minimum",
@@ -137,7 +137,7 @@ class RumbleFilterPhase(PhaseInterface):
             "dynamic_adapt": 0.8,  # Aggressive adaptation
         },
         "cd_digital": {
-            "cutoff_hz": 18,  # Minimal (DC + extreme subsonic only)
+            "cutoff_hz": 12,  # Minimal (DC + extreme subsonic only)
             "filter_order": 3,  # Gentle slope (18 dB/oct)
             "detection_threshold": 0.30,
             "phase_mode": "linear",  # Clean digital processing
@@ -145,7 +145,7 @@ class RumbleFilterPhase(PhaseInterface):
             "dynamic_adapt": 0.3,
         },
         "unknown": {
-            "cutoff_hz": 40,
+            "cutoff_hz": 24,
             "filter_order": 6,
             "detection_threshold": 0.20,
             "phase_mode": "minimum",
@@ -185,12 +185,34 @@ class RumbleFilterPhase(PhaseInterface):
         Returns:
             PhaseResult with rumble-filtered audio
         """
+        # Backward-compatible call handling:
+        # some callers pass process(audio, sample_rate) positionally.
+        if isinstance(material_type, (int, float, np.integer, np.floating)):
+            kwargs = dict(kwargs)
+            kwargs["sample_rate"] = int(material_type)
+            material_type = str(kwargs.get("material_type", "unknown"))
+
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
-        # §2.45a: RMS-Referenz vor Verarbeitung
-        _rms_in_05 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
+        # §2.45a: RMS-Referenz NACH DC-Block (DC-Offset darf den Musik-Pegel nicht aufblähen).
+        # Raw audio kann DC-Offset von Vinyl-Nadel tragen; der HP-Filter arbeitet auf dc_blocked.
+        # Beide Seiten der Guard müssen vergleichbar sein — sonst werden korrekte Rumble-
+        # Entfernungen (33+ dB Breitband-Abfall bei rausch-dominiertem Vinyl) als Schaden gewertet.
+        # Guard-Messung wird nach der Verarbeitung mit dem gleichen dc_blocked als Referenz getan.
+        _dc_alpha_05 = 0.9995  # 1 Hz ≈ Cutoff @ 48 kHz (zero-phase via filtfilt)
+        from scipy.signal import filtfilt as _filtfilt_05
+
+        _dc_b_05, _dc_a_05 = [1.0, -1.0], [1.0, -_dc_alpha_05]
+        if audio.ndim == 2:
+            _dc_ref_05 = np.column_stack(
+                [_filtfilt_05(_dc_b_05, _dc_a_05, audio[:, ch]) for ch in range(audio.shape[1])]
+            )
+        else:
+            _dc_ref_05 = _filtfilt_05(_dc_b_05, _dc_a_05, audio)
+        # §2.45a-I: Gated-RMS — nur Frames > −50 dBFS als Referenz (keine Stille-Verfälschung)
+        _rms_in_db_05_ref = self._rms_dbfs_gated(np.asarray(_dc_ref_05, dtype=np.float32))
 
         # Get material-specific parameters
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
@@ -285,26 +307,45 @@ class RumbleFilterPhase(PhaseInterface):
             filtered = (audio + _effective_strength * (filtered - audio)).astype(audio.dtype)
             filtered = np.clip(filtered, -1.0, 1.0)
 
-        # §2.45a Mid-Pipeline-Loudness-Drift-Guard
-        _rms_out_05 = float(np.sqrt(np.mean(np.asarray(filtered, dtype=np.float64) ** 2) + 1e-12))
-        _rms_drop_05 = 20.0 * np.log10(max(_rms_out_05 / _rms_in_05, 1e-30)) if _rms_in_05 > 1e-8 else 0.0
-        _max_drop_05 = 3.0  # Rumble-HP: max 3 dB Pegelabfall erlaubt
+        # §2.45a Mid-Pipeline-Loudness-Drift-Guard (gated RMS + envelope-aware gain)
+        _rms_out_db_05 = self._rms_dbfs_gated(np.asarray(filtered, dtype=np.float32))
+        _rms_drop_05 = _rms_out_db_05 - _rms_in_db_05_ref if _rms_in_db_05_ref > -80.0 else 0.0
+        _max_drop_05 = 1.5  # Rumble-HP is early and subtractive: protect musical body
         _makeup_05 = 0.0
-        if _rms_in_05 > 1e-8 and _rms_drop_05 < -_max_drop_05:
+        if _rms_in_db_05_ref > -80.0 and _rms_drop_05 < -_max_drop_05:
             _required_gain_db = -_max_drop_05 - _rms_drop_05
             _makeup_05 = float(np.clip(_required_gain_db, 0.0, 6.0))
             if _makeup_05 > 0.0:
-                _peak99_05 = float(np.percentile(np.abs(filtered), 99.9)) + 1e-10
-                _headroom_05 = min(1.0, 0.95 / _peak99_05)
-                _actual_gain_05 = min(10.0 ** (_makeup_05 / 20.0), _headroom_05)
-                filtered = np.clip(filtered * _actual_gain_05, -1.0, 1.0)
-                _rms_out_05 = float(np.sqrt(np.mean(np.asarray(filtered, dtype=np.float64) ** 2) + 1e-12))
-                _rms_drop_05 = 20.0 * np.log10(max(_rms_out_05 / _rms_in_05, 1e-30))
+                # §2.45a-II: full makeup gain via envelope-aware gain (musical frames only).
+                # BUG FIX: DO NOT cap gain by peak99-headroom before applying —
+                # for hot signals (peak99 ≥ 0.95) the old cap → actual_gain ≤ 1.0 →
+                # guard never fires → level destroyed on every normalised vinyl/MP3 input.
+                # Instead: apply full gain, then use soft-limiter ONLY when peak > 0.98
+                # (§2.45a-III: no routine compression).
+                _actual_gain_05 = float(10.0 ** (_makeup_05 / 20.0))
+                filtered = self._musical_gain_envelope(
+                    np.asarray(filtered, dtype=np.float32),
+                    _actual_gain_05,
+                    sr=sample_rate,
+                )
+                # §2.45a-III: soft-limiter only on real clipping risk
+                _peak99_05 = float(np.percentile(np.abs(filtered), 99.9))
+                if _peak99_05 > 0.98:
+                    _abs_05 = np.abs(filtered)
+                    _over_05 = _abs_05 > 0.92
+                    if np.any(_over_05):
+                        _sign_05 = np.sign(filtered)
+                        _soft_05 = 0.92 + 0.08 * np.tanh((_abs_05 - 0.92) / 0.08)
+                        filtered = np.where(_over_05, _sign_05 * _soft_05, filtered)
+                filtered = np.clip(filtered, -1.0, 1.0)
+                _rms_out_db_05 = self._rms_dbfs_gated(np.asarray(filtered, dtype=np.float32))
+                _rms_drop_05 = _rms_out_db_05 - _rms_in_db_05_ref
                 logger.info(
-                    "Phase 05 loudness-guard: cutoff=%d Hz, rms_drop=%.2f dB → makeup %.2f dB",
+                    "Phase 05 loudness-guard: cutoff=%d Hz, rms_drop=%.2f dB → makeup %.2f dB (gain ×%.3f)",
                     adapted_cutoff,
                     _rms_drop_05,
                     _makeup_05,
+                    _actual_gain_05,
                 )
 
         return create_phase_result(
@@ -335,6 +376,82 @@ class RumbleFilterPhase(PhaseInterface):
                 "loudness_makeup_db": round(float(_makeup_05), 3),
             },
         )
+
+    def _rms_dbfs_gated(self, audio: np.ndarray, gate_dbfs: float = -50.0) -> float:
+        """§2.45a-I: Gated RMS — only frames with musical content above *gate_dbfs*.
+
+        Stereo → mono downmix before framing.
+        Falls back to ungated RMS when < 5 % of frames pass the gate.
+        """
+        _arr = np.asarray(audio, dtype=np.float32)
+        if _arr.ndim == 2:
+            if _arr.shape[1] == 2:
+                _flat = ((_arr[:, 0] + _arr[:, 1]) * 0.5).ravel()
+            elif _arr.shape[0] == 2:
+                _flat = ((_arr[0] + _arr[1]) * 0.5).ravel()
+            else:
+                _flat = _arr.ravel()
+        else:
+            _flat = _arr.ravel()
+        _frame_len = 2048
+        _n_frames = max(1, len(_flat) // _frame_len)
+        _frames = _flat[: _n_frames * _frame_len].reshape(_n_frames, _frame_len)
+        _frame_rms = np.sqrt(np.mean(_frames * _frames, axis=1) + 1e-12)
+        _frame_dbfs = 20.0 * np.log10(_frame_rms + 1e-12)
+        _gate_mask = _frame_dbfs > gate_dbfs
+        if np.sum(_gate_mask) < max(1, int(0.05 * _n_frames)):
+            # < 5 % frames above gate → ungated fallback (very quiet recording)
+            _all_rms = float(np.sqrt(np.mean(_flat**2) + 1e-12))
+            return float(20.0 * np.log10(_all_rms + 1e-12))
+        _gated_rms = float(np.sqrt(np.mean(_frame_rms[_gate_mask] ** 2) + 1e-12))
+        return float(20.0 * np.log10(_gated_rms + 1e-12))
+
+    def _musical_gain_envelope(
+        self,
+        audio: np.ndarray,
+        gain: float,
+        gate_dbfs: float = -50.0,
+        crossfade_ms: float = 10.0,
+        sr: int = 48000,
+    ) -> np.ndarray:
+        """§2.45a-II: Apply makeup gain only to musical frames, leaving silence untouched."""
+        if gain <= 1.0005:
+            return audio
+        _arr = np.asarray(audio, dtype=np.float32)
+        _was_2d = _arr.ndim == 2
+        if _was_2d:
+            # (N, 2) → envelope from mean of channels
+            _mono_env = np.sqrt(np.mean(_arr**2, axis=1) + 1e-12)
+        else:
+            _mono_env = np.abs(_arr)
+        _frame_len = 2048
+        _n_samples = len(_mono_env)
+        _n_full_frames = max(1, _n_samples // _frame_len)
+        _gate_envelope = np.zeros(_n_samples, dtype=np.float32)
+        for _fi in range(_n_full_frames):
+            _s = _fi * _frame_len
+            _e = min(_s + _frame_len, _n_samples)
+            _chunk = _mono_env[_s:_e]
+            _chunk_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_chunk * _chunk) + 1e-12)) + 1e-12))
+            if _chunk_dbfs > gate_dbfs:
+                _gate_envelope[_s:_e] = 1.0
+        _tail_start = _n_full_frames * _frame_len
+        if _tail_start < _n_samples:
+            _tail = _mono_env[_tail_start:]
+            _tail_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_tail * _tail) + 1e-12)) + 1e-12))
+            if _tail_dbfs > gate_dbfs:
+                _gate_envelope[_tail_start:] = 1.0
+        _cf_samples = max(1, int(crossfade_ms * sr / 1000.0))
+        if _cf_samples > 1:
+            _kernel = np.ones(_cf_samples, dtype=np.float32) / _cf_samples
+            _gate_envelope = np.convolve(_gate_envelope, _kernel, mode="same")
+            _gate_envelope = np.clip(_gate_envelope, 0.0, 1.0)
+        _per_sample_gain = 1.0 + (gain - 1.0) * _gate_envelope
+        if _was_2d:
+            _result = _arr * _per_sample_gain[:, np.newaxis]
+        else:
+            _result = _arr * _per_sample_gain
+        return _result
 
     def _detect_rumble_professional(self, audio: np.ndarray, params: dict[str, Any]) -> tuple[bool, float, list[float]]:
         """
@@ -402,34 +519,27 @@ class RumbleFilterPhase(PhaseInterface):
         adapted_cutoff = base_cutoff + cutoff_adjustment
 
         # Clamp to reasonable range
-        adapted_cutoff = np.clip(adapted_cutoff, 15, 120)
+        adapted_cutoff = np.clip(adapted_cutoff, 8, 70)
 
         return adapted_cutoff
 
     def _dc_blocker(self, audio: np.ndarray) -> np.ndarray:
         """
-        First-order IIR DC blocker (1 Hz cutoff).
+        Zero-phase DC blocker via scipy.signal.filtfilt.
 
-        Essential for vinyl/tape digitization with DC offset.
+        B = [1, -1], A = [1, -α], α=0.9995 → Cutoff ≈1 Hz @ 48 kHz.
+        filtfilt applies filter forward+backward (zero phase, no settling artefact).
+        Replaces previous causal Python-loop (α=0.995 → ~38 Hz, slow, causal artefact).
         """
-        # DC blocker: y[n] = x[n] - x[n-1] + 0.995 * y[n-1]
-        # Cutoff ~1 Hz at 44.1 kHz
-        alpha = 0.995
+        from scipy.signal import filtfilt as _filtfilt_dc
 
+        alpha = 0.9995  # 1 Hz cutoff @ 48 kHz
+        b, a = [1.0, -1.0], [1.0, -alpha]
         if audio.ndim == 2:
-            filtered = np.zeros_like(audio)
-            for ch in range(2):
-                y = np.zeros(len(audio))
-                for i in range(1, len(audio)):
-                    y[i] = audio[i, ch] - audio[i - 1, ch] + alpha * y[i - 1]
-                filtered[:, ch] = y
-        else:
-            y = np.zeros(len(audio))
-            for i in range(1, len(audio)):
-                y[i] = audio[i] - audio[i - 1] + alpha * y[i - 1]
-            filtered = y
-
-        return filtered
+            return np.column_stack([_filtfilt_dc(b, a, audio[:, ch]) for ch in range(audio.shape[1])]).astype(
+                audio.dtype
+            )
+        return _filtfilt_dc(b, a, audio).astype(audio.dtype)
 
     def _detect_transients_professional(self, audio: np.ndarray, sensitivity: float) -> np.ndarray:
         """

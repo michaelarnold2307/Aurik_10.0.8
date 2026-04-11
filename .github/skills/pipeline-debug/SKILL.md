@@ -21,6 +21,7 @@ argument-hint: "Was debuggen? (z.B. 'SongCalibration-Profil falsch', 'KMV Stufe 
 **Kontextfluss**: `defect_result → ReparaturDenker → RekonstruktionsDenker(+defect_result) → RestaurierDenker(+reconstruction_context) → UV3`
 
 ### §2.41 Denker-Vollkontext (v9.10.117)
+
 - **ReparaturDenker**: 12 Material-Profile (click_iqr, click_kernel_ms, clip_threshold, hum_detect_db). Shellac IQR=4.0 → CD IQR=9.0. Era-adaptive Hum (≤1940: ≥−42 dB).
 - **RekonstruktionsDenker**: 6 Material-Konfigurationen für GapReconstructor (Shellac: max 200 ms, Tape: bis 2000 ms).
 - **AurikDenker**: Leitet defect_scores, defect_locations, era_decade, material an alle Stufen weiter.
@@ -29,7 +30,7 @@ argument-hint: "Was debuggen? (z.B. 'SongCalibration-Profil falsch', 'KMV Stufe 
 
 ```
 DCOffset → TDP (HPSS) → RestorabilityEstimator →
-SongCalibrationProfile → EraClassifier ∥ GermanSchlager ∥ MediumClassifier →
+SongCalibrationProfile → EraClassifier ∥ GermanSchlager ∥ MediumDetector →
 GoalApplicabilityFilter → AdaptiveGoalThresholds →
 DefectScanner (32 Defekte) → CausalDefectReasoner →
 GPParameterOptimizer → HarmonicPreservationGuard →
@@ -42,21 +43,26 @@ MusicalGoalsChecker → MDEM →
 **Parallelisierung**: Tier 0+1 sequenziell; Era+Schlager+Medium parallel (ThreadPoolExecutor max_workers=3); Tier 6 sequenziell.
 
 ### §2.44 Holistic Perceptual Gate — HPI (v9.10.123)
+
 Letztes Gate vor Export. Fragt: „Klingt der Output **als Ganzes** näher am Original UND ist er **artefaktfrei**?"
 
 **Referenz-Paradoxon**: Das Studio-Original ist unbekannt. Bei Restorability > 70 → Input als Referenz. Bei Restorability ≤ 50 → MERT-Referenz-Vektor aus GP-Memory (genre × material × ära).
 
 **Restoration**: `HPI = MERT_similarity × timbral_fidelity × artifact_freedom × emotional_arc_preservation`
+
 - `timbral_fidelity` dominant: strukturelle Klangkohärenz, nicht bloße Input-Ähnlichkeit
 - `artifact_freedom` (§2.49): Musical Noise, Pre-Echo, Spectral Holes = 0
 - RestorabilityEstimator > 0.85 → strengeres Gate
 
 **Studio 2026**: `HPI = studio_quality_gain × PQS_improvement × artifact_freedom × emotional_arc_preservation`
+
 - PQS dominant: Qualität steigern > Original-Treue
 - `studio_quality_gain`: Abstand zu Referenz-Studioniveau
 
 ### §2.46 Carrier-Chain-Inversion (v9.10.122)
+
 **Restoration**: Nicht Einzel-Defekte reparieren, sondern **Tonträgerkette invertieren**:
+
 1. ADC-Artefakte → 2. Playback-Verzerrungen → 3. Alterung → 4. Carrier-Encoding invertieren
 5. Mixer/Preamp-Charakter BEWAHREN | 6. Studio-Raumklang BEWAHREN
 
@@ -67,15 +73,19 @@ Letztes Gate vor Export. Fragt: „Klingt der Output **als Ganzes** näher am Or
 Beide: `HPI > 0` → Export | `HPI ≤ 0` → Rollback
 
 ### §2.45 Minimal-Intervention-Prinzip (v9.10.122)
+
 **Restoration**: `perceptual_delta ≤ 0` → Phase Skip. So wenige Phasen wie nötig.
 **Studio 2026**: Volle Enhancement-Kette aktiv, aber `perceptual_delta > 0` bleibt Pflicht. Auch Enhancement-Phasen müssen Klanggewinn nachweisen. Kein Skip wegen Input-Ähnlichkeit.
 
 ### §2.29d Differenziertes Regressions-Regime (v9.10.122)
+
 - P1/P2: **Hart** — keine Phase darf diese verschlechtern
 - P3–P5: **Pipeline-Netto-Budget** — Zwischenregressionen erlaubt, MusicalGoalsChecker prüft am Kettenende
 
 ### §2.47 Adaptive-Intelligence-Prinzip (v9.10.123)
+
 Adaptions-Kaskade (Reihenfolge = Informationsgewinn):
+
 1. Material-Erkennung → 2. Ära-Klassifikation → 3. Genre-Klassifikation (17 Genres)
 4. Restorability-Schätzung → 5. Defekt-Analyse (32 Typen) → 6. Song-Kalibrierung → 7. GPOptimizer
 
@@ -85,13 +95,16 @@ Adaptions-Kaskade (Reihenfolge = Informationsgewinn):
 **ML-Failure-Kaskade**: DeepFilterNet→OMLSA→Spectral-Gating; MDX23C→NMF→Bypass; MertPlugin→MFCC-Similarity→Bypass. Kein ML-Failure darf die Pipeline abbrechen.
 
 ### §2.48 Kumulative-Phasen-Interaktions-Guard (v9.10.123)
+
 Nach jeder Phase: kumulative Drift der P1/P2-Goals messen (Natürlichkeit, Authentizität, TonalCenter, Timbre, Artikulation). `cumulative_drift = goals_now - goals_pre_pipeline`. Drift < −0.05 → Rollback auf `best_checkpoint`.
 
 **Kritische Paare**: De-Hiss + De-Reverb → Raumklang; NR + De-Hiss → Over-Denoising; Multiband-Comp + LUFS → Dynamik-Verlust; Harmonic-Restoration + Vocal-AI → Frequenz-Doppelung.
 **Checkpoints**: best_checkpoint + best_artifact_free_checkpoint. Max 2 aufeinanderfolgende Rollbacks → Pipeline-Stop auf best_checkpoint.
 
 ### §2.49 Artefakt-Freiheits-Gate (v9.10.123)
+
 Dediziertes Gate — unabhängig von Musical Goals. Prüft nach jeder Phase UND als Export-Gate:
+
 - Musical Noise (isolierte Tonale in Stille, Spectral-Variance) = 0 Events
 - Pre-Echo (Energie vor Attack ≤ −40 dB) = 0 Events
 - Spectral Holes (Lücken > 200 Hz im Passband) = 0 Holes
@@ -109,6 +122,7 @@ Pflichtprofil `song_calibration_profile`:
 **family_scalars** (mind. 8): `denoise`, `reverb`, `reconstruction`, `dynamics_eq`, `transient`, `vocal`, `instrument`, `general`
 
 ### Kalibrier-Berechnungsblöcke (Reihenfolge in `_build_song_calibration_profile`):
+
 1. Era-GP-Warmstart: ≤1940 → ×1.10; ≤1960 → ×1.00; ≥1970 → ×0.88
 2. Material-Multiplikatoren (6 Materialien)
 3. Per-Defekt-Family-Boost: 28 DefectTypes → 6 Familien, max +12 %
@@ -136,12 +150,15 @@ UV3-Felder in SongCal: `source_fidelity_bandwidth_target_hz`, `reconstruction_st
 **Stufe-2-Start**: `deferred_phases > 0` AND `RAM ≥ 4 GB` AND kein anderer Refinement aktiv.
 
 ### Quality-First Hauptlauf (v9.10.80)
+
 GUI/CLI/Batch MÜSSEN `denke(..., no_rt_limit=True)` nutzen — keine Qualitätsreduktion im Normalbetrieb.
 
 ### DeferredRefinementJob-Felder
+
 `output_path`, `audio_original`, `sr`, `mode`, `deferred_phase_ids`, `cached_defect_result`, `cached_era_result`, `cached_medium_result`, `stufe1_quality`
 
 ### RestorationResult-Pflicht-Felder (§2.38)
+
 ```python
 deferred_phases: list[str]            # Phasen für Stufe 2
 refinement_complete: bool = False     # True nach ML-Veredelung
@@ -164,7 +181,7 @@ Rollback bei |MOS_neu − MOS_alt| > 0.05.
 
 Modul: `backend/core/recovery_checkpoint.py`
 
-Lifecycle: `_execute_pipeline` MemoryError → `save_checkpoint()` → sessions/<stem>_oom_checkpoint.json + _oom_audio.wav → ModernMainWindow Dialog → Resume mit Original-Audio
+Lifecycle: `_execute_pipeline` MemoryError → `save_checkpoint()` → sessions/STEM_oom_checkpoint.json + _oom_audio.wav → ModernMainWindow Dialog → Resume mit Original-Audio
 
 **Invarianten**: FLOAT WAV, 7 Tage Ablauf, Thread-safe (.tmp → os.replace), Lyrics NICHT im Checkpoint.
 
@@ -177,7 +194,7 @@ Toleranzen: `max_abs_err ≤ 1e-6`, `rms_err ≤ 1e-7`, identische `phases_execu
 
 | Pfad | SR | Module |
 |---|---|---|
-| `analysis_audio/analysis_sr` | Native Import-SR | DefectScanner, EraClassifier, MediumClassifier, RestorabilityEstimator |
+| `analysis_audio/analysis_sr` | Native Import-SR | DefectScanner, EraClassifier, MediumDetector, RestorabilityEstimator |
 | `processing_audio/processing_sr` | 48000 Hz | Alle Phasen (01–64), alle Plugins |
 
 Fail-fast: `processing_sr != 48000` und Resampling unmöglich → strukturierter Abbruch.
@@ -187,6 +204,7 @@ Fail-fast: `processing_sr != 48000` und Resampling unmöglich → strukturierter
 `_execute_pipeline` extrahiert `defect_locations: dict[str, list[tuple[float, float]]]` + `max_defect_severity: float` aus `defect_result.scores` → als kwargs an jede Phase.
 
 **Invarianten**:
+
 - Keine Caps auf defect_locations (vollständige Liste)
 - §9.1a: DROPOUTS/TRANSPORT_BUMP auf vollständigem Audio (kein 60s Crop)
 - §9.1b: Intro ≤ 5 s → Severity ×1.5

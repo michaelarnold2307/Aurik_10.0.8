@@ -483,10 +483,19 @@ class ERBAuditoryMaskingModel:
 
     @staticmethod
     def _to_mono_f64(audio: np.ndarray) -> np.ndarray:
-        """Convert to mono float64 with NaN/Inf guard."""
+        """Convert to mono float64 with NaN/Inf guard.
+
+        Aurik canonical shape is (N, channels) — axis 1 is the channel dimension.
+        For (N, 2): shape[0]=N >> shape[1]=2 → mean(axis=1) → N-element mono.
+        For (2, N): shape[0]=2 <  shape[1]=N  → mean(axis=0) → N-element mono.
+        WRONG: mean(axis=0) on (N,2) returns a 2-element vector → all downstream
+        FFT/band-power computations collapse → salience=0.000 on every call.
+        """
         arr = np.asarray(audio, dtype=np.float64)
         if arr.ndim == 2:
-            arr = arr.mean(axis=0) if arr.shape[0] > arr.shape[1] else arr.mean(axis=1)
+            # Detect Aurik (N, channels) vs. legacy (channels, N):
+            # The channel count is always ≤ 2; the sample count is always >> 2.
+            arr = arr.mean(axis=1) if arr.shape[0] > arr.shape[1] else arr.mean(axis=0)
         return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
 

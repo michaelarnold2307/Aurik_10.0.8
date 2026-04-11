@@ -57,12 +57,21 @@ class UVRMDXNetPlugin:
 
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
-            prov = ["CPUExecutionProvider"]
+            try:
+                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                prov = _get_prov("MDXNet")
+            except Exception:
+                prov = ["CPUExecutionProvider"]
             for mf in self.MODEL_FILES:
                 mp = os.path.join(d, mf)
-                if os.path.exists(mp):
+                if not os.path.exists(mp):
+                    continue
+                try:
                     self._sessions.append(ort.InferenceSession(mp, sess_options=opts, providers=prov))
                     logger.info("UVR MDX-Net geladen: %s", mf)
+                except Exception as exc:
+                    logger.debug("UVR Modell-Ladefehler %s: %s", mf, exc)
             if not self._sessions:
                 logger.warning("Keine UVR-Modelle in: %s — DSP-Fallback.", d)
                 try:

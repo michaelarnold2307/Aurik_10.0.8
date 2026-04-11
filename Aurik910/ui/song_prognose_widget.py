@@ -108,16 +108,59 @@ class _DefectPill(QLabel):
         "low": ("#4A90D9", "rgba(74,144,217,0.14)", "rgba(74,144,217,0.30)"),
         "medium": ("#C8A84B", "rgba(200,168,75,0.14)", "rgba(200,168,75,0.30)"),
         "high": ("#B87A7A", "rgba(184,122,122,0.14)", "rgba(184,122,122,0.30)"),
+        "resolved": ("#82B89A", "rgba(130,184,154,0.12)", "rgba(130,184,154,0.28)"),
     }
+
+    # Blu-ray disc read-side iridescent metallic gradient (blue-violet reflex)
+    _BLURAY_ACTIVE_STYLE = (
+        "color:#B8D4FF;"
+        " background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+        "   stop:0 rgba(93,79,205,0.22), stop:0.45 rgba(0,170,230,0.18),"
+        "   stop:1.0 rgba(140,100,220,0.22));"
+        " border:1px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+        "   stop:0 rgba(123,104,238,0.65), stop:0.5 rgba(0,191,255,0.55),"
+        "   stop:1.0 rgba(159,122,234,0.65));"
+        " border-radius:8px; padding:2px 8px; font-size:8pt; font-weight:700;"
+    )
 
     def __init__(self, label: str, severity: str = "medium") -> None:
         super().__init__(label)
+        self._base_label = label
+        self._severity = severity
         fg, bg, border = self._SEVERITY_COLORS.get(severity, self._SEVERITY_COLORS["medium"])
+        self._default_style = (
+            f"color:{fg}; background:{bg}; border:1px solid {border};"
+            " border-radius:8px; padding:2px 8px; font-size:8pt; font-weight:600;"
+        )
+        self.setStyleSheet(self._default_style)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def set_active(self) -> None:
+        """Mark pill as actively being repaired: Blu-ray iridescent metallic highlight."""
+        base_name = self._base_label.split("  ")[0].strip()
+        self.setText(f"\U0001f527\u202f{base_name}")
+        self.setStyleSheet(self._BLURAY_ACTIVE_STYLE)
+
+    def clear_active(self) -> None:
+        """Remove active highlight, restore severity-based style."""
+        self.setText(self._base_label)
+        self.setStyleSheet(self._default_style)
+
+    def set_resolved(self) -> None:
+        """Mark pill as fixed: green colour, count/metric stripped, checkmark added."""
+        fg, bg, border = self._SEVERITY_COLORS["resolved"]
+        # Strip trailing count/metric (separated by double space) to show only the defect name.
+        base_name = self._base_label.split("  ")[0].strip()
+        self.setText(f"\u2713\u202f{base_name}")
         self.setStyleSheet(
             f"color:{fg}; background:{bg}; border:1px solid {border};"
             " border-radius:8px; padding:2px 8px; font-size:8pt; font-weight:600;"
         )
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def update_metric(self, new_label: str) -> None:
+        """Update displayed metric/count text (during correcting phase)."""
+        self._base_label = new_label
+        self.setText(new_label)
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +220,56 @@ _DEFECT_LABELS: dict[str, str] = {
 def _defect_label(key: str) -> str:
     if key in _DEFECT_LABELS:
         return _DEFECT_LABELS[key]
+    # Display dict uses lowercase keys; label map uses UPPERCASE → try uppercase lookup
+    upper = key.upper()
+    if upper in _DEFECT_LABELS:
+        return _DEFECT_LABELS[upper]
     # Fallback: prettify
     return key.replace("_", " ").capitalize()
+
+
+# Physical-unit metric formatters for continuous (location-less) defects.
+# Value is already in the unit noted in the comment.
+_DEFECT_METRIC_SUFFIX: dict[str, Any] = {
+    "noise_level": lambda v: f"\u2212{v:.0f}\u202fdB",  # −45 dB (SNR)
+    "hum": lambda v: f"{v:.0f}\u202fHz",  # 50 Hz netzbrummen
+    "wow": lambda v: f"{v:.2f}\u202f%",  # 1.20 % pitch-variation
+    "flutter": lambda v: f"{v:.2f}\u202f%",  # 0.80 % flutter
+    "rumble": lambda v: f"{v:.0f}\u202f%",  # severity %
+    "bandwidth_loss": lambda v: f"{v:.0f}\u202f%",
+    "reverb_excess": lambda v: f"{v:.0f}\u202f%",
+    "dc_offset": lambda v: f"{v:.0f}\u202f%",
+    "pitch_drift": lambda v: f"{v:.0f}\u202f%",
+    "stereo_imbalance": lambda v: f"{v:.0f}\u202f%",
+    "phase_issues": lambda v: f"{v:.0f}\u202f%",
+    "print_through": lambda v: f"{v:.0f}\u202f%",
+    "dynamic_compression_excess": lambda v: f"{v:.0f}\u202f%",
+    "compression_artifacts": lambda v: f"{v:.0f}\u202f%",
+    "digital_artifacts": lambda v: f"{v:.0f}\u202f%",
+    "quantization_noise": lambda v: f"{v:.0f}\u202f%",
+    "jitter_artifacts": lambda v: f"{v:.0f}\u202f%",
+    "pre_echo": lambda v: f"{v:.0f}\u202f%",
+    "transient_smearing": lambda v: f"{v:.0f}\u202f%",
+    "soft_saturation": lambda v: f"{v:.0f}\u202f%",
+    "head_wear": lambda v: f"{v:.0f}\u202f%",
+    "azimuth_error": lambda v: f"{v:.0f}\u202f%",
+    "riaa_curve_error": lambda v: f"{v:.0f}\u202f%",
+    "bias_error": lambda v: f"{v:.0f}\u202f%",
+    "transport_bump": lambda v: f"{v:.0f}\u202f%",
+    "vocal_harshness": lambda v: f"{v:.0f}\u202f%",
+    "aliasing": lambda v: f"{v:.0f}\u202f%",
+}
+
+
+def _pill_label(key: str, val: float, n_events: int) -> str:
+    """Build pill display text: count suffix for event-defects, physical metric for continuous ones."""
+    base = _defect_label(key)
+    if n_events > 0:
+        return f"{base}  \u00d7\u202f{n_events:,}"
+    fmt = _DEFECT_METRIC_SUFFIX.get(key)
+    if fmt is not None and val > 0:
+        return f"{base}  {fmt(val)}"
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +576,9 @@ class SongPrognoseWidget(QWidget):
         self._clear_defect_pills()
         self._defect_placeholder.setText("— Scan läuft nach dem Start …")
         self._defect_placeholder.setVisible(True)
+        self._pill_by_key: dict[str, _DefectPill] = {}
+        self._detected_scores: dict[str, float] = {}
+        self._detected_locations: dict[str, list] = {}
 
     def update_material(self, material_key: str, confidence: float) -> None:
         """Update material row. Call from GUI thread after MediumClassifier."""
@@ -587,31 +681,82 @@ class SongPrognoseWidget(QWidget):
     def update_defects(self, defects: dict) -> None:
         """
         Update defect pills from DefectScanner result (BatchProcessingThread).
-        Only processes status == 'detected'.
+
+        status='detected'   → (re)build pills with counts / physical metrics.
+        status='correcting' → update existing pills; mark resolved when phase fixed the defect.
         """
-        if defects.get("status") != "detected":
+        status = defects.get("status")
+        if status not in ("detected", "correcting"):
             return
 
-        # Collect significant defects (severity > 0.15)
-        significant: list[tuple[str, float]] = []
-        for k, v in defects.items():
-            if k in ("status", "_no_anim"):
-                continue
-            if isinstance(v, (int, float)) and float(v) > 0.15:
-                significant.append((str(k), float(v)))
+        _locs: dict = defects.get("_locations", {})
 
-        if not significant:
-            return
+        if status == "detected":
+            # Collect significant defects
+            significant: list[tuple[str, float]] = []
+            for k, v in defects.items():
+                if k in ("status", "_no_anim", "_locations", "_channel_locations", "_event_counts", "_severity_raw"):
+                    continue
+                if isinstance(v, (int, float)) and float(v) > 0.15:
+                    significant.append((str(k), float(v)))
 
-        significant.sort(key=lambda x: x[1], reverse=True)
-        self._clear_defect_pills()
-        self._defect_placeholder.setVisible(False)
+            if not significant:
+                return
 
-        for key, sev_val in significant[:8]:
-            sev = "high" if sev_val > 0.6 else ("medium" if sev_val > 0.25 else "low")
-            label = f"{_defect_label(key)} ({sev_val:.0%})"
-            pill = _DefectPill(label, sev)
-            self._defect_pills_row.addWidget(pill)
+            significant.sort(key=lambda x: x[1], reverse=True)
+            self._clear_defect_pills()
+            self._defect_placeholder.setVisible(False)
+
+            self._detected_scores = {}
+            self._detected_locations = {}
+            self._pill_by_key = {}
+
+            _event_counts: dict = defects.get("_event_counts", {})
+            _severity_raw: dict = defects.get("_severity_raw", {})
+
+            for key, sev_val in significant[:8]:
+                self._detected_scores[key] = sev_val
+                self._detected_locations[key] = list(_locs.get(key, []))
+                # Prefer authoritative metadata count; fall back to location list length
+                n_events = _event_counts.get(key, len(self._detected_locations[key]))
+                # Use normalised 0-1 severity for pill colour; fall back per-key scaling
+                raw_sev = _severity_raw.get(key)
+                if raw_sev is None:
+                    # sev_val is already scaled; try best-effort normalisation
+                    raw_sev = min(1.0, sev_val / 100.0)
+                sev = "high" if raw_sev > 0.6 else ("medium" if raw_sev > 0.25 else "low")
+                label = _pill_label(key, sev_val, n_events)
+                pill = _DefectPill(label, sev)
+                self._defect_pills_row.addWidget(pill)
+                self._pill_by_key[key] = pill
+
+        else:  # status == "correcting"
+            if not getattr(self, "_pill_by_key", None):
+                return
+            # §11.4 Active defect keys from the current pipeline phase
+            _active_keys: set[str] = set(defects.get("_active_defects") or [])
+            for key, pill in self._pill_by_key.items():
+                current_val = defects.get(key)
+                if current_val is None:
+                    continue
+                current_val = float(current_val)
+                initial_val = self._detected_scores.get(key, 0.0)
+                if initial_val <= 0:
+                    continue
+                ratio = current_val / initial_val
+                if ratio < 0.15:
+                    # Phase hat diesen Defekt behoben → Zähler/Metrik entfernen, grün markieren
+                    pill.set_resolved()
+                elif key in _active_keys:
+                    # Blu-ray metallic highlight: this defect is targeted by the running phase
+                    pill.set_active()
+                else:
+                    # Not active right now: restore default severity style, update metric
+                    pill.clear_active()
+                    n_initial = len(self._detected_locations.get(key, []))
+                    n_current = int(n_initial * ratio) if n_initial > 0 else 0
+                    new_label = _pill_label(key, current_val, n_current)
+                    pill.update_metric(new_label)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -625,6 +770,9 @@ class SongPrognoseWidget(QWidget):
                 if w:
                     self._defect_pills_row.removeWidget(w)
                     w.deleteLater()
+        self._pill_by_key = {}
+        self._detected_scores = {}
+        self._detected_locations = {}
 
     def _refresh_phase_prognosis(self) -> None:
         lo, hi, desc = _GRADE_PHASES.get(self._grade, _GRADE_PHASES["unknown"])

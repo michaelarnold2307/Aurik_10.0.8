@@ -341,7 +341,10 @@ class MultibandCompressionPhase(PhaseInterface):
         # Attack/Release Smoothing (character-dependent)
         if character == "optical":
             # Optical: Program-dependent release (slower for loud signals)
-            release_ms_adaptive = release_ms * (1.0 + envelope / (np.max(envelope) + 1e-10))
+            # §copilot Peak-Guard: percentile(99.9) so a single click/impulse artefact
+            # does not collapse the normalization denominator for the entire signal.
+            envelope_peak = float(np.percentile(np.abs(envelope), 99.9)) + 1e-10
+            release_ms_adaptive = release_ms * (1.0 + envelope / envelope_peak)
             alpha_release = 1.0 - np.exp(-1.0 / (release_ms_adaptive * 0.001 * sample_rate))
         else:
             # Standard exponential release

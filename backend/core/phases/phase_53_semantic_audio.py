@@ -223,6 +223,43 @@ class SemanticAudioPhase(PhaseInterface):
         f, psd = sig.periodogram(mono, fs=sample_rate, window="hann")
         centroid = float(np.sum(f * psd) / (np.sum(psd) + 1e-12))
 
+        # ── Tier-0: BEATs iter3 Audio Tagging (SOTA §4.4) ───────────────────────────
+        # AudioSet-527-Klassifikation für semantisch reichere Pipeline-Metadaten.
+        # Fallback auf DSP-Chromagramm/Zentroid wenn BEATs nicht verfügbar.
+        _beats_tags: dict[str, float] = {}
+        _beats_model_used = "dsp_only"
+        _beats_embedding: list[float] = []
+        _beats_top_k: list[tuple[str, float]] = []
+        try:
+            from backend.core.ml_memory_budget import release as _release_53
+            from backend.core.ml_memory_budget import try_allocate as _alloc_53
+            from plugins.beats_plugin import get_beats_plugin as _beats_factory
+
+            if _alloc_53("BEATs_phase53", 0.09):
+                try:
+                    _beats_result = _beats_factory().get_tags(audio, sample_rate, top_k=15)
+                    _beats_result.tags
+                    _beats_model_used = _beats_result.model_used
+                    _beats_top_k = _beats_result.top_k
+                    # Speichere die ersten 32 Embedding-Dimensionen (Transport-safe)
+                    _beats_embedding = [float(x) for x in _beats_result.embeddings[:32].tolist()]
+                    # Überschreibe Genre-Hint wenn BEATs einen klaren Tag liefert
+                    if _beats_top_k:
+                        _top_tag, _top_conf = _beats_top_k[0]
+                        if _top_conf >= 0.40:
+                            genre_hint = _top_tag  # BEATs-Tag ersetzt DSP-Heuristik
+                    logger.info(
+                        "Phase 53: BEATs OK (model=%s, top=%s)",
+                        _beats_model_used,
+                        [f"{t}({c:.2f})" for t, c in _beats_top_k[:3]],
+                    )
+                except Exception as _beats_err:
+                    logger.debug("Phase 53: BEATs tagging fehlgeschlagen (%s) — DSP-Fallback", _beats_err)
+                finally:
+                    _release_53("BEATs_phase53")
+        except Exception as _imp_err:
+            logger.debug("Phase 53: BEATs-Import nicht verfügbar (%s) — DSP-only", _imp_err)
+
         meta = {
             "bpm": round(bpm, 1),
             "key": key,
@@ -233,6 +270,10 @@ class SemanticAudioPhase(PhaseInterface):
             "spectral_centroid_hz": round(float(centroid), 1),
             "phase_locality_factor": phase_locality_factor,
             "effective_strength": effective_strength,
+            # BEATs semantic tags (leer wenn BEATs nicht verfügbar)
+            "beats_model_used": _beats_model_used,
+            "beats_top_tags": [{"tag": t, "confidence": round(c, 3)} for t, c in _beats_top_k[:10]],
+            "beats_embedding_32": _beats_embedding,
         }
 
         logger.info(

@@ -136,14 +136,19 @@ def score_audio(self, reference: np.ndarray, degraded: np.ndarray, sr: int) -> P
 ### §3.4 Lazy Imports & Graceful Degradation
 
 ```python
-def _load_optional_model(model_path: str):
+def _load_optional_model(model_path: str, plugin_name: str = ""):
     try:
         import onnxruntime as ort
-        return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        try:
+            from backend.core.ml_device_manager import get_ort_providers as _get_prov
+            providers = _get_prov(plugin_name)
+        except Exception:
+            providers = ["CPUExecutionProvider"]
+        return ort.InferenceSession(model_path, providers=providers)
     except (ImportError, FileNotFoundError):
         logger.debug("ONNX nicht verfügbar, nutze DSP-Fallback")
         return None
-# Pflicht: torch-Imports mit +cpu-Suffix, ONNX mit CPUExecutionProvider
+# Pflicht: ml_device_manager für Device-Dispatch; CPU-Fallback immer gewährleistet
 ```
 
 ### §3.5 Logging-Konventionen
@@ -577,7 +582,7 @@ class AudioFileValidator:
 
 # Vocoder / Synthese
 plugins/vocos_plugin.py               ✅ PRIMÄRER Vocoder (Vocos 48 kHz nativ, Kaskade: 48k→44.1k→24k)
-plugins/bigvgan_v2_plugin.py           ✅ BigVGAN-v2 (0,4 GB ONNX/PyTorch, SEKUNDÄRER Vocoder; Studio-2026, CPU-only)
+plugins/bigvgan_v2_plugin.py           ✅ BigVGAN-v2 (0,4 GB ONNX/PyTorch, SEKUNDÄRER Vocoder; Studio-2026, GPU-beschleunigt)
 plugins/hifigan_plugin.py             ✅ HiFi-GAN (3,6 MB ONNX, Tertiär-Fallback)
 
 # Stem-Separation
@@ -833,8 +838,12 @@ Das visuelle Feedback teilt sich auf zwei Anzeigebereiche auf:
 dccrn==0.1.0          diffwave==1.0.0
 hifi-gan==0.1.1       nisqa==1.0.0
 
-# PyTorch IMMER CPU-only:
-torch==2.2.2+cpu  --extra-index-url https://download.pytorch.org/whl/cpu
+# PyTorch — GPU-Mixed-Mode (§GPU-Mixed-Mode):
+# Heavy plugins nutzen ROCm/DirectML wenn verfügbar (ml_device_manager).
+# CPU-only Fallback auf Systemen ohne unterstützte GPU.
+torch==2.2.2  --extra-index-url https://download.pytorch.org/whl/cpu
+# Für ROCm:   pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+# Für DirectML: pip install torch-directml
 ```
 
 ```bash
@@ -858,7 +867,7 @@ python -m pip install --dry-run -r requirements/requirements_aurik.txt
 □ SOFT_SATURATION: nicht als CLIPPING fehldetektiert
 □ Beide Modi (restoration + studio2026) getestet
 □ Out-of-the-Box-Pflicht: DSP-Fallback für alle Plugin-Imports
-□ torch-Imports: +cpu-Suffix, CPUExecutionProvider
+□ torch-Imports: ml_device_manager für heavy plugins, CPUExecutionProvider als Fallback
 □ models/manifest.json: neues Modell eingetragen (sha256 + bundled_path + fallback)
 □ scripts/verify_requirements.sh fehlerfrei
 □ Alle bestehenden Tests weiterhin grün (CI: `pytest --collect-only -q | tail -1`)

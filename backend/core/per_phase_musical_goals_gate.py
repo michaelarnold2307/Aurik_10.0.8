@@ -81,7 +81,30 @@ REGRESSION_THRESHOLD: float = 0.025
 # nun echte Regressionen zuverlässiger ab ohne False-Positives.
 REGRESSION_THRESHOLD_GOOD: float = 0.020  # restorability ≥ 70
 REGRESSION_THRESHOLD_FAIR: float = 0.035  # restorability 40–69 (entspannter)
-REGRESSION_THRESHOLD_POOR: float = 0.055  # restorability < 40 (maximal tolerant)
+REGRESSION_THRESHOLD_POOR: float = (
+    0.040  # restorability < 40 (maximal tolerant) — reduced from 0.055 to prevent best_effort cascades
+)
+
+# §2.54 Material-bonus: analog/physical carriers need more tolerance because
+# carrier-repair phases intentionally shift spectral fingerprints (Reference-
+# Paradoxon §2.44). CD/DAT need no bonus — proxy metrics are reliable there.
+_MATERIAL_THRESHOLD_BONUS: dict[str, float] = {
+    "wax_cylinder": 0.022,  # most degraded — carrier-repair phases radically alter signal
+    "shellac": 0.018,
+    "wire_recording": 0.016,
+    "optical_film": 0.010,
+    "vinyl": 0.009,
+    "reel_tape": 0.008,
+    "tape": 0.007,
+    "radio_broadcast": 0.006,
+    "cassette": 0.006,
+    "mp3_low": 0.005,  # codec artefacts → repair changes look regressive to proxies
+    "minidisc": 0.004,
+    "mp3_high": 0.002,
+    "cd_digital": 0.000,
+    "dat": 0.000,
+    "unknown": 0.003,
+}
 
 # ---------------------------------------------------------------------------
 # §2.29 v9.10.77: Priority-aware Retry-Budget
@@ -111,6 +134,25 @@ _PRIORITY_THRESHOLD_FACTOR: dict[int, float] = {
     3: 1.5,
     4: 99.0,  # Effektiv kein Retry (Threshold × 99 = immer unter)
     5: 99.0,
+}
+
+# §2.47b JND-Effektivitätsschwelle — Sub-Threshold Phase Marking
+# If ALL applicable goal-deltas are ≥ 0 and < JND → "sub_threshold" (no retry, accept)
+JND_MIN_DELTA: dict[str, float] = {
+    "natuerlichkeit": 0.015,  # 1.5 % Timbre-JND (Zwicker 1990)
+    "authentizitaet": 0.015,
+    "tonal_center": 0.010,  # Tonal centre: more sensitive (Krumhansl 1990)
+    "timbre_authentizitaet": 0.015,
+    "artikulation": 0.012,  # Transient timing: more sensitive than long-term spectrum
+    "emotionalitaet": 0.018,
+    "micro_dynamics": 0.015,
+    "groove": 0.012,
+    "transparenz": 0.015,
+    "waerme": 0.020,  # Warmth perception: slower integration
+    "bass_kraft": 0.015,
+    "separation_fidelity": 0.018,
+    "brillanz": 0.020,
+    "spatial_depth": 0.025,  # Room impression: weakest JND sensitivity
 }
 
 SAMPLE_DURATION_S: float = 5.0
@@ -187,6 +229,7 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "transparenz",
         "groove",
         "timbre_authentizitaet",
+        "artikulation",  # hum-notch removal changes onset rise-time in notched bands (LF energy alters ArticulationMetric transient-rise proxy) — CIG has this, PMGG sync §2.54
     },
     # Reconstruction phases: spectral correlation handles reconstruction well;
     # only keep exclusions where AI-generated content has low correlation by design
@@ -214,12 +257,15 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "timbre_authentizitaet",
         "transparenz",
         "tonal_center",
-    },  # Dropout repair: synthesised HF content; timbre_authentizitaet: AudioSR synthesis creates new spectral content → MFCC correlation against damaged reference is meaningless; transparenz: dropout silence regions inflate spectral clarity proxy (silence = perfect rolloff) → after AudioSR fill slight noise floor added → proxy drops (false P4); tonal_center: dropout silence has undefined/near-zero chroma → K-S key detection unstable; after AudioSR tonal synthesis K-S locks onto different key estimate → false tonal regression despite musically unchanged pitch centre (stagnation 0.3137 confirmed, 2026-04-08)
+        "groove",  # AudioSR synthesis fills 5981 dropout gaps with new audio patches; formerly silent/corrupted dropout frames had 0 onsets → GrooveMetric onset-DTW autocorr[lag_05] registers onset-density increase as rhythm disruption → false P3 regression. Regression constant at all strengths (stagnation Δ=0.000004, 2026-04-10) → PMGG reduces strength to 0.22 (best_effort), leaving >5000 dropouts unrepaired. Identical mechanism to phase_09/phase_18 groove exclusion.
+        "emotionalitaet",  # Dropout silence gaps score high in crest-factor (silence/near-zero amplitude between notes amplifies peak-to-RMS ratio in degraded reference). After AudioSR synthesis, formerly silent patches receive normal signal amplitude → crest-factor ratio drops → false P3 emotionalitaet regression. Identical mechanism to phase_09 (broadband transitions from near-silence) and phase_18 (noise-gate silencing). Regression invariant to strength → confirmed stagnation pattern.
+    },  # Dropout repair: synthesised HF content; timbre_authentizitaet: AudioSR synthesis creates new spectral content → MFCC correlation against damaged reference is meaningless; transparenz: dropout silence regions inflate spectral clarity proxy (silence = perfect rolloff) → after AudioSR fill slight noise floor added → proxy drops (false P4); tonal_center: dropout silence has undefined/near-zero chroma → K-S key detection unstable; after AudioSR tonal synthesis K-S locks onto different key estimate → false tonal regression despite musically unchanged pitch centre (stagnation 0.3137 confirmed, 2026-04-08). groove + emotionalitaet: added 2026-04-10 — see inline comments above.
     "phase_28": {
         "artikulation",
         "natuerlichkeit",
         "timbre_authentizitaet",
-    },  # Surface noise profiling (vinyl): broadband noise events look like transients to ArticulationMetric → after profiling/removal pseudo-transients gone → false P1 regression (catastrophic 0.4222 confirmed, 2026-04-08); natuerlichkeit: broadband spectral denoising (same MFCC-smoothness mechanism as phase_03/phase_29); timbre_authentizitaet: spectral envelope changes when broadband surface noise removed → MFCC-Pearson + centroid-CV shift
+        "authentizitaet",
+    },  # Surface noise profiling (vinyl): broadband noise events look like transients to ArticulationMetric → after profiling/removal pseudo-transients gone → false P1 regression (catastrophic 0.4222 confirmed, 2026-04-08); natuerlichkeit: broadband spectral denoising (same MFCC-smoothness mechanism as phase_03/phase_29); timbre_authentizitaet: spectral envelope changes when broadband surface noise removed → MFCC-Pearson + centroid-CV shift; authentizitaet: §2.44 Reference-Paradoxon — broadband surface noise smooths log-spectrum valleys → roughness proxy scores HIGH before profiling; after removal true valleys reappear → false P1 cascade (identical mechanism to phase_03/phase_29, aligned with CIG §2.48 exclusions, 2026-04-09)
     # Diffusion inpainting: synthesised content has no transient reference →
     # ArticulationMetric correlation vs pre-inpainting fragment is meaningless.
     # micro_dynamics excluded: inpainting inserts new content with its own
@@ -231,10 +277,17 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "brillanz",
         "authentizitaet",
         "timbre_authentizitaet",
-    },  # Diffusion inpainting: synthesised content → identical root-causes as phase_23/phase_24 (AudioSR); MFCC-smoothness vs. damaged reference meaningless; brillanz crest-proxy scores against absent HF pre-synthesis; authentizitaet flatness-proxy reference-mismatch; timbre_authentizitaet MFCC-Pearson/centroid meaningless for synthesised spectral content
+        "tonal_center",
+    },  # Diffusion inpainting: synthesised content → identical root-causes as phase_23/phase_24 (AudioSR); MFCC-smoothness vs. damaged reference meaningless; brillanz crest-proxy scores against absent HF pre-synthesis; authentizitaet flatness-proxy reference-mismatch; timbre_authentizitaet MFCC-Pearson/centroid meaningless for synthesised spectral content; tonal_center excluded (§9.7.11 extension, 2026-04-10): CQTdiff+ fills bandwidth-loss gaps with synthesized HF content — pre-inpainting audio (band-limited vinyl ≤8-12 kHz) has near-zero chroma energy in high-register bins; after inpainting, newly filled HF bins shift K-S key-template correlation → false catastrophic P2 regression (Δ=0.8333 confirmed, 06:34 run). Musical key is unchanged; only chroma-bin distribution shifts due to spectral extension
     # Sub-sonic removal: reference LF correlation handles bass preservation check
-    "phase_05": set(),  # Rumble filter
-    "phase_30": set(),  # DC-offset removal
+    "phase_05": {
+        "natuerlichkeit",
+        "authentizitaet",
+    },  # Rumble filter: sub-sonic removal shifts MFCC-smoothness baseline + sub-bass chroma removal causes minor chromagram shift — CIG sync §2.54
+    "phase_30": {
+        "natuerlichkeit",
+        "authentizitaet",
+    },  # DC-offset removal: zero-phase highpass slightly shifts ZCR/MFCC-smoothness + minimal chromagram baseline — CIG sync §2.54
     # Broadband denoise: reference HF/LF correlation distinguishes noise from music
     # natuerlichkeit excluded: broadband denoising shifts spectral flatness and
     # ZCR, causing the CREPE-based NatuerlichkeitMetric to report false P1
@@ -361,14 +414,20 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "artikulation",
         "natuerlichkeit",
         "timbre_authentizitaet",
-    },  # Click removal: impulse transients → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1 (confirmed 0.267 regression, 2026-04-07); timbre_authentizitaet: spectral interpolation at click locations changes MFCC-Pearson (identical mechanism to phase_02 comb-notch + phase_27; best_effort 0.0899 observed, 2026-04-08)
+        "authentizitaet",
+        "tonal_center",  # §2.44 Reference-Paradox: 22965 click events are broadband impulses; spectral interpolation at scale alters chromagram → K-S key-template correlation drops despite pitch structure being preserved/improved. Identical mechanism to phase_12/phase_49/phase_58. CIG P2 rollback confirmed (rollbacks=1, strength→0.07, 2026-04-10).
+        "groove",  # Clicks appear as spurious onset events in GrooveMetric onset-based DTW proxy. High-severity click removal reduces onset count/density → autocorr[lag_05] DTW changes → false P3 regression. Identical mechanism to phase_09 groove exclusion (confirmed: 22965 clicks on gen=7 vinyl).
+    },  # Click removal: impulse transients → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1; timbre_authentizitaet: MFCC-Pearson shift at repaired click locations; authentizitaet: §2.44 reference-paradox roughness shift vs. click-bearing reference. tonal_center + groove: see inline comments above.
     # Click/pop removal: identical mechanism to phase_01 (different algorithm,
-    # same false-regression root cause for artikulation + natuerlichkeit proxies).
+    # same false-regression root cause for all excluded proxies).
     "phase_27": {
         "artikulation",
         "natuerlichkeit",
         "timbre_authentizitaet",
-    },  # Click/pop removal: identical to phase_01 — impulse transients removed → ArticulationMetric false P2; spectral interpolation → NatuerlichkeitMetric MFCC-smoothness false P1; timbre_authentizitaet: spectral interpolation at click/pop locations changes MFCC-Pearson (same mechanism as phase_02 comb-filter: spectral modification at removed event locations → MFCC trajectory disruption, catastrophic P2 regression 0.5196 confirmed, 2026-04-08)
+        "authentizitaet",
+        "tonal_center",  # Same mechanism as phase_01: click/pop interpolation at scale alters K-S chroma correlation → false P2 CIG rollback. Confirmed: phase_27 rollbacks=1 on same run (2026-04-10).
+        "groove",  # Same mechanism as phase_01 + phase_09: impulse removal changes onset density → onset-DTW false P3 regression. (phase_27 already handled as P99 tolerance, explicit exclusion prevents CIG-level rollback cascade.)
+    },  # Click/pop removal: same proxy limitations as phase_01 — tonal_center (K-S false P2 via chroma shift) + groove (onset-DTW false P3 via impulse removal) both added 2026-04-10.
     # BANQUET blind denoising: full-band neural diffusion-based crackle/noise removal.
     # natuerlichkeit excluded: BANQUET modifies the full spectral envelope (same root
     # cause as phase_03/phase_29 — MFCC-smoothness proxy disturbed by denoising).
@@ -388,6 +447,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "groove",
         "authentizitaet",
         "timbre_authentizitaet",
+        "artikulation",  # crackle removal changes onset energy envelope (same mechanism as phase_01/phase_27) — CIG sync §2.54
+        "tonal_center",  # broadband crackle inflates K-S chroma bins; after removal chroma estimate shifts vs. crackle-bearing checkpoint — CIG sync §2.54
     },  # BANQUET blind denoising: full-band spectral mod → natuerlichkeit MFCC-smoothness false P1 (0.291, 2026-04-07); groove onset-DTW false P1 (0.291); authentizitaet log-spectrum valley mechanism; timbre MFCC-Pearson/centroid-CV
     # Spectral repair (STFT inpainting via bin interpolation):
     # Replaces isolated spike-bins with linear interpolation from ±2 neighbours.
@@ -584,6 +645,7 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "authentizitaet",
         "emotionalitaet",
         "groove",
+        "timbre_authentizitaet",  # noise gate inserts silence between phrases → spectral centroid/MFCC changes vs. continuous-noise reference — CIG sync §2.54
     },  # Noise gate (§9.7.11 K-S: tonal_center resolved — K-S key-detection is SNR-invariant; §9.7.12/13: brillanz+transparenz crest proxies SNR-robust → removed)
     "phase_26": {
         "micro_dynamics",
@@ -722,7 +784,11 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # regression triggering unnecessary strength reductions.
     "phase_49": {
         "authentizitaet",
-    },  # Advanced dereverb: K-S tonal_center resolved (§9.7.11); brillanz+transparenz crest proxies SNR-robust (§9.7.12/13); waerme warmth-ratio reverb-invariant (§9.7.14) — v9.10.96 canonical: emotionalitaet entfernt
+        "tonal_center",
+        "timbre_authentizitaet",
+        "artikulation",
+        "natuerlichkeit",
+    },  # Advanced dereverb: tonal_center excluded (§9.7.11 ext, 2026-04-10): WPE/spectral-subtraction removes reverb energy from high-register chroma bins unevenly → K-S correlation shifts; catastrophic P2 regression 0.4667/0.5530 confirmed in real run. timbre_authentizitaet: reverb tail shifts MFCC-Pearson at all cepstral coefficients → removal changes spectral-centroid-CV (identical mechanism to phase_03/phase_29). artikulation: reverb tail blurs transient attacks → pre-removal ArticulationMetric(reverberant reference) vs de-reverbed output shows false correlation drop. natuerlichkeit: spectral-subtraction dereverb applies frequency-selective gain G(f) → MFCC-smoothness instability
     # Reverb reduction (SGMSE+ primary / WPE-DSP fallback): mechanistically identical
     # to phase_49 Advanced Dereverb — both remove room impulse response energy.
     # brillanz excluded: reverb tail contributes diffuse HF energy across the spectrum
@@ -743,7 +809,10 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     "phase_20": {
         "authentizitaet",
         "natuerlichkeit",
-    },  # SGMSE+ reverb reduction: §9.7.12/13/14 brillanz+transparenz+waerme proxies SNR/reverb-robust — v9.10.96 canonical: emotionalitaet entfernt
+        "tonal_center",
+        "timbre_authentizitaet",
+        "artikulation",
+    },  # SGMSE+ reverb reduction: tonal_center excluded (§9.7.11 ext, 2026-04-10): SGMSE+ U-Net applies learned frequency-selective deconvolution → high-register chroma bins attenuated unevenly → K-S correlation shifts; P2 catastrophic regression 0.5530 confirmed. timbre_authentizitaet + artikulation: identical mechanism to phase_49 (reverb tail MFCC/transient-shape mismatch vs dry reference)
     # Spectral inpainting (AudioSR gap-fill): synthesises new frequency content for
     # spectral holes (codec artefacts, digital clipping reconstruction, missing HF).
     # Identical synthesised-content mechanism to phase_24 (AudioSR dropout repair).
@@ -774,7 +843,10 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     "phase_12": {
         "tonal_center",
         "timbre_authentizitaet",
-    },  # Wow/flutter fix: K-S volatile after pitch/speed correction + centroid-CV disturbed (v9.10.96 canonical — groove entfernt)
+        "authentizitaet",
+        "natuerlichkeit",
+        "artikulation",
+    },  # Wow/flutter fix: K-S volatile after pitch/speed correction + centroid-CV disturbed; reference-paradox affects authentizitaet/natuerlichkeit/artikulation proxies.
     # Speed/pitch correction: global time-stretch + resampling — mechanistically
     # identical to phase_12 for all proxy false-regression root causes.
     # tonal_center excluded: global pitch-shift moves ALL chroma bins proportionally
@@ -797,6 +869,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "groove",
         "emotionalitaet",
         "artikulation",
+        "natuerlichkeit",  # speed correction shifts tempo → MFCC-smoothness temporal consistency changes vs. speed-deviated reference — CIG sync §2.54
+        "authentizitaet",  # speed/pitch correction fundamentally changes chromagram vs. pitch-deviated reference (carrier-chain inversion §2.46 — mirror of phase_12) — CIG sync §2.54
     },  # Speed/pitch correction: global time-stretch identical mechanisms to phase_12 + emotionalitaet/artikulation via envelope/transient change (2026-03-31)
     # Stereo enhancement (multi-band M/S + Haas cross-feed delays + Blumlein shuffling):
     # The Haas effect simulation (5–35 ms inter-channel delays) adds delayed copies of
@@ -816,8 +890,16 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # → cancellation resolved → M-channel spectral valleys fill in → MFCC-Pearson vs.
     # the misaligned reference detects a spectral-shape change → false P2 regression.
     "phase_14": {
-        "timbre_authentizitaet"
+        "timbre_authentizitaet",
+        "authentizitaet",  # phase correction resolves mono-sum cancellation notches → stereo correlation fingerprint changes vs. phase-misaligned reference — CIG sync §2.54
     },  # Phase correction: all-pass/fractional-delay alignment resolves mono-sum cancellation notches → spectral shape changes vs. misaligned reference → MFCC-Pearson + centroid-CV false P2 timbre regression
+    # Stereo balance correction: re-balancing L/R channel levels intentionally changes stereo field.
+    # authentizitaet: stereo correlation fingerprint changes vs. imbalanced carrier reference (§2.44 Carrier-Chain-Inversion).
+    # timbre_authentizitaet: per-channel spectral balance change shifts MFCC of stereo mix vs. imbalanced reference.
+    "phase_15": {
+        "authentizitaet",
+        "timbre_authentizitaet",
+    },  # Stereo balance correction: L/R re-balancing changes stereo-field fingerprint → authentizitaet + MFCC-Pearson false P2 regression vs. imbalanced reference (§2.44)
     # Azimuth correction (tape head misalignment: fractional delay + HF restoration):
     # HF restoration via spectral prediction adds energy in the 5–20 kHz range —
     # mechanistically identical to phase_39 (air band HF enhancement). MFCC
@@ -827,7 +909,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # (with reduced HF due to destructive interference) → false P2 timbre regression
     # despite genuine quality improvement.
     "phase_25": {
-        "timbre_authentizitaet"
+        "timbre_authentizitaet",
+        "authentizitaet",  # azimuth correction changes stereo HF balance vs. mis-aligned reference → chromagram fingerprint shifts (§2.44 carrier-chain inversion) — CIG sync §2.54
     },  # Azimuth correction: fractional-delay + HF spectral restoration changes MFCC higher-order coefficients + centroid-CV vs. azimuth-degraded reference → false P2 timbre regression (identical mechanism to phase_39 air band)
     # Mono-to-stereo (Lauridsen pseudo-stereo + HF harmonics + Schroeder decorrelation):
     # Schroeder reverb structures and comb-filter frequency-dependent phase shifts used
@@ -885,6 +968,21 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     "phase_48": {
         "timbre_authentizitaet"
     },  # Stereo width enhancer: STFT frequency-dependent M/S Side scaling (HF ×1.15) changes L/R spectral distribution → MFCC higher-order coefficients + centroid-CV shift → false P2 timbre regression (identical mechanism to phase_39 air band)
+    # ── §2.54 CIG-PMGG-Synchronisation: Phasen ohne bisher existierende PMGG-Einträge ───────────────────
+    # Groove-echo cancellation (inner-groove vinyl pre-echo): removes pre-echo artefact.
+    # authentizitaet: pre-echo creates phantom chroma artefacts; removal changes chromagram (§2.44).
+    # timbre_authentizitaet: pre-echo spectral coloration is removed → MFCC-Pearson shifts vs. pre-echo-bearing reference.
+    "phase_61": {
+        "authentizitaet",
+        "timbre_authentizitaet",
+    },  # Groove-echo cancellation: pre-echo phantom chroma removed → chromagram + MFCC fingerprint change vs. pre-echo-distorted reference (§2.44)
+    # Crosstalk cancellation (early stereo channel leakage repair): removes inter-channel contamination.
+    # authentizitaet: stereo-field chromagram fingerprint changes vs. crosstalk-distorted reference (§2.46).
+    # timbre_authentizitaet: spectral crosstalk coloration removed → MFCC-Pearson shifts intentionally.
+    "phase_62": {
+        "authentizitaet",
+        "timbre_authentizitaet",
+    },  # Crosstalk cancellation: inter-channel spectral leakage removed → stereo fingerprint change vs. crosstalk-distorted reference (§2.46)
 }
 
 
@@ -935,17 +1033,32 @@ _RESTORATIVE_PHASES: frozenset[str] = frozenset(
         "phase_01",  # Click removal
         "phase_02",  # Hum removal (Kammfilter)
         "phase_03",  # Broadband denoise (OMLSA + ResembleEnhance)
+        "phase_04",  # EQ correction (RIAA/NAB de-emphasis inversion) — HF/LF energy redistribution inflates brillanz/waerme proxies
+        "phase_05",  # Rumble filter (subtractive LF cleanup)
         "phase_09",  # BANQUET blind denoising
+        "phase_12",  # Wow/flutter correction (§2.44 Reference-Paradoxon: pitch dewarping changes chroma vs. wobble-distorted reference)
+        "phase_14",  # Stereo phase correction (multi-band alignment) — fixes carrier phase misalignment; stereo-fingerprint changes vs. mis-aligned reference
+        "phase_15",  # Stereo balance correction — corrects L/R imbalance defect; energy shift changes authentizitaet proxy vs. imbalanced reference
         "phase_18",  # Noise gate (Silero VAD)
+        "phase_19",  # De-esser — sibilance carrier distortion (vinyl HF, cassette) inflates brillanz; post-reduction drop is defect-removal, not regression
         "phase_20",  # Reverb reduction (SGMSE+)
         "phase_23",  # Spectral inpainting / gap-fill (AudioSR)
         "phase_24",  # Dropout repair (AudioSR)
+        "phase_25",  # Azimuth correction — tape head misalignment repair; HF balance changes vs. mis-aligned reference
         "phase_27",  # Click/pop removal
+        "phase_28",  # Surface noise profiling (vinyl — broadband noise inflates proxy baselines identically to phase_03/phase_29)
         "phase_29",  # Tape hiss reduction (DeepFilterNet v3 II)
+        "phase_30",  # DC offset / near-DC drift removal
+        "phase_31",  # Speed/pitch correction (pYIN + WSOLA) — corrects turntable/tape speed deviation; tonal_center/groove proxies change vs. pitch-deviated checkpoint (§2.44 Reference-Paradoxon identical to phase_12)
         "phase_49",  # Advanced dereverb
         "phase_50",  # STFT spectral inpainting (bin interpolation)
+        "phase_55",  # Diffusion inpainting (CQTdiff+) — gap reconstruction: silence-baseline inflates tonal_center/waerme
         "phase_56",  # Spectral band gap repair (HEAD_WEAR)
         "phase_57_print_through_reduction",  # Print-through reduction (bidirectional LMS)
+        "phase_59",  # Tape modulation noise reduction — carrier-induced FM noise removal inflates tonal_center proxy
+        "phase_60",  # Inner groove distortion repair (vinyl) — THD reduction changes spectral fingerprint vs. distorted reference
+        "phase_62",  # Crosstalk cancellation — early stereo channel separation repair; stereo fingerprint changes vs. crosstalk-distorted reference
+        "phase_63",  # Intermodulation distortion reduction (M/S-domain) — IMD artefact removal changes spectral energy vs. distorted reference
     }
 )
 
@@ -1044,13 +1157,248 @@ _ML_DETERMINISTIC_PHASES: frozenset[str] = frozenset(
         "phase_20",  # SGMSE+ (Reverb-Separation) — nur ML-deterministisch wenn SGMSE+ geladen
         # WPE-Fallback ist strength-abhängiger DSP → _phase20_is_ml_active() prüft zur Laufzeit
         "phase_23",  # AudioSR Inpainting (Spektral-Lückenfüllung)
-        "phase_24",  # AudioSR (Dropout-Repair)
         "phase_29",  # DeepFilterNet v3 II (HF-Denoising)
         "phase_42",  # BSRoFormer (Stem-Separation)
-        "phase_55",  # CQTdiff/FlowMatching (Diffusions-Inpainting)
         "phase_56",  # FCPE/CREPE + Synthese (Spectral Band Gap Repair)
     }
 )
+
+
+def _material_key_from_phase_kwargs(phase_kwargs: dict[str, Any] | None) -> str:
+    """Return normalized material key from phase kwargs."""
+    if not isinstance(phase_kwargs, dict):
+        return "unknown"
+    _raw = phase_kwargs.get("material_type", phase_kwargs.get("material", "unknown"))
+    _txt = str(getattr(_raw, "value", _raw) or "unknown").strip().lower()
+    if _txt.startswith("materialtype."):
+        _txt = _txt.split(".", 1)[1]
+    return _txt or "unknown"
+
+
+def _phase_safe_strength_cap(phase_id: str, phase_kwargs: dict[str, Any] | None) -> float:
+    """Conservative phase-specific cap to reduce P1/P2 drift cascades.
+
+    These caps are intentionally material-adaptive and only applied to known
+    high-risk phases (02/03/12/24/29/55) that repeatedly triggered rollback cascades.
+    """
+    _mat = _material_key_from_phase_kwargs(phase_kwargs)
+    _caps: dict[str, dict[str, float]] = {
+        "phase_02_hum_removal": {
+            "vinyl": 0.34,
+            "tape": 0.36,
+            "reel_tape": 0.34,
+            "shellac": 0.32,
+            "wax_cylinder": 0.30,
+            "wire_recording": 0.30,
+            "cassette": 0.36,
+            "cd_digital": 0.40,
+            "dat": 0.40,
+            "mp3_low": 0.38,
+            "mp3_high": 0.40,
+            "aac": 0.40,
+            "streaming": 0.40,
+            "unknown": 0.36,
+        },
+        "phase_03_denoise": {
+            "vinyl": 0.42,
+            "tape": 0.44,
+            "reel_tape": 0.42,
+            "shellac": 0.40,
+            "wax_cylinder": 0.38,
+            "wire_recording": 0.38,
+            "cassette": 0.44,
+            "cd_digital": 0.48,
+            "dat": 0.48,
+            "mp3_low": 0.46,
+            "mp3_high": 0.48,
+            "aac": 0.48,
+            "streaming": 0.48,
+            "unknown": 0.44,
+        },
+        "phase_12_wow_flutter_fix": {
+            "vinyl": 0.62,
+            "tape": 0.70,
+            "reel_tape": 0.66,
+            "shellac": 0.56,
+            "wax_cylinder": 0.52,
+            "wire_recording": 0.52,
+            "cassette": 0.68,
+            "lacquer_disc": 0.58,
+            "unknown": 0.60,
+        },
+        "phase_24_dropout_repair": {
+            "vinyl": 0.58,
+            "tape": 0.62,
+            "reel_tape": 0.60,
+            "shellac": 0.54,
+            "wax_cylinder": 0.52,
+            "wire_recording": 0.52,
+            "cassette": 0.62,
+            "cd_digital": 0.64,
+            "dat": 0.64,
+            "mp3_low": 0.66,
+            "mp3_high": 0.64,
+            "aac": 0.64,
+            "streaming": 0.64,
+            "unknown": 0.60,
+        },
+        "phase_29_tape_hiss_reduction": {
+            "vinyl": 0.34,
+            "tape": 0.36,
+            "reel_tape": 0.35,
+            "shellac": 0.32,
+            "wax_cylinder": 0.30,
+            "wire_recording": 0.30,
+            "cassette": 0.36,
+            "cd_digital": 0.40,
+            "dat": 0.40,
+            "mp3_low": 0.38,
+            "mp3_high": 0.40,
+            "aac": 0.40,
+            "streaming": 0.40,
+            "unknown": 0.36,
+        },
+        "phase_55_diffusion_inpainting": {
+            "vinyl": 0.46,
+            "tape": 0.50,
+            "reel_tape": 0.48,
+            "shellac": 0.42,
+            "wax_cylinder": 0.40,
+            "wire_recording": 0.40,
+            "cassette": 0.50,
+            "cd_digital": 0.54,
+            "dat": 0.54,
+            "mp3_low": 0.56,
+            "mp3_high": 0.54,
+            "aac": 0.54,
+            "streaming": 0.54,
+            "unknown": 0.48,
+        },
+    }
+    _for_phase = _caps.get(phase_id)
+    if not _for_phase:
+        return 1.0
+    return float(_for_phase.get(_mat, _for_phase.get("unknown", 1.0)))
+
+
+def _resolve_team_context_policy(phase_id: str, phase_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    """Return PMGG team-coordination policy derived from prior phase context.
+
+    The policy is advisory and only affects PMGG retry/goal-check behavior.
+    It does not disable final export gates and does not bypass safety guards.
+    """
+    _policy: dict[str, Any] = {
+        "goal_exclusions": set(),
+        "threshold_multiplier": 1.0,
+        "strength_cap": 1.0,
+        "reason": "",
+    }
+    if not isinstance(phase_kwargs, dict):
+        return _policy
+
+    _ctx = phase_kwargs.get("prior_phase_context")
+    if not isinstance(_ctx, dict) or not _ctx:
+        return _policy
+
+    _is_phase50 = str(phase_id).startswith("phase_50")
+    _hf_chain_applied = bool(
+        _ctx.get("harmonic_restoration_applied")
+        or _ctx.get("frequency_restoration_applied")
+        or _ctx.get("spectral_super_resolution_applied")
+    )
+
+    # Generic all-phase transition policy (module/phase complete coverage)
+    # ---------------------------------------------------------------
+    # Uses phase ontology types to derive conservative PMGG adjustments for
+    # potentially conflicting transition pairs. This keeps behavior centralized
+    # and avoids manual per-phase hotfixes.
+    try:
+        from backend.core.phase_ontology import get_phase_type
+
+        _cur_t = getattr(get_phase_type(str(phase_id)), "name", "")
+        _prev_t = str(_ctx.get("last_phase_type", "") or "")
+        _transition = (_prev_t, _cur_t)
+        _TRANSITION_POLICY: dict[tuple[str, str], dict[str, Any]] = {
+            # Prior additive reconstruction followed by subtractive cleanup:
+            # avoid over-penalizing intentional HF/timbre changes.
+            ("ADDITIVE", "SUBTRACTIVE"): {
+                "goal_exclusions": {"brillanz", "transparenz"},
+                "threshold_multiplier": 1.08,
+                "strength_cap": 0.90,
+                "reason": "transition_additive_to_subtractive",
+            },
+            # Diffusion/ML-generated content followed by subtractive cleanup:
+            # articulation/micro-dynamics proxies often overreact.
+            ("ML_GENERATIVE", "SUBTRACTIVE"): {
+                "goal_exclusions": {"artikulation", "micro_dynamics"},
+                "threshold_multiplier": 1.08,
+                "strength_cap": 0.90,
+                "reason": "transition_mlgen_to_subtractive",
+            },
+            # Dynamics processing after additive synthesis: preserve reconstructed
+            # transients and avoid aggressive PMGG-driven attenuation.
+            ("ADDITIVE", "DYNAMICS"): {
+                "goal_exclusions": {"artikulation"},
+                "threshold_multiplier": 1.05,
+                "strength_cap": 0.92,
+                "reason": "transition_additive_to_dynamics",
+            },
+            # Corrective after additive: tonal/timbre proxies can reflect intentional
+            # spectral re-centering rather than real degradation.
+            ("ADDITIVE", "CORRECTIVE"): {
+                "goal_exclusions": {"timbre_authentizitaet"},
+                "threshold_multiplier": 1.05,
+                "strength_cap": 0.94,
+                "reason": "transition_additive_to_corrective",
+            },
+        }
+        _tp = _TRANSITION_POLICY.get(_transition)
+        if isinstance(_tp, dict):
+            _policy["goal_exclusions"] |= set(_tp.get("goal_exclusions", set()))
+            _policy["threshold_multiplier"] = max(
+                float(_policy["threshold_multiplier"]), float(_tp.get("threshold_multiplier", 1.0))
+            )
+            _policy["strength_cap"] = min(float(_policy["strength_cap"]), float(_tp.get("strength_cap", 1.0)))
+            if not _policy["reason"]:
+                _policy["reason"] = str(_tp.get("reason", ""))
+    except Exception:
+        pass
+
+    # Team rule: if prior phases already restored HF content, phase_50 should
+    # avoid treating those bins as "damage" via indirect metric pressure.
+    if _is_phase50 and _hf_chain_applied:
+        _policy["goal_exclusions"] = {"brillanz", "transparenz", "timbre_authentizitaet"}
+        _policy["threshold_multiplier"] = 1.15
+        _policy["strength_cap"] = 0.80
+        _policy["reason"] = "phase50_after_hf_restoration"
+
+    return _policy
+
+
+def _allow_emergency_retries(
+    phase_id: str,
+    worst_priority: int,
+    best_regression: float,
+    catastrophic_threshold: float,
+    team_policy: dict[str, Any] | None,
+) -> bool:
+    """Return whether PMGG emergency retries should run for this phase.
+
+    Team-policy can disable emergency retries when a measured regression is likely
+    a proxy artifact caused by intentional prior restoration steps.
+    """
+    if not (best_regression > catastrophic_threshold and worst_priority <= 2):
+        return False
+
+    if isinstance(team_policy, dict):
+        _reason = str(team_policy.get("reason", ""))
+        # phase_50 after HF restoration (phase_06/phase_07/phase_23):
+        # emergency low-strength loops are typically wasted because the observed
+        # P1/P2 proxy drop stems from intentional HF changes, not real damage.
+        if phase_id.startswith("phase_50") and _reason == "phase50_after_hf_restoration":
+            return False
+
+    return True
 
 
 def _phase20_is_ml_active() -> bool:
@@ -1071,20 +1419,30 @@ def _phase20_is_ml_active() -> bool:
         return False  # Safe default: DSP path — must re-run
 
 
-def _get_adaptive_threshold(restorability_score: float) -> float:
-    """Restorability-adaptiver REGRESSION_THRESHOLD (§2.29).
+def _get_adaptive_threshold(restorability_score: float, material_type: str = "unknown") -> float:
+    """§2.29/§2.54 Material- und Restorability-adaptiver REGRESSION_THRESHOLD.
 
     Args:
         restorability_score: RestorabilityEstimator-Score ∈ [0, 100]
+        material_type: Carrier-Materialklasse (z.B. 'vinyl', 'shellac', 'cd_digital')
 
     Returns:
-        Adaptiver Schwellwert: 0.025 / 0.040 / 0.060.
+        Adaptiver Schwellwert ∈ [0.012, 0.070].
+        Analog/physische Träger erhalten einen Material-Bonus, da Carrier-Repair-
+        Phasen das Signal intentional ändern (Referenz-Paradoxon §2.44).
     """
+    # Restorability-tier Basis
     if restorability_score >= 70.0:
-        return REGRESSION_THRESHOLD_GOOD
-    if restorability_score >= 40.0:
-        return REGRESSION_THRESHOLD_FAIR
-    return REGRESSION_THRESHOLD_POOR
+        base = REGRESSION_THRESHOLD_GOOD
+    elif restorability_score >= 40.0:
+        base = REGRESSION_THRESHOLD_FAIR
+    else:
+        base = REGRESSION_THRESHOLD_POOR
+    # Material-Bonus: analog-physische Träger benötigen mehr Toleranz (§2.54)
+    bonus = _MATERIAL_THRESHOLD_BONUS.get(material_type.lower(), 0.003)
+    threshold = base + bonus
+    # Hard-Cap: nie enger als 0.012 (Messrauschen), nie lockerer als 0.070
+    return float(np.clip(threshold, 0.012, 0.070))
 
 
 # All 14 Musical Goals are checked per-phase — DSP-only proxies, no ML (≤ 200 ms total §2.29).
@@ -1885,6 +2243,121 @@ def _measure_quick(
     return scores
 
 
+# Timing phases: intentional time-warping makes *any* correlation metric unreliable.
+# 163 transport bumps → envelope reordering → corr≈0.265 even on perfect correction.
+# Excluding corr_pen for these phases prevents false Content-Guard rollbacks (§2.48 §2.54).
+_TIMING_CORR_EXCLUDE: frozenset[str] = frozenset(
+    {
+        "phase_12_wow_flutter_fix",
+        "phase_31_speed_pitch_correction",
+    }
+)
+
+# LF-subtractive phases: intentional broadband RMS reduction when low-end noise dominates.
+# phase_02 (hum), phase_05 (rumble): removing sub-bass / 50 Hz hum CAN reduce broadband RMS
+# by 20-30 dB if that noise dominated the signal — this is CORRECT behaviour (§0).
+# Using broadband RMS for the drop-penalty creates false Content-Guard rollbacks.
+# These phases already have internal §2.45a guards; drop-penalty in PMGG is redundant.
+_LF_SUBTRACTIVE_DROP_SKIP: frozenset[str] = frozenset(
+    {
+        "phase_02_hum_removal",
+        "phase_05_rumble_filter",
+    }
+)
+
+
+def _content_integrity_penalty(
+    reference: np.ndarray,
+    processed: np.ndarray,
+    skip_corr_check: bool = False,
+    skip_drop_check: bool = False,
+) -> tuple[float, dict[str, float]]:
+    """Detect catastrophic content loss independently from Musical-Goal proxies.
+
+    The guard is intentionally conservative and only reacts to severe failures:
+    large broadband energy collapse and/or very low waveform correlation.
+    It protects PMGG when many P1/P2 goals are excluded for a phase.
+
+    §9.11.2: Uses RMS-envelope correlation instead of raw sample correlation.
+    Time-domain phases (wow/flutter phase vocoder, time-stretch) shift samples
+    in time without destroying content — raw corrcoef yields ~0 (false positive).
+    10 ms RMS-envelope correlation is time-shift-tolerant while still detecting
+    genuine content loss (energy distribution, spectral balance changes).
+
+    skip_corr_check: When True (timing phases with intentional global time-warp),
+    the corr_pen component is zeroed — only the RMS-drop component remains active.
+    This prevents false Content-Guard rollbacks when 100+ transport bumps are
+    corrected (§2.48 Carrier-Repair-Exclusions, §2.54 adaptive thresholds).
+    """
+    try:
+        _ref = np.asarray(reference, dtype=np.float32)
+        _out = np.asarray(processed, dtype=np.float32)
+        if _ref.ndim == 2 and _ref.shape[1] >= 2:
+            _ref_mono = ((_ref[:, 0] + _ref[:, 1]) / np.sqrt(2.0)).astype(np.float32)
+        else:
+            _ref_mono = (_ref[:, 0] if _ref.ndim == 2 else _ref).astype(np.float32)
+        if _out.ndim == 2 and _out.shape[1] >= 2:
+            _out_mono = ((_out[:, 0] + _out[:, 1]) / np.sqrt(2.0)).astype(np.float32)
+        else:
+            _out_mono = (_out[:, 0] if _out.ndim == 2 else _out).astype(np.float32)
+
+        _n = min(len(_ref_mono), len(_out_mono))
+        if _n < 256:
+            return 0.0, {"rms_drop_db": 0.0, "corr": 1.0}
+        _ref_mono = np.nan_to_num(_ref_mono[:_n], nan=0.0, posinf=0.0, neginf=0.0)
+        _out_mono = np.nan_to_num(_out_mono[:_n], nan=0.0, posinf=0.0, neginf=0.0)
+
+        _rms_ref = float(np.sqrt(np.mean(_ref_mono**2) + 1e-12))
+        _rms_out = float(np.sqrt(np.mean(_out_mono**2) + 1e-12))
+        if _rms_ref < 1e-5:
+            return 0.0, {"rms_drop_db": 0.0, "corr": 1.0}
+        _rms_drop_db = float(20.0 * np.log10((_rms_ref + 1e-12) / (_rms_out + 1e-12)))
+
+        # §9.11.2 RMS-envelope correlation (time-shift-tolerant).
+        # 10 ms frames at 48 kHz = 480 samples per frame.
+        _hop = max(256, min(480, _n // 16))
+        _n_frames = _n // _hop
+        if _n_frames >= 4:
+            _ref_env = np.array(
+                [np.sqrt(np.mean(_ref_mono[i * _hop : (i + 1) * _hop] ** 2) + 1e-12) for i in range(_n_frames)],
+                dtype=np.float32,
+            )
+            _out_env = np.array(
+                [np.sqrt(np.mean(_out_mono[i * _hop : (i + 1) * _hop] ** 2) + 1e-12) for i in range(_n_frames)],
+                dtype=np.float32,
+            )
+            _std_env_ref = float(np.std(_ref_env))
+            _std_env_out = float(np.std(_out_env))
+            if _std_env_ref < 1e-7 or _std_env_out < 1e-7:
+                _corr = 1.0 if abs(_std_env_ref - _std_env_out) < 1e-7 else 0.0
+            else:
+                _corr = float(np.corrcoef(_ref_env, _out_env)[0, 1])
+                if not np.isfinite(_corr):
+                    _corr = 0.0
+        else:
+            # Too few frames — fall back to sample correlation
+            _std_ref = float(np.std(_ref_mono))
+            _std_out = float(np.std(_out_mono))
+            if _std_ref < 1e-7 or _std_out < 1e-7:
+                _corr = 1.0 if abs(_std_ref - _std_out) < 1e-7 else 0.0
+            else:
+                _corr = float(np.corrcoef(_ref_mono, _out_mono)[0, 1])
+                if not np.isfinite(_corr):
+                    _corr = 0.0
+
+        # Conservative thresholds: trigger only catastrophic changes.
+        # skip_drop_check: LF-subtractive phases (rumble, hum) can lower broadband RMS
+        # dramatically when noise dominates the signal — this is correct (§0 §2.45a).
+        _drop_pen = 0.0 if skip_drop_check else max(0.0, min(1.0, (_rms_drop_db - 12.0) / 12.0))
+        # skip_corr_check: timing phases with intentional global time-warp produce
+        # low envelope correlation by design — do NOT penalise (§2.48/§2.54).
+        _corr_pen = 0.0 if skip_corr_check else max(0.0, min(1.0, (0.55 - _corr) / 0.55))
+        _penalty = float(max(_drop_pen, _corr_pen))
+        return _penalty, {"rms_drop_db": _rms_drop_db, "corr": _corr}
+    except Exception:
+        return 0.0, {"rms_drop_db": 0.0, "corr": 1.0}
+
+
 def _extract_sample(
     audio: np.ndarray,
     sr: int,
@@ -1977,6 +2450,7 @@ class PerPhaseMusicalGoalsGate:
         applicable_goals: set[str] | None = None,
         initial_strength: float = 1.0,
         is_studio_2026: bool = False,
+        goal_weights: dict[str, float] | None = None,
     ) -> tuple[np.ndarray, dict[str, float], PhaseGateLogEntry]:
         """
         Führt eine Phase aus und prüft Musical-Goals-Regression.
@@ -2014,8 +2488,14 @@ class PerPhaseMusicalGoalsGate:
         phase_id = phase_id or self._get_phase_id(phase)
         t0 = time.time()
 
-        # Adaptiven Threshold bestimmen (§2.29)
-        threshold = _get_adaptive_threshold(restorability_score)
+        # §2.29/§2.54 Material- und Restorability-adaptiven Threshold bestimmen
+        _mat_kw_thresh = (phase_kwargs or {}).get("material_type") or (phase_kwargs or {}).get("material")
+        _mat_str_thresh = (
+            (_mat_kw_thresh.value if hasattr(_mat_kw_thresh, "value") else str(_mat_kw_thresh)).lower()
+            if _mat_kw_thresh
+            else "unknown"
+        )
+        threshold = _get_adaptive_threshold(restorability_score, _mat_str_thresh)
 
         # §2.31a SongCal-Threshold-Feinjustage: global_scalar aus dem Song-Kalibrierungsprofil
         # erlaubt engere Schutzzone bei nahe-sauberem Audio und lockert sie bei stark
@@ -2082,6 +2562,15 @@ class PerPhaseMusicalGoalsGate:
                 phase_id.startswith("phase_03") or phase_id.startswith("phase_29")
             ):
                 _excluded_goals.add("timbre_authentizitaet")
+
+        # §2.54 Team-Koordination: Folgephase berücksichtigt Vorphasen-Kontext.
+        # Verhindert, dass PMGG Retry-Logik bewusst wiederhergestellte HF-Anteile
+        # als Regression wertet (phase_50 nach phase_06/phase_07/phase_23).
+        _team_policy = _resolve_team_context_policy(phase_id, phase_kwargs)
+        _team_goal_exclusions = _team_policy.get("goal_exclusions")
+        if isinstance(_team_goal_exclusions, set) and _team_goal_exclusions:
+            _excluded_goals |= _team_goal_exclusions
+
         if _excluded_goals:
             effective_goals = [g for g in effective_goals if g not in _excluded_goals]
             if not effective_goals:
@@ -2091,6 +2580,18 @@ class PerPhaseMusicalGoalsGate:
                 phase_id,
                 sorted(_excluded_goals),
                 len(effective_goals),
+            )
+
+        _team_threshold_mult = _team_policy.get("threshold_multiplier", 1.0)
+        if isinstance(_team_threshold_mult, (int, float)) and float(_team_threshold_mult) > 1.0:
+            _old_threshold = threshold
+            threshold = min(0.090, float(threshold) * float(_team_threshold_mult))
+            logger.debug(
+                "PMGG team-policy: %s threshold %.3f -> %.3f (reason=%s)",
+                phase_id,
+                _old_threshold,
+                threshold,
+                _team_policy.get("reason", "unknown"),
             )
 
         # Phase ausführen + Regression prüfen (§2.29: initial_strength statt immer 1.0)
@@ -2107,6 +2608,7 @@ class PerPhaseMusicalGoalsGate:
             initial_strength=max(0.0, min(1.0, initial_strength)),
             defect_locations=_defect_locs,
             is_studio_2026=is_studio_2026,
+            goal_weights=goal_weights,
         )
 
         # Best-Effort-Zähler (Phase wurde mit reduzierter Stärke angewendet, nicht übersprungen)
@@ -2130,6 +2632,17 @@ class PerPhaseMusicalGoalsGate:
             goal_regressions=goal_regressions,
             strength_used=strength,
         )
+
+        # §2.29e Team-Telemetrie: Policyinformationen in log_entry.metadata schreiben
+        # damit UV3 nach der Pipeline team_coordination_events extrahieren kann.
+        _te_reason = str(_team_policy.get("reason", "") or "")
+        if _te_reason:
+            log_entry.metadata["team_policy_reason"] = _te_reason
+            log_entry.metadata["team_excluded_goals"] = sorted(
+                _team_goal_exclusions if isinstance(_team_goal_exclusions, set) else set()
+            )
+            log_entry.metadata["team_threshold_mult"] = round(float(_team_policy.get("threshold_multiplier", 1.0)), 3)
+            log_entry.metadata["team_strength_cap"] = round(float(_team_policy.get("strength_cap", 1.0)), 3)
 
         # §TFS: Temporal Fine Structure coherence check for spectral-modification phases.
         # Measures whether sub-1.5 kHz instantaneous phase (pitch/binaural cues)
@@ -2200,6 +2713,10 @@ class PerPhaseMusicalGoalsGate:
                 strength,
             )
 
+        # §2.47b: propagate sub_threshold marking into log_entry metadata
+        if action == "sub_threshold":
+            log_entry.metadata.setdefault("sub_threshold_phases", []).append(phase_id)
+
         return audio_out, scores_after, log_entry
 
     # ------------------------------------------------------------------
@@ -2221,6 +2738,7 @@ class PerPhaseMusicalGoalsGate:
         initial_strength: float = 1.0,
         defect_locations: dict[str, list[tuple[float, float]]] | None = None,
         is_studio_2026: bool = False,
+        goal_weights: dict[str, float] | None = None,
     ) -> tuple[np.ndarray, dict[str, float], str, float]:
         """
         Führt Phase aus, ggf. mit Retry bei Regression.
@@ -2231,6 +2749,9 @@ class PerPhaseMusicalGoalsGate:
             sample_duration_s: Stichprobenlänge (§9.7.3 phasen-adaptiv, 1.0–5.0 s).
             initial_strength: Material-adaptive Initialstärke ∈ (0, 1.0] (§2.31).
                 1.0 = Default. Retry-Stärken skalieren relativ dazu wenn < 1.0.
+            goal_weights: §2.56 Song-specific goal importance weights.
+                Per-goal float ∈ [0.3, 2.0]. weight > 1.0 = stricter threshold,
+                weight < 1.0 = more lenient. None = uniform (1.0 for all).
 
         Returns:
             (audio_out, scores_after, action_label, strength_used)
@@ -2240,6 +2761,31 @@ class PerPhaseMusicalGoalsGate:
         if effective_goals is None:
             effective_goals = FAST_GOALS_SUBSET
         initial_strength = max(0.01, min(1.0, initial_strength))
+        _team_policy = _resolve_team_context_policy(phase_id, phase_kwargs)
+        _team_cap = _team_policy.get("strength_cap", 1.0)
+        if isinstance(_team_cap, (int, float)) and float(_team_cap) < 0.999:
+            _old_strength = initial_strength
+            initial_strength = min(initial_strength, float(_team_cap))
+            if initial_strength + 1e-9 < _old_strength:
+                logger.debug(
+                    "PMGG team-cap: %s strength %.2f -> %.2f (reason=%s)",
+                    phase_id,
+                    _old_strength,
+                    initial_strength,
+                    _team_policy.get("reason", "unknown"),
+                )
+        _safe_cap = _phase_safe_strength_cap(phase_id, phase_kwargs)
+        if _safe_cap < 0.999:
+            _old_strength = initial_strength
+            initial_strength = min(initial_strength, _safe_cap)
+            if initial_strength + 1e-9 < _old_strength:
+                logger.info(
+                    "PMGG safe-cap: %s material=%s strength %.2f -> %.2f",
+                    phase_id,
+                    _material_key_from_phase_kwargs(phase_kwargs),
+                    _old_strength,
+                    initial_strength,
+                )
 
         # §PMGG-Restorative: Für defektentfernende Phasen (denoise, dereverb, hiss,
         # hum, noise gate, dropout) deckeln wir scores_before auf normative Mindest-
@@ -2305,6 +2851,17 @@ class PerPhaseMusicalGoalsGate:
             audio_out = self._run_phase(phase, audio, initial_strength, phase_kwargs)
             audio_full = None  # kein Cache benötigt
 
+        # §2.45/§2.54 Passthrough-Erkennung: Phasen die kein Pitch/Defekt finden geben
+        # das Audio bit-identisch zurück (z.B. phase_31 bei CREPE confidence=0.0).
+        # In diesem Fall: kein Goal-Scoring, kein Retry, kein StrictConflictDecay.
+        # np.array_equal ist exakt + schnell (kein float-Toleranz-Drift).
+        if np.array_equal(audio, audio_out):
+            logger.debug(
+                "PMGG %s: audio_out identisch mit input (passthrough) — direkt passed, kein Retry",
+                phase_id,
+            )
+            return audio_out, scores_before, "passed", initial_strength
+
         scores_after = _measure_quick(
             _extract_sample(
                 audio_out, sr, duration_s=sample_duration_s, defect_locations=_defect_locs, phase_id=phase_id
@@ -2313,14 +2870,50 @@ class PerPhaseMusicalGoalsGate:
             reference=_ref_sample,
         )
 
-        regression = self._max_regression(effective_scores_before, scores_after, effective_goals)
+        regression = self._max_regression(
+            effective_scores_before, scores_after, effective_goals, goal_weights=goal_weights
+        )
+        _skip_corr = phase_id in _TIMING_CORR_EXCLUDE
+        _skip_drop = phase_id in _LF_SUBTRACTIVE_DROP_SKIP
+        _ci_penalty, _ci_meta = _content_integrity_penalty(
+            audio, audio_out, skip_corr_check=_skip_corr, skip_drop_check=_skip_drop
+        )
+        if _ci_penalty > 0.0:
+            # Force retry path for catastrophic content loss even when many goals are excluded.
+            regression = max(regression, threshold + 0.001 + 0.05 * _ci_penalty)
+            logger.warning(
+                "PMGG Content-Guard: %s triggered (rms_drop=%.2f dB corr=%.3f penalty=%.3f)",
+                phase_id,
+                _ci_meta.get("rms_drop_db", 0.0),
+                _ci_meta.get("corr", 1.0),
+                _ci_penalty,
+            )
+
+        # §2.47b JND Sub-Threshold Check: if all applicable goal-deltas are ≥ 0 and < JND
+        # → phase produces no perceptually detectable improvement → accept but mark sub_threshold
+        # VERBOTEN: sub-threshold logic must NOT fire when _ci_penalty > 0 (content loss)
+        if _ci_penalty == 0.0:
+            _applicable_jnd = [g for g in effective_goals if g in effective_scores_before and g in scores_after]
+            if _applicable_jnd:
+                _deltas = {g: scores_after[g] - effective_scores_before[g] for g in _applicable_jnd}
+                _all_below_jnd = all(d >= 0.0 for d in _deltas.values()) and all(
+                    abs(d) < JND_MIN_DELTA.get(g, 0.015) for g, d in _deltas.items()
+                )
+                if _all_below_jnd:
+                    logger.debug(
+                        "PMGG %s: sub_threshold — all %d goal-deltas ≥ 0 and < JND, accepting",
+                        phase_id,
+                        len(_applicable_jnd),
+                    )
+                    return audio_out, scores_after, "sub_threshold", initial_strength
+
         if regression <= threshold:
             return audio_out, scores_after, "passed", initial_strength
 
         # §2.29 v9.10.77: Priority-aware regression check.
         # Determine worst priority among regressed goals to set retry budget.
         _reg_pa, _worst_prio = self._max_regression_priority_aware(
-            effective_scores_before, scores_after, effective_goals, threshold
+            effective_scores_before, scores_after, effective_goals, threshold, goal_weights=goal_weights
         )
 
         # Log which goal caused the regression (diagnostics for false-positive detection)
@@ -2328,6 +2921,9 @@ class PerPhaseMusicalGoalsGate:
             effective_goals,
             key=lambda g: max(0.0, effective_scores_before.get(g, 0.5) - scores_after.get(g, 0.5)),
         )
+        if _ci_penalty > 0.0:
+            _worst_prio = min(_worst_prio, 2)
+            _worst_goal = "content_integrity_guard"
         logger.debug(
             "PMGG: %s regression=%.4f > threshold=%.3f — worst goal: %s (P%d, before=%.3f after=%.3f)",
             phase_id,
@@ -2464,7 +3060,20 @@ class PerPhaseMusicalGoalsGate:
                 phase_id=phase_id,
             )
             scores_retry = _measure_quick(_retry_sample, sr, reference=_ref_sample, precise_override=False)
-            regression_retry = self._max_regression(effective_scores_before, scores_retry, effective_goals)
+            regression_retry = self._max_regression(
+                effective_scores_before, scores_retry, effective_goals, goal_weights=goal_weights
+            )
+            _ci_penalty_retry, _ci_meta_retry = _content_integrity_penalty(audio, audio_retry)
+            if _ci_penalty_retry > 0.0:
+                regression_retry = max(regression_retry, threshold + 0.001 + 0.05 * _ci_penalty_retry)
+                logger.debug(
+                    "PMGG Content-Guard retry: %s r%d (rms_drop=%.2f dB corr=%.3f penalty=%.3f)",
+                    phase_id,
+                    attempt + 1,
+                    _ci_meta_retry.get("rms_drop_db", 0.0),
+                    _ci_meta_retry.get("corr", 1.0),
+                    _ci_penalty_retry,
+                )
             if regression_retry <= threshold:
                 # Apply precise overrides once for accurate score propagation to next phase
                 scores_retry = _apply_precise_metric_overrides(scores_retry, _retry_sample, sr, reference=_ref_sample)
@@ -2499,8 +3108,18 @@ class PerPhaseMusicalGoalsGate:
         # (0.055) produces 0.22, matching the old hard-coded value.
         # Floor 0.08 prevents über-aggressive cascades on very clean material.
         _CATASTROPHIC_THRESHOLD = max(0.08, 4.0 * threshold)
+        _team_thr_mult = _team_policy.get("threshold_multiplier", 1.0)
+        if isinstance(_team_thr_mult, (int, float)) and float(_team_thr_mult) > 1.0:
+            _CATASTROPHIC_THRESHOLD = min(0.25, _CATASTROPHIC_THRESHOLD * float(_team_thr_mult))
+
         _EMERGENCY_STRENGTHS = [0.15 * initial_strength, 0.10 * initial_strength]
-        if best_regression > _CATASTROPHIC_THRESHOLD and _worst_prio <= 2:
+        if _allow_emergency_retries(
+            phase_id,
+            _worst_prio,
+            best_regression,
+            _CATASTROPHIC_THRESHOLD,
+            _team_policy,
+        ):
             logger.warning(
                 "PMGG: %s catastrophic regression %.4f > %.2f (worst goal: %s P%d) — attempting emergency low-strength retries",
                 phase_id,
@@ -2527,7 +3146,19 @@ class PerPhaseMusicalGoalsGate:
                     phase_id=phase_id,
                 )
                 scores_em = _measure_quick(_em_sample, sr, reference=_ref_sample, precise_override=False)
-                regression_em = self._max_regression(effective_scores_before, scores_em, effective_goals)
+                regression_em = self._max_regression(
+                    effective_scores_before, scores_em, effective_goals, goal_weights=goal_weights
+                )
+                _ci_penalty_em, _ci_meta_em = _content_integrity_penalty(audio, audio_em)
+                if _ci_penalty_em > 0.0:
+                    regression_em = max(regression_em, threshold + 0.001 + 0.05 * _ci_penalty_em)
+                    logger.debug(
+                        "PMGG Content-Guard emergency: %s (rms_drop=%.2f dB corr=%.3f penalty=%.3f)",
+                        phase_id,
+                        _ci_meta_em.get("rms_drop_db", 0.0),
+                        _ci_meta_em.get("corr", 1.0),
+                        _ci_penalty_em,
+                    )
                 if regression_em <= threshold:
                     if audio_full is not None:
                         del audio_full
@@ -2539,6 +3170,14 @@ class PerPhaseMusicalGoalsGate:
                     best_regression = regression_em
                     best_strength = _em_strength
                     best_action = "best_effort_emergency"
+        elif best_regression > _CATASTROPHIC_THRESHOLD and _worst_prio <= 2:
+            logger.info(
+                "PMGG: %s catastrophic path skipped by team policy (reason=%s, regression=%.4f, threshold=%.3f)",
+                phase_id,
+                _team_policy.get("reason", "none") if isinstance(_team_policy, dict) else "none",
+                best_regression,
+                _CATASTROPHIC_THRESHOLD,
+            )
 
         # §2.29 KEIN Rollback — Phase wird mit geringster Regression angewendet.
         # VERBOTEN: Phase überspringen (Original-Audio zurückgeben).
@@ -2616,8 +3255,14 @@ class PerPhaseMusicalGoalsGate:
             out = np.clip(out, -1.0, 1.0).astype(np.float32)
 
             # Länge sicherstellen
-            if len(out) != len(audio):
-                out = out[: len(audio)] if len(out) > len(audio) else np.pad(out, (0, len(audio) - len(out)))
+            if out.shape[0] != audio.shape[0]:
+                target_len = int(audio.shape[0])
+                if out.shape[0] > target_len:
+                    out = out[:target_len, ...]
+                else:
+                    pad_rows = target_len - int(out.shape[0])
+                    pad_spec = [(0, pad_rows)] + [(0, 0)] * (max(out.ndim, 1) - 1)
+                    out = np.pad(out, pad_spec)
 
             # Wet/Dry-Modulation: strength < 1.0 → blende zwischen Original und Verarbeitet
             if 0.0 < strength < 1.0:
@@ -2664,9 +3309,20 @@ class PerPhaseMusicalGoalsGate:
                 "phase_31_speed_pitch_correction",
             }
         )
-        # Länge sicherstellen
-        if len(wet) != len(dry):
-            wet = wet[: len(dry)] if len(wet) > len(dry) else np.pad(wet, (0, len(dry) - len(wet)))
+        dry = np.asarray(dry, dtype=np.float32)
+        wet = np.asarray(wet, dtype=np.float32)
+
+        def _match_time_axis(x: np.ndarray, target_len: int) -> np.ndarray:
+            if x.shape[0] == target_len:
+                return x
+            if x.shape[0] > target_len:
+                return x[:target_len, ...]
+            pad_rows = target_len - int(x.shape[0])
+            pad_spec = [(0, pad_rows)] + [(0, 0)] * (max(x.ndim, 1) - 1)
+            return np.pad(x, pad_spec)
+
+        # Time axis must always match before blending.
+        wet = _match_time_axis(wet, int(dry.shape[0]))
         if strength >= 1.0:
             return np.clip(wet, -1.0, 1.0).astype(np.float32)
         if strength <= 0.0:
@@ -2681,6 +3337,48 @@ class PerPhaseMusicalGoalsGate:
                 logger.debug("PMGG: Wet/Dry-Blend Phase-Metadata-Zugriff fehlgeschlagen: %s", _meta_exc)
         if phase_id in _TIMING_PHASES:
             return np.clip(wet, -1.0, 1.0).astype(np.float32)
+
+        # Stereo-safe handling: never run STFT blend on channel axis.
+        if dry.ndim == 2 or wet.ndim == 2:
+            if dry.ndim != 2 or wet.ndim != 2:
+                logger.debug(
+                    "PMGG Wet/Dry-Blend ndim mismatch dry=%s wet=%s; using linear fallback",
+                    dry.shape,
+                    wet.shape,
+                )
+                if dry.ndim == 2 and wet.ndim == 1:
+                    wet = np.tile(wet[:, None], (1, dry.shape[1]))
+                elif dry.ndim == 1 and wet.ndim == 2:
+                    wet = wet.mean(axis=1)
+                out_lin = (dry + strength * (wet - dry)).astype(np.float32)
+                return np.clip(out_lin, -1.0, 1.0)
+
+            if dry.shape[1] != wet.shape[1]:
+                logger.debug(
+                    "PMGG Wet/Dry-Blend channel mismatch dry=%s wet=%s; using linear fallback",
+                    dry.shape,
+                    wet.shape,
+                )
+                n_ch = min(dry.shape[1], wet.shape[1])
+                out = dry.copy()
+                out[:, :n_ch] = dry[:, :n_ch] + strength * (wet[:, :n_ch] - dry[:, :n_ch])
+                return np.clip(out.astype(np.float32), -1.0, 1.0)
+
+            if strength < 0.30 and dry.shape[0] >= 2048:
+                ch_out = []
+                for ch in range(dry.shape[1]):
+                    ch_out.append(
+                        PerPhaseMusicalGoalsGate._wet_dry_blend(
+                            dry[:, ch],
+                            wet[:, ch],
+                            strength,
+                            phase=None,
+                        )
+                    )
+                return np.clip(np.stack(ch_out, axis=1).astype(np.float32), -1.0, 1.0)
+
+            out = (dry + strength * (wet - dry)).astype(np.float32)
+            return np.clip(out, -1.0, 1.0)
 
         # §9.10.118: phase-aware STFT blending for low strengths to prevent
         # comb-filter artifacts from time-domain mixing of phase-shifted signals.
@@ -2721,14 +3419,25 @@ class PerPhaseMusicalGoalsGate:
         before: dict[str, float],
         after: dict[str, float],
         goals: list | None = None,
+        goal_weights: dict[str, float] | None = None,
     ) -> float:
-        """Maximale negative Differenz in Musical Goals (positiv = Regression)."""
+        """Maximale negative Differenz in Musical Goals (positiv = Regression).
+
+        §2.56 Song-specific goal weighting: if goal_weights is provided,
+        each goal's regression is multiplied by its weight before taking the max.
+        weight > 1.0 → regression is amplified (stricter for important goals).
+        weight < 1.0 → regression is dampened (lenient for less relevant goals).
+        """
         check_goals = goals if goals is not None else FAST_GOALS_SUBSET
         max_reg = 0.0
         for g in check_goals:
             delta = after.get(g, 0.5) - before.get(g, 0.5)
             if delta < 0:
-                max_reg = max(max_reg, -delta)
+                raw_reg = -delta
+                # §2.56: Apply song-specific weight
+                w = goal_weights.get(g, 1.0) if goal_weights else 1.0
+                weighted_reg = raw_reg * w
+                max_reg = max(max_reg, weighted_reg)
         return max_reg
 
     @staticmethod
@@ -2737,17 +3446,23 @@ class PerPhaseMusicalGoalsGate:
         after: dict[str, float],
         goals: list | None = None,
         threshold: float = 0.020,
+        goal_weights: dict[str, float] | None = None,
     ) -> tuple[float, int]:
         """Priority-aware regression: returns (max_regression, worst_priority).
 
         Only considers goals whose priority-adjusted threshold is exceeded.
         Returns the highest priority level (lowest number) among regressed goals.
 
+        §2.56: goal_weights modulate the effective threshold per goal.
+        weight > 1.0 → effective threshold is lower (stricter for important goals).
+        weight < 1.0 → effective threshold is higher (lenient).
+
         Args:
             before: Scores before phase.
             after: Scores after phase.
             goals: Subset of goals to check.
             threshold: Base regression threshold.
+            goal_weights: Per-goal importance weights ∈ [0.3, 2.0].
 
         Returns:
             (max_regression_value, worst_priority) where worst_priority is 1–5
@@ -2762,13 +3477,16 @@ class PerPhaseMusicalGoalsGate:
         for g in check_goals:
             delta = after.get(g, 0.5) - before.get(g, 0.5)
             if delta < 0:
-                reg = -delta
+                raw_reg = -delta
+                # §2.56: weight amplifies regression for important goals
+                w = goal_weights.get(g, 1.0) if goal_weights else 1.0
+                weighted_reg = raw_reg * w
                 prio = gpp.priority_of(g)
                 prio_threshold = threshold * _PRIORITY_THRESHOLD_FACTOR.get(prio, 1.0)
-                if reg > prio_threshold:
+                if weighted_reg > prio_threshold:
                     if prio < worst_prio:
                         worst_prio = prio
-                    max_reg = max(max_reg, reg)
+                    max_reg = max(max_reg, weighted_reg)
         return max_reg, worst_prio
 
     @staticmethod
@@ -2795,6 +3513,7 @@ def wrap_phase(
     restorability_score: float = 70.0,
     applicable_goals: set[str] | None = None,
     is_studio_2026: bool = False,
+    goal_weights: dict[str, float] | None = None,
 ) -> tuple[np.ndarray, dict[str, float], PhaseGateLogEntry]:
     """
     Convenience-Wrapper: Führt eine Phase aus mit Musical-Goals-Schutz.
@@ -2809,6 +3528,7 @@ def wrap_phase(
                              adaptiven REGRESSION_THRESHOLD (§2.29).
         applicable_goals: Aus GoalApplicabilityFilter — nur diese Ziele geprüft.
         is_studio_2026: True for Studio 2026 mode (higher P3–P5 thresholds).
+        goal_weights: §2.56 Song-specific goal importance weights.
 
     Returns:
         (audio_out, scores_after, log_entry)
@@ -2822,4 +3542,5 @@ def wrap_phase(
         restorability_score=restorability_score,
         applicable_goals=applicable_goals,
         is_studio_2026=is_studio_2026,
+        goal_weights=goal_weights,
     )

@@ -6,10 +6,10 @@ instead of checking individual goals only.
 
 HPI > 0 → Export | HPI ≤ 0 → Rollback
 
-§2.44 Referenz-Anker-Strategie (Restorability-abhängig):
-  - Restorability > 70  → timbral_fidelity gegen Input (gute Annäherung ans Original)
-  - Restorability 50–70 → 60% Input + 40% MERT-Referenz aus GP-Memory
-  - Restorability ≤ 50  → 70% MERT-Referenz + 30% Input (Input zu weit vom Original)
+§2.44 FIX v9.11.2 — Referenz-Paradox beseitigt:
+  Für ALLE Restorability-Bereiche: Referenz-Vektor aus GP-Memory primär;
+  kein Ref-Vektor → direktionale Verbesserungsmessung (_compute_directional_restoration_quality).
+  Input-Ähnlichkeit als prim. Maß entfernt (bestrafte erfolgreiche Restaurierung).
 
 MERT-Referenz-Memory: EMA (α=0.15) pro (genre × material × era_bin).
 Fallback-Kaskade (5 Stufen) wenn kein passender Referenz-Vektor.
@@ -70,6 +70,7 @@ class HPIResult:
     pqs_improvement: float = 1.0
     is_studio_mode: bool = False
     detail: dict = field(default_factory=dict)
+    fail_reason: object | None = None  # §1.4a FailReason when passed=False
 
 
 class HolisticPerceptualGate:
@@ -81,6 +82,9 @@ class HolisticPerceptualGate:
         self._ref_lock = threading.Lock()
         # MERT similarity path is optional and must never break the gate.
         self._mert_path_disabled: bool = False
+        # §2.44 VERBOTEN: MERT darf nicht primary sein wenn VERSA verfügbar.
+        # _mert_proxy_used = True → VERSA fehlgeschlagen, MERT als Fallback aktiv.
+        self._mert_proxy_used: bool = False
 
     def evaluate_restoration(
         self,
@@ -98,32 +102,45 @@ class HolisticPerceptualGate:
 
         HPI = MERT_similarity × timbral_fidelity × artifact_freedom × emotional_arc_preservation
 
-        §2.44 Referenz-Anker-Strategie (Restorability-abhängig):
-          - > 70: timbral_fidelity gegen Input
-          - 50–70: 60% Input + 40% MERT-Referenz
-          - ≤ 50: 30% Input + 70% MERT-Referenz
+        §2.44 FIX v9.11.2 — Referenz-Paradox beseitigt:
+          Strukturelle Klangkohärenz bedeutet NICHT Ähnlichkeit zum degradierten Input.
+          Ein erfolgreich restauriertes Signal weicht vom degradierten Input ab —
+          der alte Ansatz (input_weight=1.0 bei restorability > 70) hat gute
+          Restaurierung aktiv bestraft.
+
+          Korrekte Strategie für alle Restorability-Bereiche:
+            1. Referenz-Vektor aus GP-Memory (genre × material × era_bin) → primär
+            2. Kein Referenz-Vektor → direktionale Verbesserungsmessung:
+               misst ob Signal in Richtung "sauber + musikalisch" verbessert wurde
+          Input-Ähnlichkeit dient nur als Content-Integrity-Anteil (klein).
         """
+        self._mert_proxy_used = False  # reset per evaluation
         mert_sim = self._compute_mert_similarity(original, restored, sr)
 
-        # §2.44 Restorability-dependent anchor weights
-        if restorability_score > 70.0:
-            input_weight, ref_weight = 1.0, 0.0
-        elif restorability_score >= 50.0:
-            input_weight, ref_weight = 0.6, 0.4
+        # §2.44 FIX v9.11.2: Referenz-Vektor bevorzugen für ALLE Restorability-Bereiche.
+        # Kein Ref-Vektor → direktionale Qualitätsmessung statt Input-Ähnlichkeit.
+        ref_vec = self._get_reference_vector(genre, material, era_bin)
+        if ref_vec is not None:
+            rest_embed = self._compute_embedding(restored, sr)
+            timbral_ref = float(np.clip(self._cosine_similarity(ref_vec, rest_embed), 0.0, 1.0))
         else:
-            input_weight, ref_weight = 0.3, 0.7
+            # Kein Referenz-Vektor: misst ob das Signal in Richtung "sauber" verbessert wurde
+            timbral_ref = self._compute_directional_restoration_quality(original, restored, sr)
 
+        # timbral_input als Content-Integrity-Anteil (für Logging und niedrige Restorability)
         timbral_input = self._compute_timbral_fidelity(original, restored, sr)
-        if ref_weight > 0.0:
-            ref_vec = self._get_reference_vector(genre, material, era_bin)
-            if ref_vec is not None:
-                rest_embed = self._compute_embedding(restored, sr)
-                timbral_ref = float(np.clip(self._cosine_similarity(ref_vec, rest_embed), 0.0, 1.0))
-            else:
-                # Fallback-Kaskade §2.44 Stufe 5: kein Ref-Vektor → rein gegen Input
-                timbral_ref = timbral_input
+
+        # §2.44 Restorability-dependent weights — Referenz/Direktional dominiert stets
+        if restorability_score > 70.0:
+            # Hohe Restorability: Signal bewegt sich weg vom Defekt, hin zur Referenz.
+            # Input-Ähnlichkeit ist hier KEIN Qualitätsmaß (Referenz-Paradox).
+            input_weight, ref_weight = 0.0, 1.0
+        elif restorability_score >= 50.0:
+            # Mittlere Restorability: minimaler Input-Anteil als Ankerpunkt
+            input_weight, ref_weight = 0.35, 0.65
         else:
-            timbral_ref = timbral_input
+            # Niedrige Restorability: kleiner Content-Integrity-Anteil
+            input_weight, ref_weight = 0.2, 0.8
 
         timbral = input_weight * timbral_input + ref_weight * timbral_ref
 
@@ -151,6 +168,28 @@ class HolisticPerceptualGate:
             restorability_score,
         )
 
+        # §1.4a FailReason for failed gate
+        _fr = None
+        if not passed:
+            from backend.core.pipeline_health_state import make_fail_reason
+
+            if artifact_freedom < 0.95:
+                _fr = make_fail_reason(
+                    "HolisticPerceptualGate",
+                    "ARTIFACT_VETO",
+                    severity="failed",
+                    action="rollback",
+                    details=f"artifact_freedom={artifact_freedom:.3f} < 0.95",
+                )
+            else:
+                _fr = make_fail_reason(
+                    "HolisticPerceptualGate",
+                    "HPI_BELOW_ZERO",
+                    severity="failed",
+                    action="rollback",
+                    details=f"HPI={hpi:.4f} <= 0",
+                )
+
         return HPIResult(
             hpi=round(hpi, 4),
             passed=passed,
@@ -159,6 +198,7 @@ class HolisticPerceptualGate:
             artifact_freedom=round(artifact_freedom, 4),
             emotional_arc_preservation=round(emotional_arc_score, 4),
             is_studio_mode=False,
+            fail_reason=_fr,
             detail={
                 "restorability_score": restorability_score,
                 "strict_gate": restorability_score > 85.0,
@@ -169,6 +209,8 @@ class HolisticPerceptualGate:
                 "genre": genre,
                 "material": material,
                 "era_bin": era_bin,
+                # §2.44 VERBOTEN-Tabelle: mert_proxy_used=True wenn VERSA nicht verfügbar
+                "mert_proxy_used": self._mert_proxy_used,
             },
         )
 
@@ -334,6 +376,28 @@ class HolisticPerceptualGate:
             emotional_arc_score,
         )
 
+        # §1.4a FailReason for failed Studio gate
+        _fr_s = None
+        if not passed:
+            from backend.core.pipeline_health_state import make_fail_reason
+
+            if artifact_freedom < 0.95:
+                _fr_s = make_fail_reason(
+                    "HolisticPerceptualGate",
+                    "ARTIFACT_VETO",
+                    severity="failed",
+                    action="rollback",
+                    details=f"artifact_freedom={artifact_freedom:.3f} < 0.95",
+                )
+            else:
+                _fr_s = make_fail_reason(
+                    "HolisticPerceptualGate",
+                    "HPI_BELOW_ZERO",
+                    severity="failed",
+                    action="rollback",
+                    details=f"Studio HPI={hpi:.4f} <= 0",
+                )
+
         return HPIResult(
             hpi=round(hpi, 4),
             passed=passed,
@@ -342,6 +406,7 @@ class HolisticPerceptualGate:
             artifact_freedom=round(artifact_freedom, 4),
             emotional_arc_preservation=round(emotional_arc_score, 4),
             is_studio_mode=True,
+            fail_reason=_fr_s,
         )
 
     # ── Component computations ─────────────────────────────────────────────
@@ -352,10 +417,12 @@ class HolisticPerceptualGate:
         restored: np.ndarray,
         sr: int,
     ) -> float:
-        """Compute MERT-based musical similarity (melody, harmony, rhythm).
+        """Compute musical quality coefficient for HPI.
 
-        Primary path: MERT plugin analysis similarity.
-        Fallback path: spectral correlation proxy (artifact-safe).
+        §2.44 VERBOTEN: MERT darf NICHT primary sein wenn VERSA verfügbar.
+        Primary path: VERSA MOS auf restoreriertem Audio (referenzfrei, kein Referenz-Paradoxon).
+        Fallback path 1: MERT plugin similarity (proxy, setzt self._mert_proxy_used=True).
+        Fallback path 2: spectral correlation proxy (artifact-safe).
         """
         orig_clean = np.nan_to_num(original.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         rest_clean = np.nan_to_num(restored.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
@@ -366,7 +433,35 @@ class HolisticPerceptualGate:
         if min(len(orig_mono), len(rest_mono)) < 1024:
             return 1.0
 
-        # MERT-Plugin-First path (optional, failure-safe)
+        # ─── PRIMARY PATH: VERSA MOS ───────────────────────────────────────────
+        # §2.44 VERBOTEN: MERT darf nicht primary sein wenn VERSA verfügbar.
+        # VERSA MOS (1–5) → normalisiert [0,1] via (mos-1)/4.
+        # Referenzfrei → kein Referenz-Paradoxon, kein Input-Similarity-Bias.
+        try:
+            from plugins.versa_plugin import get_versa_plugin as _get_versa
+
+            _versa = _get_versa()
+            _versa_result = _versa.score(rest_clean, sr)
+            _versa_mos = float(np.clip(_versa_result.mos, 1.0, 5.0))
+            # Nonnalisierung: MOS 1→0.0, MOS 3→0.5, MOS 5→1.0
+            _versa_sim = float(np.clip((_versa_mos - 1.0) / 4.0, 0.0, 1.0))
+            # Blend: 70% VERSA (referenzfrei) + 30% klassische spektrale Kohärenz
+            _spectral_coh = self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr)
+            _blended = float(np.clip(0.70 * _versa_sim + 0.30 * _spectral_coh, 0.0, 1.0))
+            logger.debug(
+                "§2.44 VERSA-primary: mos=%.2f → versa_sim=%.3f spectral_coh=%.3f blended=%.3f",
+                _versa_mos,
+                _versa_sim,
+                _spectral_coh,
+                _blended,
+            )
+            self._mert_proxy_used = False  # VERSA succeeded
+            return _blended
+        except Exception as _versa_exc:
+            logger.debug("§2.44 VERSA primary failed → MERT proxy fallback: %s", _versa_exc)
+            self._mert_proxy_used = True  # VERSA failed, MERT is proxy
+
+        # ─── FALLBACK PATH 1: MERT plugin ─────────────────────────────────────
         if not self._mert_path_disabled:
             try:
                 # Imported lazily to avoid mandatory ML initialization on module import.
@@ -460,10 +555,9 @@ class HolisticPerceptualGate:
                 corr = float(np.sum(orig_norm * rest_norm) / denom)
                 correlations.append(max(0.0, corr))
 
-        if not correlations:
-            return 1.0
-
-        return float(np.clip(np.mean(correlations), 0.0, 1.0))
+        if correlations:
+            return float(np.clip(float(np.mean(correlations)), 0.0, 1.0))
+        return 0.8
 
     def _compute_timbral_fidelity(
         self,
@@ -471,10 +565,10 @@ class HolisticPerceptualGate:
         restored: np.ndarray,
         sr: int,
     ) -> float:
-        """Structural timbral coherence — not mere input similarity.
+        """Content-integrity check via mel-embedding cosine similarity.
 
-        Uses mel-embedding cosine similarity (timbral perceptual features).
-        Delegates to _compute_embedding for shared mel-filterbank computation.
+        Used as small content-preservation anchor in evaluate_restoration().
+        NOT used as primary timbral_fidelity measure (see §2.44 FIX v9.11.2).
         """
         min_len = min(
             len(original) if original.ndim == 1 else original.shape[-1],
@@ -485,6 +579,89 @@ class HolisticPerceptualGate:
         orig_embed = self._compute_embedding(original, sr)
         rest_embed = self._compute_embedding(restored, sr)
         return float(np.clip(self._cosine_similarity(orig_embed, rest_embed), 0.0, 1.0))
+
+    def _compute_directional_restoration_quality(
+        self,
+        original: np.ndarray,
+        restored: np.ndarray,
+        sr: int,
+    ) -> float:
+        """§2.44 FIX v9.11.2 — Direktionale Verbesserungsmessung als Fallback.
+
+        Misst ob die Restaurierung das Signal in Richtung "sauber und musikalisch"
+        verbessert hat. Wird verwendet wenn kein Referenz-Vektor im GP-Memory vorliegt.
+
+        Drei Komponenten:
+          A) Noise-Floor-Delta: tieferer Rauschboden nach Restaurierung → Wert steigt
+          B) Spektrale Klarheit (HF-Crest): höhere Klarheit nach Denoising → Wert steigt
+          C) Content-Integrity-Guard: verhindert, dass zerstörter Inhalt besteht
+
+        Returns:
+            0.5 = keine Veränderung (Bypass)
+            > 0.5 = Signal wurde verbessert (Rauschen reduziert, Klarheit erhöht)
+            < 0.5 = Signal wurde verschlechtert
+        """
+        orig_mono = (original if original.ndim == 1 else np.mean(original, axis=0)).astype(np.float32)
+        rest_mono = (restored if restored.ndim == 1 else np.mean(restored, axis=0)).astype(np.float32)
+        min_len = min(len(orig_mono), len(rest_mono))
+        if min_len < 1024:
+            return 0.75  # short signal: neutral-good
+
+        orig_mono = np.nan_to_num(orig_mono[:min_len], nan=0.0)
+        rest_mono = np.nan_to_num(rest_mono[:min_len], nan=0.0)
+
+        # C) Content-Integrity-Guard: spectral correlation (log-magnitude)
+        n_fft_c = min(4096, min_len)
+        orig_spec = np.abs(np.fft.rfft(orig_mono[:n_fft_c] * np.hanning(n_fft_c)))
+        rest_spec = np.abs(np.fft.rfft(rest_mono[:n_fft_c] * np.hanning(n_fft_c)))
+        orig_log = np.log1p(orig_spec)
+        rest_log = np.log1p(rest_spec)
+        orig_n = orig_log - np.mean(orig_log)
+        rest_n = rest_log - np.mean(rest_log)
+        denom_c = float(np.sqrt(np.sum(orig_n**2) * np.sum(rest_n**2)) + 1e-12)
+        content_corr = float(np.sum(orig_n * rest_n) / denom_c) if denom_c > 1e-12 else 0.0
+        if content_corr < 0.3:
+            # Musikalischer Inhalt schwer verändert → frühere Rückkehr
+            return float(np.clip(0.3 + 0.2 * max(0.0, content_corr), 0.0, 1.0))
+
+        # A) Noise-Floor-Delta (5. Perzentil der Frame-Energien)
+        frame_len = max(1, int(0.03 * sr))
+        hop = max(1, frame_len // 2)
+        n_frames = min(200, max(1, (min_len - frame_len) // hop))
+        orig_e: list[float] = []
+        rest_e: list[float] = []
+        for i in range(n_frames):
+            s = i * hop
+            e = s + frame_len
+            if e > min_len:
+                break
+            orig_e.append(float(np.mean(orig_mono[s:e] ** 2) + 1e-12))
+            rest_e.append(float(np.mean(rest_mono[s:e] ** 2) + 1e-12))
+        if orig_e and rest_e:
+            orig_nf_db = 10.0 * float(np.log10(float(np.percentile(orig_e, 5))))
+            rest_nf_db = 10.0 * float(np.log10(float(np.percentile(rest_e, 5))))
+            noise_delta_db = orig_nf_db - rest_nf_db  # > 0 wenn Rauschen reduziert
+        else:
+            noise_delta_db = 0.0
+        noise_score = float(np.clip(0.5 + noise_delta_db / 40.0, 0.0, 1.0))
+
+        # B) Spektrale Klarheit (HF Crest-Factor 2–16 kHz)
+        freqs = np.fft.rfftfreq(n_fft_c, d=1.0 / sr)
+        orig_fft_full = np.abs(np.fft.rfft(orig_mono[:n_fft_c] * np.hanning(n_fft_c)))
+        rest_fft_full = np.abs(np.fft.rfft(rest_mono[:n_fft_c] * np.hanning(n_fft_c)))
+        hf_mask = (freqs >= 2000) & (freqs <= 16000)
+        hf_bins_o = orig_fft_full[hf_mask]
+        hf_bins_r = rest_fft_full[hf_mask]
+        if len(hf_bins_o) >= 10 and len(hf_bins_r) >= 10:
+            crest_o = float(np.percentile(hf_bins_o, 95)) / (float(np.median(hf_bins_o)) + 1e-9)
+            crest_r = float(np.percentile(hf_bins_r, 95)) / (float(np.median(hf_bins_r)) + 1e-9)
+            max_crest = max(crest_o, crest_r, 1e-9)
+            crest_improvement = (crest_r - crest_o) / max_crest  # [-1, 1]
+        else:
+            crest_improvement = 0.0
+        clarity_score = float(np.clip(0.5 + crest_improvement * 0.5, 0.0, 1.0))
+
+        return float(np.clip(0.6 * noise_score + 0.4 * clarity_score, 0.0, 1.0))
 
     def _compute_studio_quality_gain(
         self,

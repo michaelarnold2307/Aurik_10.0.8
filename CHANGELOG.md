@@ -2,7 +2,294 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
-## Version 9.11.2 — Konsistenz-Update: CLI/Frontend/Bridge/Backend (Apr 2026)
+## Version 9.11.10 — GPU-Mixed-Mode: Vollständige Plugin-Integration + Spec-Harmonisierung (Apr 2026)
+
+### Zusammenfassung
+
+Alle Heavy-ML-Plugins (23 Stück) nutzen jetzt `ml_device_manager` für GPU-Beschleunigung. Specs und copilot-instructions.md von CPU-only auf GPU-Mixed-Mode aktualisiert.
+
+**Whitelist-Erweiterung** (`_HEAVY_ML_PLUGINS`: 11 → 23):
+
+Neu hinzugefügt: `DemucsV4`, `ResembleEnhance`, `AudioLDM2`, `MERT-330M-HF`, `MERT-330M-fairseq`, `VersaSingMOS`, `UTMOSv2`, `BanquetVinyl`, `PANNs`, `LaionCLAP_ONNX`, `DeepResemble`, `DiffuSinger`
+
+**Neue Plugin-Integrationen (12 Plugins):**
+
+| Plugin | Typ | Methode |
+| --- | --- | --- |
+| `plugins/demucs_v4_plugin.py` | ONNX | `get_ort_providers("DemucsV4")` |
+| `plugins/resemble_enhance_plugin.py` | ONNX | `get_ort_providers("ResembleEnhance")` |
+| `plugins/audioldm2_plugin.py` | ONNX | `get_ort_providers("AudioLDM2")` |
+| `plugins/banquet_vinyl_plugin.py` | ONNX | `get_ort_providers("BanquetVinyl")` |
+| `plugins/panns_plugin.py` | ONNX | `get_ort_providers("PANNs")` |
+| `plugins/laion_clap_plugin.py` | ONNX | `get_ort_providers("LaionCLAP_ONNX")` |
+| `plugins/mert_plugin.py` (HF) | Torch | `get_torch_device("MERT-330M-HF")` |
+| `plugins/mert_plugin.py` (fairseq) | Torch | `get_torch_device("MERT-330M-fairseq")` |
+| `plugins/versa_plugin.py` | Torch | `get_torch_device("VersaSingMOS")` → `use_gpu` |
+| `plugins/utmos_plugin.py` | ONNX+Torch | `get_ort_providers("UTMOSv2")` + `get_torch_device("UTMOSv2")` |
+
+**Bugfix: DemucsV5** — War in Whitelist, aber `self.device = "cpu"` hardcoded → jetzt `get_torch_device("DemucsV5")`
+
+**Spec-Harmonisierung (CPU-only → GPU-Mixed-Mode):**
+
+- `.github/copilot-instructions.md` — Performance-Budget, VERBOTEN-Tabelle
+- `.github/specs/03_cognitive_modules.md` — BigVGAN + ONNX-Beispiel
+- `.github/specs/04_dsp_standards.md` — BigVGAN-v2
+- `.github/specs/07_quality_and_tests.md` — §9 Header + Device-Policy
+- `.github/specs/08_architecture_and_distribution.md` — §3.4 Lazy Imports, Manifest, Requirements, Checklist
+- `scripts/compliance_check.py` — R05/R06: CUDA erlaubt in `ml_device_manager.py`
+
+**Test-Fixes:**
+
+- `tests/normative/test_full_pipeline_determinism.py` — `test_onnx_cpu_provider_determinism_invariant_documented`: Akzeptiert `ml_device_manager` als gültige Device-Dispatch-Methode
+- `tests/normative/test_p2_audit_and_deployment_mode.py` — `test_p2_1_sha256_differs_for_different_seed`: Timeout 45s→120s (Fragment-Guard expandiert auf 30s Audio)
+
+### Validierung
+
+- Chunk A (unit + musical_goals): 10.127 passed, 0 failed
+- Chunk B (integration + normative): 504 passed, 0 failed
+- GPU-spezifische Tests: 390 passed, 0 failed
+- `test_ml_device_manager.py`: 27/27 grün
+
+### Dateien geändert
+
+- `backend/core/ml_device_manager.py` — Whitelist erweitert (11→23)
+- `backend/ml/inference_only/vocal_separation/demucs_v5_wrapper.py` — Bugfix: hardcoded cpu→device_manager
+- `plugins/demucs_v4_plugin.py`, `plugins/resemble_enhance_plugin.py`, `plugins/audioldm2_plugin.py`
+- `plugins/banquet_vinyl_plugin.py`, `plugins/panns_plugin.py`, `plugins/laion_clap_plugin.py`
+- `plugins/mert_plugin.py`, `plugins/versa_plugin.py`, `plugins/utmos_plugin.py`
+- `.github/copilot-instructions.md`, `.github/specs/03_cognitive_modules.md`, `.github/specs/04_dsp_standards.md`
+- `.github/specs/07_quality_and_tests.md`, `.github/specs/08_architecture_and_distribution.md`
+- `scripts/compliance_check.py`
+- `tests/normative/test_full_pipeline_determinism.py`, `tests/normative/test_p2_audit_and_deployment_mode.py`
+
+## Version 9.11.9 — GPU-Support: ROCm/DirectML + Dreistufiges CPU-Fallback-System (Apr 2026)
+
+### Zusammenfassung
+
+Vollständige GPU-Unterstützung für alle 11 Heavy-ML-Plugins mit dreistufiger CPU-Fallback-Kaskade und Session-Telemetrie.
+
+**Neues Modul: `backend/core/ml_device_manager.py`**
+
+- `MLDeviceManager` — thread-sicheres Singleton (Double-Checked Locking)
+- Auto-Erkennung: ROCm (Linux, `torch.cuda` API) und DirectML (Windows, `onnxruntime-directml`)
+- `get_torch_device(plugin_name)` — liefert `"cuda"` / `"dml"` / `"cpu"` je nach Plugin-Klasse und Verfügbarkeit
+- `get_ort_providers(plugin_name)` — liefert `["ROCMExecutionProvider", "CPUExecutionProvider"]` oder `["DmlExecutionProvider", "CPUExecutionProvider"]` für Heavy-Plugins
+- `try_allocate_vram(plugin, size_gb)` / `release_vram(plugin)` — Budget-Guard gegen VRAM-Überbuchung
+- `report_gpu_error(plugin, exc)` — Fehler protokollieren, VRAM freigeben, nach 3 Fehlern Plugin session-weit auf CPU erzwingen
+- `gpu_status_summary()` — vollständiger Zustandssnapshot inkl. `gpu_errors`, `gpu_disabled_plugins`
+- `_HEAVY_ML_PLUGINS`: `{"SGMSE", "AudioSR", "BSRoFormer", "MDXNet", "DemucsV5", "MDX23C", "BigVGAN", "ApolloPlugin", "CQTDiffPlus", "Gacela", "MPSENet"}`
+
+**Dreistufige CPU-Fallback-Kaskade:**
+
+| Ebene | Mechanismus | Betroffene Plugins |
+| --- | --- | --- |
+| **Ebene 1** — VRAM-Budget | `try_allocate_vram()` vor GPU-Load: Budget erschöpft → direkt CPU-Load | Apollo, CQTDiff+, Gacela |
+| **Ebene 2** — Load-Retry | GPU-`.to(_dev)` schlägt fehl → CPU-Retry im selben Modellladevorgang | SGMSE (beide Pfade), BigVGAN |
+| **Ebene 3** — Inference-Retry | GPU-Inferenz wirft Exception → Modell auf CPU verschieben, `report_gpu_error()`, rekursiver Retry | SGMSE, BigVGAN, Apollo, CQTDiff+, Gacela |
+
+**Plugin-Wiring (alle 11 Heavy-Plugins):**
+
+- `plugins/audiosr_plugin.py` — `build_model(device=get_torch_device("AudioSR"))`
+- `plugins/sgmse_plugin.py` — TorchScript + Checkpoint-Pfad; VRAM-aware Load; GPU→CPU Inference-Retry
+- `plugins/bigvgan_v2_plugin.py` — torch + ONNX-Pfad; GPU→CPU Inference-Retry
+- `plugins/apollo_plugin.py` — VRAM-Budget-Check; GPU→CPU Inference-Retry
+- `plugins/cqtdiff_plus_plugin.py` — VRAM-Budget-Check; GPU→CPU Inference-Retry
+- `plugins/gacela_plugin.py` — VRAM-Budget-Check; GPU→CPU Inference-Retry mit Multi-Modul-Move
+- `plugins/mp_senet_plugin.py` — `get_torch_device("MPSENet")`
+- `plugins/mdx23c_plugin.py` — `get_ort_providers("MDX23C")`
+- `plugins/bs_roformer_plugin.py` — `get_ort_providers("BSRoFormer")`
+- `plugins/uvr_mdxnet_plugin.py` — `get_ort_providers("MDXNet")`
+- ONNX-Plugins nutzen automatischen ORT-Provider-Fallback (CPU immer letzte Zeile der Provider-Liste)
+
+**Runtime-Hook:**
+
+- `Aurik910/hooks/runtime_hook_threading.py` — bedingungslose GPU-Unterdrückung (`HIP_VISIBLE_DEVICES=-1`, `DML_DISABLE=1`) entfernt; GPU-Policy liegt jetzt vollständig beim `MLDeviceManager`
+
+### Invarianten
+
+- Kein ML-Plugin darf durch fehlende GPU-Hardware abstürzen
+- `get_torch_device()` / `get_ort_providers()` werfen nie eine Exception
+- Alle DSP-Fallback-Ketten bleiben unverändert aktiv (ONNX-CPU → DSP, Torch-CPU → DSP)
+- SGMSE Torch-OOM wird weiterhin als `MemoryError` nach oben propagiert (UV3 §2.39 OOM-Checkpoint)
+
+### Validierung
+
+- `tests/unit/test_ml_device_manager.py` — 27/27 Tests grün (neu erstellt)
+  - CPU-only-Modus, Singleton-Thread-Safety, VRAM-Allokation/-Freigabe
+  - ROCm-Simulation: `get_torch_device`, `get_ort_providers`, VRAM-Budget
+  - `report_gpu_error`: Fehlerzählung, VRAM-Freigabe, Session-Deaktivierung nach 3 Fehlern
+  - `get_torch_device` respektiert `_gpu_disabled_plugins`
+  - Thread-Safety bei 20 gleichzeitigen `report_gpu_error`-Aufrufen
+
+### Dateien geändert
+
+- `backend/core/ml_device_manager.py` — Neues Modul (Singleton)
+- `Aurik910/hooks/runtime_hook_threading.py` — GPU-Unterdrückung entfernt
+- `plugins/audiosr_plugin.py`, `plugins/sgmse_plugin.py`, `plugins/bigvgan_v2_plugin.py`
+- `plugins/apollo_plugin.py`, `plugins/cqtdiff_plus_plugin.py`, `plugins/gacela_plugin.py`
+- `plugins/mp_senet_plugin.py`, `plugins/mdx23c_plugin.py`, `plugins/bs_roformer_plugin.py`, `plugins/uvr_mdxnet_plugin.py`
+- `tests/unit/test_ml_device_manager.py` — 27 neue Tests (neu erstellt)
+
+## Version 9.11.8 — Frontend Thread-Safety Hotfix (Apr 2026)
+
+### Zusammenfassung
+
+- **Thread-Safety-Fix in BatchProcessingThread** (`Aurik910/ui/modern_window.py`):
+  - Entfernt direkten GUI-Zugriff auf `self.progress_bar.setFormat(...)` aus `BatchProcessingThread.run()`.
+  - GUI-Updates laufen weiterhin ausschließlich über vorhandene Signale/Slots der Hauptoberfläche.
+- **Spezifikations-Check bestätigt**:
+  - Progress-Bar bleibt auf 0–10000-Skala (`setRange(0, 10000)`) wie gefordert.
+  - Experience-Insights-Pfad (§2.53) bleibt aktiv im Ergebnis-Handling.
+
+### Validierung
+
+- `tests/unit/test_frontend_ux_spec_compliance.py` — grün
+- `tests/test_gui_integration.py` — grün
+
+## Version 9.11.7 — Team-Telemetrie + CONFLICT_REGISTRY + Hörbasierte Abnahmetests (Apr 2026)
+
+### Zusammenfassung
+
+**Team-Telemetrie** (§2.53 RELEASE_MUST):
+
+- `PhaseGateLogEntry.metadata` in PMGG erhält `team_policy_reason`, `team_excluded_goals`,
+  `team_threshold_mult`, `team_strength_cap` — nur wenn Team-Policy aktiv war.
+- UV3 extrahiert nach der Pipeline `_team_coordination_events` aus allen PMGG-Log-Entries
+  mit gesetztem `team_policy_reason`.
+- `RestorationResult.metadata["team_coordination"]` enthält:
+  `event_count`, `events`, `phase_type_summary`.
+- `bridge.get_experience_insights()` gibt `team_coordination` als eigenes Feld zurück.
+
+**CONFLICT_REGISTRY** (`backend/core/phase_ontology.py`, §2.29e):
+
+- Neues `CONFLICT_REGISTRY: dict[str, frozenset[str]]` — explizite Paare, bei denen Phase B
+  die Arbeit von Phase A nicht neutralisieren darf:
+  - `phase_09 → {phase_50}` (Crackle-Reparatur schützt Spectral-Repair-Bins)
+  - `phase_07 → {phase_50, phase_03, phase_29}` (Harmonik-Restauration)
+  - `phase_06 → {phase_28, phase_29, phase_50}` (Bandbreiten-Erweiterung)
+  - `phase_23 → {phase_03, phase_29}` (Spektrales Inpainting)
+  - `phase_55 → {phase_03, phase_29}` (Diffusions-Inpainting)
+  - `phase_24 → {phase_50}` (Dropout-Reparatur)
+  - `phase_01 → {phase_50, phase_27}` (Click-Removal)
+  - `phase_56 → {phase_29, phase_03}` (Bandlücken-Reparatur)
+- Neue Funktion `get_conflict_phases(completed_phase_id)` mit startswith-Matching.
+- UV3 `_profiled_phase_call` injiziert `conflict_with_prior_phases` in Phase-kwargs
+  wenn CONFLICT_REGISTRY einen Treffer für die aktuelle Phase liefert.
+
+**Hörbasierte Abnahmetests** (`tests/unit/test_team_coordination_telemetry.py`):
+
+- 30 neue Unit-Tests:
+  - `TestConflictRegistry` (11 Tests): Vollständige CONFLICT_REGISTRY-Abdeckung
+  - `TestPMGGLogEntryTeamTelemetry` (4 Tests): Log-Entry-Felder korrekt gesetzt
+  - `TestTeamCoordinationEventExtraction` (2 Tests): UV3-Extraktion korrekt
+  - `TestBridgeExperienceInsights` (5 Tests): Bridge-API vollständig + NaN-sicher
+  - `TestConflictInjection` (5 Tests): conflict_with_prior_phases korrekte Pfade
+  - `TestHearingPreservation` (3 Tests): HF-Energie bleibt nach Konflikt erhalten
+
+### Dateien geändert
+
+- `backend/core/phase_ontology.py` — CONFLICT_REGISTRY + get_conflict_phases()
+- `backend/core/per_phase_musical_goals_gate.py` — team_policy_* in PhaseGateLogEntry.metadata
+- `backend/core/unified_restorer_v3.py` — _team_coordination_events, metadata["team_coordination"],
+conflict_with_prior_phases-Injektion in_profiled_phase_call
+- `backend/api/bridge.py` — team_coordination in get_experience_insights()
+- `tests/unit/test_team_coordination_telemetry.py` — 30 neue Tests (neu erstellt)
+- `.github/specs/02_pipeline_architecture.md` — §2.29e erweitert
+- `.github/specs/06_phases_system.md` — §6.9b erweitert
+- `.github/copilot-instructions.md` — §2.29e erweitert
+
+## Version 9.11.5 — PMGG Team-Koordination: Vorphasen-Kontext in Retry/Strength (Apr 2026)
+
+### Zusammenfassung
+
+- **PMGG Team-Policy** (`backend/core/per_phase_musical_goals_gate.py`):
+  - Neue Helper-Funktion `_resolve_team_context_policy(phase_id, phase_kwargs)` liest
+    `prior_phase_context` aus UV3 und erzeugt kontextabhängige PMGG-Policy.
+  - Für `phase_50` nach HF-Restaurationskette (`phase_06`/`phase_07`/`phase_23`):
+    - Goal-Exclusions erweitert um `brillanz`, `transparenz`, `timbre_authentizitaet`
+    - Retry-Threshold wird moderat gelockert (`×1.15`, capped)
+    - Initial-Strength wird konservativ gedeckelt (`≤ 0.80`)
+  - Ziel: Folgephasen kooperieren mit Vorphasen statt deren restaurierte HF-Anteile
+    indirekt über PMGG-Retry-Druck wieder abzubauen.
+- **Tests** (`tests/unit/test_per_phase_musical_goals_gate.py`):
+  - `TestPMGGTeamContextPolicy::test_35b_phase50_policy_enabled_after_hf_restoration`
+  - `TestPMGGTeamContextPolicy::test_35c_phase50_policy_disabled_without_prior_context`
+  - `TestPMGGTeamContextPolicy::test_35d_emergency_retries_blocked_for_phase50_hf_team_context`
+  - `TestPMGGTeamContextPolicy::test_35e_emergency_retries_allowed_without_team_block`
+  - `TestPMGGTeamContextPolicy::test_35f_transition_policy_additive_to_subtractive_applies`
+  - `TestPMGGTeamContextPolicy::test_35g_transition_policy_mlgen_to_subtractive_applies`
+
+### Delta-Update
+
+- **Catastrophic/Emergency-Pfad ebenfalls team-kohärent**:
+  - Neuer Helper `_allow_emergency_retries(...)` entscheidet, ob PMGG-Notfall-Retries
+    tatsächlich sinnvoll sind.
+  - Für `phase_50` mit Team-Kontext `phase50_after_hf_restoration` werden
+    Notfall-Retries blockiert (Proxy-Artefakt statt realer Schaden).
+  - `catastrophic_threshold` wird team-policy-bewusst skaliert (`threshold_multiplier`),
+    damit der Notfallpfad nicht durch intentionalen Vorphasen-Kontext fehlgetriggert wird.
+
+- **Vollständige Ausweitung auf alle Phasenfamilien (01–64) über Ontologie**:
+  - UV3 schreibt für jede erfolgreiche Phase generische Team-Semantik in den Kontext
+    (`last_phase_type`, `phase_type_counts`, Typ-Flags).
+  - PMGG leitet daraus eine zentrale Übergangs-Policy für alle Phasen ab
+    (z. B. ADDITIVE→SUBTRACTIVE, ML_GENERATIVE→SUBTRACTIVE, ADDITIVE→DYNAMICS).
+  - Ergebnis: keine punktuelle Einzelregel mehr, sondern systemweite Team-Koordination
+    über Module und Phasen hinweg.
+
+## Version 9.11.4 — Phase_50 §PriorPhase-Guard: HF-Spike-Schutz für Phase_07/06-Harmoniken (Apr 2026)
+
+### Zusammenfassung
+
+**Bug**: `phase_50_spectral_repair.py` — Pass-1 Spike-Detektor (11-Bin-Fenster, threshold_factor 3.0–4.5)
+flaggte durch `phase_07` oder `phase_06` restituierte Harmoniken als Codec-Spikes und inpaintete sie —
+d.h. die Harmonik-Restaurierung der Vorphasen wurde rückgängig gemacht.
+
+**Ursache**: Isolierter restaurierter Harmonik-Peak bei Frequenz f: `mag[f] = H`, `mag_smooth[f] ≈ H/11`
+(10 Nachbarbins nahe Noise Floor). Spike-Ratio = H / (H/11) = 11 ≫ threshold_factor → als Spike markiert.
+
+**Fix** (`phase_50_spectral_repair.py`):
+
+- `_repair_channel(...)` erhält neuen Parameter `hf_protected_bin_start: int = 0`.
+- Bins ≥ `hf_protected_bin_start` werden aus Pass-1 (Spike-Detection) ausgeschlossen.
+- Pass-2 (Frame-Energy-Dropout) bleibt global aktiv — Frame-RMS reagiert nicht auf isolierte HF-Peaks.
+- `process()` berechnet `_hf_protected_bin_start` = `material_rolloff × 0.85 / bin_hz` aus einer Lookup-Tabelle
+  für alle analogen Materialtypen (wax_cylinder/shellac/lacquer_disc/wire_recording/cassette/vinyl/tape/reel_tape).
+- Digitale Materialien (cd_digital, mp3, dat, aac, streaming): keine Schutzzone (kein analoger Rolloff).
+- Metadata-Felder: `hf_protected_bin_start`, `hf_protection_rolloff_hz` für Audit.
+
+**Validierung**:
+
+16 Tests in `tests/unit/test_phase_50_hf_protection_guard.py` — alle grün (1.2 s).
+
+- `test_isolated_harmonic_preserved_with_hf_guard` — Energie ≥ 90 % beim 13-kHz-Harmonik
+- `test_isolated_harmonic_removed_without_hf_guard` — dokumentiert Originalbug (energy < 99 %)
+- `test_lf_codec_spike_still_detected_with_hf_guard` — 2-kHz-Codec-Spike weiterhin erkannt
+- `test_vinyl_hf_harmonic_preservation` — End-to-End via `process()` für vinyl material
+
+## Version 9.11.3 — Pipeline-Stabilität: Passthrough-Guard + AudioSR Timeout (Apr 2026)
+
+### Zusammenfassung
+
+- **PMGG Passthrough-Erkennung** (`per_phase_musical_goals_gate.py`):
+  - Phasen die ihr Audio unverändert zurückgeben (z.B. `phase_31` bei CREPE confidence=0.0)
+    werden jetzt via `np.array_equal` erkannt.
+  - Konsequenz: kein Goal-Scoring, kein Retry (3× CREPE/pYIN), kein `StrictConflictDecay`
+    auf der `dynamics_eq`-Familie mehr.
+  - Einsparung: ~51 s überflüssige Inferenz pro Song mit confidence=0.0 Pitch.
+- **AudioSR Wall-Time-Budget** (`plugins/audiosr_plugin.py`):
+  - Neues `_AUDIOSR_WALL_BUDGET_S = 900.0` (15 min) vor der Zonen-Schleife.
+  - Zonen die das Budget überschreiten werden als Passthrough (Original-Audio) abgeschlossen.
+  - Import `time` hinzugefügt.
+- **[Vorherige Session]** `phase_49_advanced_dereverb.py`: MB-als-GB Bug → `251` → `0.25` GB
+- **[Vorherige Session]** `phase_53_semantic_audio.py`: MB-als-GB Bug → `90` → `0.09` GB
+- **[Vorherige Session]** `phase_05_rumble_filter.py`: DC-Blocker zero-phase + §2.45a RMS-Guard
+- **[Vorherige Session]** `per_phase_musical_goals_gate.py`: `_LF_SUBTRACTIVE_DROP_SKIP`
+
+### Geänderte Dateien
+
+- `backend/core/per_phase_musical_goals_gate.py`
+- `plugins/audiosr_plugin.py`
 
 ### Zusammenfassung
 

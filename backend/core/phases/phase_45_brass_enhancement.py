@@ -195,13 +195,19 @@ class BrassEnhancementPhase(PhaseInterface):
                 phase = np.unwrap(np.arctan2(_analytic.imag, _analytic.real))
                 h2 = amplitude * np.cos(2.0 * phase)
             else:
-                channels = []
-                for ch in range(x.shape[1]):
-                    x_bp = sig.sosfilt(sos_bp, x[:, ch])
-                    _a = np.asarray(_hilbert(x_bp))
-                    h2_ch = np.sqrt(_a.real**2 + _a.imag**2) * np.cos(2.0 * np.unwrap(np.arctan2(_a.imag, _a.real)))
-                    channels.append(h2_ch)
-                h2 = np.column_stack(channels)
+                # §2.51 M/S-Domain: H2-Synthese nur auf Mid (wie phase_07)
+                mid = (x[:, 0] + x[:, 1]) / np.sqrt(2.0)
+                side = (x[:, 0] - x[:, 1]) / np.sqrt(2.0)
+                x_bp = sig.sosfilt(sos_bp, mid)
+                _a = np.asarray(_hilbert(x_bp))
+                h2 = np.sqrt(_a.real**2 + _a.imag**2) * np.cos(2.0 * np.unwrap(np.arctan2(_a.imag, _a.real)))
+                mid = mid + gain_h2 * h2
+                x = np.column_stack(
+                    [
+                        (mid + side) / np.sqrt(2.0),
+                        (mid - side) / np.sqrt(2.0),
+                    ]
+                )
             x = x + gain_h2 * h2
         except Exception:
             # Fallback: classic rectifier if hilbert fails (e.g. very short signal)

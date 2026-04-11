@@ -168,9 +168,15 @@ class UTMOSPlugin:
                     raise
                 except Exception as _exc:
                     logger.debug("Operation failed (non-critical): %s", _exc)  # psutil not available — proceed
+                try:
+                    from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                    _providers = _get_prov("UTMOSv2")
+                except Exception:
+                    _providers = ["CPUExecutionProvider"]
                 self._session = ort.InferenceSession(
                     str(model_path),
-                    providers=["CPUExecutionProvider"],
+                    providers=_providers,
                 )
                 self._model_loaded = True
                 logger.info("🟣 UTMOS: ONNX-Modell geladen (%s)", model_path)
@@ -289,9 +295,15 @@ class UTMOSPlugin:
                         if _local_w2v_base.exists():
                             cfg.model.ssl.name = str(_local_w2v_base)  # type: ignore[attr-defined]
                             logger.debug("UTMOS: SSL-Encoder nutzt lokales wav2vec2-base (%s)", _local_w2v_base)
-                        device = torch.device("cpu")
+                        try:
+                            from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                            _utmos_dev = _get_dev("UTMOSv2")
+                        except Exception:
+                            _utmos_dev = "cpu"
+                        device = torch.device(_utmos_dev)
                         model = _get_model(cfg, device)
-                        state = torch.load(str(ckpt_path), map_location="cpu")  # nosec B614 — lokaler Checkpoint aus models/
+                        state = torch.load(str(ckpt_path), map_location=_utmos_dev)  # nosec B614 — lokaler Checkpoint aus models/
                         # State-Dict kann direkt oder unter Schlüssel liegen
                         if isinstance(state, dict) and "state_dict" in state:
                             state = state["state_dict"]

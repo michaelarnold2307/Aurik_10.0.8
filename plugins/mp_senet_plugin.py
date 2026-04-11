@@ -132,10 +132,16 @@ class MpSenetPlugin:
 
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
+            try:
+                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                _mp_prov = _get_prov("MPSENet")
+            except Exception:
+                _mp_prov = ["CPUExecutionProvider"]
             self._session = ort.InferenceSession(
                 str(_ONNX_PATH),
                 sess_options=opts,
-                providers=["CPUExecutionProvider"],
+                providers=_mp_prov,
             )
             self._model_loaded = True
             logger.info("✅ MP-SENet ONNX geladen (%s, §4.4 — DCCRN/FullSubNet+ Nachfolger)", _ONNX_PATH.name)

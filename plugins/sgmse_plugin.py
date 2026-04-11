@@ -112,6 +112,8 @@ class SGMSEPlusPlugin:
         self._n_fft: int = _DEFAULT_N_FFT
         self._hop: int = _DEFAULT_HOP
         self._win: int = _DEFAULT_WIN
+        self._device: str = "cpu"  # set by _try_load or _try_load_from_checkpoint
+        self._device: str = "cpu"  # set by _try_load or _try_load_from_checkpoint
         self._load_model_geometry()
         self._try_load()
 
@@ -181,10 +183,27 @@ class SGMSEPlusPlugin:
                 if not _budget_ok:
                     logger.warning("SGMSE+: ML-Budget erschöpft — WPE-DSP-Fallback.")
                 else:
-                    self._ts_model = torch.jit.load(str(_TS_PATH), map_location="cpu")  # nosec B614
-                    self._ts_model.eval()
+                    try:
+                        from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                        _dev = _get_dev("SGMSE")
+                    except Exception:
+                        _dev = "cpu"
+                    try:
+                        self._ts_model = torch.jit.load(str(_TS_PATH), map_location=_dev)  # nosec B614
+                        self._ts_model.eval()
+                        self._ts_model.to(_dev)
+                        self._device = _dev
+                    except Exception as _gpu_load_exc:
+                        if _dev != "cpu":
+                            logger.warning("SGMSE+: GPU-Load fehlgeschlagen (%s) — CPU-Retry", _gpu_load_exc)
+                            self._ts_model = torch.jit.load(str(_TS_PATH), map_location="cpu")  # nosec B614
+                            self._ts_model.eval()
+                            self._device = "cpu"
+                        else:
+                            raise
                     self._model_loaded = True
-                    logger.info("✅ SGMSE+ TorchScript geladen (%s)", _TS_PATH.name)
+                    logger.info("✅ SGMSE+ TorchScript geladen (%s, device=%s)", _TS_PATH.name, self._device)
                     try:
                         from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
 
@@ -243,9 +262,27 @@ class SGMSEPlusPlugin:
                     continue
                 dnn.load_state_dict(dnn_state, strict=False)
                 dnn.eval()
+                try:
+                    from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                    _dev = _get_dev("SGMSE")
+                except Exception:
+                    _dev = "cpu"
+                try:
+                    dnn.to(_dev)
+                    self._device = _dev
+                except Exception as _gpu_to_exc:
+                    logger.warning("SGMSE+ Checkpoint: GPU-Placement fehlgeschlagen (%s) — CPU", _gpu_to_exc)
+                    dnn.to("cpu")
+                    self._device = "cpu"
                 self._eager_model = dnn
                 self._eager_backbone = backbone_name
-                logger.info("✅ SGMSE+ Checkpoint-ML geladen (%s, backbone=%s)", ckpt_path.name, backbone_name)
+                logger.info(
+                    "✅ SGMSE+ Checkpoint-ML geladen (%s, backbone=%s, device=%s)",
+                    ckpt_path.name,
+                    backbone_name,
+                    self._device,
+                )
                 return True
         except Exception as exc:
             logger.warning("SGMSE+ Checkpoint-ML nicht ladbar: %s", exc)
@@ -592,19 +629,8 @@ class SGMSEPlusPlugin:
             if starts[-1] != max(0, T_orig - target_frames):
                 starts.append(max(0, T_orig - target_frames))
 
-            # Hard runtime guard: if chunk count explodes, use DSP fallback to preserve
-            # deterministic completion instead of risking long-running TorchScript loops.
-            if len(starts) > 12:
-                logger.warning(
-                    "SGMSE+ TorchScript skipped: chunk_count=%d too high (target_frames=%d, T=%d) — WPE fallback.",
-                    len(starts),
-                    target_frames,
-                    T_orig,
-                )
-                return self._wpe_fallback(mono, _SR)
-
             with torch.no_grad():
-                t_t = torch.tensor([float(sigma)], dtype=torch.float32)
+                t_t = torch.tensor([float(sigma)], dtype=torch.float32).to(self._device)
                 for s in starts:
                     e = min(s + target_frames, T_orig)
                     seg = x_t[:, :, :, s:e]
@@ -612,7 +638,7 @@ class SGMSEPlusPlugin:
                     if seg_len < target_frames:
                         seg = np.pad(seg, ((0, 0), (0, 0), (0, 0), (0, target_frames - seg_len)), mode="constant")
 
-                    xt_t = torch.from_numpy(seg)
+                    xt_t = torch.from_numpy(seg).to(self._device)
                     y_t = xt_t
                     if self._ts_model is not None:
                         out_t = self._ts_model(xt_t, y_t, t_t)
@@ -677,6 +703,23 @@ class SGMSEPlusPlugin:
                     exc,
                 )
                 raise MemoryError(f"SGMSE+ Torch-OOM: {exc}") from exc
+            if self._device != "cpu":
+                logger.warning("SGMSE+: GPU-Inferenz fehlgeschlagen (%s) — CPU-Retry", exc)
+                try:
+                    for _m in (self._ts_model, self._eager_model):
+                        if _m is not None:
+                            _m.cpu()
+                    self._device = "cpu"
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        _mgr().report_gpu_error("SGMSE", exc)
+                    except Exception:
+                        pass
+                except Exception as _mv_exc:
+                    logger.debug("SGMSE+ GPU→CPU move fehlgeschlagen: %s", _mv_exc)
+                    self._device = "cpu"
+                return self._enhance_torchscript(mono, sigma)
             logger.warning("SGMSE+ TorchScript-Inferenzfehler: %s — WPE-Fallback.", exc)
             return self._wpe_fallback(mono, _SR)
 

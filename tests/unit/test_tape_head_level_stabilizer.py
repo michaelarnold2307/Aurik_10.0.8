@@ -12,6 +12,7 @@ Tests:
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 SR = 48_000
 
@@ -412,3 +413,165 @@ class TestPhase12Integration:
         result = phase.process(dipped, SR, material=MaterialType.TAPE)
         assert np.isfinite(result.audio).all()
         assert float(np.max(np.abs(result.audio))) <= 1.0
+
+
+# ===========================================================================
+# Class 6: Cross-Material Gate — _should_keep_cross_material_tape_head_level_dip
+# ===========================================================================
+
+
+class TestCrossMaterialGate:
+    """§9.1a Cross-Material-Fallback: starke Dip-Morphologie muss auch bei
+    Fehlklassifikation (z.B. Vinyl statt Tape) durchgelassen werden."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_crepe(self, monkeypatch):
+        monkeypatch.setenv("AURIK_DISABLE_CREPE", "1")
+
+    # -- Hilfsmethode direkt (kein Scanner-Scan nötig) ---------------------
+
+    def test_60_method_exists_on_scanner(self):
+        """Die Methode muss direkt auf DefectScanner verfügbar sein."""
+        from backend.core.defect_scanner import DefectScanner
+
+        assert hasattr(DefectScanner, "_should_keep_cross_material_tape_head_level_dip")
+
+    def test_61_strong_morphology_passes(self):
+        """Severity ≥ 0.12, count ≥ 2, depth ≥ 6 dB, rate ≥ 0.15 → True."""
+        from backend.core.defect_scanner import DefectScanner, DefectScore, DefectType
+
+        score = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.45, 0.80)
+        score.metadata = {
+            "dip_count": 5,
+            "mean_depth_db": 12.0,
+            "event_rate_per_s": 0.62,
+        }
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(score) is True
+
+    def test_62_weak_severity_blocked(self):
+        """Severity < 0.12 → immer False, auch bei starker Morphologie."""
+        from backend.core.defect_scanner import DefectScanner, DefectScore, DefectType
+
+        score = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.08, 0.70)
+        score.metadata = {
+            "dip_count": 6,
+            "mean_depth_db": 14.0,
+            "event_rate_per_s": 0.70,
+        }
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(score) is False
+
+    def test_63_single_event_blocked(self):
+        """dip_count < 2 → False (einzelner Lautstärke-Einbruch, kein periodisches Muster)."""
+        from backend.core.defect_scanner import DefectScanner, DefectScore, DefectType
+
+        score = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.30, 0.80)
+        score.metadata = {
+            "dip_count": 1,
+            "mean_depth_db": 15.0,
+            "event_rate_per_s": 0.50,
+        }
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(score) is False
+
+    def test_64_shallow_dips_blocked(self):
+        """mean_depth_db < 6.0 → False (kein hörbarer Kopfkontakt-Einbruch)."""
+        from backend.core.defect_scanner import DefectScanner, DefectScore, DefectType
+
+        score = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.25, 0.75)
+        score.metadata = {
+            "dip_count": 4,
+            "mean_depth_db": 3.0,
+            "event_rate_per_s": 0.40,
+        }
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(score) is False
+
+    def test_65_low_event_rate_blocked(self):
+        """event_rate_per_s < 0.15 → False (zu selten für periodischen Kopf-Kontakt)."""
+        from backend.core.defect_scanner import DefectScanner, DefectScore, DefectType
+
+        score = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.20, 0.75)
+        score.metadata = {
+            "dip_count": 3,
+            "mean_depth_db": 10.0,
+            "event_rate_per_s": 0.08,
+        }
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(score) is False
+
+    # -- Integration mit vollständigem Scanner-Scan ------------------------
+
+    def test_66_vinyl_with_strong_dips_uses_fallback(self):
+        """Starke periodische Dips auf Vinyl → cross_material_fallback=True, severity > 0."""
+        from backend.core.defect_scanner import DefectScanner, MaterialType
+
+        sr = SR
+        dur = 10.0
+        n = int(sr * dur)
+        t = np.linspace(0, dur, n, endpoint=False, dtype=np.float32)
+        audio = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        # 7 starke periodische Dips (~15 dB)
+        for start_s in np.arange(1.0, dur - 0.5, 1.2):
+            audio = _inject_level_dips(audio, dip_times=[float(start_s)], dip_depth_db=15.0)
+
+        scanner = DefectScanner.__new__(DefectScanner)
+        scanner.sample_rate = sr
+        scanner.material_type = MaterialType.TAPE  # für _detect_tape_head_level_dips
+        raw = scanner._detect_tape_head_level_dips(audio)
+
+        # Prüfe, ob der Fallback-Guard greifen würde
+        should_keep = DefectScanner._should_keep_cross_material_tape_head_level_dip(raw)
+        assert should_keep is True, (
+            f"Erwartet: cross-material-Fallback greift, aber: "
+            f"sev={raw.severity:.3f} dip_count={raw.metadata.get('dip_count')} "
+            f"depth={raw.metadata.get('mean_depth_db'):.1f} "
+            f"rate={raw.metadata.get('event_rate_per_s'):.3f}"
+        )
+
+    def test_67_clean_vinyl_not_affected(self):
+        """Sauberes Vinyl-Signal → Severity bleibt 0, kein Fallback."""
+        from backend.core.defect_scanner import DefectScanner, MaterialType
+
+        sr = SR
+        n = int(sr * 8.0)
+        t = np.linspace(0, 8.0, n, endpoint=False, dtype=np.float32)
+        audio = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+        scanner = DefectScanner.__new__(DefectScanner)
+        scanner.sample_rate = sr
+        scanner.material_type = MaterialType.VINYL
+        raw = scanner._detect_tape_head_level_dips(audio)
+
+        assert raw.severity < 0.05
+        assert DefectScanner._should_keep_cross_material_tape_head_level_dip(raw) is False
+
+    def test_68_full_scan_vinyl_cross_material_severity_nonzero(self):
+        """Vollständiger scan() auf Vinyl mit starken Dips → TAPE_HEAD_LEVEL_DIP > 0."""
+        from backend.core.defect_scanner import DefectType, MaterialType, get_defect_scanner
+
+        sr = SR
+        dur = 10.0
+        n = int(sr * dur)
+        t = np.linspace(0, dur, n, endpoint=False, dtype=np.float32)
+        audio = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        for start_s in np.arange(1.0, dur - 0.5, 1.2):
+            audio = _inject_level_dips(audio, dip_times=[float(start_s)], dip_depth_db=15.0)
+
+        scanner = get_defect_scanner(sr)
+        result = scanner.scan(audio, sr, MaterialType.VINYL)
+        sev = result.scores[DefectType.TAPE_HEAD_LEVEL_DIP].severity
+        meta = result.scores[DefectType.TAPE_HEAD_LEVEL_DIP].metadata
+
+        assert sev > 0.0, f"Erwartet: cross-material-Fallback setzt severity > 0, got {sev}"
+        assert meta.get("cross_material_fallback") is True
+
+    def test_69_full_scan_clean_vinyl_severity_zero(self):
+        """Vollständiger scan() auf sauberem Vinyl → TAPE_HEAD_LEVEL_DIP bleibt 0."""
+        from backend.core.defect_scanner import DefectType, MaterialType, get_defect_scanner
+
+        sr = SR
+        n = int(sr * 6.0)
+        t = np.linspace(0, 6.0, n, endpoint=False, dtype=np.float32)
+        audio = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+        scanner = get_defect_scanner(sr)
+        result = scanner.scan(audio, sr, MaterialType.VINYL)
+        sev = result.scores[DefectType.TAPE_HEAD_LEVEL_DIP].severity
+        assert sev == 0.0, f"False Positive: sauberes Vinyl → severity={sev:.4f}"

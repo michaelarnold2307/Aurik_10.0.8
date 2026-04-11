@@ -223,6 +223,11 @@ class MaskingAnalyzer:
         # Initialize masking threshold with absolute threshold
         if self.config.include_absolute_threshold:
             masking_threshold = self._compute_absolute_threshold(f)
+            # Convert ATH from dB SPL to dBFS.
+            # Standard assumption: 0 dBFS ≈ 94 dB SPL (ISO 1683, 1 Pa reference)
+            # ATH values are in dB SPL, signal power is in dBFS.
+            _SPL_TO_DBFS_OFFSET = 94.0
+            masking_threshold = masking_threshold - _SPL_TO_DBFS_OFFSET
             # Broadcast to time dimension
             masking_threshold = masking_threshold[:, np.newaxis] + np.zeros((1, len(t)))
         else:
@@ -287,28 +292,49 @@ class MaskingAnalyzer:
         # More sophisticated: Use actual spreading function
 
         if self.config.enable_spreading_function:
-            # Apply spreading function (convolution in frequency)
-            # Asymmetric: steeper below masker, flatter above
+            # Proper roex-like spreading function (Moore & Glasberg 1997):
+            # The spreading kernel must be a POSITIVE, NORMALIZED function
+            # that represents how masking excitation spreads in frequency.
+            # Asymmetric: upward masking spreads further (-10 dB/ERB)
+            # than downward masking (-24 dB/ERB).
+            #
+            # We convert dB attenuation to linear spreading weights,
+            # normalize, then convolve with linear power, and convert back.
 
-            # Create spreading kernel (simplified triangular)
             kernel_size = 15  # Frequency bins
             kernel = np.zeros(kernel_size)
             center = kernel_size // 2
 
-            # Lower side (steeper): -27 dB/Bark
+            # Lower side (downward masking, steeper): -24 dB/ERB
             for i in range(center):
-                kernel[i] = -(center - i) * 3.0  # dB attenuation
+                atten_db = (center - i) * 3.0  # dB attenuation per bin
+                kernel[i] = 10.0 ** (-atten_db / 10.0)
 
-            # Upper side (flatter): -10 dB/Bark
-            for i in range(center, kernel_size):
-                kernel[i] = -(i - center) * 1.5  # dB attenuation
+            # Center bin: full masking
+            kernel[center] = 1.0
 
-            # Apply spreading (column-wise)
+            # Upper side (upward masking, shallower): -10 dB/ERB
+            for i in range(center + 1, kernel_size):
+                atten_db = (i - center) * 1.5  # dB attenuation per bin
+                kernel[i] = 10.0 ** (-atten_db / 10.0)
+
+            # Normalize kernel so sum = 1 (energy-preserving convolution)
+            kernel /= kernel.sum()
+
+            # Convolve in LINEAR domain, convert back to dB, apply masking depth.
+            # Masking depth: a component must exceed the local excitation by
+            # this many dB to be perceived as audible. The spread includes
+            # self-masking (the component's own energy), so without depth
+            # offset masking_ratio ≈ 0 everywhere.
+            # Standard values: tone-masking-tone ~14.5 dB, noise-masking-tone
+            # ~5.5 dB.  For general music (mix of tonal and noise): ~12 dB.
+            _MASKING_DEPTH_DB = 12.0
+
             masking_threshold = np.zeros_like(power_db)
             for t_idx in range(power_db.shape[1]):
-                # Convolve with spreading function
-                spread = np.convolve(power_db[:, t_idx], kernel, mode="same")
-                masking_threshold[:, t_idx] = spread
+                power_lin = 10.0 ** (power_db[:, t_idx] / 10.0)
+                spread_lin = np.convolve(power_lin, kernel, mode="same")
+                masking_threshold[:, t_idx] = 10.0 * np.log10(spread_lin + 1e-30) - _MASKING_DEPTH_DB
         else:
             # Simple: -50dB below signal
             masking_threshold = power_db - 50.0

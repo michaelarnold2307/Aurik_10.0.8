@@ -736,6 +736,7 @@ class AurikDenker:
         # §2.47a: Pass cached_medium_result to avoid a second MediumDetector.detect() call.
         _emit(4, "Tonträgerkette analysiert …")
         chain_info: dict[str, Any] = {}
+        kette = None  # Guard: TontraegerketteDenker.analysiere() kann fehlschlagen
         try:
             kette = get_tontraegerkette_denker().analysiere(
                 aktuelles_audio,
@@ -815,6 +816,19 @@ class AurikDenker:
             # Ära (z.B. 1890er für Magnetband) berechnet, die dann _recommend_autopilot_mode
             # und die emotionale Intention falsch setzt.
             _hint_decade = int(getattr(cached_era_result, "decade", 0) or 0) or None
+            # hint_genre: cached genre result aus Pre-Analyse übergeben —
+            # verhindert dass MusikalischerGlobalplan Genre als "unknown" einträgt
+            # wenn GenreClassifier bereits Schlager/Jazz/etc. erkannt hat (§2.47a).
+            _hint_genre: str | None = None
+            if cached_genre_result is not None:
+                if getattr(cached_genre_result, "is_schlager", False):
+                    _hint_genre = "schlager"
+                else:
+                    _gl = getattr(cached_genre_result, "genre_label", None) or getattr(
+                        cached_genre_result, "primary_label", None
+                    )
+                    if _gl and str(_gl).lower() not in ("unbekannt", "unknown", ""):
+                        _hint_genre = str(_gl).lower()
             _globalplan = _erstelle_gp(
                 aktuelles_audio,
                 sr,
@@ -822,6 +836,7 @@ class AurikDenker:
                 use_ml_classifiers=False,
                 chain_info=chain_info,
                 hint_decade=_hint_decade,
+                hint_genre=_hint_genre,
             )
             stage_notes["globalplan"] = (
                 f"\u00c4ra: {_globalplan.portrait.decade}er, "
@@ -897,6 +912,82 @@ class AurikDenker:
                 "Studio 2026 auf nicht-idealem Material: Interne Schutzmaßnahmen "
                 "(SongCal, PMGG, FeedbackChain) sind aktiv."
             )
+
+        # ── Stufe 5b: PhaseInteractionDenker — Orchestrierung übernehmen ────────
+        # Erzeugt einen semantisch aufgelösten, konfliktfreien Phasenplan.
+        # UV3.restore() erhält diesen als precomputed_phase_plan und agiert dann
+        # als reiner Executor (kein _optimize_phase_plan_intelligence() mehr).
+        # Bei Fehler: leerer Plan → UV3 selektiert autonom (fail-safe §0).
+        _pid_plan = None
+        _pid_phase_plan: list[str] | None = None
+        try:
+            from denker.phase_interaction_denker import get_phase_interaction_denker
+
+            _pid_defect_result = cached_defect_result or (
+                getattr(defekt, "raw_scan_result", None) if defekt is not None else None
+            )
+            if _pid_defect_result is not None:
+                _pid_rest_score: float = float(
+                    getattr(cached_restorability_result, "restorability_score", 70.0)
+                    if cached_restorability_result is not None
+                    else 70.0
+                )
+                # §GoalRisk: Exzellenz-Prognose VOR UV3 — schützende Phasen prophylaktisch
+                # aktivieren statt P1/P2-Verletzungen erst nach der Pipeline zu heilen (§2.45a).
+                _goal_risk_map: dict[str, float] = {}
+                try:
+                    from denker.exzellenz_denker import get_exzellenz_denker as _pid_exz_factory
+
+                    _goal_risk_map = _pid_exz_factory().prognostiziere(
+                        aktuelles_audio,
+                        sr,
+                        defect_result=_pid_defect_result,
+                        material=material,
+                    )
+                    if _goal_risk_map:
+                        logger.debug(
+                            "AurikDenker [5b/10] Goal-Risiko-Prognose: %s",
+                            {k: f"{v:.2f}" for k, v in _goal_risk_map.items()},
+                        )
+                except Exception as _grm_exc:
+                    logger.debug("AurikDenker [5b/10] Goal-Risiko-Prognose: %s", _grm_exc)
+                _pid_plan = get_phase_interaction_denker().plan(
+                    defect_result=_pid_defect_result,
+                    material=material,
+                    mode=effective_mode,
+                    chain_info=chain_info or None,
+                    chain_result=kette,
+                    defekt_hint=_defekt_hint,
+                    audio=aktuelles_audio,
+                    sr=sr,
+                    restorability_score=_pid_rest_score,
+                    goal_risk_map=_goal_risk_map or None,
+                    strategie_plan=strategie,
+                )
+                if _pid_plan.is_valid:
+                    _pid_phase_plan = _pid_plan.phases
+                    _pid_injected = sum(1 for n in _pid_plan.conflict_notes if "Injektion" in n)
+                    stage_notes["phase_interaction"] = (
+                        f"PhaseInteractionDenker: {len(_pid_phase_plan)} Phasen "
+                        f"({len(_pid_plan.suppressed)} supprimiert, "
+                        f"{len(_pid_plan.ordering_applied)} Ordnungsänderungen, "
+                        f"{_pid_injected} injiziert)"
+                    )
+                    phases_executed.append("phase_interaction_denker")
+                    logger.info(
+                        "AurikDenker [5b/10] PhaseInteractionDenker: %d Phasen, supprimiert=%s, conflict_notes=%s",
+                        len(_pid_phase_plan),
+                        list(_pid_plan.suppressed.keys()),
+                        _pid_plan.conflict_notes,
+                    )
+                else:
+                    stage_notes["phase_interaction"] = "PhaseInteractionDenker: kein Plan — UV3-Fallback"
+                    logger.info("AurikDenker [5b/10] PhaseInteractionDenker: kein Plan → UV3 übernimmt.")
+            else:
+                stage_notes["phase_interaction"] = "PhaseInteractionDenker: kein defect_result — übersprungen"
+        except Exception as _pid_exc:
+            stage_notes["phase_interaction"] = f"PhaseInteractionDenker fehlgeschlagen: {_pid_exc}"
+            logger.warning("AurikDenker [5b/10] PhaseInteractionDenker: %s", _pid_exc)
 
         # ── ARE-Metadaten-Träger (A-2/A-5/B-1) ────────────────────────────────
         _rest_confidence: float = 0.85
@@ -1148,6 +1239,8 @@ class AurikDenker:
                                 input_path=input_path,
                                 output_path=output_path,
                                 no_rt_limit=no_rt_limit,
+                                # §PID: PhaseInteractionDenker-Plan — UV3 als reiner Executor
+                                precomputed_phase_plan=_pid_phase_plan,
                             )
                         )
                     except Exception as _e:

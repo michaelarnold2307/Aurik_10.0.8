@@ -104,7 +104,7 @@ PHASE_TYPE_REGISTRY: dict[str, PhaseOperationType] = {
     "phase_07": PhaseOperationType.ADDITIVE,  # Harmonic restoration (H2-H4)
     "phase_21": PhaseOperationType.ADDITIVE,  # Harmonic exciter
     "phase_22": PhaseOperationType.ADDITIVE,  # Tape saturation (tanh soft-sat)
-    "phase_23": PhaseOperationType.ADDITIVE,  # Spectral inpainting (AudioSR gap-fill)
+    "phase_23": PhaseOperationType.CORRECTIVE,  # Spectral inpainting (AudioSR gap-fill / MRSA DSP repair)
     "phase_37": PhaseOperationType.ADDITIVE,  # Bass enhancement
     "phase_38": PhaseOperationType.ADDITIVE,  # Presence boost (Bell EQ)
     "phase_39": PhaseOperationType.ADDITIVE,  # Air band enhancement
@@ -224,3 +224,55 @@ P1P2_DRIFT_CHECK_INVALID_TYPES: frozenset[PhaseOperationType] = frozenset(
         PhaseOperationType.ANALYSIS_ONLY,
     }
 )
+
+# ── §2.29e Phasen-Konflikt-Register ───────────────────────────────────────
+#
+# Explizite Paare, bei denen Phase B die Arbeit von Phase A NICHT neutralisieren darf:
+#   key   = abgeschlossene Phase (hat etwas repariert)
+#   value = Folgephasen, die das Ergebnis nicht revertieren dürfen
+#
+# Semantik: „phase_09 hat Crackle entfernt → phase_50 darf diese Bins nicht als
+# Codec-Spikes einstufen und erneut löschen."
+#
+# Matching via startswith in get_conflict_phases() — phase_09_crackle → trifft „phase_09".
+# Invariante: CONFLICT_REGISTRY definiert, was UV3 als conflict_with_prior_phases injiziert;
+# die Phase selbst entscheidet, wie sie damit umgeht (conservative processing, skip, log).
+#
+CONFLICT_REGISTRY: dict[str, frozenset[str]] = {
+    # Crackle/Click repariert → Spectral-Repair darf reparierte Bins nicht als Spikes sehen
+    "phase_09": frozenset({"phase_50"}),
+    "phase_01": frozenset({"phase_50", "phase_27"}),
+    # Harmonik restauriert → Denoise/Spectral-Repair darf neue Obertöne nicht entfernen
+    "phase_07": frozenset({"phase_50", "phase_03", "phase_29"}),
+    # Bandbreite erweitert → HF-entfernende Phasen dürfen HF-Extension nicht rückgängig machen
+    "phase_06": frozenset({"phase_28", "phase_29", "phase_50"}),
+    # Spektrales Inpainting abgeschlossen → Denoise darf den Inhalt nicht nochmals entfernen
+    "phase_23": frozenset({"phase_03", "phase_29"}),
+    # Diffusions-Inpainting → Denoise darf halluzinierten Inhalt nicht entfernen
+    "phase_55": frozenset({"phase_03", "phase_29"}),
+    # Dropout repariert → Spectral-Repair + Denoise dürfen frisch interpolierten Inhalt nicht entfernen
+    "phase_24": frozenset({"phase_50", "phase_03", "phase_29"}),
+    # Bandlücke repariert (HEAD_WEAR) → Denoise darf restauriertes Band nicht re-entrauschen
+    "phase_56": frozenset({"phase_29", "phase_03"}),
+    # Broadband-Denoise → nachfolgende Harmonic/Freq-Restaurierung konservativ (§2.46 Invariante:
+    # subtraktiv vor additiv; eine zweite Denoise-Runde nach Harmonik-Enhancement ist ein Konflikt)
+    "phase_03": frozenset({"phase_29"}),
+}
+
+
+def get_conflict_phases(completed_phase_id: str) -> frozenset[str]:
+    """Return phase IDs that should behave conservatively after completed_phase_id ran.
+
+    Uses prefix matching — robust against suffix variants (e.g. 'phase_09_crackle').
+    Returns empty frozenset when no conflict is registered.
+
+    Args:
+        completed_phase_id: ID of the phase that already ran and produced content.
+
+    Returns:
+        frozenset of phase ID prefixes that should receive 'conflict_with_prior_phases'.
+    """
+    for _prefix, _conflicts in CONFLICT_REGISTRY.items():
+        if completed_phase_id.startswith(_prefix):
+            return _conflicts
+    return frozenset()

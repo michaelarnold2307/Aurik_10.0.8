@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import numpy as np
+import psutil
 import scipy.signal as signal
 
 from backend.core.phases.phase_06_frequency_restoration import FrequencyRestorationPhase
+
+
+class _FreeMemVM:
+    """Mocked psutil.virtual_memory — 32 GB free, bypasses phase_06 headroom guard."""
+
+    available: int = 32 * 1024**3
+    total: int = 32 * 1024**3
+    percent: float = 10.0
 
 
 class _FakeAudioSRPlugin:
@@ -30,6 +39,9 @@ def _make_rolloff_audio(sr: int = 48_000, duration_s: float = 0.35) -> np.ndarra
 
 
 def test_phase06_uses_ml_hybrid_when_audiosr_available(monkeypatch) -> None:
+    # Mock psutil so the phase_06 headroom guard (requires 9.5 GB available) passes
+    # on memory-constrained dev machines. Tests ML path logic, not RAM availability.
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: _FreeMemVM())
     phase = FrequencyRestorationPhase(sample_rate=48_000)
     audio = _make_rolloff_audio()
 
@@ -53,6 +65,10 @@ def test_phase06_uses_ml_hybrid_when_audiosr_available(monkeypatch) -> None:
 
 
 def test_phase06_falls_back_to_dsp_on_ml_error(monkeypatch) -> None:
+    # Mock psutil so the phase_06 headroom guard passes, allowing AudioSR to be
+    # attempted (and fail with RuntimeError) — which sets ml_error in metadata.
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: _FreeMemVM())
+
     class _BrokenAudioSRPlugin:
         def process(self, audio: np.ndarray, sr: int, target_sr: int = 48_000) -> np.ndarray:
             _ = (audio, sr, target_sr)

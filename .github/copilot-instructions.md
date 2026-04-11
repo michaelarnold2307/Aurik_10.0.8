@@ -4,9 +4,9 @@
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
 > Rekonstruktions-Denkersystem.* Stand: April 2026 — Version **9.11.0**
 >
-> **instructions_version: 6.9** — §2.53 Experience Closed Loop + Bridge/Frontend-Propagation normiert 08.04.2026
+> **instructions_version: 7.1** — §2.55 PMGG-CIG-Synchronisations-Invariante normiert 10.04.2026
 >
-> Aktuelle Testzahl: **~10022+ `def test_`-Funktionen** (376 Testdateien; alle grün)
+> Aktuelle Testzahl: **~11084 `def test_`-Funktionen** (424 Testdateien; alle grün)
 >
 > **§2.36 `LyricsGuidedEnhancement`** ist ab Version **9.10.x Pflicht**.
 
@@ -116,7 +116,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | Normalisierung | RMS / Peak | LUFS ITU-R BS.1770-5 |
 | Audio-Import | `sf.read(path)` / `librosa.load(path)` | `load_audio_file(filepath)` |
 | Backend-Import | `from Aurik910... import` in `backend/` | Architektur-Trennung |
-| GPU | `map_location="cuda"` | CPU-only: `map_location="cpu"` |
+| GPU | `map_location="cuda"` ohne ml_device_manager | `get_torch_device("PluginName")` via ml_device_manager |
 | Musikmetriken | `pesq()`, `dnsmos()`, `nisqa()` | PQS-MOS, VERSA, SingMOS |
 | Wiener-Filter | `scipy.signal.wiener()` primär | OMLSA / DeepFilterNet |
 | LPC | Ordnung < 16 | Ord. 30–40 @ 48 kHz |
@@ -132,8 +132,20 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | Inpainting HF-Halluzination | AR/Diffusion ohne BW-Begrenzung | `_MATERIAL_BW_CAP_HZ` in phase_55 — wax_cylinder ≤ 5kHz, wire_recording ≤ 6kHz (§0) |
 | Phase_63 Stereo IMD | Unabhängiges L/R-IMD-Notch | M/S-Domain: Notch-Maske aus Mid berechnen, symmetrisch auf Mid+Side anwenden (§2.51) |
 | Phase-Wetness ohne Feedback | Feste `strength` ohne Mess-Feedback zwischen Phasen | `PhaseConductor.recommend()` (§2.52) — 4D-State-Vektor → adaptiver Strength-Hint |
+| Feste Guard-Schwellwerte | `MAX_DRIFT = -0.05` / `regression > 0.02` als Konstanten | `compute_adaptive_drift_tolerance()` aus Material/Restorability/Defects (§2.54) |
 | PhaseSkipper rohe Severity | `defect_score.severity` direkt ohne Salience-Gewichtung | `_salience_adjusted_severity()` (§2.47) — ERB-maskierte Severity; fully-masked (n_masked≥3, n_salient=0) → -50 % |
 | Carrier-Formant-Inversion | Phase 42 ohne Material-Kontext in `_enhance_channel` | `_restore_carrier_formant_decay(audio, sr, material_type)` Stage 0.5 (§2.52, Hebel 4) |
+| Loudness-Guard RMS | `np.mean(audio**2)` (globaler RMS in Guards) | `_rms_dbfs_gated()` — Frame-basiert, nur Frames > −50 dBFS, Stille ignoriert (§2.45a-I) |
+| Loudness-Guard Gain | `audio *= gain_factor` (uniformer Gain) | `_musical_gain_envelope()` — Gain nur auf Musik-Frames, Stille unverändert (§2.45a-II) |
+| Loudness-Guard Limiter | Unbedingter Soft-Limiter nach Makeup-Gain | Soft-Limiter NUR wenn `peak > 0.98` — keine Routine-Dynamik-Kompression (§2.45a-III) |
+| FeedbackChain feste Schwellen | `_prune_threshold = -0.05` / `if history[-1] < history[-2] - 0.05` als Konstanten | `_compute_adaptive_prune_threshold(is_restorative, material, rest, severity)` — z. B. shellac 3×, vinyl 2×, clamped [-0.30, base] |
+| Carrier-Repair consecutive_rollbacks | Carrier-Repair-Rollback inkrementiert `consecutive_rollbacks` | `_CARRIER_REPAIR_PHASE_PREFIXES`-Check vor Increment: Carrier-Repair-Rollbacks niemals zählen (§2.48 v9.11.3) |
+| Spectral-Tilt-Drift in ADDITIVE-Phasen | HF-Extension ohne Tilt-Check (phase_06, phase_39) — Ära-Charakter wird zerstört ohne Goal-Verstoß | `era_result.spectral_tilt` in `kwargs` prüfen; Post-Tilt via `_estimate_spectral_tilt_quick()`; Cap wenn Deviation > material_tolerance (±1.5–±3.0 dB/oct je Material) (§2.46b) |
+| Roughness/Sharpness Anstieg ungeprüft | DYNAMICS/ADDITIVE-Phasen (phase_35, phase_39) erhöhen psychoakustische Lästigkeit ohne Gate | `ArtifactFreedomGate._compute_roughness_zwicker()` + `_compute_sharpness_bismarck()` für `DYNAMICS/ADDITIVE/ENHANCEMENT`-Phasen; Penalty -0.05 bzw. -0.10 (§2.49c) |
+| MERT als primäre Qualitätsmetrik | `MertPlugin.score()` direkt als HPI-Haupt-Koeffizient wenn VERSA verfügbar | VERSA primär; MERT als Proxy-Fallback wenn VERSA fehlschlägt; `metadata["mert_proxy_used"]` setzen (§2.44) |
+| Lautheitsmessung ohne ISO 532-1 | `np.mean(audio**2)` oder LUFS-only nach Rumble/Multiband-Phasen | `compute_specific_loudness_zwicker(audio, sr)` → ΔN > 2.0 sone = FAIL, Dry/Wet-Rescue (§4.1b) |
+| JND-blinde PMGG-Phase-Akzeptanz | Phase mit allen Deltas > 0 und < JND wird identisch zu signifikant positiver Phase behandelt | `JND_MIN_DELTA` Dict in `_run_with_retry()`: wenn alle Deltas ≥ 0 UND alle < JND → `sub_threshold`, kein Retry, `metadata["sub_threshold_phases"]` (§2.47b) |
+| Uniforme Goal-Gewichtung | Alle 14 Goals gleich gewichtet via Minimax (`_max_regression` ohne Weights) | `estimate_goal_importance()` → Per-Song-Profil → `goal_weights` in PMGG/CIG/GPP/FC (§2.56) |
 
 ### Sprachkonvention
 - **UI-Texte, Fehlermeldungen**: Deutsch (Ursache + Lösungsvorschlag)
@@ -159,7 +171,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 `[RELEASE_MUST]` = Harte Release-Bedingung; CI-Gates nicht skippbar.
 `[TARGET_2026]` = Roadmap 2026, kein Release-Blocker.
 
-## Performance-Budget (Desktop, kein GPU)
+## Performance-Budget (Desktop, GPU-Mixed-Mode optional)
 
 | Operation | Limit / Minute Audio |
 |---|---|
@@ -170,8 +182,11 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 
 - Verarbeitungs-SR: **48 000 Hz** (Phasen/Plugins)
 - Analyse-Module: **native Import-SR** (kein `assert sr == 48000`)
-- ONNX: `providers=["CPUExecutionProvider"]`
-- Torch: `model.to("cpu")`; `torch.set_num_threads(os.cpu_count())`
+- ONNX (heavy plugins): `providers=get_ort_providers("PluginName")` via `ml_device_manager`
+- ONNX (light plugins): `providers=["CPUExecutionProvider"]`
+- Torch (heavy plugins): `model.to(get_torch_device("PluginName"))` via `ml_device_manager`
+- Torch (light plugins/DSP): `model.to("cpu")`; `torch.set_num_threads(os.cpu_count())`
+- GPU-Fallback: Jedes Plugin MUSS bei GPU-Fehler transparent auf CPU fallen (§2.47)
 
 ## Kanonischer Pipeline-Ablauf (Kurzfassung)
 
@@ -199,19 +214,23 @@ Letztes Gate vor Export. Misst **Gesamt-Hörverbesserung** statt nur Einzel-Goal
 **Restoration**: `perceptual_delta > 0` Pflicht für jede Phase; ≤ 0 → Skip. So wenige Phasen wie nötig.
 **Studio 2026**: Volle Enhancement-Kette, aber `perceptual_delta > 0` bleibt Pflicht — kein Over-Processing.
 
-### [RELEASE_MUST] §2.45a Mid-Pipeline-Loudness-Drift-Guard (v9.10.128)
+### [RELEASE_MUST] §2.45a Mid-Pipeline-Loudness-Drift-Guard (v9.10.128, erweitert v9.11.5)
 
 Frühe subtraktive Phasen dürfen den wahrgenommenen Musikpegel nicht kollabieren lassen.
 
 - Betroffene Phasenklasse: breitbandig/subtraktiv (z. B. Denoise, Noise-Gate, Dereverb, Surface/Hiss-Reduction)
 - Invariante: material-adaptiver per-Phase-RMS-Drift-Guard muss aktiv sein
+- **Gated-RMS Pflicht** (§2.45a-I): RMS-Messungen frame-basiert, nur Frames > −50 dBFS; Stille-Frames ignorieren; Stereo→Mono-Downmix vor Framing
+- **Envelope-Aware Gain** (§2.45a-II): Makeup-Gain NUR auf musikalische Frames; Stille-Frames unverändert (Gain=1.0); 10 ms Crossfade
+- **Soft-Limiter bedingt** (§2.45a-III): tanh-Shaping bei 0.92 NUR wenn peak > 0.98 (echtes Clipping-Risiko)
+- **Dreistufige Kaskade** (§2.45a-IV): Per-Phase → Mid-Pipeline (kumulativ) → End-of-Pipeline (final); jede Stufe nutzt Gated-RMS + Envelope-Gain
 - Guard-Reaktion: **nicht** Phase wirkungslos machen; stattdessen begrenzte Dry/Wet-Rescue oder sichere Makeup-Gain-Kompensation
 - Peak-Guard Pflicht: Gain-Limits mit `np.percentile(np.abs(audio), 99.9)` (kein `np.max()`)
 - Telemetriepflicht: pro Phase `rms_drop_db` und `loudness_makeup_db` in Phase-Metadata; Pipeline-Metadaten führen Top-Drops
 
 **Normativer Zweck**: Defektentfernung bleibt wirksam, ohne musikalische Substanz oder Natürlichkeit bereits in der Phase-Kette hörbar zu verlieren (§0, §2.45, P1/P2-Hartregeln).
 
-> Pipeline-Details: Spec 02 §2.45 + Skill `pipeline-debug`
+> Pipeline-Details: Spec 02 §2.45a + Spec 04 §4.6 + Skill `pipeline-debug`
 
 ## 14 Musical Goals (Kurzreferenz)
 
@@ -223,11 +242,33 @@ Frühe subtraktive Phasen dürfen den wahrgenommenen Musikpegel nicht kollabiere
 | **P4** | Transparenz ≥ 0.82, Wärme ≥ 0.75, BassKraft ≥ 0.78, SepFidelity ≥ 0.78 |
 | **P5** | Brillanz ≥ 0.78, Raumtiefe ≥ 0.70 |
 
-**Regressions-Regime** (differenziert — §2.29d):
-- **P1/P2** (Natürlichkeit, Authentizität, Tonal, Timbre, Artikulation): **Hart** — keine Phase darf diese verschlechtern.
+**Regressions-Regime** (differenziert — §2.29d, aktualisiert §2.54):
+- **P1/P2** (Natürlichkeit, Authentizität, Tonal, Timbre, Artikulation): **Pipeline-Ende-Pflicht** — am Ende der gesamten Kette müssen alle P1/P2-Goals ≥ Schwellwert liegen. Einzelphasen dürfen vorübergehend P1/P2-Proxy-Werte senken, wenn Carrier-Repair (§2.44 Referenz-Paradoxon) oder restorative Defektentfernung (§2.29c Baseline-Capping) der Grund ist. Der CumulativeInteractionGuard (§2.48) ist die materialadaptive **Notbremse** (§2.54), nicht die Routine-Steuerung.
 - **P3–P5**: **Pipeline-Netto-Budget** — Einzelphasen dürfen vorübergehend verschlechtern, wenn am Ende der Kette alle Goals ≥ Schwellwert. PMGG loggt Zwischenregressionen, blockiert aber nicht.
 
 Details: Skill `fix-metric`
+
+### [RELEASE_MUST] §2.56 Song-Goal-Importance — Per-Song Goal Weighting (v9.12.0)
+
+Die 14 Goals bilden eine **Pareto-Front**: nicht alle gleichzeitig maximierbar. `estimate_goal_importance()` berechnet ein individuelles Gewichtungsprofil in **5 Stufen**:
+
+| Stufe | Inhalt | Parameter |
+|---|---|---|
+| **1. Label** | Genre (16 Profile) → Era → Material → Vocal → Restorability → Studio 2026 | `genre_label`, `era_decade`, `material_type`, `vocal_detected/confidence`, `restorability_score`, `is_studio_2026` |
+| **2. Audio** | SNR, Bandbreite, Dynamik, Stereo, BPM, Defekt-Schwere, Spektraler Tilt + Carrier-Chain (§2.46a: `transfer_generation_count`, `cumulative_hf_loss_db`, `source_fidelity_confidence`) | 10 optionale float/dict/int Parameter |
+| **3. Psychoakustik** | Roughness (Zwicker), Sharpness (Bismarck), Spectral Flatness, Tonality, Frequenzbalance, Masked-Ratio (Sanity: ≥0.95/≤0.01 → ignoriert), Centroid (Bark) | 7 optionale float/dict Parameter |
+| **4. Vokal/Harmonik** | HNR (Pitch-Period AC, [−10,+20] dB), Harmonic Coherence (STFT), Crest Factor (99.9-Pctl, [6,16] dB), Transient Density (STFT+50ms, /s) | 4 optionale float Parameter |
+| **5. Interactions** | 6 superadditive Cross-Feature-Effekte (Rough×Noisy, HNR×Vocal, BW×Dark, Coh×Tonal, Dyn×Trans, Chain×Noisy) | Kombinationen aus Stufe 2–4 |
+
+**Soft-Cap**: `w > 1.5 → 1.5 + excess/(1+3·excess)` (Asymptote 1.83); `w < 0.5` analog (0.17). Danach P1/P2-Floor ≥ 0.70, Hard-Bounds [0.30, 2.00].
+
+**Integration**: PMGG (`weighted_reg = reg × weight`), CIG (gewichtete Drift), GoalPriorityProtocol (gewichtete Conflict-Resolution + Abort), FeedbackChain (gewichtete GPP-Prüfung).
+
+**Messverfahren-VERBOTEN**: Lag-1-HNR (`_compute_hnr`), 46ms-Coherence (`_estimate_harmonic_coherence`), `np.max()`-Crest, RMS-Flux-Transients. → Spec 01 §2.56e.
+
+**Implementierung**: `backend/core/song_goal_importance.py` — Feature-Extraktion in UV3 `restore()`, durchgereicht als `goal_weights`.
+
+**Invarianten**: Einmalige Berechnung pro Song; alle Audio-Features optional (None → Skip); Fehler → Uniform-Fallback (1.0); Pipeline-Blockade verboten.
 
 ### [RELEASE_MUST] §2.46 Carrier-Chain-Inversion (v9.10.122)
 
@@ -265,15 +306,16 @@ Importsongs mit **3+ Tonträgerstufen** sind vollständig zu modellieren; die Ke
 
 Jede Eingabe ist ein einzigartiges Musikstück. Das System passt sich **vor** der Verarbeitung an das konkrete Material an.
 
-**Adaptions-Kaskade (8 Schritte, kanonische Reihenfolge):**
+**Adaptions-Kaskade (9 Schritte, kanonische Reihenfolge):**
 1. `MediumDetector.detect(audio, sr, file_ext=...)` → transfer_chain, primary_material (§6.7)
 2. `EraClassifier.classify()` → decade, era_profile **+ ERB-Salience-Annotation** (v9.11.0)
 3. `GenreClassifier.classify()` → genre_label, genre_profile
 4. `RestorabilityEstimator.estimate()` → restorability_score, tier
-5. `DefectScanner.scan_all()` → 32 DefectTypes × Severity × Locations
-6. `CausalDefectReasoner` → 35 Ursachen → Phase-Selektion
+5. `DefectScanner.scan()` → 46 DefectTypes × Severity × Locations
+6. `CausalDefectReasoner` → 49 Ursachen → Phase-Selektion
 7. `SongCalibrationProfile` → `global_scalar∈[0.50,1.50]`, `family_scalars[*]∈[0.30,1.80]`
-8. `GPOptimizer.propose()` → Pareto-optimale Hyperparameter
+8. `SongGoalImportance` (§2.56) → 14 Per-Song-Gewichte [0.3–2.0] (5 Stufen: Label/Audio/Psychoakustik/Vokal-Harmonik/Interactions)
+9. `GPOptimizer.propose()` → Pareto-optimale Hyperparameter
 
 **Adaptions-Erweiterungen (v9.11.0):**
 - **Salience-aware Phase-Skipping**: `_apply_phase_skipping` liest ERB-adjustierte `DefectScore.severity`; fully-masked Defekte (n_masked≥3, n_salient=0) erhalten zusätzlich 50 % Reduktion — vermeidet Phasenaktivierung für unhörbare Schäden ohne §0-Verletzung.
@@ -358,6 +400,20 @@ Neue Zielpriorität: **maximales Hörerlebnis** wird im Produktionslauf als expl
 **Verboten:** Harte Annahme, dass nur eine der beiden Methoden existiert.
 Bei Fallback MUSS ein konsistenter Stage-Note-Eintrag (`Legacy-Goal-Messpfad`) gesetzt werden.
 
+### [RELEASE_MUST] §2.53b Denker-Plan-Determinismus in UV3 (v9.11.2)
+
+Wenn `UnifiedRestorerV3.restore(..., precomputed_phase_plan=[...])` aufgerufen wird,
+gilt der Denker-Plan als **Source of Truth**.
+
+**Invarianten:**
+- UV3 MUSS autonome Planungsblöcke `_select_phases()` und `_optimize_phase_plan_intelligence()` überspringen.
+- UV3 MUSS `selected_phases` direkt aus `precomputed_phase_plan` ableiten.
+- UV3 MUSS `phase skipping` in diesem Pfad deaktivieren (kein nachträgliches Ausdünnen des Denker-Plans).
+- Zulässig sind nur normative Sicherheitsinjektionen (z. B. §2.50 Stereo-Notfall-Remediation).
+- Stale-Plan-Zustand aus vorherigen Läufen ist verboten (`_last_material_priority_phases` darf nicht implizit weiterwirken).
+
+**Rationale**: Verhindert Doppel-Orchestrierung und driftende Entscheidungen zwischen Denker und UV3.
+
 ### §0b Konfliktauflösung / Anti-Widerspruch (v6.9)
 
 Wenn Vorgaben kollidieren, gilt strikt:
@@ -434,13 +490,78 @@ _RESTORATIVE_PHASES = frozenset({"phase_02","phase_03","phase_09","phase_18","ph
 
 > Details (CANONICAL_THRESHOLDS, Implementierung): Spec 02 §2.29c
 
-### [RELEASE_MUST] §2.48 Kumulative-Phasen-Interaktions-Guard (v9.10.123)
+### [RELEASE_MUST] §2.29e PMGG Team-Koordination über Vorphasen-Kontext (v9.11.5, erweitert v9.11.7)
+
+PMGG darf Folgephasen nicht dazu drängen, intentionale Reparaturen der Vorphasen rückgängig zu machen.
+Deshalb wird `prior_phase_context` aus UV3 in PMGG berücksichtigt.
+
+**Normative Regel für alle Module/Phasen (zentral, ontologiebasiert):**
+
+- UV3 schreibt pro erfolgreicher Phase `prior_phase_context` fort
+  (inkl. `last_phase_type`, Typ-Counter, Semantik-Flags).
+- PMGG muss team-policy-bewusst arbeiten (`_resolve_team_context_policy(...)`) und
+  die Übergangs-Policy aus Vorphasen-Typ → Aktueller-Phasen-Typ ableiten.
+- Team-Policy darf Goal-Exclusions, `threshold_multiplier` und `strength_cap`
+  für die aktuelle Phase setzen (advisory-only).
+- `PhaseGateLogEntry.metadata` erhält `team_policy_reason`, `team_excluded_goals`,
+  `team_threshold_mult`, `team_strength_cap` wenn Team-Policy aktiv war.
+- UV3 baut `metadata["team_coordination"]` (§2.53 RELEASE_MUST):
+  `event_count`, `events`, `phase_type_summary`.
+- `bridge.get_experience_insights()` propagiert `team_coordination` ins Frontend.
+
+**CONFLICT_REGISTRY** (`backend/core/phase_ontology.py`):
+
+- `CONFLICT_REGISTRY: dict[str, frozenset[str]]` — explizite Paare, bei denen Phase B
+  die Arbeit von Phase A nicht neutralisieren darf.
+- `get_conflict_phases(completed_phase_id)` — startswith-Matching, frozenset-Rückgabe.
+- UV3 `_profiled_phase_call` injiziert `conflict_with_prior_phases: list[str]`
+  wenn CONFLICT_REGISTRY Treffer liefert. Phase entscheidet selbst, wie sie reagiert.
+
+**Normative Spezialregel für Phase 50 nach HF-Restaurationskette**
+(`phase_06_frequency_restoration`, `phase_07_harmonic_restoration`, `phase_23_spectral_repair`):
+
+- Goal-Exclusions sind um `brillanz`, `transparenz`, `timbre_authentizitaet` zu erweitern.
+- Regressions-Threshold darf moderat gelockert werden (`threshold_multiplier`, capped).
+- Initial-Strength darf konservativ gedeckelt werden (`strength_cap`).
+- Catastrophic/Emergency-Retry-Pfad muss dieselbe Team-Policy anwenden;
+    für `phase_50` mit Grund `phase50_after_hf_restoration` sind Emergency-Retries zu unterdrücken.
+
+**Invariante**: Diese Koordination ist *advisory-only* für PMGG-Retry/Strength.
+Export-Gates (§2.44/§2.49) bleiben unverändert hart.
+
+> Details: Spec 02 §2.29e und Spec 06 §6.9b
+
+### [RELEASE_MUST] §2.55 PMGG-CIG-Synchronisations-Invariante (v9.11.3)
+
+**Strukturelle Invariante**: `CIG._PHASE_SPECIFIC_DRIFT_EXCLUSIONS[phase]` und `PMGG.PHASE_GOAL_EXCLUSIONS[phase]` sind **bidirektional synchron** für alle P1/P2-Goals.
+
+**Formal**: Für jede Phase `p` gilt:
+- `CIG_excl(p) ∩ P1P2 ⊇ PMGG_excl(p) ∩ P1P2` (PMGG→CIG: was PMGG von der Goal-Messung ausschließt, muss CIG aus dem Drift-Check ausschließen — sonst wird Falsch-Drift akkumuliert und triggert Rollback an späterer Phase)
+- `PMGG_excl(p) ∩ P1P2 ⊇ CIG_excl(p) ∩ P1P2` (CIG→PMGG: was CIG nicht als Drift zählt, darf PMGG nicht als Regression blockieren)
+
+**Warum**: PMGG erlaubt Phase bei voller Stärke (excl. Goal X) → CIG zählt Goal-X-Delta dennoch zum kumulativen Drift → bei späterer Phase (nicht excl.) übersteigt Drift die Toleranz → CIG-Rollback an falscher Stelle → pipeline-weite Stärke-Kaskade → Defekte bleiben unrepariert.
+
+**VERBOTEN**: Neue Phase implementieren und nur eine der beiden Tabellen aktualisieren.
+
+**Implementierung**: `backend/core/per_phase_musical_goals_gate.py` → `PHASE_GOAL_EXCLUSIONS`; `backend/core/cumulative_interaction_guard.py` → `_PHASE_SPECIFIC_DRIFT_EXCLUSIONS`
+
+**Testpflicht**: CI-Regression-Test `tests/unit/test_pmgg_cig_sync.py` prüft die bidirektionale Synchronisation für alle Phasen automatisch.
+
+---
+
+### [RELEASE_MUST] §2.48 Kumulative-Phasen-Interaktions-Guard (v9.10.123, aktualisiert v9.11.2)
 
 Phasen können isoliert korrekt, in Kombination destruktiv wirken (z.B. De-Noise + De-Reverb → Over-Denoising).
 
-- **Kumulative P1/P2-Drift**: Nach jeder Phase messen; `drift < -0.05` → Rollback auf `best_checkpoint`
-- **STFT-Phasenkohärenz**: Nach ≥ 3 STFT-Phasen: Gruppenlaufzeit-Deviation ≤ 5 ms, sonst Rollback (2 ms war zu knapp für FFT-basierte Spektralverarbeitung bei 48 kHz — Standard-STFT-Fenster 2048/48k = 42,6 ms; per-Bin-Phasenverschiebung durch Spektralsubtraktion typisch 3–8 ms)
+> **§2.54 ist übergeordnet**: Der Guard ist eine **Notbremse**, nicht die Steuerung. Drift-Toleranz wird
+> **berechnet** aus Material/Restorability/Defect-Severity — nicht als Konstante definiert.
+
+- **Kumulative P1/P2-Drift**: Nach jeder Phase messen; Drift-Toleranz materialadaptiv (§2.54 `compute_adaptive_drift_tolerance()`). Überschreitung → Rollback auf `best_checkpoint`.
+- **Carrier-Repair-Phasen-Ausnahmen**: Phasen, die Tonträgerschäden invertieren — vgl. `_PHASE_SPECIFIC_DRIFT_EXCLUSIONS` — dürfen P1/P2-Goals vorübergehend senken; das ist Referenz-Paradoxon (§2.44, §2.55). Drift-Check für diese Goals ist bei diesen Phasen ausgesetzt (§2.55-Synchronisationspflicht).
+- **STFT-Phasenkohärenz**: Nach ≥ 3 STFT-Phasen: Gruppenlaufzeit-Deviation ≤ 5 ms, sonst Rollback
 - **Phasen-Reihenfolge**: Carrier-Chain-Inversions-Logik (§2.46); subtraktive vor additiven Phasen
+- **Pipeline-Stopp adaptiv**: `max_consecutive_rollbacks = max(5, n_carrier_phases + 2)` — Mehrgenerations-Material benötigt mehr Carrier-Phasen, die einzeln rollback-anfällig sind.
+- **Carrier-Repair-Phasen inkrementieren `consecutive_rollbacks` NICHT** (v9.11.3): Wenn eine Carrier-Repair-Phase (definiert in `_CARRIER_REPAIR_PHASE_PREFIXES`) rollback-bedingt zurückgesetzt wird, darf der `consecutive_rollbacks`-Zähler **nicht** erhöht werden. Andernfalls würde der Pipeline-Stopp nach `max_consecutive_rollbacks` fälschlicherweise durch restorative Phasen ausgelöst (VERBOTEN: preventable pipeline abort). Gilt sowohl für P1/P2-Drift-Rollback als auch Critical-Pair-Rollback-Pfad. Implementierung: `_CARRIER_REPAIR_PHASE_PREFIXES` tuple in `backend/core/cumulative_interaction_guard.py`.
 
 > Details (Interaktions-Paare, Checkpoint-Management): Spec 02 §2.48 + Skill `pipeline-debug`
 
@@ -518,6 +639,87 @@ Vor Pipeline-Beginn misst das System die Artefakt-Charakteristik des degradierte
 > Implementierung: `backend/core/artifact_freedom_gate.py` — `SourceMaterialBaseline`, `measure_source_baseline()`.
 > Aufruf: `backend/core/unified_restorer_v3.py` — §2.50-Block in `restore()` nach `_select_phases`.
 
+### [RELEASE_MUST] §2.54 Adaptives Phasen-Optimum — Messen-Handeln-Validieren (v9.11.2)
+
+> **Dieses Paradigma ist normativ übergeordnet gegenüber allen festen Schwellwerten in §2.48, §2.29d, §2.45.**
+> Feste Schwellwerte sind **Notbremsen** (letztes Sicherheitsnetz), nicht die Steuerung.
+> Die Steuerung ist das iterative Herantasten jeder Phase an ihr Optimum.
+
+**Grundprinzip**: Jeder Song ist einzigartig — anderes Genre, andere Ära, andere Tonträgerkette, andere Defekte.
+Feste Schwellwerte können diese Vielfalt nicht abbilden. Stattdessen gilt:
+
+**Jede Phase durchläuft einen Messen→Handeln→Validieren-Zyklus:**
+
+```
+1. MESSEN     — Zustand vor der Phase: Klangtreue, Defekt-Schwere, Energie-Profil
+2. HANDELN    — Phase mit materialadaptiver Stärke ausführen (SongCal × PhaseConductor)
+3. VALIDIEREN — Zustand nach der Phase messen: Hat sich der Klang verbessert?
+4. ENTSCHEIDEN:
+   a) Verbesserung klar hörbar       → Phase akzeptieren, weiter
+   b) Verbesserung marginal          → Stärke anpassen, erneut (max 3 Iterationen)
+   c) Verschlechterung               → Stärke reduzieren oder Phase überspringen
+   d) Katastrophale Beschädigung     → Rollback (Notbremse)
+5. BESTES ERGEBNIS BEHALTEN — Über alle Iterationen das perceptuell beste Resultat wählen
+```
+
+**Wer steuert diesen Zyklus?**
+
+| Komponente | Rolle | NICHT die Rolle |
+|---|---|---|
+| **Denker** (Reparatur/Rekonstruktion/Restaurier) | Plant Phase-Reihenfolge + Initialkonfiguration basierend auf Material/Era/Genre/Defekte | Feste Schwellwerte setzen |
+| **PhaseConductor** (§2.52) | Misst 4D-Zustand nach jeder Phase, empfiehlt `strength` für nächste Phase | Starres Pass/Fail |
+| **PMGG** (§2.29) | Misst Musical-Goals-Delta pro Phase, steuert Stärke-Iteration | Blocken mit `regression > 0.02` |
+| **SongCalibration** (§2.47) | Skaliert alle Stärken material-/song-adaptiv | Universelle Konstante |
+| **CumulativeInteractionGuard** (§2.48) | **Nur Notbremse**: Fängt katastrophale kumulative Drift | Routine-Steuerung der Pipeline |
+| **GPOptimizer** | Lernt Pareto-optimale Hyperparameter aus vorherigen Songs | Erstmalige Parameterwahl |
+
+**Adaptions-Kette (Material → Drift-Toleranz):**
+
+Die Drift-Toleranz des CumulativeInteractionGuard wird **berechnet**, nicht fest vorgegeben:
+
+```python
+# §2.54 Adaptive Drift-Toleranz (ersetzt MAX_CUMULATIVE_DRIFT = -0.05)
+adaptive_drift_tolerance = compute_adaptive_drift_tolerance(
+    restorability_score,     # 0–100: wie stark degradiert? → mehr Spielraum
+    material_type,           # vinyl/shellac brauchen mehr als cd_digital
+    defect_severity_mean,    # hohe mittlere Severity → mehr Toleranz nötig
+    n_active_phases,         # mehr Phasen → mehr kumulative Drift normal
+)
+# Ergebnis: z.B. -0.03 (CD, leicht) bis -0.25 (Shellac-4-Gen, schwer degradiert)
+```
+
+PMGG-Threshold analog: Regressions-Budget pro Phase hängt vom Material und der Defekt-Schwere ab —
+ein stark verrauschter Vinyl-Song akzeptiert mehr Chroma-Drift nach Denoise als ein CD-Rip.
+
+**Invarianten (bindend für ALLE Guards):**
+
+1. **Kein fester Schwellwert darf eine restorative Phase blockieren**, wenn das Material den Eingriff braucht
+   und die Phase den Defekt messbar reduziert — selbst wenn ein Proxy-Metrik-Score dabei sinkt.
+2. **Checkpoint-Selektion**: Der Guard wählt immer das perceptuell *beste* Audio als Checkpoint
+   (höchster gewichteter P1–P5-Score), nicht das *letzte nicht-gerollte*.
+3. **Pipeline-Stopp nur bei echtem Schaden**: `should_stop` nur wenn die Notbremse-Schwelle NACH
+   materialadaptiver Berechnung gerissen wird UND keine bessere Stärke gefunden wurde.
+4. **Referenz-Paradoxon** (§2.44) ist immer zu berücksichtigen: Carrier-Repair-Phasen verändern das
+   Signal *intentional* gegenüber dem beschädigten Checkpoint. Ein Metrik-Drop gegenüber dem
+   beschädigten Referenzpunkt bedeutet nicht „Verschlechterung", sondern „das Signal entfernt sich
+   vom Defekt" — genau das ist das Ziel.
+
+**VERBOTEN (harter Anti-Pattern-Katalog):**
+
+| Anti-Pattern | Warum falsch | Richtig |
+|---|---|---|
+| `if drift < -0.05: rollback` (feste Konstante) | Jeder Song braucht andere Toleranz | `compute_adaptive_drift_tolerance()` |
+| `if regression > 0.020: retry` (feste Konstante) | Vinyl-Denoise ≠ CD-Kompressor | Material-/Defekt-adaptive Schwelle |
+| 3 Rollbacks → Pipeline-Stopp (fest) | Vinyl→Tape→MP3 braucht >3 Carrier-Phasen | Adaptiv: `max(5, n_carrier_phases + 2)` |
+| Guard blockt Phase → Phase wird übersprungen | Defekt bleibt im Audio | Stärke iterativ reduzieren bis Optimum |
+| best_checkpoint = letztes nicht-gerolltes | Kann schlechter sein als Iteration 2/4 | Bestes perceptuelles Ergebnis über alle |
+| Alle Goals gleichgewichtig in Drift-Check | tonal_center Drop nach Denoise ≠ Schaden | §2.29c Baseline-Capping + Phase-Exclusions |
+
+> **Zusammenfassung für KI-Agenten**: Wenn du einen festen Schwellwert implementierst, der für Audio-Qualität
+> entscheidet, ist das fast immer falsch. Berechne den Schwellwert aus dem konkreten Song-Kontext
+> (Material, Era, Restorability, Defect-Severity). Feste Werte existieren nur als Notbremse für
+> katastrophale Fälle — sie dürfen die Routine-Pipeline nie blockieren.
+
 ## Vintage Aesthetics
 
 **SOFT_SATURATION** = BEWAHREN. **CLIPPING** = REPARIEREN.
@@ -525,4 +727,4 @@ Vor Pipeline-Beginn misst das System die Artefakt-Charakteristik des degradierte
 
 *Diese Richtlinien gelten für alle KI-Agenten (GitHub Copilot, Claude, GPT) die an Aurik 9 arbeiten.*
 *Vollständige normative Spezifikation: `.github/specs/01–08`.*
-*Stand: April 2026 — Aurik 9.11.0 — instructions_version 6.9*
+*Stand: April 2026 — Aurik 9.11.0 — instructions_version 7.1*

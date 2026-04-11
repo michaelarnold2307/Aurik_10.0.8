@@ -40,6 +40,10 @@ def measure_harmonic_headroom(audio: np.ndarray) -> float:
     Measure available headroom for harmonic generation.
 
     Harmonic exciters add energy - need headroom to avoid clipping.
+    Uses 99.9th percentile instead of absolute max so that isolated
+    impulse artefacts (clicks, crackles) do not artificially reduce the
+    measured headroom and prevent legitimate harmonic enhancement
+    (§DSP-Invariante Peak-Guards).
 
     Args:
         audio: Input audio
@@ -47,7 +51,8 @@ def measure_harmonic_headroom(audio: np.ndarray) -> float:
     Returns:
         Headroom in dB
     """
-    peak = np.max(np.abs(audio))
+    # §DSP-Invariante: percentile(99.9) — impulse artefacts must not block gain
+    peak = float(np.percentile(np.abs(audio), 99.9)) if audio.size > 0 else 0.0
 
     if peak == 0:
         return 60.0  # Maximum headroom

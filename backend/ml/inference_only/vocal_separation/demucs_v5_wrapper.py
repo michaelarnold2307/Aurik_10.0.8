@@ -63,12 +63,15 @@ class DemucsV5Separator:
         self.sample_rate = sample_rate
         self.segment_duration = segment_duration
 
-        # Device selection — §9.5: Aurik 9 nutzt ausschließlich CPU.
-        # CUDA/ROCm/Metal sind in Aurik 9 nicht erlaubt (CPU-Policy bindend).
-        # Parameter 'device' wird ignoriert — immer 'cpu'.
-        self.device = "cpu"
+        # §GPU-Mixed-Mode: Heavy plugins → GPU when available, CPU fallback.
+        try:
+            from backend.core.ml_device_manager import get_torch_device as _get_dev
 
-        logger.info("DemucsV5Separator (%s) initialized on %s (§9.5 CPU-only)", model_name, self.device)
+            self.device = _get_dev("DemucsV5")
+        except Exception:
+            self.device = "cpu"
+
+        logger.info("DemucsV5Separator (%s) initialized on %s", model_name, self.device)
 
         # Model loading
         self.model_path = model_path or self._get_default_model_path()
@@ -104,8 +107,8 @@ class DemucsV5Separator:
             # Load pretrained model
             model = pretrained.get_model(self.model_name)
             model.eval()
-            # §9.5 CPU-only — kein CUDA/GPU
-            logger.info("Demucs %s loaded successfully", self.model_name)
+            model.to(self.device)
+            logger.info("Demucs %s loaded successfully (device=%s)", self.model_name, self.device)
             return model
 
         except ImportError:
@@ -202,8 +205,8 @@ class DemucsV5Separator:
             if model is None:
                 raise RuntimeError("Demucs model is not loaded")
 
-            # Convert to torch tensor — §9.5: ausschließlich CPU
-            audio_torch = torch.from_numpy(audio).float()  # kein .cuda() — §9.5
+            # Convert to torch tensor
+            audio_torch = torch.from_numpy(audio).float()  # placed on device via apply_model
 
             # Add batch dimension
             audio_torch = audio_torch.unsqueeze(0)

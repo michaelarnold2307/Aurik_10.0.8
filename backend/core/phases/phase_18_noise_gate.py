@@ -278,6 +278,18 @@ class NoiseGate(PhaseInterface):
         else:
             gated_audio = self._gate_channel(audio, sample_rate, config)
 
+        # §2.45a Pre-Makeup-Guard: Erkennt Gates die Musik stärker dämpfen als Stille
+        # (d. h. Gate-Schwellen zu weit offen für Musik-Pegel).
+        # Geprüft VOR Makeup: silence_ratio ≈ 1.0 = Gate berührt Stille nicht → Musik wird gegated.
+        _orig_mono_pre = np.mean(audio, axis=1) if is_stereo else audio
+        _gated_mono_pre = np.mean(gated_audio, axis=1) if is_stereo else gated_audio
+        _music_silence_alert_pre, _music_silence_wet_pre = self._check_music_silence_inversion(
+            _orig_mono_pre, _gated_mono_pre, sample_rate
+        )
+        if _music_silence_alert_pre:
+            gated_audio = _music_silence_wet_pre * gated_audio + (1.0 - _music_silence_wet_pre) * audio
+            gated_audio = np.clip(gated_audio, -1.0, 1.0)
+
         # Low-frequency energy guard: prevent excessive bass/fundamental removal
         # especially critical for tape/vinyl where gate can eat musical low end
         _orig_mono = np.mean(audio, axis=1) if is_stereo else audio
@@ -298,7 +310,30 @@ class NoiseGate(PhaseInterface):
                 _wet,
             )
 
+        # §2.45a / §2.53: Apply wet/dry blend BEFORE loudness preservation so that
+        # rms_drop_db / makeup metadata accurately reflect the ACTUAL output level change
+        # (not the 100% wet level used for makeup calibration at low PMGG strengths).
+        gated_audio = np.nan_to_num(gated_audio, nan=0.0, posinf=0.0, neginf=0.0)
+        gated_audio = np.clip(gated_audio, -1.0, 1.0)
+        if 0.0 < _effective_strength < 1.0:
+            gated_audio = audio + _effective_strength * (gated_audio - audio)
+            gated_audio = np.clip(gated_audio, -1.0, 1.0)
+
         gated_audio, loudness_stats = self._apply_material_loudness_preservation(audio, gated_audio, material)
+
+        # §2.45a Post-Makeup-Guard: Stille-Anstieg nach Makeup prüfen.
+        # Wenn Makeup-Gain die Stille ÜBER den Original-Rausch-Boden hebt und Musik
+        # gleichzeitig deutlich unterdrückt wurde → sofortiger Rescue.
+        _orig_mono_post = np.mean(audio, axis=1) if is_stereo else audio
+        _gated_mono_post = np.mean(gated_audio, axis=1) if is_stereo else gated_audio
+        _music_silence_alert_post, _music_silence_wet_post = self._check_music_silence_inversion(
+            _orig_mono_post, _gated_mono_post, sample_rate
+        )
+        if _music_silence_alert_post and not _music_silence_alert_pre:
+            # Nur eingreifen wenn Pre-Makeup-Guard NICHT bereits korrigiert hat
+            # (Doppel-Rescue würde Dry-Signal dominieren)
+            _rescued = _music_silence_wet_post * gated_audio + (1.0 - _music_silence_wet_post) * audio
+            gated_audio = np.clip(_rescued, -1.0, 1.0)
 
         # Metrics
         rms_original = np.sqrt(np.mean(audio**2))
@@ -308,12 +343,6 @@ class NoiseGate(PhaseInterface):
 
         execution_time = time.time() - start_time
         rt_factor = execution_time / (len(audio) / sample_rate)
-
-        gated_audio = np.nan_to_num(gated_audio, nan=0.0, posinf=0.0, neginf=0.0)
-        gated_audio = np.clip(gated_audio, -1.0, 1.0)
-        if 0.0 < _effective_strength < 1.0:
-            gated_audio = audio + _effective_strength * (gated_audio - audio)
-            gated_audio = np.clip(gated_audio, -1.0, 1.0)
         return PhaseResult(
             success=True,
             audio=gated_audio,
@@ -330,6 +359,101 @@ class NoiseGate(PhaseInterface):
             },
             warnings=[] if rt_factor < 0.18 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
+
+    # ------------------------------------------------------------------
+    # §2.45a Music/Silence inversion guard
+    # ------------------------------------------------------------------
+    def _check_music_silence_inversion(
+        self,
+        orig_mono: np.ndarray,
+        gated_mono: np.ndarray,
+        sr: int,
+    ) -> tuple[bool, float]:
+        """Erkennt inverses Gate-/Makeup-Verhalten: Musik stärker verändert als Stille.
+
+        Wird zweimal aufgerufen:
+          A) PRE-Makeup  → orig/gated sind Pegel VOR Makeup; silence_ratio ≈ 1.0 wenn Gate Stille
+             nicht berührt; Alert wenn Musik aber stark gedämpft (Gate-Schwelle-Fehler).
+          B) POST-Makeup → Alert wenn Stille ÜBER Original (Makeup überkompensiert Stille-Abschnitte)
+             und Musik gleichzeitig unter Original liegt.
+
+        Algorithmus (frame-basiert, 50 ms Frames):
+          1. Frames klassifizieren: music   (RMS orig ≥ P40-Perzentil)
+                                    silence (RMS orig <  P20-Perzentil)
+          2. ratio = rms_gated / rms_orig pro Frame
+          3. Median music_ratio vs. silence_ratio vergleichen
+          4. Inversion A (pre-makeup):  music_ratio < 0.65, silence_ratio > 0.88
+               → Gate trifft Musik, lässt Stille unberührt
+          4. Inversion B (post-makeup): music_ratio < 0.90, silence_ratio > 1.04
+               → Makeup hebt Stille über Original, Musik bleibt unter Original
+
+        Returns:
+            (alert: bool, wet_factor: float [0..1])
+        """
+        frame_len = max(1, int(sr * 0.05))  # 50 ms frames
+        n_frames = len(orig_mono) // frame_len
+        if n_frames < 4:
+            return False, 1.0
+
+        orig_frames = orig_mono[: n_frames * frame_len].reshape(n_frames, frame_len)
+        gated_frames = gated_mono[: n_frames * frame_len].reshape(n_frames, frame_len)
+
+        rms_orig = np.sqrt(np.mean(orig_frames**2, axis=1) + 1e-20)
+        rms_gated = np.sqrt(np.mean(gated_frames**2, axis=1) + 1e-20)
+        ratio = rms_gated / rms_orig  # 1.0 = unverändert; < 1.0 = gedämpft; > 1.0 = angehoben
+
+        p20 = float(np.percentile(rms_orig, 20))
+        p40 = float(np.percentile(rms_orig, 40))
+
+        music_mask = rms_orig >= p40
+        silence_mask = rms_orig < p20
+
+        n_music = int(music_mask.sum())
+        n_silence = int(silence_mask.sum())
+
+        if n_music < 2 or n_silence < 2:
+            return False, 1.0
+
+        music_ratio = float(np.median(ratio[music_mask]))  # 1.0 = musik unverändert
+        silence_ratio = float(np.median(ratio[silence_mask]))  # 1.0 = stille unverändert
+
+        # Inversion A (typisch pre-makeup): Gate-Schwelle zu weit offen →
+        # Musik wird relativ stärker gedämpft als Stille.
+        MUSIC_DROP_A = 0.65  # Musik < −3.7 dB
+        SILENCE_OK_A = 0.88  # Stille kaum berührt (< −1.1 dB)
+        alert_a = music_ratio < MUSIC_DROP_A and silence_ratio > SILENCE_OK_A
+
+        # Inversion B (typisch post-makeup): Makeup hebt Stille über Original
+        # (global Gain auf ein Signal das hauptsächlich aus Stille-Frames besteht)
+        MUSIC_DROP_B = 0.90  # Musik < −0.9 dB (netto unter Original)
+        SILENCE_RISE_B = 1.04  # Stille > +0.3 dB über Original
+        alert_b = music_ratio < MUSIC_DROP_B and silence_ratio > SILENCE_RISE_B
+
+        alert = alert_a or alert_b
+
+        if alert:
+            mode = "pre-makeup" if alert_a else "post-makeup"
+            wet = float(np.clip(music_ratio / max(MUSIC_DROP_A, MUSIC_DROP_B) * 0.55, 0.25, 0.55))
+            logger.warning(
+                "Phase 18 §2.45a MUSIC/SILENCE INVERSION (%s): "
+                "music_ratio=%.3f silence_ratio=%.3f → Rescue wet=%.2f "
+                "(n_music=%d, n_silence=%d)",
+                mode,
+                music_ratio,
+                silence_ratio,
+                wet,
+                n_music,
+                n_silence,
+            )
+            return True, wet
+
+        if music_ratio < 0.80 or silence_ratio > 1.02:
+            logger.info(
+                "Phase 18 §2.45a level check: music_ratio=%.3f silence_ratio=%.3f — OK (no rescue)",
+                music_ratio,
+                silence_ratio,
+            )
+        return False, 1.0
 
     def _apply_material_loudness_preservation(
         self,
@@ -348,15 +472,25 @@ class NoiseGate(PhaseInterface):
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
             target_rms_drop_db = -max_rms_drop_db
             required_gain_db = target_rms_drop_db - rms_drop_db
-            current_peak = float(np.percentile(np.abs(processed_audio), 99.9) + 1e-12)
-            max_safe_gain_db = max(0.0, -1.5 - 20.0 * np.log10(current_peak))
-            makeup_gain_db = float(np.clip(required_gain_db, 0.0, max_safe_gain_db))
+            # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
+            # §2.45a-III: soft-limiter only when peak99 > 0.98.
+            makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 processed_audio = np.clip(
                     processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
                     -1.0,
                     1.0,
                 ).astype(np.float32)
+                current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
+                if current_peak > 0.98:
+                    _abs_18 = np.abs(processed_audio)
+                    _over_18 = _abs_18 > 0.92
+                    if np.any(_over_18):
+                        _sign_18 = np.sign(processed_audio)
+                        processed_audio = np.where(
+                            _over_18, _sign_18 * (0.92 + 0.08 * np.tanh((_abs_18 - 0.92) / 0.08)), processed_audio
+                        )
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
                 rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
                 logger.info(

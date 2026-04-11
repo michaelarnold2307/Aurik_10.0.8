@@ -406,13 +406,21 @@ class MertPlugin:
         try:
             from transformers import AutoModel, Wav2Vec2FeatureExtractor  # type: ignore[import]
 
+            try:
+                from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                _mert_device = _get_dev("MERT-330M-HF")
+            except Exception:
+                _mert_device = "cpu"
             self._processor = Wav2Vec2FeatureExtractor.from_pretrained(
                 str(hf_dir), trust_remote_code=True, local_files_only=True
             )
             self._model = AutoModel.from_pretrained(str(hf_dir), trust_remote_code=True, local_files_only=True)  # nosec B615 — lokales, SHA256-verifiziertes Modell
             self._model.eval()
+            self._model.to(_mert_device)
+            self._device = _mert_device
             self._model_type = "mert_hf"
-            logger.info("MERT-v1-330M (HuggingFace, CC BY-NC 4.0) geladen: %s", hf_dir)
+            logger.info("MERT-v1-330M (HuggingFace, CC BY-NC 4.0, device=%s) geladen: %s", _mert_device, hf_dir)
         except Exception as e:
             logger.debug("MERT-v1-330M HuggingFace Ladefehler: %s → weiter", e)
             try:
@@ -447,14 +455,24 @@ class MertPlugin:
             if not _try_alloc("MERT-330M-fairseq", 3.7):
                 return  # Budget erschöpft → weiter mit nächster Priorität
         except Exception as _exc:
-            logger.debug("Plugin operation failed (non-critical): %s", _exc)
+            # §OOM-Guard fail-safe: Exception im Budget-Check → Laden verweigern.
+            logger.warning(
+                "MERT-330M-fairseq: Budget-Check fehlgeschlagen (%s) — Laden verweigert (OOM-Fail-safe).", _exc
+            )
+            return
         try:
             import os as _os
 
             import torch
 
             torch.set_num_threads(_os.cpu_count() or 4)  # §2.37 CPU-Thread-Budget
-            checkpoint = torch.load(pt_path, map_location="cpu", weights_only=False)  # nosec B614 — lokaler, SHA256-verifizierter fairseq Checkpoint
+            try:
+                from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                _mert_fs_dev = _get_dev("MERT-330M-fairseq")
+            except Exception:
+                _mert_fs_dev = "cpu"
+            checkpoint = torch.load(pt_path, map_location=_mert_fs_dev, weights_only=False)  # nosec B614 — lokaler, SHA256-verifizierter fairseq Checkpoint
             state_dict = checkpoint.get("model", checkpoint)
             self._model = state_dict
             self._model_type = "mert_fairseq"

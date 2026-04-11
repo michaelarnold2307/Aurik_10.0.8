@@ -237,7 +237,10 @@ class PolyphonicSpeedCurveEstimator:
         # are physically implausible for wow/flutter and indicate inference failure.
         # Use a deterministic pYIN fallback instead of forcing a zero-curve to avoid
         # masking hard tracker failures and to preserve musical timing information.
-        _max_abs_cents = float(np.max(np.abs(speed_curve))) if len(speed_curve) > 0 else 0.0
+        # Ana­logue to the Peak-Guard rule (spec §Verboten): use 99th percentile
+        # instead of max — a single crackle/impulse frame after SG-smoothing must
+        # not trigger a full fallback for a crackle-heavy vinyl recording.
+        _max_abs_cents = float(np.percentile(np.abs(speed_curve), 99.0)) if len(speed_curve) > 0 else 0.0
         if _max_abs_cents > 200.0:
             logger.warning(
                 "PolyphonicSpeedCurveEstimator: speed_range implausible (max |%.1f| cents > 200) — switching to pYIN fallback",

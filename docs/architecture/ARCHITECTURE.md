@@ -17,7 +17,7 @@
 | `CausalDefectReasoner` | `core/causal_defect_reasoner.py` | 34 Kausal-Ursachen (Bayes) |
 | `GPParameterOptimizer` | `core/gp_parameter_optimizer.py` | RBF-GP + UCB, MOO-Pareto |
 | `MusicalGoalsChecker` | `backend/core/musical_goals/musical_goals_metrics.py` | 14 Ziele |
-| `MediumClassifier` | `core/medium_classifier.py` | 17 Materialtypen |
+| `MediumDetector` | `forensics/medium_detector.py` | Autoritative Tonträgerketten-Erkennung |
 | `PerPhaseMusicalGoalsGate` | `core/per_phase_musical_goals_gate.py` | Rollback-Gate pro Phase |
 | `AurikDenker` | `denker/aurik_denker.py` | Kognitive Orchestrierung |
 | `MusikalischerGlobalplanDienst` | `backend/core/musikalischer_globalplan.py` | Cross-Phase-Globalplan, 13 Ära-Profile, 17 Phase-Adjustments (v9.10.50) |
@@ -30,7 +30,7 @@ flowchart TD
     TDP --> RE[RestorabilityEstimator]
     RE --> ERA[EraClassifier]
     ERA --> SCHLAGER[GermanSchlagerClassifier]
-    SCHLAGER --> MC[MediumClassifier]
+    SCHLAGER --> MC[MediumDetector]
     MC --> DS[DefectScanner]
     DS --> CDR[CausalDefectReasoner]
     CDR --> GP[GPParameterOptimizer]

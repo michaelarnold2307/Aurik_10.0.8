@@ -154,29 +154,89 @@ class AdvancedDereverbPhase(PhaseInterface):
             )
 
         strength = effective_strength
+
+        # §2.20 Genre-adaptive dereverb hardcap (defense-in-depth — SongCal is primary guard).
+        _genre_label_49 = str(kwargs.get("genre_label", ""))
+        if _genre_label_49 == "Reggae":
+            strength = min(strength, 0.20)  # Dub/Echo-Reverb = genre-definierend
+            logger.debug("Phase 49: Genre=Reggae → strength capped to %.2f", strength)
+        elif _genre_label_49 == "Gospel":
+            strength = min(strength, 0.30)  # Kirchenhall = Authentizität
+            logger.debug("Phase 49: Genre=Gospel → strength capped to %.2f", strength)
+        elif _genre_label_49 in ("Klassik", "Oper"):
+            strength = min(strength, 0.25)  # Konzerthall = integraler Klanganteil
+            logger.debug("Phase 49: Genre=%s → strength capped to %.2f", _genre_label_49, strength)
+        elif _genre_label_49 == "Folk":
+            strength = min(strength, 0.40)  # Natürlicher Kleiner-Raum-Klang
+            logger.debug("Phase 49: Genre=Folk → strength capped to %.2f", strength)
+        elif _genre_label_49 == "Jazz":
+            strength = min(strength, 0.35)  # Club-Atmosphäre bewahren
+            logger.debug("Phase 49: Genre=Jazz → strength capped to %.2f", strength)
+
         protect_transients: bool = bool(kwargs.get("protect_transients", True))
         # Store material type for EMA-alpha selection in _dereverb_channel
         self._current_material = str(kwargs.get("material_type", "unknown"))
+        # Sub-phase progress callback: scoped to this phase's range (injected by UV3).
+        # Emitting keeps the UI progress bar moving during slow WPE computation.
+        _progress_sub_cb = kwargs.get("progress_sub_callback")
 
-        is_stereo = audio.ndim == 2
-        if is_stereo:
-            # §2.51 M/S: derive room envelope from Mid-channel only so both
-            # channels are attenuated by the SAME gain curve — independent L/R
-            # processing assigns different room estimates and causes stereo-field
-            # asymmetry that triggers §2.49 phase-cancellation rollbacks.
-            _sqrt2 = np.sqrt(2.0)
-            _mid = (audio[:, 0] + audio[:, 1]) / _sqrt2
-            _side = (audio[:, 0] - audio[:, 1]) / _sqrt2
-            _mid_dry = self._dereverb_channel(_mid, sample_rate, strength, protect_transients)
-            # Side: apply weaker dereverb (side information is already less reverberant)
-            _side_strength = strength * 0.5
-            _side_dry = self._dereverb_channel(_side, sample_rate, _side_strength, protect_transients)
-            _n = min(len(_mid_dry), len(_side_dry))
-            _l = (_mid_dry[:_n] + _side_dry[:_n]) / _sqrt2
-            _r = (_mid_dry[:_n] - _side_dry[:_n]) / _sqrt2
-            processed = np.column_stack([_l, _r])
-        else:
-            processed = self._dereverb_channel(audio, sample_rate, strength, protect_transients)
+        # ── Tier-0: SGMSE+ (Richter 2022) — SOTA für starken Nachhall RT60 > 0.4 s ────
+        # Dereverb-Kaskade §2.47: SGMSE+ → WPE DSP-Fallback
+        _sgmse_used = False
+        _ml_model_name = "WPE-DSP"
+        try:
+            from backend.core.ml_memory_budget import release as _release_49
+            from backend.core.ml_memory_budget import try_allocate as _alloc_49
+            from plugins.sgmse_plugin import get_sgmse_plus_plugin as _sgmse_factory_49
+
+            if _alloc_49("SGMSE+_phase49", 0.25):
+                try:
+                    # sigma: adaptiv aus strength — stärkerer Nachhall braucht höheres sigma
+                    _sigma = float(np.clip(0.25 + strength * 0.65, 0.25, 0.90))
+                    _sgmse_result = _sgmse_factory_49().enhance(audio, sample_rate, sigma=_sigma)
+                    processed = np.asarray(_sgmse_result.audio, dtype=np.float32)
+                    _sgmse_used = True
+                    _ml_model_name = f"SGMSE+ ({_sgmse_result.model_used})"
+                    logger.info("Phase 49: Tier-0 SGMSE+ OK (sigma=%.2f, model=%s)", _sigma, _sgmse_result.model_used)
+                    if _progress_sub_cb is not None:
+                        _progress_sub_cb(80.0, "Nachhall-Entfernung (SGMSE+-Nachbearbeitung)", 0.0)
+                except Exception as _sgmse_err:
+                    logger.info(
+                        "Phase 49: SGMSE+ enhance fehlgeschlagen (%s) → WPE DSP-Fallback",
+                        _sgmse_err,
+                    )
+                finally:
+                    _release_49("SGMSE+_phase49")
+        except Exception as _imp_err:
+            logger.debug("Phase 49: SGMSE+-Import nicht verfügbar (%s) → WPE DSP-Fallback", _imp_err)
+
+        if not _sgmse_used:
+            is_stereo = audio.ndim == 2
+            if is_stereo:
+                # §2.51 M/S: derive room envelope from Mid-channel only so both
+                # channels are attenuated by the SAME gain curve — independent L/R
+                # processing assigns different room estimates and causes stereo-field
+                # asymmetry that triggers §2.49 phase-cancellation rollbacks.
+                _sqrt2 = np.sqrt(2.0)
+                _mid = (audio[:, 0] + audio[:, 1]) / _sqrt2
+                _side = (audio[:, 0] - audio[:, 1]) / _sqrt2
+                _mid_dry = self._dereverb_channel(_mid, sample_rate, strength, protect_transients)
+                if _progress_sub_cb is not None:
+                    _progress_sub_cb(55.0, "Nachhall-Entfernung (Side-Kanal)", 0.0)
+                # Side: apply weaker dereverb (side information is already less reverberant)
+                _side_strength = strength * 0.5
+                _side_dry = self._dereverb_channel(_side, sample_rate, _side_strength, protect_transients)
+                if _progress_sub_cb is not None:
+                    _progress_sub_cb(85.0, "Nachhall-Entfernung (Nachbearbeitung)", 0.0)
+                _n = min(len(_mid_dry), len(_side_dry))
+                _l = (_mid_dry[:_n] + _side_dry[:_n]) / _sqrt2
+                _r = (_mid_dry[:_n] - _side_dry[:_n]) / _sqrt2
+                processed = np.column_stack([_l, _r])
+            else:
+                _mid_dry_mono = self._dereverb_channel(audio, sample_rate, strength, protect_transients)
+                if _progress_sub_cb is not None:
+                    _progress_sub_cb(80.0, "Nachhall-Entfernung (Nachbearbeitung)", 0.0)
+                processed = _mid_dry_mono
 
         # Make PMGG strength retries audibly monotonic: explicit wet/dry blend at
         # the phase output, independent from internal WPE model scaling.
@@ -288,7 +348,9 @@ class AdvancedDereverbPhase(PhaseInterface):
             audio=processed,
             execution_time_seconds=elapsed,
             metadata={
-                "algorithm": "wpe_spectral_dsp_v3_scipy_stft",
+                "algorithm": _ml_model_name,
+                "ml_used": _sgmse_used,
+                "ml_model": _ml_model_name,
                 "strength": strength,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,

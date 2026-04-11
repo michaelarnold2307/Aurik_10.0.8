@@ -254,9 +254,10 @@ class TestRunPreAnalysis:
 
     def test_medium_failure_partial_result(self):
         """If medium detection fails, other steps still succeed."""
+        _legacy = MagicMock(side_effect=RuntimeError("legacy classifier must stay unused"))
         with (
             patch("forensics.medium_detector.get_medium_detector", side_effect=ImportError("no module")),
-            patch("backend.core.medium_classifier.classify_medium", side_effect=RuntimeError("fallback fail")),
+            patch("backend.core.medium_classifier.classify_medium", _legacy),
             patch("backend.core.era_classifier.get_era_classifier", return_value=_make_mock_era_cls()),
             patch("backend.core.genre_classifier.get_genre_classifier", return_value=_make_mock_genre_cls()),
             patch("backend.core.defect_scanner.DefectScanner", return_value=_make_mock_defect_scanner()),
@@ -267,22 +268,19 @@ class TestRunPreAnalysis:
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
         assert result.medium is None
         assert "medium" in result.errors
+        assert _legacy.call_count == 0
         assert result.era is not None
 
-    def test_medium_primary_fails_fallback_runs_once(self):
-        """Primary detect is attempted once; fallback exactly once on failure."""
-
-        class _FallbackResult:
-            material_type = "vinyl"
-            confidence = 0.66
+    def test_medium_primary_fails_without_legacy_fallback(self):
+        """Primary detect is attempted once; legacy classifier is never called."""
 
         _md = MagicMock()
         _md.detect.side_effect = RuntimeError("primary down")
-        _fb = MagicMock(return_value=_FallbackResult())
+        _legacy = MagicMock(side_effect=RuntimeError("legacy classifier must stay unused"))
 
         with (
             patch("forensics.medium_detector.get_medium_detector", return_value=_md),
-            patch("backend.core.medium_classifier.classify_medium", _fb),
+            patch("backend.core.medium_classifier.classify_medium", _legacy),
             patch("backend.core.era_classifier.get_era_classifier", return_value=_make_mock_era_cls()),
             patch("backend.core.genre_classifier.get_genre_classifier", return_value=_make_mock_genre_cls()),
             patch("backend.core.defect_scanner.DefectScanner", return_value=_make_mock_defect_scanner()),
@@ -293,9 +291,9 @@ class TestRunPreAnalysis:
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
 
         assert _md.detect.call_count == 1
-        assert _fb.call_count == 1
-        assert result.medium is not None
-        assert getattr(result.medium, "primary_material", "") == "vinyl"
+        assert _legacy.call_count == 0
+        assert result.medium is None
+        assert "medium" in result.errors
 
     def test_single_step_failure_no_exception(self):
         """A failure in one step must not raise — result is returned with errors dict."""

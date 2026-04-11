@@ -85,6 +85,7 @@ _SIGMA_MAX = 0.3  # Maximale Rausch-Standardabweichung
 _MATERIAL_BW_CAP_HZ: dict[str, float] = {
     "wax_cylinder": 5000.0,  # Mechanische Aufzeichnung 1900–1930
     "wire_recording": 6000.0,  # Stahlbandfone 1940–1955
+    "shellac": 7000.0,  # Schellackplatten 1898–1960, §0 Vintage Aesthetics (≤ 7 kHz)
     "lacquer_disc": 8000.0,  # Acetat-Lackfolien 1930–1950 (konservativ)
 }
 
@@ -463,6 +464,26 @@ class DiffusionInpaintingPhase(PhaseInterface):
     Rekonstruktion wenn Modellgewichte vorhanden.
     """
 
+    @staticmethod
+    def _derive_safe_inpainting_strength(
+        effective_strength: float,
+        material_key: str,
+        vocals_confidence: float,
+    ) -> float:
+        """Reduce wet blend for content that is prone to synthetic overfill artifacts."""
+        strength = float(effective_strength)
+        if vocals_confidence >= 0.40:
+            strength *= 0.78
+        _is_analog_sensitive = any(
+            token in material_key for token in ("vinyl", "shellac", "wax_cylinder", "wire_recording", "lacquer_disc")
+        )
+        if _is_analog_sensitive:
+            strength *= 0.85
+        # Prevent tonal-center drift spikes from aggressive diffuse fill on vocal analog material.
+        if _is_analog_sensitive and vocals_confidence >= 0.40:
+            strength = min(strength, 0.58)
+        return float(np.clip(strength, 0.0, 1.0))
+
     def get_metadata(self) -> PhaseMetadata:
         """Implementiert PhaseInterface.get_metadata()."""
         return PhaseMetadata(
@@ -498,6 +519,10 @@ class DiffusionInpaintingPhase(PhaseInterface):
         # §0 BW-Cap: prevent hallucination of HF content on bandwidth-limited carriers
         _material = kwargs.get("material_type")
         _mat_key = str(_material).lower() if _material is not None else ""
+        _vocals_conf = float(kwargs.get("panns_vocals_confidence", 0.0))
+        if _vocals_conf == 0.0:  # Fallback: direct callers may use panns_singing key
+            _vocals_conf = float(kwargs.get("panns_singing", 0.0))
+        safe_strength = self._derive_safe_inpainting_strength(effective_strength, _mat_key, _vocals_conf)
         # Accept both enum value strings like "MaterialType.WAX_CYLINDER" and plain keys
         for _mk, _cap in _MATERIAL_BW_CAP_HZ.items():
             if _mk in _mat_key:
@@ -522,7 +547,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 },
             )
 
-        min_gap_ms_eff = float(min_gap_ms) / max(effective_strength, 0.1)
+        min_gap_ms_eff = float(min_gap_ms) / max(safe_strength, 0.1)
         source_audio = audio
 
         # §11.7a: Bereits von RekonstruktionsDenker reparierte Gap-Regionen
@@ -540,7 +565,11 @@ class DiffusionInpaintingPhase(PhaseInterface):
             plugin_used = stats["plugin_used"]
             _n_repaired_skipped = stats.get("pre_repaired_skipped", 0)
         else:
-            # Stereo / Multi-channel — UV3 liefert (N, C) Format
+            # §2.51 Linked-Stereo: Gap-Detektion auf Mono-Mix, kohärente Reparatur
+            # Detect gaps on mono downmix to ensure identical gap regions for L+R
+            mono_mix = np.mean(audio, axis=1)
+            mono_gaps = _detect_gaps(mono_mix, sample_rate, min_gap_ms_eff)
+
             channels_repaired = []
             n_gaps = 0
             total_gap_ms = 0.0
@@ -557,14 +586,13 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 plugin_used = plugin_used or stats["plugin_used"]
                 _n_repaired_skipped += stats.get("pre_repaired_skipped", 0)
 
-                gaps = _detect_gaps(audio[:, ch], sample_rate, min_gap_ms_eff)
-                quality_scores.append(_reconstruction_quality_score(audio[:, ch], ch_rep, gaps))
+                quality_scores.append(_reconstruction_quality_score(audio[:, ch], ch_rep, mono_gaps))
 
             repaired = np.column_stack(channels_repaired)
             quality = float(np.mean(quality_scores)) if quality_scores else 1.0
 
-        if 0.0 < effective_strength < 1.0:
-            repaired = source_audio + effective_strength * (repaired - source_audio)
+        if 0.0 < safe_strength < 1.0:
+            repaired = source_audio + safe_strength * (repaired - source_audio)
 
         elapsed = time.perf_counter() - t0
 
@@ -588,6 +616,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 "pre_repaired_gaps_skipped": _n_repaired_skipped,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "safe_strength": safe_strength,
+                "panns_vocals_confidence": _vocals_conf,
                 "bw_cap_hz": _bw_cap_hz,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,

@@ -123,6 +123,7 @@ class ApolloPlugin:
         self._torch_model = None  # torch.jit.ScriptModule
         self._model_loaded: bool = False
         self._fallback_active: bool = False
+        self._device: str = "cpu"  # set by _try_load_model
         self._try_load_model()
 
     _BUDGET_NAME: str = "Apollo"
@@ -150,10 +151,27 @@ class ApolloPlugin:
             torch.set_num_threads(_os.cpu_count() or 4)  # §2.37 CPU-Thread-Budget
             model_path = self.MODELS_DIR / self._MODEL_FILENAME
             if model_path.exists():
-                self._torch_model = torch.jit.load(str(model_path), map_location="cpu")
+                try:
+                    from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                    _dev = _get_dev("ApolloPlugin")
+                except Exception:
+                    _dev = "cpu"
+                if _dev != "cpu":
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        if not _mgr().try_allocate_vram("ApolloPlugin", self._BUDGET_SIZE_GB):
+                            logger.info("Apollo: VRAM-Budget erschöpft — CPU-Load")
+                            _dev = "cpu"
+                    except Exception:
+                        pass
+                self._torch_model = torch.jit.load(str(model_path), map_location=_dev)
                 self._torch_model.eval()
+                self._torch_model.to(_dev)
+                self._device = _dev
                 self._model_loaded = True
-                logger.info("🟡 Apollo TorchScript geladen: %s", model_path.name)
+                logger.info("🟡 Apollo TorchScript geladen: %s (device=%s)", model_path.name, _dev)
                 try:
                     from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
 
@@ -282,7 +300,7 @@ class ApolloPlugin:
                 raise RuntimeError("Apollo TorchScript-Modell nicht initialisiert")
 
             # 1. Resample 48000 → 44100
-            t = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0)  # [1,1,T]
+            t = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0).to(self._device)  # [1,1,T]
             if sr != self._APOLLO_SR:
                 t = torchaudio.functional.resample(t, sr, self._APOLLO_SR)
 
@@ -294,7 +312,7 @@ class ApolloPlugin:
             if sr != self._APOLLO_SR:
                 out = torchaudio.functional.resample(out, self._APOLLO_SR, sr)
 
-            reconstructed = out.squeeze().numpy()  # [T]
+            reconstructed = out.squeeze().cpu().numpy()  # [T]
 
             # 4. Länge angleichen + Guard
             n = min(len(audio), len(reconstructed))
@@ -303,6 +321,22 @@ class ApolloPlugin:
             return np.clip(result, -1.0, 1.0).astype(np.float32)
 
         except Exception as exc:
+            if self._device != "cpu":
+                logger.warning("Apollo: GPU-Inferenz fehlgeschlagen (%s) — CPU-Retry", exc)
+                try:
+                    if self._torch_model is not None:
+                        self._torch_model.cpu()
+                    self._device = "cpu"
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        _mgr().report_gpu_error("ApolloPlugin", exc)
+                    except Exception:
+                        pass
+                except Exception as _mv_exc:
+                    logger.debug("Apollo GPU→CPU move fehlgeschlagen: %s", _mv_exc)
+                    self._device = "cpu"
+                return self._repair_apollo(audio, sr, material)
             logger.warning("Apollo TorchScript-Fehler: %s — DSP-Fallback", exc)
             return self._repair_dsp_fallback(audio, sr, material)
 

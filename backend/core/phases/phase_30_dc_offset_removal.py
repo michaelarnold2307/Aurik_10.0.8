@@ -81,34 +81,59 @@ class DCOffsetRemoval(PhaseInterface):
     Performance: <0.05× realtime on modern CPU
     """
 
-    # Material-adaptive high-pass configurations
+    # Material-adaptive DC-removal configurations.
+    # Phase 30 must stay conservative: true DC correction first, no aggressive rumble removal.
     HP_CONFIG = {
         MaterialType.SHELLAC: {
-            "cutoff_hz": 35,
-            "filter_order": 5,
-            "filter_type": "fir",  # Phase-linear
+            "cutoff_hz": 8,
+            "filter_order": 2,
+            "filter_type": "iir",
             "q_factor": 0.7,
         },
         MaterialType.VINYL: {
-            "cutoff_hz": 28,
-            "filter_order": 5,
-            "filter_type": "fir",
+            "cutoff_hz": 6,
+            "filter_order": 2,
+            "filter_type": "iir",
             "q_factor": 0.7,
         },
         MaterialType.TAPE: {
-            "cutoff_hz": 22,
-            "filter_order": 4,
-            "filter_type": "fir",
+            "cutoff_hz": 5,
+            "filter_order": 2,
+            "filter_type": "iir",
+            "q_factor": 0.7,
+        },
+        MaterialType.REEL_TAPE: {
+            "cutoff_hz": 5,
+            "filter_order": 2,
+            "filter_type": "iir",
             "q_factor": 0.7,
         },
         MaterialType.CD_DIGITAL: {
-            "cutoff_hz": 8,
-            "filter_order": 3,
-            "filter_type": "iir",  # Efficient for minimal processing
+            "cutoff_hz": 4,
+            "filter_order": 2,
+            "filter_type": "iir",
+            "q_factor": 0.7,
+        },
+        MaterialType.MP3_LOW: {
+            "cutoff_hz": 4,
+            "filter_order": 2,
+            "filter_type": "iir",
+            "q_factor": 0.7,
+        },
+        MaterialType.MP3_HIGH: {
+            "cutoff_hz": 4,
+            "filter_order": 2,
+            "filter_type": "iir",
+            "q_factor": 0.7,
+        },
+        MaterialType.AAC: {
+            "cutoff_hz": 4,
+            "filter_order": 2,
+            "filter_type": "iir",
             "q_factor": 0.7,
         },
         MaterialType.STREAMING: {
-            "cutoff_hz": 5,
+            "cutoff_hz": 4,
             "filter_order": 2,
             "filter_type": "iir",
             "q_factor": 0.7,
@@ -185,6 +210,8 @@ class DCOffsetRemoval(PhaseInterface):
                 },
             )
 
+        _original_audio = np.asarray(audio, dtype=np.float32).copy()
+
         # Measure DC offset before removal
         dc_offset_before = [float(np.mean(audio[:, ch])) for ch in range(2)] if is_stereo else [float(np.mean(audio))]
 
@@ -220,6 +247,20 @@ class DCOffsetRemoval(PhaseInterface):
         if 0.0 < _effective_strength < 1.0:
             audio_processed = audio + _effective_strength * (audio_processed - audio)
             audio_processed = np.clip(audio_processed, -1.0, 1.0)
+
+        audio_processed, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
+            _original_audio,
+            audio_processed,
+            material,
+        )
+        if abs(_makeup_db) > 0.01:
+            logger.info(
+                "Phase 30 loudness-preservation: material=%s rms_drop=%+.2f dB via makeup %+.2f dB",
+                material.value,
+                _rms_drop_db,
+                _makeup_db,
+            )
+
         return PhaseResult(
             success=True,
             audio=audio_processed,
@@ -236,17 +277,32 @@ class DCOffsetRemoval(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "rt_factor": float(rt_factor),
-                "rms_drop_db": 0.0,
-                "loudness_makeup_db": 0.0,
+                "rms_drop_db": _rms_drop_db,
+                "loudness_makeup_db": _makeup_db,
             },
             warnings=[] if rt_factor < 0.08 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
 
     def _remove_dc_and_rumble(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
-        """Remove DC offset and subsonic rumble from a single channel."""
+        """Remove DC offset conservatively from a single channel."""
         cutoff_hz = config["cutoff_hz"]
         filter_order = config["filter_order"]
         filter_type = config["filter_type"]
+
+        # Stage 1: always remove static DC bias directly.
+        dc = float(np.mean(audio))
+        if abs(dc) > 1e-9:
+            audio = audio - dc
+
+        # Stage 2: remove residual near-DC drift with very low cutoff.
+        # For tape/reel-tape we use the project-mandated zero-phase form.
+        if cutoff_hz <= 0.0:
+            return np.asarray(audio, dtype=np.float32)
+
+        if filter_type == "iir" and cutoff_hz <= 5.0:
+            b = np.array([1.0, -1.0], dtype=np.float64)
+            a = np.array([1.0, -0.9995], dtype=np.float64)
+            return signal.filtfilt(b, a, audio).astype(np.float32)
 
         if filter_type == "fir":
             # Phase-linear FIR filter
@@ -276,7 +332,51 @@ class DCOffsetRemoval(PhaseInterface):
             # Apply filter (forward-backward for zero-phase)
             processed = signal.sosfiltfilt(sos, audio)
 
-        return processed
+        return np.asarray(processed, dtype=np.float32)
+
+    def _preserve_phase_loudness(
+        self,
+        original_audio: np.ndarray,
+        processed_audio: np.ndarray,
+        material: MaterialType,
+    ) -> tuple[np.ndarray, float, float]:
+        """Preserve perceived level for DC-removal phase to avoid musical loss."""
+        orig = np.asarray(original_audio, dtype=np.float64)
+        proc = np.asarray(processed_audio, dtype=np.float64)
+        if orig.shape != proc.shape:
+            return np.clip(np.asarray(processed_audio, dtype=np.float32), -1.0, 1.0), 0.0, 0.0
+
+        max_drop_db = {
+            MaterialType.SHELLAC: 1.1,
+            MaterialType.VINYL: 0.9,
+            MaterialType.TAPE: 1.0,
+            MaterialType.REEL_TAPE: 1.0,
+        }.get(material, 0.8)
+        max_lift_db = 0.6
+
+        orig_rms = float(np.sqrt(np.mean(orig**2) + 1e-12))
+        proc_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        if orig_rms < 1e-10 or proc_rms < 1e-12:
+            return np.clip(proc.astype(np.float32), -1.0, 1.0), 0.0, 0.0
+
+        delta_db = float(20.0 * np.log10(max(proc_rms / orig_rms, 1e-30)))
+        gain_db = 0.0
+        if delta_db < -max_drop_db:
+            gain_db = (-max_drop_db) - delta_db
+        elif delta_db > max_lift_db:
+            gain_db = max_lift_db - delta_db
+
+        if abs(gain_db) > 0.01:
+            gain = float(10.0 ** (gain_db / 20.0))
+            p999 = float(np.percentile(np.abs(proc), 99.9) + 1e-12)
+            if gain > 1.0:
+                gain = min(gain, float(0.985 / p999))
+            proc = np.clip(proc * gain, -1.0, 1.0)
+
+        out_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        out_delta_db = float(20.0 * np.log10(max(out_rms / orig_rms, 1e-30)))
+        makeup_db = float(20.0 * np.log10(max(out_rms / proc_rms, 1e-30)))
+        return np.clip(proc.astype(np.float32), -1.0, 1.0), out_delta_db, makeup_db
 
     def _measure_subsonic_energy(self, audio: np.ndarray, sample_rate: int, cutoff_hz: float) -> float:
         """Measure RMS energy in subsonic band (<cutoff_hz)."""

@@ -719,7 +719,6 @@ class AuthenticityMetricsExtended:
 if __name__ == "__main__":
     import argparse
 
-
     parser = argparse.ArgumentParser(description="Genre-Specific Authenticity Detector")
     parser.add_argument("input", help="Input audio file")
     parser.add_argument(

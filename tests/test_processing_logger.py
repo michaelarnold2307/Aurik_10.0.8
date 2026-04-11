@@ -217,6 +217,33 @@ class TestProcessingTrace:
         assert "step1" in md
         assert "Phase 1" in md
 
+    def test_markdown_time_units_regression(self, sample_audio):
+        """Ensure per-step times stay in ms and total time stays in seconds."""
+        audio_clean, audio_noisy, sr = sample_audio
+        logger = ProcessingLogger()
+
+        trace = ProcessingTrace(session_id="units", input_file="units.wav", sample_rate=sr)
+        step = ProcessingStep(
+            step_id="step_units",
+            phase="Phase Units",
+            module_name="module_units",
+            metrics_before=logger._compute_metrics(audio_noisy, sr),
+            metrics_after=logger._compute_metrics(audio_clean, sr),
+            processing_time_ms=208.0,
+        )
+        trace.steps.append(step)
+        trace.total_processing_time_sec = 0.208
+
+        md = trace.to_markdown()
+
+        # Regression guard: step time/average must remain in milliseconds.
+        assert "208 ms" in md
+        assert "Avg Time/Step:" in md and " ms" in md
+
+        # Total time is a session duration in seconds, never milliseconds.
+        assert "Total Time:" in md and "0.21s" in md
+        assert "208 s" not in md
+
 
 class TestProcessingLogger:
     """Test ProcessingLogger functionality."""

@@ -176,26 +176,90 @@ def load_audio_file(
                 logger.debug("load_audio_file: soundfile failed (%s) — trying pedalboard", _e1)
 
         if audio is None and _sf_unsupported:
-            # Stufe 2 (lossy): pydub first (FFmpeg subprocess) to reduce in-process
-            # abort risk observed with some FFmpeg backends under memory pressure.
+            # Stufe 2 (lossy primary): pedalboard/FFmpeg — stabiler als pydub für in-process.
+            # pydub.from_file() kann via libavcodec SIGABRT auslösen (auch ohne malloc_trim),
+            # weil FFmpeg-Allokierungsfehler unter Speicherdruck als abort() propagieren.
+            # Pedalboard nutzt denselben FFmpeg-Stack, aber ohne audioop C-Extension.
             try:
-                from pydub import AudioSegment as _AudioSeg  # type: ignore
+                from pedalboard.io import AudioFile as _PBAudioFile  # type: ignore
 
-                _seg = _AudioSeg.from_file(filepath)
-                sr = int(_seg.frame_rate)
-                _samples = np.array(_seg.get_array_of_samples(), dtype=np.float32)
-                _bit_depth = _seg.sample_width * 8
-                _samples /= float(2 ** (_bit_depth - 1))
-                if _seg.channels > 1:
-                    _samples = _samples.reshape(-1, _seg.channels)
-                audio = _samples
-                logger.debug("load_audio_file: pydub OK (%s)", filepath)
+                with _PBAudioFile(filepath) as _f:
+                    sr = int(_f.samplerate)
+                    _frames = _f.frames
+                    _chunk = sr * 300  # 300 s chunks to avoid OOM on long files
+                    _parts: list[np.ndarray] = []
+                    _read = 0
+                    while _read < _frames:
+                        _block = _f.read(min(_chunk, _frames - _read))
+                        if _block.shape[-1] == 0:
+                            break  # EOF — pedalboard.frames can overcount for VBR
+                        _parts.append(_block)
+                        _read += _block.shape[-1]
+                _raw = np.concatenate(_parts, axis=1) if len(_parts) > 1 else _parts[0]
+                # pedalboard returns (channels, samples) — transpose to (samples, channels)
+                if _raw.ndim == 2:
+                    _raw = _raw.T
+                audio = _raw.astype(np.float32)
+                logger.debug("load_audio_file: pedalboard/FFmpeg OK for lossy (%s)", filepath)
+            except Exception as _e_pb_lossy:
+                logger.debug(
+                    "load_audio_file: pedalboard failed for lossy (%s) — pydub subprocess fallback", _e_pb_lossy
+                )
+
+        if audio is None and _sf_unsupported:
+            # Stufe 3 (lossy fallback): pydub — in subprocess, um in-process SIGABRT zu vermeiden.
+            # Subprocess-Isolation: SIGABRT des Child-Prozesses wird als Exception behandelt.
+            try:
+                import json
+                import subprocess
+                import sys
+                import tempfile
+
+                _script = (
+                    "import sys, json, numpy as np\n"
+                    "from pydub import AudioSegment\n"
+                    f"seg = AudioSegment.from_file({filepath!r})\n"
+                    "sr = seg.frame_rate\n"
+                    "bw = seg.sample_width\n"
+                    "raw = bytes(seg.raw_data)\n"
+                    "dt = np.uint8 if bw==1 else (np.int16 if bw==2 else np.int32)\n"
+                    "s = np.frombuffer(raw, dtype=dt).astype(np.float32)\n"
+                    "if bw == 1:\n"
+                    "    s = (s - 128.0) / 128.0\n"
+                    "else:\n"
+                    "    s /= float(2**(bw*8-1))\n"
+                    "if seg.channels > 1:\n"
+                    "    s = s.reshape(-1, seg.channels)\n"
+                    "result = {'sr': sr, 'channels': seg.channels, 'shape': list(s.shape)}\n"
+                    "with open(sys.argv[1], 'wb') as f:\n"
+                    "    np.save(f, s)\n"
+                    "print(json.dumps(result))\n"
+                )
+                _tmp = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
+                _tmp.close()
+                _r = subprocess.run(
+                    [sys.executable, "-c", _script, _tmp.name],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if _r.returncode == 0 and _r.stdout.strip():
+                    _d = json.loads(_r.stdout.strip())
+                    audio = np.load(_tmp.name).astype(np.float32)
+                    sr = int(_d["sr"])
+                    logger.debug("load_audio_file: pydub subprocess OK (%s)", filepath)
+                else:
+                    raise RuntimeError(_r.stderr[:500] or f"returncode={_r.returncode}")
             except Exception as _e2:
-                # Do not fall back to in-process pedalboard for lossy media.
-                # On some systems this path can abort the whole process under
-                # memory pressure. Keep failures explicit and recoverable.
-                result["error"] = f"Audio read error: pydub failed for lossy format. Last: {_e2}"
+                result["error"] = f"Audio read error: pedalboard + pydub subprocess failed. Last: {_e2}"
                 return result
+            finally:
+                try:
+                    import os as _os_tmp
+
+                    _os_tmp.unlink(_tmp.name)
+                except Exception:
+                    pass
 
         if audio is None and not _sf_unsupported:
             # Stufe 2/3: pedalboard (FFmpeg backend) — preferred for lossless fallback,

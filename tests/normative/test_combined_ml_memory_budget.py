@@ -39,7 +39,7 @@ _MAX_BUDGET_GB = 12.0
 # Threshold adjusted to 3.5 GB to accommodate Lazy-Load requirement semantics (§2.37).
 _LAZY_THRESHOLD_GB = 3.5
 _LAZY_MODEL_SIZES: dict[str, float] = {
-    "AudioSR": 7.0,  # plugins/audiosr_plugin.py  _AUDIOSR_BUDGET_GB
+    "AudioSR": 5.75,  # plugins/audiosr_plugin.py  _AUDIOSR_BUDGET_GB
     "MERT": 3.7,  # plugins/mert_plugin.py     MERT full checkpoint
 }
 

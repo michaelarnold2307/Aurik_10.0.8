@@ -393,6 +393,16 @@ class QualityRecoverySystem:
                         original_audio, current_audio, action.parameters, medium_type, processing_mode, sample_rate
                     )
 
+                elif action.strategy == RecoveryStrategy.ADJUST_PARAMETERS:
+                    recovered_audio = self._adjust_parameters(
+                        original_audio, current_audio, action.parameters, sample_rate
+                    )
+
+                elif action.strategy == RecoveryStrategy.USE_ALTERNATIVE:
+                    recovered_audio = self._use_alternative(
+                        original_audio, current_audio, action.parameters, medium_type, processing_mode, sample_rate
+                    )
+
                 else:
                     logger.warning("  Strategy %s not implemented yet", action.strategy.value)
                     continue
@@ -737,6 +747,207 @@ class QualityRecoverySystem:
         logger.info("  → Incremental step: %.1% towards target", step_size)
 
         return incremental.astype(np.float32)
+
+    def _adjust_parameters(
+        self,
+        original: np.ndarray,
+        processed: np.ndarray,
+        parameters: dict[str, Any],
+        sample_rate: int,
+    ) -> np.ndarray:
+        """Spectral parameter adjustment via STFT-domain EQ correction.
+
+        Applies frequency-selective gain to address:
+        - ``high_freq_reduction`` (0–1): blend HF bins (≥ 6 kHz) back toward
+          the original PSD, reducing over-brightening.
+        - ``compression_ratio`` (0–1): reduce residual dynamic compression
+          by restoring frame-level crest-factor toward original.
+        - ``low_freq_boost`` (0–1): boost LF bins (≤ 250 Hz) relative to
+          the original to restore warmth lost during processing.
+
+        All operations are M/S-aware: stereo input is processed as M/S and
+        adjustments are applied to Mid only (§2.51).
+        """
+        from scipy.signal import istft as _istft
+        from scipy.signal import stft as _stft
+
+        hf_red = float(parameters.get("high_freq_reduction", 0.0))
+        comp_rat = float(parameters.get("compression_ratio", 0.0))
+        lf_boost = float(parameters.get("low_freq_boost", 0.0))
+
+        if hf_red == 0.0 and comp_rat == 0.0 and lf_boost == 0.0:
+            return processed.astype(np.float32)
+
+        audio_f32 = processed.astype(np.float32)
+        orig_f32 = original.astype(np.float32)
+        stereo = audio_f32.ndim == 2
+
+        # Convert stereo → M/S (Mid only adjusted, §2.51)
+        if stereo:
+            mid = (audio_f32[:, 0] + audio_f32[:, 1]) * 0.5
+            side = (audio_f32[:, 0] - audio_f32[:, 1]) * 0.5
+            mid_orig = (orig_f32[:, 0] + orig_f32[:, 1]) * 0.5
+        else:
+            mid = audio_f32
+            mid_orig = orig_f32
+
+        nperseg = 2048
+        noverlap = nperseg * 3 // 4
+
+        try:
+            _, _, Zxx = _stft(mid, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+            _, _, Zxx_orig = _stft(mid_orig, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+
+            freqs = np.linspace(0, sample_rate / 2, Zxx.shape[0])
+            mag = np.abs(Zxx)
+            mag_orig = np.abs(Zxx_orig)
+            phase = np.angle(Zxx)
+
+            gain = np.ones_like(mag)
+
+            if hf_red > 0.0:
+                # HF bins ≥ 6 kHz — blend back toward original to reduce over-brightness
+                hf_mask = freqs >= 6000.0
+                # gain factor: 1 at boundary, moves toward mag_orig/mag at full cut
+                ratio = np.where(mag > 1e-12, mag_orig / (mag + 1e-12), 1.0)
+                ratio = np.clip(ratio, 0.1, 10.0)
+                gain[hf_mask, :] *= 1.0 - hf_red * (1.0 - ratio[hf_mask, :])
+                gain[hf_mask, :] = np.clip(gain[hf_mask, :], 0.1, 2.0)
+
+            if comp_rat > 0.0:
+                # Per-frame crest-factor restoration — reintroduce dynamics
+                frame_peak_proc = np.percentile(mag, 99.9, axis=0, keepdims=True) + 1e-12
+                frame_peak_orig = np.percentile(mag_orig, 99.9, axis=0, keepdims=True) + 1e-12
+                crest_scale = (frame_peak_orig / frame_peak_proc) ** comp_rat
+                crest_scale = np.clip(crest_scale, 0.5, 2.0)
+                gain *= crest_scale
+
+            if lf_boost > 0.0:
+                lf_mask = freqs <= 250.0
+                lf_scale = 1.0 + lf_boost * 0.5  # max +6 dB
+                gain[lf_mask, :] *= lf_scale
+
+            Zxx_out = mag * gain * np.exp(1j * phase)
+            _, mid_out = _istft(Zxx_out, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+            n = len(mid)
+            mid_out = mid_out[:n] if len(mid_out) >= n else np.pad(mid_out, (0, n - len(mid_out)))
+            mid_out = np.nan_to_num(mid_out, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if stereo:
+                out_l = mid_out + side
+                out_r = mid_out - side
+                result = np.stack([out_l, out_r], axis=1)
+            else:
+                result = mid_out
+
+            result = np.clip(result, -1.0, 1.0).astype(np.float32)
+            logger.info(
+                "  → ADJUST_PARAMETERS: hf_red=%.2f comp=%.2f lf_boost=%.2f applied",
+                hf_red,
+                comp_rat,
+                lf_boost,
+            )
+            return result
+
+        except Exception as exc:
+            logger.warning("  → _adjust_parameters STFT failed (%s), returning processed unchanged.", exc)
+            return processed.astype(np.float32)
+
+    def _use_alternative(
+        self,
+        original: np.ndarray,
+        processed: np.ndarray,
+        parameters: dict[str, Any],
+        medium_type: MediumType,
+        processing_mode: ProcessingMode,
+        sample_rate: int,
+    ) -> np.ndarray:
+        """Multi-band alternative processing path.
+
+        Replaces the current processing chain output with a frequency-zone-aware
+        blend: uses more of the *original* in perceptually sensitive zones (vocals,
+        low-mids) and more of the *processed* output in bands where processing
+        likely helped (HF extensions, bass cleaning).
+
+        Blend weights per zone are tunable via ``parameters``:
+          - ``lf_blend``       bass zone (≤ 250 Hz)  — default 0.4 orig
+          - ``low_mid_blend``  vocals/mids (250–2 kHz) — default 0.55 orig
+          - ``high_mid_blend`` presence (2–6 kHz)     — default 0.35 orig
+          - ``hf_blend``       air (≥ 6 kHz)          — default 0.25 orig
+
+        Always adds a limiting step to prevent clipping.
+        """
+        from scipy.signal import istft as _istft
+        from scipy.signal import stft as _stft
+
+        lf_blend = float(parameters.get("lf_blend", 0.40))
+        low_mid_blend = float(parameters.get("low_mid_blend", 0.55))
+        high_mid_blend = float(parameters.get("high_mid_blend", 0.35))
+        hf_blend = float(parameters.get("hf_blend", 0.25))
+
+        audio_f32 = processed.astype(np.float32)
+        orig_f32 = original.astype(np.float32)
+
+        # Work on mono-mid for M/S compliance (§2.51); keep side unchanged
+        stereo = audio_f32.ndim == 2
+        if stereo:
+            mid = (audio_f32[:, 0] + audio_f32[:, 1]) * 0.5
+            side = (audio_f32[:, 0] - audio_f32[:, 1]) * 0.5
+            mid_orig = (orig_f32[:, 0] + orig_f32[:, 1]) * 0.5
+        else:
+            mid = audio_f32
+            mid_orig = orig_f32
+
+        nperseg = 2048
+        noverlap = nperseg * 3 // 4
+
+        try:
+            _, _, Zxx_proc = _stft(mid, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+            _, _, Zxx_orig = _stft(mid_orig, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+
+            freqs = np.linspace(0, sample_rate / 2, Zxx_proc.shape[0])
+
+            # Per-bin blend weights (α_orig × Zxx_orig + (1-α_orig) × Zxx_proc)
+            alpha = np.zeros(len(freqs))
+            alpha[freqs <= 250.0] = lf_blend
+            alpha[(freqs > 250.0) & (freqs <= 2000.0)] = low_mid_blend
+            alpha[(freqs > 2000.0) & (freqs <= 6000.0)] = high_mid_blend
+            alpha[freqs > 6000.0] = hf_blend
+
+            alpha = alpha[:, np.newaxis]  # broadcast over frames
+            Zxx_alt = alpha * Zxx_orig + (1.0 - alpha) * Zxx_proc
+
+            _, mid_out = _istft(Zxx_alt, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
+            n = len(mid)
+            mid_out = mid_out[:n] if len(mid_out) >= n else np.pad(mid_out, (0, n - len(mid_out)))
+            mid_out = np.nan_to_num(mid_out, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if stereo:
+                out_l = mid_out + side
+                out_r = mid_out - side
+                result = np.stack([out_l, out_r], axis=1)
+            else:
+                result = mid_out
+
+            # True-peak guard (§ peak-guard rule)
+            peak = np.percentile(np.abs(result), 99.9)
+            if peak > 0.98:
+                result = result * (0.98 / peak)
+
+            result = np.clip(result, -1.0, 1.0).astype(np.float32)
+            logger.info(
+                "  → USE_ALTERNATIVE: multi-band blend applied (lf=%.2f lo_mid=%.2f hi_mid=%.2f hf=%.2f)",
+                lf_blend,
+                low_mid_blend,
+                high_mid_blend,
+                hf_blend,
+            )
+            return result
+
+        except Exception as exc:
+            logger.warning("  → _use_alternative STFT failed (%s), using blend fallback.", exc)
+            blend = 0.5 * processed + 0.5 * original
+            return np.clip(blend, -1.0, 1.0).astype(np.float32)
 
 
 def create_quality_recovery_system() -> QualityRecoverySystem:

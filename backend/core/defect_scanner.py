@@ -1310,8 +1310,15 @@ class DefectScanner:
                 MaterialType.WIRE_RECORDING,
             }
         )
+        _tape_head_dip_score = self._detect_tape_head_level_dips(_audio_mono_full)
         if material_type in _TAPE_HEAD_DIP_MATERIALS:
-            scores[DefectType.TAPE_HEAD_LEVEL_DIP] = self._detect_tape_head_level_dips(_audio_mono_full)
+            scores[DefectType.TAPE_HEAD_LEVEL_DIP] = _tape_head_dip_score
+        elif self._should_keep_cross_material_tape_head_level_dip(_tape_head_dip_score):
+            _tape_head_dip_score.severity = float(np.clip(_tape_head_dip_score.severity * 0.75, 0.0, 1.0))
+            _tape_head_dip_score.confidence = float(np.clip(min(_tape_head_dip_score.confidence, 0.72), 0.05, 0.95))
+            _tape_head_dip_score.metadata["cross_material_fallback"] = True
+            _tape_head_dip_score.metadata["fallback_material_gate_bypassed"] = material_type.value
+            scores[DefectType.TAPE_HEAD_LEVEL_DIP] = _tape_head_dip_score
         else:
             scores[DefectType.TAPE_HEAD_LEVEL_DIP] = DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.0, 0.95)
         _tail_tick("Tape-Head-Level-Dip")
@@ -1328,7 +1335,25 @@ class DefectScanner:
         # Semi-stationary defects (print_through, transient_smearing, pre_echo)
         # have their locations cleared — they show as full-width tints instead.
         if _location_offset_s > 0.0:
-            # Event-based detectors: re-detect on full audio for locations only
+            # §9.7.5b Performance: analyze only non-center sections for location re-detection.
+            # Center 60 s is already covered by the primary pass (locations offset-corrected below).
+            # Event-detectors (location-critical): use FULL intro + FULL outro to ensure 100 % coverage.
+            # Severity-rechecks (statistical sample only): capped at 30 s per side — severity is not
+            # location-dependent; a representative sample is sufficient.
+            _center_begin = _dc_mid - _dc_half  # sample index where center-crop starts
+            _center_end = _dc_mid + _dc_half  # sample index where center-crop ends
+            _nc_intro_audio = _audio_mono_full[:_center_begin]  # full intro (all before center)
+            _nc_intro_offset_s = 0.0
+            _nc_outro_audio = _audio_mono_full[_center_end:]  # full outro (all after center)
+            _nc_outro_offset_s = float(_center_end) / sr
+            # 30 s samples for severity-only rechecks (statistically representative)
+            _sev_cap = _detector_cap_n // 2  # 30 s
+            _sev_intro = _audio_mono_full[: min(_sev_cap, _center_begin)]
+            _sev_intro_off = 0.0
+            _sev_outro = _audio_mono_full[_center_end : _center_end + _sev_cap]
+            _sev_outro_off = _nc_outro_offset_s
+
+            # Event-based detectors: re-detect on non-center sections for locations only
             _EVENT_DETECTORS: list[tuple] = [
                 (DefectType.CLICKS, self._detect_clicks),
                 (DefectType.CRACKLE, self._detect_crackle),
@@ -1340,7 +1365,7 @@ class DefectScanner:
                 (DefectType.GROOVE_ECHO, self._detect_groove_echo),
             ]
             # Long-audio center-crop misses are most critical for cheap impulse
-            # detectors; always re-check them on full audio to avoid blind spots.
+            # detectors; always re-check them on non-center sections to avoid blind spots.
             _FORCE_FULL_REDETECT = {
                 DefectType.CLICKS,
                 DefectType.CRACKLE,
@@ -1356,35 +1381,40 @@ class DefectScanner:
                 _need_redetect = (_edt in _FORCE_FULL_REDETECT) or (scores[_edt].severity > 0.01)
                 if not _need_redetect:
                     continue
-                try:
-                    _prev_sev = float(scores[_edt].severity)
-                    _prev_conf = float(scores[_edt].confidence)
-                    _full_result = _edet_fn(_audio_mono_full)
-                    # Merge severity/confidence conservatively: never lower previous
-                    # center-crop evidence, but allow full-audio rescue detections.
-                    scores[_edt].severity = float(np.clip(max(_prev_sev, _full_result.severity), 0.0, 1.0))
-                    scores[_edt].confidence = float(np.clip(max(_prev_conf, _full_result.confidence), 0.0, 1.0))
-
-                    if _full_result.locations:
-                        scores[_edt].locations = _full_result.locations
-                        if _prev_sev <= 0.01 and _full_result.severity > 0.01:
-                            scores[_edt].metadata["outside_center_crop_detected"] = True
-                            scores[_edt].metadata["outside_center_crop_recheck"] = "full_audio"
-                    # If full-audio detection finds no locations, keep severity
-                    # but clear the center-only locations (shown as tint instead)
-                    else:
-                        scores[_edt].locations = []
-                except Exception:
-                    # Fallback: apply offset to center-crop locations
-                    if scores[_edt].locations:
-                        scores[_edt].locations = [
-                            (t0 + _location_offset_s, t1 + _location_offset_s) for t0, t1 in scores[_edt].locations
-                        ]
+                _prev_sev = float(scores[_edt].severity)
+                _prev_conf = float(scores[_edt].confidence)
+                # Start with center-crop locations already offset-corrected to absolute time.
+                _abs_locations: list[tuple[float, float]] = [
+                    (t0 + _location_offset_s, t1 + _location_offset_s) for t0, t1 in scores[_edt].locations
+                ]
+                _nc_sev = _prev_sev
+                _nc_conf = _prev_conf
+                for _seg, _seg_off in ((_nc_intro_audio, _nc_intro_offset_s), (_nc_outro_audio, _nc_outro_offset_s)):
+                    if len(_seg) < sr // 4:
+                        continue
+                    try:
+                        _sub = _edet_fn(_seg)
+                        _nc_sev = max(_nc_sev, float(_sub.severity))
+                        _nc_conf = max(_nc_conf, float(_sub.confidence))
+                        _abs_locations.extend((t0 + _seg_off, t1 + _seg_off) for t0, t1 in _sub.locations)
+                    except Exception:
+                        pass
+                scores[_edt].severity = float(np.clip(_nc_sev, 0.0, 1.0))
+                scores[_edt].confidence = float(np.clip(_nc_conf, 0.0, 1.0))
+                if _abs_locations:
+                    scores[_edt].locations = sorted(_abs_locations, key=lambda _loc: _loc[0])
+                    if _prev_sev <= 0.01 and _nc_sev > 0.01:
+                        scores[_edt].metadata["outside_center_crop_detected"] = True
+                        scores[_edt].metadata["outside_center_crop_recheck"] = "non_center_sections"
+                else:
+                    scores[_edt].locations = []
                 _tail_tick("Vollaudio-Recheck (Events)")
 
-            # Full-audio severity rescue for center-crop-sensitive defects.
-            # These defects can be concentrated in intro/outro and may be under-estimated
-            # when only the center 60 s are used for the primary pass.
+            # Severity rescue for center-crop-sensitive defects.
+            # Severity is a statistical / global property — a 30 s intro + 30 s outro sample
+            # is sufficient to catch intro/outro-concentrated defects without running the full
+            # duration (e.g. 225 s) through expensive detectors like pitch_drift or reverb_excess.
+            # §9.7.5b: use _sev_intro / _sev_outro (both ≤ 30 s) instead of _audio_mono_full.
             _FULL_AUDIO_SEVERITY_RECHECK: list[tuple] = [
                 (DefectType.PITCH_DRIFT, self._detect_pitch_drift),
                 (DefectType.REVERB_EXCESS, self._detect_reverb_excess),
@@ -1401,26 +1431,30 @@ class DefectScanner:
                     continue
                 _prev_sev = float(scores[_sdt].severity)
                 _prev_conf = float(scores[_sdt].confidence)
-                # Re-check only if the center-crop score is not already very strong.
-                if _prev_sev >= 0.35:
+                # Re-check only if the center-crop score is not already meaningful.
+                # Threshold 0.10: any real center-crop detection is statistically representative;
+                # running the expensive detector again on 225 s is not justified when center-crop
+                # already found evidence (severity > 0.10 is a reliable detection).
+                if _prev_sev >= 0.10:
                     continue
-                try:
-                    _full_result = _sdet_fn(_audio_mono_full)
-                    _merged_sev = float(np.clip(max(_prev_sev, _full_result.severity), 0.0, 1.0))
-                    _merged_conf = float(np.clip(max(_prev_conf, _full_result.confidence), 0.0, 1.0))
-                    scores[_sdt].severity = _merged_sev
-                    scores[_sdt].confidence = _merged_conf
-
-                    # Use full-audio locations if provided.
-                    if _full_result.locations:
-                        scores[_sdt].locations = list(_full_result.locations)
-
-                    if _merged_sev > (_prev_sev + 0.02):
-                        scores[_sdt].metadata["outside_center_crop_detected"] = True
-                        scores[_sdt].metadata["outside_center_crop_recheck"] = "full_audio_severity"
-                except Exception as _exc:
-                    logger.debug("Non-stationary recheck failed for %s: %s", _sdt, _exc)
-                    # Keep center-crop value on recheck errors.
+                _sev_merged = _prev_sev
+                _conf_merged = _prev_conf
+                for _seg, _seg_off in ((_sev_intro, _sev_intro_off), (_sev_outro, _sev_outro_off)):
+                    if len(_seg) < sr // 4:
+                        continue
+                    try:
+                        _sub = _sdet_fn(_seg)
+                        _sev_merged = max(_sev_merged, float(_sub.severity))
+                        _conf_merged = max(_conf_merged, float(_sub.confidence))
+                        if _sub.locations:
+                            scores[_sdt].locations = [(t0 + _seg_off, t1 + _seg_off) for t0, t1 in _sub.locations]
+                    except Exception as _exc:
+                        logger.debug("Non-stationary recheck failed for %s: %s", _sdt, _exc)
+                scores[_sdt].severity = float(np.clip(_sev_merged, 0.0, 1.0))
+                scores[_sdt].confidence = float(np.clip(_conf_merged, 0.0, 1.0))
+                if _sev_merged > (_prev_sev + 0.02):
+                    scores[_sdt].metadata["outside_center_crop_detected"] = True
+                    scores[_sdt].metadata["outside_center_crop_recheck"] = "non_center_sample_severity"
                 _tail_tick("Vollaudio-Recheck (Severity)")
 
             # DROPOUTS + TRANSPORT_BUMP + TAPE_HEAD_LEVEL_DIP already use full audio — no correction needed.
@@ -1435,6 +1469,10 @@ class DefectScanner:
                 DefectType.SIBILANCE,
                 DefectType.VOCAL_HARSHNESS,
                 DefectType.GROOVE_ECHO,
+                # §9.7.5b: Event re-detection produces absolute-time locations for these too;
+                # must skip the offset correction that would double-correct them.
+                DefectType.TAPE_SPLICE_ARTIFACT,
+                DefectType.STICKY_SHED_RESIDUE,
             }
             if is_stereo:
                 _SKIP_OFFSET.add(DefectType.CLICKS)  # redundant but explicit
@@ -3617,7 +3655,7 @@ class DefectScanner:
 
         def estimate_fundamental(seg: np.ndarray) -> float:
             """Fundamental frequency via FFT-based autocorrelation."""
-            seg = seg / (np.max(np.abs(seg)) + 1e-8)
+            seg = seg / (np.percentile(np.abs(seg), 99.9) + 1e-8)
             min_lag = int(self.sample_rate / 2000)
             max_lag = int(self.sample_rate / 80)
             if max_lag >= len(seg):
@@ -3944,7 +3982,7 @@ class DefectScanner:
         analysis across passages of varying amplitude.
         """
         audio_norm = audio - np.mean(audio)
-        max_amp = float(np.max(np.abs(audio_norm)))
+        max_amp = float(np.percentile(np.abs(audio_norm), 99.9))
         if max_amp < 1e-8:
             return DefectScore(DefectType.QUANTIZATION_NOISE, 0.0, 0.0)
         audio_norm = audio_norm / max_amp
@@ -4173,7 +4211,7 @@ class DefectScanner:
             return DefectScore(DefectType.DYNAMIC_COMPRESSION_EXCESS, 0.0, 0.0)
 
         # Schritt 1: Crest Factor
-        max_amp = np.max(np.abs(audio))
+        max_amp = np.percentile(np.abs(audio), 99.9)
         if max_amp < 1e-8:
             return DefectScore(DefectType.DYNAMIC_COMPRESSION_EXCESS, 0.0, 0.0)
         audio_norm = audio / max_amp
@@ -4252,7 +4290,7 @@ class DefectScanner:
             return DefectScore(DefectType.SOFT_SATURATION, 0.0, 0.80)
 
         try:
-            max_amp = float(np.max(np.abs(audio)))
+            max_amp = float(np.percentile(np.abs(audio), 99.9))
             if max_amp < 0.05:
                 return DefectScore(DefectType.SOFT_SATURATION, 0.0, 0.5)
             audio_norm = audio / max_amp
@@ -4789,6 +4827,14 @@ class DefectScanner:
             sev = float(np.clip(sev, 0.0, 1.0))
             confidence = 0.65 if sev > 0.05 else 0.85
 
+            # §6.7 Dolby NR type inference from HF-to-mid ratio
+            if hf_to_mid >= 1.5:
+                _dolby_type = "dolby_c"
+            elif hf_to_mid >= 0.8:
+                _dolby_type = "dolby_b"
+            else:
+                _dolby_type = "none"
+
             return DefectScore(
                 defect_type=DefectType.DOLBY_NR_MISMATCH,
                 severity=sev,
@@ -4797,6 +4843,7 @@ class DefectScanner:
                 metadata={
                     "hf_to_mid_ratio": round(hf_to_mid, 3),
                     "shelf_uniformity": round(shelf_uniformity, 3),
+                    "dolby_nr_type": _dolby_type,
                 },
             )
         except Exception:
@@ -4906,6 +4953,23 @@ class DefectScanner:
 
             confidence = float(np.clip(0.70 + 0.20 * min(1.0, severity), 0.70, 0.95))
 
+            # ── Periodicity bonus (capstan-irregularity signature) ──────────
+            # Real capstan/pinch-roller dips recur at a stable interval (0.5–3.5 s).
+            # Musical dynamics also cause level dips but are NOT periodic.
+            # A low coefficient-of-variation in inter-event intervals → confidence bonus.
+            is_periodic = False
+            median_interval_s = 0.0
+            if n_dips >= 3:
+                event_centres_s = [(loc[0] + loc[1]) / 2.0 for loc in locations]
+                intervals = np.diff(event_centres_s)
+                if len(intervals) >= 2:
+                    median_interval_s = float(np.median(intervals))
+                    cv = float(np.std(intervals)) / max(median_interval_s, 1e-9)
+                    # Capstan cycle: 0.5–3.5 s, coefficient-of-variation < 0.35
+                    if cv < 0.35 and 0.5 <= median_interval_s <= 3.5:
+                        confidence = float(np.clip(confidence + 0.08, 0.70, 0.99))
+                        is_periodic = True
+
             return DefectScore(
                 defect_type=DefectType.TAPE_HEAD_LEVEL_DIP,
                 severity=severity,
@@ -4917,10 +4981,34 @@ class DefectScanner:
                     "event_rate_per_s": round(event_rate, 3),
                     "mean_depth_db": round(mean_depth, 2),
                     "max_depth_db": round(float(np.max(dip_depths)), 2) if dip_depths else 0.0,
+                    "is_periodic_capstan": is_periodic,
+                    "median_interval_s": round(median_interval_s, 3),
                 },
             )
         except Exception:
             return DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.0, 0.3)
+
+    @staticmethod
+    def _should_keep_cross_material_tape_head_level_dip(score: "DefectScore") -> bool:
+        """Keep strong head-level-dip evidence even when material classification is wrong.
+
+        Real-world archive imports can contain tape transfers mislabelled as vinyl/CD.
+        When the dip morphology is strong enough (high event rate, deep dips), hard
+        material gating hides a real defect and prevents the Tape Level Stabilizer (Phase 12)
+        from ever activating.  Thresholds are deliberately conservative to avoid false
+        positives on legitimate amplitude-dynamic music.
+
+        Criteria (all must hold):
+          - severity >= 0.12   (not just scanner noise)
+          - dip_count >= 2     (at least two periodic dip events)
+          - mean_depth_db >= 6.0  (audible head-contact dip depth)
+          - event_rate_per_s >= 0.15  (recurrent, not a single transient)
+        """
+        severity = float(np.clip(score.severity, 0.0, 1.0))
+        dip_count = int(score.metadata.get("dip_count", 0))
+        mean_depth_db = float(score.metadata.get("mean_depth_db", 0.0))
+        event_rate = float(score.metadata.get("event_rate_per_s", 0.0))
+        return severity >= 0.12 and dip_count >= 2 and mean_depth_db >= 6.0 and event_rate >= 0.15
 
     def _detect_riaa_curve_error(self, audio: np.ndarray) -> DefectScore:
         """Detect RIAA_CURVE_ERROR: wrong EQ curve applied during vinyl/disc digitization.

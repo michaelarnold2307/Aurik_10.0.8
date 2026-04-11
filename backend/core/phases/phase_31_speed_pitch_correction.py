@@ -342,6 +342,8 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                 result_audio = self._correct_wsola(audio, correction_ratio, params)
             elif params["algorithm"] == "phase_vocoder":
                 vocals_conf = float(kwargs.get("panns_vocals_confidence", 0.0))
+                if vocals_conf == 0.0:  # Fallback: direct callers may use panns_singing key
+                    vocals_conf = float(kwargs.get("panns_singing", 0.0))
                 shift_semitones = abs(12.0 * np.log2(max(correction_ratio, 1e-6)))
                 if vocals_conf >= 0.4 and shift_semitones > 2.0:
                     logger.debug(
@@ -511,11 +513,17 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         hop_analysis = int(window_size / 2)
         hop_synthesis = int(hop_analysis * ratio)
 
-        # Stereo handling
+        # §2.51 Linked-Stereo: WSOLA auf Mono-Referenz, dann identische
+        # Stretch-Ratio kohärent auf L+R anwenden (verhindert L/R-Desync)
         if audio.ndim == 2:
+            mono_ref = np.mean(audio, axis=1)
+            mono_stretched = self._wsola_mono(mono_ref, window_size, hop_analysis, hop_synthesis)
+            target_len = len(mono_stretched)
             left = self._wsola_mono(audio[:, 0], window_size, hop_analysis, hop_synthesis)
             right = self._wsola_mono(audio[:, 1], window_size, hop_analysis, hop_synthesis)
-            return np.column_stack([left, right])
+            # Align to same length (Linked invariant)
+            min_len = min(len(left), len(right), target_len)
+            return np.column_stack([left[:min_len], right[:min_len]])
         else:
             return self._wsola_mono(audio, window_size, hop_analysis, hop_synthesis)
 
@@ -568,11 +576,12 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         nperseg = 2048
         noverlap = nperseg // 2
 
-        # Stereo handling
+        # §2.51 Linked-Stereo: Phase-Vocoder kohärent auf L+R
         if audio.ndim == 2:
             left = self._phase_vocoder_mono(audio[:, 0], ratio, nperseg, noverlap)
             right = self._phase_vocoder_mono(audio[:, 1], ratio, nperseg, noverlap)
-            return np.column_stack([left, right])
+            min_len = min(len(left), len(right))
+            return np.column_stack([left[:min_len], right[:min_len]])
         else:
             return self._phase_vocoder_mono(audio, ratio, nperseg, noverlap)
 

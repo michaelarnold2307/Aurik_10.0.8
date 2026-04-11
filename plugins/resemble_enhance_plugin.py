@@ -47,7 +47,13 @@ class ResembleEnhancePlugin:
 
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
-            self._session = ort.InferenceSession(path, sess_options=opts, providers=["CPUExecutionProvider"])
+            try:
+                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                _providers = _get_prov("ResembleEnhance")
+            except Exception:
+                _providers = ["CPUExecutionProvider"]
+            self._session = ort.InferenceSession(path, sess_options=opts, providers=_providers)
             logger.info("Resemble-Enhance ONNX geladen: %s", path)
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm

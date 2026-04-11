@@ -96,6 +96,38 @@ phase_64_tape_splice_repair.py       Tape-Splice-Reparatur
 
 ---
 
+## §7.1b [RELEASE_MUST] Phase 12 — Tape-Head-Level-Stabilizer v2 (v9.11.2)
+
+`phase_12_wow_flutter_fix` enthält neben Wow/Flutter-Korrektur einen dedizierten
+`TAPE_HEAD_LEVEL_DIP`-Pfad mit frequenzabhängiger Kompensation.
+
+### Pflichtverhalten
+
+1. Dip-Erkennung auf RMS-Hüllkurve (20 ms Fenster / 10 ms Hop) mit lokaler p75-Referenz.
+2. Spektrale Korrektur in STFT-Domain:
+    - Broadband-Gain aus Dip-Defizit
+    - zusätzlicher HF-Tilt aus Kontext-vs.-Dip-Spektralverlust
+3. SNR-Guard pro Frequenzbin: Bins nahe Noise-Floor dürfen nicht geboostet werden.
+4. Asymmetrische Gain-Hüllkurve je Dip:
+    - langsamer Onset (~30 %)
+    - schnelle Recovery (~10 %)
+5. §7.1a/§2.51 Stereo-Kohärenz: linked Stereo-Maske (identische Gain-Maske auf L/R).
+
+### Sicherheitsinvarianten
+
+- `strength < 0.01` → passthrough.
+- `max_gain_db <= 15 dB`.
+- Dips in quasi-Stille (`< -55 dBFS`) werden nicht repariert.
+- NaN/Inf-Guard + hartes Clipping auf `[-1, 1]` am Phasenende.
+
+### Detektor-Kopplung
+
+Dieser Pfad ist primär an `tape_head_contact_instability` gebunden und wird bei
+`TAPE_HEAD_LEVEL_DIP`-Severity automatisch aktiviert; siehe Spec 05 §6.4b für
+Cross-Material-Fallback und Periodizitäts-Marker.
+
+---
+
 ## §7.1a [RELEASE_MUST] Stereo-Kohärenz-Pflicht für Phasen (v9.10.127)
 
 Phasen, die auf Stereo-Audio operieren, dürfen L und R **nicht unabhängig** mit signal-modifizierendem DSP verarbeiten (separates Gate, separater Kompressor, separate Spektralreparatur). Dies erzeugt anti-phasige Transient-Artefakte in 2–3 Frame-Grenzen, die §2.49 korrekt als Phase-Cancellation flaggt und zurückrollt — mit direkter OQS-Auswirkung.
@@ -250,6 +282,42 @@ CAUSE_TO_PHASES = {
 # PFLICHT: Jede neue Ursache → Eintrag hier UND in allen Material-Prior-Tabellen des DefectScanners.
 
 # [RELEASE_MUST] §7.2a Severity-Weighted Phase-Reorder bei ≥3 Simultandefekten (v9.10.100+):
+
+### §6.9b [RELEASE_MUST] Phase-50 Team-Kohärenz + CONFLICT_REGISTRY (v9.11.5, erweitert v9.11.7)
+
+`phase_50_spectral_repair` ist nach `phase_06_frequency_restoration`,
+`phase_07_harmonic_restoration` oder `phase_23_spectral_repair` als
+**kooperative Folgephase** zu behandeln.
+
+**Normative Invarianten**:
+
+- UV3 muss `prior_phase_context` an Folgephasen durchreichen.
+- UV3 muss für jede erfolgreiche Phase den Ontologie-Typ in den Kontext schreiben
+  (`last_phase_type`, Typ-Counter, angewendete Typ-Familien).
+- PMGG muss diesen Kontext **für alle Phasen** über eine zentrale Übergangs-Policy
+  auswerten (Spec 02 §2.29e).
+    wenn die erkannte Regression dem Team-Policy-Grund
+    `phase50_after_hf_restoration` entspricht.
+
+**CONFLICT_REGISTRY (v9.11.7)** — `backend/core/phase_ontology.py`:
+
+Für alle aktiven Phasen gilt: UV3 prüft vor jeder Phasen-Ausführung, ob im
+`CONFLICT_REGISTRY` ein Eintrag existiert, der die aktuelle Phase als potentiell
+neutralisierend einstuft. Falls ja, erhält die Phase `conflict_with_prior_phases: list[str]`.
+
+Die Phase selbst entscheidet, wie sie mit `conflict_with_prior_phases` umgeht —
+typischerweise: konservativere Threshold, Schutz bestimmter Frequenzbereiche.
+`phase_50` nutzt bereits `hf_protected_bin_start` (v9.11.4) für genau diesen Zweck.
+
+**Team-Telemetrie (v9.11.7)**:
+
+UV3 schreibt `metadata["team_coordination"]` nach jeder Pipeline:
+- `event_count`: Anzahl Phasen, bei denen Team-Policy aktiv war
+- `events`: Liste mit `phase_id`, `action`, `reason`, `excluded_goals`, `threshold_mult`, `strength_cap`
+- `phase_type_summary`: Häufigkeiten der Phase-Operationstypen (SUBTRACTIVE, ADDITIVE, etc.)
+
+**Rationale**: Die Phasenkette arbeitet als Team; spätere Reparaturphasen
+dürfen frühere restaurative Interventionen nicht indirekt neutralisieren.
 # Wenn CausalDefectReasoner für ein Audio-Segment ≥3 Ursachen mit
 # max_severity ≥ 0.70 identifiziert, DARF die kanonische CAUSE_TO_PHASES-Reihenfolge
 # durch folgende Regel überschrieben werden:

@@ -37,6 +37,50 @@
 
 ---
 
+## §4.1b [RELEASE_MUST] Psychoakustische Lautheitsmessung nach ISO 532-1 (Zwicker/Fastl)
+
+**Warum LUFS nicht ausreicht**: LUFS (ITU-R BS.1770-5) verwendet K-Weighting (~A-Gewichtung +
+Hochregal +4 dB). K-Weighting detektiert Tieftonrumpeln (200–300 Hz) nicht als Lautheitszunahme,
+die das Gehör mit bis zu +6 Phon wahrnimmt (ISO 226:2023 Equal-Loudness-Contours). Ergebnis:
+Rumble-Filter-Phasen werden bei LUFS-Only-Check fälschlich als lautheitsneutral eingestuft.
+
+**MidPipeline-Guard nach subtraktiven Phasen mit großem Breitband-Impact**:
+
+```python
+# backend/core/dsp/psychoacoustics.py
+def compute_specific_loudness_zwicker(audio: np.ndarray, sr: int) -> float:
+    """
+    ISO 532-1 stationäre Methode (Zwicker/Fastl).
+    Returns total loudness N in sone.
+    - Bark-Filterbank: 24 kritische Bänder (0–16 kHz)
+    - Fletcher-Munson-Kurven: ISO 226:2023 Tabelle
+    - Referenz: 1 sone = 40 phon bei 1 kHz
+    """
+```
+
+**ΔN-Entscheidungstabelle** (Δ = output_sone - input_sone):
+
+| ΔN (sone) | Wahrnehmung | Pipeline-Reaktion |
+| --- | --- | --- |
+| ≤ 0.5 | Lautheitsneutral | OK |
+| 0.5 – 1.0 | Grenzbereich | INFO in `metadata["loudness_delta_sone"]` |
+| 1.0 – 2.0 | Wahrnehmbar lauter | WARNING in `metadata` + im PhaseConductor-State |
+| > 2.0 | Deutliche Verfälschung | FAIL → Dry/Wet-Anteil erhöhen (per-Phase trocken beimischen), kein Harter Rollback |
+
+**Mapping sone → phon** für Diagnose: `phon = 40 + 33.2 × log10(max(N, 0.001) / 1.0)` (gültig für N ≥ 1 sone)
+
+**Implementierungspfad**:
+
+- Modul: `backend/core/dsp/psychoacoustics.py` (neu)
+- Aufruf: `backend/core/unified_restorer_v3.py` — §2.45a MidPipeline-Guard nach breitbandigen subtraktiven Phasen
+- Methode: Stationäre ISO 532-1 (not zeitvariant) — ausreichend für Pipeline-Check, Laufzeit ≤ 50 ms / 5-s-Fenster
+- Approximation: 24 Butterworth-Bandpass-Filter (Bark-Skala), nicht physikalische Cochlea-Simulation
+
+**Rückwärtskompatibilität**: Ergänzt §2.45a (Gated-RMS-Guard) — LUFS-Check bleibt erhalten als Broadcast-Metrik.
+LUFS = Distribution-Standard; Sone = psychoakustische Lästigkeitsmetrik. Beide sind Pflicht.
+
+---
+
 ## §4.2 Verbotene Legacy-Algorithmen als Primärverarbeitung
 
 ```python
@@ -263,7 +307,7 @@ ZONES = {
     1. Vocos 48 kHz nativ — vocos_mel_spec_48khz.onnx (CPUExecutionProvider)
        Mel-Bins 80; True-Peak −1.0 dBTP nach Synthese
        # VERBOTEN: vocos_mel_spec_24khz.onnx (24-kHz-Variante — SR-Mismatch zu processing_sr=48000)
-    2. BigVGAN-v2 — bigvgan_v2 (0,4 GB, ONNX/PyTorch, CPU-only)
+    2. BigVGAN-v2 — bigvgan_v2 (0,4 GB, ONNX/PyTorch, GPU-beschleunigt via ml_device_manager)
     3. HiFi-GAN (3,6 MB ONNX) — Tertiär-Fallback
     4. PGHI-ISTFT — DSP-Endfall-Fallback
 VERBOTEN: Griffin-Lim als Endschritt in Studio-2026
@@ -349,6 +393,20 @@ PFLICHT: PGHI (Perraudin et al. 2013)
 Fallback: Griffin-Lim ≥ 32 Iterationen
 ABSOLUT VERBOTEN: Direkte ISTFT auf modifiziertem Betragsspektrum
 ```
+
+**Ausnahmevertrag (eng begrenzt, RELEASE_MUST) — `phase_12_wow_flutter_fix` / Tape-Head-Level-v2:**
+
+Direkte STFT→iSTFT-Rekonstruktion ist ausschließlich für den
+`TAPE_HEAD_LEVEL_DIP`-Unterpfad in `phase_12` zulässig, wenn alle Bedingungen erfüllt sind:
+
+1. Ziel ist frequenzabhängige Kopfkontakt-/Spacing-Loss-Kompensation (kein generatives Inpainting).
+2. Linked-Stereo-Invariante: identische spektrale Gain-Maske für L und R.
+3. Boundary-konsistent: SciPy-kompatibler Boundary-Modus (`even|odd|constant|zeros|None`),
+   identisch zwischen STFT und iSTFT-Pfad.
+4. Länge exakt konserviert (`len(out) == len(in)` via trim/pad).
+5. SNR-Guard aktiv (Noise-Floor-nahe Bins nicht boosten) + `max_gain_db <= 15`.
+
+**Verboten bleibt** direkte ISTFT für alle anderen spektralen Rekonstruktionsphasen.
 
 **PGHI-Compliance-Status (Stand April 2026):**
 Phasen mit PGHI-Rekonstruktion: `phase_03`, `phase_06`, `phase_20`, `phase_23`, `phase_24`, `phase_28`, `phase_29`, `phase_31`.
@@ -464,3 +522,72 @@ IMPLEMENTATION: Butterworth 4th-Order Tiefpass (sosfiltfilt, zero-phase) nach
 - Záviška et al. (2021): _A Proper Version of Synthesis-based Sparse Audio Declipper_ — EUSIPCO 2021
 - Blauert (1997): _Spatial Hearing — The Psychophysics of Human Sound Localization_ — MIT Press
 - Kuttruff (2009): _Room Acoustics_ — 5th Ed. (C80/D50 Definitionen §4.5c)
+
+---
+
+## §4.6 [RELEASE_MUST] Loudness-Guard DSP-Invarianten (v9.11.5)
+
+DSP-Pflichtregeln für alle Loudness-Drift-Guards in der Pipeline (§2.45a).
+
+### §4.6a Gated-RMS-Messung
+
+```python
+# VERBOTEN — globaler RMS misst Stille mit:
+rms_db = 20.0 * np.log10(np.sqrt(np.mean(audio ** 2)) + 1e-10)
+
+# PFLICHT — Gated-RMS (nur musikalische Frames):
+def _rms_dbfs_gated(audio, frame_size=2048, gate_dbfs=-50.0, min_gate_ratio=0.05):
+    # Stereo → Mono downmix vor Framing
+    if audio.ndim == 2:
+        mono = (audio[0] + audio[1]) * 0.5
+    else:
+        mono = audio
+    # Frame-basierte Messung
+    n_frames = len(mono) // frame_size
+    frames = mono[:n_frames * frame_size].reshape(n_frames, frame_size)
+    frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-10)
+    # Gate: nur Frames > gate_dbfs
+    mask = frame_rms_db > gate_dbfs
+    if mask.sum() < max(1, int(n_frames * min_gate_ratio)):
+        return float(np.mean(frame_rms_db))  # Fallback: ungated
+    return float(np.mean(frame_rms_db[mask]))
+```
+
+### §4.6b Envelope-Aware Gain
+
+```python
+# VERBOTEN — uniformer Gain amplifiziert Stille:
+audio *= gain_factor
+
+# PFLICHT — musik-selektiver Gain:
+def _musical_gain_envelope(audio, gain, gate_dbfs=-50.0, sr=48000):
+    # Gate-Envelope: 1.0 für Musik-Frames, 0.0 für Stille
+    # Crossfade: 10 ms Hann-Smoothing an Gate-Übergängen
+    # Gain-Formel pro Sample: out = audio * (1.0 + (gain - 1.0) * gate_envelope)
+    # → Stille (gate=0): out = audio * 1.0 (unverändert)
+    # → Musik (gate=1): out = audio * gain (verstärkt)
+```
+
+### §4.6c Soft-Limiter
+
+```python
+# VERBOTEN — unbedingter Soft-Limiter komprimiert Musikdynamik:
+_abs = np.abs(audio)
+_over = _abs > 0.92
+audio = np.where(_over, np.sign(audio) * (0.92 + 0.08 * np.tanh((_abs - 0.92) / 0.08)), audio)
+
+# PFLICHT — bedingter Soft-Limiter nur bei echtem Clipping-Risiko:
+peak = float(np.max(np.abs(audio)))
+if peak > 0.98:  # Nur bei echtem Clipping-Risiko
+    _abs = np.abs(audio)
+    _over = _abs > 0.92
+    if np.any(_over):
+        audio = np.where(_over, np.sign(audio) * (0.92 + 0.08 * np.tanh((_abs - 0.92) / 0.08)), audio)
+audio = np.clip(audio, -1.0, 1.0)  # Finales Sicherheitsnetz
+```
+
+### Rationale
+
+Diese drei Invarianten verhindern das Silence-Amplification-Problem: Subtraktive Phasen entfernen Rauschen aus Stille-Segmenten → globaler RMS sinkt → Guard meldet falschen Pegelkollaps → uniformer Makeup-Gain amplifiziert entrauschte Stille → Soft-Limiter komprimiert Musikpeaks. Ergebnis: Musik leiser, Stille lauter — exakt das Gegenteil des Ziels.
+
+> Kreuzreferenz: Spec 02 §2.45a-I bis §2.45a-IV

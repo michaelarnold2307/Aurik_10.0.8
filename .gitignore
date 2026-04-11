@@ -142,6 +142,9 @@ AppDir/
 test_output/
 .venv_sgmse_export/
 
+# ── Temporäre Reproduktions-/Debug-Ordner ─────────────────────────────────────
+temp_repro/
+
 # ── Laufzeit-Artefakte (kein Source-Code) ────────────────────────────────────
 output/
 pip_list.txt

@@ -142,6 +142,83 @@ class WowFlutterFix(PhaseInterface):
         super().__init__()
         self.name = "Wow & Flutter Correction v2 Professional"
 
+    @staticmethod
+    def _derive_safe_timing_profile(
+        material: MaterialType,
+        mean_confidence: float,
+        vocals_confidence: float,
+        *,
+        polyphonic_fallback: bool = False,
+    ) -> tuple[float, float]:
+        """Reduce timing aggression for content that is easy to damage.
+
+        Vocal-heavy vintage transfers are especially sensitive to articulation and
+        authenticity loss from even correct-but-strong time warping. Keep the
+        internal timing remap narrower than the outer PMGG strength alone would
+        allow.
+        """
+        strength_scale = 1.0
+        max_stretch_delta = 0.05
+
+        if vocals_confidence >= 0.40:
+            strength_scale *= 0.82
+            max_stretch_delta = min(max_stretch_delta, 0.035)
+
+        if (
+            material
+            in {
+                MaterialType.VINYL,
+                MaterialType.SHELLAC,
+                MaterialType.WAX_CYLINDER,
+                MaterialType.WIRE_RECORDING,
+                MaterialType.LACQUER_DISC,
+            }
+            and mean_confidence < 0.75
+        ):
+            strength_scale *= float(np.clip(0.82 + 0.20 * mean_confidence, 0.82, 0.97))
+            max_stretch_delta = min(max_stretch_delta, 0.03)
+        elif mean_confidence < 0.60:
+            strength_scale *= 0.90
+            max_stretch_delta = min(max_stretch_delta, 0.04)
+
+        if polyphonic_fallback:
+            # If the polyphonic speed estimator rejected the signal as implausible,
+            # stay in a narrow DSP-safe correction band. Continuing with the broader
+            # quality-mode path can drift tonal center on difficult analog vocals.
+            strength_scale *= 0.78
+            max_stretch_delta = min(max_stretch_delta, 0.02)
+
+        return float(strength_scale), float(max_stretch_delta)
+
+    @staticmethod
+    def _should_bypass_unsafe_polyphonic_fallback(
+        material: MaterialType,
+        mean_confidence: float,
+        vocals_confidence: float,
+        *,
+        polyphonic_fallback: bool,
+    ) -> bool:
+        """Bypass correction entirely when the estimator already proved unstable.
+
+        If the polyphonic speed estimator rejects the input as implausible, a second,
+        still-global pitch correction pass on vocal-heavy analog material often harms
+        tonal center more than it helps. In that case, minimal intervention is safer
+        than a likely rollback.
+        """
+        if not polyphonic_fallback:
+            return False
+        if vocals_confidence < 0.40:
+            return False
+        if mean_confidence >= 0.80:
+            return False
+        return material in {
+            MaterialType.VINYL,
+            MaterialType.SHELLAC,
+            MaterialType.WAX_CYLINDER,
+            MaterialType.WIRE_RECORDING,
+            MaterialType.LACQUER_DISC,
+        }
+
     def get_metadata(self) -> PhaseMetadata:
         """Get phase metadata."""
         return PhaseMetadata(
@@ -176,6 +253,7 @@ class WowFlutterFix(PhaseInterface):
         self.validate_input(audio)
         assert sample_rate == 48000, f"Interne SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
+        _original_audio = np.asarray(audio, dtype=np.float32).copy()
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -235,6 +313,7 @@ class WowFlutterFix(PhaseInterface):
         # balanced → HybridWowFlutter pYIN+FCPE/CREPE (ML-Hybrid, ADAPTIVE strategy)
         # fast / lightweight → pYIN DSP
         _poly_applied = False
+        _poly_fallback = False
 
         if quality_mode in ["quality", "maximum"] and not use_lightweight:
             try:
@@ -251,6 +330,7 @@ class WowFlutterFix(PhaseInterface):
                     material.value,
                 )
             except Exception as _poly_exc:
+                _poly_fallback = True
                 logger.warning(
                     "PolyphonicSpeedCurveEstimator fehlgeschlagen (%s) — ML-Hybrid-Fallback",
                     _poly_exc,
@@ -263,6 +343,11 @@ class WowFlutterFix(PhaseInterface):
             and quality_mode in ["balanced", "quality", "maximum"]
             and not use_lightweight
         )
+
+        if _poly_fallback and quality_mode in ["quality", "maximum"]:
+            # Conservative restoration fallback: keep Phase 12 in narrow DSP mode
+            # after an implausible polyphonic estimate instead of escalating again.
+            use_ml_hybrid = False
 
         if use_ml_hybrid:
             try:
@@ -348,6 +433,11 @@ class WowFlutterFix(PhaseInterface):
                         "Phase 12 tape level stabilizer (low confidence path): %d dips repaired",
                         n_level_dips_repaired,
                     )
+            audio, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
+                _original_audio,
+                audio,
+                material,
+            )
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
             return PhaseResult(
@@ -371,8 +461,8 @@ class WowFlutterFix(PhaseInterface):
                     "polyphonic": _poly_applied,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
-                    "rms_drop_db": 0.0,
-                    "loudness_makeup_db": 0.0,
+                    "rms_drop_db": _rms_drop_db,
+                    "loudness_makeup_db": _makeup_db,
                 },
             )
 
@@ -415,6 +505,12 @@ class WowFlutterFix(PhaseInterface):
                         n_level_dips_repaired,
                     )
 
+            audio, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
+                _original_audio,
+                audio,
+                material,
+            )
+
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
             return PhaseResult(
@@ -434,18 +530,81 @@ class WowFlutterFix(PhaseInterface):
                     **metadata,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
-                    "rms_drop_db": 0.0,
-                    "loudness_makeup_db": 0.0,
+                    "rms_drop_db": _rms_drop_db,
+                    "loudness_makeup_db": _makeup_db,
                 },
             )
 
+        vocals_conf = float(kwargs.get("panns_vocals_confidence", 0.0))
+        if vocals_conf == 0.0:  # Fallback: direct callers may use panns_singing key
+            vocals_conf = float(kwargs.get("panns_singing", 0.0))
+        _timing_safe_strength_scale, _max_stretch_delta = self._derive_safe_timing_profile(
+            material,
+            _mean_conf,
+            vocals_conf,
+            polyphonic_fallback=_poly_fallback,
+        )
+        _timing_safe_strength = float(np.clip(strength * _timing_safe_strength_scale, 0.0, max(0.15, strength)))
+
+        if self._should_bypass_unsafe_polyphonic_fallback(
+            material,
+            _mean_conf,
+            vocals_conf,
+            polyphonic_fallback=_poly_fallback,
+        ):
+            restored = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            restored = np.clip(restored, -1.0, 1.0)
+            processing_time = time.time() - start_time
+            return PhaseResult(
+                success=True,
+                audio=restored,
+                metrics={
+                    "wow_flutter_detected": True,
+                    "max_deviation_percent": max_deviation,
+                    "residual_deviation_percent": max_deviation,
+                    "wow_magnitude_percent": 0.0,
+                    "flutter_magnitude_percent": 0.0,
+                    "correction_strength": 0.0,
+                    "mean_confidence": float(_mean_conf),
+                    "material": material.value,
+                    "quality_mode": quality_mode,
+                    "transport_bumps_repaired": 0,
+                    "tape_level_dips_repaired": 0,
+                },
+                execution_time_seconds=processing_time,
+                metadata={
+                    "algorithm": "unsafe_polyphonic_fallback_bypass",
+                    "version": "4.1_locality",
+                    "ml_hybrid": False,
+                    "psola_active": vocals_conf >= 0.4,
+                    "panns_vocals_confidence": vocals_conf,
+                    "threshold": threshold,
+                    "polyphonic_fallback": _poly_fallback,
+                    "timing_safe_strength": 0.0,
+                    "timing_safe_strength_scale": _timing_safe_strength_scale,
+                    "max_stretch_delta": _max_stretch_delta,
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": _effective_strength,
+                    "bypassed_due_to_unsafe_polyphonic_fallback": True,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=[
+                    "Wow/flutter correction bypassed: polyphonic estimator was implausible and fallback was unsafe for vocal analog material"
+                ],
+            )
+
         # Step 4: Calculate time-stretching factors from pitch deviation
-        stretch_factors = self._calculate_stretch_factors(pitch_trajectory, confidence, strength)
+        stretch_factors = self._calculate_stretch_factors(
+            pitch_trajectory,
+            confidence,
+            _timing_safe_strength,
+            max_stretch_delta=_max_stretch_delta,
+        )
 
         # Step 5: Apply time-stretching – PSOLA für Vokal-Segmente, WSOLA sonst
         # Moulines & Charpentier (1990): PSOLA ist formanterhaltend bei Gesangsmaterial;
         # Phase-Vocoder (hier: WSOLA/resample) für Instrumental-/Nicht-Vokal-Material.
-        vocals_conf = float(kwargs.get("panns_vocals_confidence", 0.0))
         _stretch_fn = self._psola_timestretch if vocals_conf >= 0.4 else self._phase_vocoder_timestretch
         if vocals_conf >= 0.4:
             logger.debug(
@@ -470,17 +629,30 @@ class WowFlutterFix(PhaseInterface):
             bump_locations = _dl.get("transport_bump", []) if isinstance(_dl, dict) else []
         n_bumps_repaired = 0
         if bump_locations and len(bump_locations) > 0:
+            # Confidence-aware bump repair: keep defect removal active while avoiding
+            # over-processing when pitch certainty is marginal.
+            _bump_strength = float(
+                np.clip(
+                    _timing_safe_strength * (0.65 + 0.35 * np.clip(_mean_conf, 0.0, 1.0)),
+                    0.15,
+                    max(0.15, _timing_safe_strength),
+                )
+            )
+            if len(bump_locations) > 120:
+                _bump_strength *= 0.85
             restored, n_bumps_repaired = self._repair_transport_bumps(
                 restored,
                 sample_rate,
                 bump_locations,
-                strength,
+                _bump_strength,
             )
             restored_mono = np.mean(restored, axis=1) if is_stereo else restored
             logger.info(
-                "Phase 12 transport_bump repair: %d/%d bumps repaired",
+                "Phase 12 transport_bump repair: %d/%d bumps repaired (strength=%.3f, conf=%.3f)",
                 n_bumps_repaired,
                 len(bump_locations),
+                _bump_strength,
+                _mean_conf,
             )
 
         # Step 6c: Tape head contact level stabilization (autonomous detection + repair)
@@ -571,6 +743,10 @@ class WowFlutterFix(PhaseInterface):
             "threshold": threshold,
             "stft_window": self.STFT_WINDOW_SIZE,
             "stft_hop": self.STFT_HOP_SIZE,
+            "polyphonic_fallback": _poly_fallback,
+            "timing_safe_strength": _timing_safe_strength,
+            "timing_safe_strength_scale": _timing_safe_strength_scale,
+            "max_stretch_delta": _max_stretch_delta,
         }
 
         if use_ml_hybrid:
@@ -585,6 +761,19 @@ class WowFlutterFix(PhaseInterface):
         if 0.0 < _effective_strength < 1.0:
             restored = audio + _effective_strength * (restored - audio)
             restored = np.clip(restored, -1.0, 1.0)
+
+        restored, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
+            _original_audio,
+            restored,
+            material,
+        )
+        if abs(_makeup_db) > 0.01:
+            logger.info(
+                "Phase 12 loudness-preservation: material=%s rms_drop=%+.2f dB via makeup %+.2f dB",
+                material.value,
+                _rms_drop_db,
+                _makeup_db,
+            )
         return PhaseResult(
             success=True,
             audio=restored,
@@ -594,7 +783,7 @@ class WowFlutterFix(PhaseInterface):
                 "residual_deviation_percent": residual_deviation,
                 "wow_magnitude_percent": float(wow_magnitude) if not np.isnan(wow_magnitude) else 0.0,
                 "flutter_magnitude_percent": float(flutter_magnitude) if not np.isnan(flutter_magnitude) else 0.0,
-                "correction_strength": strength,
+                "correction_strength": _timing_safe_strength,
                 "mean_confidence": float(np.mean(confidence[confidence > 0])),
                 "material": material.value,
                 "quality_mode": quality_mode,
@@ -606,10 +795,68 @@ class WowFlutterFix(PhaseInterface):
                 **metadata,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
-                "rms_drop_db": 0.0,
-                "loudness_makeup_db": 0.0,
+                "rms_drop_db": _rms_drop_db,
+                "loudness_makeup_db": _makeup_db,
             },
         )
+
+    def _preserve_phase_loudness(
+        self,
+        original_audio: np.ndarray,
+        processed_audio: np.ndarray,
+        material: MaterialType,
+    ) -> tuple[np.ndarray, float, float]:
+        """Keep Phase-12 loudness close to input while preserving defect repairs.
+
+        Returns:
+            (audio_out, rms_delta_db, applied_makeup_db)
+        """
+        orig = np.asarray(original_audio, dtype=np.float64)
+        proc = np.asarray(processed_audio, dtype=np.float64)
+        if orig.shape != proc.shape:
+            return np.clip(np.asarray(processed_audio, dtype=np.float32), -1.0, 1.0), 0.0, 0.0
+
+        _max_rms_drop_db = {
+            MaterialType.SHELLAC: 1.2,
+            MaterialType.WAX_CYLINDER: 1.2,
+            MaterialType.WIRE_RECORDING: 1.3,
+            MaterialType.VINYL: 1.5,
+            MaterialType.TAPE: 1.7,
+            MaterialType.REEL_TAPE: 1.6,
+            MaterialType.CD_DIGITAL: 2.0,
+            MaterialType.DAT: 2.0,
+            MaterialType.MP3_LOW: 2.2,
+            MaterialType.MP3_HIGH: 2.0,
+            MaterialType.AAC: 2.0,
+            MaterialType.STREAMING: 2.0,
+        }.get(material, 1.8)
+        _max_rms_lift_db = 1.0
+
+        _orig_rms = float(np.sqrt(np.mean(orig**2) + 1e-12))
+        _proc_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        if _orig_rms < 1e-10 or _proc_rms < 1e-12:
+            return np.clip(proc.astype(np.float32), -1.0, 1.0), 0.0, 0.0
+
+        _delta_db = float(20.0 * np.log10(max(_proc_rms / _orig_rms, 1e-30)))
+        _gain_db = 0.0
+
+        if _delta_db < -_max_rms_drop_db:
+            _gain_db = (-_max_rms_drop_db) - _delta_db
+        elif _delta_db > _max_rms_lift_db:
+            _gain_db = _max_rms_lift_db - _delta_db
+
+        if abs(_gain_db) > 0.01:
+            _gain = float(10.0 ** (_gain_db / 20.0))
+            _peak_p999 = float(np.percentile(np.abs(proc), 99.9) + 1e-12)
+            if _gain > 1.0:
+                _gain = min(_gain, float(0.985 / _peak_p999))
+            proc = np.clip(proc * _gain, -1.0, 1.0)
+
+        _out_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        _out_delta_db = float(20.0 * np.log10(max(_out_rms / _orig_rms, 1e-30)))
+        _applied_makeup_db = float(20.0 * np.log10(max(np.sqrt(np.mean(proc**2) + 1e-12) / _proc_rms, 1e-30)))
+
+        return np.clip(proc.astype(np.float32), -1.0, 1.0), _out_delta_db, _applied_makeup_db
 
     def _estimate_pitch_yin(self, audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
         """Rückwärts-kompatibles Alias auf pYIN (Mauch & Dixon 2014).
@@ -1109,150 +1356,259 @@ class WowFlutterFix(PhaseInterface):
         sample_rate: int,
         strength: float,
     ) -> tuple[np.ndarray, int]:
-        """Detect and repair tape head contact level dips autonomously.
+        """Detect and repair tape head contact level dips — STFT-domain SOTA v2.
+
+        Physics basis (Wallace 1951):
+            When head-tape contact pressure varies, effective head-tape spacing
+            Δd increases → spacing loss L(f) = e^(-2π·Δd·f/v).
+            HF loss is exponentially greater than LF loss: a 1 µm spacing
+            increase at cassette speed (v=47.6 mm/s) causes ~11 dB loss at
+            10 kHz but only ~1 dB at 1 kHz.  Wideband-only gain therefore
+            restores loudness but leaves a residual HF spectral tilt.
+
+        v2 SOTA upgrades (2026-04-09):
+          1. STFT-domain frequency-dependent gain (HF boosted proportional to
+             estimated spacing loss derived from per-dip context comparison)
+          2. Per-dip HF tilt estimated adaptively from spectral centroid shift
+             in context vs. dip frames — no fixed tape-speed assumption needed
+          3. SNR guard per frequency bin: bins at noise floor are not boosted
+             (prevents amplification of residual tape hiss during deep dips)
+          4. Asymmetric gain envelope: slow onset (~30 % of dip duration) /
+             fast recovery (~10 %) matches the physical capstan-irregularity
+             dip morphology
+          5. §2.51 linked stereo: spectral gain derived from mono, applied
+             identically to L and R channels
 
         Args:
-            audio:       Audio signal (mono [N] or stereo [N, 2])
+            audio:       Audio signal (mono [N] or stereo [N, 2] — float32/64)
             sample_rate: Sample rate in Hz (expected: 48000)
-            strength:    Correction strength 0.0-1.0
+            strength:    Correction strength [0.0, 1.0]
 
         Returns:
             (stabilized_audio, n_dips_repaired)
+
+        References:
+            Wallace, R.L. (1951) The Reproduction of Magnetically Recorded
+            Signals. Bell System Technical Journal 30(4):1145–1173.
+            Camras, M. (1988) Magnetic Recording Handbook. §8.3.
+            McKnight, J.G. (1969) Tape Reproducer Response Measurements.
         """
         if strength < 0.01:
             return audio, 0
 
-        # Input NaN/Inf guard — prevent poisoning in RMS envelope calculation
         audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
 
         is_stereo = audio.ndim == 2
         n_samples = audio.shape[0]
 
-        # Work on mono for detection; apply gain to all channels
         if is_stereo:
             mono = audio.mean(axis=1).astype(np.float64)
         else:
             mono = audio.astype(np.float64)
 
-        # --- Parameters ---
-        env_window_s = 0.020  # 20 ms RMS envelope window
-        env_hop_s = 0.010  # 10 ms hop
-        ref_window_s = 0.500  # 500 ms local reference window
-        dip_threshold_db = 3.0  # dip detection threshold (dB below reference)
-        min_dip_frames = 3  # minimum 3 frames = 30 ms to be a dip
-        max_gain_db = 15.0  # maximum compensating gain (dB)
-        crossfade_frames = 3  # 3 frames = 30 ms crossfade at dip edges
+        # ── Step 1: RMS envelope (20 ms / 10 ms) + percentile-75 reference ──
+        env_win_s = 0.020
+        env_hop_s = 0.010
+        ref_win_s = 0.500
+        dip_thresh_db = 3.0
+        min_dip_frames = 3
+        max_gain_db = 15.0
 
-        env_win = max(1, int(env_window_s * sample_rate))
+        env_win = max(1, int(env_win_s * sample_rate))
         env_hop = max(1, int(env_hop_s * sample_rate))
         n_frames = max(0, (n_samples - env_win) // env_hop)
 
         if n_frames < 10:
             return audio, 0
 
-        # --- Step 1: Compute RMS envelope (20 ms windows, 10 ms hop) ---
-        rms_env = np.empty(n_frames, dtype=np.float64)
-        for i in range(n_frames):
-            s = i * env_hop
-            e = s + env_win
-            rms_env[i] = np.sqrt(np.mean(mono[s:e] ** 2) + 1e-15)
-
-        # Convert to dB
+        rms_env = np.array(
+            [np.sqrt(np.mean(mono[i * env_hop : i * env_hop + env_win] ** 2) + 1e-15) for i in range(n_frames)],
+            dtype=np.float64,
+        )
         rms_db = 20.0 * np.log10(rms_env + 1e-15)
-
-        # --- Step 2: Compute local reference (percentile-based, robust to dips) ---
-        # Use p75 instead of median -- dips pull down the median; p75 represents
-        # the "normal" signal level around each region.
-        ref_frames = max(3, int(ref_window_s / env_hop_s))
-        if ref_frames % 2 == 0:
-            ref_frames += 1
 
         from scipy.ndimage import percentile_filter
 
-        ref_db = percentile_filter(rms_db, percentile=75, size=ref_frames, mode="reflect")
+        ref_n = max(3, int(ref_win_s / env_hop_s))
+        ref_n = ref_n + (1 - ref_n % 2)  # ensure odd
+        ref_db = percentile_filter(rms_db, percentile=75, size=ref_n, mode="reflect")
 
-        # --- Step 3: Detect dips (envelope < reference - threshold) ---
-        dip_mask = rms_db < (ref_db - dip_threshold_db)
+        dip_mask_rms = rms_db < (ref_db - dip_thresh_db)
 
-        # Connected-component labelling to find dip regions
         from scipy.ndimage import label as nd_label
 
-        labeled, n_dips = nd_label(dip_mask)
+        labeled, n_dips_raw = nd_label(dip_mask_rms)
 
-        if n_dips == 0:
+        if n_dips_raw == 0:
             return audio, 0
 
-        # --- Step 4: Compute per-frame compensating gain ---
-        gain_db = np.zeros(n_frames, dtype=np.float64)
+        # ── Step 2: Collect valid dip events ─────────────────────────────
+        rms_centres = np.arange(n_frames) * env_hop + env_win // 2  # sample pos
+
+        dip_events: list[tuple[np.ndarray, np.ndarray]] = []
+        for i in range(1, n_dips_raw + 1):
+            frames = np.where(labeled == i)[0]
+            if len(frames) < min_dip_frames:
+                continue
+            deficit = ref_db[frames] - rms_db[frames]
+            if np.max(deficit) > max_gain_db + 5.0:
+                continue  # likely genuine silence gap
+            if np.mean(rms_db[frames]) < -55.0:
+                continue  # noise floor — nothing to restore
+            dip_events.append((frames, deficit))
+
+        if not dip_events:
+            return audio, 0
+
+        # ── Step 3: STFT setup ────────────────────────────────────────────
+        # fft_size = 2048 → 42.7 ms @ 48 kHz; hop = 512 → 10.7 ms (75 % OV)
+        fft_size = 2048
+        hop_stft = fft_size // 4
+        n_freqs = fft_size // 2 + 1
+        freqs_hz = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
+
+        _, _, X_mono = signal.stft(
+            mono,
+            fs=sample_rate,
+            window="hann",
+            nperseg=fft_size,
+            noverlap=fft_size - hop_stft,
+            boundary="even",
+            padded=True,
+        )
+        n_stft_frames = X_mono.shape[1]
+        stft_centres = np.arange(n_stft_frames) * hop_stft + fft_size // 2  # samples
+
+        X_mag_db = 20.0 * np.log10(np.abs(X_mono) + 1e-15)  # [n_freqs, n_stft_frames]
+
+        # Spectral gain mask: identity (1.0) everywhere — modified per dip below
+        spectral_gain = np.ones((n_freqs, n_stft_frames), dtype=np.float64)
+
+        # ── Step 4: Build per-dip spectral gain (broadband + HF tilt) ────
         n_repaired = 0
+        ctx_n = 64  # context window ≈ 680 ms before dip onset
 
-        for dip_idx in range(1, n_dips + 1):
-            dip_frames = np.where(labeled == dip_idx)[0]
-            if len(dip_frames) < min_dip_frames:
+        for rms_frames, deficit in dip_events:
+            # Map RMS dip frames → nearest STFT frame indices
+            rms_ctrs = rms_centres[rms_frames]
+            stft_idx = np.searchsorted(stft_centres, rms_ctrs)
+            stft_idx = np.unique(np.clip(stft_idx, 0, n_stft_frames - 1))
+            if len(stft_idx) == 0:
                 continue
 
-            # Dip depth (max deficit in this region)
-            deficit_db = ref_db[dip_frames] - rms_db[dip_frames]
+            # Per-STFT-frame broadband gain: interpolate from per-RMS-frame deficit
+            bb_gain_db_stft = np.interp(
+                stft_centres[stft_idx].astype(float),
+                rms_centres[rms_frames].astype(float),
+                np.clip(deficit * strength, 0.0, max_gain_db),
+            )  # dB, shape [n_stft_dip]
 
-            # Skip very deep dips (> max_gain_db + 5 dB) -- likely genuine silence
-            if np.max(deficit_db) > max_gain_db + 5.0:
-                continue
+            # ── HF spectral-tilt correction (Wallace spacing-loss inversion) ──
+            first_stft = int(stft_idx[0])
+            ctx_start = max(0, first_stft - ctx_n)
+            ctx_end = max(0, first_stft - 2)
+            hf_tilt_db = np.zeros(n_freqs, dtype=np.float64)  # per-bin
 
-            # Skip dips where signal is already very quiet (< -55 dBFS) -- noise floor
-            if np.mean(rms_db[dip_frames]) < -55.0:
-                continue
+            if ctx_end - ctx_start >= 4:
+                ctx_mag = X_mag_db[:, ctx_start:ctx_end]  # [n_freqs, ctx]
+                dip_mag = X_mag_db[:, stft_idx]  # [n_freqs, n_dip_stft]
 
-            # Compensating gain: bring level up toward reference
-            # Apply strength scaling and cap at max_gain_db
-            frame_gain = np.clip(deficit_db * strength, 0.0, max_gain_db)
-            gain_db[dip_frames] = frame_gain
+                # Reference: p75 of context per bin (robust to note-onset transients)
+                ref_spec = np.percentile(ctx_mag, 75, axis=1)  # [n_freqs]
+                dip_spec = np.mean(dip_mag, axis=1)  # [n_freqs]
+
+                spectral_loss = ref_spec - dip_spec  # positive = dropped in dip
+
+                # Remove broadband component (median of LF bins < 4 kHz)
+                lf_mask = freqs_hz < 4000.0
+                if lf_mask.any():
+                    broadband_loss = float(np.median(spectral_loss[lf_mask]))
+                else:
+                    broadband_loss = float(np.median(spectral_loss))
+
+                tilt_raw = spectral_loss - broadband_loss  # frequency-dep. residual
+
+                # SNR guard: bins where signal ≤ noise floor + 6 dB → no HF boost
+                noise_floor = np.percentile(ctx_mag, 10, axis=1)  # p10 ≈ noise floor
+                snr_in_dip = dip_spec - noise_floor
+                tilt_raw = np.where(snr_in_dip > 6.0, tilt_raw, 0.0)
+
+                # Cap HF tilt at 10 dB; only positive values (loss → boost)
+                hf_tilt_db = np.clip(tilt_raw, 0.0, 10.0) * strength
+
+            # ── Asymmetric gain envelope (slow onset / fast recovery) ────
+            n_sf = len(stft_idx)
+            onset_n = max(1, int(n_sf * 0.30))  # ~30 % slow fade-in
+            recovery_n = max(1, int(n_sf * 0.10))  # ~10 % fast fade-out
+            fade_env = np.ones(n_sf, dtype=np.float64)
+            fade_env[:onset_n] = np.linspace(0.0, 1.0, onset_n)
+            if n_sf > onset_n + recovery_n:
+                fade_env[-recovery_n:] = np.linspace(1.0, 0.0, recovery_n)
+
+            # ── Combine broadband + HF-tilt into spectral_gain mask ──────
+            tilt_lin = 10.0 ** (hf_tilt_db / 20.0)  # [n_freqs] — per-bin extra boost
+            max_lin = 10.0 ** (max_gain_db / 20.0)
+
+            for k, sf in enumerate(stft_idx):
+                bb_db = float(bb_gain_db_stft[k])
+                if bb_db < 0.3:
+                    continue  # trivially small — skip
+                bb_lin = 10.0 ** (bb_db / 20.0)  # scalar
+                combined = bb_lin * tilt_lin  # [n_freqs]
+                # Asymmetric fade: smoothly ramp gain at onset/recovery edges
+                combined = 1.0 + (combined - 1.0) * float(fade_env[k])
+                spectral_gain[:, sf] = np.clip(combined, 1.0, max_lin)
+
             n_repaired += 1
 
         if n_repaired == 0:
             return audio, 0
 
-        # --- Step 5: Smooth the gain curve (avoid gain discontinuities) ---
-        sg_win = min(n_frames, crossfade_frames * 2 + 1)
-        if sg_win % 2 == 0:
-            sg_win += 1
-        sg_win = max(3, sg_win)
-        if sg_win <= n_frames:
-            try:
-                gain_db = signal.savgol_filter(gain_db, sg_win, 2)
-            except Exception as _exc:
-                logger.debug("Operation failed (non-critical): %s", _exc)  # keep unsmoothed gain if savgol fails
+        # ── Step 5: Apply spectral gain to each channel (§2.51 linked) ──
+        def _apply_gain_to_channel(sig_ch: np.ndarray) -> np.ndarray:
+            """Apply the spectral_gain mask to one audio channel via STFT."""
+            _, _, X_ch = signal.stft(
+                sig_ch.astype(np.float64),
+                fs=sample_rate,
+                window="hann",
+                nperseg=fft_size,
+                noverlap=fft_size - hop_stft,
+                boundary="even",
+                padded=True,
+            )
+            n_apply = min(X_ch.shape[1], spectral_gain.shape[1])
+            X_ch[:, :n_apply] *= spectral_gain[:, :n_apply]
+            _, y = signal.istft(
+                X_ch,
+                fs=sample_rate,
+                window="hann",
+                nperseg=fft_size,
+                noverlap=fft_size - hop_stft,
+                boundary="even",
+            )
+            # Trim / zero-pad to original length
+            y_out = np.zeros(n_samples, dtype=np.float64)
+            n_trim = min(len(y), n_samples)
+            y_out[:n_trim] = y[:n_trim]
+            return y_out
 
-        # Ensure no negative gain
-        gain_db = np.clip(gain_db, 0.0, max_gain_db)
-
-        # --- Step 6: Interpolate frame-level gain to sample-level ---
-        frame_centres = np.arange(n_frames) * env_hop + env_win // 2
-        gain_linear = 10.0 ** (gain_db / 20.0)  # dB to linear
-
-        sample_positions = np.arange(n_samples)
-        gain_per_sample = np.interp(sample_positions, frame_centres, gain_linear)
-
-        # --- Step 7: Apply gain to audio ---
-        result = audio.copy().astype(np.float64)
         if is_stereo:
-            result[:, 0] *= gain_per_sample
-            result[:, 1] *= gain_per_sample
+            L_out = _apply_gain_to_channel(audio[:, 0])
+            R_out = _apply_gain_to_channel(audio[:, 1])
+            result = np.stack([L_out, R_out], axis=1)
         else:
-            result *= gain_per_sample
+            result = _apply_gain_to_channel(mono)
 
-        # Safety: NaN/Inf guard + clip
         result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
-        result = np.clip(result, -1.0, 1.0)
+        result = np.clip(result, -1.0, 1.0).astype(np.float32)
 
         logger.debug(
-            "Tape level stabilizer: %d dips detected, max gain %.1f dB, mean gain %.2f dB (strength=%.2f)",
+            "Tape level stabilizer v2 (STFT): %d dips repaired, HF-tilt correction active, strength=%.2f",
             n_repaired,
-            float(np.max(gain_db)),
-            float(np.mean(gain_db[gain_db > 0.0])) if np.any(gain_db > 0.0) else 0.0,
             strength,
         )
 
-        return result.astype(np.float32), n_repaired
+        return result, n_repaired
 
     def _local_pitch_flatten(
         self,
@@ -1463,7 +1819,12 @@ class WowFlutterFix(PhaseInterface):
         return max_dev
 
     def _calculate_stretch_factors(
-        self, pitch_trajectory: np.ndarray, confidence: np.ndarray, strength: float
+        self,
+        pitch_trajectory: np.ndarray,
+        confidence: np.ndarray,
+        strength: float,
+        *,
+        max_stretch_delta: float = 0.05,
     ) -> np.ndarray:
         """
         Calculate time-stretching factors to correct pitch deviations.
@@ -1501,7 +1862,11 @@ class WowFlutterFix(PhaseInterface):
                 stretch_factors[i] = 1.0 + strength * (raw_stretch - 1.0)
 
                 # Clamp to reasonable range (avoid extreme stretching)
-                stretch_factors[i] = np.clip(stretch_factors[i], 0.95, 1.05)  # ±5% max stretch
+                stretch_factors[i] = np.clip(
+                    stretch_factors[i],
+                    1.0 - max_stretch_delta,
+                    1.0 + max_stretch_delta,
+                )
             else:
                 # Low confidence, no correction
                 stretch_factors[i] = 1.0
@@ -1517,7 +1882,11 @@ class WowFlutterFix(PhaseInterface):
             from scipy.ndimage import uniform_filter1d
 
             stretch_factors = uniform_filter1d(stretch_factors, size=5, mode="nearest")
-        stretch_factors = np.clip(stretch_factors, 0.95, 1.05)  # Grenzen nach Glättung sichern
+        stretch_factors = np.clip(
+            stretch_factors,
+            1.0 - max_stretch_delta,
+            1.0 + max_stretch_delta,
+        )
 
         return stretch_factors
 

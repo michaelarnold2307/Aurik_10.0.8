@@ -107,7 +107,7 @@ ergebnis = denker.erkenne(audio, sr=48_000)
 ```
 
 Wraps: `forensics.medium_detector.MediumDetector`
-Spec: §2.1 MediumClassifier · §6.1 SUPPORTED_MATERIALS
+Spec: §2.1 MediumDetector · §6.7 Transfer-Chain-Erkennung
 
 ---
 

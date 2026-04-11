@@ -76,7 +76,8 @@ class GermanSchlagerClassifier:
     ]
 
     # ---- Schwellwerte ----
-    SCHLAGER_CONFIDENCE_THRESHOLD: float = 0.44
+    # §2.2.2 normative Invariante: Aktivierungsschwelle MUSS 0.52 sein (keine Abweichung).
+    SCHLAGER_CONFIDENCE_THRESHOLD: float = 0.52
     CLAP_POSITIVE_THRESHOLD: float = 0.26
     ACCORDION_AM_FREQ_RANGE: tuple[float, float] = (5.0, 15.0)
     ACCORDION_TREMOLO_RANGE: tuple[float, float] = (4.0, 8.0)
@@ -1699,58 +1700,65 @@ class GermanSchlagerClassifier:
     def _compute_clap_score(self, audio: np.ndarray, sr: int) -> float:
         """LAION-CLAP Zero-Shot (optionaler weicher Prior).
 
-        Setzt AURIK_ENABLE_CLAP=1 (Env-Variable) voraus, um den schweren
-        `transformers`-Import zu erlauben. Ohne diese Variable wird sofort
-        der neutrale Prior 0.35 zurückgegeben (verhindert 30 s Timeout in Tests).
+        Lädt LAION-CLAP via ml_memory_budget.try_allocate() — identisches Muster
+        wie alle anderen ML-Plugins (§2.47 ML-Failure-Degradationskaskade).
+        Kein Env-Gate: CLAP wird geladen wenn Speicher verfügbar ist, sonst 0.35.
         """
-        import os
-
-        if not os.environ.get("AURIK_ENABLE_CLAP"):
-            return 0.35  # neutraler Prior ohne CLAP-Import
         try:
-            # Versuche CLAP zu laden
+            from backend.core.ml_memory_budget import release as _release_clap_genre
+            from backend.core.ml_memory_budget import try_allocate as _alloc_clap_genre
             from plugins.laion_clap_plugin import get_laion_clap as get_clap_plugin
 
-            clap = get_clap_plugin()
-            if clap is None:
-                return 0.35  # neutral wenn nicht verfügbar
+            if not _alloc_clap_genre("LAION_CLAP_genre", 2.2):
+                logger.debug("GenreClassifier CLAP: Speicherbudget nicht verfügbar — neutraler Prior 0.35")
+                return 0.35
 
-            # Schlager-Ähnlichkeit via Genre-Tags schätzen
-            # tag() mit Schlager-assoziierten text_queries aufrufen
-            schlager_prompts = [p for p, _ in self.SCHLAGER_CLAP_PROMPTS[:3]]
             try:
-                tag_result = clap.tag(audio, sr, text_queries=schlager_prompts)
-                # Genre-Tags: "schlager", "volksmusik", "folk" als Proxy-Scores
-                genre_scores_dict = tag_result.genre_tags
-                proxy_keys = ["schlager", "volksmusik", "folk", "german", "pop"]
-                proxy_score = 0.0
-                for key in proxy_keys:
-                    if key in genre_scores_dict:
-                        proxy_score = max(proxy_score, genre_scores_dict[key])
-                clap_score = float(np.clip(proxy_score, 0.0, 1.0))
-            except Exception:
-                clap_score = 0.35
+                clap = get_clap_plugin()
+                if clap is None:
+                    logger.debug("GenreClassifier CLAP: Plugin nicht verfügbar — neutraler Prior 0.35")
+                    return 0.35
 
-            pos_scores = [clap_score]
-            pos_total = float(np.mean(pos_scores)) if pos_scores else 0.35
+                # Schlager-Ähnlichkeit via Genre-Tags schätzen
+                schlager_prompts = [p for p, _ in self.SCHLAGER_CLAP_PROMPTS[:3]]
+                try:
+                    tag_result = clap.tag(audio, sr, text_queries=schlager_prompts)
+                    genre_scores_dict = tag_result.genre_tags
+                    proxy_keys = ["schlager", "volksmusik", "folk", "german", "pop"]
+                    proxy_score = 0.0
+                    for key in proxy_keys:
+                        if key in genre_scores_dict:
+                            proxy_score = max(proxy_score, genre_scores_dict[key])
+                    clap_score = float(np.clip(proxy_score, 0.0, 1.0))
+                except Exception:
+                    clap_score = 0.35
 
-            neg_scores: list[float] = []
-            try:
-                neg_tag = clap.tag(audio, sr, text_queries=self.NON_SCHLAGER_NEGATIVE_PROMPTS[:3])
-                _neg_dict = neg_tag.genre_tags if hasattr(neg_tag, "genre_tags") else {}
-                for v in _neg_dict.values():
-                    neg_scores.append(float(v))
-            except Exception:
-                neg_scores = []
-            neg_mean = (
-                float(np.mean(neg_scores)) if neg_scores else 0.0
-            )  # Negativ-Prior via NON_SCHLAGER_NEGATIVE_PROMPTS
-            clap_score = float(np.clip(pos_total - 0.5 * neg_mean, 0.0, 1.0))
-            return float(np.nan_to_num(clap_score))
+                pos_total = clap_score
+
+                neg_scores: list[float] = []
+                try:
+                    neg_tag = clap.tag(audio, sr, text_queries=self.NON_SCHLAGER_NEGATIVE_PROMPTS[:3])
+                    _neg_dict = neg_tag.genre_tags if hasattr(neg_tag, "genre_tags") else {}
+                    for v in _neg_dict.values():
+                        neg_scores.append(float(v))
+                except Exception:
+                    neg_scores = []
+                neg_mean = float(np.mean(neg_scores)) if neg_scores else 0.0
+                result_score = float(np.clip(pos_total - 0.5 * neg_mean, 0.0, 1.0))
+                logger.info(
+                    "GenreClassifier CLAP: score=%.3f (pos=%.3f neg_mean=%.3f)", result_score, pos_total, neg_mean
+                )
+                return float(np.nan_to_num(result_score))
+
+            except Exception as _clap_err:
+                logger.debug("GenreClassifier CLAP: Inferenz fehlgeschlagen (%s) — neutraler Prior 0.35", _clap_err)
+                return 0.35
+            finally:
+                _release_clap_genre("LAION_CLAP_genre")
 
         except (ImportError, Exception) as e:
-            logger.debug("CLAP nicht verfügbar, neutraler Prior: %s", e)
-            return 0.35  # neutral
+            logger.debug("GenreClassifier CLAP: Import nicht verfügbar (%s) — neutraler Prior 0.35", e)
+            return 0.35
 
     # ---- Hilfsfunktionen ----
 

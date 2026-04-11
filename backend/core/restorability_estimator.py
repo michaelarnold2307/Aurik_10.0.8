@@ -40,6 +40,11 @@ class RestorabilityResult:
     snr_db: float = 0.0  # Geschätzter SNR
     grade: str = "unknown"  # excellent / good / fair / poor / critical
 
+    @property
+    def tier(self) -> str:
+        """Alias for `grade` (§2.47 Spec compatibility)."""
+        return self.grade
+
     def as_dict(self) -> dict:
         return {
             "restorability_score": self.restorability_score,
@@ -50,6 +55,7 @@ class RestorabilityResult:
             "processing_time_estimate_s": self.processing_time_estimate_s,
             "snr_db": self.snr_db,
             "grade": self.grade,
+            "tier": self.tier,
         }
 
 
@@ -143,8 +149,17 @@ class RestorabilityEstimator:
             RestorabilityResult mit Score, MOS-Prognose, Empfehlungen.
         """
 
-        # Mono-Konvertierung
-        mono = np.mean(audio, axis=0).astype(np.float32) if audio.ndim == 2 else audio.astype(np.float32)
+        # Mono-Konvertierung:
+        # Aurik canonical shape is (N, channels) — axis=1 is the channel dimension.
+        # (channels, N) shape is never used in Aurik pipelines (§11 Spec 02 §2.46).
+        # Using axis=0 would reduce (N, 2) to a 2-element vector → SNR=0.0 bug.
+        if audio.ndim == 2:
+            # Normalise to (N, channels) if necessary, then average channels
+            if audio.shape[0] < audio.shape[1]:
+                audio = audio.T  # was (channels, N) → (N, channels)
+            mono = audio.mean(axis=1).astype(np.float32)
+        else:
+            mono = audio.astype(np.float32)
         mono = np.nan_to_num(mono, nan=0.0, posinf=0.0, neginf=0.0)
 
         # §2.26 Performance-Guard: Laufzeit ≤ 5 s (Spec-Invariante)

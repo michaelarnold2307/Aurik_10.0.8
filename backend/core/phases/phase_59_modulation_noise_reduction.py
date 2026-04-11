@@ -63,9 +63,17 @@ def apply(
 
     stereo = audio.ndim == 2
     if stereo:
-        left = apply(audio[0], sample_rate, strength=strength, defect_scores=defect_scores)
-        right = apply(audio[1], sample_rate, strength=strength, defect_scores=defect_scores)
-        return np.clip(np.stack([left, right], axis=0), -1.0, 1.0).astype(np.float32)
+        # §2.51 Linked-Stereo: Noise-Modell aus Mid, identischer STFT-Gain auf L+R
+        mono_mix = (audio[0] + audio[1]) / 2.0
+        mono_denoised = apply(mono_mix, sample_rate, strength=strength, defect_scores=defect_scores)
+        _eps_mn = 1e-10
+        _gain_mn = np.where(
+            np.abs(mono_mix) > _eps_mn,
+            mono_denoised / (mono_mix + _eps_mn * np.sign(mono_mix + _eps_mn)),
+            1.0,
+        )
+        _gain_mn = np.clip(_gain_mn, 0.0, 10.0)
+        return np.clip(np.stack([audio[0] * _gain_mn, audio[1] * _gain_mn], axis=0), -1.0, 1.0).astype(np.float32)
 
     x = audio.astype(np.float64)
     n = len(x)

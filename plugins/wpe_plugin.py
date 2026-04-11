@@ -72,6 +72,32 @@ def _wpe_numpy(
 
     D = Y.copy().astype(np.complex64)
 
+    # §OOM-Guard: Y_del kann sehr groß werden (K × L × T_full × 8 Bytes, complex64).
+    # Für 225 s Audio @ 48 kHz: 1025 × 10 × 21 081 × 8 ≈ 1.73 GB.
+    # Einsum-Peak (Y_del + Y_del.conj()):  ≈ 3.5 GB zusätzlich.
+    # Wenn freier RAM < 3 × Y_del-Größe + 2 GB Overhead → OMLSA-Fallback (passthrough).
+    _y_del_bytes = K * L * T_full * 8  # complex64 = 8 Bytes
+    _y_del_mb = _y_del_bytes / (1024**2)
+    if _y_del_mb > 800:  # Nur bei > 800 MB Y_del ist ein RAM-Check sinnvoll
+        try:
+            import psutil as _psutil_wpe
+
+            _avail_mb = _psutil_wpe.virtual_memory().available / (1024**2)
+            _needed_mb = _y_del_mb * 3.0 + 2048  # 3× Peak + 2 GB Overhead
+            if _avail_mb < _needed_mb:
+                import logging as _log_wpe
+
+                _log_wpe.getLogger(__name__).warning(
+                    "WPE §OOM-Guard: Y_del=%.0f MB, Einsum-Peak=%.0f MB total, "
+                    "nur %.0f MB frei — WPE übersprungen, OMLSA-Fallback aktiv.",
+                    _y_del_mb,
+                    _needed_mb,
+                    _avail_mb,
+                )
+                return D  # passthrough: phase_20 verwendet OMLSA als Fallback
+        except ImportError:
+            pass  # psutil nicht verfügbar — fortfahren
+
     # Stapel verzoegerter Beobachtungen einmalig aufbauen [K, L, T_full]
     # Y_del[k, l, t] = Y[k, t + delay + l]   l=0..L-1
     Y_del = np.empty((K, L, T_full), dtype=np.complex64)

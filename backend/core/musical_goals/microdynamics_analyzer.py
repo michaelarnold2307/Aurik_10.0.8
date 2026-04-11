@@ -475,7 +475,6 @@ def check_microdynamics_preservation(original: np.ndarray, processed: np.ndarray
 if __name__ == "__main__":
     import sys
 
-
     if len(sys.argv) < 2:
         logger.debug("Usage: python microdynamics_analyzer.py <audio_file>")
         sys.exit(1)

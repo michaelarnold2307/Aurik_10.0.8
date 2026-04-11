@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 if TYPE_CHECKING:
     from denker.aurik_denker import AurikErgebnis
@@ -541,7 +542,7 @@ class TestAurikDenkerDigitalExcellenceGuard:
         ):
             from denker.aurik_denker import AurikDenker
 
-            AurikDenker().denke(audio, SR)
+            AurikDenker().denke(audio, SR, no_rt_limit=True)
 
         # v9.10.72: ExzellenzDenker ruft messe_ziele() statt optimiere() auf
         assert exz_denker_m.messe_ziele.called, "ExzellenzDenker.messe_ziele() wurde nicht aufgerufen"
@@ -1046,7 +1047,7 @@ class TestAurikErgebnisInvarianten:
 # ─── Vollständig gemockte Orchestrierung (alle 10 Stufen) ───────────────────
 
 
-def _full_mock_ctx(audio: np.ndarray) -> Any:
+def _full_mock_ctx(audio: np.ndarray, rest_metadata: dict[str, Any] | None = None) -> Any:
     """Context-Manager der alle 10 Stufen in AurikDenker mockt.
 
     Verhindert jeden echten Aufruf von RestaurierDenker, CDPAMPlugin,
@@ -1075,6 +1076,7 @@ def _full_mock_ctx(audio: np.ndarray) -> Any:
     rest_result.winning_variant = "balanced"
     rest_result.musical_goals = {"brillanz": 0.87, "waerme": 0.81}
     rest_result.goals_passed = 2
+    rest_result.metadata = dict(rest_metadata) if isinstance(rest_metadata, dict) else {}
 
     rest_denker_m = MagicMock()
     rest_denker_m.restauriere.return_value = rest_result
@@ -1139,11 +1141,11 @@ def _full_mock_ctx(audio: np.ndarray) -> Any:
     )
 
 
-def _run_fully_mocked(audio: np.ndarray) -> Any:
+def _run_fully_mocked(audio: np.ndarray, rest_metadata: dict[str, Any] | None = None) -> Any:
     """Hilfsfunktion: führt AurikDenker.denke() mit vollständigen Mocks aus."""
     from denker.aurik_denker import AurikDenker
 
-    patches = _full_mock_ctx(audio)
+    patches = _full_mock_ctx(audio, rest_metadata=rest_metadata)
     with (
         patches[0],
         patches[1],
@@ -1225,6 +1227,39 @@ class TestAurikDenkerVollMock:
         audio = _sine()
         result = _run_fully_mocked(audio)
         assert len(result.phases_executed) > 0
+
+    def test_30b_orchestrator_propagates_253_metadata_to_aurikergebnis(self):
+        """§8.3.2: AurikDenker propagiert §2.53-Metadaten unverändert bis AurikErgebnis."""
+        audio = _sine()
+        rest_metadata = {
+            "joy_runtime_index": {
+                "joy_index": 0.73,
+                "fatigue_index": 0.19,
+                "components": {"natuerlichkeit": 0.91},
+            },
+            "auto_improvement_recommendations": {
+                "count": 1,
+                "recommendations": [
+                    {
+                        "focus": "noise_floor",
+                        "action": "reduce_denoise_strength",
+                        "reason": "over-processing",
+                    }
+                ],
+            },
+            "song_calibration": {
+                "cluster_key": "jazz:vinyl:pre-1980:good",
+                "cluster_policy": {"cluster_key": "jazz:vinyl:pre-1980:good"},
+            },
+        }
+
+        result = _run_fully_mocked(audio, rest_metadata=rest_metadata)
+
+        assert isinstance(result.metadata, dict)
+        for key in ("joy_runtime_index", "auto_improvement_recommendations", "song_calibration"):
+            assert key in result.metadata, f"Pflichtfeld {key} fehlt in AurikErgebnis.metadata"
+        assert result.metadata["joy_runtime_index"]["joy_index"] == pytest.approx(0.73, abs=0.01)
+        assert result.metadata["song_calibration"]["cluster_key"] == "jazz:vinyl:pre-1980:good"
 
     def test_31_full_pipeline_stereo_input(self):
         """Stereo-Input (2 Kanäle) wird ohne Absturz verarbeitet."""

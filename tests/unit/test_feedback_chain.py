@@ -396,3 +396,53 @@ class TestFeedbackChainPerceptualLoopScoring:
         assert result.metadata["score_source"] == "versa"
         assert result.metadata["score_fallback_used"] is False
         assert result.overall_score == pytest.approx(4.7)
+
+
+# ---------------------------------------------------------------------------
+# Klasse: §2.54 Adaptive Threshold Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveThresholds254:
+    """§2.54: FeedbackChain thresholds must be material/restorability-adaptive."""
+
+    def test_39_prune_threshold_shellac_more_lenient_than_cd(self):
+        fc_cd = FeedbackChain(material="cd_digital", restorability_score=20.0)
+        fc_shellac = FeedbackChain(material="shellac", restorability_score=85.0)
+        # Restorative phase pruning threshold
+        t_cd = fc_cd._compute_adaptive_prune_threshold(is_restorative=True)
+        t_shellac = fc_shellac._compute_adaptive_prune_threshold(is_restorative=True)
+        # More lenient = more negative
+        assert t_shellac < t_cd, f"Shellac ({t_shellac}) should be more lenient than CD ({t_cd})"
+
+    def test_40_prune_threshold_enhancement_stricter_than_restorative(self):
+        fc = FeedbackChain(material="vinyl", restorability_score=60.0)
+        t_rest = fc._compute_adaptive_prune_threshold(is_restorative=True)
+        t_enh = fc._compute_adaptive_prune_threshold(is_restorative=False)
+        assert t_enh > t_rest, "Enhancement threshold should be stricter (less negative)"
+
+    def test_41_mos_regression_tolerance_poor_material_higher(self):
+        fc_cd = FeedbackChain(material="cd_digital", restorability_score=20.0)
+        fc_shellac = FeedbackChain(material="shellac", restorability_score=85.0, defect_severity_mean=0.7)
+        tol_cd = fc_cd._compute_adaptive_mos_regression_tolerance()
+        tol_shellac = fc_shellac._compute_adaptive_mos_regression_tolerance()
+        assert tol_shellac > tol_cd, f"Shellac tol ({tol_shellac}) should exceed CD ({tol_cd})"
+
+    def test_42_prune_threshold_clamped_within_bounds(self):
+        fc = FeedbackChain(material="wax_cylinder", restorability_score=100.0, defect_severity_mean=1.0)
+        t = fc._compute_adaptive_prune_threshold(is_restorative=True)
+        assert -0.30 <= t <= -0.05, f"Must be in [-0.30, -0.05], got {t}"
+
+    def test_43_mos_regression_tolerance_clamped(self):
+        fc = FeedbackChain(material="wax_cylinder", restorability_score=100.0, defect_severity_mean=1.0)
+        tol = fc._compute_adaptive_mos_regression_tolerance()
+        assert 0.03 <= tol <= 0.25, f"Must be in [0.03, 0.25], got {tol}"
+
+    def test_44_default_params_backward_compatible(self):
+        """Default restorability/severity should produce values close to legacy."""
+        fc = FeedbackChain()  # defaults: restorability=50, severity=0.3
+        t_rest = fc._compute_adaptive_prune_threshold(is_restorative=True)
+        t_enh = fc._compute_adaptive_prune_threshold(is_restorative=False)
+        # Legacy: -0.05 restorative, -0.01 enhancement
+        assert -0.15 <= t_rest <= -0.05
+        assert -0.03 <= t_enh <= -0.01

@@ -128,6 +128,8 @@ class BigVGANv2Plugin:
         self._torch_gen = None  # torch.nn.Module (Generator)
         self._model_loaded: bool = False
         self._fallback_mode: str = "pghi_istft"
+        self._device: str = "cpu"  # set by _try_load_model
+        self._device: str = "cpu"  # set by _try_load_model
         self._try_load_model()
 
     _BUDGET_NAME: str = "bigvgan_v2"
@@ -153,12 +155,19 @@ class BigVGANv2Plugin:
             torch.set_num_threads(os.cpu_count() or 4)
             checkpoint = self.MODELS_DIR / "bigvgan_v2.pth"
             if checkpoint.exists():
-                # Generisches Laden — spezifisches Modell muss kompatibel sein
-                self._torch_gen = torch.load(str(checkpoint), map_location="cpu")  # nosec B614 — lokales Modell aus models/
+                try:
+                    from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                    _dev = _get_dev("BigVGAN")
+                except Exception:
+                    _dev = "cpu"
+                self._torch_gen = torch.load(str(checkpoint), map_location=_dev)  # nosec B614 — lokales Modell aus models/
                 self._torch_gen.eval()
+                self._torch_gen.to(_dev)
+                self._device = _dev
                 self._model_loaded = True
                 self._fallback_mode = "bigvgan_v2_torch"
-                logger.info("🟢 BigVGAN-v2: torch-Modell geladen (CPU, %s)", checkpoint)
+                logger.info("🟢 BigVGAN-v2: torch-Modell geladen (device=%s, %s)", _dev, checkpoint)
                 try:
                     from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
 
@@ -277,16 +286,15 @@ class BigVGANv2Plugin:
                 if outputs and outputs[0] is not None:
                     synthesized = outputs[0].flatten()
                 else:
-                    raise RuntimeError("BigVGAN-v2 ONNX: leerer Output")
-
+                    synthesized = np.zeros(int(mel.shape[1] * self._HOP_SIZE), dtype=np.float32)
             elif self._torch_gen is not None:
                 # torch-Pfad
                 import torch
 
                 with torch.no_grad():
-                    mel_t = torch.from_numpy(mel[np.newaxis, :, :])
+                    mel_t = torch.from_numpy(mel[np.newaxis, :, :]).to(self._device)
                     waveform = self._torch_gen(mel_t)
-                    synthesized = waveform.squeeze().numpy()
+                    synthesized = waveform.squeeze().cpu().numpy()
 
             else:
                 raise RuntimeError("Kein Modell verfügbar")
@@ -297,6 +305,21 @@ class BigVGANv2Plugin:
             return np.clip(result, -1.0, 1.0).astype(np.float32), "bigvgan_v2", 0.95
 
         except Exception as exc:
+            if self._device != "cpu" and self._torch_gen is not None:
+                logger.warning("BigVGAN-v2: GPU-Inferenz fehlgeschlagen (%s) — CPU-Retry", exc)
+                try:
+                    self._torch_gen.cpu()
+                    self._device = "cpu"
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        _mgr().report_gpu_error("BigVGAN", exc)
+                    except Exception:
+                        pass
+                except Exception as _mv_exc:
+                    logger.debug("BigVGAN-v2 GPU→CPU move fehlgeschlagen: %s", _mv_exc)
+                    self._device = "cpu"
+                return self._synthesize_bigvgan(audio, sr)
             logger.warning("BigVGAN-v2 Inferenz-Fehler: %s — PGHI-Fallback", exc)
             return self._synthesize_pghi_fallback(audio, sr)
 

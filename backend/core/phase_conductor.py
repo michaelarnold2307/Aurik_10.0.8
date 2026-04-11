@@ -132,7 +132,7 @@ _NEVER_SKIP = frozenset(
 
 # Mindeststärken je Phase-Typ (verhindert Bypass durch Over-Confidence)
 _MIN_STRENGTH: dict[str, float] = {
-    "phase_03_denoise": 0.10,
+    "phase_03_denoise": 0.35,
     "phase_29_tape_hiss_reduction": 0.12,
     "phase_01_click_removal": 0.30,
     "phase_07_harmonic_restoration": 0.10,
@@ -351,12 +351,18 @@ def _estimate_transient_density(mono: np.ndarray, sr: int) -> float:
 
 def _estimate_harmonic_coherence(mono: np.ndarray, sr: int) -> float:
     """Harmonizitäts-Schätzung via normalisierter Autokorrelation am F0-Lag."""
-    max_samples = sr  # max 1 s
+    # Keep this bounded for realtime-safety in long E2E runs.
+    # A 2048-sample window is sufficient for robust lag-peak estimation
+    # while avoiding O(n^2) autocorrelation costs.
+    max_samples = min(int(sr), 2048)
     segment = mono[: min(len(mono), max_samples)]
     if len(segment) < 64:
         return 0.5
-    ac = np.correlate(segment, segment, mode="full")
-    ac = ac[len(ac) // 2 :]
+    # FFT-based autocorrelation: O(n log n) instead of O(n^2).
+    n = int(len(segment))
+    n_fft = 1 << ((2 * n - 1).bit_length())
+    spec = np.fft.rfft(segment, n=n_fft)
+    ac = np.fft.irfft(spec * np.conj(spec), n=n_fft)[:n]
     ac_norm = ac / (ac[0] + 1e-12)
     # F0 search: 50–1000 Hz → lags sr/1000 .. sr/50
     lag_min = max(int(sr / 1000), 1)

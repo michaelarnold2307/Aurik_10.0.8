@@ -755,6 +755,19 @@ class TestPhase27ClickPopRemoval:
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
 
+    def test_safe_strength_dampens_vocal_vinyl(self, mono):
+        result = self.phase.process(
+            mono,
+            SR,
+            MaterialType.VINYL,
+            strength=1.0,
+            panns_tags={"Singing voice": 0.78},
+        )
+        _assert_phase_result(result, mono, check_clipping=False)
+        eff = float(result.metadata.get("effective_strength", 1.0))
+        safe = float(result.metadata.get("safe_strength", eff))
+        assert 0.0 < safe < eff
+
     def test_stereo_linked_detection_coherence(self):
         """§2.51: Stereo click detection is linked — same positions repaired in both channels."""
         rng = np.random.default_rng(42)
@@ -812,6 +825,19 @@ class TestPhase28SurfaceNoiseProfiling:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_safe_strength_dampens_vocal_vinyl(self, mono):
+        result = self.phase.process(
+            mono,
+            SR,
+            MaterialType.VINYL,
+            strength=1.0,
+            panns_tags={"Vocals": 0.81},
+        )
+        _assert_phase_result(result, mono, check_clipping=False)
+        eff = float(result.metadata.get("effective_strength", 1.0))
+        safe = float(result.metadata.get("safe_strength", eff))
+        assert 0.0 < safe < eff
 
 
 # ===========================================================================
@@ -949,6 +975,24 @@ class TestPhase30DCOffsetRemoval:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_dc_removed_without_large_level_loss(self):
+        """DC muss sinken, musikalischer Pegel darf nicht stark kollabieren."""
+        t = np.linspace(0.0, _N / SR, _N, endpoint=False, dtype=np.float64)
+        music = 0.30 * np.sin(2.0 * np.pi * 80.0 * t)
+        dc_bias = 0.12
+        sig = (music + dc_bias).astype(np.float32)
+
+        in_rms = float(np.sqrt(np.mean(sig.astype(np.float64) ** 2) + 1e-12))
+        result = self.phase.process(sig, SR, MaterialType.VINYL)
+        _assert_phase_result(result, sig, check_clipping=False)
+
+        out = result.audio.astype(np.float64)
+        out_rms = float(np.sqrt(np.mean(out**2) + 1e-12))
+        delta_db = 20.0 * np.log10(max(out_rms / in_rms, 1e-30))
+
+        assert abs(float(np.mean(out))) < abs(float(np.mean(sig)))
+        assert delta_db > -1.2
 
 
 # ===========================================================================

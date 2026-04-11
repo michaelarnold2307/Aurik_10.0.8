@@ -654,8 +654,14 @@ class DeEsserPhase(PhaseInterface):
         # Multi-Band De-Essing anwenden (mit Gender-Profil)
         gender_bands_used = None
         if is_stereo:
-            deessed_left, gender_bands_used = self._process_channel_multiband_gender_aware(
-                enhanced_audio[:, 0],
+            # §2.51 Stereo-Kohärenz: kein unabhängiges L/R-De-Essing.
+            # M/S-Verarbeitung: Mid voll, Side konservativ.
+            _sqrt2 = float(np.sqrt(2.0))
+            _mid = (enhanced_audio[:, 0] + enhanced_audio[:, 1]) / _sqrt2
+            _side = (enhanced_audio[:, 0] - enhanced_audio[:, 1]) / _sqrt2
+
+            deessed_mid, gender_bands_used = self._process_channel_multiband_gender_aware(
+                _mid,
                 sample_rate,
                 material,
                 band_weights,
@@ -663,16 +669,19 @@ class DeEsserPhase(PhaseInterface):
                 threshold_ratio,
                 lookahead_samples,
             )
-            deessed_right, _ = self._process_channel_multiband_gender_aware(
-                enhanced_audio[:, 1],
+            deessed_side, _ = self._process_channel_multiband_gender_aware(
+                _side,
                 sample_rate,
                 material,
                 band_weights,
-                max_reduction_db,
-                threshold_ratio,
+                max(0.5, float(max_reduction_db) * 0.5),
+                float(threshold_ratio) * 1.15,
                 lookahead_samples,
             )
-            deessed_audio = np.column_stack((deessed_left, deessed_right))
+
+            _left = (deessed_mid + deessed_side) / _sqrt2
+            _right = (deessed_mid - deessed_side) / _sqrt2
+            deessed_audio = np.column_stack((_left, _right))
         else:
             deessed_audio, _gender_bands_used = self._process_channel_multiband_gender_aware(
                 enhanced_audio,
@@ -784,12 +793,18 @@ class DeEsserPhase(PhaseInterface):
                             _fricative_snr_invariant_met,
                         )
                     if not _fricative_snr_invariant_met:
-                        logger.warning(
+                        # Downgrade to DEBUG when no fricatives were found — the invariant
+                        # cannot be met if the material has no sibilant content (e.g. band-limited
+                        # vinyl, Schlager, instrumental), which is not an error condition.
+                        _fric_count = getattr(_retry_result, "fricative_segments", 0)
+                        _log_level = logger.warning if _fric_count > 0 else logger.debug
+                        _log_level(
                             "§2.8 Feedback-Invariante nach Retry nicht erfüllbar "
-                            "(SNR_nach=%.1f dB, required=%.1f dB). "
+                            "(SNR_nach=%.1f dB, required=%.1f dB, fricative_segments=%d). "
                             "Quellmaterial hat möglicherweise kaum Frikativinhalt.",
                             _snr_after_chain,
                             _snr_required,
+                            _fric_count,
                         )
                 else:
                     logger.debug(

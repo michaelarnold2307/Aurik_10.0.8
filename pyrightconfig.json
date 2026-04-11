@@ -28,6 +28,7 @@
   "reportMissingImports": "warning",
   "reportMissingModuleSource": "none",
   "reportOperatorIssue": "none",
+  "reportOptionalMemberAccess": "none",
   "reportPossiblyUnbound": "none",
   "reportReturnType": "none",
   "reportUnknownArgumentType": "none",

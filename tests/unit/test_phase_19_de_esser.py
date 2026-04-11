@@ -330,3 +330,43 @@ class TestBreahinessScalingLogic:
         """breathiness=0.31 → breath_scale = max(0.5, 1 − 0.01) = 0.99 → −3.96 dB."""
         result = self._scale(0.31, -4.0)
         assert result == pytest.approx(-3.96, abs=0.01)
+
+
+class TestStereoMSCoherence:
+    """§2.51: Stereo-De-Esser darf nicht unabhängig pro Kanal laufen."""
+
+    def test_stereo_uses_ms_domain_not_independent_lr(self, monkeypatch):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender="female")
+        calls: list[np.ndarray] = []
+
+        def _spy_channel(
+            channel: np.ndarray,
+            sample_rate: int,
+            material: object,
+            band_weights: dict,
+            max_reduction_db: float,
+            threshold_ratio: float,
+            lookahead_samples: int,
+        ) -> tuple[np.ndarray, dict]:
+            calls.append(np.asarray(channel, dtype=np.float32))
+            return np.asarray(channel, dtype=np.float32), {"low": True, "mid": True, "high": True}
+
+        monkeypatch.setattr(phase, "_process_channel_multiband_gender_aware", _spy_channel)
+
+        # Near-mono stereo: M/S erwartet sehr kleinen Side-Kanal.
+        base = (0.25 * _sine(300, 1.0) + 0.85 * _noise_band(6000, 9500, 1.0, amp=0.8)).astype(np.float32)
+        stereo = np.stack([base, (0.98 * base).astype(np.float32)], axis=1)
+
+        result = phase.process(stereo, SR, material=MaterialType.TAPE)
+        assert result.success is True
+        assert result.audio.shape == stereo.shape
+        assert len(calls) == 2, "Stereo-Pfad muss genau zwei Kanalaufrufe ausführen (Mid + Side)."
+
+        rms_first = float(np.sqrt(np.mean(calls[0] ** 2) + 1e-12))
+        rms_second = float(np.sqrt(np.mean(calls[1] ** 2) + 1e-12))
+        assert rms_second < rms_first * 0.25, (
+            "Bei Near-Mono muss Side deutlich kleiner als Mid sein; "
+            f"gefunden: mid={rms_first:.6f}, side={rms_second:.6f}"
+        )

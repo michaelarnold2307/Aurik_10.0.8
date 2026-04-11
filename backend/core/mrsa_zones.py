@@ -97,11 +97,14 @@ def analyze_zones(
             boundary="zeros",
             padded=True,
         )
+        # complex64 instead of complex128: halves STFT memory footprint.
+        # sub_bass (win=65536) on 10 min audio = ~850 MB complex128 vs ~425 MB complex64.
+        # Precision is sufficient for spectral inpainting (SNR floor ~90 dB).
         result[name] = ZoneSTFT(
             name=name,
             freqs=freqs,
             times=times,
-            stft=Zxx.astype(np.complex128),
+            stft=Zxx.astype(np.complex64),
             win=win,
             hop=hop,
             hz_lo=float(hz_lo),

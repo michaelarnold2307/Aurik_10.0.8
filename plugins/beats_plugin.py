@@ -256,6 +256,12 @@ class BeatsPlugin:
             top = sorted(tags.items(), key=lambda x: x[1], reverse=True)[:top_k]
             return BeatsResult(tags=tags, embeddings=embeddings, model_used="beats_onnx", top_k=top, raw_scores=scores)
         except Exception as exc:
+            _msg = str(exc)
+            # Known BEATs input-rank mismatches should not trigger heavyweight model loads
+            # in fallback paths (e.g. strict timeout test runs). Use DSP fallback directly.
+            if "INVALID_ARGUMENT" in _msg and "Invalid rank for input" in _msg:
+                logger.warning("BEATs ONNX-Inferenzfehler: %s — Spectral DSP-Fallback.", exc)
+                return self._spectral_dsp_fallback(audio, sr, top_k)
             logger.warning("BEATs ONNX-Inferenzfehler: %s — PANNs-Fallback.", exc)
             return self._panns_fallback(audio, sr, top_k)
 

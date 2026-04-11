@@ -593,7 +593,6 @@ def check_fatigue_preservation(original: np.ndarray, processed: np.ndarray, sr: 
 if __name__ == "__main__":
     import sys
 
-
     if len(sys.argv) < 2:
         logger.debug("Usage: python listening_fatigue_analyzer.py <audio_file>")
         sys.exit(1)

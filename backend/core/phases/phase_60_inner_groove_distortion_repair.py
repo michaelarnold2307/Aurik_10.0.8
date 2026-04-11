@@ -47,9 +47,17 @@ def apply(
 
     stereo = audio.ndim == 2
     if stereo:
-        left = apply(audio[0], sample_rate, strength=strength, defect_scores=defect_scores)
-        right = apply(audio[1], sample_rate, strength=strength, defect_scores=defect_scores)
-        return np.clip(np.stack([left, right], axis=0), -1.0, 1.0).astype(np.float32)
+        # §2.51 Linked-Stereo: STFT-Gain-Maske aus Mid, identisch auf L+R
+        mono_mix = (audio[0] + audio[1]) / 2.0
+        mono_repaired = apply(mono_mix, sample_rate, strength=strength, defect_scores=defect_scores)
+        _eps_igd = 1e-10
+        _gain_igd = np.where(
+            np.abs(mono_mix) > _eps_igd,
+            mono_repaired / (mono_mix + _eps_igd * np.sign(mono_mix + _eps_igd)),
+            1.0,
+        )
+        _gain_igd = np.clip(_gain_igd, 0.0, 10.0)
+        return np.clip(np.stack([audio[0] * _gain_igd, audio[1] * _gain_igd], axis=0), -1.0, 1.0).astype(np.float32)
 
     x = audio.astype(np.float64)
     n = len(x)

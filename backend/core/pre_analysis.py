@@ -87,19 +87,6 @@ class PreAnalysisResult:
     errors: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
-class _FallbackMediumResult:
-    """Compatibility wrapper for legacy medium classifier fallback results."""
-
-    primary_material: str
-    confidence: float
-    transfer_chain: list[str] = field(default_factory=list)
-    chain_label: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Singleton lock (not needed for stateless function, but kept for clarity)
-# ---------------------------------------------------------------------------
 _run_lock = threading.Lock()
 
 
@@ -221,38 +208,17 @@ def run_pre_analysis(
         _medium_primary_error = str(exc)
         logger.warning("pre_analysis: primary medium detection failed (%s)", exc)
 
-    # Strict 1+1 cascade:
+    # Strict detector-only policy:
     # - Primary detector exactly once
-    # - Secondary fallback exactly once and only if primary failed
+    # - No legacy MediumClassifier fallback in production chain detection (§6.7)
     if _medium_result is None:
-        try:
-            from backend.core.medium_classifier import classify_medium as _classify_medium
-
-            _fallback = _classify_medium(audio_native, sr=sr_native, use_ml=True)
-            _material = str(getattr(_fallback, "material_type", getattr(_fallback, "material", "unknown")))
-            _conf = float(getattr(_fallback, "confidence", 0.0))
-            _chain = list(getattr(_fallback, "transfer_chain", None) or [_material])
-            _chain_label = str(getattr(_fallback, "chain_label", " -> ".join(_chain)))
-            _medium_result = _FallbackMediumResult(
-                primary_material=_material,
-                confidence=_conf,
-                transfer_chain=_chain,
-                chain_label=_chain_label,
-            )
-            result.medium = _medium_result
-            logger.info(
-                "pre_analysis: medium fallback=legacy_classifier material=%s conf=%.2f chain=%s",
-                _material,
-                _conf,
-                _chain_label,
-            )
-        except Exception as fb_exc:
-            _fb_msg = str(fb_exc)
-            if _medium_primary_error is not None:
-                result.errors["medium"] = f"primary_failed={_medium_primary_error}; fallback_failed={_fb_msg}"
-            else:
-                result.errors["medium"] = _fb_msg
-            logger.warning("pre_analysis: medium fallback failed (%s)", fb_exc)
+        if _medium_primary_error is not None:
+            result.errors["medium"] = f"primary_failed={_medium_primary_error}; no_legacy_fallback=true"
+        else:
+            result.errors["medium"] = "medium_detection_failed; no_legacy_fallback=true"
+        logger.warning(
+            "pre_analysis: medium detection unavailable; continuing without medium result (legacy fallback disabled)"
+        )
 
     _cb(20, "Tonträger erkannt — analysiere Ära, Genre und Defekte…")
 

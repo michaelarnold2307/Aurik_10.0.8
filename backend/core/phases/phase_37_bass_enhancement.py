@@ -214,11 +214,18 @@ class BassEnhancement(PhaseInterface):
         # Measure initial bass energy
         bass_energy_before = self._measure_bass_energy(audio, sample_rate)
 
-        # Process each channel
+        # §2.51 M/S-Domain: Bass Enhancement nur auf Mid, Side unver\u00e4ndert
         if is_stereo:
-            enhanced_left = self._enhance_channel(audio[:, 0], sample_rate, config)
-            enhanced_right = self._enhance_channel(audio[:, 1], sample_rate, config)
-            enhanced_audio = np.column_stack((enhanced_left, enhanced_right))
+            mid = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+            side = (audio[:, 0] - audio[:, 1]) / np.sqrt(2.0)
+            mid_enhanced = self._enhance_channel(mid, sample_rate, config)
+            # Decode back to L/R
+            enhanced_audio = np.column_stack(
+                (
+                    (mid_enhanced + side) / np.sqrt(2.0),
+                    (mid_enhanced - side) / np.sqrt(2.0),
+                )
+            )
         else:
             enhanced_audio = self._enhance_channel(audio, sample_rate, config)
 

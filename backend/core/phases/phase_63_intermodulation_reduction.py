@@ -304,6 +304,43 @@ class IntermodulationReductionPhase(PhaseInterface):
                 },
                 warnings=["Intermodulation reduction skipped due to zero effective strength"],
             )
+        # §2.54 Material-adaptive IMD threshold: natural harmonic distortion in analog
+        # sources (vinyl, shellac) must not be mistaken for IMD — protect with higher skip threshold.
+        # Digital sources (CD, DAT, MP3) have no natural distortion → low threshold captures real IMD.
+        _mat_63 = kwargs.get("material_type") or kwargs.get("material")
+        _mat_str_63 = str(_mat_63).lower() if _mat_63 is not None else ""
+        _imd_threshold_63 = _MIN_IMD_SCORE  # default 0.10
+        if any(k in _mat_str_63 for k in ("shellac", "wax_cylinder", "optical_film")):
+            _imd_threshold_63 = 0.25  # heavy natural distortion — only very clear IMD
+        elif "vinyl" in _mat_str_63:
+            _imd_threshold_63 = 0.18  # soft saturation is authentic (§0 Vintage Aesthetics)
+        elif "cassette" in _mat_str_63 or "tape" in _mat_str_63:
+            _imd_threshold_63 = 0.12  # tape has some harmonic character
+        elif any(k in _mat_str_63 for k in ("cd_digital", "dat", "mp3")):
+            _imd_threshold_63 = 0.05  # digital: IMD is a real artifact, activate early
+        _imd_score_63 = float((_defect_scores or {}).get("intermodulation_distortion", 0.0))
+        if _imd_score_63 < _imd_threshold_63:
+            _passthrough_63 = np.clip(np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+            logger.debug(
+                "Phase 63: IMD %.3f < material-adaptive threshold %.3f (%s) → skip",
+                _imd_score_63,
+                _imd_threshold_63,
+                _mat_str_63 or "unknown",
+            )
+            return PhaseResult(
+                audio=_passthrough_63,
+                success=True,
+                execution_time_seconds=_time.perf_counter() - t0,
+                metrics={"imd_score": _imd_score_63, "strength": strength, "effective_strength": 0.0},
+                metadata={
+                    "phase_locality_factor": phase_locality_factor,
+                    "effective_strength": 0.0,
+                    "imd_threshold": _imd_threshold_63,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=["IMD below material-adaptive threshold"],
+            )
         _rms_in = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
         result_audio = apply(audio, sample_rate, strength=_effective_strength, defect_scores=_defect_scores)
         elapsed = _time.perf_counter() - t0

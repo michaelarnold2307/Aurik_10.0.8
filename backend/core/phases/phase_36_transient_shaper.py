@@ -195,8 +195,11 @@ class TransientShaper(PhaseInterface):
 
         # Process each channel
         if is_stereo:
-            shaped_left = self._shape_channel(audio[:, 0], sample_rate, config)
-            shaped_right = self._shape_channel(audio[:, 1], sample_rate, config)
+            # §2.51 Linked Stereo: derive transient detection from mono sidechain (√(L²+R²)/√2)
+            # so that both channels receive the identical gain curve — prevents stereo-field divergence.
+            mono_sc = np.sqrt(audio[:, 0] ** 2 + audio[:, 1] ** 2) * (1.0 / np.sqrt(2))
+            shaped_left = self._shape_channel(audio[:, 0], sample_rate, config, sidechain=mono_sc)
+            shaped_right = self._shape_channel(audio[:, 1], sample_rate, config, sidechain=mono_sc)
             shaped_audio = np.column_stack((shaped_left, shaped_right))
         else:
             shaped_audio = self._shape_channel(audio, sample_rate, config)
@@ -236,19 +239,43 @@ class TransientShaper(PhaseInterface):
             warnings=[] if rt_factor < 0.25 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
 
-    def _shape_channel(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
-        """Shape transients in a single audio channel."""
+    def _shape_channel(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        config: dict[str, Any],
+        sidechain: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Shape transients in a single audio channel.
+
+        Args:
+            sidechain: Optional mono sidechain for envelope/transient detection.
+                When provided (§2.51 Linked Stereo), gain curves are derived from
+                the sidechain rather than from ``audio`` itself.  The sidechain
+                must have the same length as ``audio``.
+        """
         # Split into bands
         bands = self._split_into_bands(audio, sample_rate)
+        sc_bands: list[np.ndarray | None]
+        if sidechain is not None:
+            sc_bands = self._split_into_bands(sidechain, sample_rate)
+        else:
+            sc_bands = [None] * len(bands)
 
         # Shape each band
         shaped_bands = []
-        for i, band in enumerate(bands):
+        for i, (band, sc_band) in enumerate(zip(bands, sc_bands)):
             attack_gain = config["attack_gain_db"][i]
             sustain_gain = config["sustain_gain_db"][i]
 
             shaped_band = self._shape_band(
-                band, sample_rate, attack_gain, sustain_gain, config["attack_window_ms"], config["release_window_ms"]
+                band,
+                sample_rate,
+                attack_gain,
+                sustain_gain,
+                config["attack_window_ms"],
+                config["release_window_ms"],
+                sidechain_band=sc_band,
             )
             shaped_bands.append(shaped_band)
 
@@ -291,13 +318,22 @@ class TransientShaper(PhaseInterface):
         sustain_gain_db: float,
         attack_window_ms: float,
         release_window_ms: float,
+        sidechain_band: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Shape transients in a single frequency band."""
+        """Shape transients in a single frequency band.
+
+        Args:
+            sidechain_band: When provided (§2.51 Linked Stereo), envelope detection
+                and transient masking are derived from this signal rather than from
+                ``band`` itself.  The resulting gain curve is then applied to ``band``.
+        """
         # Compute envelope (fast attack, slow release for transient detection)
         attack_samples = int(attack_window_ms * sample_rate / 1000)
         release_samples = int(release_window_ms * sample_rate / 1000)
 
-        envelope = self._compute_envelope(band, attack_samples, release_samples)
+        # §2.51: use sidechain signal for detection if provided (Linked Stereo)
+        detection_signal = sidechain_band if sidechain_band is not None else band
+        envelope = self._compute_envelope(detection_signal, attack_samples, release_samples)
 
         # Detect transients (steep rises in envelope)
         transient_mask = self._detect_transients(envelope, attack_samples)

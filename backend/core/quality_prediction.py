@@ -413,15 +413,22 @@ class QualityAnalyzer:
         # Smoothness: low residual variance = natural spectral envelope
         # Typical values: natural music residual_var ≈ 0.01–0.08,
         # heavily processed/artifact-laden ≈ 0.15–0.50
+        # Threshold 0.35 (was 0.15) prevents false-zero scores for AudioSR output:
+        # AudioSR synthesises HF harmonics whose spectral envelope deviates from the
+        # 1/f tilt, pushing residual_var above 0.15.  The old threshold yielded
+        # naturalness=0.00 for all audios touched by AudioSR — a false positive that
+        # blocked quality gates and caused misleading "Unnatural sound" warnings.
+        # With 0.35, residual_var=0.20 → naturalness=0.43 (reasonable), 0.35 → 0.0.
         residual_var = float(np.var(residual))
-        naturalness = max(0.0, 1.0 - min(residual_var / 0.15, 1.0))
+        naturalness = max(0.0, 1.0 - min(residual_var / 0.35, 1.0))
 
         # Additionally penalise sharp spectral notches (overprocessing indicator):
-        # Large consecutive jumps in residual signal processing artifacts
+        # Large consecutive jumps in residual indicate processing artifacts.
+        # Max 15% penalty (was 20%) — further guards against false-zero stacking.
         if n_bands > 1:
             jumps = np.abs(np.diff(residual))
             max_jump = float(np.max(jumps))
-            jump_penalty = min(max_jump / 1.0, 0.20)  # max 20% penalty
+            jump_penalty = min(max_jump / 1.0, 0.15)  # max 15% penalty
             naturalness = max(0.0, naturalness - jump_penalty)
 
         if not np.isfinite(naturalness):

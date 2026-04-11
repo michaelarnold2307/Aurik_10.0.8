@@ -420,12 +420,34 @@ class DenoisePhase(PhaseInterface):
 
         # §2.20 Genre-adaptive NR: classical/opera preserve hall ambience,
         # rock tolerates aggressive NR without losing character.
+        # Defense-in-depth: SongCal genre_denoise_factor is primary guard (via PMGG);
+        # these in-phase adjustments apply only when "strength" not in kwargs.
         genre_label = kwargs.get("genre_label", "Unbekannt")
-        if genre_label in ("Klassik", "Oper") and "strength" not in kwargs:
+        _genre_lower_03 = genre_label.strip().lower() if genre_label else ""
+        if _genre_lower_03 in ("klassik", "oper") and "strength" not in kwargs:
             effective_strength = max(0.01, effective_strength * 0.75)
             logger.debug("Phase 03: Genre=%s → NR strength reduced to %.2f", genre_label, effective_strength)
-        elif genre_label == "Rock" and "strength" not in kwargs:
+        elif _genre_lower_03 == "rock" and "strength" not in kwargs:
             effective_strength = min(1.0, effective_strength * 1.10)
+        elif _genre_lower_03 == "reggae" and "strength" not in kwargs:
+            # Vinyl warmth + tape character of reggae/dub recordings = texture, not noise.
+            effective_strength = max(0.01, effective_strength * 0.80)
+            logger.debug("Phase 03: Genre=Reggae → NR strength capped to %.2f", effective_strength)
+        elif _genre_lower_03 == "gospel" and "strength" not in kwargs:
+            # Church room ambience and choir breath texture — preserve.
+            effective_strength = max(0.01, effective_strength * 0.85)
+            logger.debug("Phase 03: Genre=Gospel → NR strength reduced to %.2f", effective_strength)
+        elif _genre_lower_03 == "folk" and "strength" not in kwargs:
+            # Breathing, finger noise, room texture are part of the performance.
+            effective_strength = max(0.01, effective_strength * 0.83)
+            logger.debug("Phase 03: Genre=Folk → NR strength reduced to %.2f", effective_strength)
+        elif _genre_lower_03 == "blues" and "strength" not in kwargs:
+            # Tube amp noise floor is an intentional timbral component.
+            effective_strength = max(0.01, effective_strength * 0.88)
+            logger.debug("Phase 03: Genre=Blues → NR strength reduced to %.2f", effective_strength)
+        elif _genre_lower_03 in ("electronic", "hip-hop") and "strength" not in kwargs:
+            # Clean-recorded digital material — conservative NR to avoid artifacts.
+            effective_strength = max(0.01, effective_strength * 0.90)
 
         # ML-Hybrid Mode Routing (v3.0)
         # quality_mode from UnifiedRestorerV3: 'fast', 'balanced', 'maximum'
@@ -448,20 +470,94 @@ class DenoisePhase(PhaseInterface):
                     f"Memory: {adaptive_resource_manager.get_memory_usage():.1f}%)"
                 )
 
+        # §2.47 [RELEASE_MUST] SNR > 35 dB Dry-Signal Bypass
+        # Terminal fallback: if the signal is essentially clean (SNR > 35 dB),
+        # noise reduction is unnecessary and risks introducing artifacts.
+        # Quick SNR estimate via IMCRA minimum statistics on a center segment.
+        _snr_bypass = False
+        try:
+            _snr_seg = audio[:, 0] if audio.ndim == 2 else audio
+            _snr_seg = _snr_seg.astype(np.float64)
+            _snr_n = len(_snr_seg)
+            _snr_win = min(_snr_n, 5 * sample_rate)
+            _snr_start = max(0, (_snr_n - _snr_win) // 2)
+            _snr_chunk = _snr_seg[_snr_start : _snr_start + _snr_win]
+            # Signal power (RMS²) vs noise floor estimate (5th percentile of frame powers)
+            _snr_frame_len = sample_rate // 20  # 50 ms frames
+            if len(_snr_chunk) >= _snr_frame_len * 4:
+                _snr_n_frames = len(_snr_chunk) // _snr_frame_len
+                _snr_frames = _snr_chunk[: _snr_n_frames * _snr_frame_len].reshape(_snr_n_frames, _snr_frame_len)
+                _snr_frame_powers = np.mean(_snr_frames**2, axis=1)
+                _snr_signal_power = float(np.mean(_snr_frame_powers))
+                _snr_noise_power = float(np.percentile(_snr_frame_powers, 5))
+                if _snr_noise_power > 1e-15 and _snr_signal_power > 1e-15:
+                    _est_snr_db = 10.0 * np.log10(_snr_signal_power / _snr_noise_power)
+                    if _est_snr_db > 35.0:
+                        _snr_bypass = True
+                        logger.info(
+                            "§2.47 Phase 03: estimated SNR=%.1f dB > 35 dB → "
+                            "Dry-Signal bypass (clean signal, no denoising needed)",
+                            _est_snr_db,
+                        )
+        except Exception as _snr_exc:
+            logger.debug("SNR bypass estimation failed (non-blocking): %s", _snr_exc)
+
+        if _snr_bypass:
+            execution_time = time.time() - start_time
+            return create_phase_result(
+                audio=np.clip(audio, -1.0, 1.0),
+                modifications={
+                    "noise_reduction_db": 0.0,
+                    "strength": effective_strength,
+                    "phase_locality_factor": phase_locality_factor,
+                    "material_type": material_type,
+                    "snr_bypass": True,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=["SNR > 35 dB: clean signal, denoising bypassed"],
+                metadata={
+                    "algorithm": "snr_bypass",
+                    "snr_bypass": True,
+                    "execution_time_seconds": execution_time,
+                },
+            )
+
         # §Hebel-2 SGMSE+ Tier-0: Score-Based Generative Speech Enhancement
         # Applied BEFORE ML-Hybrid for vocal-dominant material (singing, speech, opera).
         # SGMSE+ (Richter et al. 2022) uses diffusion posterior sampling P(x|y) in the
         # complex STFT domain — superior to deterministic filters for structured vocal noise.
         # Only active when:
         #   a) quality_mode in ["quality", "maximum"] (not balanced — too slow)
-        #   b) vocal content detected (genre Klassik/Oper or panns_singing >= 0.30)
+        #   b) vocal content detected: PANNs singing ≥ 0.25 (primary gate), OR genre in
+        #      vocal set AND PANNs singing ≥ 0.10 (genre boosts confidence threshold)
+        #      Rationale: genre label "Klassik" alone (instrumental orchestra) must NOT
+        #      activate SGMSE+; a pure symphonic recording has panns_singing ≈ 0.0.
         #   c) material is NOT clean_digital (SGMSE trains on degraded recordings)
         #   d) available RAM > 0.5 GB (SGMSE+ TorchScript is ~251 MB loaded)
         _sgmse_applied = False
-        _vocal_genres = {"Klassik", "Oper", "Jazz", "Singer-Songwriter", "Chanson", "Folk"}
+        # Vocal genres where SGMSE+ helps when vocals are present (based on GenreClassifier
+        # output labels). "Singer-Songwriter" and "Chanson" removed — never returned by classifier.
+        _vocal_genres = {"Klassik", "Oper", "Jazz", "Folk", "Blues", "Pop", "Soul/R&B", "Gospel"}
         _genre_is_vocal = genre_label in _vocal_genres
         _panns_singing = float(kwargs.get("panns_singing", 0.0))
-        _is_vocal_material = _genre_is_vocal or _panns_singing >= 0.30
+        # Fallback: UV3 injects panns_vocals_confidence (max of Singing/Singing voice/Vocals tags).
+        # "panns_singing" is used by direct callers; "panns_vocals_confidence" is the UV3 key.
+        if _panns_singing == 0.0:
+            _panns_singing = float(kwargs.get("panns_vocals_confidence", 0.0))
+        # Second fallback: extract from full panns_tags dict (singing-only, no Speech tag).
+        if _panns_singing == 0.0:
+            _pt = kwargs.get("panns_tags") or {}
+            _panns_singing = max(
+                float(_pt.get("Singing", 0.0)),
+                float(_pt.get("Singing voice", 0.0)),
+                float(_pt.get("Vocals", 0.0)),
+                float(_pt.get("Male singing", 0.0)),
+                float(_pt.get("Female singing", 0.0)),
+            )
+        # §0 Primum non nocere: genre alone is insufficient — require PANNs evidence.
+        # Pure orchestral "Klassik" (panns_singing ≈ 0.0) must NOT trigger SGMSE+.
+        _is_vocal_material = _panns_singing >= 0.25 or (_genre_is_vocal and _panns_singing >= 0.10)
         _is_non_digital = material_type not in ("cd_digital", "streaming", "mp3_high")
         _sgmse_eligible = (
             quality_mode in ("quality", "maximum") and _is_vocal_material and _is_non_digital and not use_lightweight
@@ -487,10 +583,60 @@ class DenoisePhase(PhaseInterface):
             except Exception as _sgmse_exc:
                 logger.debug("SGMSE+ Tier-0 nicht verfügbar, weiter mit OMLSA: %s", _sgmse_exc)
 
+        # §4.5 / §2.47 DeepFilterNet Tier-1: Vocal broadband noise with singing ≥ 0.4
+        # DeepFilterNet v3.II is the primary model for broadband noise with vocal content
+        # (Schröter et al. 2022).  energy_bias = -6 dB preserves harmonics (§4.4 Spec).
+        # Activated between SGMSE+ (Tier-0) and ML-Hybrid (Tier-2) if SGMSE+ was not applied.
+        _dfn_applied = False
+        _dfn_eligible = (
+            not _sgmse_applied
+            and _is_vocal_material
+            and _panns_singing >= 0.4
+            and quality_mode in ("quality", "maximum")
+            and not use_lightweight
+        )
+        if _dfn_eligible:
+            try:
+                from plugins.deepfilternet_v3_ii_plugin import get_deepfilternet_plugin
+
+                _dfn_plugin = get_deepfilternet_plugin()
+                _dfn_result = _dfn_plugin.enhance(audio, sr=sample_rate, energy_bias_db=-6.0)
+                if _dfn_result is not None and np.isfinite(_dfn_result).all():
+                    # §8.2 Energy-preservation guard for DeepFilterNet
+                    _dfn_e_in = float(np.sum(audio.astype(np.float64) ** 2))
+                    _dfn_e_out = float(np.sum(_dfn_result.astype(np.float64) ** 2))
+                    if _dfn_e_in > 1e-6 and _dfn_e_out / _dfn_e_in >= 0.20:
+                        audio = np.nan_to_num(_dfn_result, nan=0.0, posinf=0.0, neginf=0.0)
+                        audio = np.clip(audio, -1.0, 1.0)
+                        _dfn_applied = True
+                        logger.info(
+                            "§4.5 DeepFilterNet Tier-1: vocal broadband denoise applied "
+                            "(panns_singing=%.2f, material=%s, energy_ratio=%.3f)",
+                            _panns_singing,
+                            material_type,
+                            _dfn_e_out / _dfn_e_in,
+                        )
+                    else:
+                        logger.info(
+                            "§4.5 DeepFilterNet Tier-1: energy guard triggered "
+                            "(e_ratio=%.4f < 0.20) → fallback to ML-Hybrid/OMLSA",
+                            _dfn_e_out / max(_dfn_e_in, 1e-10),
+                        )
+            except Exception as _dfn_exc:
+                logger.debug(
+                    "DeepFilterNet Tier-1 nicht verfügbar, weiter mit ML-Hybrid/OMLSA: %s",
+                    _dfn_exc,
+                )
+                _dfn_applied = False
+
         # ML-Hybrid only if resources available and quality mode permits
+        # Skip if DeepFilterNet Tier-1 already applied successfully.
         # "quality" (10×RT) and "maximum" (15×RT) both use full ML-Hybrid; "balanced" (8×RT) uses adaptive
         use_ml_hybrid = (
-            ML_HYBRID_AVAILABLE and quality_mode in ["balanced", "quality", "maximum"] and not use_lightweight
+            ML_HYBRID_AVAILABLE
+            and quality_mode in ["balanced", "quality", "maximum"]
+            and not use_lightweight
+            and not _dfn_applied
         )
 
         if use_ml_hybrid:
@@ -562,14 +708,22 @@ class DenoisePhase(PhaseInterface):
                     dsp_params_fb = dict(params)
                     dsp_params_fb["strength"] = effective_strength
                     if audio.ndim == 2:
-                        _fb_l, _fb_stats_l = self._denoise_mono_professional(
-                            audio[:, 0], dsp_params_fb, noise_profile_start, noise_profile_end
+                        # §2.51 Linked-Stereo: OMLSA-Gain aus Mid-Sidechain (L+R)/√2
+                        _mid_fb = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+                        _mid_den_fb, _fb_stats_l = self._denoise_mono_professional(
+                            _mid_fb, dsp_params_fb, noise_profile_start, noise_profile_end
                         )
-                        _fb_r, _fb_stats_r = self._denoise_mono_professional(
-                            audio[:, 1], dsp_params_fb, noise_profile_start, noise_profile_end
+                        _eps_fb = 1e-10
+                        _gain_fb = np.where(
+                            np.abs(_mid_fb) > _eps_fb,
+                            _mid_den_fb / (_mid_fb + _eps_fb * np.sign(_mid_fb + _eps_fb)),
+                            1.0,
                         )
-                        ml_result.audio = np.column_stack([_fb_l, _fb_r]).astype(np.float32)
-                        noise_reduction_db = (_fb_stats_l["reduction_db"] + _fb_stats_r["reduction_db"]) / 2
+                        _gain_fb = np.clip(_gain_fb, 0.0, 10.0)
+                        ml_result.audio = np.column_stack([audio[:, 0] * _gain_fb, audio[:, 1] * _gain_fb]).astype(
+                            np.float32
+                        )
+                        noise_reduction_db = _fb_stats_l["reduction_db"]
                     else:
                         ml_result.audio, _fb_stats = self._denoise_mono_professional(
                             audio, dsp_params_fb, noise_profile_start, noise_profile_end
@@ -630,17 +784,22 @@ class DenoisePhase(PhaseInterface):
 
         # Stereo/Mono handling
         if audio.ndim == 2:
-            left, stats_left = self._denoise_mono_professional(
-                audio[:, 0], dsp_params, noise_profile_start, noise_profile_end
+            # §2.51 Linked-Stereo: OMLSA-Gain aus Mid-Sidechain (L+R)/√2, identisch auf L+R
+            _mid_dsp = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+            _mid_denoised, stats_left = self._denoise_mono_professional(
+                _mid_dsp, dsp_params, noise_profile_start, noise_profile_end
             )
-            right, stats_right = self._denoise_mono_professional(
-                audio[:, 1], dsp_params, noise_profile_start, noise_profile_end
+            _eps_dsp = 1e-10
+            _gain_dsp = np.where(
+                np.abs(_mid_dsp) > _eps_dsp,
+                _mid_denoised / (_mid_dsp + _eps_dsp * np.sign(_mid_dsp + _eps_dsp)),
+                1.0,
             )
-            result_audio = np.column_stack([left, right])
+            _gain_dsp = np.clip(_gain_dsp, 0.0, 10.0)
+            result_audio = np.column_stack([audio[:, 0] * _gain_dsp, audio[:, 1] * _gain_dsp])
 
-            # Average statistics
-            noise_reduction_db = (stats_left["reduction_db"] + stats_right["reduction_db"]) / 2
-            musical_noise_suppression = (stats_left["musical_suppression"] + stats_right["musical_suppression"]) / 2
+            noise_reduction_db = stats_left["reduction_db"]
+            musical_noise_suppression = stats_left["musical_suppression"]
         else:
             result_audio, stats = self._denoise_mono_professional(
                 audio, dsp_params, noise_profile_start, noise_profile_end
@@ -685,6 +844,7 @@ class DenoisePhase(PhaseInterface):
                 "multi_band": True,
                 "adaptive_noise_tracking": True,
                 "sgmse_plus_tier0_applied": _sgmse_applied,
+                "deepfilternet_tier1_applied": _dfn_applied,
                 "scientific_ref": "Cohen & Berdugo IMCRA (2002), Cohen OMLSA (2003), Cappé (1994)",
                 "benchmark": "iZotope RX Voice De-noise Pro, CEDAR DNS One",
                 "algorithm_version": "3.0_omlsa_imcra",
@@ -713,15 +873,27 @@ class DenoisePhase(PhaseInterface):
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
             target_rms_drop_db = -max_rms_drop_db
             required_gain_db = target_rms_drop_db - rms_drop_db
-            current_peak = float(np.percentile(np.abs(processed_audio), 99.9) + 1e-12)
-            max_safe_gain_db = max(0.0, -1.5 - 20.0 * np.log10(current_peak))
-            makeup_gain_db = float(np.clip(required_gain_db, 0.0, max_safe_gain_db))
+            # §2.45a-II fix: apply full gain — do NOT cap via peak-headroom before applying.
+            # For hot signals (peak99 ≥ 0.84) the old max_safe_gain_db collapses to 0.0
+            # and the guard never fires, leaving level destroyed on every normalised input.
+            # §2.45a-III: soft-limiter (tanh) only when real clipping risk (peak99 > 0.98).
+            makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 processed_audio = np.clip(
                     processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
                     -1.0,
                     1.0,
                 ).astype(np.float32)
+                current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
+                if current_peak > 0.98:
+                    _abs_p = np.abs(processed_audio)
+                    _over_p = _abs_p > 0.92
+                    if np.any(_over_p):
+                        _sign_p = np.sign(processed_audio)
+                        processed_audio = np.where(
+                            _over_p, _sign_p * (0.92 + 0.08 * np.tanh((_abs_p - 0.92) / 0.08)), processed_audio
+                        )
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
                 rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
                 logger.info(
@@ -783,13 +955,20 @@ class DenoisePhase(PhaseInterface):
             _pmm_centers = np.arange(len(_pmm_gain_t)) * float(_hop) + _hop * 0.5
             _pmm_x = np.arange(len(audio_filtered), dtype=np.float32)
             _gain_samples = np.interp(_pmm_x, _pmm_centers, _pmm_gain_t).astype(np.float32)
-            audio_filtered = (audio_filtered * _gain_samples).astype(np.float32)
+            # §2.45a / §2.54: Scale masking suppression toward 1.0 by effective strength.
+            # At low PMGG strength the masking clamp must be near-transparent — unscaled
+            # it causes unexpected RMS drops and TFS coherence degradation regardless of strength.
+            _pmm_strength = float(np.clip(float(params.get("strength", 1.0)), 0.0, 1.0))
+            _gain_samples_scaled = (1.0 + _pmm_strength * (_gain_samples - 1.0)).astype(np.float32)
+            audio_filtered = (audio_filtered * _gain_samples_scaled).astype(np.float32)
             audio_filtered = np.clip(audio_filtered, -1.0, 1.0)
             logger.debug(
-                "🎭 PsychoacousticMasking: silence=%.1f%% post_mask=%.1f%% mean_gain=%.3f",
+                "🎭 PsychoacousticMasking: silence=%.1f%% post_mask=%.1f%% mean_gain=%.3f scaled_mean=%.3f (scale=%.2f)",
                 100.0 * float(np.mean(_pmm.silence_frames)),
                 100.0 * float(np.mean(_pmm.post_mask_frames)),
                 float(np.mean(_pmm_gain_t)),
+                float(np.mean(_gain_samples_scaled)),
+                _pmm_strength,
             )
         except Exception as _pmm_exc:
             logger.debug("PsychoacousticMaskingModel nicht verfügbar: %s", _pmm_exc)

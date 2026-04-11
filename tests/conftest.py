@@ -13,6 +13,7 @@ Version: 1.0.0 - INITIAL CONSOLIDATION
 import gc
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -225,3 +226,66 @@ def pytest_sessionfinish(session, exitstatus):
         _plm_mod._instance = None
     except (KeyboardInterrupt, SystemExit, Exception):
         pass
+
+
+@pytest.fixture(scope="session")
+def real_audio_gate_case() -> dict[str, object]:
+    """Provide a short real-audio clip for acceptance tests (MP3-first).
+
+    The fixture prefers local real-world media and returns a compact, centered
+    clip to keep functional gate tests deterministic and runtime-bounded.
+    """
+    candidates = [
+        Path(project_root)
+        / "test_audio"
+        / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
+        Path(project_root)
+        / "audio_examples"
+        / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
+        Path(project_root) / "audio_examples" / "Elke_Best_Freund.mp3",
+        Path(project_root) / "temp_repro" / "repro_input.mp3",
+    ]
+    audio_path = next((p for p in candidates if p.exists()), None)
+    if audio_path is None:
+        pytest.skip(
+            "Keine reale Audio-Fixture gefunden. Erwartet eine Datei in: " + ", ".join(str(p) for p in candidates)
+        )
+
+    from backend.file_import import load_audio_file
+
+    loaded = load_audio_file(str(audio_path), target_sr=None, mono=False, do_carrier_analysis=False)
+    if not loaded or loaded.get("audio") is None:
+        pytest.fail(f"Reale Audio-Fixture konnte nicht geladen werden: {audio_path}")
+
+    if loaded.get("error"):
+        pytest.fail(f"Reale Audio-Fixture-Importfehler: {loaded['error']}")
+
+    audio = np.asarray(loaded["audio"], dtype=np.float32)
+    sr = int(loaded.get("sr") or 48_000)
+
+    if audio.ndim == 2 and audio.shape[0] in (1, 2) and audio.shape[1] > audio.shape[0]:
+        audio = audio.T
+
+    if audio.ndim == 1:
+        audio = np.stack([audio, audio], axis=1)
+    elif audio.ndim == 2 and audio.shape[1] == 1:
+        audio = np.repeat(audio, 2, axis=1)
+
+    clip_len = min(audio.shape[0], int(sr * 8.0))
+    if clip_len < int(sr * 2.0):
+        pytest.skip(f"Reale Audio-Fixture ist zu kurz für Gate-Tests: {audio_path}")
+    start = max(0, (audio.shape[0] - clip_len) // 2)
+    clip = np.clip(np.nan_to_num(audio[start : start + clip_len], nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+
+    # Resample only the short clip to avoid timeouts on long source files.
+    if sr != 48_000:
+        import librosa
+
+        clip = librosa.resample(clip.T, orig_sr=sr, target_sr=48_000).T.astype(np.float32)
+        sr = 48_000
+
+    return {
+        "path": str(audio_path),
+        "audio": clip,
+        "sr": sr,
+    }

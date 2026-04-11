@@ -28,6 +28,99 @@ _MIN_SPLICE_SCORE: float = 0.10
 _CROSSFADE_MS: float = 15.0  # Crossfade duration at splice boundary
 
 
+def _detect_splice_points(x: np.ndarray, sample_rate: int, crossfade_samples: int) -> list[int]:
+    """Detect splice points on a mono signal.
+
+    Extracted so that stereo processing can run detection on the mono mix
+    (§2.51 Linked Stereo — splice boundaries must be synchronised across channels).
+
+    Returns:
+        List of sample indices where tape splices were detected.
+    """
+    n = len(x)
+    frame_len = max(1, int(0.010 * sample_rate))  # 10 ms frames
+    hop = max(1, frame_len // 2)
+    n_frames = max(1, (n - frame_len) // hop)
+    if n_frames < 10:
+        return []
+
+    frames = np.lib.stride_tricks.as_strided(
+        x,
+        shape=(n_frames, frame_len),
+        strides=(x.strides[0] * hop, x.strides[0]),
+    ).copy()
+    rms_env = np.sqrt(np.mean(frames**2, axis=1) + 1e-12)
+    rms_db = 20.0 * np.log10(rms_env + 1e-12)
+
+    level_diffs = np.abs(np.diff(rms_db))
+    jump_indices = np.where(level_diffs > 6.0)[0]
+
+    splice_points: list[int] = []
+    for ji in jump_indices[:30]:
+        sample_idx = ji * hop
+        if sample_idx < crossfade_samples or sample_idx > n - crossfade_samples:
+            continue
+        boundary = x[sample_idx - 32 : sample_idx + 32]
+        if len(boundary) < 64:
+            continue
+        hf_spec = np.abs(np.fft.rfft(boundary))
+        hf_energy = float(np.sum(hf_spec[len(hf_spec) // 2 :] ** 2))
+        total_energy = float(np.sum(hf_spec**2)) + 1e-12
+        hf_ratio = hf_energy / total_energy
+
+        persist_frames = min(5, n_frames - ji - 1)
+        if persist_frames > 2:
+            post = rms_db[ji + 1 : ji + 1 + persist_frames]
+            pre = rms_db[max(0, ji - persist_frames) : ji]
+            if len(post) > 0 and len(pre) > 0:
+                level_persist = abs(float(np.mean(post)) - float(np.mean(pre)))
+                if hf_ratio > 0.15 and level_persist > 3.0:
+                    splice_points.append(sample_idx)
+
+    return splice_points
+
+
+def _apply_splice_repair(
+    out: np.ndarray, original: np.ndarray, splice_points: list[int], crossfade_samples: int, strength: float
+) -> np.ndarray:
+    """Apply click removal and level crossfade at each splice point.
+
+    Args:
+        out:             Working copy of the signal (modified in place).
+        original:        Read-only original signal for stable RMS measurements.
+        splice_points:   Sample indices of detected splices.
+        crossfade_samples: Crossfade region length in samples.
+        strength:        Processing strength [0, 1].
+    """
+    n = len(out)
+    for sp in splice_points:
+        # Sub-step 2a: Remove click impulse (short interpolation)
+        click_half = min(32, crossfade_samples // 2)
+        cl = max(0, sp - click_half)
+        cr = min(n, sp + click_half)
+        if cr - cl < 4:
+            continue
+        interp = np.linspace(out[cl], out[min(cr, n - 1)], cr - cl)
+        click_weight = float(np.clip(strength, 0.0, 1.0))
+        out[cl:cr] = out[cl:cr] * (1.0 - click_weight) + interp * click_weight
+
+        # Sub-step 2b: Level crossfade (measured against unmodified original)
+        pre_start = max(0, sp - crossfade_samples)
+        post_end = min(n, sp + crossfade_samples)
+        pre_rms = float(np.sqrt(np.mean(original[pre_start:sp] ** 2) + 1e-12))
+        post_rms = float(np.sqrt(np.mean(original[sp:post_end] ** 2) + 1e-12))
+
+        if pre_rms > 1e-8 and post_rms > 1e-8:
+            gain_ratio = float(np.clip(pre_rms / post_rms, 0.5, 2.0))
+            fade_len = min(crossfade_samples, post_end - sp)
+            if fade_len > 0:
+                fade = np.linspace(gain_ratio, 1.0, fade_len)
+                blend = float(np.clip(strength * 0.5, 0.0, 0.5))
+                out[sp : sp + fade_len] *= (1.0 - blend) + blend * fade
+
+    return out
+
+
 def apply(
     audio: np.ndarray,
     sample_rate: int,
@@ -44,96 +137,33 @@ def apply(
             logger.debug("Phase 64: splice score %.3f < %.3f — skipped", splice_score, _MIN_SPLICE_SCORE)
             return np.clip(audio, -1.0, 1.0)
 
+    crossfade_samples = max(1, int(_CROSSFADE_MS * 0.001 * sample_rate))
+
     stereo = audio.ndim == 2
     if stereo:
-        left = apply(audio[0], sample_rate, strength=strength, defect_scores=defect_scores)
-        right = apply(audio[1], sample_rate, strength=strength, defect_scores=defect_scores)
-        return np.clip(np.stack([left, right], axis=0), -1.0, 1.0).astype(np.float32)
+        # §2.51 Linked: detect splice boundaries on mono mix (L+R)/2 so that
+        # both channels are repaired at exactly the same sample positions.
+        mono_mix = (audio[0] + audio[1]) * 0.5
+        mono64 = mono_mix.astype(np.float64)
+        splice_points = _detect_splice_points(mono64, sample_rate, crossfade_samples)
+        if not splice_points:
+            return np.clip(audio, -1.0, 1.0).astype(np.float32)
+        left_out = _apply_splice_repair(
+            audio[0].astype(np.float64).copy(), audio[0].astype(np.float64), splice_points, crossfade_samples, strength
+        )
+        right_out = _apply_splice_repair(
+            audio[1].astype(np.float64).copy(), audio[1].astype(np.float64), splice_points, crossfade_samples, strength
+        )
+        left_out = np.nan_to_num(left_out, nan=0.0, posinf=0.0, neginf=0.0)
+        right_out = np.nan_to_num(right_out, nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(np.stack([left_out, right_out], axis=0), -1.0, 1.0).astype(np.float32)
 
     x = audio.astype(np.float64)
-    n = len(x)
-    sr = sample_rate
-    out = np.copy(x)
-
-    # Step 1: Detect splice points (simultaneous click + level jump)
-    frame_len = max(1, int(0.010 * sr))  # 10 ms frames
-    hop = max(1, frame_len // 2)
-    n_frames = max(1, (n - frame_len) // hop)
-    if n_frames < 10:
-        return np.clip(audio, -1.0, 1.0).astype(np.float32)
-
-    frames = np.lib.stride_tricks.as_strided(
-        x,
-        shape=(n_frames, frame_len),
-        strides=(x.strides[0] * hop, x.strides[0]),
-    ).copy()
-    rms_env = np.sqrt(np.mean(frames**2, axis=1) + 1e-12)
-    rms_db = 20.0 * np.log10(rms_env + 1e-12)
-
-    # Level jumps > 6 dB
-    level_diffs = np.abs(np.diff(rms_db))
-    jump_indices = np.where(level_diffs > 6.0)[0]
-
-    crossfade_samples = max(1, int(_CROSSFADE_MS * 0.001 * sr))
-    splice_points = []
-
-    for ji in jump_indices[:30]:
-        sample_idx = ji * hop
-        if sample_idx < crossfade_samples or sample_idx > n - crossfade_samples:
-            continue
-
-        # Check for impulsive energy at boundary
-        boundary = x[sample_idx - 32 : sample_idx + 32]
-        if len(boundary) < 64:
-            continue
-        hf_spec = np.abs(np.fft.rfft(boundary))
-        hf_energy = float(np.sum(hf_spec[len(hf_spec) // 2 :] ** 2))
-        total_energy = float(np.sum(hf_spec**2)) + 1e-12
-        hf_ratio = hf_energy / total_energy
-
-        # Check persistence (level change lasts > 50 ms)
-        persist_frames = min(5, n_frames - ji - 1)
-        if persist_frames > 2:
-            post = rms_db[ji + 1 : ji + 1 + persist_frames]
-            pre = rms_db[max(0, ji - persist_frames) : ji]
-            if len(post) > 0 and len(pre) > 0:
-                level_persist = abs(float(np.mean(post)) - float(np.mean(pre)))
-                if hf_ratio > 0.15 and level_persist > 3.0:
-                    splice_points.append(sample_idx)
-
+    splice_points = _detect_splice_points(x, sample_rate, crossfade_samples)
     if not splice_points:
         return np.clip(audio, -1.0, 1.0).astype(np.float32)
 
-    # Step 2: Repair each splice point
-    for sp in splice_points:
-        # Sub-step 2a: Remove click impulse (short interpolation)
-        click_half = min(32, crossfade_samples // 2)
-        cl = max(0, sp - click_half)
-        cr = min(n, sp + click_half)
-        if cr - cl < 4:
-            continue
-        # Linear interpolation across the click
-        interp = np.linspace(out[cl], out[min(cr, n - 1)], cr - cl)
-        click_weight = float(np.clip(strength, 0.0, 1.0))
-        out[cl:cr] = out[cl:cr] * (1.0 - click_weight) + interp * click_weight
-
-        # Sub-step 2b: Level crossfade
-        pre_start = max(0, sp - crossfade_samples)
-        post_end = min(n, sp + crossfade_samples)
-        pre_rms = float(np.sqrt(np.mean(x[pre_start:sp] ** 2) + 1e-12))
-        post_rms = float(np.sqrt(np.mean(x[sp:post_end] ** 2) + 1e-12))
-
-        if pre_rms > 1e-8 and post_rms > 1e-8:
-            gain_ratio = pre_rms / post_rms
-            gain_ratio = float(np.clip(gain_ratio, 0.5, 2.0))
-
-            # Apply gradual gain crossfade
-            fade_len = min(crossfade_samples, post_end - sp)
-            if fade_len > 0:
-                fade = np.linspace(gain_ratio, 1.0, fade_len)
-                blend = float(np.clip(strength * 0.5, 0.0, 0.5))
-                out[sp : sp + fade_len] *= (1.0 - blend) + blend * fade
-
+    out = _apply_splice_repair(np.copy(x), x, splice_points, crossfade_samples, strength)
     result = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
     return np.clip(result, -1.0, 1.0).astype(np.float32)
 

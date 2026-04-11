@@ -34,7 +34,7 @@
 | `GPParameterOptimizer` (MOO-Pareto) | `core/gp_parameter_optimizer.py` | ✅ |
 | `PerceptualQualityScorer` | `core/perceptual_quality_scorer.py` | ✅ |
 | `MusicalGoalsChecker` (14 Ziele) | `backend/core/musical_goals/musical_goals_metrics.py` | ✅ |
-| `MediumClassifier` | `core/medium_classifier.py` | ✅ |
+| `MediumDetector` | `forensics/medium_detector.py` | ✅ |
 | `DefectScanner` (32 DefectTypes) | `core/defect_scanner.py` | ✅ |
 | `VocalAIEnhancement` | `core/vocal_ai_enhancement.py` | ✅ |
 | `ExcellenceOptimizer` | `core/excellence_optimizer.py` | ✅ |
@@ -104,7 +104,7 @@ Emotionalität, Transparenz, Timbre-Authentizität, Artikulation.
 DCOffset-Removal
 -> TransientDecoupledProcessing (TDP/HPSS)
 -> RestorabilityEstimator -> SongCalibrationProfile
--> EraClassifier + GermanSchlagerClassifier + MediumClassifier (parallel)
+-> EraClassifier + GermanSchlagerClassifier + MediumDetector (parallel)
 -> GoalApplicabilityFilter -> AdaptiveGoalThresholds
 -> DefectScanner (32 Defekte) -> CausalDefectReasoner
 -> GPParameterOptimizer -> HarmonicPreservationGuard

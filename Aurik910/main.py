@@ -44,18 +44,82 @@ _log_file = _LOG_DIR / "aurik_backend.log"
 _root_logger = logging.getLogger()
 _root_logger.setLevel(logging.DEBUG)
 
+# AURIK_DEBUG=1 → alle Handler auf DEBUG, dediziertes Timestamp-Log, volle Quelle
+_DEBUG_MODE = os.getenv("AURIK_DEBUG", "0") == "1"
+
 # Datei-Handler (5 MB, Rotation)
 from logging.handlers import RotatingFileHandler as _RFH
 
 _fh = _RFH(str(_log_file), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
-_fh.setLevel(logging.INFO)
-_fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
+_fh.setLevel(logging.DEBUG if _DEBUG_MODE else logging.INFO)
+_fh.setFormatter(
+    logging.Formatter(
+        "[%(asctime)s.%(msecs)03d] %(levelname)-8s %(name)s (%(filename)s:%(lineno)d): %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    if _DEBUG_MODE
+    else logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s")
+)
 _root_logger.addHandler(_fh)
 
-# Konsole-Handler (nur WARNING+)
+# Debug-Session-Log: eigene Datei mit Timestamp — nie rotiert, immer vollständig
+if _DEBUG_MODE:
+    import datetime as _dt
+
+    _debug_log_file = _LOG_DIR / f"aurik_debug_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    _dfh = logging.FileHandler(str(_debug_log_file), mode="w", encoding="utf-8")
+    _dfh.setLevel(logging.DEBUG)
+    _dfh.setFormatter(
+        logging.Formatter(
+            "[%(asctime)s.%(msecs)03d] %(levelname)-8s %(name)s (%(filename)s:%(lineno)d): %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    _root_logger.addHandler(_dfh)
+    # Pfad für shell-seitiges tail -f: in bekannter Datei hinterlegen
+    (_LOG_DIR / "aurik_debug_latest.log").write_text(str(_debug_log_file), encoding="utf-8")
+
+    # ── Noisy 3rd-party loggers: auf WARNING kappen — kein DSP/Aurik-Nutzen ─
+    # Numba JIT-Compiler gibt bei jeder Erstcompilierung hunderte DEBUG-Zeilen aus.
+    # PIL/fonttools/matplotlib werden durch Qt-Ressourcen gelegentlich importiert.
+    # triton/torch.fx sind reine Framework-Internals ohne Diagnosewert für Aurik.
+    for _noisy_logger in (
+        "numba",
+        "numba.core",
+        "numba.core.byteflow",
+        "numba.core.interpreter",
+        "numba.core.ssa",
+        "numba.core.analysis",
+        "numba.typed",
+        "PIL",
+        "fonttools",
+        "matplotlib",
+        "matplotlib.font_manager",
+        "triton",
+        "torch.fx",
+        "torch._dynamo",
+        "urllib3",
+        "h5py",
+        "audioread",
+        "librosa",
+        "librosa.core",
+        "pedalboard",
+        "backend.core.erb_auditory_masking",
+        "dsp.pghi",
+    ):
+        logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
+
+# Konsole-Handler (WARNING+ im Normalbetrieb; DEBUG im Debug-Modus → live sichtbar)
 _ch = logging.StreamHandler(sys.stderr)
-_ch.setLevel(logging.WARNING)
-_ch.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+_ch.setLevel(logging.DEBUG if _DEBUG_MODE else logging.WARNING)
+_ch.setFormatter(
+    logging.Formatter(
+        "[%(asctime)s.%(msecs)03d] %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    if _DEBUG_MODE
+    else logging.Formatter("%(levelname)s %(name)s: %(message)s")
+)
 _root_logger.addHandler(_ch)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -84,6 +148,7 @@ def _enable_crash_forensics() -> None:
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
+from Aurik910 import __version__
 from Aurik910.ui.modern_window import ModernMainWindow
 
 
@@ -186,7 +251,7 @@ def _emergency_checkpoint_if_running() -> None:
             return
         for widget in app.topLevelWidgets():
             if isinstance(widget, ModernMainWindow):
-                bt = getattr(widget, "_batch_thread", None)
+                bt = getattr(widget, "batch_thread", None)
                 if bt is not None and bt.isRunning():
                     try:
                         # best-effort: trigger checkpoint without waiting
@@ -243,7 +308,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("AURIK Professional")
     app.setOrganizationName("AURIK")
-    app.setApplicationVersion("9.10.120")
+    app.setApplicationVersion(__version__)
 
     # §3.9.2: Register SIGTERM handler for graceful shutdown + emergency checkpoint.
     # Must be installed after QApplication to avoid race with Qt's signal handling.
@@ -251,7 +316,7 @@ def main():
 
     # Application icon (taskbar, dock, alt-tab)
     _res = Path(__file__).parent / "resources"
-    for _icon_path in (_res / "icon_premium.svg", _res / "icon.png"):
+    for _icon_path in (_res / "vinyl_gold.png", _res / "icon_premium.svg", _res / "icon.png"):
         if _icon_path.exists():
             from PyQt5.QtGui import QIcon
 

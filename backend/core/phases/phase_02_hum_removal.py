@@ -378,10 +378,21 @@ class HumRemovalPhase(PhaseInterface):
             _required_gain_db = -_max_drop_02 - _rms_drop_02
             _makeup_02 = float(np.clip(_required_gain_db, 0.0, 6.0))  # max +6 dB Makeup-Gain
             if _makeup_02 > 0.0:
-                _peak99 = float(np.percentile(np.abs(result_audio), 99.9)) + 1e-10
-                _headroom = min(1.0, 0.95 / _peak99)
-                _actual_gain = min(10.0 ** (_makeup_02 / 20.0), _headroom)
+                # §2.45a-II: apply full makeup gain — do NOT cap by peak99-headroom before
+                # applying, because for hot signals (peak99 ≥ 0.95) the cap reduces to 1.0
+                # and no gain is applied, leaving level destroyed.
+                # §2.45a-III: apply soft-limiter ONLY when real clipping risk (peak > 0.98).
+                _actual_gain = float(10.0 ** (_makeup_02 / 20.0))
                 result_audio = np.clip(result_audio * _actual_gain, -1.0, 1.0)
+                _peak99_02 = float(np.percentile(np.abs(result_audio), 99.9))
+                if _peak99_02 > 0.98:
+                    _abs_02 = np.abs(result_audio)
+                    _over_02 = _abs_02 > 0.92
+                    if np.any(_over_02):
+                        _sign_02 = np.sign(result_audio)
+                        _soft_02 = 0.92 + 0.08 * np.tanh((_abs_02 - 0.92) / 0.08)
+                        result_audio = np.where(_over_02, _sign_02 * _soft_02, result_audio)
+                result_audio = np.clip(result_audio, -1.0, 1.0)
                 _rms_out_02 = float(np.sqrt(np.mean(np.asarray(result_audio, dtype=np.float64) ** 2) + 1e-12))
                 _rms_drop_02 = 20.0 * np.log10(max(_rms_out_02 / _rms_in_02, 1e-30))
                 logger.info(

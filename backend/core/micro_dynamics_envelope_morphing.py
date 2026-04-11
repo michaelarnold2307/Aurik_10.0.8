@@ -181,15 +181,24 @@ class MicroDynamicsEnvelopeMorphing:
                 gain_envelope[start:ce] = ramp
 
         # §2.30 tail-gap fix (§9.10.119 improved): Samples nach dem letzten
-        # Frame-Ende erhalten eine sanfte Rückkehr zu Unity-Gain statt eines
-        # harten Wert-Kopierens.  Harter Übergang erzeugte unnatürliche
-        # Fade-Out-Dynamik (abrupter Energiesprung in den letzten ~200 ms).
+        # Frame-Ende erhalten eine sanfte Rückkehr statt eines harten Wert-Kopierens.
+        # §9.11.2: Tail-Gain darf in stillen Regionen NICHT auf 1.0 (Unity) hoch-
+        # interpolieren — das hebt den Rauschboden an und erzeugt hörbaren Pegelsprung
+        # am Musikende.  Stattdessen: Wenn das Tail-Audio leise ist (Stille/Rauschboden),
+        # bleibt der letzte Gain erhalten oder wird sanft auf _last_gain gehalten.
         _last_covered = min((n_frames - 1) * hop + fsize, n)
         if _last_covered < n and _last_covered > 0:
             _tail_len = n - _last_covered
             _last_gain = gain_envelope[_last_covered - 1]
-            # Smooth interpolation to 1.0 (unity gain = no modification)
-            gain_envelope[_last_covered:] = np.linspace(_last_gain, 1.0, _tail_len, dtype=np.float32)
+            # Check if tail audio is silence/noise floor (RMS < -50 dBFS ≈ 0.003)
+            _tail_audio = res_mono[_last_covered:] if _last_covered < len(res_mono) else np.zeros(1)
+            _tail_rms = float(np.sqrt(np.mean(_tail_audio**2) + 1e-12))
+            if _tail_rms < 0.003:
+                # Tail is silence: hold last gain (don't boost noise to unity)
+                gain_envelope[_last_covered:] = _last_gain
+            else:
+                # Tail has content: smooth interpolation to unity
+                gain_envelope[_last_covered:] = np.linspace(_last_gain, 1.0, _tail_len, dtype=np.float32)
 
         # Auf Stereo/Mono anwenden
         if is_stereo:
@@ -215,10 +224,11 @@ class MicroDynamicsEnvelopeMorphing:
         out_mono = out.mean(axis=0) if out.ndim == 2 else out
         r = self._pearson(orig_mono[: len(out_mono)], out_mono[: len(orig_mono)])
 
-        if r < self.PEARSON_TARGET and max_gain < 4.0:
-            logger.debug("MDEM Retry mit erweitertem MAX_GAIN=4.0 (aktuell r=%.3f)", r)
+        if r < self.PEARSON_TARGET and max_gain < self.MAX_GAIN_LU:
+            _retry_gain = min(max(max_gain * 1.5, 4.0), self.MAX_GAIN_LU)  # §2.54: mindestens 4.0, max MAX_GAIN_LU
+            logger.debug("MDEM Retry mit erweitertem MAX_GAIN=%.1f dB (aktuell r=%.3f)", _retry_gain, r)
             # Einmaliger Retry mit erweitertem Gain — kein weiterer rekursiver Aufruf
-            out2 = self._morph_internal(res_mono, orig_mono, max_gain=4.0)
+            out2 = self._morph_internal(res_mono, orig_mono, max_gain=_retry_gain)
             out2 = np.nan_to_num(out2, nan=0.0, posinf=1.0, neginf=-1.0)
             out2 = np.clip(out2, -self.TRUE_PEAK_LIMIT, self.TRUE_PEAK_LIMIT)
             if is_stereo and res.ndim == 2:
@@ -237,12 +247,16 @@ class MicroDynamicsEnvelopeMorphing:
             _final_mono = final.mean(axis=0) if final.ndim == 2 else final
             r_final = self._pearson(orig_mono[: len(_final_mono)], _final_mono[: len(orig_mono)])
             if r_final < 0.92:
-                logger.warning(
+                # Pearson still < 0.92 after retry — signal structure limits correlation
+                # (e.g. heavily compressed 1970s vinyl).  Only warn if retry made no progress.
+                _pearson_improved = r_final > r + 0.005
+                _log_fn = logger.debug if _pearson_improved else logger.warning
+                _log_fn(
                     "§8.2 MDEM Mikro-Dynamik-Guarantee VERFEHLT: pearson=%.4f < 0.92 "
-                    "(max_gain=%.1f dB, mode=%s) — Rohausgabe nicht unterdrückt",
+                    "(max_gain=%.1f dB, mode=retry, Δ=%.4f) — Rohausgabe nicht unterdrückt",
                     r_final,
                     max_gain,
-                    "retry",
+                    r_final - r,
                 )
             else:
                 logger.info("§8.2 MDEM Micro-Dynamics pearson=%.4f ≥ 0.92 (retry, r_before=%.4f)", r_final, r)

@@ -1353,8 +1353,28 @@ class EraClassifier:
                     self._clap_loaded = True
             if self._clap_plugin is None:
                 return None
+            # CLAP requires exactly 48 kHz — resample if input SR differs.
+            # Most legacy imports arrive at 44 100 Hz; without explicit resampling
+            # embed_audio() raises a ValueError and the tier falls back to DSP
+            # unnecessarily.  scipy.signal.resample_poly is phase-linear and cheap
+            # for the short (≤30 s) excerpts used here.
+            _audio_clap = audio_mono
+            _sr_clap = sr
+            if sr != 48000:
+                try:
+                    import math as _math
+
+                    from scipy.signal import resample_poly as _rspoly
+
+                    _g = _math.gcd(48000, sr)
+                    _audio_clap = _rspoly(audio_mono, 48000 // _g, sr // _g).astype(np.float32)
+                    _sr_clap = 48000
+                    logger.debug("EraClassifier Tier-1: resampled %d → 48000 Hz for CLAP embed", sr)
+                except Exception as _rs_exc:
+                    logger.debug("EraClassifier Tier-1: resample failed (%s) — skip CLAP tier", _rs_exc)
+                    return None
             # CLAP-Embedding → Cosinus-Ähnlichkeit zu Ära-Ankern
-            embedding = self._clap_plugin.embed_audio(audio_mono, sr)  # type: ignore[union-attr]
+            embedding = self._clap_plugin.embed_audio(_audio_clap, _sr_clap)  # type: ignore[union-attr]
             decade, conf = self._clap_nearest_neighbor(embedding)
             if conf < 0.35:
                 return None
@@ -1431,9 +1451,30 @@ class EraClassifier:
         if not anchors_path.exists():
             return 1960, 0.20
         try:
-            anchors = np.load(str(anchors_path))  # (n_anchors, embedding_dim)
+            anchors = np.load(str(anchors_path))  # expected (n_anchors, embedding_dim + 1)
+            # Format guard: last column must be decade labels (≥1900).
+            # If anchors.shape[1] == embedding.shape[0], the label column is missing —
+            # the catalog was saved without appending the decades vector.
+            # Attempting to use it would produce (a) all-zero "labels" and
+            # (b) a 511×512 matmul dimension error.  Skip and fall back to Tier-2.
+            if anchors.shape[1] != embedding.shape[0] + 1:
+                logger.debug(
+                    "CLAP NN-Suche übersprungen: anchors shape %s inkompatibel mit "
+                    "embedding dim %d (erwartet %d Spalten — embedding + 1 Dekaden-Label)",
+                    anchors.shape,
+                    embedding.shape[0],
+                    embedding.shape[0] + 1,
+                )
+                return 1960, 0.20
             # Letzte Spalte: decade-Label
             decade_labels = anchors[:, -1].astype(int)
+            # Sanity-check: at least some labels must be valid decades
+            if int(decade_labels.max()) < 1900:
+                logger.debug(
+                    "CLAP NN-Suche übersprungen: Dekaden-Labels ungültig (max=%d < 1900)",
+                    int(decade_labels.max()),
+                )
+                return 1960, 0.20
             anchor_vecs = anchors[:, :-1]
             # L2-normalisieren für Cosinus
             anchor_norms = np.linalg.norm(anchor_vecs, axis=1, keepdims=True) + 1e-12

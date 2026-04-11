@@ -20,9 +20,9 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", _n)
 os.environ.setdefault("MKL_NUM_THREADS", _n)
 os.environ.setdefault("NUMEXPR_NUM_THREADS", _n)
 
-# Disable CUDA probing — Aurik is CPU-only (§8 — no GPU).
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-os.environ.setdefault("ONNXRUNTIME_PROVIDERS", "CPUExecutionProvider")
+# GPU policy: ml_device_manager decides at runtime (ROCm or DirectML if available).
+# Do NOT unconditionally suppress CUDA_VISIBLE_DEVICES here — that would hide ROCm.
+# On systems without a supported GPU, MLDeviceManager falls back to CPU automatically.U automatically.
 
 # §2.37 InterOp-Thread-Pool — limits parallel operator dispatch in PyTorch.
 # Set to 4 to balance inter-operator and intra-operator parallelism on Ryzen 7.

@@ -24,7 +24,8 @@ exclude =
     chain_templates,
     .eggs,
     *.egg-info,
-    configs
+    configs,
+    *.pyi
 
 # Ignorierte Regeln:
 # E203 — Leerzeichen vor ':' (Black-kompatibel)

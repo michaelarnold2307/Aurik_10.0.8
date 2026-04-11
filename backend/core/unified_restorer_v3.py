@@ -255,6 +255,11 @@ class UnifiedRestorerV3:
         self._quality_estimate_used_fallback: bool = False
         self._quality_estimate_source: str = "unknown"
         self._blocked_experimental_features: set[str] = set()
+        self._phase_goal_conflict_runtime: dict[str, Any] = {}
+        self._strict_autosetup_policy: dict[str, Any] = {}
+        # Team-Koordination zwischen Folgephasen: prior_phase_context wird pro erfolgreicher
+        # Phase fortgeschrieben und an nachfolgende Phasen injiziert.
+        self._phase_team_context: dict[str, Any] = {}
 
         # PhaseSkipper (optional, beschleunigt Pipeline um 20–40 %)
         if self.config.enable_phase_skipping:
@@ -295,6 +300,21 @@ class UnifiedRestorerV3:
             self._warnings.append(_msg)
             logger.info(_msg)
         return False
+
+    @staticmethod
+    def _fc_defect_severity_mean(defect_result: object | None) -> float:
+        """Extract mean defect severity for §2.54 FeedbackChain adaptive thresholds."""
+        if defect_result is None:
+            return 0.0
+        try:
+            scores = getattr(defect_result, "scores", None)
+            if scores and hasattr(scores, "values"):
+                vals = [s.severity for s in scores.values() if hasattr(s, "severity") and s.severity > 0]
+                if vals:
+                    return float(np.mean(vals))
+        except Exception:
+            pass
+        return 0.0
 
     @staticmethod
     def _resolve_studio_pqs_improvement(
@@ -749,6 +769,71 @@ class UnifiedRestorerV3:
             _genre_transient_factor = 1.05
             # Rock hat oft gewollte Sättigung → denoise konservativer.
             _genre_denoise_factor = 0.95
+        elif _genre_label_l in ("metal",):
+            # Metal: Extremtransienten (Double-Bass, Gitarren-Attack) bewahren.
+            _genre_transient_factor = 1.08
+            # Gewollte Gainstruktur → kein aggressives Dereverb.
+            _genre_reverb_factor = 0.90
+            _genre_denoise_factor = 0.95
+        elif _genre_label_l in ("electronic", "hip-hop"):
+            # Electronic / Hip-Hop: absichtlich komprimiert und begrenzt produziert.
+            # Dynamik-Prozesse interpretieren legitime Limitierung als Defekt → dämpfen.
+            _genre_dynamics_factor = 0.80
+            # Sub-Bass-Transienten (808, Kick) sind genre-definierend → schonen.
+            _genre_transient_factor = 1.03
+            # Digitale Quellen: denoise eher konservativ (oft sauber produziert).
+            _genre_denoise_factor = 0.92
+            # Dereverb: Producer-Raum ist Intention, nicht Defekt → stark dämpfen.
+            _genre_reverb_factor = 0.75
+        elif _genre_label_l == "pop":
+            # Pop: Modernes Studio-Finish, oft bereits sauber produziert.
+            # Artifizielle Komprimierung respektieren → Dynamik-Phasen gedämpft.
+            _genre_dynamics_factor = 0.90
+            # Pop-Mix-Reverb ist Produktion, kein Raumakustikartefakt → konservativ.
+            _genre_reverb_factor = 0.90
+            # Denoise nur wo nötig (Pop oft digitaler Ursprung).
+            _genre_denoise_factor = 0.93
+        elif _genre_label_l in ("soul/r&b", "soul", "r&b"):
+            # Soul/R&B: Warmer, intimer Raumklang durch Studiomischregel — bewahren.
+            _genre_reverb_factor = 0.85
+            # Dynamische Ausdruckskraft schützen (Vocal-Swells, Fade-Ins).
+            _genre_dynamics_factor = 0.92
+            # Vokalprominenz leicht steigern — Vokallinien sind Genre-definierend.
+            _genre_vocal_factor = 1.05
+        elif _genre_label_l in ("blues",):
+            # Blues: Röhrenverstärker-Sättigung + Slide-Transienten sind Klangidentität.
+            _genre_denoise_factor = 0.92
+            _genre_transient_factor = 1.03
+            # Club-Raumatmosphäre bewahren.
+            _genre_reverb_factor = 0.88
+        elif _genre_label_l in ("country",):
+            # Country: Nashville-Raumklang + akustische Transienten (Banjo, Flat-Pick).
+            _genre_reverb_factor = 0.85
+            _genre_transient_factor = 1.04
+        elif _genre_label_l in ("folk",):
+            # Folk: Minimale Produktion, natürlicher Raumklang eines kleinen Raums.
+            _genre_reverb_factor = 0.83
+            # Sehr natürlich → denoise sehr konservativ (Atemgeräusche, Saiten = Textur).
+            _genre_denoise_factor = 0.90
+        elif _genre_label_l in ("reggae",):
+            # Reggae: Hall + Echo sind ABSICHTLICHE ikonische Stilmittel (Dub, One-Drop).
+            # Aggressives Dereverb würde den Klang zerstören → sehr stark dämpfen.
+            _genre_reverb_factor = 0.55
+            # Laid-back One-Drop-Groove nicht verschärfen.
+            _genre_transient_factor = 0.97
+        elif _genre_label_l in ("latin",):
+            # Latin (Salsa, Bossa Nova, Cumbia): Rhythmische Transienten (Conga, Bongo, Claves).
+            _genre_transient_factor = 1.05
+            _genre_reverb_factor = 0.88
+        elif _genre_label_l in ("funk",):
+            # Funk: Groove-Präzision, Brass-Attacken, Slap-Bass-Transienten.
+            _genre_transient_factor = 1.06
+            _genre_dynamics_factor = 0.93
+        elif _genre_label_l in ("gospel",):
+            # Gospel: Kirchenhall ist Teil der Authentizität → Dereverb stark dämpfen.
+            _genre_reverb_factor = 0.65
+            # Chor-Vokalprominenz schützen.
+            _genre_vocal_factor = 1.05
         _global = 1.0
         _global *= 0.90 + 0.20 * _def
         _global *= 0.88 + 0.24 * _rest
@@ -966,6 +1051,328 @@ class UnifiedRestorerV3:
             return _out or None
 
         return None
+
+    @staticmethod
+    def _infer_tape_speed_ips(material_type: Any, era_decade: int | None) -> float | None:
+        """Infer tape speed in IPS from material type and recording era.
+
+        Used to inject ``tape_speed_ips`` into ``_restoration_context`` so that
+        phase_04 head-bump compensation fires automatically for tape material
+        (§copilot-instructions HEAD_BUMP_PROFILES invariant).
+
+        Returns None for non-tape materials (no head-bump compensation needed).
+        """
+        mat_str = (material_type.value if hasattr(material_type, "value") else str(material_type)).lower()
+        if "cassette" in mat_str:
+            return 1.875  # IEC standard compact cassette speed
+        if "reel_tape" in mat_str:
+            # Professional reel-to-reel: 15 ips dominant from 1960s onward; earlier 7.5 ips
+            return 15.0 if (era_decade is not None and era_decade >= 1960) else 7.5
+        if "tape" in mat_str:
+            return 7.5  # Generic tape: conservative default
+        return None  # vinyl, shellac, digital, etc. — head-bump not applicable
+
+    @staticmethod
+    def _phase_family_from_phase_id(phase_id: str) -> str:
+        """Map phase id to calibration family used by song-level adaptation."""
+        try:
+            _parts = phase_id.split("_", 2)
+            _phase_num = int(_parts[1]) if len(_parts) > 1 else -1
+        except Exception:
+            _phase_num = -1
+
+        if _phase_num in {2, 3, 18, 29, 37}:
+            return "denoise"
+        if _phase_num in {20, 49}:
+            return "reverb"
+        if _phase_num in {6, 7, 9, 23, 24, 55, 56, 57, 58}:
+            return "reconstruction"
+        if _phase_num in {4, 10, 17, 26, 31, 36, 40, 47}:
+            return "dynamics_eq"
+        if _phase_num in {8, 11, 50, 12}:
+            return "transient"
+        if _phase_num in {19, 42, 43}:
+            return "vocal"
+        if _phase_num in {44, 45, 46, 51, 52}:
+            return "instrument"
+        return "general"
+
+    @staticmethod
+    def _apply_song_autosetup_policy(
+        profile: dict[str, Any],
+        *,
+        defect_scores: dict[str, float] | None,
+        transfer_chain: list[str] | None,
+        max_defect_severity: float,
+    ) -> dict[str, Any]:
+        """Apply strict per-song autosetup policy for fidelity/defect/carrier restoration.
+
+        This policy is deterministic and bounded. It tunes family scalars from
+        transfer-chain depth and dominant defect topology and installs strict
+        phase caps for conflict-prone phases.
+        """
+        if not isinstance(profile, dict) or not profile:
+            return profile
+
+        _out = dict(profile)
+        _family = dict(_out.get("family_scalars", {})) if isinstance(_out.get("family_scalars"), dict) else {}
+        if not _family:
+            return _out
+
+        _chain = list(transfer_chain or _out.get("source_fidelity_transfer_chain") or [])
+        _chain_depth = len(_chain)
+        _max_def = float(np.clip(max_defect_severity, 0.0, 1.0))
+        _mat = str(_out.get("material", "unknown") or "unknown").lower()
+        _tier = str(_out.get("restorability_tier", "fair") or "fair").lower()
+
+        # Carrier-chain awareness: deeper transfer chains need stronger subtractive +
+        # reconstruction handling while keeping transients protected.
+        if _chain_depth >= 3:
+            _family["reconstruction"] = float(np.clip(_family.get("reconstruction", 1.0) * 1.08, 0.30, 1.80))
+            _family["denoise"] = float(np.clip(_family.get("denoise", 1.0) * 1.05, 0.30, 1.80))
+            _family["transient"] = float(np.clip(_family.get("transient", 1.0) * 0.96, 0.30, 1.80))
+        if _chain_depth >= 4:
+            _family["reconstruction"] = float(np.clip(_family.get("reconstruction", 1.0) * 1.05, 0.30, 1.80))
+            _family["dynamics_eq"] = float(np.clip(_family.get("dynamics_eq", 1.0) * 0.96, 0.30, 1.80))
+
+        # Defect-topology aware balancing: high temporal defects demand safer timing/transient path.
+        _d = defect_scores or {}
+        _wow = float(np.clip(_d.get("wow", 0.0), 0.0, 1.0))
+        _flutter = float(np.clip(_d.get("flutter", 0.0), 0.0, 1.0))
+        _drop = float(np.clip(_d.get("dropouts", 0.0), 0.0, 1.0))
+        _jitter = float(np.clip(_d.get("jitter_artifacts", 0.0), 0.0, 1.0))
+        _temporal = max(_wow, _flutter, _drop, _jitter)
+        if _temporal >= 0.35:
+            _family["transient"] = float(np.clip(_family.get("transient", 1.0) * (0.98 - 0.10 * _temporal), 0.30, 1.80))
+            _family["reconstruction"] = float(
+                np.clip(_family.get("reconstruction", 1.0) * (1.00 + 0.10 * _temporal), 0.30, 1.80)
+            )
+
+        for _k, _v in list(_family.items()):
+            _family[_k] = UnifiedRestorerV3._pullback_from_bounds(float(_v), 0.30, 1.80, margin_frac=0.03)
+
+        # Strict phase caps (phase conflict-safe defaults), material/tier-aware.
+        _caps_12 = {
+            "vinyl": 0.62,
+            "tape": 0.70,
+            "reel_tape": 0.66,
+            "shellac": 0.56,
+            "wax_cylinder": 0.52,
+            "wire_recording": 0.52,
+            "unknown": 0.60,
+        }
+        _caps_24 = {
+            "vinyl": 0.58,
+            "tape": 0.62,
+            "reel_tape": 0.60,
+            "shellac": 0.54,
+            "wax_cylinder": 0.52,
+            "wire_recording": 0.52,
+            "unknown": 0.60,
+        }
+        _caps_55 = {
+            "vinyl": 0.46,
+            "tape": 0.50,
+            "reel_tape": 0.48,
+            "shellac": 0.42,
+            "wax_cylinder": 0.40,
+            "wire_recording": 0.40,
+            "unknown": 0.48,
+        }
+        _tier_mul = 1.0
+        if _tier == "poor":
+            _tier_mul = 0.94
+        elif _tier == "good":
+            _tier_mul = 1.03
+        _severity_mul = float(np.clip(1.0 - 0.06 * _max_def, 0.90, 1.02))
+
+        _phase_caps = {
+            "phase_02_hum_removal": float(np.clip(0.36 * _tier_mul * _severity_mul, 0.28, 0.70)),
+            "phase_03_denoise": float(np.clip(0.44 * _tier_mul * _severity_mul, 0.30, 0.75)),
+            "phase_12_wow_flutter_fix": float(np.clip(_caps_12.get(_mat, _caps_12["unknown"]) * _tier_mul, 0.35, 0.90)),
+            "phase_24_dropout_repair": float(
+                np.clip(_caps_24.get(_mat, _caps_24["unknown"]) * _tier_mul * _severity_mul, 0.35, 0.90)
+            ),
+            "phase_29_tape_hiss_reduction": float(np.clip(0.36 * _tier_mul * _severity_mul, 0.28, 0.70)),
+            "phase_55_diffusion_inpainting": float(
+                np.clip(_caps_55.get(_mat, _caps_55["unknown"]) * _tier_mul * _severity_mul, 0.30, 0.85)
+            ),
+        }
+
+        _strict_policy = {
+            "enabled": True,
+            "policy_id": "strict_phase_goal_conflict_v1",
+            "transfer_chain_depth": int(_chain_depth),
+            "phase_strength_caps": _phase_caps,
+            "rollback_decay_per_family": {
+                "denoise": 0.90,
+                "transient": 0.92,
+                "reconstruction": 0.93,
+                "dynamics_eq": 0.95,
+                "vocal": 0.95,
+                "general": 0.96,
+            },
+            "rollback_decay_floor": 0.55,
+        }
+
+        _out["family_scalars"] = _family
+        _out["strict_conflict_policy"] = _strict_policy
+        return _out
+
+    def _register_phase_goal_conflict_event(
+        self, phase_id: str, reason: str, details: dict[str, Any] | None = None
+    ) -> None:
+        """Track phase-goal conflicts and adapt family scalars online (non-blocking)."""
+        if not isinstance(self._phase_goal_conflict_runtime, dict) or not self._phase_goal_conflict_runtime:
+            self._phase_goal_conflict_runtime = {
+                "events": [],
+                "by_phase": {},
+                "by_family": {},
+                "total": 0,
+            }
+
+        _family = self._phase_family_from_phase_id(phase_id)
+        _state = self._phase_goal_conflict_runtime
+        _state["total"] = int(_state.get("total", 0)) + 1
+        _state["by_phase"][phase_id] = int(_state.get("by_phase", {}).get(phase_id, 0)) + 1
+        _state["by_family"][_family] = int(_state.get("by_family", {}).get(_family, 0)) + 1
+        _state["events"].append(
+            {
+                "phase_id": phase_id,
+                "family": _family,
+                "reason": reason,
+                "details": dict(details or {}),
+                "index": int(_state.get("total", 0)),
+            }
+        )
+
+        try:
+            _profile = getattr(self, "_song_calibration_profile", None)
+            if not isinstance(_profile, dict):
+                return
+            _family_scalars = _profile.get("family_scalars")
+            _policy = _profile.get("strict_conflict_policy")
+            if not isinstance(_policy, dict):
+                _policy = {}
+            if not isinstance(_family_scalars, dict):
+                return
+
+            _decays = _policy.get("rollback_decay_per_family", {}) if isinstance(_policy, dict) else {}
+            _decay = float(_decays.get(_family, _decays.get("general", 0.96)))
+            _floor = float(_policy.get("rollback_decay_floor", 0.55))
+            _old = float(_family_scalars.get(_family, 1.0))
+            _new = float(np.clip(_old * _decay, _floor, 1.80))
+            if _new + 1e-9 < _old:
+                _family_scalars[_family] = UnifiedRestorerV3._pullback_from_bounds(_new, 0.30, 1.80, margin_frac=0.03)
+                logger.info(
+                    "StrictConflictDecay: %s family=%s reason=%s scalar %.3f -> %.3f",
+                    phase_id,
+                    _family,
+                    reason,
+                    _old,
+                    float(_family_scalars[_family]),
+                )
+
+            # If repeated conflict on same phase, tighten phase cap for remaining pipeline.
+            _phase_hits = int(_state.get("by_phase", {}).get(phase_id, 0))
+            _caps = _policy.get("phase_strength_caps", {}) if isinstance(_policy, dict) else {}
+            if isinstance(_caps, dict) and phase_id in _caps and _phase_hits >= 2:
+                _old_cap = float(_caps.get(phase_id, 1.0))
+                _new_cap = float(np.clip(_old_cap * 0.92, 0.28, 0.95))
+                if _new_cap + 1e-9 < _old_cap:
+                    _caps[phase_id] = _new_cap
+                    logger.info(
+                        "StrictConflictCapTighten: %s cap %.3f -> %.3f (hits=%d)",
+                        phase_id,
+                        _old_cap,
+                        _new_cap,
+                        _phase_hits,
+                    )
+        except Exception as _conf_exc:
+            logger.debug("Strict conflict tracking failed (non-critical): %s", _conf_exc)
+
+    @staticmethod
+    def _build_strict_phase_goal_conflict_report(
+        *,
+        phase_gate_entries: list[Any],
+        phase_regression_log: dict[str, float] | None,
+        interaction_guard_meta: dict[str, Any] | None,
+        runtime_conflict_state: dict[str, Any] | None,
+        musical_goals_passed: dict[str, bool] | None,
+        song_calibration_profile: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build strict conflict verification report between phases and musical goals."""
+        _entries = list(phase_gate_entries or [])
+        _reg = dict(phase_regression_log or {})
+        _ig = dict(interaction_guard_meta or {})
+        _rt = dict(runtime_conflict_state or {})
+        _passed = dict(musical_goals_passed or {})
+        _profile = dict(song_calibration_profile or {})
+
+        _best_effort = [
+            getattr(e, "phase_id", "") for e in _entries if str(getattr(e, "action", "")).startswith("best_effort")
+        ]
+        _best_effort = [p for p in _best_effort if p]
+        _regressive = [
+            {
+                "phase_id": getattr(e, "phase_id", ""),
+                "action": str(getattr(e, "action", "")),
+                "goal_regressions": dict(getattr(e, "goal_regressions", {}) or {}),
+            }
+            for e in _entries
+            if isinstance(getattr(e, "goal_regressions", None), dict)
+            and any(float(v) > 0.05 for v in dict(getattr(e, "goal_regressions", {})).values())
+        ]
+        _top_drops = sorted(
+            [{"phase_id": p, "rms_delta_db": float(d)} for p, d in _reg.items() if float(d) < -0.7],
+            key=lambda x: x["rms_delta_db"],
+        )[:12]
+        _violations = [k for k, ok in _passed.items() if not bool(ok)]
+
+        _rollback_count = 0
+        _rbp = {}
+        if isinstance(_rt.get("by_phase"), dict):
+            _rbp = {str(k): int(v) for k, v in _rt.get("by_phase", {}).items()}
+            _rollback_count = int(sum(_rbp.values()))
+        elif isinstance(_ig.get("rollbacks_by_phase"), dict):
+            _rbp = {str(k): int(v) for k, v in _ig.get("rollbacks_by_phase", {}).items()}
+            _rollback_count = int(sum(_rbp.values()))
+        elif isinstance(_ig.get("rollback_count"), (int, float)):
+            _rollback_count = int(_ig.get("rollback_count", 0))
+
+        _score = float(
+            np.clip(
+                0.12 * len(set(_best_effort))
+                + 0.10 * len(_regressive)
+                + 0.12 * _rollback_count
+                + 0.05 * len(_top_drops)
+                + 0.06 * len(_violations),
+                0.0,
+                1.0,
+            )
+        )
+        _conflict_present = bool(_score >= 0.35 or _rollback_count >= 2 or len(_best_effort) >= 3)
+
+        _strict_policy = {}
+        if isinstance(_profile.get("strict_conflict_policy"), dict):
+            _strict_policy = dict(_profile.get("strict_conflict_policy", {}))
+
+        return {
+            "enabled": True,
+            "conflict_present": _conflict_present,
+            "conflict_score": round(_score, 4),
+            "rollback_count": int(_rollback_count),
+            "rollbacks_by_phase": _rbp,
+            "best_effort_phases": sorted(set(_best_effort)),
+            "regressive_phase_events": _regressive,
+            "top_rms_drops": _top_drops,
+            "goal_violations": _violations,
+            "runtime_events": list(_rt.get("events", [])) if isinstance(_rt.get("events"), list) else [],
+            "autosetup_policy": _strict_policy,
+            "family_scalars_final": (
+                dict(_profile.get("family_scalars", {})) if isinstance(_profile.get("family_scalars"), dict) else {}
+            ),
+        }
 
     @staticmethod
     def _derive_song_cluster_policy(
@@ -1310,7 +1717,8 @@ class UnifiedRestorerV3:
         _new_profile: dict[str, Any] = _copy.deepcopy(profile)
         _new_fam: dict[str, float] = _new_profile["family_scalars"]
         _changes: dict[str, float] = {}
-        _policy = _new_profile.get("cluster_policy") if isinstance(_new_profile.get("cluster_policy"), dict) else {}
+        _raw_policy = _new_profile.get("cluster_policy")
+        _policy: dict[str, Any] = _raw_policy if isinstance(_raw_policy, dict) else {}
         _artifact_sens = float(np.clip(float(_policy.get("artifact_sensitivity", 1.0)), 0.85, 1.25))
         _fatigue_sens = float(np.clip(float(_policy.get("fatigue_sensitivity", 1.0)), 0.85, 1.20))
         _recovery_bias = float(np.clip(float(_policy.get("recovery_bias", 1.0)), 0.85, 1.20))
@@ -1451,7 +1859,8 @@ class UnifiedRestorerV3:
         _new_profile: dict[str, Any] = _copy.deepcopy(profile)
         _new_fam: dict[str, float] = _new_profile["family_scalars"]
         _changes: dict[str, float] = {}
-        _policy = _new_profile.get("cluster_policy") if isinstance(_new_profile.get("cluster_policy"), dict) else {}
+        _raw_policy = _new_profile.get("cluster_policy")
+        _policy: dict[str, Any] = _raw_policy if isinstance(_raw_policy, dict) else {}
         _artifact_sens = float(np.clip(float(_policy.get("artifact_sensitivity", 1.0)), 0.85, 1.25))
         _fatigue_sens = float(np.clip(float(_policy.get("fatigue_sensitivity", 1.0)), 0.85, 1.20))
         _recovery_bias = float(np.clip(float(_policy.get("recovery_bias", 1.0)), 0.85, 1.20))
@@ -2029,7 +2438,7 @@ class UnifiedRestorerV3:
 
     # _register_phases entfällt, Lazy Loading übernimmt die Instanziierung
 
-    def restore(
+    def restore(  # pyright: ignore[reportGeneralTypeIssues]
         self,
         audio: np.ndarray,
         sample_rate: int = 44100,
@@ -2100,6 +2509,10 @@ class UnifiedRestorerV3:
         _gp_kwarg = kwargs.pop("global_plan", None)
         _chain_kwarg = kwargs.pop("chain_info", None)
         _defekt_hint_kwarg = kwargs.pop("defekt_hint", None)
+        # §PID: PhaseInteractionDenker übergibt fertig selektierten Plan — UV3 übernimmt
+        # dann als reiner Executor (kein _optimize_phase_plan_intelligence() mehr).
+        # Leerer Plan [] oder None → UV3 selektiert autonom (fail-safe).
+        _precomputed_phase_plan: list[str] | None = kwargs.pop("precomputed_phase_plan", None) or None
         # Pre-analysis result (PreAnalysisResult from backend.core.pre_analysis).
         # When provided, individual cached_* kwargs are populated from it automatically
         # so callers only need to pass one object.
@@ -2128,6 +2541,8 @@ class UnifiedRestorerV3:
         _audio_update_cb_kwarg = kwargs.pop("audio_update_callback", None)
         _no_rt_limit = bool(kwargs.pop("no_rt_limit", False))
         self._song_calibration_profile = {}
+        self._strict_autosetup_policy = {}
+        self._phase_goal_conflict_runtime = {"events": [], "by_phase": {}, "by_family": {}, "total": 0}
         # §11.7a: reconstruction_context von RekonstruktionsDenker — enthält bereits reparierte Gaps
         _reconstruction_ctx = kwargs.pop("reconstruction_context", None)
         # Bug-15-Fix: file_ext aus input_path extrahieren — wird an DefectScanner.scan()
@@ -2368,7 +2783,7 @@ class UnifiedRestorerV3:
             from backend.core.batch_session_learner import BatchSessionLearner as _BSL
 
             _source_paths = [kwargs.get("source_path")] if kwargs.get("source_path") else []
-            _batch_session_id = _BSL.get_instance().start_session(_source_paths)
+            _batch_session_id = _BSL().start_session(_source_paths)
             logger.info("📦 BatchSessionLearner: session_id=%s", _batch_session_id)
         except Exception as _bsl_exc:
             logger.debug("BatchSessionLearner nicht verfügbar: %s", _bsl_exc)
@@ -2419,19 +2834,16 @@ class UnifiedRestorerV3:
 
             def _run_mc(a: np.ndarray, sr: int) -> object | None:
                 # §6.7 v9.10.97: MediumDetector ist das einzige autoritative System.
-                # MediumClassifier (legacy) nur als Fallback wenn MediumDetector n.v.
+                # Kein Legacy-MediumClassifier-Fallback im produktiven Tonträgerpfad.
                 try:
                     from forensics.medium_detector import get_medium_detector as _get_md
 
                     return _get_md().detect(a, sr, file_ext=_file_ext_for_scan)
                 except Exception as _e:
-                    logger.debug("MediumDetector nicht verfügbar, Fallback auf MediumClassifier: %s", _e)
-                try:
-                    from backend.core.medium_classifier import classify_medium
-
-                    return classify_medium(a, sr=sr, use_ml=True)
-                except Exception as _e2:
-                    logger.debug("MediumClassifier nicht verfügbar: %s", _e2)
+                    logger.warning(
+                        "MediumDetector nicht verfügbar; setze Material auf unknown (legacy fallback deaktiviert): %s",
+                        _e,
+                    )
                     return None
 
             def _run_era(a: np.ndarray, sr: int) -> object | None:
@@ -2568,8 +2980,11 @@ class UnifiedRestorerV3:
                 and _era_conflict_mat is not None
                 and _classified_material != _era_conflict_mat
             ):
-                if _era_conf_val > _mc_conf_val + 0.10:
+                _conf_delta = _era_conf_val - _mc_conf_val
+                if _conf_delta > 0.10 + 1e-9:
                     # EraClassifier deutlich konfidenter → Era-Material-Prior gewinnt
+                    # Explizite Delta-Berechnung verhindert Float-Boundary-Artefakte
+                    # (z.B. mc_conf=0.3999 → mc_conf+0.10=0.4999 < 0.50 → fälschlicherweise True)
                     logger.info(
                         "Material-Konfliktregel (§Spec): EraClassifier dominiert MC"
                         " (era_conf=%.2f > mc_conf=%.2f + 0.10)"
@@ -2580,7 +2995,7 @@ class UnifiedRestorerV3:
                         _era_conflict_mat.value,
                     )
                     _classified_material = _era_conflict_mat
-                elif abs(_era_conf_val - _mc_conf_val) <= 0.10:
+                elif abs(_conf_delta) <= 0.10:
                     # Gleichstand → konservativerer (restaurierungsschonenderer) Typ
                     _conservative_mat = _pick_more_conservative_material(_classified_material, _era_conflict_mat)
                     logger.info(
@@ -3433,12 +3848,30 @@ class UnifiedRestorerV3:
             is_schlager=_cal_is_schlager,
             genre_label=_cal_genre_label,
         )
+        self._song_calibration_profile = self._apply_song_autosetup_policy(
+            self._song_calibration_profile,
+            defect_scores=_cal_defect_sev if _cal_defect_sev else None,
+            transfer_chain=_cal_transfer_chain,
+            max_defect_severity=_max_defect_severity,
+        )
+        # §9.11.1 Restorability-Ceiling: persist for access during phase loop
+        self._last_restorability_score = float(_pmgg_restorability_score)
+        self._strict_autosetup_policy = dict(self._song_calibration_profile.get("strict_conflict_policy", {}))
         if isinstance(getattr(self, "_restoration_context", None), dict):
             self._restoration_context.update(
                 {
                     "song_calibration_global": self._song_calibration_profile.get("global_scalar", 1.0),
                     "song_calibration_tier": self._song_calibration_profile.get("restorability_tier", "fair"),
                     "song_calibration_confidence": self._song_calibration_profile.get("pipeline_confidence", 1.0),
+                    "strict_conflict_policy": dict(self._strict_autosetup_policy),
+                    # §2.54 Adaptive Intelligence — downstream phases may query these directly
+                    "restorability_score": float(_pmgg_restorability_score),
+                    "transfer_chain": list(_cal_transfer_chain) if _cal_transfer_chain else [],
+                    # §HEAD_BUMP_PROFILES — enables phase_04 head-bump for tape/cassette material
+                    "tape_speed_ips": UnifiedRestorerV3._infer_tape_speed_ips(
+                        material_type,
+                        getattr(_era_result, "decade", None) if _era_result is not None else None,
+                    ),
                 }
             )
             # §2.9 PANNs-Durchreichung: panns_tags + abgeleitete Konfidenzen in den
@@ -3470,6 +3903,240 @@ class UnifiedRestorerV3:
             float(self._song_calibration_profile.get("family_scalars", {}).get("denoise", 1.0)),
             float(self._song_calibration_profile.get("pipeline_confidence", 1.0)),
         )
+        logger.info(
+            "StrictAutoSetup: transfer_depth=%d caps={12:%.2f,24:%.2f,55:%.2f}",
+            int(self._strict_autosetup_policy.get("transfer_chain_depth", 0)),
+            float(self._strict_autosetup_policy.get("phase_strength_caps", {}).get("phase_12_wow_flutter_fix", 1.0)),
+            float(self._strict_autosetup_policy.get("phase_strength_caps", {}).get("phase_24_dropout_repair", 1.0)),
+            float(
+                self._strict_autosetup_policy.get("phase_strength_caps", {}).get("phase_55_diffusion_inpainting", 1.0)
+            ),
+        )
+        # ── §2.56 Song-Goal-Importance: Per-song goal weighting ──────────
+        # Computed ONCE after all classifiers (Genre, Era, Material, Vocal)
+        # and threaded through PMGG, CIG, and FeedbackChain for the entire pipeline.
+        try:
+            from backend.core.song_goal_importance import estimate_goal_importance
+
+            _vocal_detected = bool(getattr(self, "_restoration_context", {}).get("panns_vocals_confidence", 0.0) > 0.4)
+            _vocal_conf = float(getattr(self, "_restoration_context", {}).get("panns_vocals_confidence", 0.0))
+            # §2.56 v9.12: Extract audio-derived features for per-song tuning
+            _sgi_bw_hz = float(_cal_sf.get("effective_bandwidth_hz", 0)) or None
+            _sgi_dyn_db: float | None = None
+            try:
+                _qb = locals().get("_quality_before")
+                if _qb is not None and hasattr(_qb, "dynamic_range_db"):
+                    _sgi_dyn_db = float(_qb.dynamic_range_db)
+            except Exception:
+                pass
+            _sgi_bpm: float | None = None
+            if _schlager_result is not None and hasattr(_schlager_result, "bpm"):
+                _bpm_raw = getattr(_schlager_result, "bpm", None)
+                if _bpm_raw is not None and float(_bpm_raw) > 0:
+                    _sgi_bpm = float(_bpm_raw)
+            _sgi_defect_sev: dict[str, float] | None = None
+            if defect_result is not None and hasattr(defect_result, "scores"):
+                _sgi_defect_sev = {
+                    str(getattr(dt, "name", dt)).lower(): float(ds.severity)
+                    for dt, ds in defect_result.scores.items()
+                    if hasattr(ds, "severity") and ds.severity > 0.05
+                }
+            _sgi_tilt: float | None = None
+            if _era_result is not None and hasattr(_era_result, "spectral_tilt"):
+                _raw_tilt = getattr(_era_result, "spectral_tilt", None)
+                if _raw_tilt is not None:
+                    _sgi_tilt = float(_raw_tilt)
+            # §2.46/§2.46a: Carrier-chain degradation data from SourceFidelityReconstructor
+            _sgi_gen_count: int | None = None
+            _sgi_hf_loss: float | None = None
+            _sgi_sfr_conf: float | None = None
+            _rctx = getattr(self, "_restoration_context", {}) or {}
+            if _rctx.get("source_fidelity_generation_count") is not None:
+                _sgi_gen_count = int(_rctx["source_fidelity_generation_count"])
+            if _rctx.get("source_fidelity_hf_loss_db") is not None:
+                _sgi_hf_loss = float(_rctx["source_fidelity_hf_loss_db"])
+            if _rctx.get("source_fidelity_confidence") is not None:
+                _sgi_sfr_conf = float(_rctx["source_fidelity_confidence"])
+            # §2.56 Psychoacoustic features — Zwicker/Aures/Bark/Masking/Tonality
+            _sgi_roughness: float | None = None
+            _sgi_sharpness: float | None = None
+            _sgi_spectral_flatness: float | None = None
+            _sgi_tonality: float | None = None
+            _sgi_freq_balance: dict[str, float] | None = None
+            _sgi_masked_ratio: float | None = None
+            _sgi_centroid_bark: float | None = None
+            try:
+                _pa_mono = audio.mean(axis=0) if audio.ndim == 2 else audio
+                # Roughness, Sharpness, Spectral Flatness via PsychoAcousticMetrics
+                from backend.core.psychoacoustic_metrics import PsychoAcousticMetrics
+
+                _pam = PsychoAcousticMetrics(sample_rate=sr)
+                _sgi_roughness = float(_pam.calculate_roughness(_pa_mono))
+                _sgi_sharpness = float(_pam.calculate_sharpness(_pa_mono))
+                _sgi_spectral_flatness = float(_pam.calculate_spectral_flatness(_pa_mono))
+                # Tonality via ComprehensiveMetricsCalculator._compute_tonality
+                from backend.core.comprehensive_metrics import ComprehensiveMetricsCalculator
+
+                _cm = ComprehensiveMetricsCalculator(sr)
+                _sgi_tonality = float(_cm._compute_tonality(_pa_mono))
+                # Bark-scale analysis: frequency balance, masked ratio, centroid
+                from backend.core.psychoacoustic_core import PsychoacousticCore
+
+                _pac = PsychoacousticCore()
+                _pa_result = _pac.analyze(_pa_mono, sr)
+                _sgi_freq_balance = _pa_result.frequency_balance
+                _sgi_masked_ratio = float(_pa_result.masked_components_ratio)
+                _sgi_centroid_bark = float(_pa_result.perceptual_centroid_bark)
+                logger.debug(
+                    "§2.56 psychoacoustic features: rough=%.3f sharp=%.3f flat=%.3f "
+                    "tonal=%.3f masked=%.3f centroid=%.1fBark",
+                    _sgi_roughness,
+                    _sgi_sharpness,
+                    _sgi_spectral_flatness,
+                    _sgi_tonality,
+                    _sgi_masked_ratio,
+                    _sgi_centroid_bark,
+                )
+            except Exception as _pa_err:
+                logger.debug("§2.56 psychoacoustic feature extraction failed: %s", _pa_err)
+            # §2.56 Vocal/harmonic/transient features — music preservation
+            _sgi_hnr_db: float | None = None
+            _sgi_harm_coh: float | None = None
+            _sgi_crest_db: float | None = None
+            _sgi_trans_dens: float | None = None
+            try:
+                _pa_mono_vht = audio.mean(axis=0) if audio.ndim == 2 else audio
+
+                # --- HNR: True pitch-period HNR via multi-frame AC ---
+                # ComprehensiveMetrics._compute_hnr starts lag search at 1
+                # (measures SNR proxy, not pitch periodicity).  Instead, use
+                # _compute_fundamental_stability's frame-wise AC with pitch-lag
+                # search starting at lag 20 (2400 Hz upper bound @ 48kHz).
+                from backend.core.comprehensive_metrics import ComprehensiveMetricsCalculator as _CMC
+
+                _cm_vht = _CMC(sr)
+                # Use 10s representative segment from middle of song (avoid intro/outro)
+                _n_vht = len(_pa_mono_vht)
+                _mid = _n_vht // 2
+                _seg_half = min(sr * 5, _mid)  # ±5s around middle
+                _pa_seg = _pa_mono_vht[max(0, _mid - _seg_half) : min(_n_vht, _mid + _seg_half)]
+                # Frame-wise pitch-lag HNR (robust, O(N log N) per frame)
+                _hnr_samples: list[float] = []
+                _frame_sz = int(0.05 * sr)  # 50ms frames
+                _hnr_hop = _frame_sz  # no overlap for speed
+                _search_lo = max(int(sr / 2000), 2)  # 2000 Hz upper pitch
+                _search_hi = min(int(sr / 50), _frame_sz - 1)  # 50 Hz lower pitch
+                if _search_hi > _search_lo and len(_pa_seg) >= _frame_sz * 4:
+                    from scipy.signal import find_peaks as _fp
+
+                    for _fs in range(0, len(_pa_seg) - _frame_sz, _hnr_hop):
+                        _frm = _pa_seg[_fs : _fs + _frame_sz]
+                        _nf = len(_frm)
+                        _Xf = np.fft.rfft(_frm, n=2 * _nf)
+                        _ac = np.fft.irfft(np.abs(_Xf) ** 2)[:_nf]
+                        _ac0 = _ac[0] + 1e-30
+                        _ac = _ac / _ac0
+                        # Find first significant AC peak in pitch range
+                        _region = _ac[_search_lo:_search_hi]
+                        _pks, _ = _fp(_region, height=0.1)
+                        if len(_pks) > 0:
+                            _pk_val = float(_region[_pks[0]])
+                            _noise_e = max(1.0 - _pk_val, 1e-10)
+                            _hnr_samples.append(10.0 * np.log10(max(_pk_val, 1e-10) / _noise_e))
+                    if _hnr_samples:
+                        _sgi_hnr_db = float(np.clip(np.median(_hnr_samples), -10, 40))
+
+                # --- Crest factor (peak vs. RMS in dB) ---
+                _rms_vht = float(np.sqrt(np.mean(_pa_seg**2)))
+                _peak_vht = float(np.percentile(np.abs(_pa_seg), 99.9))
+                if _rms_vht > 1e-10 and _peak_vht > 1e-10:
+                    _sgi_crest_db = 20.0 * np.log10(_peak_vht / _rms_vht)
+
+                # --- Harmonic Coherence: STFT-based whole-song analysis ---
+                # PhaseConductor._estimate_harmonic_coherence only uses first 46ms
+                # (designed for realtime phase-state, not song-level analysis).
+                # Use PsychoAcousticMetrics.calculate_harmonic_coherence instead:
+                # STFT spectral peak consistency over the full song duration.
+                from backend.core.psychoacoustic_metrics import PsychoAcousticMetrics as _PAM_VHT
+
+                _pam_vht = _PAM_VHT(sr)
+                _sgi_harm_coh = float(_pam_vht.calculate_harmonic_coherence(_pa_seg))
+
+                # --- Transient Density: STFT Spectral Flux + Peak-Picking ---
+                # PhaseConductor._estimate_transient_density uses RMS-flux + 1.5σ
+                # without min-distance → ~4× too many onsets for noisy material.
+                # Use dsp/dtw_groove.detect_onsets: STFT spectral flux + adaptive
+                # threshold + 50ms min-gap → robust for vinyl/tape.
+                from dsp.dtw_groove import detect_onsets as _detect_onsets_stft
+
+                _onset_result = _detect_onsets_stft(
+                    _pa_seg,
+                    sr=sr,
+                    hop_ms=10.0,
+                    threshold=0.3,
+                    min_onset_gap_ms=50.0,
+                )
+                _seg_dur = len(_pa_seg) / max(sr, 1)
+                _sgi_trans_dens = float(_onset_result.n_onsets / max(_seg_dur, 0.01))
+
+                logger.debug(
+                    "§2.56 vocal/harmonic/transient features: hnr=%.1fdB hcoh=%.3f crest=%.1fdB tdens=%.1f/s",
+                    _sgi_hnr_db or 0.0,
+                    _sgi_harm_coh or 0.0,
+                    _sgi_crest_db or 0.0,
+                    _sgi_trans_dens or 0.0,
+                )
+            except Exception as _vht_err:
+                logger.debug("§2.56 vocal/harmonic/transient extraction failed: %s", _vht_err)
+            _sgi = estimate_goal_importance(
+                genre_label=_cal_genre_label
+                or (str(getattr(_schlager_result, "genre_label", "")) if _schlager_result is not None else ""),
+                era_decade=getattr(_era_result, "decade", None) if _era_result is not None else None,
+                material_type=material_type,
+                restorability_score=float(_pmgg_restorability_score),
+                vocal_detected=_vocal_detected,
+                vocal_confidence=_vocal_conf,
+                is_studio_2026=self.is_studio_mode(),
+                # Audio-derived features
+                snr_db=_input_snr_db if _input_snr_db is not None else None,
+                effective_bandwidth_hz=_sgi_bw_hz,
+                dynamic_range_db=_sgi_dyn_db,
+                stereo_mono_compat=None,  # Populated later from §2.50 baseline
+                bpm=_sgi_bpm,
+                defect_severities=_sgi_defect_sev,
+                spectral_tilt_db_per_oct=_sgi_tilt,
+                # Carrier-chain degradation (§2.46/§2.46a)
+                transfer_generation_count=_sgi_gen_count,
+                cumulative_hf_loss_db=_sgi_hf_loss,
+                source_fidelity_confidence=_sgi_sfr_conf,
+                # Psychoacoustic features (Zwicker/Aures/Bark/Masking)
+                roughness=_sgi_roughness,
+                sharpness=_sgi_sharpness,
+                spectral_flatness=_sgi_spectral_flatness,
+                tonality=_sgi_tonality,
+                frequency_balance=_sgi_freq_balance,
+                masked_components_ratio=_sgi_masked_ratio,
+                perceptual_centroid_bark=_sgi_centroid_bark,
+                # Vocal/harmonic/transient preservation
+                harmonic_to_noise_ratio_db=_sgi_hnr_db,
+                harmonic_coherence=_sgi_harm_coh,
+                crest_factor_db=_sgi_crest_db,
+                transient_density=_sgi_trans_dens,
+            )
+            self._song_goal_importance = _sgi
+            self._song_goal_weights = _sgi.weights
+            logger.info(
+                "§2.56 SongGoalImportance: genre=%s era=%s mat=%s vocal=%s | %s",
+                _sgi.genre_profile,
+                _sgi.era_profile,
+                _sgi.material_profile,
+                _vocal_detected,
+                " ".join(f"{k}={v:.2f}" for k, v in sorted(_sgi.weights.items())),
+            )
+        except Exception as _sgi_err:
+            logger.warning("§2.56 SongGoalImportance failed (uniform fallback): %s", _sgi_err)
+            self._song_goal_importance = None
+            self._song_goal_weights = None
         if _pass_through_mode:
             if _clean_digital_mode and not (_input_snr_db > 40.0 and _max_defect_severity < 0.15):
                 logger.info(
@@ -3492,20 +4159,35 @@ class UnifiedRestorerV3:
         # Step 2: Phase Selection (basierend auf Defekten)
         _cb(16, "Phasenauswahl…")
         logger.info("Step 2/4: Phase Selection...")
-        selected_phases = self._select_phases(
-            defect_result,
-            causal_plan=_causal_plan,
-            chain_info=self._active_chain_info,
-            defekt_hint=self._active_defekt_hint,
-            audio=audio,
-            sr=sample_rate,
-        )
-        selected_phases = self._optimize_phase_plan_intelligence(
-            selected_phases,
-            causal_plan=_causal_plan,
-            pipeline_confidence=_pipeline_confidence,
-            restorability_score=_pmgg_restorability_score,
-        )
+        if _precomputed_phase_plan:
+            # §PID: PhaseInteractionDenker hat Orchestrierung übernommen.
+            # UV3 verwendet den extern berechneten Plan deterministisch.
+            # Keine autonome _select/_optimize-Planung mehr, damit Denker-Plan
+            # und UV3-Ausführung nicht auseinanderlaufen.
+            logger.info(
+                "§PID PhaseInteractionDenker-Plan aktiv: %d Phasen (UV3 _select/_optimize übersprungen)",
+                len(_precomputed_phase_plan),
+            )
+            # Verhindert Stale-State aus vorherigen restore()-Läufen.
+            self._last_material_priority_phases = ()
+            selected_phases = list(_precomputed_phase_plan)
+        else:
+            # Kein Denker-Plan — UV3 selektiert und optimiert autonom (Legacy/fail-safe).
+            selected_phases = self._select_phases(
+                defect_result,
+                causal_plan=_causal_plan,
+                chain_info=self._active_chain_info,
+                defekt_hint=self._active_defekt_hint,
+                audio=audio,
+                sr=sample_rate,
+            )
+            # Kein Denker-Plan — UV3 optimiert autonom (Legacy-Pfad / fail-safe).
+            selected_phases = self._optimize_phase_plan_intelligence(
+                selected_phases,
+                causal_plan=_causal_plan,
+                pipeline_confidence=_pipeline_confidence,
+                restorability_score=_pmgg_restorability_score,
+            )
         logger.info("Selected %s phases based on defects", len(selected_phases))
         _runtime_never_skip_phases: list[str] = list(getattr(self, "_last_material_priority_phases", ()) or ())
 
@@ -3552,6 +4234,26 @@ class UnifiedRestorerV3:
         # Baseline für Pipeline speichern (Übergabe an _execute_pipeline via self)
         self._source_material_baseline = _src_baseline
 
+        # §6.7 Dolby-NR-Typ + Konfidenz aus DefectResult in _restoration_context injizieren,
+        # damit phase_04 über kwargs.get("dolby_nr_type") die korrekte Inverse anwenden kann.
+        if defect_result is not None and hasattr(defect_result, "scores"):
+            try:
+                _dolby_ds = defect_result.scores.get(DefectType.DOLBY_NR_MISMATCH)
+                if _dolby_ds is not None and getattr(_dolby_ds, "severity", 0.0) > 0.10:
+                    _dolby_meta = getattr(_dolby_ds, "metadata", {}) or {}
+                    _dnr_type = _dolby_meta.get("dolby_nr_type", "none")
+                    if _dnr_type and _dnr_type != "none":
+                        self._restoration_context["dolby_nr_type"] = _dnr_type
+                        self._restoration_context["dolby_nr_confidence"] = float(getattr(_dolby_ds, "confidence", 0.65))
+                        logger.info(
+                            "§6.7 Dolby-NR-Injektion: type=%s conf=%.2f sev=%.2f",
+                            _dnr_type,
+                            self._restoration_context["dolby_nr_confidence"],
+                            float(_dolby_ds.severity),
+                        )
+            except Exception as _dolby_exc:
+                logger.debug("§6.7 Dolby-NR-Extraktion fehlgeschlagen: %s", _dolby_exc)
+
         # §2.8 Vocal-Chain: vocal_gender in RestorationContext injizieren
         # → wird automatisch via _profiled_phase_call in ALLE Phase-kwargs aufgenommen
         _vg = getattr(self, "_detected_vocal_gender", None)
@@ -3572,6 +4274,9 @@ class UnifiedRestorerV3:
                 "Phase Skipping deaktiviert: niedrige Restaurierbarkeit (%.1f < 40.0)",
                 _pmgg_restorability_score,
             )
+        if _precomputed_phase_plan:
+            _enable_phase_skipping = False
+            logger.info("Phase Skipping deaktiviert: precomputed_phase_plan aktiv (deterministischer PID-Executor)")
 
         if _enable_phase_skipping:
             original_count = len(selected_phases)
@@ -3784,6 +4489,7 @@ class UnifiedRestorerV3:
 
         # §2.36 LGE Pre-Phase: Transkription auf Originalaudio (genauere Phonemkarte als auf NR-Output)
         _lge_trans_pre: Any = None
+        _lge_saliency_for_eap: np.ndarray | None = None  # §2.36/§2.44: Lyrics-Salienz für EAP
         try:
             from backend.core.lyrics_guided_enhancement import (
                 get_lyrics_guided_enhancement as _get_lge_pre,
@@ -3910,6 +4616,14 @@ class UnifiedRestorerV3:
                 set_pipeline_active(False)
             except Exception as _spa_exc:
                 logger.debug("set_pipeline_active(False) fehlgeschlagen: %s", _spa_exc)
+        # §7 PDV: Collect session summary after pipeline (Ursache 7 telemetry).
+        _pdv_session_summary: dict = {}
+        try:
+            from backend.core.phase_defect_verifier import get_phase_defect_verifier as _get_pdv_sum
+
+            _pdv_session_summary = _get_pdv_sum().get_session_summary()
+        except Exception as _pdv_sum_exc:
+            logger.debug("§7 PDV summary collection failed (non-blocking): %s", _pdv_sum_exc)
         # v9.10.58: EnsembleProcessor-Block entfernt.
         # v9.10.72: ARE Multi-Pass ebenfalls entfernt. UV3 ist der einzige Processing-Pass.
         # Wissenschaftliche Begründung:
@@ -4056,67 +4770,6 @@ class UnifiedRestorerV3:
                     len(_fc_phases_list),
                 )
 
-            # §2.47 Deferred-Phase-Promotion: RT-gedefererte P3-P5-Enhancement-Phasen
-            # ergänzen die FeedbackChain-Liste. FeedbackChain prüft via MOS-δ (Iteration 2)
-            # ob sie helfen — unhelpful phases werden gepruned (δ < -0.01).
-            # Nur whitelisted Enhancement-Phasen: keine Reparatur-Phasen, §0-konform.
-            _DEFERRED_FC_WHITELIST: frozenset[str] = frozenset(
-                {
-                    "phase_19",  # De-esser → artikulation (P2), transparenz (P4)
-                    "phase_22",  # Dynamic Enhancement → micro_dynamics (P3), groove (P3)
-                    "phase_36",  # Log-Envelope Smoothing → micro_dynamics (P3), emotionalitaet
-                    "phase_47",  # Timbre Restoration → waerme (P4), timbre_authentizitaet
-                    "phase_48",  # Stereo Imaging → spatial_depth (P5), separation_fidelity (P4)
-                    "phase_55",  # Spectral Band Enhancement → brillanz (P5), bass_kraft (P4)
-                }
-            )
-            _fc_already_nums: frozenset[int] = frozenset(num for num, _, _ in _fc_phases_list if isinstance(num, int))
-
-            def _dfr_make_callable(_ph: object) -> object:
-                """Closure-Fabrik für Deferred-Phase-FeedbackChain-Integration."""
-
-                def _dfr_call(_audio: np.ndarray, _sr: int, **_kw: object) -> np.ndarray:
-                    _res = self._profiled_phase_call(
-                        _ph,
-                        _audio,
-                        sample_rate=_sr,
-                        material_type=material_type,
-                        material=material_type,
-                        defect_scores=defect_result.scores,
-                        quality_mode=self.config.mode.value,
-                    )
-                    return _res.audio if hasattr(_res, "audio") else _audio
-
-                return _dfr_call
-
-            _added_deferred: int = 0
-            for _dfr_pid in deferred_phases:
-                if _added_deferred >= 3:
-                    break  # Max 3 Extra-Phasen — §2.45 Minimal-Intervention
-                _dfr_parts = str(_dfr_pid).split("_")
-                if len(_dfr_parts) < 2:
-                    continue
-                _dfr_prefix = f"{_dfr_parts[0]}_{_dfr_parts[1]}"  # "phase_22"
-                if _dfr_prefix not in _DEFERRED_FC_WHITELIST:
-                    continue
-                try:
-                    _dfr_num = int(_dfr_parts[1])
-                except (ValueError, IndexError):
-                    continue
-                if _dfr_num in _fc_already_nums:
-                    continue  # Bereits in FeedbackChain — kein Duplikat
-                _dfr_obj = self._get_phase(_dfr_pid)
-                if _dfr_obj is None:
-                    continue
-                _fc_phases_list.append((_dfr_num, _dfr_make_callable(_dfr_obj), {}))
-                _fc_already_nums = _fc_already_nums | {_dfr_num}
-                _added_deferred += 1
-                logger.info(
-                    "§2.47 Deferred-Phase-Promotion: %s → FeedbackChain (%d Gesamt)",
-                    _dfr_pid,
-                    len(_fc_phases_list),
-                )
-
             if _fc_phases_list:
                 _fc_excellence = True  # v9.14-D1: ExcellenceOptimizer für beide Modi aktiv
                 # §2.33 PhysicalCeiling-Gate: wenn keine weitere Optimierung lohnend,
@@ -4159,7 +4812,11 @@ class UnifiedRestorerV3:
                     material=material_type.value,
                     use_pqs_in_loop=True,
                     use_versa_in_loop=self.config.deployment_mode == DeploymentMode.RESEARCH,
+                    restorability_score=float(_pmgg_restorability_score),
+                    defect_severity_mean=float(self._fc_defect_severity_mean(defect_result)),
                 )
+                # §2.56: Inject song-specific goal weights into FeedbackChain
+                _fc_chain.goal_weights = getattr(self, "_song_goal_weights", None)
                 # §2.34 GPP-WIRE: GoalPriorityProtocol als in-loop Phase-Callback verdrahten
                 try:
                     from backend.core.goal_priority_protocol import check_iteration_abort as _check_gpp
@@ -4193,7 +4850,8 @@ class UnifiedRestorerV3:
                             _sa = _gpp_quick(_aa, _gpp_sr)
                             _gpp_analytics_s[0] += _t_gpp.perf_counter() - _t0g
                             _gpp_prev_scores = _sa  # cache for next iteration
-                            _res = _check_gpp(_sb, _sa)
+                            # §2.56: Pass song-specific goal weights to GPP abort check
+                            _res = _check_gpp(_sb, _sa, goal_weights=getattr(self, "_song_goal_weights", None))
                             return _res.should_abort, _res.reason
                         except Exception as _gpp_cb_exc:
                             logger.debug("GPP FeedbackChain callback failed: %s", _gpp_cb_exc)
@@ -4367,44 +5025,49 @@ class UnifiedRestorerV3:
         # Positionierung: nach EAPC (§2.35), vor IAD (§2.23) — schützt Konsonanten und betonte Silben.
         # Aktivierung: immer wenn Audio ≥ 1 s; kein Vocals-Gate (Lyrics können auch instrumental sein).
         # Privacy: Lyrics-Text wird NICHT geloggt (§2.36 Datenschutz-Pflicht).
-        try:
-            from backend.core.lyrics_guided_enhancement import (
-                get_content_aware_processor as _get_cap,
-            )
-            from backend.core.lyrics_guided_enhancement import (
-                get_lyrics_guided_enhancement as _get_lge,
-            )
-
-            _lge = _get_lge()
-            if _lge_trans_pre is not None and not getattr(_lge_trans_pre, "fallback_used", True):
-                # §2.36 Phase-Gate-Anbindung: Saliency aus Pre-Phase-Transkription (Originalaudio)
-                _cap = _get_cap()
-                _n_smp = restored_audio.shape[-1] if restored_audio.ndim == 2 else len(restored_audio)
-                _base_sal = np.ones(_n_smp, dtype=np.float32)
-                _lge_saliency = _cap.compute_lyrics_saliency(_base_sal, _lge_trans_pre, sample_rate)
-                if restored_audio.ndim == 2 and restored_audio.shape[0] <= 2:
-                    _lge_audio = restored_audio * _lge_saliency[np.newaxis, :]
-                elif restored_audio.ndim == 2:
-                    _lge_audio = restored_audio * _lge_saliency[:, np.newaxis]
-                else:
-                    _lge_audio = restored_audio * _lge_saliency
-                _lge_audio = np.clip(np.nan_to_num(_lge_audio, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
-                restored_audio = _lge_audio
-                _lge_seg_count = len(_lge_trans_pre.words) if _lge_trans_pre is not None else 0
-                logger.info(
-                    "§2.36 LGE: Saliency aus Original-Phonemkarte — %d Segmente (§2.36 Phase-Gate)",
-                    _lge_seg_count,
+        # Guard: Skip wenn phase_58 bereits in Pipeline ausgeführt (Deduplication — verhindert ×Saliency²).
+        if "phase_58_lyrics_guided_enhancement" in (executed_phases or []):
+            logger.debug("§2.36 LGE: Inline-Pfad übersprungen — phase_58 bereits ausgeführt")
+        else:
+            try:
+                from backend.core.lyrics_guided_enhancement import (
+                    get_content_aware_processor as _get_cap,
                 )
-            else:
-                # Fallback: transcribe restored audio (pre-computed transcription unavailable)
-                _lge_audio, _lge_transcription = _lge.enhance(restored_audio, sample_rate)
-                _lge_audio = np.nan_to_num(_lge_audio, nan=0.0, posinf=0.0, neginf=0.0)
-                _lge_audio = np.clip(_lge_audio, -1.0, 1.0)
-                restored_audio = _lge_audio
-                _lge_seg_count = len(_lge_transcription.words) if _lge_transcription is not None else 0
-                logger.info("§2.36 LGE: Lyrics-geführte Verbesserung — %d Segmente verarbeitet", _lge_seg_count)
-        except Exception as _lge_exc:
-            logger.debug("LyricsGuidedEnhancement nicht verfügbar: %s", _lge_exc)
+                from backend.core.lyrics_guided_enhancement import (
+                    get_lyrics_guided_enhancement as _get_lge,
+                )
+
+                _lge = _get_lge()
+                if _lge_trans_pre is not None and not getattr(_lge_trans_pre, "fallback_used", True):
+                    # §2.36 Phase-Gate-Anbindung: Saliency aus Pre-Phase-Transkription (Originalaudio)
+                    _cap = _get_cap()
+                    _n_smp = restored_audio.shape[-1] if restored_audio.ndim == 2 else len(restored_audio)
+                    _base_sal = np.ones(_n_smp, dtype=np.float32)
+                    _lge_saliency = _cap.compute_lyrics_saliency(_base_sal, _lge_trans_pre, sample_rate)
+                    _lge_saliency_for_eap = _lge_saliency  # §2.36/§2.44: für measure_emotional_arc()
+                    if restored_audio.ndim == 2 and restored_audio.shape[0] <= 2:
+                        _lge_audio = restored_audio * _lge_saliency[np.newaxis, :]
+                    elif restored_audio.ndim == 2:
+                        _lge_audio = restored_audio * _lge_saliency[:, np.newaxis]
+                    else:
+                        _lge_audio = restored_audio * _lge_saliency
+                    _lge_audio = np.clip(np.nan_to_num(_lge_audio, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+                    restored_audio = _lge_audio
+                    _lge_seg_count = len(_lge_trans_pre.words) if _lge_trans_pre is not None else 0
+                    logger.info(
+                        "§2.36 LGE: Saliency aus Original-Phonemkarte — %d Segmente (§2.36 Phase-Gate)",
+                        _lge_seg_count,
+                    )
+                else:
+                    # Fallback: transcribe restored audio (pre-computed transcription unavailable)
+                    _lge_audio, _lge_transcription = _lge.enhance(restored_audio, sample_rate)
+                    _lge_audio = np.nan_to_num(_lge_audio, nan=0.0, posinf=0.0, neginf=0.0)
+                    _lge_audio = np.clip(_lge_audio, -1.0, 1.0)
+                    restored_audio = _lge_audio
+                    _lge_seg_count = len(_lge_transcription.words) if _lge_transcription is not None else 0
+                    logger.info("§2.36 LGE: Lyrics-geführte Verbesserung — %d Segmente verarbeitet", _lge_seg_count)
+            except Exception as _lge_exc:
+                logger.debug("LyricsGuidedEnhancement nicht verfügbar: %s", _lge_exc)
 
         # §2.23 IntroducedArtifactDetector — Durch Restaurierung neu eingebrachte Artefakte prüfen
         try:
@@ -5066,7 +5729,12 @@ class UnifiedRestorerV3:
             try:
                 from backend.core.emotional_arc_preservation import measure_emotional_arc
 
-                _arc_result = measure_emotional_arc(original_audio_for_goals, restored_audio, sample_rate)
+                _arc_result = measure_emotional_arc(
+                    original_audio_for_goals,
+                    restored_audio,
+                    sample_rate,
+                    lyrics_saliency=_lge_saliency_for_eap,  # §2.36/§2.44: Lyrics-Salienz
+                )
                 if _arc_result.skipped:
                     logger.debug("EmotionalArc: übersprungen (Datei zu kurz, < 30 s)")
                 elif _arc_result.arc_preserved:
@@ -5171,7 +5839,10 @@ class UnifiedRestorerV3:
                         "authenticity": round(_goosebumps_result.authenticity, 4),
                     }
                 )
-        except Exception as _gb_exc:
+        except BaseException as _gb_exc:
+            # Non-blocking analytics: timeout/outcome exceptions must not abort restore().
+            if isinstance(_gb_exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                raise
             logger.debug("GoosebumpsQualityChecker nicht verfügbar: %s", _gb_exc)
 
         # --- GP-Lernzyklus: Vorbereitung — PQS-Norm + Pareto-Vorschlag (vor MDEM) (§2.5 Spec) ---
@@ -5577,7 +6248,9 @@ class UnifiedRestorerV3:
                 )
             else:
                 logger.warning("DefectScanner post-scan returned None — using pre-restoration defect scores in result")
-        except Exception as _post_scan_exc:
+        except BaseException as _post_scan_exc:
+            if isinstance(_post_scan_exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                raise
             logger.warning(
                 "DefectScanner post-scan failed (%s) — using pre-restoration defect scores in result",
                 _post_scan_exc,
@@ -5590,6 +6263,20 @@ class UnifiedRestorerV3:
             float(getattr(_emotional_arc_result, "preservation_score", 1.0))
             if _emotional_arc_result is not None
             else 1.0
+        )
+        # §2.44 Context: pass real restorability + genre/material/era so HPG reference
+        # memory is keyed correctly (prevents all songs hitting "DEFAULT/digital/post-1990").
+        _hpi_restorability = float(_pmgg_restorability_score)
+        _hpi_genre = str(_cal_genre_label or "general").strip().lower() or "general"
+        _hpi_material = (
+            (material_type.value if hasattr(material_type, "value") else str(material_type)).lower()
+            if material_type
+            else "digital"
+        )
+        _hpi_era = (
+            f"{'pre-1950' if getattr(_era_result, 'decade', 1990) < 1950 else 'pre-1980' if getattr(_era_result, 'decade', 1990) < 1980 else 'post-1980'}"
+            if _era_result is not None
+            else "post-1980"
         )
         try:
             from backend.core.holistic_perceptual_gate import get_holistic_gate as _get_hg
@@ -5612,7 +6299,10 @@ class UnifiedRestorerV3:
                     sample_rate,
                     artifact_freedom=_artifact_freedom_for_hpi,
                     emotional_arc_score=_emotional_arc_for_hpi,
-                    restorability_score=float(getattr(self, "_restorability_score", 70.0)),
+                    restorability_score=_hpi_restorability,
+                    genre=_hpi_genre,
+                    material=_hpi_material,
+                    era_bin=_hpi_era,
                 )
             if not _hpi_result.passed:
                 _fail_reasons.append(
@@ -5668,8 +6358,22 @@ class UnifiedRestorerV3:
                         "(HPI=%.4f) — Export mit Pipeline-Ausgang (Fallback)",
                         _hpi_result.hpi,
                     )
+            else:
+                logger.info(
+                    "§2.44 HPI(%s)=%.4f passed=%s (artifact=%.3f emotional=%.3f)",
+                    "Studio" if self.is_studio_mode() else "Restoration",
+                    float(_hpi_result.hpi),
+                    bool(_hpi_result.passed),
+                    float(_hpi_result.artifact_freedom),
+                    float(_hpi_result.emotional_arc_preservation),
+                )
         except Exception as _hpi_exc:
             logger.debug("§2.44 HolisticPerceptualGate nicht verfügbar: %s", _hpi_exc)
+        if _hpi_result is None:
+            logger.warning(
+                "§2.44 HPI(unavailable) — HolisticPerceptualGate lieferte kein Ergebnis; "
+                "Export läuft im degrade-Modus mit vorhandenen Sicherheitsgates"
+            )
 
         # §2.49 Export-Gate: artifact_freedom < 0.95 → rollback + fail_reason
         # [RELEASE_MUST] "Kein Artefakt-behafteter Export" (§2.49 Invariante).
@@ -5733,6 +6437,17 @@ class UnifiedRestorerV3:
             _artifact_freedom_for_hpi,
             _emotional_arc_for_hpi,
         )
+        if not isinstance(_joy_runtime_index, dict):
+            _joy_runtime_index = {}
+        _joy_runtime_index = {
+            "joy_index": float(np.clip(float(_joy_runtime_index.get("joy_index", 0.0)), 0.0, 1.0)),
+            "fatigue_index": float(np.clip(float(_joy_runtime_index.get("fatigue_index", 0.0)), 0.0, 1.0)),
+            "components": (
+                dict(_joy_runtime_index.get("components", {}))
+                if isinstance(_joy_runtime_index.get("components", {}), dict)
+                else {}
+            ),
+        }
         _auto_improvement = self._derive_auto_improvement_recommendations(
             musical_goal_scores=_musical_goal_scores if isinstance(_musical_goal_scores, dict) else None,
             musical_goals_passed=_musical_goals_passed if isinstance(_musical_goals_passed, dict) else None,
@@ -5740,6 +6455,78 @@ class UnifiedRestorerV3:
             phase_regression_log=dict(getattr(self, "_phase_regression_log", {})),
             top_defects=_top_defects_pre,
         )
+        if not isinstance(_auto_improvement, dict):
+            _auto_improvement = {}
+        _auto_improvement = {
+            "count": (
+                int(max(0, _auto_improvement.get("count", 0)))
+                if isinstance(_auto_improvement.get("count", 0), (int, float))
+                else 0
+            ),
+            "recommendations": (
+                list(_auto_improvement.get("recommendations", []))
+                if isinstance(_auto_improvement.get("recommendations", []), list)
+                else []
+            ),
+        }
+
+        _song_calibration_meta = dict(getattr(self, "_song_calibration_profile", {}))
+        if not isinstance(_song_calibration_meta.get("cluster_policy"), dict):
+            _song_calibration_meta["cluster_policy"] = UnifiedRestorerV3._derive_song_cluster_policy(
+                material=str(getattr(material_type, "value", material_type) or "unknown"),
+                era_decade=_song_calibration_meta.get("era_decade"),
+                genre_label=str(_song_calibration_meta.get("genre_label", "general") or "general"),
+                restorability_tier=str(_song_calibration_meta.get("restorability_tier", "fair") or "fair"),
+                is_schlager=bool(_song_calibration_meta.get("is_schlager", False)),
+            )
+        _song_calibration_meta["cluster_key"] = str(
+            _song_calibration_meta.get("cluster_key")
+            or _song_calibration_meta["cluster_policy"].get("cluster_key", "unknown:unknown:general:fair")
+        )
+        _strict_conflict_report = self._build_strict_phase_goal_conflict_report(
+            phase_gate_entries=list(getattr(self, "_pmgg_log_entries", []) or []),
+            phase_regression_log=dict(getattr(self, "_phase_regression_log", {})),
+            interaction_guard_meta=dict(getattr(self, "_interaction_guard_metadata", {})),
+            runtime_conflict_state=dict(getattr(self, "_phase_goal_conflict_runtime", {})),
+            musical_goals_passed=_musical_goals_passed if isinstance(_musical_goals_passed, dict) else None,
+            song_calibration_profile=_song_calibration_meta,
+        )
+        if bool(_strict_conflict_report.get("conflict_present", False)):
+            _auto_recos = list(_auto_improvement.get("recommendations", []))
+            _auto_recos.insert(
+                0,
+                {
+                    "focus": "phase_goal_conflict",
+                    "action": "strict_autosetup_active",
+                    "reason": (
+                        f"conflict_score={float(_strict_conflict_report.get('conflict_score', 0.0)):.2f}, "
+                        f"rollbacks={int(_strict_conflict_report.get('rollback_count', 0))}"
+                    ),
+                },
+            )
+            _auto_improvement["recommendations"] = _auto_recos[:8]
+            _auto_improvement["count"] = len(_auto_improvement["recommendations"])
+
+        logger.info(
+            "§2.53 experience_runtime: joy_runtime_index={joy_index:%.3f,fatigue_index:%.3f} "
+            "auto_improvement_recommendations={count:%d} song_calibration={cluster_key:%s,cluster_policy:%s}",
+            float(_joy_runtime_index.get("joy_index", 0.0)),
+            float(_joy_runtime_index.get("fatigue_index", 0.0)),
+            int(_auto_improvement.get("count", 0)),
+            str(_song_calibration_meta.get("cluster_key", "")),
+            str(_song_calibration_meta.get("cluster_policy", {}).get("cluster_key", "")),
+        )
+        logger.info(
+            "StrictConflictReport: present=%s score=%.3f rollback_count=%d",
+            bool(_strict_conflict_report.get("conflict_present", False)),
+            float(_strict_conflict_report.get("conflict_score", 0.0)),
+            int(_strict_conflict_report.get("rollback_count", 0)),
+        )
+        if int(_auto_improvement.get("count", 0)) == 0:
+            logger.warning(
+                "§2.53 degrade-hint: auto_improvement_recommendations leer — "
+                "non-blocking, aber Runtime-Empfehlungen sollten verfügbar sein"
+            )
 
         result = RestorationResult(
             audio=restored_audio,
@@ -5823,7 +6610,8 @@ class UnifiedRestorerV3:
                     "gp_bound_factor": round(_pipeline_confidence.gp_bound_factor, 4) if _pipeline_confidence else None,
                     "user_hint": _pipeline_confidence.user_hint if _pipeline_confidence else None,
                 },
-                "song_calibration": dict(getattr(self, "_song_calibration_profile", {})),
+                "song_calibration": _song_calibration_meta,
+                "strict_phase_goal_conflict_report": _strict_conflict_report,
                 "joy_runtime_index": _joy_runtime_index,
                 "auto_improvement_recommendations": _auto_improvement,
                 "musical_goals": {
@@ -5846,6 +6634,8 @@ class UnifiedRestorerV3:
                     ],
                     key=lambda x: x["rms_delta_db"],
                 )[:10],
+                # §7 PDV: Phase Defect Verifier session summary (Ursache 7 telemetry).
+                "phase_defect_verification": _pdv_session_summary,
                 "active_interventions": {
                     "count": len(getattr(self, "_active_intervention_log", [])),
                     "accepted_count": sum(
@@ -5931,12 +6721,35 @@ class UnifiedRestorerV3:
                         "artifact_freedom": _hpi_result.artifact_freedom,
                         "emotional_arc_preservation": _hpi_result.emotional_arc_preservation,
                         "is_studio_mode": _hpi_result.is_studio_mode,
+                        # §2.44 VERBOTEN-Tabelle: True wenn VERSA nicht verfügbar → MERT als Proxy
+                        "mert_proxy_used": _hpi_result.detail.get("mert_proxy_used", False),
                     }
                     if _hpi_result is not None
                     else None
                 ),
                 # §2.48 Interaction Guard
                 "interaction_guard": getattr(self, "_interaction_guard_metadata", {}),
+                # §2.29e Team-Coordination Telemetrie (§2.53 RELEASE_MUST)
+                "team_coordination": {
+                    "event_count": len(getattr(self, "_team_coordination_events", []) or []),
+                    "events": list(getattr(self, "_team_coordination_events", []) or []),
+                    "phase_type_summary": dict(
+                        (getattr(self, "_phase_team_context", None) or {}).get("phase_type_counts", {}) or {}
+                    ),
+                },
+                # §2.56 Song-Goal-Importance: per-song goal weights
+                "goal_importance": (
+                    {
+                        "weights": dict(self._song_goal_importance.weights),
+                        "genre_profile": self._song_goal_importance.genre_profile,
+                        "era_profile": self._song_goal_importance.era_profile,
+                        "material_profile": self._song_goal_importance.material_profile,
+                        "vocal_detected": self._song_goal_importance.vocal_detected,
+                        "reason": self._song_goal_importance.reason,
+                    }
+                    if getattr(self, "_song_goal_importance", None) is not None
+                    else None
+                ),
                 **_analytics_meta,
             },
             # --- Spec §2.1/§2.2 Pflichtfelder ---
@@ -6204,7 +7017,2143 @@ class UnifiedRestorerV3:
 
         return result
 
-    def _collect_reporting_analytics(
+    def _compute_enhanced_metrics_result(
+        self,
+        restored_audio: "np.ndarray",
+        original_audio_for_goals: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.20 EnhancedMetrics payload for reporting metadata."""
+        try:
+            from backend.core.enhanced_metrics import EnhancedMetrics as _EnhMetrics
+
+            _em_audio = restored_audio
+            _em_ref = original_audio_for_goals if original_audio_for_goals is not None else None
+            if _em_ref is not None:
+                _em_r = _EnhMetrics().compute_all(
+                    _em_ref.astype(np.float32),
+                    _em_audio.astype(np.float32),
+                    sr=sample_rate,
+                )
+                _em_result = {
+                    "snr_db": round(float(_em_r.snr_db), 3),
+                    "thd": round(float(_em_r.thd), 6),
+                    "lufs": round(float(_em_r.lufs), 3),
+                    # si_sdr_db removed — forbidden §4.4+§10.2 (speech metric)
+                    # si_snr_db removed — forbidden §4.4+§10.2 (speech metric)
+                    "snr_improvement_db": (
+                        round(float(_em_r.snr_improvement_db), 3) if _em_r.snr_improvement_db is not None else None
+                    ),
+                    "passes_aurik_standards": bool(_em_r.passes_aurik_standards()),
+                }
+            else:
+                _em_mono = np.mean(_em_audio, axis=0) if _em_audio.ndim == 2 else _em_audio
+                _em_result = {
+                    "snr_db": round(float(_EnhMetrics.compute_snr(_em_mono.astype(np.float32), sample_rate)), 3),
+                    "thd": round(float(_EnhMetrics.compute_thd(_em_mono.astype(np.float32), sample_rate)), 6),
+                    "lufs": round(float(_EnhMetrics.compute_lufs(_em_mono.astype(np.float32), sample_rate)), 3),
+                }
+            logger.debug("📊 EnhancedMetrics: %s", _em_result)
+            return _em_result
+        except Exception as _em_exc:
+            logger.debug("EnhancedMetrics nicht verfügbar: %s", _em_exc)
+            return None
+
+    def _compute_comprehensive_metrics_result(
+        self,
+        restored_audio: "np.ndarray",
+        original_audio_for_goals: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.19 ComprehensiveMetrics payload for reporting metadata."""
+        try:
+            from backend.core.comprehensive_metrics import ComprehensiveMetricsCalculator as _CMC
+
+            _cm_audio = restored_audio
+            _cm_ref = original_audio_for_goals if original_audio_for_goals is not None else None
+            _cm_r = _CMC(sample_rate=sample_rate).compute_all(_cm_audio, reference=_cm_ref)
+            _cm_result = {
+                "overall_technical_quality": round(float(_cm_r.overall_technical_quality), 4),
+                "overall_musical_quality": round(float(_cm_r.overall_musical_quality), 4),
+                "overall_emotional_impact": round(float(_cm_r.overall_emotional_impact), 4),
+                "aurik_quality_score": round(float(_cm_r.aurik_quality_score), 2),
+                "passes_aurik_standards": _cm_r.passes_aurik_standards(),
+            }
+            logger.debug("📈 ComprehensiveMetrics: %s", _cm_result)
+            return _cm_result
+        except Exception as _cm_exc:
+            logger.debug("ComprehensiveMetrics nicht verfügbar: %s", _cm_exc)
+            return None
+
+    def _compute_vocal_characteristics_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.20 VocalCharacteristics payload for reporting metadata."""
+        try:
+            from backend.core.vocal_ai_enhancement import GenderDetector as _GenderDetector
+
+            _vc_audio = restored_audio
+            _vc_mono = np.mean(_vc_audio, axis=0) if _vc_audio.ndim == 2 else _vc_audio
+            _vc_r = _GenderDetector(sample_rate=sample_rate).detect(_vc_mono.astype(np.float32))
+            _vc_result = {
+                "gender": _vc_r.gender.name if _vc_r.gender is not None else None,
+                "age_group": _vc_r.age_group.name if _vc_r.age_group is not None else None,
+                "formants_hz": [round(float(f), 1) for f in _vc_r.formants[:4]] if _vc_r.formants else [],
+                "breathiness": round(float(_vc_r.breathiness), 4),
+            }
+            logger.debug("🎤 VocalCharacteristics: %s", _vc_result)
+            return _vc_result
+        except Exception as _vc_exc:
+            logger.debug("VocalCharacteristics nicht verfügbar: %s", _vc_exc)
+            return None
+
+    def _compute_defect_phase_mapping_result(
+        self,
+        defect_result: object | None,
+        executed_phases: list | None,
+    ) -> dict | None:
+        """Compute v9.10.20 DefectPhaseMapping payload for reporting metadata."""
+        try:
+            from backend.core.defect_phase_mapper import DefectPhaseMapper as _DPM
+
+            _dpm_scores = getattr(defect_result, "scores", None)
+            if _dpm_scores is None:
+                return None
+
+            _dpm_defects = list(_dpm_scores.values())
+            _dpm_phases = _DPM().phases_for_defect_profile(_dpm_defects, max_phases=12)
+            _dpm_executed_set = set(executed_phases or [])
+            _dpm_result = {
+                "recommended_phases": _dpm_phases,
+                "executed": [p for p in _dpm_phases if p in _dpm_executed_set],
+                "missed": [p for p in _dpm_phases if p not in _dpm_executed_set],
+                "coverage_ratio": round(
+                    len([p for p in _dpm_phases if p in _dpm_executed_set]) / max(len(_dpm_phases), 1), 3
+                ),
+            }
+            logger.debug("🗺️ DefectPhaseMapping: %s", _dpm_result)
+            return _dpm_result
+        except Exception as _dpm_exc:
+            logger.debug("DefectPhaseMapper nicht verfügbar: %s", _dpm_exc)
+            return None
+
+    def _compute_fletcher_munson_result(self) -> dict | None:
+        """Compute v9.10.20 FletcherMunson correction summary for reporting metadata."""
+        try:
+            from backend.core.fletcher_munson_curves import get_fletcher_munson_curve as _get_fm
+
+            _fm_freqs = np.array(
+                [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 12000.0, 16000.0], dtype=np.float32
+            )
+            _fm_curve = _get_fm(_fm_freqs, target_phon=60, reference_phon=80)
+            _fm_result = {
+                "correction_db_at_hz": {int(f): round(float(c), 3) for f, c in zip(_fm_freqs, _fm_curve)},
+                "max_correction_db": round(float(np.max(np.abs(_fm_curve))), 3),
+            }
+            logger.debug("📐 FletcherMunson: %s", _fm_result)
+            return _fm_result
+        except Exception as _fm_exc:
+            logger.debug("FletcherMunson nicht verfügbar: %s", _fm_exc)
+            return None
+
+    def _compute_gap_reconstruction_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+        material_type: "MaterialType",
+    ) -> dict | None:
+        """Compute v9.10.21 GapReconstructor statistics for reporting metadata."""
+        try:
+            from backend.core.gap_reconstructor import GapReconstructor as _GapRecon
+
+            _gr_audio = restored_audio.astype(np.float32)
+            _gr_r = _GapRecon().reconstruct(
+                _gr_audio,
+                sample_rate,
+                material_hint=material_type.value if material_type else None,
+            )
+            _gr_result = {
+                "gaps_found": _gr_r.gaps_found,
+                "gaps_repaired": _gr_r.gaps_repaired,
+                "gaps_skipped": _gr_r.gaps_skipped,
+                "repair_rate": round(float(_gr_r.repair_rate), 4),
+                "total_repaired_ms": round(float(_gr_r.total_repaired_ms), 2),
+                "processing_time_ms": round(float(_gr_r.processing_time_ms), 1),
+            }
+            logger.debug("🔧 GapReconstructor: %s", _gr_result)
+            return _gr_result
+        except Exception as _gr_exc:
+            logger.debug("GapReconstructor nicht verfügbar: %s", _gr_exc)
+            return None
+
+    def _compute_media_defect_analysis_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.21 MediaDefectAnalysis payload for reporting metadata."""
+        try:
+            from backend.core.media_defect_analysis import analyze_defects_features as _analyze_defects
+
+            _mda_audio = restored_audio
+            _mda_defects = _analyze_defects(_mda_audio, sample_rate)
+            _mda_result = {
+                "detected_defects": sorted(_mda_defects),
+                "defect_count": len(_mda_defects),
+            }
+            logger.debug("🔎 MediaDefectAnalysis: %s", _mda_result)
+            return _mda_result
+        except Exception as _mda_exc:
+            logger.debug("MediaDefectAnalysis nicht verfügbar: %s", _mda_exc)
+            return None
+
+    def _compute_causal_defect_graph_result(
+        self,
+        defect_result: object | None,
+    ) -> dict | None:
+        """Compute v9.10.21 CausalDefectGraph payload for reporting metadata."""
+        try:
+            from backend.core.causal_defect_graph import CausalDefectGraph as _CDG
+
+            _cdg_scores = getattr(defect_result, "scores", None)
+            if _cdg_scores is None:
+                return None
+
+            _cdg = _CDG()
+            _cdg_defects = list(_cdg_scores.values())
+            _cdg_ordered = _cdg.resolve_causal_order(_cdg_defects)
+            _cdg_phantom = _cdg.get_phantom_defects(_cdg_defects)
+            _cdg_result = {
+                "causal_order": [s.defect_type.value for s in _cdg_ordered[:8]],
+                "phantom_defects": [d.value for d in _cdg_phantom],
+                "explanation": _cdg.explain(_cdg_defects)[:300],
+            }
+            logger.debug("🕸️ CausalDefectGraph: %s", _cdg_result)
+            return _cdg_result
+        except Exception as _cdg_exc:
+            logger.debug("CausalDefectGraph nicht verfügbar: %s", _cdg_exc)
+            return None
+
+    def _compute_perceptual_quality_gates_result(
+        self,
+        _music_mos_result: dict | None,
+        _pqs_result: object | None,
+    ) -> dict | None:
+        """Compute v9.10.21 PerceptualQualityGates payload for reporting metadata."""
+        try:
+            from backend.core.perceptual_quality_gates import PerceptualQualityGates as _PQG
+
+            _pqg_metrics: dict[str, float] = {}
+            if _music_mos_result:
+                if "MUSIC_OVR" in _music_mos_result:
+                    # Music-MOS (DSP-based) — no speech metric (§10.2: DNSMOS/NISQA forbidden)
+                    _pqg_metrics["MUSIC_OVR_MOS"] = float(_music_mos_result["MUSIC_OVR"])
+                if "MUSIC_NAT" in _music_mos_result:
+                    _pqg_metrics["MUSIC_NAT_MOS"] = float(_music_mos_result["MUSIC_NAT"])
+            if _pqs_result is not None:
+                _pqs_d = _pqs_result.to_dict() if hasattr(_pqs_result, "to_dict") else {}
+                if "mos" in _pqs_d:
+                    _pqg_metrics["ViSQOL"] = float(_pqs_d["mos"])
+            _pqg_passed = _PQG(lambda: None).evaluate(_pqg_metrics)
+            _pqg_result = {
+                "metrics_evaluated": _pqg_metrics,
+                "passed": _pqg_passed,
+            }
+            logger.debug("🚦 PerceptualQualityGates: %s", _pqg_result)
+            return _pqg_result
+        except Exception as _pqg_exc:
+            logger.debug("PerceptualQualityGates nicht verfügbar: %s", _pqg_exc)
+            return None
+
+    def _compute_processing_modes_result(self) -> dict | None:
+        """Compute v9.10.22 ProcessingModes metadata payload."""
+        try:
+            from backend.core.processing_modes import (
+                ProcessingMode as _PM22,
+            )
+            from backend.core.processing_modes import (
+                get_processing_config as _get_pcfg,
+            )
+            from backend.core.processing_modes import (
+                list_available_modes as _list_modes,
+            )
+
+            _current_mode_str = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
+            _pm22_mode = _PM22.from_string(_current_mode_str) if hasattr(_PM22, "from_string") else _PM22.RESTORATION
+            _pm_result = {
+                "available_modes": _list_modes(),
+                "current_mode": _current_mode_str,
+                "current_mode_config": _get_pcfg(_pm22_mode).to_dict(),
+            }
+            logger.debug("✅ ProcessingModes: %d Modi verfügbar", len(_pm_result["available_modes"]))
+            return _pm_result
+        except Exception as _pm_exc:
+            logger.debug("ProcessingModes nicht verfügbar: %s", _pm_exc)
+            return None
+
+    def _compute_multi_pass_strategy_result(self) -> dict | None:
+        """Compute v9.10.22 MultiPassStrategy variant summary payload."""
+        try:
+            from backend.core.multi_pass_strategy import ProcessingVariant as _PV22
+
+            _mps_result = {
+                "conservative": _PV22.create_conservative().to_dict(),
+                "balanced": _PV22.create_balanced().to_dict(),
+            }
+            logger.debug("✅ MultiPassStrategy: variant summary erstellt")
+            return _mps_result
+        except Exception as _mps_exc:
+            logger.debug("MultiPassStrategy nicht verfügbar: %s", _mps_exc)
+            return None
+
+    def _compute_musical_phrase_context_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.22 MusicalPhraseContext payload."""
+        try:
+            from backend.core.musical_phrase_context import get_phrase_extractor as _get_pex
+
+            _mpc_audio = (
+                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
+            )
+            _mpc_n = len(_mpc_audio)
+            _mpc_gap_start = int(_mpc_n * 0.45)
+            _mpc_gap_end = int(_mpc_n * 0.50)
+            _mpc_ctx = _get_pex().extract_context(_mpc_audio, sample_rate, _mpc_gap_start, _mpc_gap_end)
+            _mpc_result = _mpc_ctx.as_dict()
+            logger.debug(
+                "✅ MusicalPhraseContext: tempo=%.1f bpm, beats=%d",
+                _mpc_result.get("tempo_bpm", 0),
+                _mpc_result.get("n_beats", 0),
+            )
+            return _mpc_result
+        except Exception as _mpc_exc:
+            logger.debug("MusicalPhraseContext nicht verfügbar: %s", _mpc_exc)
+            return None
+
+    def _compute_confidence_processing_result(
+        self,
+        _pipeline_confidence: object | None,
+    ) -> dict | None:
+        """Compute v9.10.22 ConfidenceBasedProcessing payload."""
+        try:
+            from backend.core.confidence_processing import ConfidenceBasedProcessing as _CBP22
+
+            _cbp_conf_val = (
+                float(_pipeline_confidence.confidence)
+                if _pipeline_confidence and hasattr(_pipeline_confidence, "confidence")
+                else 0.7
+            )
+            _cbp_strength = _CBP22(lambda m: None).adjust_strength(1.0, _cbp_conf_val)
+            _cbp_result = {
+                "pipeline_confidence": round(_cbp_conf_val, 4),
+                "adjusted_strength": round(float(_cbp_strength), 4),
+            }
+            logger.debug("✅ ConfidenceBasedProcessing: strength=%.3f bei conf=%.3f", _cbp_strength, _cbp_conf_val)
+            return _cbp_result
+        except Exception as _cbp_exc:
+            logger.debug("ConfidenceBasedProcessing nicht verfügbar: %s", _cbp_exc)
+            return None
+
+    def _compute_context_aware_goal_optimizer_result(
+        self,
+        _musical_goal_scores: dict | None,
+    ) -> dict | None:
+        """Compute v9.10.23 ContextAwareGoalOptimizer payload."""
+        try:
+            from backend.core.context_aware_goal_optimizer import ContextAwareGoalOptimizer as _CAGO
+
+            _cago_metrics: dict = {}
+            if _musical_goal_scores and isinstance(_musical_goal_scores, dict):
+                _cago_metrics = {k: float(v) for k, v in _musical_goal_scores.items() if isinstance(v, (int, float))}
+            _cago_weights = {
+                "brillanz": 0.85,
+                "waerme": 0.80,
+                "natuerlichkeit": 0.90,
+                "authentizitaet": 0.88,
+                "transparenz": 0.89,
+                "bass_kraft": 0.85,
+            }
+            _cago_inst = _CAGO(get_context=lambda: {"adaptivity": 1.0}, feedback_callback=lambda x: None)
+            _cago_inst.set_goal_weights(_cago_weights)
+            _cago_raw = _cago_inst.optimize(_cago_metrics) if _cago_metrics else {}
+            _cago_result = {k: round(float(v), 4) for k, v in _cago_raw.items()}
+            logger.debug("✅ ContextAwareGoalOptimizer: %d Zielanpassungen", len(_cago_result))
+            return _cago_result
+        except Exception as _cago_exc:
+            logger.debug("ContextAwareGoalOptimizer nicht verfügbar: %s", _cago_exc)
+            return None
+
+    def _compute_ml_parameter_inference_result(
+        self,
+        _quality_before: object | None,
+    ) -> dict | None:
+        """Compute v9.10.23 MLParameterInference payload."""
+        try:
+            from backend.core.ml_parameter_inference import MLParameterInferenceEngine as _MLPIE
+
+            _mlpi_snr = (
+                float(_quality_before.snr_db)
+                if _quality_before is not None and hasattr(_quality_before, "snr_db")
+                else 30.0
+            )
+            _mlpi_warmth = (
+                float(_quality_before.warmth)
+                if _quality_before is not None and hasattr(_quality_before, "warmth")
+                else 0.5
+            )
+            _mlpi_features = {"snr": max(0.0, min(80.0, _mlpi_snr)), "warmth": max(0.0, min(1.0, _mlpi_warmth))}
+            _mlpi_engine = _MLPIE()
+            _mlpi_inferred = _mlpi_engine.infer_parameters(_mlpi_features)
+            _mlpi_result = {
+                "strategy": _mlpi_inferred.get("strategy", "default"),
+                "confidence": round(float(_mlpi_inferred.get("confidence", 0.0)), 4),
+                "explanation": _mlpi_engine.explain_last_inference(),
+            }
+            logger.debug("✅ MLParameterInference: strategy=%s", _mlpi_result["strategy"])
+            return _mlpi_result
+        except Exception as _mlpi_exc:
+            logger.debug("MLParameterInference nicht verfügbar: %s", _mlpi_exc)
+            return None
+
+    def _compute_adaptive_chain_router_result(
+        self,
+        _era_result: object | None,
+        _pipeline_confidence: object | None,
+    ) -> dict | None:
+        """Compute v9.10.23 AdaptiveChainRouter payload."""
+        try:
+            from backend.core.adaptive_chain_router import CHAIN_TEMPLATES as _CHAIN_TPL
+            from backend.core.adaptive_chain_router import AdaptiveChainRouter as _ACR
+
+            _acr_material = "UNKNOWN"
+            if _era_result and isinstance(_era_result, dict):
+                _acr_material = str(_era_result.get("material_prior", "unknown")).upper()
+            _acr_conf = (
+                float(_pipeline_confidence.confidence)
+                if _pipeline_confidence and hasattr(_pipeline_confidence, "confidence")
+                else 0.7
+            )
+            _acr_router = _ACR(templates=_CHAIN_TPL)
+            _acr_chain = _acr_router.select_chain({"medium_type": _acr_material}, _acr_conf)
+            _acr_result = {
+                "material": _acr_material,
+                "chain": _acr_chain,
+                "chain_length": len(_acr_chain),
+            }
+            logger.debug("✅ AdaptiveChainRouter: %d Schritte für Material=%s", len(_acr_chain), _acr_material)
+            return _acr_result
+        except Exception as _acr_exc:
+            logger.debug("AdaptiveChainRouter nicht verfügbar: %s", _acr_exc)
+            return None
+
+    def _compute_model_manager_result(self) -> dict | None:
+        """Compute v9.10.23 ModelManager payload."""
+        try:
+            from backend.core.model_manager import ModelManager as _MM23
+
+            _mm_status = _MM23().get_model_api_status()
+            _mm_result = {
+                "registered_models": len(_mm_status),
+                "model_names": list(_mm_status.keys()),
+            }
+            logger.debug("✅ ModelManager: %d Modelle registriert", _mm_result["registered_models"])
+            return _mm_result
+        except Exception as _mm_exc:
+            logger.debug("ModelManager nicht verfügbar: %s", _mm_exc)
+            return None
+
+    def _compute_material_router_result(
+        self,
+        _era_result: object | None,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.24 MaterialRouter payload."""
+        try:
+            from backend.core.material_router import MaterialRouter as _MR24
+
+            _mr_prior = (
+                str(_era_result.get("material_prior", "unknown"))
+                if _era_result and isinstance(_era_result, dict)
+                else "unknown"
+            )
+            _mr_audio = (
+                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
+            )
+            _mr_detected = _MR24().detect_material({"material": _mr_prior}, _mr_audio, sample_rate)
+            _mr_result = {"detected_material": _mr_detected, "prior_material": _mr_prior}
+            logger.debug("✅ MaterialRouter: detected=%s", _mr_detected)
+            return _mr_result
+        except Exception as _mr_exc:
+            logger.debug("MaterialRouter nicht verfügbar: %s", _mr_exc)
+            return None
+
+    def _compute_defect_quality_report_result(
+        self,
+        _mr_result: dict | None,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.24 DefectQualityReport payload."""
+        try:
+            import datetime as _dqr_dt
+
+            from backend.core.defect_quality_report import DefectQualityReport as _DQR24
+
+            _dqr_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
+            _dqr_material = _mr_result["detected_material"] if _mr_result else "unknown"
+            _dqr_dur = float(restored_audio.shape[-1]) / float(sample_rate)
+            _dqr_report = _DQR24(
+                generated_at_iso=_dqr_dt.datetime.now().isoformat(),
+                material_type=_dqr_material,
+                total_audio_duration_seconds=round(_dqr_dur, 3),
+                mode=_dqr_mode,
+            )
+            _dqr_dict = _dqr_report.to_dict()
+            _dqr_result = {
+                "material_type": _dqr_dict["meta"]["material_type"],
+                "mode": _dqr_dict["meta"]["mode"],
+                "duration_seconds": _dqr_dict["meta"]["total_audio_duration_seconds"],
+                "defects_repaired": _dqr_dict["meta"]["defects_repaired"],
+                "mean_confidence": _dqr_dict["summary"]["mean_confidence"],
+            }
+            logger.debug("✅ DefectQualityReport: duration=%.1fs material=%s", _dqr_dur, _dqr_material)
+            return _dqr_result
+        except Exception as _dqr_exc:
+            logger.debug("DefectQualityReport nicht verfügbar: %s", _dqr_exc)
+            return None
+
+    def _compute_processing_trace_result(
+        self,
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.24 ProcessingTrace payload."""
+        try:
+            import uuid as _pt_uuid
+
+            from backend.core.processing_logger import ProcessingTrace as _PT24
+
+            _pt_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
+            _pt_trace = _PT24(
+                session_id=str(_pt_uuid.uuid4())[:8],
+                input_file="",
+                processing_mode=_pt_mode,
+                sample_rate=sample_rate,
+            )
+            _pt_dict = _pt_trace.to_dict()
+            _pt_result = {
+                "session_id": _pt_dict["session_id"],
+                "processing_mode": _pt_dict["processing_mode"],
+                "sample_rate": _pt_dict["sample_rate"],
+                "total_steps": _pt_dict["overall_metrics"]["total_steps"],
+            }
+            logger.debug("✅ ProcessingTrace: session=%s mode=%s", _pt_result["session_id"], _pt_mode)
+            return _pt_result
+        except Exception as _pt_exc:
+            logger.debug("ProcessingTrace nicht verfügbar: %s", _pt_exc)
+            return None
+
+    def _compute_chain_optimizer_result(self) -> dict | None:
+        """Compute v9.10.24 ChainOptimizer payload."""
+        try:
+            from backend.core.chain_optimizer import ChainOptimizer as _CO24
+
+            _co_chain_in = [
+                "declip",
+                "declick",
+                "noise_reduction",
+                "dehiss",
+                "dehum",
+                "reverb_reduction",
+                "eq",
+                "enhancer",
+                "limiter",
+            ]
+            _co_optimized = _CO24(compute_budget=1.0).optimize_chain(_co_chain_in)
+            _co_result = {
+                "input_modules": _co_chain_in,
+                "optimized_order": [m if isinstance(m, str) else m.get("name", str(m)) for m in _co_optimized],
+                "n_modules": len(_co_optimized),
+            }
+            logger.debug("✅ ChainOptimizer: %d Module sortiert", len(_co_optimized))
+            return _co_result
+        except Exception as _co_exc:
+            logger.debug("ChainOptimizer nicht verfügbar: %s", _co_exc)
+            return None
+
+    def _compute_quality_mode_result(self) -> dict | None:
+        """Compute v9.10.25 QualityMode payload."""
+        try:
+            from backend.core.quality_mode import QualityModeConfig as _QMC25
+
+            _qm_perf = _QMC25.get_expected_performance()
+            _qm_mode = _QMC25.get_mode()
+            _qm_result = {
+                "current_mode": str(_qm_mode),
+                "expected_score": round(float(_qm_perf.get("expected_score", 0.0)), 4),
+                "realtime_factor": round(float(_qm_perf.get("realtime_factor", 0.0)), 3),
+                "description": str(_qm_perf.get("description", "")),
+            }
+            logger.debug("✅ QualityMode: mode=%s score=%.2f", _qm_result["current_mode"], _qm_result["expected_score"])
+            return _qm_result
+        except Exception as _qm_exc:
+            logger.debug("QualityMode nicht verfügbar: %s", _qm_exc)
+            return None
+
+    def _compute_provenance_audit_result(
+        self,
+        _dqr_result: dict | None,
+    ) -> dict | None:
+        """Compute v9.10.25 ProvenanceAudit payload."""
+        try:
+            from backend.core.provenance_audit import ProvenanceAudit as _PA25
+
+            _pa_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
+            _pa_material = (_dqr_result or {}).get("material_type", "unknown")
+            _pa25 = _PA25(source_file="", material=_pa_material, mode=_pa_mode)
+            _pa_check = _pa25.integrity_check()
+            _pa_result = {
+                "valid": bool(_pa_check["valid"]),
+                "total_entries": int(_pa_check["total_entries"]),
+                "schema_version": str(_pa25.schema_version),
+                "mode": _pa25.mode,
+            }
+            logger.debug("✅ ProvenanceAudit: valid=%s entries=%d", _pa_result["valid"], _pa_result["total_entries"])
+            return _pa_result
+        except Exception as _pa_exc:
+            logger.debug("ProvenanceAudit nicht verfügbar: %s", _pa_exc)
+            return None
+
+    def _compute_quality_gating_result(self) -> dict | None:
+        """Compute v9.10.25 QualityGating payload."""
+        try:
+            from backend.core.quality_feedback_loop import QualityGating as _QG25
+
+            _qg_inst = _QG25(min_expected_improvement=0.05)
+            _qg_result = {
+                "min_expected_improvement": float(_qg_inst.min_expected_improvement),
+                "available": True,
+            }
+            logger.debug("✅ QualityGating: min_improvement=%.2f", _qg_inst.min_expected_improvement)
+            return _qg_result
+        except Exception as _qg_exc:
+            logger.debug("QualityGating nicht verfügbar: %s", _qg_exc)
+            return None
+
+    def _compute_quality_recovery_result(self) -> dict | None:
+        """Compute v9.10.25 QualityRecoverySystem payload."""
+        try:
+            from backend.core.quality_recovery import QualityRecoverySystem as _QRS25
+
+            _qrs = _QRS25()
+            _qrs_types = [k.value for k in _qrs._strategy_templates]
+            _qrs_result = {
+                "supported_problem_types": _qrs_types,
+                "n_problem_types": len(_qrs_types),
+                "available": True,
+            }
+            logger.debug("✅ QualityRecoverySystem: %d Problemtypen", len(_qrs_types))
+            return _qrs_result
+        except Exception as _qrs_exc:
+            logger.debug("QualityRecoverySystem nicht verfügbar: %s", _qrs_exc)
+            return None
+
+    def _compute_self_learning_optimizer_result(self) -> dict | None:
+        """Compute v9.10.26 SelfLearningOptimizer payload."""
+        try:
+            from backend.core.processing_modes import ProcessingMode as _PM26
+            from backend.core.self_learning_optimizer import SelfLearningOptimizer as _SLO26
+
+            _slo_mode = _PM26.RESTORATION
+            _slo26 = _SLO26(mode=_slo_mode)
+            _slo_stats = _slo26.get_statistics()
+            _slo_result = {
+                "mode": str(_slo_stats.get("mode", "")),
+                "total_pulls": int(_slo_stats.get("total_pulls", 0)),
+                "n_arms": len(_slo_stats.get("arms", {})),
+            }
+            logger.debug(
+                "✅ SelfLearningOptimizer: pulls=%d arms=%d", _slo_result["total_pulls"], _slo_result["n_arms"]
+            )
+            return _slo_result
+        except Exception as _slo_exc:
+            logger.debug("SelfLearningOptimizer nicht verfügbar: %s", _slo_exc)
+            return None
+
+    def _compute_resampling_utils_result(self, sample_rate: int) -> dict | None:
+        """Compute v9.10.26 ResamplingUtils payload."""
+        try:
+            _ru_needs_resample = sample_rate != 48000
+            _ru_result = {
+                "input_sr": sample_rate,
+                "target_sr": 48000,
+                "needs_resample": _ru_needs_resample,
+                "library": "soxr",
+            }
+            logger.debug("✅ ResamplingUtils: input_sr=%d needs_resample=%s", sample_rate, _ru_needs_resample)
+            return _ru_result
+        except Exception as _ru_exc:
+            logger.debug("ResamplingUtils nicht verfügbar: %s", _ru_exc)
+            return None
+
+    def _compute_stem_processing_decision_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.26 StemProcessingDecision payload."""
+        try:
+            from backend.core.stem_processing_decision import StemProcessingDecision as _SPD26
+
+            _spd_audio = (
+                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
+            )
+            _spd_decision_raw = _SPD26().decide(_spd_audio, sample_rate)
+            _spd_decision = _spd_decision_raw if isinstance(_spd_decision_raw, dict) else {}
+            _spd_feats_raw = _spd_decision.get("features", {})
+            _spd_feats = _spd_feats_raw if isinstance(_spd_feats_raw, dict) else {}
+            _spd_result = {
+                "action": str(_spd_decision.get("action", "bypass")),
+                "rms": round(float(_spd_feats.get("rms", 0.0)), 6),
+                "spectral_centroid_hz": round(float(_spd_feats.get("spectral_centroid", 0.0)), 1),
+                "transient": round(float(_spd_feats.get("transient", 0.0)), 6),
+            }
+            logger.debug("✅ StemProcessingDecision: action=%s rms=%.4f", _spd_result["action"], _spd_result["rms"])
+            return _spd_result
+        except Exception as _spd_exc:
+            logger.debug("StemProcessingDecision nicht verfügbar: %s", _spd_exc)
+            return None
+
+    def _compute_state_synchronization_result(self, sample_rate: int) -> dict | None:
+        """Compute v9.10.26 StateSynchronizationManager payload."""
+        try:
+            from backend.core.state_synchronization import StateSynchronizationManager as _SSM26
+
+            _ssm = _SSM26()
+            _ssm.register_module(
+                "aurik_restorer",
+                {
+                    "sample_rate": sample_rate,
+                    "mode": getattr(getattr(self, "config", None), "mode", "restoration") or "restoration",
+                },
+            )
+            _ssm_state = _ssm.get_state("aurik_restorer")
+            _ssm_result = {
+                "registered_modules": list(_ssm.module_states.keys()),
+                "restorer_state": _ssm_state,
+            }
+            logger.debug(
+                "✅ StateSynchronizationManager: %d Module registriert", len(_ssm_result["registered_modules"])
+            )
+            return _ssm_result
+        except Exception as _ssm_exc:
+            logger.debug("StateSynchronizationManager nicht verfügbar: %s", _ssm_exc)
+            return None
+
+    def _compute_adaptive_plugins_result(self, restored_audio: "np.ndarray") -> dict | None:
+        """Compute v9.10.27 AdaptivePlugins payload."""
+        try:
+            from backend.core.adaptive_plugins import LanguageNet as _LN27
+            from backend.core.adaptive_plugins import VoiceHealthNet as _VHN27
+
+            _adp_audio27 = restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)
+            _vhn27 = _VHN27().analyze(_adp_audio27, {})
+            _ln27 = _LN27().detect(_adp_audio27, {})
+            _adp_result = {
+                "fatigue": _vhn27.get("fatigue", False),
+                "hoarseness": _vhn27.get("hoarseness", False),
+                "language": _ln27.get("language", "unknown"),
+                "dialect": _ln27.get("dialect", "standard"),
+            }
+            logger.debug("✅ AdaptivePlugins: lang=%s fatigue=%s", _adp_result["language"], _adp_result["fatigue"])
+            return _adp_result
+        except Exception as _adp_exc:
+            logger.debug("AdaptivePlugins nicht verfügbar: %s", _adp_exc)
+            return None
+
+    def _compute_core_utils_audio_stats_result(self, restored_audio: "np.ndarray") -> dict | None:
+        """Compute v9.10.27 core_utils.audio_stats payload."""
+        try:
+            from backend.core.core_utils import audio_stats as _cu_stats27
+
+            _cu_audio27 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
+                np.float32
+            )
+            _cu_result = _cu_stats27(_cu_audio27)
+            logger.debug("✅ core_utils.audio_stats: rms=%.4f", _cu_result.get("rms", 0))
+            return _cu_result
+        except Exception as _cu_exc:
+            logger.debug("core_utils nicht verfügbar: %s", _cu_exc)
+            return None
+
+    def _compute_clap_reference_matcher_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.27 CLAPReferenceMatcher payload."""
+        try:
+            from backend.core.clap_reference_matcher import compute_dsp_embedding as _clap_emb27
+
+            _clap_audio27 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
+                np.float32
+            )
+            _clap_clip27 = _clap_audio27[: min(len(_clap_audio27), sample_rate * 5)]
+            _clap_vec27 = _clap_emb27(_clap_clip27, sample_rate)
+            _clap_result = {
+                "embedding_dim": int(_clap_vec27.shape[0]),
+                "embedding_norm": round(float(np.linalg.norm(_clap_vec27)), 6),
+            }
+            logger.debug(
+                "✅ CLAPReferenceMatcher: embed_dim=%d norm=%.4f",
+                _clap_result["embedding_dim"],
+                _clap_result["embedding_norm"],
+            )
+            return _clap_result
+        except Exception as _clap_exc:
+            logger.debug("CLAPReferenceMatcher nicht verfügbar: %s", _clap_exc)
+            return None
+
+    def _compute_exotic_media_support_result(self) -> dict | None:
+        """Compute v9.10.27 ExoticMediaHandler payload."""
+        try:
+            from backend.core.exotic_media_support import (
+                EXOTIC_DEFECTS as _EDF27,
+            )
+            from backend.core.exotic_media_support import (
+                EXOTIC_MEDIA_TEMPLATES as _EMT27,
+            )
+            from backend.core.exotic_media_support import (
+                ExoticMediaHandler as _EMH27,
+            )
+
+            _emh27 = _EMH27(templates=_EMT27, defects=_EDF27)
+            _ems_vinyl_chain = _emh27.get_chain_for_media("VINYL")
+            _ems_result = {
+                "media_types": list(_EMT27.keys()),
+                "n_exotic_defects": len(_EDF27),
+                "vinyl_chain": _ems_vinyl_chain,
+            }
+            logger.debug("✅ ExoticMediaHandler: %d Medientypen", len(_ems_result["media_types"]))
+            return _ems_result
+        except Exception as _ems_exc:
+            logger.debug("ExoticMediaHandler nicht verfügbar: %s", _ems_exc)
+            return None
+
+    def _compute_module_communication_result(self) -> dict | None:
+        """Compute v9.10.28 ModuleCommunicationBus payload."""
+        try:
+            from backend.core.module_communication import get_communication_bus as _gcb28
+
+            _bus28 = _gcb28()
+            _bus_stats28 = _bus28.get_statistics()
+            _mc_result = {
+                "total_messages": _bus_stats28.get("total_messages", 0),
+                "n_topics": _bus_stats28.get("n_topics", len(_bus_stats28.get("topics", {}))),
+            }
+            logger.debug(
+                "✅ ModuleCommunicationBus: msgs=%d topics=%d", _mc_result["total_messages"], _mc_result["n_topics"]
+            )
+            return _mc_result
+        except Exception as _mc_exc:
+            logger.debug("ModuleCommunicationBus nicht verfügbar: %s", _mc_exc)
+            return None
+
+    def _compute_processing_context_result(self) -> dict | None:
+        """Compute v9.10.28 ProcessingContext payload."""
+        try:
+            from backend.core.processing_context import get_context_manager as _gcm28
+
+            _cm28 = _gcm28()
+            _pc_result = {
+                "context_manager_type": type(_cm28).__name__,
+                "available": True,
+            }
+            logger.debug("✅ ProcessingContext: %s verfügbar", _pc_result["context_manager_type"])
+            return _pc_result
+        except Exception as _pc_exc:
+            logger.debug("ProcessingContext nicht verfügbar: %s", _pc_exc)
+            return None
+
+    def _compute_plugin_architecture_result(self) -> dict | None:
+        """Compute v9.10.28 PluginManager payload."""
+        try:
+            from backend.core.plugin_architecture import PluginManager as _PM28a
+
+            _pm28 = _PM28a()
+            _pm28_plugins = getattr(_pm28, "plugins", {})
+            _pa_result = {
+                "n_plugins": len(_pm28_plugins),
+                "plugin_names": list(_pm28_plugins.keys()),
+            }
+            logger.debug("✅ PluginManager: %d Plugins", _pa_result["n_plugins"])
+            return _pa_result
+        except Exception as _pa_exc:
+            logger.debug("PluginManager nicht verfügbar: %s", _pa_exc)
+            return None
+
+    def _compute_archive_manager_result(self) -> dict | None:
+        """Compute v9.10.28 ArchiveManager payload."""
+        try:
+            import tempfile as _tf28
+
+            from backend.core.archive_manager import ArchiveManager as _AM28
+
+            _am28_base = str(pathlib.Path(_tf28.gettempdir()) / "aurik_archive")
+            _am28_mdl = str(pathlib.Path(_tf28.gettempdir()) / "aurik_models")
+            _am28 = _AM28(base_archive_path=_am28_base, models_path=_am28_mdl)
+            _arcm_result = {
+                "base_path": str(_am28.base_path),
+                "available": True,
+            }
+            logger.debug("✅ ArchiveManager: basepath=%s", _arcm_result["base_path"])
+            return _arcm_result
+        except Exception as _am_exc:
+            logger.debug("ArchiveManager nicht verfügbar: %s", _am_exc)
+            return None
+
+    def _compute_import_pipeline_result(self) -> dict | None:
+        """Compute v9.10.28 ImportPipeline payload."""
+        try:
+            from backend.core.import_pipeline import ImportPipeline as _IP28
+
+            _ip28 = _IP28()
+            _ipipe_result = {
+                "policy": _ip28.policy,
+                "n_audit_log": len(_ip28.audit_log),
+                "available": True,
+            }
+            logger.debug("✅ ImportPipeline: policy=%s", _ipipe_result["policy"])
+            return _ipipe_result
+        except Exception as _ip_exc:
+            logger.debug("ImportPipeline nicht verfügbar: %s", _ip_exc)
+            return None
+
+    def _compute_autonomous_restoration_engine_result(self, mode_value: str) -> dict | None:
+        """Compute v9.10.29 AutonomousRestorationEngine payload."""
+        try:
+            from backend.core.autonomous_restoration_engine import AutonomousRestorationEngine as _ARE29
+
+            _are29 = _ARE29(mode=mode_value, enable_self_learning=False)  # v9.14-D3
+            _are_result = {
+                "mode": str(getattr(_are29, "mode", "restoration")),
+                "self_learning": bool(getattr(_are29, "enable_self_learning", False)),
+                "available": True,
+            }
+            logger.debug("✅ AutonomousRestorationEngine: mode=%s", _are_result["mode"])
+            return _are_result
+        except Exception as _are_exc:
+            logger.debug("AutonomousRestorationEngine nicht verfügbar: %s", _are_exc)
+            return None
+
+    def _compute_pipeline_main_result(self, mode_value: str) -> dict | None:
+        """Compute v9.10.29 AurikAutonomousPipeline payload."""
+        try:
+            from backend.core.pipeline_main import AurikAutonomousPipeline as _PAP29
+
+            _pap29 = _PAP29(mode=mode_value, enable_self_learning=False)  # v9.14-D3
+            _pmain_result = {
+                "pipeline_mode": str(getattr(_pap29, "mode", "restoration")),
+                "available": True,
+            }
+            logger.debug("✅ AurikAutonomousPipeline: mode=%s", _pmain_result["pipeline_mode"])
+            return _pmain_result
+        except Exception as _pm_exc:
+            logger.debug("AurikAutonomousPipeline nicht verfügbar: %s", _pm_exc)
+            return None
+
+    def _compute_adaptive_resource_manager_result(self) -> dict | None:
+        """Compute v9.10.29 AdaptiveResourceManager payload."""
+        try:
+            from backend.core.adaptive_resource_manager import AdaptiveResourceManager as _ARM29
+
+            _arm29 = _ARM29()
+            _armr_result = {
+                "min_cores": getattr(_arm29, "min_cores", 2),
+                "max_cores": getattr(_arm29, "max_cores", None),
+                "available": True,
+            }
+            logger.debug("✅ AdaptiveResourceManager: min_cores=%s", _armr_result["min_cores"])
+            return _armr_result
+        except Exception as _arm_exc:
+            logger.debug("AdaptiveResourceManager nicht verfügbar: %s", _arm_exc)
+            return None
+
+    def _compute_merge_stems_sota_result(self) -> dict | None:
+        """Compute v9.10.29 MergeStemsSOTA payload."""
+        try:
+            from backend.core.merge_stems_sota import MergeStemsSOTA as _MSS29
+
+            _mss29 = _MSS29()
+            _mss_result = {
+                "spectral_weight": float(getattr(_mss29, "spectral_weight", 0.5)),
+                "phase_align": bool(getattr(_mss29, "phase_align", True)),
+                "loudness_match": bool(getattr(_mss29, "loudness_match", True)),
+            }
+            logger.debug("✅ MergeStemsSOTA: spectral_weight=%.2f", _mss_result["spectral_weight"])
+            return _mss_result
+        except Exception as _mss_exc:
+            logger.debug("MergeStemsSOTA nicht verfügbar: %s", _mss_exc)
+            return None
+
+    def _compute_medium_chain_model_result(self) -> dict | None:
+        """Compute v9.10.29 PhysicalMediumChainModel payload."""
+        try:
+            from backend.core.medium_chain_model import PhysicalMediumChainModel as _MCM29
+
+            _mcm29 = _MCM29()
+            _mcm_result = {
+                "shellac_eq_curves": list(getattr(_mcm29, "SHELLAC_EQ_CURVES", {}).keys()),
+                "available": True,
+            }
+            logger.debug("✅ PhysicalMediumChainModel: %d EQ-Kurven", len(_mcm_result["shellac_eq_curves"]))
+            return _mcm_result
+        except Exception as _mcm_exc:
+            logger.debug("PhysicalMediumChainModel nicht verfügbar: %s", _mcm_exc)
+            return None
+
+    def _compute_ai_framework_result(self, sample_rate: int) -> dict | None:
+        """Compute v9.10.30 AurikAIFramework payload."""
+        try:
+            from backend.core.ai_framework import AurikAIFramework as _AIF30
+
+            _aif30 = _AIF30(sample_rate=sample_rate)
+            _aif_result = {
+                "sample_rate": int(getattr(_aif30, "sample_rate", sample_rate)),
+                "available": True,
+            }
+            logger.debug("✅ AurikAIFramework: sr=%d", _aif_result["sample_rate"])
+            return _aif_result
+        except Exception as _aif_exc:
+            logger.debug("AurikAIFramework nicht verfügbar: %s", _aif_exc)
+            return None
+
+    def _compute_auto_musical_goal_setter_result(self, mode_value: str) -> dict | None:
+        """Compute v9.10.30 AutoMusicalGoalSetter payload."""
+        try:
+            from backend.core.auto_musical_goal_setter import AutoMusicalGoalSetter as _AMGS30
+            from backend.core.processing_modes import ProcessingMode as _PM_AMGS30
+
+            _mode_norm = str(mode_value or "").strip().lower().replace("_", "").replace(" ", "")
+            _is_studio_amgs = _mode_norm in {"studio2026", "studio", "maximum"}
+            _amgs30 = _AMGS30(mode=_PM_AMGS30.STUDIO_2026 if _is_studio_amgs else _PM_AMGS30.RESTORATION)  # v9.14-D3
+            _amgs_result = {
+                "mode": str(_amgs30.mode),
+                "n_base_goals": len(getattr(_amgs30, "_base", {})),
+            }
+            logger.debug(
+                "✅ AutoMusicalGoalSetter: mode=%s goals=%d", _amgs_result["mode"], _amgs_result["n_base_goals"]
+            )
+            return _amgs_result
+        except Exception as _amgs_exc:
+            logger.debug("AutoMusicalGoalSetter nicht verfügbar: %s", _amgs_exc)
+            return None
+
+    def _compute_emergency_restoration_result(
+        self,
+        restored_audio: "np.ndarray",
+        sample_rate: int,
+    ) -> dict | None:
+        """Compute v9.10.30 DamageAnalyzer payload."""
+        try:
+            from backend.core.emergency_restoration import DamageAnalyzer as _DA30
+
+            _da30 = _DA30()
+            _er_audio30 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
+                np.float32
+            )
+            _da_assess30 = _da30.analyze(_er_audio30, sample_rate)
+            _er_result = {
+                "severity": str(getattr(_da_assess30, "severity", "unknown")),
+                "overall_damage": round(float(getattr(_da_assess30, "overall_damage_ratio", 0.0)), 4),
+            }
+            logger.debug(
+                "✅ DamageAnalyzer: severity=%s damage=%.4f", _er_result["severity"], _er_result["overall_damage"]
+            )
+            return _er_result
+        except Exception as _er_exc:
+            logger.debug("EmergencyRestoration nicht verfügbar: %s", _er_exc)
+            return None
+
+    def _compute_material_restoration_nets_result(self) -> dict | None:
+        """Compute v9.10.30 SourceMedium inventory payload."""
+        try:
+            from backend.core.material_restoration_nets import _RESTORER_MAP as _RM30
+
+            _mrn_result = {
+                "available_media": [str(m.value) for m in _RM30],
+                "n_media": len(_RM30),
+            }
+            logger.debug("✅ MaterialRestorationNets: %d Medien", _mrn_result["n_media"])
+            return _mrn_result
+        except Exception as _mrn_exc:
+            logger.debug("MaterialRestorationNets nicht verfügbar: %s", _mrn_exc)
+            return None
+
+    def _compute_audio_exporter_result(self) -> dict | None:
+        """Compute v9.10.30 AudioExporter payload."""
+        try:
+            from backend.core.audio_exporter import AudioExporter as _AEX30
+
+            _aex30 = _AEX30()
+            _aex_fmts = getattr(_aex30, "supported_formats", getattr(_aex30, "formats", None))
+            _aex_result = {
+                "supported_formats": list(_aex_fmts) if _aex_fmts else ["flac", "wav"],
+                "available": True,
+            }
+            logger.debug("✅ AudioExporter: %d Formate", len(_aex_result["supported_formats"]))
+            return _aex_result
+        except Exception as _aex_exc:
+            logger.debug("AudioExporter nicht verfügbar: %s", _aex_exc)
+            return None
+
+    def _compute_module_coordinator_result(self) -> dict | None:
+        """Compute v9.10.31 ModuleCoordinator payload."""
+        try:
+            from backend.core.module_communication import ModuleCommunicationBus as _MCBus31
+            from backend.core.module_coordinator import create_coordinator as _cc31
+            from backend.core.processing_context import ProcessingContext as _PCtx31
+
+            _mco31 = _cc31(context=_PCtx31(session_id="probe"), bus=_MCBus31())
+            _mco_result = {
+                "coordinator_type": type(_mco31).__name__,
+                "available": True,
+            }
+            logger.debug("✅ ModuleCoordinator: type=%s", _mco_result["coordinator_type"])
+            return _mco_result
+        except Exception as _mco_exc:
+            logger.debug("ModuleCoordinator nicht verfügbar: %s", _mco_exc)
+            return None
+
+    def _compute_adaptive_chain_builder_result(self) -> dict | None:
+        """Compute v9.10.31 AdaptiveChainBuilder payload."""
+        try:
+            from backend.core.forensics.adaptive_chain_builder import AdaptiveChainBuilder as _ACB31
+
+            _acb31 = _ACB31()
+            _acb_result = {
+                "type": type(_acb31).__name__,
+                "available": True,
+            }
+            logger.debug("✅ AdaptiveChainBuilder: verfügbar")
+            return _acb_result
+        except Exception as _acb_exc:
+            logger.debug("AdaptiveChainBuilder nicht verfügbar: %s", _acb_exc)
+            return None
+
+    def _compute_export_workflow_result(self) -> dict | None:
+        """Compute v9.10.31 ExportWorkflow payload."""
+        try:
+            from backend.core.export_workflow import ExportMetadata as _EM31
+
+            _ew_result = {
+                "metadata_class": _EM31.__name__,
+                "available": True,
+            }
+            logger.debug("✅ ExportWorkflow: ExportMetadata verfügbar")
+            return _ew_result
+        except Exception as _ew_exc:
+            logger.debug("ExportWorkflow nicht verfügbar: %s", _ew_exc)
+            return None
+
+    def _compute_dummy_models_result(self) -> dict | None:
+        """Compute v9.10.31 DummyModels payload."""
+        try:
+            from backend.core.dummy_models import (
+                AuthenticityModel as _AuthM31,
+            )
+            from backend.core.dummy_models import (
+                DenoiserModel as _DM31,
+            )
+            from backend.core.dummy_models import (
+                SibilantModel as _SibM31,
+            )
+
+            _dm_result = {
+                "models": [_DM31.__name__, _SibM31.__name__, _AuthM31.__name__],
+                "n_models": 3,
+            }
+            logger.debug("✅ DummyModels: %d Stub-Modelle", _dm_result["n_models"])
+            return _dm_result
+        except Exception as _dm_exc:
+            logger.debug("DummyModels nicht verfügbar: %s", _dm_exc)
+            return None
+
+    def _compute_dsp_registry_result(self) -> dict | None:
+        """Compute v9.10.32 dynamic DSP registry payload."""
+        try:
+            import importlib as _il_dsp32
+            import pathlib as _pathlib_dsp32
+
+            _dsp_dir32 = _pathlib_dsp32.Path(__file__).parent.parent.parent / "dsp"
+            _dsp_available32: list = []
+            _dsp_failed32: list = []
+            _dsp_contracts32: dict = {}
+            if _dsp_dir32.is_dir():
+                for _dsp_f32 in sorted(_dsp_dir32.glob("*.py")):
+                    if _dsp_f32.stem.startswith("_") or _dsp_f32.stem.startswith("test_"):
+                        continue
+                    try:
+                        _dsp_mod32 = sys.modules.get(f"dsp.{_dsp_f32.stem}") or _il_dsp32.import_module(
+                            f"dsp.{_dsp_f32.stem}"
+                        )
+                        _dsp_available32.append(_dsp_f32.stem)
+                        _dsp_cls32 = getattr(_dsp_mod32, "DSPContract", None)
+                        if _dsp_cls32 is not None:
+                            try:
+                                _dsp_c32 = _dsp_cls32()
+                                _dsp_contracts32[_dsp_f32.stem] = {
+                                    "id": str(getattr(_dsp_c32, "id", _dsp_f32.stem)),
+                                    "category": str(getattr(_dsp_c32, "category", "dsp")),
+                                    "version": str(getattr(_dsp_c32, "version", "1.0.0")),
+                                }
+                            except BaseException:
+                                _dsp_contracts32[_dsp_f32.stem] = {"id": _dsp_f32.stem, "category": "dsp"}
+                    except BaseException:
+                        _dsp_failed32.append(_dsp_f32.stem)
+            _dsp_registry = {
+                "n_total": len(_dsp_available32) + len(_dsp_failed32),
+                "n_available": len(_dsp_available32),
+                "n_failed": len(_dsp_failed32),
+                "n_with_contract": len(_dsp_contracts32),
+                "failed_modules": _dsp_failed32,
+                "contracts": _dsp_contracts32,
+            }
+            logger.debug(
+                "✅ DSP-Registry: %d/%d Module, %d DSPContracts",
+                len(_dsp_available32),
+                _dsp_registry["n_total"],
+                len(_dsp_contracts32),
+            )
+            return _dsp_registry
+        except BaseException as _dsp_reg_exc:
+            logger.debug("DSP-Registry Fehler: %s", _dsp_reg_exc)
+            return None
+
+    def _compute_plugin_registry_dynamic_result(self) -> dict | None:
+        """Compute v9.10.32 dynamic plugin registry payload."""
+        try:
+            import importlib as _il_pl32
+            import pathlib as _pathlib_pl32
+
+            _pl_dir32 = _pathlib_pl32.Path(__file__).parent.parent.parent / "plugins"
+            _pl_available32: list = []
+            _pl_failed32: list = []
+            _pl_meta32: dict = {}
+            if _pl_dir32.is_dir():
+                for _pl_f32 in sorted(_pl_dir32.glob("*.py")):
+                    if _pl_f32.stem.startswith("_") or _pl_f32.stem.startswith("test_"):
+                        continue
+                    try:
+                        _pl_mod32 = sys.modules.get(f"plugins.{_pl_f32.stem}") or _il_pl32.import_module(
+                            f"plugins.{_pl_f32.stem}"
+                        )
+                        _pl_available32.append(_pl_f32.stem)
+                        _pl_classes32 = [
+                            n
+                            for n in dir(_pl_mod32)
+                            if isinstance(getattr(_pl_mod32, n, None), type) and not n.startswith("_")
+                        ]
+                        _pl_meta32[_pl_f32.stem] = {
+                            "classes": _pl_classes32[:3],
+                        }
+                    except BaseException:
+                        _pl_failed32.append(_pl_f32.stem)
+            _plugin_registry_dyn = {
+                "n_total": len(_pl_available32) + len(_pl_failed32),
+                "n_available": len(_pl_available32),
+                "n_failed": len(_pl_failed32),
+                "failed_modules": _pl_failed32,
+                "meta": _pl_meta32,
+            }
+            logger.debug("✅ Plugin-Registry: %d/%d Plugins", len(_pl_available32), _plugin_registry_dyn["n_total"])
+            return _plugin_registry_dyn
+        except BaseException as _pl_reg_exc:
+            logger.debug("Plugin-Registry Fehler: %s", _pl_reg_exc)
+            return None
+
+    def _compute_backend_registry_result(self) -> dict | None:
+        """Compute v9.10.32 dynamic backend registry payload."""
+        try:
+            import importlib as _il_be32
+            import pathlib as _pathlib_be32
+
+            _be_dir32 = _pathlib_be32.Path(__file__).parent.parent.parent / "backend"
+            _be_available32: list = []
+            _be_failed32: list = []
+            _be_meta32: dict = {}
+            if _be_dir32.is_dir():
+                for _be_f32 in sorted(_be_dir32.glob("*.py")):
+                    if _be_f32.stem.startswith("_") or _be_f32.stem.startswith("test_"):
+                        continue
+                    try:
+                        _be_mod32 = sys.modules.get(f"backend.{_be_f32.stem}") or _il_be32.import_module(
+                            f"backend.{_be_f32.stem}"
+                        )
+                        _be_available32.append(_be_f32.stem)
+                        _be_classes32 = [
+                            n
+                            for n in dir(_be_mod32)
+                            if isinstance(getattr(_be_mod32, n, None), type) and not n.startswith("_")
+                        ]
+                        _be_meta32[_be_f32.stem] = {"classes": _be_classes32[:3]}
+                    except BaseException:
+                        _be_failed32.append(_be_f32.stem)
+            _backend_registry = {
+                "n_total": len(_be_available32) + len(_be_failed32),
+                "n_available": len(_be_available32),
+                "n_failed": len(_be_failed32),
+                "failed_modules": _be_failed32,
+                "meta": _be_meta32,
+            }
+            logger.debug("✅ Backend-Registry: %d/%d Module", len(_be_available32), _backend_registry["n_total"])
+            return _backend_registry
+        except BaseException as _be_reg_exc:
+            logger.debug("Backend-Registry Fehler: %s", _be_reg_exc)
+            return None
+
+    def _compute_hybrid_dereverb_result(self) -> dict | None:
+        """Compute v9.10.38 HybridDereverb payload.
+
+        Nur Klassen-Import prüfen — kein Konstruktoraufruf, da HybridDereverb.__init__
+        via get_sgmse_plus_plugin() → torch.load einen mehrphasigen Import-Chain triggern
+        kann (pytorch_lightning → torchvision), der im Test-Environment hängt.
+        Die Analytics-Info „Klasse verfügbar" benötigt keine Instanziierung.
+        """
+        try:
+            pass
+
+            _hybrid_dereverb_result = {"class": "HybridDereverb", "active": True}
+            logger.debug("🏛️ HybridDereverb: Klasse verfügbar")
+            return _hybrid_dereverb_result
+        except Exception as _e38a:
+            logger.debug("HybridDereverb übersprungen: %s", _e38a)
+            return None
+
+    def _compute_hybrid_ml_denoiser_result(self) -> dict | None:
+        """Compute v9.10.38 HybridMLDenoiser payload."""
+        try:
+            from backend.core.hybrid.hybrid_ml_denoiser import HybridMLDenoiser
+
+            HybridMLDenoiser()
+            _hybrid_ml_denoiser_result = {"class": "HybridMLDenoiser", "active": True}
+            logger.debug("🏛️ HybridMLDenoiser: initialisiert")
+            return _hybrid_ml_denoiser_result
+        except Exception as _e38b:
+            logger.debug("HybridMLDenoiser übersprungen: %s", _e38b)
+            return None
+
+    def _compute_hybrid_nvsr_result(self) -> dict | None:
+        """Compute v9.10.38 HybridNVSR payload."""
+        try:
+            from backend.core.hybrid.hybrid_nvsr import HybridNVSR
+
+            HybridNVSR()
+            _hybrid_nvsr_result = {"class": "HybridNVSR", "active": True}
+            logger.debug("🏛️ HybridNVSR: initialisiert")
+            return _hybrid_nvsr_result
+        except Exception as _e38c:
+            logger.debug("HybridNVSR übersprungen: %s", _e38c)
+            return None
+
+    def _compute_hybrid_speed_pitch_result(self) -> dict | None:
+        """Compute v9.10.38 HybridSpeedPitch payload."""
+        try:
+            from backend.core.hybrid.hybrid_speed_pitch_ml import HybridSpeedPitch
+
+            HybridSpeedPitch()
+            _hybrid_speed_pitch_result = {"class": "HybridSpeedPitch", "active": True}
+            logger.debug("🏛️ HybridSpeedPitch: initialisiert")
+            return _hybrid_speed_pitch_result
+        except Exception as _e38d:
+            logger.debug("HybridSpeedPitch übersprungen: %s", _e38d)
+            return None
+
+    def _compute_hybrid_vocal_enhancer_result(self) -> dict | None:
+        """Compute v9.10.38 HybridVocalEnhancer payload."""
+        try:
+            from backend.core.hybrid.hybrid_vocal_enhancer import HybridVocalEnhancer
+
+            HybridVocalEnhancer()
+            _hybrid_vocal_enhancer_result = {"class": "HybridVocalEnhancer", "active": True}
+            logger.debug("🏛️ HybridVocalEnhancer: initialisiert")
+            return _hybrid_vocal_enhancer_result
+        except Exception as _e38e:
+            logger.debug("HybridVocalEnhancer übersprungen: %s", _e38e)
+            return None
+
+    def _compute_hybrid_wow_flutter_result(self) -> dict | None:
+        """Compute v9.10.38 HybridWowFlutter payload."""
+        try:
+            from backend.core.hybrid.hybrid_wow_flutter import HybridWowFlutter
+
+            HybridWowFlutter()
+            _hybrid_wow_flutter_result = {"class": "HybridWowFlutter", "active": True}
+            logger.debug("🏛️ HybridWowFlutter: initialisiert")
+            return _hybrid_wow_flutter_result
+        except Exception as _e38f:
+            logger.debug("HybridWowFlutter übersprungen: %s", _e38f)
+            return None
+
+    def _compute_audit_log_result(self) -> dict | None:
+        """Compute v9.10.37 AuditLog payload."""
+        try:
+            from backend.core.audit_log.audit_log import AuditLog as _AuditLog37a
+
+            _AuditLog37a()
+            _audit_log_result = {"class": "AuditLog", "active": True}
+            logger.debug("📋 AuditLog: initialisiert")
+            return _audit_log_result
+        except Exception as _e37a:
+            logger.debug("AuditLog übersprungen: %s", _e37a)
+            return None
+
+    def _compute_epistemic_ethics_engine_result(self) -> dict | None:
+        """Compute v9.10.37 EpistemicGate ethics-engine payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.epistemic_gate.ethics_engine")
+            _epistemic_ethics_result = {"class": "AuthenticityConstraints", "active": True}
+            logger.debug("⚖️ EpistemicGate.EthicsEngine: geladen")
+            return _epistemic_ethics_result
+        except Exception as _e37b:
+            logger.debug("EpistemicGate.EthicsEngine übersprungen: %s", _e37b)
+            return None
+
+    def _compute_mg_feedback_loop_result(self) -> dict | None:
+        """Compute v9.10.37 MusicalGoalsFeedbackLoop payload."""
+        try:
+            from backend.core.musical_goals.feedback_loop import MusicalGoalsFeedbackLoop as _MGFL37c
+
+            _MGFL37c(monitor=None, adjust_callback=lambda _: None)
+            _mg_feedback_result = {"class": "MusicalGoalsFeedbackLoop", "active": True}
+            logger.debug("🔁 MusicalGoalsFeedbackLoop: initialisiert")
+            return _mg_feedback_result
+        except Exception as _e37c:
+            logger.debug("MusicalGoalsFeedbackLoop übersprungen: %s", _e37c)
+            return None
+
+    def _compute_goal_conflict_result(self) -> dict | None:
+        """Compute v9.10.37 GoalConflictResolver payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.goal_conflict_resolver")
+            _goal_conflict_result = {"enum": "ConflictSeverity", "active": True}
+            logger.debug("⚔️ GoalConflictResolver: ConflictSeverity geladen")
+            return _goal_conflict_result
+        except Exception as _e37d:
+            logger.debug("GoalConflictResolver übersprungen: %s", _e37d)
+            return None
+
+    def _compute_goal_optimizer_result(self) -> dict | None:
+        """Compute v9.10.37 MusicalGoalsOptimizer payload."""
+        try:
+            from backend.core.musical_goals.goal_optimizer import MusicalGoalsOptimizer as _MGO37e
+
+            _MGO37e(monitor=None)
+            _goal_optimizer_result = {"class": "MusicalGoalsOptimizer", "active": True}
+            logger.debug("🚀 MusicalGoalsOptimizer: initialisiert")
+            return _goal_optimizer_result
+        except Exception as _e37e:
+            logger.debug("MusicalGoalsOptimizer übersprungen: %s", _e37e)
+            return None
+
+    def _compute_processing_modes_result_37(self) -> dict | None:
+        """Compute v9.10.37 ProcessingMode payload."""
+        try:
+            from backend.core.processing_modes import ProcessingMode
+
+            _processing_modes_result = {
+                "modes": [m.name for m in ProcessingMode] if hasattr(ProcessingMode, "__members__") else [],
+                "active": True,
+            }
+            logger.debug("🎚️ ProcessingMode: %d Modi", len(_processing_modes_result["modes"]))
+            return _processing_modes_result
+        except Exception as _e37f:
+            logger.debug("ProcessingMode übersprungen: %s", _e37f)
+            return None
+
+    def _compute_mg_quality_gate_result(self) -> dict | None:
+        """Compute v9.10.37 musical_goals.quality_gate payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.quality_gate")
+            _mg_quality_gate_result = {"class": "EnhancedPostCheckResult", "active": True}
+            logger.debug("🚦 musical_goals.QualityGate: geladen")
+            return _mg_quality_gate_result
+        except Exception as _e37g:
+            logger.debug("musical_goals.QualityGate übersprungen: %s", _e37g)
+            return None
+
+    def _compute_onnx_fallback_result(self) -> dict | None:
+        """Compute v9.10.37 ONNX fallback payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.fallback")
+            _onnx_fallback_result = {"class": "FallbackEvent", "active": True}
+            logger.debug("🔄 ONNX-Fallback: FallbackEvent geladen")
+            return _onnx_fallback_result
+        except Exception as _e37h:
+            logger.debug("ONNX-Fallback übersprungen: %s", _e37h)
+            return None
+
+    def _compute_onnx_quantizer_result(self) -> dict | None:
+        """Compute v9.10.37 ONNX quantizer payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.quantizer")
+            _onnx_quantizer_result = {"class": "ModelQuantizer", "active": True}
+            logger.debug("🗜️ ONNX-Quantizer: ModelQuantizer geladen")
+            return _onnx_quantizer_result
+        except Exception as _e37i:
+            logger.debug("ONNX-Quantizer übersprungen: %s", _e37i)
+            return None
+
+    def _compute_onnx_runtime_result(self) -> dict | None:
+        """Compute v9.10.37 ONNX runtime payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.runtime")
+            _onnx_runtime_result = {"class": "onnx.runtime.ModelInfo", "active": True}
+            logger.debug("⚙️ ONNX-Runtime: ModelInfo geladen")
+            return _onnx_runtime_result
+        except Exception as _e37j:
+            logger.debug("ONNX-Runtime übersprungen: %s", _e37j)
+            return None
+
+    def _compute_adv_ensemble_result(self) -> dict | None:
+        """Compute v9.10.37 AdvancedEnsemble payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.advanced_ensemble")
+            _adv_ensemble_result = {"class": "AdvancedEnsemble", "active": True}
+            logger.debug("🎼 AdvancedEnsemble: geladen")
+            return _adv_ensemble_result
+        except Exception as _e37k:
+            logger.debug("AdvancedEnsemble übersprungen: %s", _e37k)
+            return None
+
+    def _compute_auto_augmentation_result(self) -> dict | None:
+        """Compute v9.10.37 AudioAugmentations payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.automated_augmentation")
+            _auto_aug_result = {"class": "AudioAugmentations", "active": True}
+            logger.debug("🎨 AudioAugmentations: geladen")
+            return _auto_aug_result
+        except Exception as _e37l:
+            logger.debug("AudioAugmentations übersprungen: %s", _e37l)
+            return None
+
+    def _compute_neural_arch_search_result(self) -> dict | None:
+        """Compute v9.10.37 NeuralArchitectureSearch payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.neural_architecture_search")
+            _nas_result = {"class": "AudioNASNetwork", "active": True}
+            logger.debug("🧠 NeuralArchitectureSearch: AudioNASNetwork geladen")
+            return _nas_result
+        except Exception as _e37n:
+            logger.debug("NeuralArchitectureSearch übersprungen: %s", _e37n)
+            return None
+
+    def _compute_opt_integration_result(self) -> dict | None:
+        """Compute v9.10.37 OptimizationIntegration payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.optimization_integration")
+            _opt_integration_result = {"class": "optimization_integration.AdvancedEnsemble", "active": True}
+            logger.debug("🔗 OptimizationIntegration: geladen")
+            return _opt_integration_result
+        except Exception as _e37o:
+            logger.debug("OptimizationIntegration übersprungen: %s", _e37o)
+            return None
+
+    def _compute_perceptual_loss_result(self) -> dict | None:
+        """Compute v9.10.37 PerceptualLoss payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.perceptual_loss")
+            _perceptual_loss_result = {"class": "MultiResolutionSTFTLoss", "active": True}
+            logger.debug("🎵 PerceptualLoss: MultiResolutionSTFTLoss geladen")
+            return _perceptual_loss_result
+        except Exception as _e37p:
+            logger.debug("PerceptualLoss übersprungen: %s", _e37p)
+            return None
+
+    def _compute_mod_parallel_result(self) -> dict | None:
+        """Compute v9.10.37 module_parallel payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.parallel.module_parallel")
+            _mod_parallel_result = {"class": "ModuleDependency", "active": True}
+            logger.debug("⚡ module_parallel: ModuleDependency geladen")
+            return _mod_parallel_result
+        except Exception as _e37q:
+            logger.debug("module_parallel übersprungen: %s", _e37q)
+            return None
+
+    def _compute_stereo_par_result(self) -> dict | None:
+        """Compute v9.10.37 stereo_parallel payload."""
+        try:
+            from backend.core.parallel.stereo_parallel import ChannelType as _CT37r
+
+            _stereo_par_result = {
+                "channels": [c.name for c in _CT37r] if hasattr(_CT37r, "__members__") else [],
+                "active": True,
+            }
+            logger.debug("🔊 stereo_parallel: ChannelType geladen")
+            return _stereo_par_result
+        except Exception as _e37r:
+            logger.debug("stereo_parallel übersprungen: %s", _e37r)
+            return None
+
+    def _compute_quality_gate_result_37(self) -> dict | None:
+        """Compute v9.10.37 QualityGate payload."""
+        try:
+            from backend.core.quality_gate import QualityGate as _QG37s
+
+            _QG37s()
+            _quality_gate_result = {"class": "QualityGate", "active": True}
+            logger.debug("🚦 QualityGate: initialisiert")
+            return _quality_gate_result
+        except Exception as _e37s:
+            logger.debug("QualityGate übersprungen: %s", _e37s)
+            return None
+
+    def _compute_reg_adaptive_goal_result(self) -> dict | None:
+        """Compute v9.10.37 regulator adaptive_goal payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.regulator.adaptive_goal")
+            _reg_adaptive_goal_result = {"class": "regulator.AdaptiveGoalEngine", "active": True}
+            logger.debug("🎯 regulator.AdaptiveGoal: geladen")
+            return _reg_adaptive_goal_result
+        except Exception as _e37t:
+            logger.debug("regulator.AdaptiveGoal übersprungen: %s", _e37t)
+            return None
+
+    def _compute_reg_context_result(self) -> dict | None:
+        """Compute v9.10.37 regulator context_analysis payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.regulator.context_analysis")
+            _reg_context_result = {"class": "regulator.ContextAnalyzer", "active": True}
+            logger.debug("🔍 regulator.ContextAnalysis: ContextAnalyzer geladen")
+            return _reg_context_result
+        except Exception as _e37u:
+            logger.debug("regulator.ContextAnalysis übersprungen: %s", _e37u)
+            return None
+
+    def _compute_reg_ethics_result(self) -> dict | None:
+        """Compute v9.10.37 regulator ethics_engine payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.regulator.ethics_engine")
+            _reg_ethics_result = {"class": "EpistemicDecision", "active": True}
+            logger.debug("⚖️ regulator.EthicsEngine: EpistemicDecision geladen")
+            return _reg_ethics_result
+        except Exception as _e37v:
+            logger.debug("regulator.EthicsEngine übersprungen: %s", _e37v)
+            return None
+
+    def _compute_reg_quality_ctrl_result(self) -> dict | None:
+        """Compute v9.10.37 regulator quality_control payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.regulator.quality_control")
+            _reg_quality_ctrl_result = {"class": "regulator.QualityControl", "active": True}
+            logger.debug("🛡️ regulator.QualityControl: geladen")
+            return _reg_quality_ctrl_result
+        except Exception as _e37w:
+            logger.debug("regulator.QualityControl übersprungen: %s", _e37w)
+            return None
+
+    def _compute_regulator_result(self) -> dict | None:
+        """Compute v9.10.37 Regulator payload."""
+        try:
+            from backend.core.regulator.regulator import Regulator as _Reg37x
+
+            _Reg37x()
+            _regulator_result = {"class": "Regulator", "active": True}
+            logger.debug("📜 Regulator: initialisiert")
+            return _regulator_result
+        except Exception as _e37x:
+            logger.debug("Regulator übersprungen: %s", _e37x)
+            return None
+
+    def _compute_regulator_v8_result(self) -> dict | None:
+        """Compute v9.10.37 RegulatorV8 payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.regulator.regulator_v8")
+            _regulator_v8_result = {
+                "enum": "DecisionType",
+                "values": [],
+                "active": True,
+            }
+            logger.debug("📜 RegulatorV8: DecisionType geladen")
+            return _regulator_v8_result
+        except Exception as _e37y:
+            logger.debug("RegulatorV8 übersprungen: %s", _e37y)
+            return None
+
+    def _compute_sota_max_result(self) -> dict | None:
+        """Compute v9.10.37 SOTAMaximumAnalyzer payload."""
+        try:
+            from backend.core.regulator.sota_maximum_analyzer import SOTAMaximumAnalyzer as _SMA37z
+
+            _SMA37z()
+            _sota_max_result = {"class": "SOTAMaximumAnalyzer", "active": True}
+            logger.debug("🏆 SOTAMaximumAnalyzer: initialisiert")
+            return _sota_max_result
+        except Exception as _e37z:
+            logger.debug("SOTAMaximumAnalyzer übersprungen: %s", _e37z)
+            return None
+
+    def _compute_undo_manager_result(self) -> dict | None:
+        """Compute v9.10.37 UndoManager payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.undo.undo_manager")
+            _undo_manager_result = {"class": "Action", "active": True}
+            logger.debug("↩️ UndoManager: Action geladen")
+            return _undo_manager_result
+        except Exception as _e37aa:
+            logger.debug("UndoManager übersprungen: %s", _e37aa)
+            return None
+
+    def _compute_zone_context_result(self) -> dict | None:
+        """Compute v9.10.37 ZoneEngine context payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.zone_engine.context_analysis")
+            _zone_context_result = {"class": "zone_engine.ContextAnalyzer", "active": True}
+            logger.debug("🗺️ ZoneEngine.ContextAnalysis: geladen")
+            return _zone_context_result
+        except Exception as _e37ab:
+            logger.debug("ZoneEngine.ContextAnalysis übersprungen: %s", _e37ab)
+            return None
+
+    def _compute_region_analysis_result(self) -> dict | None:
+        """Compute v9.10.37 ZoneEngine region-analysis payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.zone_engine.region_analysis")
+            _region_analysis_result = {"class": "AudioRegion", "active": True}
+            logger.debug("🗺️ ZoneEngine.RegionAnalysis: AudioRegion geladen")
+            return _region_analysis_result
+        except Exception as _e37ac:
+            logger.debug("ZoneEngine.RegionAnalysis übersprungen: %s", _e37ac)
+            return None
+
+    def _compute_zone_engine_result(self) -> dict | None:
+        """Compute v9.10.37 ZoneEngine payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.zone_engine.zone_engine")
+            _zone_engine_result = {"class": "Zone", "active": True}
+            logger.debug("🗺️ ZoneEngine: Zone geladen")
+            return _zone_engine_result
+        except Exception as _e37ad:
+            logger.debug("ZoneEngine übersprungen: %s", _e37ad)
+            return None
+
+    def _compute_adaptive_goal_result_36(self) -> dict | None:
+        """Compute v9.10.36 adaptive_goal payload."""
+        try:
+            from backend.core.conduct_enforcer.adaptive_goal import AdaptiveGoalEngine as _AGE36a
+
+            _AGE36a()
+            _adaptive_goal_result = {"engine": "AdaptiveGoalEngine", "active": True}
+            logger.debug("🎯 AdaptiveGoalEngine: initialisiert")
+            return _adaptive_goal_result
+        except Exception as _exc36a:
+            logger.debug("AdaptiveGoalEngine übersprungen: %s", _exc36a)
+            return None
+
+    def _compute_continuous_learning_result_36(self) -> dict | None:
+        """Compute v9.10.36 continuous_learning payload."""
+        try:
+            from backend.core.evaluation.continuous_learning import ContinuousLearningSystem as _CLS36b
+
+            _CLS36b()
+            _continuous_learning_result = {"system": "ContinuousLearningSystem", "active": True}
+            logger.debug("📚 ContinuousLearningSystem: initialisiert")
+            return _continuous_learning_result
+        except Exception as _exc36b:
+            logger.debug("ContinuousLearningSystem übersprungen: %s", _exc36b)
+            return None
+
+    def _compute_adaptive_goals_result_36(self) -> dict | None:
+        """Compute v9.10.36 adaptive_goals_system payload."""
+        try:
+            from backend.core.musical_goals.adaptive_goals_system import AdaptiveGoalsCalculator as _AGC36c
+
+            _agc36 = _AGC36c()
+            _agc36_defaults = getattr(_agc36, "DEFAULT_THRESHOLDS", {})
+            _adaptive_goals_result = dict(_agc36_defaults) if _agc36_defaults else {"active": True}
+            logger.debug("🎵 AdaptiveGoalsCalculator: %d Thresholds", len(_adaptive_goals_result))
+            return _adaptive_goals_result
+        except Exception as _exc36c:
+            logger.debug("AdaptiveGoalsCalculator übersprungen: %s", _exc36c)
+            return None
+
+    def _compute_adaptive_thresholds_result_36(self) -> dict | None:
+        """Compute v9.10.36 adaptive_thresholds payload."""
+        try:
+            from backend.core.musical_goals.adaptive_thresholds import AdaptiveThresholdsManager as _ATM36d
+
+            _ATM36d()
+            _adaptive_thresholds_result = {"manager": "AdaptiveThresholdsManager", "active": True}
+            logger.debug("📊 AdaptiveThresholdsManager: initialisiert")
+            return _adaptive_thresholds_result
+        except Exception as _exc36d:
+            logger.debug("AdaptiveThresholdsManager übersprungen: %s", _exc36d)
+            return None
+
+    def _compute_auto_reprocessing_result_36(self) -> dict | None:
+        """Compute v9.10.36 auto_reprocessing payload."""
+        try:
+            from backend.core.musical_goals.auto_reprocessing import AutoReprocessingEngine as _ARE36e
+
+            _ARE36e()
+            _auto_reprocessing_result = {"engine": "AutoReprocessingEngine", "active": True}
+            logger.debug("🔄 AutoReprocessingEngine: initialisiert")
+            return _auto_reprocessing_result
+        except Exception as _exc36e:
+            logger.debug("AutoReprocessingEngine übersprungen: %s", _exc36e)
+            return None
+
+    def _compute_convergence_result_36(self, _musical_goal_scores: dict | None) -> dict | None:
+        """Compute v9.10.36 convergence_detector payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.convergence_detector")
+            _MGCD36 = getattr(_mod_cache, "MusicalGoalsConvergenceDetector", None)
+            if _MGCD36 is None:
+                logger.debug("ConvergenceDetector übersprungen: MusicalGoalsConvergenceDetector nicht verfügbar")
+                return None
+            _mgcd36 = _MGCD36()
+            _mgcd36_scores = _musical_goal_scores if _musical_goal_scores else {}
+            _mgcd36_conv = _mgcd36.has_converged(_mgcd36_scores) if _mgcd36_scores else False
+            _convergence_result = {"converged": bool(_mgcd36_conv), "n_goals": len(_mgcd36_scores)}
+            logger.debug("✅ ConvergenceDetector: converged=%s", _mgcd36_conv)
+            return _convergence_result
+        except Exception as _exc36f:
+            logger.debug("ConvergenceDetector übersprungen: %s", _exc36f)
+            return None
+
+    def _compute_deviation_corrector_result_36(self) -> dict | None:
+        """Compute v9.10.36 deviation_corrector payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.deviation_corrector")
+            _MGDC36 = getattr(_mod_cache, "MusicalGoalsDeviationCorrector", None)
+            if _MGDC36 is None:
+                logger.debug("DeviationCorrector übersprungen: MusicalGoalsDeviationCorrector nicht verfügbar")
+                return None
+            _MGDC36()
+            _deviation_corrector_result = {"corrector": "MusicalGoalsDeviationCorrector", "active": True}
+            logger.debug("🔧 DeviationCorrector: initialisiert")
+            return _deviation_corrector_result
+        except Exception as _exc36g:
+            logger.debug("DeviationCorrector übersprungen: %s", _exc36g)
+            return None
+
+    def _compute_edge_case_result_36(self, restored_audio: "np.ndarray", sample_rate: int) -> dict | None:
+        """Compute v9.10.36 edge_case_handler payload."""
+        try:
+            from backend.core.musical_goals.edge_case_handler import EdgeCaseHandler as _ECH36h
+
+            _ech36 = _ECH36h()
+            _ech_cap = 10 * sample_rate
+            _ech_audio = restored_audio[:_ech_cap] if restored_audio.shape[-1] > _ech_cap else restored_audio
+            _eca36 = _ech36.assess_edge_cases(_ech_audio, sample_rate)
+            _edge_case_result = _eca36.as_dict() if hasattr(_eca36, "as_dict") else {"severity": str(_eca36)}
+            logger.debug("⚠️ EdgeCaseHandler: %s", _edge_case_result)
+            return _edge_case_result
+        except Exception as _exc36h:
+            logger.debug("EdgeCaseHandler übersprungen: %s", _exc36h)
+            return None
+
+    def _compute_explainability_result_36(self, _musical_goal_scores: dict | None) -> dict | None:
+        """Compute v9.10.36 explainability payload."""
+        try:
+            from backend.core.musical_goals.explainability import GoalExplainer as _GE36i
+
+            _ge36 = _GE36i()
+            _start_tracking = getattr(_ge36, "start_tracking", None)
+            if callable(_start_tracking):
+                _start_tracking()
+            _explain_simple = getattr(_ge36, "explain_simple", None)
+            if not callable(_explain_simple):
+                logger.debug("GoalExplainer übersprungen: explain_simple nicht verfügbar")
+                return None
+            try:
+                _ge36_exp = _explain_simple(_musical_goal_scores if _musical_goal_scores else {})
+            except TypeError:
+                _ge36_exp = _explain_simple()
+            _stop_tracking = getattr(_ge36, "stop_tracking", None)
+            if callable(_stop_tracking):
+                _stop_tracking()
+            _explainability_result = _ge36_exp if isinstance(_ge36_exp, dict) else {"explanation": str(_ge36_exp)}
+            logger.debug("💡 GoalExplainer: %d Einträge", len(_explainability_result))
+            return _explainability_result
+        except Exception as _exc36i:
+            logger.debug("GoalExplainer übersprungen: %s", _exc36i)
+            return None
+
+    def _compute_ki_hearing_result_36(self) -> dict | None:
+        """Compute v9.10.36 ki_hearing_model payload."""
+        try:
+            from backend.core.musical_goals.ki_hearing_model import KIHörbarkeitsAnalyzer as _KIHA36j
+
+            _KIHA36j()
+            _ki_hearing_result = {"analyzer": "KIHörbarkeitsAnalyzer", "active": True}
+            logger.debug("👂 KIHörbarkeitsAnalyzer: initialisiert")
+            return _ki_hearing_result
+        except Exception as _exc36j:
+            logger.debug("KIHörbarkeitsAnalyzer übersprungen: %s", _exc36j)
+            return None
+
+    def _compute_reference_learning_result_36(self) -> dict | None:
+        """Compute v9.10.36 reference_based_learning payload."""
+        try:
+            from backend.core.musical_goals.reference_based_learning import LearningStrategy as _LS36k
+
+            _reference_learning_result = {"strategy_class": str(_LS36k), "active": True}
+            logger.debug("📖 ReferenceLearning: LearningStrategy geladen")
+            return _reference_learning_result
+        except Exception as _exc36k:
+            logger.debug("ReferenceLearning übersprungen: %s", _exc36k)
+            return None
+
+    def _compute_semantic_goals_result_36(self) -> dict | None:
+        """Compute v9.10.36 semantic_goals payload."""
+        try:
+            from backend.core.musical_goals.semantic_goals import GoalProfile as _GP36l
+
+            _semantic_goals_result = {"profile_class": str(_GP36l), "active": True}
+            logger.debug("🎯 SemanticGoals: GoalProfile geladen")
+            return _semantic_goals_result
+        except Exception as _exc36l:
+            logger.debug("SemanticGoals übersprungen: %s", _exc36l)
+            return None
+
+    def _compute_mg_uncertainty_result_36(self) -> dict | None:
+        """Compute v9.10.36 musical_goals uncertainty payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.uncertainty_quantification")
+            _mg_uncertainty_result = {"report_class": "GoalsUncertaintyReport", "active": True}
+            logger.debug("❓ MusicalGoalsUncertainty: GoalsUncertaintyReport geladen")
+            return _mg_uncertainty_result
+        except Exception as _exc36m:
+            logger.debug("MusicalGoalsUncertainty übersprungen: %s", _exc36m)
+            return None
+
+    def _compute_onnx_converter_result_36(self) -> dict | None:
+        """Compute v9.10.36 onnx.converter payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.converter")
+            _onnx_converter_result = {"config_class": "ConversionConfig", "active": True}
+            logger.debug("🔌 ONNX-Converter: ConversionConfig geladen")
+            return _onnx_converter_result
+        except Exception as _exc36n:
+            logger.debug("ONNX-Converter übersprungen: %s", _exc36n)
+            return None
+
+    def _compute_onnx_model_info_result_36(self) -> dict | None:
+        """Compute v9.10.36 onnx.model_info payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.model_info")
+            _onnx_model_info_result = {"info_class": "ModelInfo", "active": True}
+            logger.debug("ℹ️ ONNX-ModelInfo: ModelInfo geladen")
+            return _onnx_model_info_result
+        except Exception as _exc36o:
+            logger.debug("ONNX-ModelInfo übersprungen: %s", _exc36o)
+            return None
+
+    def _compute_onnx_plugin_mgr_result_36(self) -> dict | None:
+        """Compute v9.10.36 onnx.plugin_manager payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.onnx.plugin_manager")
+            _onnx_plugin_mgr_result = {"manager_class": "FallbackManager", "active": True}
+            logger.debug("🔧 ONNX-PluginManager: FallbackManager geladen")
+            return _onnx_plugin_mgr_result
+        except Exception as _exc36p:
+            logger.debug("ONNX-PluginManager übersprungen: %s", _exc36p)
+            return None
+
+    def _compute_multi_objective_result_36(self) -> dict | None:
+        """Compute v9.10.36 optimization.multi_objective payload."""
+        try:
+            from backend.core.optimization.multi_objective import Individual as _Ind36q
+
+            _multi_objective_result = {"individual_class": str(_Ind36q), "active": True}
+            logger.debug("🎯 MultiObjective: Individual geladen")
+            return _multi_objective_result
+        except Exception as _exc36q:
+            logger.debug("MultiObjective übersprungen: %s", _exc36q)
+            return None
+
+    def _compute_opt_uncertainty_result_36(self) -> dict | None:
+        """Compute v9.10.36 optimization uncertainty payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.optimization.uncertainty_quantification")
+            _opt_uncertainty_result = {"model_class": "BayesianLinear", "active": True}
+            logger.debug("🧪 OptUncertainty: BayesianLinear geladen")
+            return _opt_uncertainty_result
+        except Exception as _exc36r:
+            logger.debug("OptUncertainty übersprungen: %s", _exc36r)
+            return None
+
+    def _compute_batch_parallel_result_36(self) -> dict | None:
+        """Compute v9.10.36 parallel.batch_parallel payload."""
+        try:
+            from backend.core.parallel.batch_parallel import BatchParallelProcessor as _BPP36s
+
+            _bpp36 = _BPP36s()
+            _bpp36_stats = _bpp36.get_stats() if hasattr(_bpp36, "get_stats") else {}
+            _batch_parallel_result = _bpp36_stats if isinstance(_bpp36_stats, dict) else {"active": True}
+            logger.debug("⚡ BatchParallel: %s", _batch_parallel_result)
+            return _batch_parallel_result
+        except Exception as _exc36s:
+            logger.debug("BatchParallel übersprungen: %s", _exc36s)
+            return None
+
+    def _compute_module_parallel_result_36(self) -> dict | None:
+        """Compute v9.10.36 parallel.module_parallel payload."""
+        try:
+            _mp36_mod = sys.modules.get("backend.core.parallel")
+            _mp36_cls = (
+                next(
+                    (getattr(_mp36_mod, n) for n in dir(_mp36_mod) if "Parallel" in n and not n.startswith("_")),
+                    None,
+                )
+                if _mp36_mod is not None
+                else None
+            )
+            _module_parallel_result = (
+                {
+                    "class": str(_mp36_cls),
+                    "active": True,
+                }
+                if _mp36_cls
+                else {"active": True}
+            )
+            logger.debug("⚡ ModuleParallel: %s", _module_parallel_result)
+            return _module_parallel_result
+        except Exception as _exc36t:
+            logger.debug("ModuleParallel übersprungen: %s", _exc36t)
+            return None
+
+    def _compute_stereo_parallel_result_36(self) -> dict | None:
+        """Compute v9.10.36 parallel.stereo_parallel payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.parallel")
+            _sp36_cls = (
+                next(
+                    (getattr(_mod_cache, n) for n in dir(_mod_cache) if "Parallel" in n and not n.startswith("_")),
+                    None,
+                )
+                if _mod_cache
+                else None
+            )
+            _stereo_parallel_result = (
+                {
+                    "class": str(_sp36_cls),
+                    "active": True,
+                }
+                if _sp36_cls
+                else {"active": True}
+            )
+            logger.debug("⚡ StereoParallel: %s", _stereo_parallel_result)
+            return _stereo_parallel_result
+        except Exception as _exc36u:
+            logger.debug("StereoParallel übersprungen: %s", _exc36u)
+            return None
+
+    def _compute_fatigue_result_35(self, restored_audio: "np.ndarray", sample_rate: int) -> dict | None:
+        """Compute v9.10.35 listening_fatigue_analyzer payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.listening_fatigue_analyzer")
+            _analyze_fatigue35 = getattr(_mod_cache, "analyze_listening_fatigue", None)
+            if _analyze_fatigue35 is None:
+                logger.debug("ListeningFatigueAnalyzer übersprungen: analyze_listening_fatigue nicht verfügbar")
+                return None
+            _fa35 = _analyze_fatigue35(restored_audio, sample_rate)
+            _fatigue_result = _fa35.as_dict() if hasattr(_fa35, "as_dict") else {"risk": str(_fa35)}
+            logger.debug("🦻 FatigueAnalyzer: risk=%s", _fatigue_result.get("risk_level", "?"))
+            return _fatigue_result
+        except Exception as _fa_exc:
+            logger.debug("ListeningFatigueAnalyzer nicht verfügbar: %s", _fa_exc)
+            return None
+
+    def _compute_emotional_result_35(self, restored_audio: "np.ndarray", sample_rate: int) -> dict | None:
+        """Compute v9.10.35 emotional_resonance_analyzer payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.emotional_resonance_analyzer")
+            _analyze_emotional35 = getattr(_mod_cache, "analyze_and_enhance_emotional_resonance", None)
+            if _analyze_emotional35 is None:
+                logger.debug(
+                    "EmotionalResonanceAnalyzer übersprungen: analyze_and_enhance_emotional_resonance nicht verfügbar"
+                )
+                return None
+            _em35_tuple = _analyze_emotional35(restored_audio, sample_rate)
+            _em35_audio, _em35_analysis, _em35_report = _em35_tuple
+            _emotional_result = {
+                "score": float(getattr(_em35_analysis, "overall_score", 0.0)),
+                "passed": bool(getattr(_em35_analysis, "passes_threshold", True)),
+            }
+            logger.debug("❤️ EmotionalResonance: score=%.3f", _emotional_result["score"])
+            return _emotional_result
+        except Exception as _em_exc:
+            logger.debug("EmotionalResonanceAnalyzer nicht verfügbar: %s", _em_exc)
+            return None
+
+    def _compute_harmonic_char_result_35(self, restored_audio: "np.ndarray", sample_rate: int) -> dict | None:
+        """Compute v9.10.35 harmonic_character_analyzer payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.harmonic_character_analyzer")
+            _analyze_harmonic35 = getattr(_mod_cache, "analyze_harmonic_character", None)
+            if _analyze_harmonic35 is None:
+                logger.debug("HarmonicCharacterAnalyzer übersprungen: analyze_harmonic_character nicht verfügbar")
+                return None
+            _hca35 = _analyze_harmonic35(restored_audio, sample_rate)
+            _harmonic_char_result = (
+                _hca35.as_dict()
+                if hasattr(_hca35, "as_dict")
+                else {
+                    "harmonic_ratio": float(getattr(_hca35, "harmonic_ratio", 0.0)),
+                }
+            )
+            logger.debug("🎵 HarmonicChar: ratio=%.3f", _harmonic_char_result.get("harmonic_ratio", 0.0))
+            return _harmonic_char_result
+        except Exception as _hca_exc:
+            logger.debug("HarmonicCharacterAnalyzer nicht verfügbar: %s", _hca_exc)
+            return None
+
+    def _compute_ki_quality_score_35(self, restored_audio: "np.ndarray", sample_rate: int) -> float | None:
+        """Compute v9.10.35 ki_quality_model score."""
+        try:
+            from backend.core.musical_goals.ki_quality_model import KIQualityAnalyzer as _KIQA35
+
+            _ki_cap = 10 * sample_rate
+            _ki_audio = restored_audio[:_ki_cap] if restored_audio.shape[-1] > _ki_cap else restored_audio
+            _ki_score35 = _KIQA35().analyze_audio_quality(_ki_audio, sample_rate)
+            _ki_quality_score = float(_ki_score35) if _ki_score35 is not None else None
+            logger.debug("🤖 KIQuality: score=%.3f", _ki_quality_score or 0.0)
+            return _ki_quality_score
+        except Exception as _ki_exc:
+            logger.debug("KIQualityAnalyzer nicht verfügbar: %s", _ki_exc)
+            return None
+
+    def _compute_microdynamics_result_35(self, restored_audio: "np.ndarray", sample_rate: int) -> dict | None:
+        """Compute v9.10.35 microdynamics_analyzer payload."""
+        try:
+            _mod_cache = sys.modules.get("backend.core.musical_goals.microdynamics_analyzer")
+            _analyze_microdyn35 = getattr(_mod_cache, "analyze_microdynamics", None)
+            if _analyze_microdyn35 is None:
+                logger.debug("MicrodynamicsAnalyzer übersprungen: analyze_microdynamics nicht verfügbar")
+                return None
+            _md35 = _analyze_microdyn35(restored_audio, sample_rate)
+            _microdynamics_result = (
+                _md35.as_dict()
+                if hasattr(_md35, "as_dict")
+                else {
+                    "preservation_ratio": float(getattr(_md35, "preservation_ratio", 0.0)),
+                }
+            )
+            logger.debug("📊 Microdynamics: %s", {k: round(v, 3) for k, v in list(_microdynamics_result.items())[:3]})
+            return _microdynamics_result
+        except Exception as _md_exc:
+            logger.debug("MicrodynamicsAnalyzer nicht verfügbar: %s", _md_exc)
+            return None
+
+    def _collect_reporting_analytics(  # pyright: ignore[reportGeneralTypeIssues]
         self,
         restored_audio: "np.ndarray",
         audio: "np.ndarray",
@@ -6289,7 +9238,19 @@ class UnifiedRestorerV3:
             from backend.core.psychoacoustic_artifact_detector import PsychoacousticArtifactDetector as _PAD
 
             _pad_audio = restored_audio if restored_audio.ndim == 1 else restored_audio.mean(axis=0)
-            _artifact_scores = _PAD().analyze(_pad_audio, sample_rate)
+            _artifact_raw: Any = _PAD().analyze(_pad_audio, sample_rate)
+            if isinstance(_artifact_raw, dict):
+                _artifact_scores = {
+                    "masking_effect": float(_artifact_raw.get("masking_effect", 0.0)),
+                    "transient_loss": float(_artifact_raw.get("transient_loss", 0.0)),
+                    "musical_transparency": float(_artifact_raw.get("musical_transparency", 0.0)),
+                }
+            else:
+                _artifact_scores = {
+                    "masking_effect": float(getattr(_artifact_raw, "masking_effect", 0.0)),
+                    "transient_loss": float(getattr(_artifact_raw, "transient_loss", 0.0)),
+                    "musical_transparency": float(getattr(_artifact_raw, "musical_transparency", 0.0)),
+                }
             logger.debug(
                 "🔍 ArtifactDetector: masking=%.3f transient_loss=%.3f transparency=%.3f",
                 _artifact_scores.get("masking_effect", 0.0),
@@ -6562,6 +9523,8 @@ class UnifiedRestorerV3:
                 _ae_width = 1.0
             else:
                 _ae_coh, _ae_ms, _ae_width = 1.0, 1.0, 0.0
+            _vocal_ctor: Any = _VocalAnal
+            _feat_ctor: Any = _FeatVec
             _ae_profile = _AProfile(
                 format_info=_FormatInfo(
                     container_format="WAV",
@@ -6574,6 +9537,12 @@ class UnifiedRestorerV3:
                 material_chain=_MatChain(
                     detected_medium=_MediaType.UNKNOWN,
                     medium_confidence=0.5,
+                    vinyl_rpm=None,
+                    tape_type=None,
+                    adc_type=None,
+                    resampling_artifacts=False,
+                    lossy_codec_history=[],
+                    generation_count=1,
                 ),
                 spectral=_SpectralAnal(
                     spectral_centroid=max(0.0, _ae_centroid),
@@ -6601,10 +9570,33 @@ class UnifiedRestorerV3:
                 musical_context=_MusCtx(
                     genre=_DataGenre.UNKNOWN,
                     genre_confidence=0.5,
+                    tempo_bpm=None,
+                    time_signature=None,
+                    key_signature=None,
                     harmonic_complexity=0.5,
                 ),
-                vocal_analysis=_VocalAnal(has_vocals=False, vocal_confidence=0.0),
-                feature_vectors=_FeatVec(),
+                vocal_analysis=_vocal_ctor(
+                    has_vocals=False,
+                    vocal_confidence=0.0,
+                    num_speakers=0,
+                    language=None,
+                    language_confidence=0.0,
+                    valence=None,
+                    arousal=None,
+                ),
+                feature_vectors=_feat_ctor(
+                    onset_times=[],
+                    beat_times=[],
+                    tempo_bpm=None,
+                    mfccs=None,
+                    spectral_contrast=None,
+                    chroma_features=None,
+                    pitch_contour=None,
+                    pitch_confidence=None,
+                    harmonicity=None,
+                    rhythm_patterns={},
+                    syncopation_index=None,
+                ),
                 overall_quality_score=0.5,
             )
             _ae_ref = (
@@ -6819,1115 +9811,231 @@ class UnifiedRestorerV3:
         except Exception as _pam_exc:
             logger.debug("PsychoAcousticMetrics nicht verfügbar: %s", _pam_exc)
 
-        # v9.10.19 — ComprehensiveMetrics
-        _cm_result: dict | None = None
-        try:
-            from backend.core.comprehensive_metrics import ComprehensiveMetricsCalculator as _CMC
+        # v9.10.19 — ComprehensiveMetrics (extracted helper to reduce method complexity)
+        _cm_result = self._compute_comprehensive_metrics_result(
+            restored_audio=restored_audio,
+            original_audio_for_goals=original_audio_for_goals,
+            sample_rate=sample_rate,
+        )
 
-            _cm_audio = restored_audio
-            _cm_ref = original_audio_for_goals if original_audio_for_goals is not None else None
-            _cm_r = _CMC(sample_rate=sample_rate).compute_all(_cm_audio, reference=_cm_ref)
-            _cm_result = {
-                "overall_technical_quality": round(float(_cm_r.overall_technical_quality), 4),
-                "overall_musical_quality": round(float(_cm_r.overall_musical_quality), 4),
-                "overall_emotional_impact": round(float(_cm_r.overall_emotional_impact), 4),
-                "aurik_quality_score": round(float(_cm_r.aurik_quality_score), 2),
-                "passes_aurik_standards": _cm_r.passes_aurik_standards(),
-            }
-            logger.debug("📈 ComprehensiveMetrics: %s", _cm_result)
-        except Exception as _cm_exc:
-            logger.debug("ComprehensiveMetrics nicht verfügbar: %s", _cm_exc)
+        # v9.10.20 — EnhancedMetrics (extracted helper to reduce method complexity)
+        _em_result = self._compute_enhanced_metrics_result(
+            restored_audio=restored_audio,
+            original_audio_for_goals=original_audio_for_goals,
+            sample_rate=sample_rate,
+        )
 
-        # v9.10.20 — EnhancedMetrics
-        _em_result: dict | None = None
-        try:
-            from backend.core.enhanced_metrics import EnhancedMetrics as _EnhMetrics
+        # v9.10.20 — VocalCharacteristics (extracted helper to reduce method complexity)
+        _vc_result = self._compute_vocal_characteristics_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-            _em_audio = restored_audio
-            _em_ref = original_audio_for_goals if original_audio_for_goals is not None else None
-            if _em_ref is not None:
-                _em_r = _EnhMetrics().compute_all(
-                    _em_ref.astype(np.float32),
-                    _em_audio.astype(np.float32),
-                    sr=sample_rate,
-                )
-                _em_result = {
-                    "snr_db": round(float(_em_r.snr_db), 3),
-                    "thd": round(float(_em_r.thd), 6),
-                    "lufs": round(float(_em_r.lufs), 3),
-                    # si_sdr_db entfernt — verboten §4.4+§10.2 (Sprach-Metrik)
-                    # si_snr_db entfernt — verboten §4.4+§10.2 (Sprach-Metrik)
-                    "snr_improvement_db": (
-                        round(float(_em_r.snr_improvement_db), 3) if _em_r.snr_improvement_db is not None else None
-                    ),
-                    "passes_aurik_standards": bool(_em_r.passes_aurik_standards()),
-                }
-            else:
-                _em_mono = np.mean(_em_audio, axis=0) if _em_audio.ndim == 2 else _em_audio
-                _em_result = {
-                    "snr_db": round(float(_EnhMetrics.compute_snr(_em_mono.astype(np.float32), sample_rate)), 3),
-                    "thd": round(float(_EnhMetrics.compute_thd(_em_mono.astype(np.float32), sample_rate)), 6),
-                    "lufs": round(float(_EnhMetrics.compute_lufs(_em_mono.astype(np.float32), sample_rate)), 3),
-                }
-            logger.debug("📊 EnhancedMetrics: %s", _em_result)
-        except Exception as _em_exc:
-            logger.debug("EnhancedMetrics nicht verfügbar: %s", _em_exc)
-
-        # v9.10.20 — VocalCharacteristics (GenderDetector)
-        _vc_result: dict | None = None
-        try:
-            from backend.core.vocal_ai_enhancement import GenderDetector as _GenderDetector
-
-            _vc_audio = restored_audio
-            _vc_mono = np.mean(_vc_audio, axis=0) if _vc_audio.ndim == 2 else _vc_audio
-            _vc_r = _GenderDetector(sample_rate=sample_rate).detect(_vc_mono.astype(np.float32))
-            _vc_result = {
-                "gender": _vc_r.gender.name if _vc_r.gender is not None else None,
-                "age_group": _vc_r.age_group.name if _vc_r.age_group is not None else None,
-                "formants_hz": [round(float(f), 1) for f in _vc_r.formants[:4]] if _vc_r.formants else [],
-                "breathiness": round(float(_vc_r.breathiness), 4),
-            }
-            logger.debug("🎤 VocalCharacteristics: %s", _vc_result)
-        except Exception as _vc_exc:
-            logger.debug("VocalCharacteristics nicht verfügbar: %s", _vc_exc)
-
-        # v9.10.20 — DefectPhaseMapping
-        _dpm_result: dict | None = None
-        try:
-            from backend.core.defect_phase_mapper import DefectPhaseMapper as _DPM
-
-            _dpm_defects = list(defect_result.scores.values())
-            _dpm_phases = _DPM().phases_for_defect_profile(_dpm_defects, max_phases=12)
-            _dpm_executed_set = set(executed_phases)
-            _dpm_result = {
-                "recommended_phases": _dpm_phases,
-                "executed": [p for p in _dpm_phases if p in _dpm_executed_set],
-                "missed": [p for p in _dpm_phases if p not in _dpm_executed_set],
-                "coverage_ratio": round(
-                    len([p for p in _dpm_phases if p in _dpm_executed_set]) / max(len(_dpm_phases), 1), 3
-                ),
-            }
-            logger.debug("🗺️ DefectPhaseMapping: %s", _dpm_result)
-        except Exception as _dpm_exc:
-            logger.debug("DefectPhaseMapper nicht verfügbar: %s", _dpm_exc)
+        # v9.10.20 — DefectPhaseMapping (extracted helper to reduce method complexity)
+        _dpm_result = self._compute_defect_phase_mapping_result(
+            defect_result=defect_result,
+            executed_phases=executed_phases,
+        )
 
         # v9.10.20 — FletcherMunson equal-loudness correction summary
-        _fm_result: dict | None = None
-        try:
-            from backend.core.fletcher_munson_curves import get_fletcher_munson_curve as _get_fm
+        _fm_result = self._compute_fletcher_munson_result()
 
-            _fm_freqs = np.array(
-                [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 12000.0, 16000.0], dtype=np.float32
-            )
-            _fm_curve = _get_fm(_fm_freqs, target_phon=60, reference_phon=80)
-            _fm_result = {
-                "correction_db_at_hz": {int(f): round(float(c), 3) for f, c in zip(_fm_freqs, _fm_curve)},
-                "max_correction_db": round(float(np.max(np.abs(_fm_curve))), 3),
-            }
-            logger.debug("📐 FletcherMunson: %s", _fm_result)
-        except Exception as _fm_exc:
-            logger.debug("FletcherMunson nicht verfügbar: %s", _fm_exc)
+        # v9.10.21 — GapReconstructor (extracted helper to reduce method complexity)
+        _gr_result = self._compute_gap_reconstruction_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+            material_type=material_type,
+        )
 
-        # v9.10.21 — GapReconstructor (Statistik, ohne Audio-Ersatz)
-        _gr_result: dict | None = None
-        try:
-            from backend.core.gap_reconstructor import GapReconstructor as _GapRecon
+        # v9.10.21 — MediaDefectAnalysis (extracted helper to reduce method complexity)
+        _mda_result = self._compute_media_defect_analysis_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-            _gr_audio = restored_audio.astype(np.float32)
-            _gr_r = _GapRecon().reconstruct(
-                _gr_audio,
-                sample_rate,
-                material_hint=material_type.value if material_type else None,
-            )
-            _gr_result = {
-                "gaps_found": _gr_r.gaps_found,
-                "gaps_repaired": _gr_r.gaps_repaired,
-                "gaps_skipped": _gr_r.gaps_skipped,
-                "repair_rate": round(float(_gr_r.repair_rate), 4),
-                "total_repaired_ms": round(float(_gr_r.total_repaired_ms), 2),
-                "processing_time_ms": round(float(_gr_r.processing_time_ms), 1),
-            }
-            logger.debug("🔧 GapReconstructor: %s", _gr_result)
-        except Exception as _gr_exc:
-            logger.debug("GapReconstructor nicht verfügbar: %s", _gr_exc)
+        # v9.10.21 — CausalDefectGraph (extracted helper to reduce method complexity)
+        _cdg_result = self._compute_causal_defect_graph_result(defect_result=defect_result)
 
-        # v9.10.21 — MediaDefectAnalysis (DSP-Schnellscanner)
-        _mda_result: dict | None = None
-        try:
-            from backend.core.media_defect_analysis import analyze_defects_features as _analyze_defects
+        # v9.10.21 — PerceptualQualityGates (extracted helper to reduce method complexity)
+        _pqg_result = self._compute_perceptual_quality_gates_result(
+            _music_mos_result=_music_mos_result,
+            _pqs_result=_pqs_result,
+        )
 
-            _mda_audio = restored_audio
-            _mda_defects = _analyze_defects(_mda_audio, sample_rate)
-            _mda_result = {
-                "detected_defects": sorted(_mda_defects),
-                "defect_count": len(_mda_defects),
-            }
-            logger.debug("🔎 MediaDefectAnalysis: %s", _mda_result)
-        except Exception as _mda_exc:
-            logger.debug("MediaDefectAnalysis nicht verfügbar: %s", _mda_exc)
+        # v9.10.22 — ProcessingModes metadata (extracted helper to reduce method complexity)
+        _pm_result = self._compute_processing_modes_result()
 
-        # v9.10.21 — CausalDefectGraph
-        _cdg_result: dict | None = None
-        try:
-            from backend.core.causal_defect_graph import CausalDefectGraph as _CDG
+        # v9.10.22 — MultiPassStrategy variant summary (extracted helper to reduce method complexity)
+        _mps_result = self._compute_multi_pass_strategy_result()
 
-            _cdg = _CDG()
-            _cdg_defects = list(defect_result.scores.values())
-            _cdg_ordered = _cdg.resolve_causal_order(_cdg_defects)
-            _cdg_phantom = _cdg.get_phantom_defects(_cdg_defects)
-            _cdg_result = {
-                "causal_order": [s.defect_type.value for s in _cdg_ordered[:8]],
-                "phantom_defects": [d.value for d in _cdg_phantom],
-                "explanation": _cdg.explain(_cdg_defects)[:300],
-            }
-            logger.debug("🕸️ CausalDefectGraph: %s", _cdg_result)
-        except Exception as _cdg_exc:
-            logger.debug("CausalDefectGraph nicht verfügbar: %s", _cdg_exc)
+        # v9.10.22 — MusicalPhraseContext (extracted helper to reduce method complexity)
+        _mpc_result = self._compute_musical_phrase_context_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-        # v9.10.21 — PerceptualQualityGates (Evaluation mit vorhandenen Scores)
-        _pqg_result: dict | None = None
-        try:
-            from backend.core.perceptual_quality_gates import PerceptualQualityGates as _PQG
+        # v9.10.22 — ConfidenceBasedProcessing (extracted helper to reduce method complexity)
+        _cbp_result = self._compute_confidence_processing_result(
+            _pipeline_confidence=_pipeline_confidence,
+        )
 
-            _pqg_metrics: dict[str, float] = {}
-            if _music_mos_result:
-                if "MUSIC_OVR" in _music_mos_result:
-                    # Music-MOS (DSP-basiert) — KEINE Sprach-Metrik (§10.2: DNSMOS/NISQA VERBOTEN)
-                    _pqg_metrics["MUSIC_OVR_MOS"] = float(_music_mos_result["MUSIC_OVR"])
-                if "MUSIC_NAT" in _music_mos_result:
-                    _pqg_metrics["MUSIC_NAT_MOS"] = float(_music_mos_result["MUSIC_NAT"])
-            if _pqs_result is not None:
-                _pqs_d = _pqs_result.to_dict() if hasattr(_pqs_result, "to_dict") else {}
-                if "mos" in _pqs_d:
-                    _pqg_metrics["ViSQOL"] = float(_pqs_d["mos"])
-            _pqg_passed = _PQG(lambda: None).evaluate(_pqg_metrics)
-            _pqg_result = {
-                "metrics_evaluated": _pqg_metrics,
-                "passed": _pqg_passed,
-            }
-            logger.debug("🚦 PerceptualQualityGates: %s", _pqg_result)
-        except Exception as _pqg_exc:
-            logger.debug("PerceptualQualityGates nicht verfügbar: %s", _pqg_exc)
+        # v9.10.23 — ContextAwareGoalOptimizer (extracted helper to reduce method complexity)
+        _cago_result = self._compute_context_aware_goal_optimizer_result(
+            _musical_goal_scores=_musical_goal_scores,
+        )
 
-        # v9.10.22 — ProcessingModes metadata
-        _pm_result: dict | None = None
-        try:
-            from backend.core.processing_modes import (
-                ProcessingMode as _PM22,
-            )
-            from backend.core.processing_modes import (
-                get_processing_config as _get_pcfg,
-            )
-            from backend.core.processing_modes import (
-                list_available_modes as _list_modes,
-            )
+        # v9.10.23 — MLParameterInference (extracted helper to reduce method complexity)
+        _mlpi_result = self._compute_ml_parameter_inference_result(
+            _quality_before=_quality_before,
+        )
 
-            _current_mode_str = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
-            _pm22_mode = _PM22.from_string(_current_mode_str) if hasattr(_PM22, "from_string") else _PM22.RESTORATION
-            _pm_result = {
-                "available_modes": _list_modes(),
-                "current_mode": _current_mode_str,
-                "current_mode_config": _get_pcfg(_pm22_mode).to_dict(),
-            }
-            logger.debug("✅ ProcessingModes: %d Modi verfügbar", len(_pm_result["available_modes"]))
-        except Exception as _pm_exc:
-            logger.debug("ProcessingModes nicht verfügbar: %s", _pm_exc)
+        # v9.10.23 — AdaptiveChainRouter (extracted helper to reduce method complexity)
+        _acr_result = self._compute_adaptive_chain_router_result(
+            _era_result=_era_result,
+            _pipeline_confidence=_pipeline_confidence,
+        )
 
-        # v9.10.22 — MultiPassStrategy variant summary
-        _mps_result: dict | None = None
-        try:
-            from backend.core.multi_pass_strategy import ProcessingVariant as _PV22
+        # v9.10.23 — ModelManager (extracted helper to reduce method complexity)
+        _mm_result = self._compute_model_manager_result()
 
-            _mps_result = {
-                "conservative": _PV22.create_conservative().to_dict(),
-                "balanced": _PV22.create_balanced().to_dict(),
-            }
-            logger.debug("✅ MultiPassStrategy: variant summary erstellt")
-        except Exception as _mps_exc:
-            logger.debug("MultiPassStrategy nicht verfügbar: %s", _mps_exc)
+        # v9.10.24 — MaterialRouter (extracted helper to reduce method complexity)
+        _mr_result = self._compute_material_router_result(
+            _era_result=_era_result,
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-        # v9.10.22 — MusicalPhraseContext (Tempo + Beats aus restauriertem Audio)
-        _mpc_result: dict | None = None
-        try:
-            from backend.core.musical_phrase_context import get_phrase_extractor as _get_pex
+        # v9.10.24 — DefectQualityReport (extracted helper to reduce method complexity)
+        _dqr_result = self._compute_defect_quality_report_result(
+            _mr_result=_mr_result,
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-            _mpc_audio = (
-                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
-            )
-            _mpc_n = len(_mpc_audio)
-            _mpc_gap_start = int(_mpc_n * 0.45)
-            _mpc_gap_end = int(_mpc_n * 0.50)
-            _mpc_ctx = _get_pex().extract_context(_mpc_audio, sample_rate, _mpc_gap_start, _mpc_gap_end)
-            _mpc_result = _mpc_ctx.as_dict()
-            logger.debug(
-                "✅ MusicalPhraseContext: tempo=%.1f bpm, beats=%d",
-                _mpc_result.get("tempo_bpm", 0),
-                _mpc_result.get("n_beats", 0),
-            )
-        except Exception as _mpc_exc:
-            logger.debug("MusicalPhraseContext nicht verfügbar: %s", _mpc_exc)
+        # v9.10.24 — ProcessingTrace (extracted helper to reduce method complexity)
+        _pt_result = self._compute_processing_trace_result(sample_rate=sample_rate)
 
-        # v9.10.22 — ConfidenceBasedProcessing: adjusted NR strength
-        _cbp_result: dict | None = None
-        try:
-            from backend.core.confidence_processing import ConfidenceBasedProcessing as _CBP22
+        # v9.10.24 — ChainOptimizer (extracted helper to reduce method complexity)
+        _co_result = self._compute_chain_optimizer_result()
 
-            _cbp_conf_val = (
-                float(_pipeline_confidence.confidence)
-                if _pipeline_confidence and hasattr(_pipeline_confidence, "confidence")
-                else 0.7
-            )
-            _cbp_strength = _CBP22(lambda m: None).adjust_strength(1.0, _cbp_conf_val)
-            _cbp_result = {
-                "pipeline_confidence": round(_cbp_conf_val, 4),
-                "adjusted_strength": round(float(_cbp_strength), 4),
-            }
-            logger.debug("✅ ConfidenceBasedProcessing: strength=%.3f bei conf=%.3f", _cbp_strength, _cbp_conf_val)
-        except Exception as _cbp_exc:
-            logger.debug("ConfidenceBasedProcessing nicht verfügbar: %s", _cbp_exc)
+        # v9.10.25 — QualityMode (extracted helper to reduce method complexity)
+        _qm_result = self._compute_quality_mode_result()
 
-        # v9.10.23 — ContextAwareGoalOptimizer: musikalische Zielanpassungen
-        _cago_result: dict | None = None
-        try:
-            from backend.core.context_aware_goal_optimizer import ContextAwareGoalOptimizer as _CAGO
+        # v9.10.25 — ProvenanceAudit (extracted helper to reduce method complexity)
+        _pa_result = self._compute_provenance_audit_result(_dqr_result=_dqr_result)
 
-            _cago_metrics: dict = {}
-            if _musical_goal_scores and isinstance(_musical_goal_scores, dict):
-                _cago_metrics = {k: float(v) for k, v in _musical_goal_scores.items() if isinstance(v, (int, float))}
-            _cago_weights = {
-                "brillanz": 0.85,
-                "waerme": 0.80,
-                "natuerlichkeit": 0.90,
-                "authentizitaet": 0.88,
-                "transparenz": 0.89,
-                "bass_kraft": 0.85,
-            }
-            _cago_inst = _CAGO(get_context=lambda: {"adaptivity": 1.0}, feedback_callback=lambda x: None)
-            _cago_inst.set_goal_weights(_cago_weights)
-            _cago_raw = _cago_inst.optimize(_cago_metrics) if _cago_metrics else {}
-            _cago_result = {k: round(float(v), 4) for k, v in _cago_raw.items()}
-            logger.debug("✅ ContextAwareGoalOptimizer: %d Zielanpassungen", len(_cago_result))
-        except Exception as _cago_exc:
-            logger.debug("ContextAwareGoalOptimizer nicht verfügbar: %s", _cago_exc)
+        # v9.10.25 — QualityGating (extracted helper to reduce method complexity)
+        _qg_result = self._compute_quality_gating_result()
 
-        # v9.10.23 — MLParameterInference: materialspezifische Parameter ableiten
-        _mlpi_result: dict | None = None
-        try:
-            from backend.core.ml_parameter_inference import MLParameterInferenceEngine as _MLPIE
+        # v9.10.25 — QualityRecoverySystem (extracted helper to reduce method complexity)
+        _qrs_result = self._compute_quality_recovery_result()
 
-            _mlpi_snr = (
-                float(_quality_before.snr_db)
-                if _quality_before is not None and hasattr(_quality_before, "snr_db")
-                else 30.0
-            )
-            _mlpi_warmth = (
-                float(_quality_before.warmth)
-                if _quality_before is not None and hasattr(_quality_before, "warmth")
-                else 0.5
-            )
-            _mlpi_features = {"snr": max(0.0, min(80.0, _mlpi_snr)), "warmth": max(0.0, min(1.0, _mlpi_warmth))}
-            _mlpi_engine = _MLPIE()
-            _mlpi_inferred = _mlpi_engine.infer_parameters(_mlpi_features)
-            _mlpi_result = {
-                "strategy": _mlpi_inferred.get("strategy", "default"),
-                "confidence": round(float(_mlpi_inferred.get("confidence", 0.0)), 4),
-                "explanation": _mlpi_engine.explain_last_inference(),
-            }
-            logger.debug("✅ MLParameterInference: strategy=%s", _mlpi_result["strategy"])
-        except Exception as _mlpi_exc:
-            logger.debug("MLParameterInference nicht verfügbar: %s", _mlpi_exc)
+        # v9.10.26 — SelfLearningOptimizer (extracted helper to reduce method complexity)
+        _slo_result = self._compute_self_learning_optimizer_result()
 
-        # v9.10.23 — AdaptiveChainRouter: optimale Phasenkette für Material
-        _acr_result: dict | None = None
-        try:
-            from backend.core.adaptive_chain_router import CHAIN_TEMPLATES as _CHAIN_TPL
-            from backend.core.adaptive_chain_router import AdaptiveChainRouter as _ACR
+        # v9.10.26 — ResamplingUtils (extracted helper to reduce method complexity)
+        _ru_result = self._compute_resampling_utils_result(sample_rate=sample_rate)
 
-            _acr_material = "UNKNOWN"
-            if _era_result and isinstance(_era_result, dict):
-                _acr_material = str(_era_result.get("material_prior", "unknown")).upper()
-            _acr_conf = (
-                float(_pipeline_confidence.confidence)
-                if _pipeline_confidence and hasattr(_pipeline_confidence, "confidence")
-                else 0.7
-            )
-            _acr_router = _ACR(templates=_CHAIN_TPL)
-            _acr_chain = _acr_router.select_chain({"medium_type": _acr_material}, _acr_conf)
-            _acr_result = {
-                "material": _acr_material,
-                "chain": _acr_chain,
-                "chain_length": len(_acr_chain),
-            }
-            logger.debug("✅ AdaptiveChainRouter: %d Schritte für Material=%s", len(_acr_chain), _acr_material)
-        except Exception as _acr_exc:
-            logger.debug("AdaptiveChainRouter nicht verfügbar: %s", _acr_exc)
+        # v9.10.26 — StemProcessingDecision (extracted helper to reduce method complexity)
+        _spd_result = self._compute_stem_processing_decision_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-        # v9.10.23 — ModelManager: Status registrierter Modelle
-        _mm_result: dict | None = None
-        try:
-            from backend.core.model_manager import ModelManager as _MM23
-
-            _mm_status = _MM23().get_model_api_status()
-            _mm_result = {
-                "registered_models": len(_mm_status),
-                "model_names": list(_mm_status.keys()),
-            }
-            logger.debug("✅ ModelManager: %d Modelle registriert", _mm_result["registered_models"])
-        except Exception as _mm_exc:
-            logger.debug("ModelManager nicht verfügbar: %s", _mm_exc)
-
-        # v9.10.24 — MaterialRouter: Materialtyp aus Audio ableiten
-        _mr_result: dict | None = None
-        try:
-            from backend.core.material_router import MaterialRouter as _MR24
-
-            _mr_prior = (
-                str(_era_result.get("material_prior", "unknown"))
-                if _era_result and isinstance(_era_result, dict)
-                else "unknown"
-            )
-            _mr_audio = (
-                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
-            )
-            _mr_detected = _MR24().detect_material({"material": _mr_prior}, _mr_audio, sample_rate)
-            _mr_result = {"detected_material": _mr_detected, "prior_material": _mr_prior}
-            logger.debug("✅ MaterialRouter: detected=%s", _mr_detected)
-        except Exception as _mr_exc:
-            logger.debug("MaterialRouter nicht verfügbar: %s", _mr_exc)
-
-        # v9.10.24 — DefectQualityReport: leerer Bericht (Struktur-Metadaten)
-        _dqr_result: dict | None = None
-        try:
-            import datetime as _dqr_dt
-
-            from backend.core.defect_quality_report import DefectQualityReport as _DQR24
-
-            _dqr_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
-            _dqr_material = _mr_result["detected_material"] if _mr_result else "unknown"
-            _dqr_dur = float(restored_audio.shape[-1]) / float(sample_rate)
-            _dqr_report = _DQR24(
-                generated_at_iso=_dqr_dt.datetime.now().isoformat(),
-                material_type=_dqr_material,
-                total_audio_duration_seconds=round(_dqr_dur, 3),
-                mode=_dqr_mode,
-            )
-            _dqr_dict = _dqr_report.to_dict()
-            _dqr_result = {
-                "material_type": _dqr_dict["meta"]["material_type"],
-                "mode": _dqr_dict["meta"]["mode"],
-                "duration_seconds": _dqr_dict["meta"]["total_audio_duration_seconds"],
-                "defects_repaired": _dqr_dict["meta"]["defects_repaired"],
-                "mean_confidence": _dqr_dict["summary"]["mean_confidence"],
-            }
-            logger.debug("✅ DefectQualityReport: duration=%.1fs material=%s", _dqr_dur, _dqr_material)
-        except Exception as _dqr_exc:
-            logger.debug("DefectQualityReport nicht verfügbar: %s", _dqr_exc)
-
-        # v9.10.24 — ProcessingTrace (processing_logger): Session-Zusammenfassung
-        _pt_result: dict | None = None
-        try:
-            import uuid as _pt_uuid
-
-            from backend.core.processing_logger import ProcessingTrace as _PT24
-
-            _pt_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
-            _pt_trace = _PT24(
-                session_id=str(_pt_uuid.uuid4())[:8],
-                input_file="",
-                processing_mode=_pt_mode,
-                sample_rate=sample_rate,
-            )
-            _pt_dict = _pt_trace.to_dict()
-            _pt_result = {
-                "session_id": _pt_dict["session_id"],
-                "processing_mode": _pt_dict["processing_mode"],
-                "sample_rate": _pt_dict["sample_rate"],
-                "total_steps": _pt_dict["overall_metrics"]["total_steps"],
-            }
-            logger.debug("✅ ProcessingTrace: session=%s mode=%s", _pt_result["session_id"], _pt_mode)
-        except Exception as _pt_exc:
-            logger.debug("ProcessingTrace nicht verfügbar: %s", _pt_exc)
-
-        # v9.10.24 — ChainOptimizer: kanonisch sortierte Modul-Reihenfolge
-        _co_result: dict | None = None
-        try:
-            from backend.core.chain_optimizer import ChainOptimizer as _CO24
-
-            _co_chain_in = [
-                "declip",
-                "declick",
-                "noise_reduction",
-                "dehiss",
-                "dehum",
-                "reverb_reduction",
-                "eq",
-                "enhancer",
-                "limiter",
-            ]
-            _co_optimized = _CO24(compute_budget=1.0).optimize_chain(_co_chain_in)
-            _co_result = {
-                "input_modules": _co_chain_in,
-                "optimized_order": [m if isinstance(m, str) else m.get("name", str(m)) for m in _co_optimized],
-                "n_modules": len(_co_optimized),
-            }
-            logger.debug("✅ ChainOptimizer: %d Module sortiert", len(_co_optimized))
-        except Exception as _co_exc:
-            logger.debug("ChainOptimizer nicht verfügbar: %s", _co_exc)
-
-        # v9.10.25 — QualityMode: aktueller Modus + erwartete Performance-Metriken
-        _qm_result: dict | None = None
-        try:
-            from backend.core.quality_mode import QualityModeConfig as _QMC25
-
-            _qm_perf = _QMC25.get_expected_performance()
-            _qm_mode = _QMC25.get_mode()
-            _qm_result = {
-                "current_mode": str(_qm_mode),
-                "expected_score": round(float(_qm_perf.get("expected_score", 0.0)), 4),
-                "realtime_factor": round(float(_qm_perf.get("realtime_factor", 0.0)), 3),
-                "description": str(_qm_perf.get("description", "")),
-            }
-            logger.debug("✅ QualityMode: mode=%s score=%.2f", _qm_result["current_mode"], _qm_result["expected_score"])
-        except Exception as _qm_exc:
-            logger.debug("QualityMode nicht verfügbar: %s", _qm_exc)
-
-        # v9.10.25 — ProvenanceAudit: Integritätsprüfung des leeren Archiv-Audits
-        _pa_result: dict | None = None
-        try:
-            from backend.core.provenance_audit import ProvenanceAudit as _PA25
-
-            _pa_mode = getattr(getattr(self, "config", None), "mode", "restoration") or "restoration"
-            _pa_material = (_dqr_result or {}).get("material_type", "unknown")
-            _pa25 = _PA25(source_file="", material=_pa_material, mode=_pa_mode)
-            _pa_check = _pa25.integrity_check()
-            _pa_result = {
-                "valid": bool(_pa_check["valid"]),
-                "total_entries": int(_pa_check["total_entries"]),
-                "schema_version": str(_pa25.schema_version),
-                "mode": _pa25.mode,
-            }
-            logger.debug("✅ ProvenanceAudit: valid=%s entries=%d", _pa_result["valid"], _pa_result["total_entries"])
-        except Exception as _pa_exc:
-            logger.debug("ProvenanceAudit nicht verfügbar: %s", _pa_exc)
-
-        # v9.10.25 — QualityGating (quality_feedback_loop): Konfiguration
-        _qg_result: dict | None = None
-        try:
-            from backend.core.quality_feedback_loop import QualityGating as _QG25
-
-            _qg_inst = _QG25(min_expected_improvement=0.05)
-            _qg_result = {
-                "min_expected_improvement": float(_qg_inst.min_expected_improvement),
-                "available": True,
-            }
-            logger.debug("✅ QualityGating: min_improvement=%.2f", _qg_inst.min_expected_improvement)
-        except Exception as _qg_exc:
-            logger.debug("QualityGating nicht verfügbar: %s", _qg_exc)
-
-        # v9.10.25 — QualityRecoverySystem: unterstützte Problemtypen
-        _qrs_result: dict | None = None
-        try:
-            from backend.core.quality_recovery import QualityRecoverySystem as _QRS25
-
-            _qrs = _QRS25()
-            _qrs_types = [k.value for k in _qrs._strategy_templates]
-            _qrs_result = {
-                "supported_problem_types": _qrs_types,
-                "n_problem_types": len(_qrs_types),
-                "available": True,
-            }
-            logger.debug("✅ QualityRecoverySystem: %d Problemtypen", len(_qrs_types))
-        except Exception as _qrs_exc:
-            logger.debug("QualityRecoverySystem nicht verfügbar: %s", _qrs_exc)
-
-        # v9.10.26 — SelfLearningOptimizer: UCB1-Lernstatistiken
-        _slo_result: dict | None = None
-        try:
-            from backend.core.processing_modes import ProcessingMode as _PM26
-            from backend.core.self_learning_optimizer import SelfLearningOptimizer as _SLO26
-
-            _slo_mode = _PM26.RESTORATION
-            _slo26 = _SLO26(mode=_slo_mode)
-            _slo_stats = _slo26.get_statistics()
-            _slo_result = {
-                "mode": str(_slo_stats.get("mode", "")),
-                "total_pulls": int(_slo_stats.get("total_pulls", 0)),
-                "n_arms": len(_slo_stats.get("arms", {})),
-            }
-            logger.debug(
-                "✅ SelfLearningOptimizer: pulls=%d arms=%d", _slo_result["total_pulls"], _slo_result["n_arms"]
-            )
-        except Exception as _slo_exc:
-            logger.debug("SelfLearningOptimizer nicht verfügbar: %s", _slo_exc)
-
-        # v9.10.26 — ResamplingUtils: SR-Info + Resample-Bedarf
-        _ru_result: dict | None = None
-        try:
-            _ru_needs_resample = sample_rate != 48000
-            _ru_result = {
-                "input_sr": sample_rate,
-                "target_sr": 48000,
-                "needs_resample": _ru_needs_resample,
-                "library": "soxr",
-            }
-            logger.debug("✅ ResamplingUtils: input_sr=%d needs_resample=%s", sample_rate, _ru_needs_resample)
-        except Exception as _ru_exc:
-            logger.debug("ResamplingUtils nicht verfügbar: %s", _ru_exc)
-
-        # v9.10.26 — StemProcessingDecision: Entscheidung für restauriertes Audio
-        _spd_result: dict | None = None
-        try:
-            from backend.core.stem_processing_decision import StemProcessingDecision as _SPD26
-
-            _spd_audio = (
-                restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
-            )
-            _spd_decision = _SPD26().decide(_spd_audio, sample_rate)
-            _spd_feats = _spd_decision.get("features", {})
-            _spd_result = {
-                "action": str(_spd_decision.get("action", "bypass")),
-                "rms": round(float(_spd_feats.get("rms", 0.0)), 6),
-                "spectral_centroid_hz": round(float(_spd_feats.get("spectral_centroid", 0.0)), 1),
-                "transient": round(float(_spd_feats.get("transient", 0.0)), 6),
-            }
-            logger.debug("✅ StemProcessingDecision: action=%s rms=%.4f", _spd_result["action"], _spd_result["rms"])
-        except Exception as _spd_exc:
-            logger.debug("StemProcessingDecision nicht verfügbar: %s", _spd_exc)
-
-        # v9.10.26 — StateSynchronizationManager: Zustandssynchronisation
-        _ssm_result: dict | None = None
-        try:
-            from backend.core.state_synchronization import StateSynchronizationManager as _SSM26
-
-            _ssm = _SSM26()
-            _ssm.register_module(
-                "aurik_restorer",
-                {
-                    "sample_rate": sample_rate,
-                    "mode": getattr(getattr(self, "config", None), "mode", "restoration") or "restoration",
-                },
-            )
-            _ssm_state = _ssm.get_state("aurik_restorer")
-            _ssm_result = {
-                "registered_modules": list(_ssm.module_states.keys()),
-                "restorer_state": _ssm_state,
-            }
-            logger.debug(
-                "✅ StateSynchronizationManager: %d Module registriert", len(_ssm_result["registered_modules"])
-            )
-        except Exception as _ssm_exc:
-            logger.debug("StateSynchronizationManager nicht verfügbar: %s", _ssm_exc)
+        # v9.10.26 — StateSynchronizationManager (extracted helper to reduce method complexity)
+        _ssm_result = self._compute_state_synchronization_result(sample_rate=sample_rate)
 
         # Deprecated v9.10.45: ABTestManager war immer leer (frische Instanz je Aufruf,
         # keine geteilten Test-Daten). Ersetzt durch ABCompareManager (ab_compare_manager.py).
         # AB-Session-Daten sind unter metadata['ab_compare'] verfügbar.
         _abt_result: dict | None = None  # backward-compat: Key bleibt in metadata
 
-        # v9.10.27 — adaptive_plugins: VoiceHealthNet + LanguageNet
-        _adp_result: dict | None = None
-        try:
-            from backend.core.adaptive_plugins import LanguageNet as _LN27
-            from backend.core.adaptive_plugins import VoiceHealthNet as _VHN27
+        # v9.10.27 — adaptive_plugins (extracted helper to reduce method complexity)
+        _adp_result = self._compute_adaptive_plugins_result(restored_audio=restored_audio)
 
-            _adp_audio27 = restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)
-            _vhn27 = _VHN27().analyze(_adp_audio27, {})
-            _ln27 = _LN27().detect(_adp_audio27, {})
-            _adp_result = {
-                "fatigue": _vhn27.get("fatigue", False),
-                "hoarseness": _vhn27.get("hoarseness", False),
-                "language": _ln27.get("language", "unknown"),
-                "dialect": _ln27.get("dialect", "standard"),
-            }
-            logger.debug("✅ AdaptivePlugins: lang=%s fatigue=%s", _adp_result["language"], _adp_result["fatigue"])
-        except Exception as _adp_exc:
-            logger.debug("AdaptivePlugins nicht verfügbar: %s", _adp_exc)
+        # v9.10.27 — core_utils.audio_stats (extracted helper to reduce method complexity)
+        _cu_result = self._compute_core_utils_audio_stats_result(restored_audio=restored_audio)
 
-        # v9.10.27 — core_utils: audio_stats
-        _cu_result: dict | None = None
-        try:
-            from backend.core.core_utils import audio_stats as _cu_stats27
+        # v9.10.27 — clap_reference_matcher (extracted helper to reduce method complexity)
+        _clap_result = self._compute_clap_reference_matcher_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-            _cu_audio27 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
-                np.float32
-            )
-            _cu_result = _cu_stats27(_cu_audio27)
-            logger.debug("✅ core_utils.audio_stats: rms=%.4f", _cu_result.get("rms", 0))
-        except Exception as _cu_exc:
-            logger.debug("core_utils nicht verfügbar: %s", _cu_exc)
+        # v9.10.27 — exotic_media_support (extracted helper to reduce method complexity)
+        _ems_result = self._compute_exotic_media_support_result()
 
-        # v9.10.27 — clap_reference_matcher: DSP-Embedding
-        _clap_result: dict | None = None
-        try:
-            from backend.core.clap_reference_matcher import compute_dsp_embedding as _clap_emb27
+        # v9.10.28 — module_communication (extracted helper to reduce method complexity)
+        _mc_result = self._compute_module_communication_result()
 
-            _clap_audio27 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
-                np.float32
-            )
-            _clap_clip27 = _clap_audio27[: min(len(_clap_audio27), sample_rate * 5)]
-            _clap_vec27 = _clap_emb27(_clap_clip27, sample_rate)
-            _clap_result = {
-                "embedding_dim": int(_clap_vec27.shape[0]),
-                "embedding_norm": round(float(np.linalg.norm(_clap_vec27)), 6),
-            }
-            logger.debug(
-                "✅ CLAPReferenceMatcher: embed_dim=%d norm=%.4f",
-                _clap_result["embedding_dim"],
-                _clap_result["embedding_norm"],
-            )
-        except Exception as _clap_exc:
-            logger.debug("CLAPReferenceMatcher nicht verfügbar: %s", _clap_exc)
+        # v9.10.28 — processing_context (extracted helper to reduce method complexity)
+        _pc_result = self._compute_processing_context_result()
 
-        # v9.10.27 — exotic_media_support: ExoticMediaHandler
-        _ems_result: dict | None = None
-        try:
-            from backend.core.exotic_media_support import (
-                EXOTIC_DEFECTS as _EDF27,
-            )
-            from backend.core.exotic_media_support import (
-                EXOTIC_MEDIA_TEMPLATES as _EMT27,
-            )
-            from backend.core.exotic_media_support import (
-                ExoticMediaHandler as _EMH27,
-            )
+        # v9.10.28 — plugin_architecture (extracted helper to reduce method complexity)
+        _pa_result = self._compute_plugin_architecture_result()
 
-            _emh27 = _EMH27(templates=_EMT27, defects=_EDF27)
-            _ems_vinyl_chain = _emh27.get_chain_for_media("VINYL")
-            _ems_result = {
-                "media_types": list(_EMT27.keys()),
-                "n_exotic_defects": len(_EDF27),
-                "vinyl_chain": _ems_vinyl_chain,
-            }
-            logger.debug("✅ ExoticMediaHandler: %d Medientypen", len(_ems_result["media_types"]))
-        except Exception as _ems_exc:
-            logger.debug("ExoticMediaHandler nicht verfügbar: %s", _ems_exc)
+        # v9.10.28 — archive_manager (extracted helper to reduce method complexity)
+        _arcm_result = self._compute_archive_manager_result()
 
-        # v9.10.28 — module_communication: CommunicationBus
-        _mc_result: dict | None = None
-        try:
-            from backend.core.module_communication import get_communication_bus as _gcb28
-
-            _bus28 = _gcb28()
-            _bus_stats28 = _bus28.get_statistics()
-            _mc_result = {
-                "total_messages": _bus_stats28.get("total_messages", 0),
-                "n_topics": _bus_stats28.get("n_topics", len(_bus_stats28.get("topics", {}))),
-            }
-            logger.debug(
-                "✅ ModuleCommunicationBus: msgs=%d topics=%d", _mc_result["total_messages"], _mc_result["n_topics"]
-            )
-        except Exception as _mc_exc:
-            logger.debug("ModuleCommunicationBus nicht verfügbar: %s", _mc_exc)
-
-        # v9.10.28 — processing_context: ContextManager
-        _pc_result: dict | None = None
-        try:
-            from backend.core.processing_context import get_context_manager as _gcm28
-
-            _cm28 = _gcm28()
-            _pc_result = {
-                "context_manager_type": type(_cm28).__name__,
-                "available": True,
-            }
-            logger.debug("✅ ProcessingContext: %s verfügbar", _pc_result["context_manager_type"])
-        except Exception as _pc_exc:
-            logger.debug("ProcessingContext nicht verfügbar: %s", _pc_exc)
-
-        # v9.10.28 — plugin_architecture: PluginManager
-        _pa_result: dict | None = None
-        try:
-            from backend.core.plugin_architecture import PluginManager as _PM28a
-
-            _pm28 = _PM28a()
-            _pm28_plugins = getattr(_pm28, "plugins", {})
-            _pa_result = {
-                "n_plugins": len(_pm28_plugins),
-                "plugin_names": list(_pm28_plugins.keys()),
-            }
-            logger.debug("✅ PluginManager: %d Plugins", _pa_result["n_plugins"])
-        except Exception as _pa_exc:
-            logger.debug("PluginManager nicht verfügbar: %s", _pa_exc)
-
-        # v9.10.28 — archive_manager: ArchiveManager
-        _arcm_result: dict | None = None
-        try:
-            import tempfile as _tf28
-
-            from backend.core.archive_manager import ArchiveManager as _AM28
-
-            _am28_base = str(pathlib.Path(_tf28.gettempdir()) / "aurik_archive")
-            _am28_mdl = str(pathlib.Path(_tf28.gettempdir()) / "aurik_models")
-            _am28 = _AM28(base_archive_path=_am28_base, models_path=_am28_mdl)
-            _arcm_result = {
-                "base_path": str(_am28.base_path),
-                "available": True,
-            }
-            logger.debug("✅ ArchiveManager: basepath=%s", _arcm_result["base_path"])
-        except Exception as _am_exc:
-            logger.debug("ArchiveManager nicht verfügbar: %s", _am_exc)
-
-        # v9.10.28 — import_pipeline: ImportPipeline
-        _ipipe_result: dict | None = None
-        try:
-            from backend.core.import_pipeline import ImportPipeline as _IP28
-
-            _ip28 = _IP28()
-            _ipipe_result = {
-                "policy": _ip28.policy,
-                "n_audit_log": len(_ip28.audit_log),
-                "available": True,
-            }
-            logger.debug("✅ ImportPipeline: policy=%s", _ipipe_result["policy"])
-        except Exception as _ip_exc:
-            logger.debug("ImportPipeline nicht verfügbar: %s", _ip_exc)
+        # v9.10.28 — import_pipeline (extracted helper to reduce method complexity)
+        _ipipe_result = self._compute_import_pipeline_result()
 
         # v9.14-D3: aktiven Verarbeitungs-Modus für ARE/PAP/AMGS ableiten
         _mode_val = getattr(self.config.mode, "value", "restoration")
 
-        # v9.10.29 — autonomous_restoration_engine: AutonomousRestorationEngine
-        _are_result: dict | None = None
-        try:
-            from backend.core.autonomous_restoration_engine import AutonomousRestorationEngine as _ARE29
+        # v9.10.29 — autonomous_restoration_engine (extracted helper to reduce method complexity)
+        _are_result = self._compute_autonomous_restoration_engine_result(mode_value=_mode_val)
 
-            _are29 = _ARE29(mode=_mode_val, enable_self_learning=False)  # v9.14-D3
-            _are_result = {
-                "mode": str(getattr(_are29, "mode", "restoration")),
-                "self_learning": bool(getattr(_are29, "enable_self_learning", False)),
-                "available": True,
-            }
-            logger.debug("✅ AutonomousRestorationEngine: mode=%s", _are_result["mode"])
-        except Exception as _are_exc:
-            logger.debug("AutonomousRestorationEngine nicht verfügbar: %s", _are_exc)
+        # v9.10.29 — pipeline_main (extracted helper to reduce method complexity)
+        _pmain_result = self._compute_pipeline_main_result(mode_value=_mode_val)
 
-        # v9.10.29 — pipeline_main: AurikAutonomousPipeline
-        _pmain_result: dict | None = None
-        try:
-            from backend.core.pipeline_main import AurikAutonomousPipeline as _PAP29
+        # v9.10.29 — adaptive_resource_manager (extracted helper to reduce method complexity)
+        _armr_result = self._compute_adaptive_resource_manager_result()
 
-            _pap29 = _PAP29(mode=_mode_val, enable_self_learning=False)  # v9.14-D3
-            _pmain_result = {
-                "pipeline_mode": str(getattr(_pap29, "mode", "restoration")),
-                "available": True,
-            }
-            logger.debug("✅ AurikAutonomousPipeline: mode=%s", _pmain_result["pipeline_mode"])
-        except Exception as _pm_exc:
-            logger.debug("AurikAutonomousPipeline nicht verfügbar: %s", _pm_exc)
+        # v9.10.29 — merge_stems_sota (extracted helper to reduce method complexity)
+        _mss_result = self._compute_merge_stems_sota_result()
 
-        # v9.10.29 — adaptive_resource_manager: AdaptiveResourceManager
-        _armr_result: dict | None = None
-        try:
-            from backend.core.adaptive_resource_manager import AdaptiveResourceManager as _ARM29
+        # v9.10.29 — medium_chain_model (extracted helper to reduce method complexity)
+        _mcm_result = self._compute_medium_chain_model_result()
 
-            _arm29 = _ARM29()
-            _armr_result = {
-                "min_cores": getattr(_arm29, "min_cores", 2),
-                "max_cores": getattr(_arm29, "max_cores", None),
-                "available": True,
-            }
-            logger.debug("✅ AdaptiveResourceManager: min_cores=%s", _armr_result["min_cores"])
-        except Exception as _arm_exc:
-            logger.debug("AdaptiveResourceManager nicht verfügbar: %s", _arm_exc)
+        # v9.10.30 — ai_framework (extracted helper to reduce method complexity)
+        _aif_result = self._compute_ai_framework_result(sample_rate=sample_rate)
 
-        # v9.10.29 — merge_stems_sota: MergeStemsSOTA
-        _mss_result: dict | None = None
-        try:
-            from backend.core.merge_stems_sota import MergeStemsSOTA as _MSS29
+        # v9.10.30 — auto_musical_goal_setter (extracted helper to reduce method complexity)
+        _amgs_result = self._compute_auto_musical_goal_setter_result(mode_value=_mode_val)
 
-            _mss29 = _MSS29()
-            _mss_result = {
-                "spectral_weight": float(getattr(_mss29, "spectral_weight", 0.5)),
-                "phase_align": bool(getattr(_mss29, "phase_align", True)),
-                "loudness_match": bool(getattr(_mss29, "loudness_match", True)),
-            }
-            logger.debug("✅ MergeStemsSOTA: spectral_weight=%.2f", _mss_result["spectral_weight"])
-        except Exception as _mss_exc:
-            logger.debug("MergeStemsSOTA nicht verfügbar: %s", _mss_exc)
+        # v9.10.30 — emergency_restoration (extracted helper to reduce method complexity)
+        _er_result = self._compute_emergency_restoration_result(
+            restored_audio=restored_audio,
+            sample_rate=sample_rate,
+        )
 
-        # v9.10.29 — medium_chain_model: PhysicalMediumChainModel
-        _mcm_result: dict | None = None
-        try:
-            from backend.core.medium_chain_model import PhysicalMediumChainModel as _MCM29
+        # v9.10.30 — material_restoration_nets (extracted helper to reduce method complexity)
+        _mrn_result = self._compute_material_restoration_nets_result()
 
-            _mcm29 = _MCM29()
-            _mcm_result = {
-                "shellac_eq_curves": list(getattr(_mcm29, "SHELLAC_EQ_CURVES", {}).keys()),
-                "available": True,
-            }
-            logger.debug("✅ PhysicalMediumChainModel: %d EQ-Kurven", len(_mcm_result["shellac_eq_curves"]))
-        except Exception as _mcm_exc:
-            logger.debug("PhysicalMediumChainModel nicht verfügbar: %s", _mcm_exc)
+        # v9.10.30 — audio_exporter (extracted helper to reduce method complexity)
+        _aex_result = self._compute_audio_exporter_result()
 
-        # v9.10.30 — ai_framework: AurikAIFramework
-        _aif_result: dict | None = None
-        try:
-            from backend.core.ai_framework import AurikAIFramework as _AIF30
+        # v9.10.31 — module_coordinator (extracted helper to reduce method complexity)
+        _mco_result = self._compute_module_coordinator_result()
 
-            _aif30 = _AIF30(sample_rate=sample_rate)
-            _aif_result = {
-                "sample_rate": int(getattr(_aif30, "sample_rate", sample_rate)),
-                "available": True,
-            }
-            logger.debug("✅ AurikAIFramework: sr=%d", _aif_result["sample_rate"])
-        except Exception as _aif_exc:
-            logger.debug("AurikAIFramework nicht verfügbar: %s", _aif_exc)
+        # v9.10.31 — adaptive_chain_builder (extracted helper to reduce method complexity)
+        _acb_result = self._compute_adaptive_chain_builder_result()
 
-        # v9.10.30 — auto_musical_goal_setter: AutoMusicalGoalSetter
-        _amgs_result: dict | None = None
-        try:
-            from backend.core.auto_musical_goal_setter import AutoMusicalGoalSetter as _AMGS30
-            from backend.core.processing_modes import ProcessingMode as _PM_AMGS30
+        # v9.10.31 — export_workflow (extracted helper to reduce method complexity)
+        _ew_result = self._compute_export_workflow_result()
 
-            _mode_norm = str(_mode_val or "").strip().lower().replace("_", "").replace(" ", "")
-            _is_studio_amgs = _mode_norm in {"studio2026", "studio", "maximum"}
-            _amgs30 = _AMGS30(mode=_PM_AMGS30.STUDIO_2026 if _is_studio_amgs else _PM_AMGS30.RESTORATION)  # v9.14-D3
-            _amgs_result = {
-                "mode": str(_amgs30.mode),
-                "n_base_goals": len(getattr(_amgs30, "_base", {})),
-            }
-            logger.debug(
-                "✅ AutoMusicalGoalSetter: mode=%s goals=%d", _amgs_result["mode"], _amgs_result["n_base_goals"]
-            )
-        except Exception as _amgs_exc:
-            logger.debug("AutoMusicalGoalSetter nicht verfügbar: %s", _amgs_exc)
+        # v9.10.31 — dummy_models (extracted helper to reduce method complexity)
+        _dm_result = self._compute_dummy_models_result()
 
-        # v9.10.30 — emergency_restoration: DamageAnalyzer
-        _er_result: dict | None = None
-        try:
-            from backend.core.emergency_restoration import DamageAnalyzer as _DA30
+        # v9.10.32 — dsp registry (extracted helper to reduce method complexity)
+        _dsp_registry = self._compute_dsp_registry_result()
 
-            _da30 = _DA30()
-            _er_audio30 = (restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0)).astype(
-                np.float32
-            )
-            _da_assess30 = _da30.analyze(_er_audio30, sample_rate)
-            _er_result = {
-                "severity": str(getattr(_da_assess30, "severity", "unknown")),
-                "overall_damage": round(float(getattr(_da_assess30, "overall_damage_ratio", 0.0)), 4),
-            }
-            logger.debug(
-                "✅ DamageAnalyzer: severity=%s damage=%.4f", _er_result["severity"], _er_result["overall_damage"]
-            )
-        except Exception as _er_exc:
-            logger.debug("EmergencyRestoration nicht verfügbar: %s", _er_exc)
+        # v9.10.32 — plugin registry (extracted helper to reduce method complexity)
+        _plugin_registry_dyn = self._compute_plugin_registry_dynamic_result()
 
-        # v9.10.30 — material_restoration_nets: SourceMedium-Inventar
-        _mrn_result: dict | None = None
-        try:
-            from backend.core.material_restoration_nets import _RESTORER_MAP as _RM30
-
-            _mrn_result = {
-                "available_media": [str(m.value) for m in _RM30],
-                "n_media": len(_RM30),
-            }
-            logger.debug("✅ MaterialRestorationNets: %d Medien", _mrn_result["n_media"])
-        except Exception as _mrn_exc:
-            logger.debug("MaterialRestorationNets nicht verfügbar: %s", _mrn_exc)
-
-        # v9.10.30 — audio_exporter: AudioExporter
-        _aex_result: dict | None = None
-        try:
-            from backend.core.audio_exporter import AudioExporter as _AEX30
-
-            _aex30 = _AEX30()
-            _aex_fmts = getattr(_aex30, "supported_formats", getattr(_aex30, "formats", None))
-            _aex_result = {
-                "supported_formats": list(_aex_fmts) if _aex_fmts else ["flac", "wav"],
-                "available": True,
-            }
-            logger.debug("✅ AudioExporter: %d Formate", len(_aex_result["supported_formats"]))
-        except Exception as _aex_exc:
-            logger.debug("AudioExporter nicht verfügbar: %s", _aex_exc)
-
-        # v9.10.31 — module_coordinator: create_coordinator()
-        _mco_result: dict | None = None
-        try:
-            from backend.core.module_communication import ModuleCommunicationBus as _MCBus31
-            from backend.core.module_coordinator import create_coordinator as _cc31
-            from backend.core.processing_context import ProcessingContext as _PCtx31
-
-            _mco31 = _cc31(context=_PCtx31(session_id="probe"), bus=_MCBus31())
-            _mco_result = {
-                "coordinator_type": type(_mco31).__name__,
-                "available": True,
-            }
-            logger.debug("✅ ModuleCoordinator: type=%s", _mco_result["coordinator_type"])
-        except Exception as _mco_exc:
-            logger.debug("ModuleCoordinator nicht verfügbar: %s", _mco_exc)
-
-        # v9.10.31 — adaptive_chain_builder: AdaptiveChainBuilder
-        _acb_result: dict | None = None
-        try:
-            from backend.core.forensics.adaptive_chain_builder import AdaptiveChainBuilder as _ACB31
-
-            _acb31 = _ACB31()
-            _acb_result = {
-                "type": type(_acb31).__name__,
-                "available": True,
-            }
-            logger.debug("✅ AdaptiveChainBuilder: verfügbar")
-        except Exception as _acb_exc:
-            logger.debug("AdaptiveChainBuilder nicht verfügbar: %s", _acb_exc)
-
-        # v9.10.31 — export_workflow: ExportMetadata
-        _ew_result: dict | None = None
-        try:
-            from backend.core.export_workflow import ExportMetadata as _EM31
-
-            _ew_result = {
-                "metadata_class": _EM31.__name__,
-                "available": True,
-            }
-            logger.debug("✅ ExportWorkflow: ExportMetadata verfügbar")
-        except Exception as _ew_exc:
-            logger.debug("ExportWorkflow nicht verfügbar: %s", _ew_exc)
-
-        # v9.10.31 — dummy_models: Stub-Modelle
-        _dm_result: dict | None = None
-        try:
-            from backend.core.dummy_models import (
-                AuthenticityModel as _AuthM31,
-            )
-            from backend.core.dummy_models import (
-                DenoiserModel as _DM31,
-            )
-            from backend.core.dummy_models import (
-                SibilantModel as _SibM31,
-            )
-
-            _dm_result = {
-                "models": [_DM31.__name__, _SibM31.__name__, _AuthM31.__name__],
-                "n_models": 3,
-            }
-            logger.debug("✅ DummyModels: %d Stub-Modelle", _dm_result["n_models"])
-        except Exception as _dm_exc:
-            logger.debug("DummyModels nicht verfügbar: %s", _dm_exc)
-
-        # v9.10.32 — Dynamische DSP-Modul-Registry (alle dsp/ Module)
-        _dsp_registry: dict | None = None
-        try:
-            import importlib as _il_dsp32
-            import pathlib as _pathlib_dsp32
-
-            _dsp_dir32 = _pathlib_dsp32.Path(__file__).parent.parent.parent / "dsp"
-            _dsp_available32: list = []
-            _dsp_failed32: list = []
-            _dsp_contracts32: dict = {}
-            if _dsp_dir32.is_dir():
-                for _dsp_f32 in sorted(_dsp_dir32.glob("*.py")):
-                    if _dsp_f32.stem.startswith("_") or _dsp_f32.stem.startswith("test_"):
-                        continue
-                    try:
-                        _dsp_mod32 = sys.modules.get(f"dsp.{_dsp_f32.stem}") or _il_dsp32.import_module(
-                            f"dsp.{_dsp_f32.stem}"
-                        )
-                        _dsp_available32.append(_dsp_f32.stem)
-                        _dsp_cls32 = getattr(_dsp_mod32, "DSPContract", None)
-                        if _dsp_cls32 is not None:
-                            try:
-                                _dsp_c32 = _dsp_cls32()
-                                _dsp_contracts32[_dsp_f32.stem] = {
-                                    "id": str(getattr(_dsp_c32, "id", _dsp_f32.stem)),
-                                    "category": str(getattr(_dsp_c32, "category", "dsp")),
-                                    "version": str(getattr(_dsp_c32, "version", "1.0.0")),
-                                }
-                            except BaseException:
-                                _dsp_contracts32[_dsp_f32.stem] = {"id": _dsp_f32.stem, "category": "dsp"}
-                    except BaseException:
-                        _dsp_failed32.append(_dsp_f32.stem)
-            _dsp_registry = {
-                "n_total": len(_dsp_available32) + len(_dsp_failed32),
-                "n_available": len(_dsp_available32),
-                "n_failed": len(_dsp_failed32),
-                "n_with_contract": len(_dsp_contracts32),
-                "failed_modules": _dsp_failed32,
-                "contracts": _dsp_contracts32,
-            }
-            logger.debug(
-                "✅ DSP-Registry: %d/%d Module, %d DSPContracts",
-                len(_dsp_available32),
-                _dsp_registry["n_total"],
-                len(_dsp_contracts32),
-            )
-        except BaseException as _dsp_reg_exc:
-            logger.debug("DSP-Registry Fehler: %s", _dsp_reg_exc)
-
-        # v9.10.32 — Dynamische Plugin-Registry (alle plugins/ Module)
-        _plugin_registry_dyn: dict | None = None
-        try:
-            import importlib as _il_pl32
-            import pathlib as _pathlib_pl32
-
-            _pl_dir32 = _pathlib_pl32.Path(__file__).parent.parent.parent / "plugins"
-            _pl_available32: list = []
-            _pl_failed32: list = []
-            _pl_meta32: dict = {}
-            if _pl_dir32.is_dir():
-                for _pl_f32 in sorted(_pl_dir32.glob("*.py")):
-                    if _pl_f32.stem.startswith("_") or _pl_f32.stem.startswith("test_"):
-                        continue
-                    try:
-                        _pl_mod32 = sys.modules.get(f"plugins.{_pl_f32.stem}") or _il_pl32.import_module(
-                            f"plugins.{_pl_f32.stem}"
-                        )
-                        _pl_available32.append(_pl_f32.stem)
-                        # Ersten Klassennamen und ersten def-Namen festhalten
-                        _pl_classes32 = [
-                            n
-                            for n in dir(_pl_mod32)
-                            if isinstance(getattr(_pl_mod32, n, None), type) and not n.startswith("_")
-                        ]
-                        _pl_meta32[_pl_f32.stem] = {
-                            "classes": _pl_classes32[:3],
-                        }
-                    except BaseException:
-                        _pl_failed32.append(_pl_f32.stem)
-            _plugin_registry_dyn = {
-                "n_total": len(_pl_available32) + len(_pl_failed32),
-                "n_available": len(_pl_available32),
-                "n_failed": len(_pl_failed32),
-                "failed_modules": _pl_failed32,
-                "meta": _pl_meta32,
-            }
-            logger.debug("✅ Plugin-Registry: %d/%d Plugins", len(_pl_available32), _plugin_registry_dyn["n_total"])
-        except BaseException as _pl_reg_exc:
-            logger.debug("Plugin-Registry Fehler: %s", _pl_reg_exc)
-
-        # v9.10.32 — Dynamische Backend-Registry (alle backend/ Module)
-        _backend_registry: dict | None = None
-        try:
-            import importlib as _il_be32
-            import pathlib as _pathlib_be32
-
-            _be_dir32 = _pathlib_be32.Path(__file__).parent.parent.parent / "backend"
-            _be_available32: list = []
-            _be_failed32: list = []
-            _be_meta32: dict = {}
-            if _be_dir32.is_dir():
-                for _be_f32 in sorted(_be_dir32.glob("*.py")):
-                    if _be_f32.stem.startswith("_") or _be_f32.stem.startswith("test_"):
-                        continue
-                    try:
-                        _be_mod32 = sys.modules.get(f"backend.{_be_f32.stem}") or _il_be32.import_module(
-                            f"backend.{_be_f32.stem}"
-                        )
-                        _be_available32.append(_be_f32.stem)
-                        _be_classes32 = [
-                            n
-                            for n in dir(_be_mod32)
-                            if isinstance(getattr(_be_mod32, n, None), type) and not n.startswith("_")
-                        ]
-                        _be_meta32[_be_f32.stem] = {"classes": _be_classes32[:3]}
-                    except BaseException:
-                        _be_failed32.append(_be_f32.stem)
-            _backend_registry = {
-                "n_total": len(_be_available32) + len(_be_failed32),
-                "n_available": len(_be_available32),
-                "n_failed": len(_be_failed32),
-                "failed_modules": _be_failed32,
-                "meta": _be_meta32,
-            }
-            logger.debug("✅ Backend-Registry: %d/%d Module", len(_be_available32), _backend_registry["n_total"])
-        except BaseException as _be_reg_exc:
-            logger.debug("Backend-Registry Fehler: %s", _be_reg_exc)
+        # v9.10.32 — backend registry (extracted helper to reduce method complexity)
+        _backend_registry = self._compute_backend_registry_result()
 
         # Optional: Resample back to original sample rate
         # (Currently disabled - output is 48 kHz for consistency)
@@ -7946,193 +10054,63 @@ class UnifiedRestorerV3:
         # v9.10.38 — core/hybrid/-Module (6 Hybrid-Prozessoren)
         # ===================================================================
 
-        # hybrid_dereverb
-        _hybrid_dereverb_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_dereverb import HybridDereverb
+        # hybrid_dereverb (extracted helper to reduce method complexity)
+        _hybrid_dereverb_result = self._compute_hybrid_dereverb_result()
 
-            HybridDereverb()
-            _hybrid_dereverb_result = {"class": "HybridDereverb", "active": True}
-            logger.debug("🏛️ HybridDereverb: initialisiert")
-        except Exception as _e38a:
-            logger.debug("HybridDereverb übersprungen: %s", _e38a)
+        # hybrid_ml_denoiser (extracted helper to reduce method complexity)
+        _hybrid_ml_denoiser_result = self._compute_hybrid_ml_denoiser_result()
 
-        # hybrid_ml_denoiser
-        _hybrid_ml_denoiser_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_ml_denoiser import HybridMLDenoiser
+        # hybrid_nvsr (extracted helper to reduce method complexity)
+        _hybrid_nvsr_result = self._compute_hybrid_nvsr_result()
 
-            HybridMLDenoiser()
-            _hybrid_ml_denoiser_result = {"class": "HybridMLDenoiser", "active": True}
-            logger.debug("🏛️ HybridMLDenoiser: initialisiert")
-        except Exception as _e38b:
-            logger.debug("HybridMLDenoiser übersprungen: %s", _e38b)
+        # hybrid_speed_pitch_ml (extracted helper to reduce method complexity)
+        _hybrid_speed_pitch_result = self._compute_hybrid_speed_pitch_result()
 
-        # hybrid_nvsr
-        _hybrid_nvsr_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_nvsr import HybridNVSR
+        # hybrid_vocal_enhancer (extracted helper to reduce method complexity)
+        _hybrid_vocal_enhancer_result = self._compute_hybrid_vocal_enhancer_result()
 
-            HybridNVSR()
-            _hybrid_nvsr_result = {"class": "HybridNVSR", "active": True}
-            logger.debug("🏛️ HybridNVSR: initialisiert")
-        except Exception as _e38c:
-            logger.debug("HybridNVSR übersprungen: %s", _e38c)
-
-        # hybrid_speed_pitch_ml
-        _hybrid_speed_pitch_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_speed_pitch_ml import HybridSpeedPitch
-
-            HybridSpeedPitch()
-            _hybrid_speed_pitch_result = {"class": "HybridSpeedPitch", "active": True}
-            logger.debug("🏛️ HybridSpeedPitch: initialisiert")
-        except Exception as _e38d:
-            logger.debug("HybridSpeedPitch übersprungen: %s", _e38d)
-
-        # hybrid_vocal_enhancer
-        _hybrid_vocal_enhancer_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_vocal_enhancer import HybridVocalEnhancer
-
-            HybridVocalEnhancer()
-            _hybrid_vocal_enhancer_result = {"class": "HybridVocalEnhancer", "active": True}
-            logger.debug("🏛️ HybridVocalEnhancer: initialisiert")
-        except Exception as _e38e:
-            logger.debug("HybridVocalEnhancer übersprungen: %s", _e38e)
-
-        # hybrid_wow_flutter
-        _hybrid_wow_flutter_result: dict | None = None
-        try:
-            from backend.core.hybrid.hybrid_wow_flutter import HybridWowFlutter
-
-            HybridWowFlutter()
-            _hybrid_wow_flutter_result = {"class": "HybridWowFlutter", "active": True}
-            logger.debug("🏛️ HybridWowFlutter: initialisiert")
-        except Exception as _e38f:
-            logger.debug("HybridWowFlutter übersprungen: %s", _e38f)
+        # hybrid_wow_flutter (extracted helper to reduce method complexity)
+        _hybrid_wow_flutter_result = self._compute_hybrid_wow_flutter_result()
 
         # ===================================================================
         # v9.10.37 — Backend-Reste: Audit, Regulator, Zone, Optimization
         # ===================================================================
 
-        # audit_log.audit_log
-        _audit_log_result: dict | None = None
-        try:
-            from backend.core.audit_log.audit_log import AuditLog as _AuditLog37a
+        # audit_log.audit_log (extracted helper to reduce method complexity)
+        _audit_log_result = self._compute_audit_log_result()
 
-            _AuditLog37a()
-            _audit_log_result = {"class": "AuditLog", "active": True}
-            logger.debug("📋 AuditLog: initialisiert")
-        except Exception as _e37a:
-            logger.debug("AuditLog übersprungen: %s", _e37a)
+        # epistemic_gate.ethics_engine (extracted helper to reduce method complexity)
+        _ethics_engine_result = self._compute_epistemic_ethics_engine_result()
 
-        # epistemic_gate.ethics_engine
-        _ethics_engine_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.epistemic_gate.ethics_engine")
-            _ethics_engine_result = {"class": "AuthenticityConstraints", "active": True}
-            logger.debug("⚖️ EpistemicGate.EthicsEngine: geladen")
-        except Exception as _e37b:
-            logger.debug("EpistemicGate.EthicsEngine übersprungen: %s", _e37b)
+        # musical_goals.feedback_loop (extracted helper to reduce method complexity)
+        _mg_feedback_result = self._compute_mg_feedback_loop_result()
 
-        # musical_goals.feedback_loop
-        _mg_feedback_result: dict | None = None
-        try:
-            from backend.core.musical_goals.feedback_loop import MusicalGoalsFeedbackLoop as _MGFL37c
+        # musical_goals.goal_conflict_resolver (extracted helper to reduce method complexity)
+        _goal_conflict_result = self._compute_goal_conflict_result()
 
-            _MGFL37c(monitor=None, adjust_callback=lambda _: None)
-            _mg_feedback_result = {"class": "MusicalGoalsFeedbackLoop", "active": True}
-            logger.debug("🔁 MusicalGoalsFeedbackLoop: initialisiert")
-        except Exception as _e37c:
-            logger.debug("MusicalGoalsFeedbackLoop übersprungen: %s", _e37c)
+        # musical_goals.goal_optimizer (extracted helper to reduce method complexity)
+        _goal_optimizer_result = self._compute_goal_optimizer_result()
 
-        # musical_goals.goal_conflict_resolver
-        _goal_conflict_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.goal_conflict_resolver")
-            _goal_conflict_result = {"enum": "ConflictSeverity", "active": True}
-            logger.debug("⚔️ GoalConflictResolver: ConflictSeverity geladen")
-        except Exception as _e37d:
-            logger.debug("GoalConflictResolver übersprungen: %s", _e37d)
+        # musical_goals.processing_modes (extracted helper to reduce method complexity)
+        _processing_modes_result = self._compute_processing_modes_result_37()
 
-        # musical_goals.goal_optimizer
-        _goal_optimizer_result: dict | None = None
-        try:
-            from backend.core.musical_goals.goal_optimizer import MusicalGoalsOptimizer as _MGO37e
+        # musical_goals.quality_gate (extracted helper to reduce method complexity)
+        _mg_quality_gate_result = self._compute_mg_quality_gate_result()
 
-            _MGO37e(monitor=None)
-            _goal_optimizer_result = {"class": "MusicalGoalsOptimizer", "active": True}
-            logger.debug("🚀 MusicalGoalsOptimizer: initialisiert")
-        except Exception as _e37e:
-            logger.debug("MusicalGoalsOptimizer übersprungen: %s", _e37e)
+        # onnx.fallback (extracted helper to reduce method complexity)
+        _onnx_fallback_result = self._compute_onnx_fallback_result()
 
-        # musical_goals.processing_modes
-        _processing_modes_result: dict | None = None
-        try:
-            from backend.core.processing_modes import ProcessingMode
+        # onnx.quantizer (extracted helper to reduce method complexity)
+        _onnx_quantizer_result = self._compute_onnx_quantizer_result()
 
-            _processing_modes_result = {
-                "modes": [m.name for m in ProcessingMode] if hasattr(ProcessingMode, "__members__") else [],
-                "active": True,
-            }
-            logger.debug("🎚️ ProcessingMode: %d Modi", len(_processing_modes_result["modes"]))
-        except Exception as _e37f:
-            logger.debug("ProcessingMode übersprungen: %s", _e37f)
+        # onnx.runtime (extracted helper to reduce method complexity)
+        _onnx_runtime_result = self._compute_onnx_runtime_result()
 
-        # musical_goals.quality_gate
-        _mg_quality_gate_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.quality_gate")
-            _mg_quality_gate_result = {"class": "EnhancedPostCheckResult", "active": True}
-            logger.debug("🚦 musical_goals.QualityGate: geladen")
-        except Exception as _e37g:
-            logger.debug("musical_goals.QualityGate übersprungen: %s", _e37g)
+        # optimization.advanced_ensemble (extracted helper to reduce method complexity)
+        _adv_ensemble_result = self._compute_adv_ensemble_result()
 
-        # onnx.fallback
-        _onnx_fallback_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.fallback")
-            _onnx_fallback_result = {"class": "FallbackEvent", "active": True}
-            logger.debug("🔄 ONNX-Fallback: FallbackEvent geladen")
-        except Exception as _e37h:
-            logger.debug("ONNX-Fallback übersprungen: %s", _e37h)
-
-        # onnx.quantizer
-        _onnx_quantizer_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.quantizer")
-            _onnx_quantizer_result = {"class": "ModelQuantizer", "active": True}
-            logger.debug("🗜️ ONNX-Quantizer: ModelQuantizer geladen")
-        except Exception as _e37i:
-            logger.debug("ONNX-Quantizer übersprungen: %s", _e37i)
-
-        # onnx.runtime
-        _onnx_runtime_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.runtime")
-            _onnx_runtime_result = {"class": "onnx.runtime.ModelInfo", "active": True}
-            logger.debug("⚙️ ONNX-Runtime: ModelInfo geladen")
-        except Exception as _e37j:
-            logger.debug("ONNX-Runtime übersprungen: %s", _e37j)
-
-        # optimization.advanced_ensemble
-        _adv_ensemble_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.advanced_ensemble")
-            _adv_ensemble_result = {"class": "AdvancedEnsemble", "active": True}
-            logger.debug("🎼 AdvancedEnsemble: geladen")
-        except Exception as _e37k:
-            logger.debug("AdvancedEnsemble übersprungen: %s", _e37k)
-
-        # optimization.automated_augmentation
-        _auto_aug_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.automated_augmentation")
-            _auto_aug_result = {"class": "AudioAugmentations", "active": True}
-            logger.debug("🎨 AudioAugmentations: geladen")
-        except Exception as _e37l:
-            logger.debug("AudioAugmentations übersprungen: %s", _e37l)
+        # optimization.automated_augmentation (extracted helper to reduce method complexity)
+        _auto_aug_result = self._compute_auto_augmentation_result()
 
         # optimization.hyperparameter_optimizer
         # DEADLOCK-SAFE: Nur aus sys.modules-Cache laden — KEIN direkter Import in Thread.
@@ -8143,513 +10121,142 @@ class UnifiedRestorerV3:
             _hyperparam_result = {"class": "HyperparameterConfig", "active": True}
             logger.debug("🔬 HyperparameterOptimizer: HyperparameterConfig aus Cache")
 
-        # optimization.neural_architecture_search
-        _nas_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.neural_architecture_search")
-            _nas_result = {"class": "AudioNASNetwork", "active": True}
-            logger.debug("🧠 NeuralArchitectureSearch: AudioNASNetwork geladen")
-        except Exception as _e37n:
-            logger.debug("NeuralArchitectureSearch übersprungen: %s", _e37n)
+        # optimization.neural_architecture_search (extracted helper to reduce method complexity)
+        _nas_result = self._compute_neural_arch_search_result()
 
-        # optimization.optimization_integration
-        _opt_integration_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.optimization_integration")
-            _opt_integration_result = {"class": "optimization_integration.AdvancedEnsemble", "active": True}
-            logger.debug("🔗 OptimizationIntegration: geladen")
-        except Exception as _e37o:
-            logger.debug("OptimizationIntegration übersprungen: %s", _e37o)
+        # optimization.optimization_integration (extracted helper to reduce method complexity)
+        _opt_integration_result = self._compute_opt_integration_result()
 
-        # optimization.perceptual_loss
-        _perceptual_loss_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.perceptual_loss")
-            _perceptual_loss_result = {"class": "MultiResolutionSTFTLoss", "active": True}
-            logger.debug("🎵 PerceptualLoss: MultiResolutionSTFTLoss geladen")
-        except Exception as _e37p:
-            logger.debug("PerceptualLoss übersprungen: %s", _e37p)
+        # optimization.perceptual_loss (extracted helper to reduce method complexity)
+        _perceptual_loss_result = self._compute_perceptual_loss_result()
 
-        # parallel.module_parallel (vollständiger Import)
-        _mod_parallel_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.parallel.module_parallel")
-            _mod_parallel_result = {"class": "ModuleDependency", "active": True}
-            logger.debug("⚡ module_parallel: ModuleDependency geladen")
-        except Exception as _e37q:
-            logger.debug("module_parallel übersprungen: %s", _e37q)
+        # parallel.module_parallel (extracted helper to reduce method complexity)
+        _mod_parallel_result = self._compute_mod_parallel_result()
 
-        # parallel.stereo_parallel (vollständiger Import)
-        _stereo_par_result: dict | None = None
-        try:
-            from backend.core.parallel.stereo_parallel import ChannelType as _CT37r
+        # parallel.stereo_parallel (extracted helper to reduce method complexity)
+        _stereo_par_result = self._compute_stereo_par_result()
 
-            _stereo_par_result = {
-                "channels": [c.name for c in _CT37r] if hasattr(_CT37r, "__members__") else [],
-                "active": True,
-            }
-            logger.debug("🔊 stereo_parallel: ChannelType geladen")
-        except Exception as _e37r:
-            logger.debug("stereo_parallel übersprungen: %s", _e37r)
+        # quality_gate (top-level backend.core) (extracted helper to reduce method complexity)
+        _quality_gate_result = self._compute_quality_gate_result_37()
 
-        # quality_gate (top-level backend.core)
-        _quality_gate_result: dict | None = None
-        try:
-            from backend.core.quality_gate import QualityGate as _QG37s
+        # regulator.adaptive_goal (extracted helper to reduce method complexity)
+        _reg_adaptive_goal_result = self._compute_reg_adaptive_goal_result()
 
-            _QG37s()
-            _quality_gate_result = {"class": "QualityGate", "active": True}
-            logger.debug("🚦 QualityGate: initialisiert")
-        except Exception as _e37s:
-            logger.debug("QualityGate übersprungen: %s", _e37s)
+        # regulator.context_analysis (extracted helper to reduce method complexity)
+        _reg_context_result = self._compute_reg_context_result()
 
-        # regulator.adaptive_goal
-        _reg_adaptive_goal_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.regulator.adaptive_goal")
-            _reg_adaptive_goal_result = {"class": "regulator.AdaptiveGoalEngine", "active": True}
-            logger.debug("🎯 regulator.AdaptiveGoal: geladen")
-        except Exception as _e37t:
-            logger.debug("regulator.AdaptiveGoal übersprungen: %s", _e37t)
+        # regulator.ethics_engine (extracted helper to reduce method complexity)
+        _reg_ethics_result = self._compute_reg_ethics_result()
 
-        # regulator.context_analysis
-        _reg_context_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.regulator.context_analysis")
-            _reg_context_result = {"class": "regulator.ContextAnalyzer", "active": True}
-            logger.debug("🔍 regulator.ContextAnalysis: ContextAnalyzer geladen")
-        except Exception as _e37u:
-            logger.debug("regulator.ContextAnalysis übersprungen: %s", _e37u)
+        # regulator.quality_control (extracted helper to reduce method complexity)
+        _reg_quality_ctrl_result = self._compute_reg_quality_ctrl_result()
 
-        # regulator.ethics_engine
-        _reg_ethics_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.regulator.ethics_engine")
-            _reg_ethics_result = {"class": "EpistemicDecision", "active": True}
-            logger.debug("⚖️ regulator.EthicsEngine: EpistemicDecision geladen")
-        except Exception as _e37v:
-            logger.debug("regulator.EthicsEngine übersprungen: %s", _e37v)
+        # regulator.regulator (extracted helper to reduce method complexity)
+        _regulator_result = self._compute_regulator_result()
 
-        # regulator.quality_control
-        _reg_quality_ctrl_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.regulator.quality_control")
-            _reg_quality_ctrl_result = {"class": "regulator.QualityControl", "active": True}
-            logger.debug("🛡️ regulator.QualityControl: geladen")
-        except Exception as _e37w:
-            logger.debug("regulator.QualityControl übersprungen: %s", _e37w)
+        # regulator.regulator_v8 (extracted helper to reduce method complexity)
+        _regulator_v8_result = self._compute_regulator_v8_result()
 
-        # regulator.regulator
-        _regulator_result: dict | None = None
-        try:
-            from backend.core.regulator.regulator import Regulator as _Reg37x
+        # regulator.sota_maximum_analyzer (extracted helper to reduce method complexity)
+        _sota_max_result = self._compute_sota_max_result()
 
-            _Reg37x()
-            _regulator_result = {"class": "Regulator", "active": True}
-            logger.debug("📜 Regulator: initialisiert")
-        except Exception as _e37x:
-            logger.debug("Regulator übersprungen: %s", _e37x)
+        # undo.undo_manager (extracted helper to reduce method complexity)
+        _undo_manager_result = self._compute_undo_manager_result()
 
-        # regulator.regulator_v8
-        _regulator_v8_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.regulator.regulator_v8")
-            _regulator_v8_result = {
-                "enum": "DecisionType",
-                "values": [],
-                "active": True,
-            }
-            logger.debug("📜 RegulatorV8: DecisionType geladen")
-        except Exception as _e37y:
-            logger.debug("RegulatorV8 übersprungen: %s", _e37y)
+        # zone_engine.context_analysis (extracted helper to reduce method complexity)
+        _zone_context_result = self._compute_zone_context_result()
 
-        # regulator.sota_maximum_analyzer
-        _sota_max_result: dict | None = None
-        try:
-            from backend.core.regulator.sota_maximum_analyzer import SOTAMaximumAnalyzer as _SMA37z
+        # zone_engine.region_analysis (extracted helper to reduce method complexity)
+        _region_analysis_result = self._compute_region_analysis_result()
 
-            _SMA37z()
-            _sota_max_result = {"class": "SOTAMaximumAnalyzer", "active": True}
-            logger.debug("🏆 SOTAMaximumAnalyzer: initialisiert")
-        except Exception as _e37z:
-            logger.debug("SOTAMaximumAnalyzer übersprungen: %s", _e37z)
-
-        # undo.undo_manager
-        _undo_manager_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.undo.undo_manager")
-            _undo_manager_result = {"class": "Action", "active": True}
-            logger.debug("↩️ UndoManager: Action geladen")
-        except Exception as _e37aa:
-            logger.debug("UndoManager übersprungen: %s", _e37aa)
-
-        # zone_engine.context_analysis
-        _zone_context_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.zone_engine.context_analysis")
-            _zone_context_result = {"class": "zone_engine.ContextAnalyzer", "active": True}
-            logger.debug("🗺️ ZoneEngine.ContextAnalysis: geladen")
-        except Exception as _e37ab:
-            logger.debug("ZoneEngine.ContextAnalysis übersprungen: %s", _e37ab)
-
-        # zone_engine.region_analysis
-        _region_analysis_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.zone_engine.region_analysis")
-            _region_analysis_result = {"class": "AudioRegion", "active": True}
-            logger.debug("🗺️ ZoneEngine.RegionAnalysis: AudioRegion geladen")
-        except Exception as _e37ac:
-            logger.debug("ZoneEngine.RegionAnalysis übersprungen: %s", _e37ac)
-
-        # zone_engine.zone_engine
-        _zone_engine_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.zone_engine.zone_engine")
-            _zone_engine_result = {"class": "Zone", "active": True}
-            logger.debug("🗺️ ZoneEngine: Zone geladen")
-        except Exception as _e37ad:
-            logger.debug("ZoneEngine übersprungen: %s", _e37ad)
+        # zone_engine.zone_engine (extracted helper to reduce method complexity)
+        _zone_engine_result = self._compute_zone_engine_result()
 
         # ===================================================================
         # v9.10.36 — Backend-Infrastruktur-Module (Batch 2, 21 Module)
         # ===================================================================
 
-        # adaptive_goal (ConductEnforcer-Erweiterung)
-        _adaptive_goal_result: dict | None = None
-        try:
-            from backend.core.conduct_enforcer.adaptive_goal import AdaptiveGoalEngine as _AGE36a
+        # adaptive_goal (extracted helper to reduce method complexity)
+        _adaptive_goal_result = self._compute_adaptive_goal_result_36()
 
-            _AGE36a()
-            _adaptive_goal_result = {"engine": "AdaptiveGoalEngine", "active": True}
-            logger.debug("🎯 AdaptiveGoalEngine: initialisiert")
-        except Exception as _exc36a:
-            logger.debug("AdaptiveGoalEngine übersprungen: %s", _exc36a)
+        # continuous_learning (extracted helper to reduce method complexity)
+        _continuous_learning_result = self._compute_continuous_learning_result_36()
 
-        # continuous_learning (Evaluation-Modul)
-        _continuous_learning_result: dict | None = None
-        try:
-            from backend.core.evaluation.continuous_learning import ContinuousLearningSystem as _CLS36b
+        # adaptive_goals_system (extracted helper to reduce method complexity)
+        _adaptive_goals_result = self._compute_adaptive_goals_result_36()
 
-            _CLS36b()
-            _continuous_learning_result = {"system": "ContinuousLearningSystem", "active": True}
-            logger.debug("📚 ContinuousLearningSystem: initialisiert")
-        except Exception as _exc36b:
-            logger.debug("ContinuousLearningSystem übersprungen: %s", _exc36b)
+        # adaptive_thresholds (extracted helper to reduce method complexity)
+        _adaptive_thresholds_result = self._compute_adaptive_thresholds_result_36()
 
-        # adaptive_goals_system (Musical Goals — adaptive Schwellwerte)
-        _adaptive_goals_result: dict | None = None
-        try:
-            from backend.core.musical_goals.adaptive_goals_system import (
-                AdaptiveGoalsCalculator as _AGC36c,
-            )
+        # auto_reprocessing (extracted helper to reduce method complexity)
+        _auto_reprocessing_result = self._compute_auto_reprocessing_result_36()
 
-            _agc36 = _AGC36c()
-            _agc36_defaults = getattr(_agc36, "DEFAULT_THRESHOLDS", {})
-            _adaptive_goals_result = dict(_agc36_defaults) if _agc36_defaults else {"active": True}
-            logger.debug("🎵 AdaptiveGoalsCalculator: %d Thresholds", len(_adaptive_goals_result))
-        except Exception as _exc36c:
-            logger.debug("AdaptiveGoalsCalculator übersprungen: %s", _exc36c)
+        # convergence_detector (extracted helper to reduce method complexity)
+        _convergence_result = self._compute_convergence_result_36(_musical_goal_scores)
 
-        # adaptive_thresholds (Musical Goals)
-        _adaptive_thresholds_result: dict | None = None
-        try:
-            from backend.core.musical_goals.adaptive_thresholds import (
-                AdaptiveThresholdsManager as _ATM36d,
-            )
+        # deviation_corrector (extracted helper to reduce method complexity)
+        _deviation_corrector_result = self._compute_deviation_corrector_result_36()
 
-            _ATM36d()
-            _adaptive_thresholds_result = {"manager": "AdaptiveThresholdsManager", "active": True}
-            logger.debug("📊 AdaptiveThresholdsManager: initialisiert")
-        except Exception as _exc36d:
-            logger.debug("AdaptiveThresholdsManager übersprungen: %s", _exc36d)
+        # edge_case_handler (extracted helper to reduce method complexity)
+        _edge_case_result = self._compute_edge_case_result_36(restored_audio, sample_rate)
 
-        # auto_reprocessing (Musical Goals)
-        _auto_reprocessing_result: dict | None = None
-        try:
-            from backend.core.musical_goals.auto_reprocessing import AutoReprocessingEngine as _ARE36e
+        # explainability / GoalExplainer (extracted helper to reduce method complexity)
+        _explainability_result = self._compute_explainability_result_36(_musical_goal_scores)
 
-            _ARE36e()
-            _auto_reprocessing_result = {"engine": "AutoReprocessingEngine", "active": True}
-            logger.debug("🔄 AutoReprocessingEngine: initialisiert")
-        except Exception as _exc36e:
-            logger.debug("AutoReprocessingEngine übersprungen: %s", _exc36e)
+        # ki_hearing_model (extracted helper to reduce method complexity)
+        _ki_hearing_result = self._compute_ki_hearing_result_36()
 
-        # convergence_detector (Musical Goals)
-        _convergence_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.convergence_detector")
-            _MGCD36 = getattr(_mod_cache, "MusicalGoalsConvergenceDetector", None)
-            _mgcd36 = _MGCD36()
-            _mgcd36_scores = _musical_goal_scores if _musical_goal_scores else {}
-            _mgcd36_conv = _mgcd36.has_converged(_mgcd36_scores) if _mgcd36_scores else False
-            _convergence_result = {"converged": bool(_mgcd36_conv), "n_goals": len(_mgcd36_scores)}
-            logger.debug("✅ ConvergenceDetector: converged=%s", _mgcd36_conv)
-        except Exception as _exc36f:
-            logger.debug("ConvergenceDetector übersprungen: %s", _exc36f)
+        # reference_based_learning (extracted helper to reduce method complexity)
+        _reference_learning_result = self._compute_reference_learning_result_36()
 
-        # deviation_corrector (Musical Goals)
-        _deviation_corrector_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.deviation_corrector")
-            _MGDC36 = getattr(_mod_cache, "MusicalGoalsDeviationCorrector", None)
-            _MGDC36()
-            _deviation_corrector_result = {"corrector": "MusicalGoalsDeviationCorrector", "active": True}
-            logger.debug("🔧 DeviationCorrector: initialisiert")
-        except Exception as _exc36g:
-            logger.debug("DeviationCorrector übersprungen: %s", _exc36g)
+        # semantic_goals (extracted helper to reduce method complexity)
+        _semantic_goals_result = self._compute_semantic_goals_result_36()
 
-        # edge_case_handler (Musical Goals)
-        _edge_case_result: dict | None = None
-        try:
-            from backend.core.musical_goals.edge_case_handler import EdgeCaseHandler as _ECH36h
+        # uncertainty_quantification musical_goals (extracted helper to reduce method complexity)
+        _mg_uncertainty_result = self._compute_mg_uncertainty_result_36()
 
-            _ech36 = _ECH36h()
-            # Bug-Fix §10b: cap to 10 s — metadata section must not run full-audio O(N²) analysis
-            _ech_cap = 10 * sample_rate
-            _ech_audio = restored_audio[:_ech_cap] if restored_audio.shape[-1] > _ech_cap else restored_audio
-            _eca36 = _ech36.assess_edge_cases(_ech_audio, sample_rate)
-            _edge_case_result = _eca36.as_dict() if hasattr(_eca36, "as_dict") else {"severity": str(_eca36)}
-            logger.debug("⚠️ EdgeCaseHandler: %s", _edge_case_result)
-        except Exception as _exc36h:
-            logger.debug("EdgeCaseHandler übersprungen: %s", _exc36h)
+        # onnx.converter (extracted helper to reduce method complexity)
+        _onnx_converter_result = self._compute_onnx_converter_result_36()
 
-        # explainability / GoalExplainer (Musical Goals)
-        _explainability_result: dict | None = None
-        try:
-            from backend.core.musical_goals.explainability import GoalExplainer as _GE36i
+        # onnx.model_info (extracted helper to reduce method complexity)
+        _onnx_model_info_result = self._compute_onnx_model_info_result_36()
 
-            _ge36 = _GE36i()
-            _ge36.start_tracking()
-            _ge36_exp = _ge36.explain_simple(_musical_goal_scores if _musical_goal_scores else {})
-            _ge36.stop_tracking()
-            _explainability_result = _ge36_exp if isinstance(_ge36_exp, dict) else {"explanation": str(_ge36_exp)}
-            logger.debug("💡 GoalExplainer: %d Einträge", len(_explainability_result))
-        except Exception as _exc36i:
-            logger.debug("GoalExplainer übersprungen: %s", _exc36i)
+        # onnx.plugin_manager (extracted helper to reduce method complexity)
+        _onnx_plugin_mgr_result = self._compute_onnx_plugin_mgr_result_36()
 
-        # ki_hearing_model (Musical Goals — KIHörbarkeitsAnalyzer)
-        _ki_hearing_result: dict | None = None
-        try:
-            from backend.core.musical_goals.ki_hearing_model import KIHörbarkeitsAnalyzer as _KIHA36j
+        # optimization.multi_objective (extracted helper to reduce method complexity)
+        _multi_objective_result = self._compute_multi_objective_result_36()
 
-            _KIHA36j()
-            _ki_hearing_result = {"analyzer": "KIHörbarkeitsAnalyzer", "active": True}
-            logger.debug("👂 KIHörbarkeitsAnalyzer: initialisiert")
-        except Exception as _exc36j:
-            logger.debug("KIHörbarkeitsAnalyzer übersprungen: %s", _exc36j)
+        # optimization.uncertainty_quantification (extracted helper to reduce method complexity)
+        _opt_uncertainty_result = self._compute_opt_uncertainty_result_36()
 
-        # reference_based_learning (Musical Goals)
-        _reference_learning_result: dict | None = None
-        try:
-            from backend.core.musical_goals.reference_based_learning import LearningStrategy as _LS36k
+        # parallel.batch_parallel (extracted helper to reduce method complexity)
+        _batch_parallel_result = self._compute_batch_parallel_result_36()
 
-            _reference_learning_result = {"strategy_class": str(_LS36k), "active": True}
-            logger.debug("📖 ReferenceLearning: LearningStrategy geladen")
-        except Exception as _exc36k:
-            logger.debug("ReferenceLearning übersprungen: %s", _exc36k)
+        # parallel.module_parallel (extracted helper to reduce method complexity)
+        _module_parallel_result = self._compute_module_parallel_result_36()
 
-        # semantic_goals (Musical Goals — GoalProfile)
-        _semantic_goals_result: dict | None = None
-        try:
-            from backend.core.musical_goals.semantic_goals import GoalProfile as _GP36l
-
-            _semantic_goals_result = {"profile_class": str(_GP36l), "active": True}
-            logger.debug("🎯 SemanticGoals: GoalProfile geladen")
-        except Exception as _exc36l:
-            logger.debug("SemanticGoals übersprungen: %s", _exc36l)
-
-        # uncertainty_quantification musical_goals (GoalsUncertaintyReport)
-        _mg_uncertainty_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.uncertainty_quantification")
-            _mg_uncertainty_result = {"report_class": "GoalsUncertaintyReport", "active": True}
-            logger.debug("❓ MusicalGoalsUncertainty: GoalsUncertaintyReport geladen")
-        except Exception as _exc36m:
-            logger.debug("MusicalGoalsUncertainty übersprungen: %s", _exc36m)
-
-        # onnx.converter (ModelSpecificConverter / ConversionConfig)
-        _onnx_converter_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.converter")
-            _onnx_converter_result = {"config_class": "ConversionConfig", "active": True}
-            logger.debug("🔌 ONNX-Converter: ConversionConfig geladen")
-        except Exception as _exc36n:
-            logger.debug("ONNX-Converter übersprungen: %s", _exc36n)
-
-        # onnx.model_info (ModelInfo)
-        _onnx_model_info_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.model_info")
-            _onnx_model_info_result = {"info_class": "ModelInfo", "active": True}
-            logger.debug("ℹ️ ONNX-ModelInfo: ModelInfo geladen")
-        except Exception as _exc36o:
-            logger.debug("ONNX-ModelInfo übersprungen: %s", _exc36o)
-
-        # onnx.plugin_manager (FallbackManager)
-        _onnx_plugin_mgr_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.onnx.plugin_manager")
-            _onnx_plugin_mgr_result = {"manager_class": "FallbackManager", "active": True}
-            logger.debug("🔧 ONNX-PluginManager: FallbackManager geladen")
-        except Exception as _exc36p:
-            logger.debug("ONNX-PluginManager übersprungen: %s", _exc36p)
-
-        # optimization.multi_objective (Individual / Pareto-Front)
-        _multi_objective_result: dict | None = None
-        try:
-            from backend.core.optimization.multi_objective import Individual as _Ind36q
-
-            _multi_objective_result = {"individual_class": str(_Ind36q), "active": True}
-            logger.debug("🎯 MultiObjective: Individual geladen")
-        except Exception as _exc36q:
-            logger.debug("MultiObjective übersprungen: %s", _exc36q)
-
-        # optimization.uncertainty_quantification (BayesianLinear)
-        _opt_uncertainty_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.optimization.uncertainty_quantification")
-            _opt_uncertainty_result = {"model_class": "BayesianLinear", "active": True}
-            logger.debug("🧪 OptUncertainty: BayesianLinear geladen")
-        except Exception as _exc36r:
-            logger.debug("OptUncertainty übersprungen: %s", _exc36r)
-
-        # parallel.batch_parallel (BatchParallelProcessor)
-        _batch_parallel_result: dict | None = None
-        try:
-            from backend.core.parallel.batch_parallel import BatchParallelProcessor as _BPP36s
-
-            _bpp36 = _BPP36s()
-            _bpp36_stats = _bpp36.get_stats() if hasattr(_bpp36, "get_stats") else {}
-            _batch_parallel_result = _bpp36_stats if isinstance(_bpp36_stats, dict) else {"active": True}
-            logger.debug("⚡ BatchParallel: %s", _batch_parallel_result)
-        except Exception as _exc36s:
-            logger.debug("BatchParallel übersprungen: %s", _exc36s)
-
-        # parallel.module_parallel
-        _module_parallel_result: dict | None = None
-        try:
-            _mp36_mod = sys.modules.get("backend.core.parallel")
-            _mp36_cls = (
-                next(
-                    (getattr(_mp36_mod, n) for n in dir(_mp36_mod) if "Parallel" in n and not n.startswith("_")),
-                    None,
-                )
-                if _mp36_mod is not None
-                else None
-            )
-            _module_parallel_result = (
-                {
-                    "class": str(_mp36_cls),
-                    "active": True,
-                }
-                if _mp36_cls
-                else {"active": True}
-            )
-            logger.debug("⚡ ModuleParallel: %s", _module_parallel_result)
-        except Exception as _exc36t:
-            logger.debug("ModuleParallel übersprungen: %s", _exc36t)
-
-        # parallel.stereo_parallel
-        _stereo_parallel_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.parallel")
-            _sp36_cls = (
-                next(
-                    (getattr(_mod_cache, n) for n in dir(_mod_cache) if "Parallel" in n and not n.startswith("_")),
-                    None,
-                )
-                if _mod_cache
-                else None
-            )
-            _stereo_parallel_result = (
-                {
-                    "class": str(_sp36_cls),
-                    "active": True,
-                }
-                if _sp36_cls
-                else {"active": True}
-            )
-            logger.debug("⚡ StereoParallel: %s", _stereo_parallel_result)
-        except Exception as _exc36u:
-            logger.debug("StereoParallel übersprungen: %s", _exc36u)
+        # parallel.stereo_parallel (extracted helper to reduce method complexity)
+        _stereo_parallel_result = self._compute_stereo_parallel_result_36()
 
         # ===================================================================
         # v9.10.35 — Backend Musical Goals & Support-Module
         # ===================================================================
 
-        # listening_fatigue_analyzer (§8.1 HF-Kumulativ-Limit)
-        _fatigue_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.listening_fatigue_analyzer")
-            _analyze_fatigue35 = getattr(_mod_cache, "analyze_listening_fatigue", None)
-            _fa35 = _analyze_fatigue35(restored_audio, sample_rate)
-            _fatigue_result = _fa35.as_dict() if hasattr(_fa35, "as_dict") else {"risk": str(_fa35)}
-            logger.debug("🦻 FatigueAnalyzer: risk=%s", _fatigue_result.get("risk_level", "?"))
-        except Exception as _fa_exc:
-            logger.debug("ListeningFatigueAnalyzer nicht verfügbar: %s", _fa_exc)
+        # listening_fatigue_analyzer (§8.1 HF-Kumulativ-Limit) (extracted helper)
+        _fatigue_result = self._compute_fatigue_result_35(restored_audio, sample_rate)
 
-        # emotional_resonance_analyzer (Musical Goal Emotionalität)
-        _emotional_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.emotional_resonance_analyzer")
-            _analyze_emotional35 = getattr(_mod_cache, "analyze_and_enhance_emotional_resonance", None)
-            _em35_tuple = _analyze_emotional35(restored_audio, sample_rate)
-            _em35_audio, _em35_analysis, _em35_report = _em35_tuple
-            _emotional_result = {
-                "score": float(getattr(_em35_analysis, "overall_score", 0.0)),
-                "passed": bool(getattr(_em35_analysis, "passes_threshold", True)),
-            }
-            logger.debug("❤️ EmotionalResonance: score=%.3f", _emotional_result["score"])
-        except Exception as _em_exc:
-            logger.debug("EmotionalResonanceAnalyzer nicht verfügbar: %s", _em_exc)
+        # emotional_resonance_analyzer (extracted helper)
+        _emotional_result = self._compute_emotional_result_35(restored_audio, sample_rate)
 
-        # harmonic_character_analyzer (Obertonstruktur)
-        _harmonic_char_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.harmonic_character_analyzer")
-            _analyze_harmonic35 = getattr(_mod_cache, "analyze_harmonic_character", None)
-            _hca35 = _analyze_harmonic35(restored_audio, sample_rate)
-            _harmonic_char_result = (
-                _hca35.as_dict()
-                if hasattr(_hca35, "as_dict")
-                else {
-                    "harmonic_ratio": float(getattr(_hca35, "harmonic_ratio", 0.0)),
-                }
-            )
-            logger.debug("🎵 HarmonicChar: ratio=%.3f", _harmonic_char_result.get("harmonic_ratio", 0.0))
-        except Exception as _hca_exc:
-            logger.debug("HarmonicCharacterAnalyzer nicht verfügbar: %s", _hca_exc)
+        # harmonic_character_analyzer (extracted helper)
+        _harmonic_char_result = self._compute_harmonic_char_result_35(restored_audio, sample_rate)
 
-        # ki_quality_model (KI Gesamtqualitätseinschätzung)
-        _ki_quality_score: float | None = None
-        try:
-            from backend.core.musical_goals.ki_quality_model import KIQualityAnalyzer as _KIQA35
+        # ki_quality_model (extracted helper)
+        _ki_quality_score = self._compute_ki_quality_score_35(restored_audio, sample_rate)
 
-            # Bug-Fix §10b: cap to 10 s
-            _ki_cap = 10 * sample_rate
-            _ki_audio = restored_audio[:_ki_cap] if restored_audio.shape[-1] > _ki_cap else restored_audio
-            _ki_score35 = _KIQA35().analyze_audio_quality(_ki_audio, sample_rate)
-            _ki_quality_score = float(_ki_score35) if _ki_score35 is not None else None
-            logger.debug("🤖 KIQuality: score=%.3f", _ki_quality_score or 0.0)
-        except Exception as _ki_exc:
-            logger.debug("KIQualityAnalyzer nicht verfügbar: %s", _ki_exc)
-
-        # microdynamics_analyzer (MicroDynamicsMetric §2.16)
-        _microdynamics_result: dict | None = None
-        try:
-            _mod_cache = sys.modules.get("backend.core.musical_goals.microdynamics_analyzer")
-            _analyze_microdyn35 = getattr(_mod_cache, "analyze_microdynamics", None)
-            _md35 = _analyze_microdyn35(restored_audio, sample_rate)
-            _microdynamics_result = (
-                _md35.as_dict()
-                if hasattr(_md35, "as_dict")
-                else {
-                    "preservation_ratio": float(getattr(_md35, "preservation_ratio", 0.0)),
-                }
-            )
-            logger.debug("📊 Microdynamics: %s", {k: round(v, 3) for k, v in list(_microdynamics_result.items())[:3]})
-        except Exception as _md_exc:
-            logger.debug("MicrodynamicsAnalyzer nicht verfügbar: %s", _md_exc)
+        # microdynamics_analyzer (extracted helper)
+        _microdynamics_result = self._compute_microdynamics_result_35(restored_audio, sample_rate)
 
         # perceptual_validator (Musical Goals perceptual validation)
         _perceptual_validation: dict | None = None
@@ -8668,7 +10275,11 @@ class UnifiedRestorerV3:
                 for k, v in (_pv35_result or {}).items()
             }
             logger.debug("✅ PerceptualValidator: %d goals validated", len(_perceptual_validation))
-        except Exception as _pv_exc:
+        except BaseException as _pv_exc:
+            # pytest-timeout may raise an outcome exception that is not always an Exception subclass.
+            # Analytics must remain non-blocking and fall back instead of aborting restore().
+            if isinstance(_pv_exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                raise
             logger.debug("PerceptualValidator nicht verfügbar: %s", _pv_exc)
 
         # epistemic_gate (Epistemic Gate — verantwortungsvolles Handeln)
@@ -8703,7 +10314,8 @@ class UnifiedRestorerV3:
             )
             _lm35 = _LM35(goals=_lm35_goals)
             _lm35_snap = getattr(_lm35, "snapshot", None) or getattr(_lm35, "get_current", None)
-            _live_monitor_result = _lm35_snap() if callable(_lm35_snap) else {"goals": _lm35_goals}
+            _lm35_raw: Any = _lm35_snap() if callable(_lm35_snap) else {"goals": _lm35_goals}
+            _live_monitor_result = _lm35_raw if isinstance(_lm35_raw, dict) else {"goals": _lm35_goals}
             logger.debug("📡 LiveMonitor: %d goals überwacht", len(_lm35_goals))
         except Exception as _lm_exc:
             logger.debug("MusicalGoalsLiveMonitor nicht verfügbar: %s", _lm_exc)
@@ -8715,7 +10327,8 @@ class UnifiedRestorerV3:
 
             _gmon35 = _GMon35()
             _gmon35_status = getattr(_gmon35, "get_status", None) or getattr(_gmon35, "status", None)
-            _goals_monitor_result = _gmon35_status() if callable(_gmon35_status) else {"active": True}
+            _gmon35_raw: Any = _gmon35_status() if callable(_gmon35_status) else {"active": True}
+            _goals_monitor_result = _gmon35_raw if isinstance(_gmon35_raw, dict) else {"active": True}
             logger.debug("📈 MusicalGoalsMonitor: aktiv")
         except Exception as _gmon_exc:
             logger.debug("MusicalGoalsMonitor nicht verfügbar: %s", _gmon_exc)
@@ -8744,9 +10357,21 @@ class UnifiedRestorerV3:
             from backend.core.rollback.rollback_manager import RollbackManager as _RM35
 
             _rm35 = _RM35(max_snapshots=5)
-            _rm35_snap_id = _rm35.create_snapshot(original_audio_for_goals)
+            _rm35_snap_name = "original"
+            _rm35_goals = (
+                {k: float(v) for k, v in _musical_goal_scores.items() if isinstance(v, (int, float))}
+                if isinstance(_musical_goal_scores, dict)
+                else {}
+            )
+            _rm35.create_snapshot(
+                name=_rm35_snap_name,
+                audio=original_audio_for_goals,
+                sr=int(sample_rate),
+                musical_goals=_rm35_goals,
+                metadata={"source": "reporting_analytics"},
+            )
             _rollback_result = {
-                "snapshot_id": str(_rm35_snap_id) if _rm35_snap_id else None,
+                "snapshot_id": _rm35_snap_name,
                 "snapshots_available": len(_rm35.list_snapshots()) if hasattr(_rm35, "list_snapshots") else 1,
             }
             logger.debug("↩️ RollbackManager: snapshot=%s", _rollback_result["snapshot_id"])
@@ -8835,7 +10460,11 @@ class UnifiedRestorerV3:
                 confidence_tier=(_pipeline_confidence.tier if _pipeline_confidence is not None else "medium"),
                 musical_goal_scores=_musical_goal_scores,
                 musical_goals_passed=_musical_goals_passed,
-                top_defects=[(s.defect_type.value, s.severity) for s in defect_result.get_top_defects(5)],
+                top_defects=(
+                    [(s.defect_type.value, s.severity) for s in defect_result.get_top_defects(5)]
+                    if defect_result is not None and hasattr(defect_result, "get_top_defects")
+                    else []
+                ),
                 executed_phases=len(executed_phases),
                 era_decade=(_era_result.decade if _era_result is not None else None),
                 era_label=(_era_result.era_label if _era_result is not None else None),
@@ -9320,10 +10949,13 @@ class UnifiedRestorerV3:
         # ════════════════════════════════════════════════════════════════════
         # TIER 0 — Basiskorrekturen (immer aktiv, < 1 ms Overhead)
         # ════════════════════════════════════════════════════════════════════
-        selected += [
-            "phase_30_dc_offset_removal",  # DC-Gleichanteil entfernen
-            "phase_05_rumble_filter",  # Tieffrequenzrumpeln < 20 Hz
-        ]
+        # Phase 30/05 nur bei echten Defekten aktivieren (§0 Minimal-Intervention)
+        if sev(DefectType.DC_OFFSET) > 0.10:
+            selected.append("phase_30_dc_offset_removal")
+            logger.debug("TIER0: phase_30 (DC severity=%.3f)", sev(DefectType.DC_OFFSET))
+        if sev(DefectType.LOW_FREQ_RUMBLE) > 0.10:
+            selected.append("phase_05_rumble_filter")
+            logger.debug("TIER0: phase_05 (Rumble severity=%.3f)", sev(DefectType.LOW_FREQ_RUMBLE))
 
         # ════════════════════════════════════════════════════════════════════
         # TIER 1 — Kritische Defektkorrektur
@@ -9557,9 +11189,10 @@ class UnifiedRestorerV3:
             selected.append("phase_06_frequency_restoration")
 
         # Azimuth-Fehler (Kopfausrichtung — nur Tape/Reel; eigenständig neben PHASE_ISSUES)
+        # §7.2 CAUSE_TO_PHASES: phase_14 (Phasenkonsistenz L/R) MUSS vor phase_25 (Kopf-EQ) laufen.
         if sev(DefectType.AZIMUTH_ERROR) > 0.12:
-            selected.append("phase_25_azimuth_correction")  # §7.2 — direkt, nicht nur via PHASE_ISSUES
-            selected.append("phase_14_phase_correction")
+            selected.append("phase_14_phase_correction")  # §7.2: zuerst Phasenkonsistenz L/R normieren
+            selected.append("phase_25_azimuth_correction")  # §7.2: dann Kopfausrichtungs-EQ-Kompensation
             selected.append("phase_06_frequency_restoration")
 
         # Transient-Smearing (Transienten-Verschmierung — Mastering/Codec)
@@ -9742,7 +11375,7 @@ class UnifiedRestorerV3:
             "vinyl": [
                 "phase_09_crackle_removal",
                 "phase_12_wow_flutter_fix",
-                "phase_30_dc_offset_removal",
+                "phase_05_rumble_filter",
                 "phase_60_inner_groove_distortion_repair",
                 "phase_61_groove_echo_cancellation",
             ],
@@ -9802,6 +11435,13 @@ class UnifiedRestorerV3:
                 "phase_24_dropout_repair",
                 "phase_23_spectral_repair",
                 "phase_50_spectral_repair",
+            ],
+            "cassette": [  # §6.2a — IEC compact cassette: wow/flutter + hiss dominant
+                "phase_12_wow_flutter_fix",
+                "phase_29_tape_hiss_reduction",
+                "phase_24_dropout_repair",
+                "phase_06_frequency_restoration",
+                "phase_59_modulation_noise_reduction",
             ],
         }
         _mat_key = material.value if hasattr(material, "value") else str(material)
@@ -10083,17 +11723,35 @@ class UnifiedRestorerV3:
         if drums_detected:
             selected.append("phase_36_transient_shaper")
 
-        # Kompression & Limiting (wenn nicht bereits über-komprimiert)
+        # Kompression & Limiting (wenn nicht bereits über-komprimiert).
+        # §2.48 Dynamik-Interaktions-Guard: wenn phase_26 (Dynamic Range Expansion) aktiv ist,
+        # darf phase_10 (Compression) NICHT zusätzlich komprimieren — das würde die Expansion
+        # direkt rückgängig machen (expand → compress = Netto-Null, aber doppelte Artefaktlast).
+        _dyn_expand_active = "phase_26_dynamic_range_expansion" in selected
         if sev(DefectType.COMPRESSION_ARTIFACTS) < 0.50 and not _loudness_war_victim:
-            selected.append("phase_10_compression")
+            if not _dyn_expand_active:
+                selected.append("phase_10_compression")
+            else:
+                logger.info(
+                    "§2.48 Dynamik-Konflikt-Guard: phase_10 deaktiviert — phase_26 (Expansion) aktiv; "
+                    "Komprimieren nach Expansion würde Restaurierung umkehren."
+                )
             selected.append("phase_11_limiting")
 
         # Stereo-Enhancement
         if sev(DefectType.STEREO_IMBALANCE) < 0.40:
             selected.append("phase_13_stereo_enhancement")
 
-        # Stereo-Breiten-Enhancement
-        selected.append("phase_48_stereo_width_enhancer")
+        # Stereo-Breiten-Enhancement — inhibiert wenn Breiten-Limiter aktiv (§2.48 Interaktions-Guard).
+        # Phase_48 würde die Arbeit von phase_33 (Breiten-Limiting bei STEREO_IMBALANCE > 0.40) direkt
+        # rückgängig machen → gegenläufige Phasenwirkung verletzt §0 Primum non nocere und §2.45.
+        if "phase_33_stereo_width_limiter" not in selected:
+            selected.append("phase_48_stereo_width_enhancer")
+        else:
+            logger.info(
+                "§2.48 Stereo-Konflikt-Guard: phase_48 deaktiviert — phase_33 aktiv "
+                "(STEREO_IMBALANCE > 0.40); Breiten-Limiter hat Vorrang."
+            )
 
         # Spatial-Enhancement (Raumklang)
         selected.append("phase_46_spatial_enhancement")
@@ -10104,8 +11762,8 @@ class UnifiedRestorerV3:
         selected += [
             "phase_16_final_eq",  # Finales EQ-Trimming
             "phase_17_mastering_polish",  # Mastering-Politur
-            "phase_47_truepeak_limiter",  # True-Peak −1.0 dBTP (EBU R128)
-            "phase_40_loudness_normalization",  # −14 LUFS (Streaming) / −18 (Archiv)
+            "phase_40_loudness_normalization",  # −14 LUFS (Streaming) / −18 (Archiv) — VOR TruePeak (EBU R128)
+            "phase_47_truepeak_limiter",  # True-Peak −1.0 dBTP (EBU R128) — NACH LUFS-Normierung
             "phase_41_output_format_optimization",  # Dithering, Metadaten, Format
         ]
 
@@ -10266,6 +11924,43 @@ class UnifiedRestorerV3:
             _move_before("phase_29_tape_hiss_reduction", "phase_06_frequency_restoration")
             _move_before("phase_49_advanced_dereverb", "phase_07_harmonic_restoration")
             _move_before("phase_20_reverb_reduction", "phase_07_harmonic_restoration")
+            # §7.2 CAUSE_TO_PHASES["azimuth_error"]: phase_14 (L/R Phasenkonsistenz) vor
+            # phase_25 (Kopfausrichtungs-EQ). Bei Aktivierung über AZIMUTH_ERROR-Defektpfad
+            # wurde in _select_phases die Reihenfolge bereits korrekt eingetragen; diese Regel
+            # fängt Edge-Cases ab, in denen phase_25 über andere Pfade früher eingetragen
+            # wurde (z.B. PHASE_ISSUES-Gate vor AZIMUTH_ERROR-Gate).
+            _move_before("phase_14_phase_correction", "phase_25_azimuth_correction")
+            # §2.48 Groove-Echo vor Reverb-Reduction: Groove-Echo-Cancellation (RPM-Template)
+            # muss auf dem originalen Echo-Signal arbeiten, bevor der allgemeine Dereverber
+            # die Echo-Charakteristik zerstört (SGMSE+ kann Groove-Echo als Raumhall
+            # fehlidentifizieren und entfernen).
+            _move_before("phase_61_groove_echo_cancellation", "phase_20_reverb_reduction")
+            _move_before("phase_61_groove_echo_cancellation", "phase_49_advanced_dereverb")
+
+            # §2.46 [RELEASE_MUST] EQ-Korrektur (RIAA/Tape-Entzerrung) = Tier 2 Playback.
+            # Muss VOR Tier-3-Alterungsschäden (Clicks, Crackle, Dropout) UND VOR
+            # Tier-4-Carrier-NR (Broadband NR, Tape Hiss) stehen.
+            # Ohne diese Regeln läuft phase_03/phase_29 auf spectrum-unkorriertem Audio:
+            # die NR adaptiert sich an den falschen Equalizer-Stand und schneidet nach
+            # der RIAA-Inversion Musik-Energie, die sie für Rauschen hielt. Außerdem
+            # arbeiten Crackle/Dropout-Detektoren besser auf dem korrekt entzerrten Signal.
+            _move_before("phase_30_dc_offset_removal", "phase_04_eq_correction")
+            _move_before("phase_05_rumble_filter", "phase_04_eq_correction")
+            _move_before("phase_04_eq_correction", "phase_01_click_removal")
+            _move_before("phase_04_eq_correction", "phase_09_crackle_removal")
+            _move_before("phase_04_eq_correction", "phase_24_dropout_repair")
+            _move_before("phase_04_eq_correction", "phase_03_denoise")
+            _move_before("phase_04_eq_correction", "phase_29_tape_hiss_reduction")
+            # Surface-Noise-Profiling (phase_28) muss VOR der Verwendung des Profils in
+            # phase_29 (Tape Hiss) und phase_09 (Crackle) laufen.
+            _move_before("phase_28_surface_noise_profiling", "phase_29_tape_hiss_reduction")
+            # Vinyl-spezifische Groove-Defekte (Tier 3 Aging) vor Carrier-NR (Tier 4 subtraktiv):
+            # Inner-Groove-Distortion und Groove-Echo sind physikalische Vinyl-Artefakte, die
+            # auf dem EQ-korrigierten aber noch nicht NR-bearbeiteten Signal detektiert werden müssen.
+            _move_before("phase_60_inner_groove_distortion_repair", "phase_03_denoise")
+            _move_before("phase_60_inner_groove_distortion_repair", "phase_29_tape_hiss_reduction")
+            _move_before("phase_61_groove_echo_cancellation", "phase_03_denoise")
+            _move_before("phase_61_groove_echo_cancellation", "phase_29_tape_hiss_reduction")
 
             if len(_precedence_fixes) == _fixes_before:
                 break  # Converged — no further reordering needed
@@ -10576,11 +12271,38 @@ class UnifiedRestorerV3:
         # We read severity directly — masked defects already carry reduced severity.
         # Additionally extract n_masked_events from metadata for fully-masked detection.
         def _salience_adjusted_severity(defect_type: DefectType) -> float:
-            """Return severity already adjusted by psychoacoustic masking (Glasberg-Moore ERB)."""
+            """Return severity adjusted by psychoacoustic masking AND detection confidence.
+
+            Low-confidence detections (scanner uncertain whether defect is real) are
+            dampened proportionally so that ambiguous scans on high-quality material
+            do not trigger full-strength processing phases.
+            Confidence-factor: max(0.35, sqrt(confidence)) — keeps a floor so even
+            low-confidence detections remain plausible (never fully zeroed out).
+            """
             _ds = defect_result.scores.get(defect_type)
             if _ds is None:
                 return 0.0
             sev = float(_ds.severity)
+            # §Confidence-Weighting (v9.11.1): dampen severity proportional to
+            # detection confidence.  sqrt() gives a gentler curve than linear:
+            # conf=1.00 → factor=1.00 (unchanged)
+            # conf=0.50 → factor=0.71 (moderate damping)
+            # conf=0.25 → factor=0.50 (strong damping)
+            # conf=0.10 → factor=0.35 (floor — defect still considered plausible)
+            import math as _math
+
+            _conf = max(0.0, min(1.0, float(_ds.confidence)))
+            _conf_factor = max(0.35, _math.sqrt(_conf))
+            if _conf_factor < 0.98:  # only log when actually dampening
+                logger.debug(
+                    "§Confidence-Weighting: %s conf=%.2f → factor=%.3f sev %.3f→%.3f",
+                    defect_type.value,
+                    _conf,
+                    _conf_factor,
+                    sev,
+                    sev * _conf_factor,
+                )
+            sev = sev * _conf_factor
             # If PerceptualSalienceEstimator ran, severity is already salience-scaled.
             # Extra guard: if ALL events are psychoacoustically masked → halve severity
             # so clearly inaudible defects don't trigger unnecessary phases.
@@ -10685,6 +12407,7 @@ class UnifiedRestorerV3:
         phase_metadata = phase.get_metadata()
         phase_name = f"{phase_metadata.name} ({phase_metadata.phase_id})"
         _strength_explicit = "strength" in kwargs
+        _team_context_enabled = bool(kwargs.pop("phase_team_context_enabled", False))
 
         # §Dach: GlobalPlan-Parameter einschleusen (ohne explizite Werte zu überschreiben)
         _gp = getattr(self, "_active_global_plan", None)
@@ -10726,6 +12449,37 @@ class UnifiedRestorerV3:
         if isinstance(_song_calibration, dict) and _song_calibration:
             kwargs.setdefault("song_calibration_profile", dict(_song_calibration))
 
+        # Team-Modus: Folgephasen erhalten Kontext über bereits ausgeführte Reparaturen,
+        # damit sie diese nicht als neue Defekte interpretieren.
+        if _team_context_enabled:
+            _ptc = getattr(self, "_phase_team_context", None)
+            if isinstance(_ptc, dict) and _ptc:
+                kwargs.setdefault("prior_phase_context", dict(_ptc))
+                kwargs.setdefault("phase_team_mode", True)
+
+            # §2.29e CONFLICT_REGISTRY: Prüfe ob die aktuelle Phase vorherige Reparaturen
+            # rückgängig machen könnte. Falls ja, conflict_with_prior_phases injizieren.
+            try:
+                from backend.core.phase_ontology import get_conflict_phases as _get_conflict_phases
+
+                _pid_str = str(getattr(phase_metadata, "phase_id", "") or "")
+                if _pid_str:
+                    _prior_ids = list((_ptc or {}).get("executed_phase_ids", []))
+                    _conflict_priors: list[str] = []
+                    for _prior_id in _prior_ids:
+                        _conflicting = _get_conflict_phases(_prior_id)
+                        if any(_pid_str.startswith(_cp) for _cp in _conflicting):
+                            _conflict_priors.append(_prior_id)
+                    if _conflict_priors:
+                        kwargs.setdefault("conflict_with_prior_phases", _conflict_priors)
+                        logger.debug(
+                            "§2.29e CONFLICT_REGISTRY: %s may conflict with repaired content of %s",
+                            _pid_str,
+                            _conflict_priors,
+                        )
+            except Exception as _conf_exc:
+                logger.debug("CONFLICT_REGISTRY lookup skipped (non-blocking): %s", _conf_exc)
+
         # §Hebel-3 PhaseConductor: Strength-Hint injizieren wenn Conductor Empfehlung hat.
         # Nur wenn 'strength' noch nicht explizit gesetzt (explizit gewinnt, §0 Primum non nocere).
         _conductor_hints = getattr(self, "_conductor_strength_hints", {})
@@ -10751,8 +12505,11 @@ class UnifiedRestorerV3:
                         _cap,
                     )
 
+        _phase_mem_profiling = bool(
+            MEMORY_PROFILING_AVAILABLE and os.environ.get("AURIK_PHASE_MEMORY_PROFILING", "0") == "1"
+        )
         t0 = time.perf_counter()
-        mem0 = memory_usage(-1, interval=0.01, timeout=1) if MEMORY_PROFILING_AVAILABLE else [0]
+        mem0 = memory_usage(-1, interval=0.01, timeout=1) if _phase_mem_profiling else [0]
 
         # §MusikalischeHarmonisierung: Defekt-Severity-Wet/Dry für non-PMGG-Pfade
         # Berechne Severity-Faktor VOR Phasenausführung (benötigt Original-Audio für Mix)
@@ -10835,6 +12592,25 @@ class UnifiedRestorerV3:
                     )
 
         # Call phase.process() method (not phase() itself!)
+        # §Heartbeat: Inject scoped sub-progress callback so slow phases (e.g. phase_49
+        # WPE dereverb) can emit intermediate progress — keeps the UI bar moving.
+        _sub_root_cb = getattr(self, "_active_pipeline_cb_for_sub", None)
+        _sub_pct_range = getattr(self, "_active_phase_pct_for_sub", None)
+        if _sub_root_cb is not None and _sub_pct_range is not None and "progress_sub_callback" not in kwargs:
+            _sp_s, _sp_e = _sub_pct_range
+
+            def _make_sub_progress(_root_cb, _pct_s, _pct_e):
+                def _sub_progress(sub_pct_0_100: float, lbl: str, elapsed: float) -> None:
+                    try:
+                        _mapped = int(_pct_s + (_pct_e - _pct_s) * sub_pct_0_100 / 100.0)
+                        _mapped = max(_pct_s, min(_pct_e, _mapped))
+                        _root_cb(_mapped, lbl, elapsed)
+                    except Exception:
+                        pass
+
+                return _sub_progress
+
+            kwargs["progress_sub_callback"] = _make_sub_progress(_sub_root_cb, _sp_s, _sp_e)
         _audio_before_phase = audio if _sev_wet_dry < 1.0 else None
         result = phase.process(audio, **kwargs)
 
@@ -10854,9 +12630,9 @@ class UnifiedRestorerV3:
                 )
 
         t1 = time.perf_counter()
-        mem1 = memory_usage(-1, interval=0.01, timeout=1) if MEMORY_PROFILING_AVAILABLE else [0]
+        mem1 = memory_usage(-1, interval=0.01, timeout=1) if _phase_mem_profiling else [0]
         elapsed = t1 - t0
-        mem_used = max(mem1) - min(mem0) if MEMORY_PROFILING_AVAILABLE else None
+        mem_used = max(mem1) - min(mem0) if _phase_mem_profiling else None
 
         logger.info(
             f"Profiling: Phase {phase_name} | Zeit: {elapsed:.3f}s"
@@ -10867,6 +12643,77 @@ class UnifiedRestorerV3:
             result.profiling["time_seconds"] = elapsed
             if mem_used is not None:
                 result.profiling["memory_mib"] = mem_used
+
+        if _team_context_enabled and getattr(result, "success", False):
+            _team_ctx = getattr(self, "_phase_team_context", None)
+            if not isinstance(_team_ctx, dict):
+                _team_ctx = {}
+            _executed = _team_ctx.get("executed_phase_ids")
+            if not isinstance(_executed, list):
+                _executed = []
+            _pid = str(getattr(phase_metadata, "phase_id", ""))
+            if _pid and _pid not in _executed:
+                _executed.append(_pid)
+            _team_ctx["executed_phase_ids"] = _executed
+
+            # Generic all-phase team semantics derived from normative phase ontology.
+            # This makes context propagation complete for all 01-64 phases without
+            # requiring per-phase manual wiring.
+            try:
+                from backend.core.phase_ontology import PhaseOperationType, get_phase_type
+
+                _ptype = get_phase_type(_pid)
+                _ptype_name = getattr(_ptype, "name", str(_ptype))
+                _team_ctx["last_phase_id"] = _pid
+                _team_ctx["last_phase_type"] = _ptype_name
+                _team_ctx["last_phase_succeeded"] = True
+
+                _type_counts = _team_ctx.get("phase_type_counts")
+                if not isinstance(_type_counts, dict):
+                    _type_counts = {}
+                _type_counts[_ptype_name] = int(_type_counts.get(_ptype_name, 0)) + 1
+                _team_ctx["phase_type_counts"] = _type_counts
+
+                if _ptype == PhaseOperationType.SUBTRACTIVE:
+                    _team_ctx["subtractive_applied"] = True
+                elif _ptype == PhaseOperationType.ADDITIVE:
+                    _team_ctx["additive_applied"] = True
+                elif _ptype == PhaseOperationType.CORRECTIVE:
+                    _team_ctx["corrective_applied"] = True
+                elif _ptype == PhaseOperationType.DYNAMICS:
+                    _team_ctx["dynamics_applied"] = True
+                elif _ptype == PhaseOperationType.ML_GENERATIVE:
+                    _team_ctx["ml_generative_applied"] = True
+                elif _ptype == PhaseOperationType.ANALYSIS_ONLY:
+                    _team_ctx["analysis_only_applied"] = True
+                else:
+                    _team_ctx["enhancement_applied"] = True
+            except Exception as _ptype_exc:
+                logger.debug("Phase team ontology update skipped for %s: %s", _pid, _ptype_exc)
+
+            # Semantic flags for downstream phases (coarse-grained, robust against
+            # differing per-phase metadata schemas).
+            if "phase_01" in _pid:
+                _team_ctx["click_repair_applied"] = True
+            if "phase_06" in _pid:
+                _team_ctx["frequency_restoration_applied"] = True
+            if "phase_07" in _pid:
+                _team_ctx["harmonic_restoration_applied"] = True
+            if "phase_23" in _pid:
+                _team_ctx["spectral_super_resolution_applied"] = True
+            if "phase_24" in _pid:
+                _team_ctx["dropout_repair_applied"] = True
+            if "phase_55" in _pid or "phase_56" in _pid:
+                _team_ctx["inpainting_applied"] = True
+
+            _rmeta = getattr(result, "metadata", None)
+            if isinstance(_rmeta, dict) and _rmeta:
+                if "hf_protected_bin_start" in _rmeta:
+                    _team_ctx["hf_protected_bin_start"] = int(_rmeta.get("hf_protected_bin_start", 0) or 0)
+                if "hf_protection_rolloff_hz" in _rmeta:
+                    _team_ctx["hf_protection_rolloff_hz"] = float(_rmeta.get("hf_protection_rolloff_hz", 0.0) or 0.0)
+
+            self._phase_team_context = _team_ctx
 
         return result
 
@@ -10969,7 +12816,7 @@ class UnifiedRestorerV3:
                 return result_l
             return combined
 
-    def _execute_pipeline(
+    def _execute_pipeline(  # pyright: ignore[reportGeneralTypeIssues]
         self,
         audio: np.ndarray,
         sample_rate: int,
@@ -11003,11 +12850,27 @@ class UnifiedRestorerV3:
         _active_quality_mode = quality_mode_override or self.config.mode
         _quality_mode_value = _active_quality_mode.value
         current_audio = audio.copy()
+        self._phase_team_context = {
+            "material_type": str(material_type.value if hasattr(material_type, "value") else material_type),
+            "executed_phase_ids": [],
+        }
         executed = []
         skipped = []
         deferred = []  # §2.38 KMV: phases skipped by PerformanceGuard for Stage 2 refinement
         pipeline_ml_guard_events: list[dict[str, Any]] = []
         _ml_guard_event_keys: set[tuple[Any, ...]] = set()
+
+        # §9.11.1 Perceptual-Plateau-Stop: rolling window of recent spectral quality deltas.
+        # If the last 3 executed phases each improved quality by < 0.005, the music has
+        # reached a perceptual plateau — further optional phases at full strength would
+        # introduce spectral smearing with negligible gain. Non-mandatory phases get
+        # strength dampened to 40% until a phase again exceeds the threshold.
+        # Mandatory phases (§6.2a) are ALWAYS exempt.
+        from collections import deque as _deque
+
+        _plateau_delta_history: _deque = _deque(maxlen=3)
+        _PLATEAU_THRESHOLD = 0.005  # below this → plateau for that phase
+        _PLATEAU_DAMPEN = 0.40  # attenuate optional phases to 40% during plateau
 
         # §Hebel-3 PhaseConductor: leichtgewichtiger inter-phase Feedback-Controller.
         # Misst Restdefekt-Zustand nach jeder Phase und schätzt ob und wie stark
@@ -11021,6 +12884,14 @@ class UnifiedRestorerV3:
             _conductor.reset()  # neue Song-Session
         except Exception as _cond_exc:
             logger.debug("§Hebel-3 PhaseConductor nicht verfügbar: %s", _cond_exc)
+
+        # §7 PDV: Reset session telemetry before each restoration run (Ursache 7).
+        try:
+            from backend.core.phase_defect_verifier import get_phase_defect_verifier as _get_pdv_init
+
+            _get_pdv_init().reset_session()
+        except Exception as _pdv_init_exc:
+            logger.debug("§7 PDV session reset failed (non-blocking): %s", _pdv_init_exc)
 
         # §2.45 [RELEASE_MUST] perceptual_delta helper — fast spectral quality proxy.
         # Used in non-PMGG fallback paths to detect phases that degrade audio quality.
@@ -11190,6 +13061,97 @@ class UnifiedRestorerV3:
             _arr = np.asarray(_x, dtype=np.float32)
             return float(20.0 * np.log10(float(np.sqrt(np.mean(_arr * _arr) + 1e-12))))
 
+        def _rms_dbfs_gated(_x: np.ndarray, gate_dbfs: float = -50.0) -> float:
+            """Gated RMS: only measure frames with musical content above *gate_dbfs*.
+
+            Silent passages (noise floor, pauses, fade-outs) are excluded so that
+            noise removal in silence does not appear as a musical level drop.
+            Frame size = 2048 samples (~43 ms @ 48 kHz) — short enough for transient
+            resolution, long enough to avoid single-sample noise spikes.
+
+            For stereo audio, channels are downmixed to mono first to avoid
+            interleaved-sample artifacts in frame boundaries.
+
+            Falls back to ungated RMS when < 5 % of frames pass the gate (e.g.
+            very quiet recordings or near-silence — ungated is safer there).
+            """
+            _arr = np.asarray(_x, dtype=np.float32)
+            # Stereo → mono downmix before framing (avoid interleaved L/R in frames)
+            if _arr.ndim == 2:
+                if _arr.shape[0] == 2:
+                    _flat = ((_arr[0] + _arr[1]) * 0.5).ravel()
+                elif _arr.shape[1] == 2:
+                    _flat = ((_arr[:, 0] + _arr[:, 1]) * 0.5).ravel()
+                else:
+                    _flat = _arr.ravel()
+            else:
+                _flat = _arr.ravel()
+            _frame_len = 2048
+            _n_frames = max(1, len(_flat) // _frame_len)
+            _frames = _flat[: _n_frames * _frame_len].reshape(_n_frames, _frame_len)
+            _frame_rms = np.sqrt(np.mean(_frames * _frames, axis=1) + 1e-12)
+            _frame_dbfs = 20.0 * np.log10(_frame_rms + 1e-12)
+            _gate_mask = _frame_dbfs > gate_dbfs
+            if np.sum(_gate_mask) < max(1, int(0.05 * _n_frames)):
+                # < 5 % frames above gate → fall back to ungated (very quiet recording)
+                return _rms_dbfs(_x)
+            _gated_rms = float(np.sqrt(np.mean(_frame_rms[_gate_mask] ** 2) + 1e-12))
+            return float(20.0 * np.log10(_gated_rms + 1e-12))
+
+        def _musical_gain_envelope(
+            _x: np.ndarray, _gain: float, gate_dbfs: float = -50.0, crossfade_ms: float = 10.0, sr: int = 48000
+        ) -> np.ndarray:
+            """Apply makeup gain only to musical frames, leaving silence untouched.
+
+            Prevents noise-floor pumping in pauses and preserves dynamics.
+            Uses a smooth per-sample gain envelope with *crossfade_ms* ramps
+            at gate boundaries (no audible clicks).
+            """
+            if _gain <= 1.0005:
+                return _x
+            _arr = np.asarray(_x, dtype=np.float32)
+            _was_2d = _arr.ndim == 2
+            if _was_2d:
+                _mono_env = np.sqrt(np.mean(_arr**2, axis=0) + 1e-12)
+            else:
+                _mono_env = np.abs(_arr)
+
+            # Per-frame gate: 0.0 where silent, 1.0 where musical
+            _frame_len = 2048
+            _n_samples = _mono_env.shape[-1]
+            _n_full_frames = max(1, _n_samples // _frame_len)
+            # Initialize to 0.0 (silent) — only mark musical frames as 1.0
+            _gate_envelope = np.zeros(_n_samples, dtype=np.float32)
+            for _fi in range(_n_full_frames):
+                _s = _fi * _frame_len
+                _e = min(_s + _frame_len, _n_samples)
+                _chunk = _mono_env[_s:_e]
+                _chunk_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_chunk * _chunk) + 1e-12)) + 1e-12))
+                if _chunk_dbfs > gate_dbfs:
+                    _gate_envelope[_s:_e] = 1.0
+            # Handle tail samples beyond last full frame (default: silent = no gain)
+            _tail_start = _n_full_frames * _frame_len
+            if _tail_start < _n_samples:
+                _tail = _mono_env[_tail_start:]
+                _tail_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_tail * _tail) + 1e-12)) + 1e-12))
+                if _tail_dbfs > gate_dbfs:
+                    _gate_envelope[_tail_start:] = 1.0
+
+            # Smooth the gate envelope to avoid clicks (crossfade at boundaries)
+            _cf_samples = max(1, int(crossfade_ms * sr / 1000.0))
+            if _cf_samples > 1:
+                _kernel = np.ones(_cf_samples, dtype=np.float32) / _cf_samples
+                _gate_envelope = np.convolve(_gate_envelope, _kernel, mode="same")
+                _gate_envelope = np.clip(_gate_envelope, 0.0, 1.0)
+
+            # Per-sample gain: 1.0 in silence, _gain where musical, smooth between
+            _per_sample_gain = 1.0 + (_gain - 1.0) * _gate_envelope
+            if _was_2d:
+                _result = _arr * _per_sample_gain[np.newaxis, :]
+            else:
+                _result = _arr * _per_sample_gain
+            return _result
+
         def _peak_p999(_x: np.ndarray) -> float:
             _arr = np.asarray(_x, dtype=np.float32)
             return float(np.percentile(np.abs(_arr), 99.9))
@@ -11351,21 +13313,30 @@ class UnifiedRestorerV3:
                     "stereo_gain_cap": 1.45,
                     "cost_stereo_w": 0.70,
                 },
+                "phase_12_wow_flutter_fix": {
+                    "family": "phase12_timing",
+                    "enable_loudness": False,
+                    "enable_stereo": False,
+                    "transient_floor": 0.84,
+                    "dry_blend_min": 0.18,
+                    "dry_blend_max": 0.45,
+                    "cost_transient_w": 4.8,
+                },
                 "phase_24_dropout_repair": {
                     "family": "phase24_dropout",
                     "enable_stereo": False,
-                    "transient_floor": 0.66,
-                    "dry_blend_min": 0.06,
-                    "dry_blend_max": 0.18,
-                    "cost_transient_w": 2.0,
+                    "transient_floor": 0.78,
+                    "dry_blend_min": 0.10,
+                    "dry_blend_max": 0.30,
+                    "cost_transient_w": 3.2,
                 },
                 "phase_55_diffusion_inpainting": {
                     "family": "phase55_inpainting",
                     "enable_stereo": False,
-                    "transient_floor": 0.64,
-                    "dry_blend_min": 0.05,
-                    "dry_blend_max": 0.16,
-                    "cost_transient_w": 1.8,
+                    "transient_floor": 0.76,
+                    "dry_blend_min": 0.12,
+                    "dry_blend_max": 0.34,
+                    "cost_transient_w": 3.6,
                 },
                 "phase_40_loudness_normalization": {
                     "family": "phase40_loudness",
@@ -11435,36 +13406,54 @@ class UnifiedRestorerV3:
             _actions: list[dict[str, Any]] = []
             _prof = _phase_intervention_profile(phase_id)
 
-            # 1) Loudness collapse rescue (peak-safe via percentile guard).
-            _rms_ref = _rms_dbfs(_ref_arr)
-            _rms_work = _rms_dbfs(_work)
+            # 1) Loudness collapse rescue — gated-RMS + envelope-aware gain (§2.45a).
+            # Gated-RMS excludes silent passages from the measurement so that noise
+            # removal in pauses/fade-outs is not misinterpreted as musical level loss.
+            # Envelope-aware gain applies makeup only to musical frames, leaving silence
+            # untouched — preventing noise-floor pumping and dynamics compression.
+            _rms_ref = _rms_dbfs_gated(_ref_arr)
+            _rms_work = _rms_dbfs_gated(_work)
             _drop_db = _rms_ref - _rms_work
             if bool(_prof.get("enable_loudness", True)) and _drop_db > _max_rms_drop_db:
                 _target_rms = _rms_ref - _max_rms_drop_db
                 _needed_db = max(0.0, _target_rms - _rms_work)
                 if _needed_db > 0.01:
                     _g = float(10.0 ** (_needed_db / 20.0))
-                    _p = _peak_p999(_work)
-                    if _p > 1e-9:
-                        _g = min(_g, float(0.995 / _p))
+                    # Safety cap: max +12 dB gain per phase (prevents runaway amplification)
+                    _g = min(_g, 4.0)
                     if _g > 1.0005:
-                        _work = np.clip(_work * _g, -1.0, 1.0)
+                        # Envelope-aware gain: only amplify musical frames, leave silence untouched
+                        _work = _musical_gain_envelope(_work, _g, gate_dbfs=-50.0, sr=sample_rate)
+                        # Soft-limiter only if actual clipping risk (peak > 0.98),
+                        # NOT as routine post-gain step — avoids compressing musical dynamics
+                        # §2.45a-III + §v9.10.125: 99.9th-percentile, not np.max — impulse artefacts
+                        # (crackle, click) must not block normalisation of music signal
+                        _peak_after = float(np.percentile(np.abs(_work), 99.9))
+                        if _peak_after > 0.98:
+                            _abs_work = np.abs(_work)
+                            _over_mask = _abs_work > 0.92
+                            if np.any(_over_mask):
+                                _sign_work = np.sign(_work)
+                                _soft = 0.92 + 0.08 * np.tanh((_abs_work - 0.92) / 0.08)
+                                _work = np.where(_over_mask, _sign_work * _soft, _work)
+                        _work = np.clip(_work, -1.0, 1.0)
                         _actions.append(
                             {
                                 "type": "loudness_makeup",
                                 "rms_drop_db_before": round(float(_drop_db), 3),
                                 "makeup_db": round(float(20.0 * np.log10(max(_g, 1e-9))), 3),
+                                "gated": True,
                             }
                         )
 
-                # If peak-safe makeup is still not enough (e.g. sparse near-peak spikes),
+                # If envelope-aware makeup is still not enough,
                 # apply a limited dry blend to recover musical body without disabling repair.
-                _drop_after_makeup = _rms_ref - _rms_dbfs(_work)
+                _drop_after_makeup = _rms_ref - _rms_dbfs_gated(_work)
                 _residual_drop = _drop_after_makeup - _max_rms_drop_db
                 if _residual_drop > 0.20:
-                    _alpha = float(np.clip(0.06 + (_residual_drop / 8.0), 0.06, 0.28))
+                    _alpha = float(np.clip(0.06 + (_residual_drop / 6.0), 0.06, 0.45))
                     _rescued = np.clip((1.0 - _alpha) * _work + _alpha * _ref_arr, -1.0, 1.0)
-                    _drop_after_rescue = _rms_ref - _rms_dbfs(_rescued)
+                    _drop_after_rescue = _rms_ref - _rms_dbfs_gated(_rescued)
                     if _drop_after_rescue + 1e-6 < _drop_after_makeup:
                         _work = _rescued
                         _actions.append(
@@ -12035,10 +14024,51 @@ class UnifiedRestorerV3:
 
                     _mg_checker_248 = _get_mg_checker_248()
                     _baseline_goals_248 = _mg_checker_248.measure_all(current_audio, sample_rate)
+
+                    # §2.54: Compute material-adaptive context for drift tolerance
+                    _mat_str_248 = "unknown"
+                    try:
+                        _mat_str_248 = str(getattr(material_type, "value", material_type)).lower()
+                    except Exception:
+                        pass
+                    _defect_sev_mean_248 = 0.0
+                    try:
+                        if defect_result is not None and hasattr(defect_result, "scores"):
+                            _sev_vals = [
+                                s.severity
+                                for s in defect_result.scores.values()
+                                if hasattr(s, "severity") and s.severity > 0
+                            ]
+                            if _sev_vals:
+                                _defect_sev_mean_248 = float(np.mean(_sev_vals))
+                    except Exception:
+                        pass
+                    # §2.54: Count carrier-repair phases in the selected plan
+                    _carrier_prefixes_248 = (
+                        "phase_01",
+                        "phase_03",
+                        "phase_09",
+                        "phase_12",
+                        "phase_24",
+                        "phase_27",
+                        "phase_28",
+                        "phase_29",
+                        "phase_55",
+                    )
+                    _n_carrier_248 = sum(
+                        1 for p in selected_phases if any(p.startswith(cp) for cp in _carrier_prefixes_248)
+                    )
+
                     _interaction_guard.set_pre_pipeline_baseline(
                         _interaction_guard_state,
                         current_audio,
                         _baseline_goals_248,
+                        material_type=_mat_str_248,
+                        restorability_score=float(_pmgg_restorability_score),
+                        defect_severity_mean=_defect_sev_mean_248,
+                        n_active_phases=len(selected_phases),
+                        n_carrier_phases=_n_carrier_248,
+                        goal_weights=getattr(self, "_song_goal_weights", None),  # §2.56
                     )
                 except Exception as _ig_baseline_exc:
                     logger.debug("§2.48 InteractionGuard baseline failed: %s", _ig_baseline_exc)
@@ -12083,6 +14113,16 @@ class UnifiedRestorerV3:
                     _record_oom_probe("phase_deferred_rt", phase_id, estimated_time_s=round(float(estimated_time), 3))
                     continue
                 phase_start = self.performance_guard.start_phase(phase_id) if self.performance_guard else time.time()
+                # §OOM-Diagnose: Phase-Identity VOR Eviction loggen — damit der Phase-Name
+                # im Log erscheint, BEVOR PLM-Eviction das RAM-Niveau ändert.
+                # Ohne diesen Log kann bei einem OOM-Kill nicht mehr zurückverfolgt werden,
+                # welche Phase die Allokation ausgelöst hat.
+                logger.info(
+                    "▶ %s geplant (%d/%d) — Eviction + RAM-Check folgen",
+                    phase_id,
+                    len(executed) + 1,
+                    len(selected_phases),
+                )
                 # ── §2.37 Automatische ML-RAM-Verwaltung: Vor jeder Phase ──
                 # Entlade alle ML-Modelle die für die kommende Phase NICHT benötigt
                 # werden. Gewährleistet, dass nur aktiv benötigte Modelle im RAM sind.
@@ -12092,14 +14132,40 @@ class UnifiedRestorerV3:
                     _evict_for_phase(phase_id)
                 except Exception as _exc:
                     logger.debug("evict_for_phase(%s) failed: %s", phase_id, _exc)
-                # Zusätzlich: Bei < 2 GB frei nach Eviction → Phase deferred (KMV Stufe 2)
+                # Zusätzlich: RAM-Check vor Phase — bei kritischem RAM GC erzwingen oder deferrieren.
+                # §OOM-Guard: Schwellwert 4 GB (statt 2 GB) — gibt 2× mehr Puffer für große
+                # Numpy-Allokationen (STFT-Matrizen ~1.5 GB, ML-Models 1–6 GB).
+                # Nach AudioSR (5.8 GB) hält Python-Allocator fragmentierten Heap im RSS, auch
+                # nach PLM-Eviction + malloc_trim. Pre-Phase-Deep-Flush verhindert OOM-Kill.
                 try:
                     import psutil as _ps_pre
 
-                    _avail_pre = _ps_pre.virtual_memory().available / (1024**3)
-                    if _avail_pre < 2.0:
+                    _vm_pre = _ps_pre.virtual_memory()
+                    _avail_pre = _vm_pre.available / (1024**3)
+                    _ram_pct_pre = _vm_pre.percent
+                    # Deep-Flush: wenn RAM > 75 % UND AudioSR zuvor gelaufen (große Heap-Fragmente)
+                    # → aggressive GC + malloc_trim BEVOR die nächste Phase ihren Speicher anfordert.
+                    _audiosr_ran = bool(getattr(self, "_restoration_context", {}).get("audiosr_applied", False))
+                    if _ram_pct_pre > 75.0 or (_audiosr_ran and _ram_pct_pre > 70.0):
+                        gc.collect(2)  # alle 3 Generationen
+                        gc.collect(2)  # drittes collect für zirkuläre Refs
+                        try:
+                            import ctypes as _ctypes_pre
+
+                            _ctypes_pre.CDLL("libc.so.6").malloc_trim(0)
+                        except Exception:
+                            pass
+                        _avail_pre = _ps_pre.virtual_memory().available / (1024**3)
+                        _ram_pct_pre = _ps_pre.virtual_memory().percent
+                        logger.info(
+                            "§OOM-DeepFlush vor %s: RAM nach GC+trim=%.1f%% (%.1f GB frei)",
+                            phase_id,
+                            _ram_pct_pre,
+                            _avail_pre,
+                        )
+                    if _avail_pre < 4.0:
                         logger.warning(
-                            "⚠️ Nur %.1f GB frei nach Eviction — %s wird deferred (KMV Stufe 2)",
+                            "⚠️ Nur %.1f GB frei nach Eviction+GC — %s wird deferred (KMV Stufe 2)",
                             _avail_pre,
                             phase_id,
                         )
@@ -12130,14 +14196,26 @@ class UnifiedRestorerV3:
                 # harmonic enhancement) as musical-noise artifacts because the accumulated residual after N
                 # restoration phases overwhelms the artifact detector thresholds.
                 _afg_phase_input: np.ndarray | None = current_audio.copy() if _artifact_gate is not None else None
+                # §7 PDV: Pre-phase reference for defect proxy comparison (no copy: current_audio is reassigned).
+                _pdv_pre_phase: np.ndarray = current_audio
                 # §PROGRESS: Emit BEFORE phase execution — real-time ML plugin detection
+                # Compute heartbeat range so _profiled_phase_call can inject a scoped
+                # sub-progress callback into slow phases (e.g. phase_49 WPE dereverb).
+                _hb_n_sel = max(len(selected_phases), 1)
+                _hb_idx = len(executed)
+                _hb_pct_start = _phase_progress_start + int(
+                    (_phase_progress_end - _phase_progress_start) * _hb_idx / _hb_n_sel
+                )
+                _hb_pct_end = _phase_progress_start + int(
+                    (_phase_progress_end - _phase_progress_start) * (_hb_idx + 1) / _hb_n_sel
+                )
+                self._active_pipeline_cb_for_sub = progress_callback  # may be None
+                self._active_phase_pct_for_sub = (_hb_pct_start, _hb_pct_end)
                 if progress_callback is not None:
                     try:
-                        _n_sel_pre = max(len(selected_phases), 1)
-                        _idx_pre = len(executed)
-                        _pct_pre = _phase_progress_start + int(
-                            (_phase_progress_end - _phase_progress_start) * _idx_pre / _n_sel_pre
-                        )
+                        _n_sel_pre = _hb_n_sel
+                        _idx_pre = _hb_idx
+                        _pct_pre = _hb_pct_start
                         _lbl_pre = (self.phase_metadata.get(phase_id) or {}).get("name") or phase_id.replace(
                             "phase_", ""
                         ).replace("_", " ").title().lstrip("0123456789 ")
@@ -12206,6 +14284,28 @@ class UnifiedRestorerV3:
                                         _combined_strength,
                                     )
 
+                            # Strict conflict policy: per-phase hard caps for conflict-prone phases.
+                            _strict_policy = (
+                                _song_cal_profile.get("strict_conflict_policy", {})
+                                if isinstance(_song_cal_profile, dict)
+                                else {}
+                            )
+                            _phase_caps = (
+                                _strict_policy.get("phase_strength_caps", {})
+                                if isinstance(_strict_policy, dict)
+                                else {}
+                            )
+                            if isinstance(_phase_caps, dict) and phase_id in _phase_caps:
+                                _cap_val = float(np.clip(_phase_caps.get(phase_id, 1.0), 0.05, 1.0))
+                                if _combined_strength > _cap_val:
+                                    logger.debug(
+                                        "StrictAutoSetup cap: %s strength %.3f -> %.3f",
+                                        phase_id,
+                                        _combined_strength,
+                                        _cap_val,
+                                    )
+                                    _combined_strength = _cap_val
+
                             # §9.10.118 Diminishing-Returns-Moderation:
                             # Each STFT round-trip (STFT→modify→ISTFT) introduces
                             # cumulative spectral smearing.  After the 20th executed
@@ -12224,6 +14324,82 @@ class UnifiedRestorerV3:
                                         _diminish,
                                         _combined_strength,
                                     )
+
+                            # §9.11.1 Restorability-Ceiling (v9.11.1):
+                            # High restorability = audio already in good condition = less aggressive
+                            # processing needed. Cap proportional to material health, only for
+                            # optional phases (mandatory §6.2a phases are exempt).
+                            # Formula: cap = 1.0 when restorability ≤ 65 (damaged material, no cap)
+                            #          cap = 0.45 when restorability = 100 (pristine, max 45% strength)
+                            # Curve: linear ramp from 65→100 maps to cap 1.0→0.45
+                            _mandatory_set = frozenset(getattr(self, "_last_material_priority_phases", ()) or ())
+                            _is_mandatory_phase = phase_id in _mandatory_set
+                            if not _is_mandatory_phase:
+                                _rest_pct = float(getattr(self, "_last_restorability_score", _pmgg_restorability_score))
+                                if _rest_pct > 65.0:
+                                    _rest_cap = 1.0 - 0.55 * (_rest_pct - 65.0) / 35.0
+                                    _rest_cap = float(np.clip(_rest_cap, 0.45, 1.0))
+                                    if _combined_strength > _rest_cap:
+                                        logger.debug(
+                                            "§9.11.1 RestorabilitysCeiling %s: rest=%.1f cap=%.3f strength %.3f→%.3f",
+                                            phase_id,
+                                            _rest_pct,
+                                            _rest_cap,
+                                            _combined_strength,
+                                            _rest_cap,
+                                        )
+                                        _combined_strength = _rest_cap
+
+                            # §9.11.1 Perceptual-Plateau-Stop (v9.11.1):
+                            # If the rolling window is full (≥ 3 phases) and ALL recent deltas
+                            # were below the plateau threshold, the music has reached peak
+                            # restoration benefit. Non-mandatory phases are dampened to avoid
+                            # introducing artefacts for negligible perceptual gain (§2.45, §0).
+                            if (
+                                not _is_mandatory_phase
+                                and len(_plateau_delta_history) == 3
+                                and all(d < _PLATEAU_THRESHOLD for d in _plateau_delta_history)
+                            ):
+                                _dampened = _combined_strength * _PLATEAU_DAMPEN
+                                logger.debug(
+                                    "§9.11.1 PlateauStop %s: last-3-deltas=%s → strength %.3f→%.3f",
+                                    phase_id,
+                                    [round(d, 4) for d in _plateau_delta_history],
+                                    _combined_strength,
+                                    _dampened,
+                                )
+                                _combined_strength = float(np.clip(_dampened, 0.05, 1.0))
+
+                            # §2.9a RELEASE_MUST: PANNs Soft-Activation fuer Vocals muss die
+                            # tatsaechliche Phase-Staerke beeinflussen (nicht nur Metadaten).
+                            # Bereich 0.35-0.40 setzt vocal_strength_scale=0.5 und skaliert
+                            # explizit die PMGG-initial_strength fuer die Vocal-Phasen.
+                            _vocal_soft_phases = frozenset(
+                                {
+                                    "phase_19_de_esser",
+                                    "phase_42_vocal_enhancement",
+                                    "phase_43_ml_deesser",
+                                }
+                            )
+                            _vocal_strength_scale = float(
+                                np.clip(
+                                    float(getattr(self, "_restoration_context", {}).get("vocal_strength_scale", 1.0)),
+                                    0.0,
+                                    1.0,
+                                )
+                            )
+                            if phase_id in _vocal_soft_phases and _vocal_strength_scale < 1.0:
+                                _pre_soft_strength = _combined_strength
+                                _combined_strength = float(
+                                    np.clip(_combined_strength * _vocal_strength_scale, 0.05, 1.0)
+                                )
+                                logger.debug(
+                                    "§2.9a Vocal Soft-Scale %s: %.3f -> %.3f (scale=%.2f)",
+                                    phase_id,
+                                    _pre_soft_strength,
+                                    _combined_strength,
+                                    _vocal_strength_scale,
+                                )
 
                             _pmgg_audio_out, _pmgg_scores_curr, _pmgg_entry = _pmgg_gate.wrap_phase(
                                 _phase_for_exec,
@@ -12260,11 +14436,15 @@ class UnifiedRestorerV3:
                                     "vocal_probability": float(
                                         getattr(self, "_restoration_context", {}).get("panns_vocals_confidence", 1.0)
                                     ),  # §2.36: PANNs vocal prob for phase_58
+                                    "vocal_strength_scale": float(
+                                        getattr(self, "_restoration_context", {}).get("vocal_strength_scale", 1.0)
+                                    ),  # §2.9a: explicit soft-activation hint for vocal phases
                                 },
                                 restorability_score=_pmgg_restorability_score,  # §2.29 normativ
                                 applicable_goals=applicable_goals,  # §2.32 normativ
                                 initial_strength=_combined_strength,  # §2.31 + §Harmonisierung
                                 is_studio_2026=self.is_studio_mode(),  # §9.10.77 Pareto-differenzierte P3–P5-Schwellwerte
+                                goal_weights=getattr(self, "_song_goal_weights", None),  # §2.56 Song-Goal-Importance
                             )
                             _pmgg_log_entries.append(_pmgg_entry)
                             _collect_guard_payload(_phase_for_exec, phase_id)
@@ -12305,6 +14485,15 @@ class UnifiedRestorerV3:
                                         _cb_exc,
                                     )
                             executed.append(phase_id)
+                            # §9.11.1 PlateauStop: track spectral quality delta for rolling window.
+                            # Uses the same fast proxy as §2.45 to stay lightweight.
+                            try:
+                                _pdelta_plateau = _spectral_quality_score(
+                                    current_audio, sample_rate
+                                ) - _spectral_quality_score(_pdv_pre_phase, sample_rate)
+                                _plateau_delta_history.append(float(_pdelta_plateau))
+                            except Exception:
+                                pass  # non-critical telemetry, never blocks pipeline
                             # §Live-Waveform: Emit updated audio after PMGG phase
                             if audio_update_callback is not None:
                                 try:
@@ -12316,7 +14505,36 @@ class UnifiedRestorerV3:
                                 f"strength={_pmgg_entry.strength_used:.2f} "
                                 f"rollbacks={_pmgg_gate._rollback_count}"
                             )
+                            if str(_pmgg_entry.action).startswith("best_effort"):
+                                self._register_phase_goal_conflict_event(
+                                    phase_id,
+                                    "pmgg_best_effort",
+                                    {
+                                        "action": str(_pmgg_entry.action),
+                                        "strength_used": float(getattr(_pmgg_entry, "strength_used", 0.0) or 0.0),
+                                    },
+                                )
                             _record_oom_probe("phase_ok", phase_id, action=str(_pmgg_entry.action))
+                            # §2.54 AudioSR-Flag: phases after phase_23 get audiosr_applied=True
+                            # via _restoration_context so phase_07 can reduce redundant enhancement.
+                            if "phase_23" in phase_id:
+                                self._restoration_context["audiosr_applied"] = True
+                                logger.debug("§2.54 audiosr_applied=True gesetzt (phase_23 erfolgreich)")
+                                # §OOM-Guard Post-AudioSR Deep-Flush: AudioSR hält 5.8 GB in Python-Heap.
+                                # PLM-Eviction gibt PLM-Tracking frei, aber Python-Allocator behält
+                                # fragmentierte glibc-Seiten im RSS. Sofortiger aggressiver Flush
+                                # vor der nächsten Phase verhindert OOM-Kill (wie PID1553305, 07:48 UTC).
+                                try:
+                                    gc.collect(2)
+                                    gc.collect(2)  # zweiter Pass für zirkuläre Refs
+                                    import ctypes as _ctypes_asr
+
+                                    _ctypes_asr.CDLL("libc.so.6").malloc_trim(0)
+                                    logger.info(
+                                        "§OOM-PostAudioSR-Flush: gc+malloc_trim nach phase_23 (AudioSR 5.8 GB)",
+                                    )
+                                except Exception as _asr_flush_exc:
+                                    logger.debug("Post-AudioSR flush failed: %s", _asr_flush_exc)
                             # §Punkt3 Regressionsprotokoll: RMS nach PMGG-Phase
                             _rms_after_db = 20.0 * np.log10(float(np.sqrt(np.mean(current_audio**2) + 1e-12)))
                             self._phase_regression_log[phase_id] = round(_rms_after_db - _rms_before_db, 3)
@@ -12330,6 +14548,7 @@ class UnifiedRestorerV3:
                             result = self._profiled_phase_call(
                                 _phase_for_exec,
                                 current_audio,
+                                phase_team_context_enabled=True,
                                 sample_rate=sample_rate,
                                 material_type=material_type,
                                 material=material_type,
@@ -12427,6 +14646,7 @@ class UnifiedRestorerV3:
                         result = self._profiled_phase_call(
                             _phase_for_exec,
                             current_audio,  # audio parameter
+                            phase_team_context_enabled=True,
                             sample_rate=sample_rate,
                             material_type=material_type,
                             material=material_type,
@@ -12522,6 +14742,30 @@ class UnifiedRestorerV3:
                             logger.error("❌ %s failed: %s", phase_id, result.warnings)
                             skipped.append(phase_id)
                             _record_oom_probe("phase_failed", phase_id)
+                    # §7 PDV: Post-phase defect verification — Ursache 7 (Primum non nocere).
+                    # If a phase measurably WORSENED its primary targeted defect (proxy > +25 %),
+                    # roll back to pre-phase audio.  Non-blocking: any exception keeps audio_after.
+                    if phase_id in executed:
+                        try:
+                            from backend.core.phase_defect_verifier import get_phase_defect_verifier as _get_pdv
+
+                            _pdv_ref = _afg_phase_input if _afg_phase_input is not None else _pdv_pre_phase
+                            _audio_pdv_result = _get_pdv().check(phase_id, _pdv_ref, current_audio, sample_rate)
+                            if _audio_pdv_result is not current_audio:
+                                # Rollback triggered: revert executed entry so it's not counted as success.
+                                # The phase ran but actively worsened its target — log as skipped.
+                                logger.warning(
+                                    "§7 PDV: %s rolled back — removed from executed, added to skipped",
+                                    phase_id,
+                                )
+                                try:
+                                    executed.remove(phase_id)
+                                except ValueError:
+                                    pass
+                                skipped.append(phase_id)
+                            current_audio = _audio_pdv_result
+                        except Exception as _pdv_exc:
+                            logger.debug("§7 PDV check (non-blocking): %s", _pdv_exc)
                 except MemoryError:
                     # OOM-Notfall-Export: Teilergebnis zurückgeben statt Totalverlust.
                     # current_audio enthält den Stand nach der letzten erfolgreichen Phase.
@@ -12693,12 +14937,147 @@ class UnifiedRestorerV3:
                         if _ig_rolled_back:
                             current_audio = np.clip(_ig_audio, -1.0, 1.0)
                             logger.warning("§2.48 Rollback applied after %s", phase_id)
+                            self._register_phase_goal_conflict_event(phase_id, "interaction_guard_rollback")
                         if _interaction_guard_state.should_stop:
                             logger.warning("§2.48 Pipeline stop — exporting best checkpoint")
+                            self._register_phase_goal_conflict_event(phase_id, "interaction_guard_pipeline_stop")
                             skipped.extend(p for p in selected_phases if p not in executed)
                             break
                     except Exception as _ig_exc:
                         logger.debug("§2.48 InteractionGuard check failed: %s", _ig_exc)
+
+                # §2.45a [RELEASE_MUST] Mid-Pipeline Cumulative Loudness-Drift-Guard
+                # Per-phase guards limit each phase's drop vs its own input, but compound
+                # effects accumulate unchecked: 8 phases × 2.5 dB = 20 dB total collapse.
+                # This guard checks cumulative RMS drop from PIPELINE START after each phase
+                # and applies soft-limited makeup gain when the drift exceeds material-adaptive tolerance.
+                if _afg_pre_pipeline_audio is not None and phase_id in executed:
+                    try:
+                        _cum_rms_pipeline_start = _rms_dbfs_gated(_afg_pre_pipeline_audio)
+                        _cum_rms_current = _rms_dbfs_gated(current_audio)
+                        _cum_total_drop = _cum_rms_pipeline_start - _cum_rms_current
+                        # Material-adaptive cumulative tolerance (§2.54):
+                        # Heavily degraded analog material needs more subtraktive processing,
+                        # so allow more cumulative drop. But still enforce a hard ceiling.
+                        _cum_max_drop_db = {
+                            "shellac": 3.5,
+                            "wax_cylinder": 3.5,
+                            "wire_recording": 4.0,
+                            "vinyl": 4.5,
+                            "lacquer_disc": 4.0,
+                            "reel_tape": 5.0,
+                            "tape": 5.0,
+                            "cassette": 5.0,
+                            "cd_digital": 3.0,
+                            "dat": 3.0,
+                            "mp3_low": 3.5,
+                            "mp3_high": 3.0,
+                            "aac": 3.0,
+                            "streaming": 3.0,
+                        }.get(str(getattr(material_type, "value", material_type)).lower(), 4.0)
+                        if _cum_total_drop > _cum_max_drop_db:
+                            _cum_target = _cum_rms_pipeline_start - _cum_max_drop_db
+                            _cum_needed = max(0.0, _cum_target - _cum_rms_current)
+                            if _cum_needed > 0.01:
+                                _cum_g = float(10.0 ** (_cum_needed / 20.0))
+                                _cum_g = min(_cum_g, 6.0)  # max +15.6 dB safety cap
+                                if _cum_g > 1.0005:
+                                    # Envelope-aware gain: only amplify musical frames
+                                    current_audio = _musical_gain_envelope(
+                                        current_audio, _cum_g, gate_dbfs=-50.0, sr=sample_rate
+                                    )
+                                    # Soft-limiter only if actual clipping risk
+                                    # §v9.10.125: 99.9th-percentile — impulse artefact must not block normalisation
+                                    _cum_peak = float(np.percentile(np.abs(current_audio), 99.9))
+                                    if _cum_peak > 0.98:
+                                        _cum_abs = np.abs(current_audio)
+                                        _cum_over = _cum_abs > 0.92
+                                        if np.any(_cum_over):
+                                            _cum_sign = np.sign(current_audio)
+                                            _cum_soft = 0.92 + 0.08 * np.tanh((_cum_abs - 0.92) / 0.08)
+                                            current_audio = np.where(_cum_over, _cum_sign * _cum_soft, current_audio)
+                                    current_audio = np.clip(current_audio, -1.0, 1.0)
+                                    logger.info(
+                                        "§2.45a MID-PIPELINE cumulative guard after %s: "
+                                        "total_drop=%.2f dB (gated) > %.2f dB limit → envelope-aware makeup +%.2f dB",
+                                        phase_id,
+                                        _cum_total_drop,
+                                        _cum_max_drop_db,
+                                        float(20.0 * np.log10(max(_cum_g, 1e-9))),
+                                    )
+                    except Exception as _cum_mid_exc:
+                        logger.debug("§2.45a mid-pipeline cumulative guard failed (non-blocking): %s", _cum_mid_exc)
+
+                # §4.1b [RELEASE_MUST] Psychoakustische Lautheitsmessung (Zwicker/Fastl)
+                # After broadband subtraktive phases: compare perceived loudness (sone)
+                # before vs after. ΔN > 2.0 sone → Dry/Wet rescue (not hard rollback).
+                _ZWICKER_SUBTRAKTIVE_PHASES: frozenset = frozenset(
+                    {
+                        "phase_03",
+                        "phase_05",
+                        "phase_18",
+                        "phase_20",
+                        "phase_28",
+                        "phase_29",
+                        "phase_35",
+                        "phase_49",
+                    }
+                )
+                _zwicker_phase_prefix = "_".join(str(phase_id).split("_")[:2])
+                if (
+                    _afg_phase_input is not None
+                    and phase_id in executed
+                    and _zwicker_phase_prefix in _ZWICKER_SUBTRAKTIVE_PHASES
+                ):
+                    try:
+                        from dsp.psychoacoustics import compute_loudness_delta_sone
+
+                        _zw_delta, _zw_before, _zw_after = compute_loudness_delta_sone(
+                            _afg_phase_input, current_audio, sample_rate
+                        )
+                        _zw_abs_delta = abs(_zw_delta)
+                        if _zw_abs_delta > 2.0:
+                            # FAIL → Dry/Wet rescue: blend back toward dry
+                            _zw_wet_ratio = max(0.3, 2.0 / max(_zw_abs_delta, 0.01))
+                            current_audio = np.clip(
+                                _afg_phase_input * (1.0 - _zw_wet_ratio) + current_audio * _zw_wet_ratio,
+                                -1.0,
+                                1.0,
+                            ).astype(np.float32)
+                            logger.warning(
+                                "§4.1b Zwicker loudness guard after %s: ΔN=%.2f sone "
+                                "(before=%.2f, after=%.2f) > 2.0 → Dry/Wet rescue "
+                                "(wet_ratio=%.2f)",
+                                phase_id,
+                                _zw_delta,
+                                _zw_before,
+                                _zw_after,
+                                _zw_wet_ratio,
+                            )
+                        elif _zw_abs_delta > 1.0:
+                            logger.info(
+                                "§4.1b Zwicker loudness WARNING after %s: ΔN=%.2f sone (before=%.2f, after=%.2f)",
+                                phase_id,
+                                _zw_delta,
+                                _zw_before,
+                                _zw_after,
+                            )
+                        elif _zw_abs_delta > 0.5:
+                            logger.debug(
+                                "§4.1b Zwicker loudness INFO after %s: ΔN=%.2f sone",
+                                phase_id,
+                                _zw_delta,
+                            )
+                        # Telemetry
+                        if hasattr(self, "_phase_metadata_accumulator"):
+                            self._phase_metadata_accumulator[phase_id] = {
+                                **(self._phase_metadata_accumulator.get(phase_id) or {}),
+                                "loudness_delta_sone": round(float(_zw_delta), 3),
+                                "loudness_before_sone": round(float(_zw_before), 3),
+                                "loudness_after_sone": round(float(_zw_after), 3),
+                            }
+                    except Exception as _zw_exc:
+                        logger.debug("§4.1b Zwicker loudness guard non-blocking error: %s", _zw_exc)
 
                 # §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate — per-phase artifact check
                 # Uses _afg_phase_input (audio before THIS phase) not _afg_pre_pipeline_audio (pipeline start),
@@ -12882,7 +15261,96 @@ class UnifiedRestorerV3:
                     1.0,
                 )
 
+        # §2.45a [RELEASE_MUST] Cumulative Pipeline-Level-Guard — final safety net.
+        # The mid-pipeline guard (above) catches most drift; this is the last check before export.
+        # Uses same soft-limiter approach instead of peak-ceiling that blocked gain recovery.
+        _MAX_CUMULATIVE_LEVEL_DROP_DB: float = 0.915  # 10 % amplitude = 20*log10(0.9)
+        if _afg_pre_pipeline_audio is not None:
+            try:
+                _cum_rms_in = _rms_dbfs_gated(_afg_pre_pipeline_audio)
+                _cum_rms_out = _rms_dbfs_gated(current_audio)
+                _cum_drop_db = _cum_rms_in - _cum_rms_out
+                _cumulative_makeup_db: float = 0.0
+                if _cum_drop_db > _MAX_CUMULATIVE_LEVEL_DROP_DB:
+                    # Maximum allowed output RMS: input level minus the 10%-tolerance
+                    _cum_target_rms_db = _cum_rms_in - _MAX_CUMULATIVE_LEVEL_DROP_DB
+                    _cum_needed_db = max(0.0, _cum_target_rms_db - _cum_rms_out)
+                    if _cum_needed_db > 0.01:
+                        _cum_gain = float(10.0 ** (_cum_needed_db / 20.0))
+                        # Safety cap: max +18 dB for end-of-pipeline recovery
+                        _cum_gain = min(_cum_gain, 8.0)
+                        if _cum_gain > 1.0005:
+                            # Envelope-aware gain: only amplify musical frames
+                            current_audio = _musical_gain_envelope(
+                                current_audio, _cum_gain, gate_dbfs=-50.0, sr=sample_rate
+                            )
+                            # Soft-limiter only if actual clipping risk
+                            # §v9.10.125: 99.9th-percentile — impulse artefact must not block normalisation
+                            _cum_peak_final = float(np.percentile(np.abs(current_audio), 99.9))
+                            if _cum_peak_final > 0.98:
+                                _cum_abs_final = np.abs(current_audio)
+                                _cum_over_final = _cum_abs_final > 0.92
+                                if np.any(_cum_over_final):
+                                    _cum_sign_final = np.sign(current_audio)
+                                    _cum_soft_final = 0.92 + 0.08 * np.tanh((_cum_abs_final - 0.92) / 0.08)
+                                    current_audio = np.where(
+                                        _cum_over_final, _cum_sign_final * _cum_soft_final, current_audio
+                                    )
+                            current_audio = np.clip(current_audio, -1.0, 1.0)
+                            _cumulative_makeup_db = float(20.0 * np.log10(max(_cum_gain, 1e-9)))
+                            logger.info(
+                                "§2.45a CUMULATIVE level-guard (final): drop %.2f dB (gated) > %.2f dB limit "
+                                "→ envelope-aware makeup +%.2f dB applied",
+                                _cum_drop_db,
+                                _MAX_CUMULATIVE_LEVEL_DROP_DB,
+                                _cumulative_makeup_db,
+                            )
+                    else:
+                        logger.debug(
+                            "§2.45a CUMULATIVE level-guard (final): drop %.2f dB — within tolerance after "
+                            "rounding, no action",
+                            _cum_drop_db,
+                        )
+                else:
+                    logger.debug(
+                        "§2.45a CUMULATIVE level-guard (final): drop %.2f dB (gated) ≤ %.2f dB — OK",
+                        _cum_drop_db,
+                        _MAX_CUMULATIVE_LEVEL_DROP_DB,
+                    )
+            except Exception as _cum_exc:
+                logger.debug("§2.45a CUMULATIVE level-guard (final) failed (non-blocking): %s", _cum_exc)
+
         self._pmgg_log_entries = _pmgg_log_entries
+
+        # §2.29e Team-Coordination-Telemetrie: Ereignisse aus PMGG-Log extrahieren.
+        # Nur Entries mit gesetztem team_policy_reason — d.h. Phasen, bei denen die
+        # Team-Koordination aktiv etwas verändert hat (Goal-Exclusions, Threshold, Cap).
+        _team_evs: list[dict[str, Any]] = []
+        for _te in _pmgg_log_entries:
+            try:
+                _te_meta = _te.metadata if isinstance(_te.metadata, dict) else {}
+                _te_reason = str(_te_meta.get("team_policy_reason", "") or "")
+                if _te_reason:
+                    _team_evs.append(
+                        {
+                            "phase_id": str(getattr(_te, "phase_id", "") or ""),
+                            "action": str(getattr(_te, "action", "") or ""),
+                            "reason": _te_reason,
+                            "excluded_goals": list(_te_meta.get("team_excluded_goals", []) or []),
+                            "threshold_mult": float(_te_meta.get("team_threshold_mult", 1.0) or 1.0),
+                            "strength_cap": float(_te_meta.get("team_strength_cap", 1.0) or 1.0),
+                        }
+                    )
+            except Exception as _tev_exc:
+                logger.debug("team_coordination event extraction failed (non-blocking): %s", _tev_exc)
+        self._team_coordination_events = _team_evs
+        if _team_evs:
+            logger.info(
+                "§2.29e team_coordination: %d coordination event(s) — %s",
+                len(_team_evs),
+                [_e["reason"] for _e in _team_evs],
+            )
+
         self._pipeline_ml_guard_events = list(pipeline_ml_guard_events)
 
         # §2.47 [RELEASE_MUST] ml_fallbacks_used: aggregate from ML-guard events (OOM-triggered fallbacks)

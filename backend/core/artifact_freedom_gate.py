@@ -65,6 +65,11 @@ class ArtifactFreedomResult:
     noise_texture_penalty: float = 0.0  # 0.0 or -0.05
     material_type: str = "digital"
     detail_report: dict = field(default_factory=dict)
+    fail_reason: object | None = None  # §1.4a FailReason when artifact_freedom < 0.95
+    # §2.49c Roughness/Sharpness psychoacoustic annoyance metrics
+    roughness_delta_asper: float = 0.0  # Δrauheit (output - input) in asper
+    sharpness_delta_acum: float = 0.0  # Δschärfe (output - input) in acum
+    roughness_sharpness_penalty: float = 0.0  # ≤ 0.0, applied to artifact_freedom
 
 
 @dataclass
@@ -155,6 +160,30 @@ _TYPE_WEIGHTS = {
 
 # Max tolerance (normalisation denominator for artifact_freedom)
 _MAX_TOLERANCE = 5.0
+
+# §2.49c Roughness/Sharpness Guard thresholds
+_ROUGHNESS_FLAG_ASPER: float = 0.15  # Δrauheit per phase in asper
+_SHARPNESS_FLAG_ACUM: float = 0.30  # Δschärfe cumulative in acum
+_ROUGHNESS_MATERIAL_TOLERANCE: dict[str, float] = {
+    "digital": 1.0,
+    "cd_digital": 1.0,
+    "streaming": 1.0,
+    "tape": 1.25,
+    "reel_tape": 1.25,
+    "vinyl": 1.5,
+    "minidisc": 1.5,
+    "shellac": 2.0,
+    "wax_cylinder": 2.0,
+    "wire_recording": 2.0,
+}
+# Phase types for which Roughness/Sharpness guard applies (§2.49c §2.48a)
+_ROUGHNESS_APPLICABLE_TYPES: frozenset = frozenset(
+    {
+        PhaseOperationType.DYNAMICS,
+        PhaseOperationType.ADDITIVE,
+        PhaseOperationType.ENHANCEMENT,
+    }
+)
 
 
 class ArtifactFreedomGate:
@@ -323,10 +352,31 @@ class ArtifactFreedomGate:
         else:
             noise_dev, noise_penalty = 0.0, 0.0
 
+        # §2.49c Roughness/Sharpness Guard — DYNAMICS, ADDITIVE, ENHANCEMENT only
+        _roughness_delta = 0.0
+        _sharpness_delta = 0.0
+        _rs_penalty = 0.0
+        if _phase_type in _ROUGHNESS_APPLICABLE_TYPES:
+            try:
+                rough_orig = self._compute_roughness_zwicker(orig_mono, sr)
+                rough_rest = self._compute_roughness_zwicker(rest_mono, sr)
+                sharp_orig = self._compute_sharpness_bismarck(orig_mono, sr)
+                sharp_rest = self._compute_sharpness_bismarck(rest_mono, sr)
+                mat_tol = _ROUGHNESS_MATERIAL_TOLERANCE.get(mat_key, 1.0)
+                _roughness_delta = max(0.0, rough_rest - rough_orig)
+                _sharpness_delta = max(0.0, sharp_rest - sharp_orig)
+                if _roughness_delta > _ROUGHNESS_FLAG_ASPER * mat_tol:
+                    _rs_penalty -= 0.05
+                if _sharpness_delta > _SHARPNESS_FLAG_ACUM * mat_tol:
+                    _rs_penalty -= 0.10
+            except Exception as _ex:
+                logger.debug("roughness/sharpness guard failed: %s", _ex)
+
         # Score calculation
         weighted_sum = sum(_TYPE_WEIGHTS.get(a.artifact_type, 1.0) * a.salience_weighted_score for a in all_artifacts)
         artifact_freedom = float(np.clip(1.0 - (weighted_sum / _MAX_TOLERANCE), 0.0, 1.0))
         artifact_freedom = artifact_freedom + noise_penalty  # penalty is negative or 0
+        artifact_freedom = artifact_freedom + _rs_penalty  # §2.49c roughness/sharpness penalty
         artifact_freedom = float(np.clip(artifact_freedom, 0.0, 1.0))
 
         detail = {
@@ -338,6 +388,25 @@ class ArtifactFreedomGate:
             "weighted_artifact_sum": round(weighted_sum, 4),
             "noise_texture_deviation_db_oct": round(noise_dev, 3),
         }
+        # §2.49c: populate roughness/sharpness detail when guard fired
+        if _rs_penalty < 0.0:
+            if _roughness_delta > _ROUGHNESS_FLAG_ASPER:
+                detail["roughness_flag"] = {"delta_asper": round(_roughness_delta, 4)}
+            if _sharpness_delta > _SHARPNESS_FLAG_ACUM:
+                detail["sharpness_flag"] = {"delta_acum": round(_sharpness_delta, 4)}
+
+        # §1.4a FailReason when artifact_freedom < 0.95
+        _afg_fr = None
+        if artifact_freedom < 0.95:
+            from backend.core.pipeline_health_state import make_fail_reason
+
+            _afg_fr = make_fail_reason(
+                "ArtifactFreedomGate",
+                "ARTIFACT_VETO",
+                severity="failed",
+                action="rollback",
+                details=f"artifact_freedom={artifact_freedom:.4f} < 0.95, {len(all_artifacts)} artifacts detected",
+            )
 
         return ArtifactFreedomResult(
             artifact_freedom=round(artifact_freedom, 4),
@@ -346,6 +415,10 @@ class ArtifactFreedomGate:
             noise_texture_penalty=noise_penalty,
             material_type=mat_key,
             detail_report=detail,
+            fail_reason=_afg_fr,
+            roughness_delta_asper=round(_roughness_delta, 4),
+            sharpness_delta_acum=round(_sharpness_delta, 4),
+            roughness_sharpness_penalty=round(_rs_penalty, 4),
         )
 
     # ── Detector: Musical Noise ────────────────────────────────────────────
@@ -881,7 +954,6 @@ class ArtifactFreedomGate:
         n_frames = max(1, (len(orig) - frame_len) // hop)
 
         silence_frames_orig: list[int] = []
-        silence_frames_rest: list[int] = []
 
         for i in range(n_frames):
             s = i * hop
@@ -959,6 +1031,147 @@ class ArtifactFreedomGate:
             tilt = 0.0
 
         return tilt
+
+    # ── §2.49c Roughness/Sharpness (Zwicker/Bismarck) ─────────────────────
+
+    def _compute_roughness_zwicker(self, audio: np.ndarray, sr: int) -> float:
+        """Estimate roughness in asper (Zwicker 1991 approximation).
+
+        Uses temporal envelope modulation energy in 15–300 Hz range.
+        Reference: 1 asper ≈ 1 kHz tone, 60 dB SPL, 100 % AM at 70 Hz.
+        """
+        if len(audio) < int(0.1 * sr):
+            return 0.0
+
+        try:
+            from scipy.signal import hilbert
+
+            # Temporal envelope via Hilbert transform
+            analytic = hilbert(audio.astype(np.float32))
+            envelope = np.abs(analytic).astype(np.float64)
+
+            # Normalise envelope to remove DC (absolute level)
+            envelope -= np.mean(envelope)
+
+            # FFT of envelope to get modulation spectrum
+            env_fft = np.abs(np.fft.rfft(envelope))
+            env_freqs = np.fft.rfftfreq(len(envelope), d=1.0 / sr)
+
+            # Integrate energy in 15–300 Hz band (roughness band)
+            mask = (env_freqs >= 15.0) & (env_freqs <= 300.0)
+            if not np.any(mask):
+                return 0.0
+
+            am_energy = float(np.sum(env_fft[mask] ** 2)) / max(len(audio), 1)
+
+            # Calibrate: empirical scaling → ~1.0 asper for typical steady-state 70 Hz AM
+            # am_energy_ref at 60 dB SPL, f_AM=70 Hz, 100% AM, sr=48000 ≈ 1.5e-3
+            _ROUGHNESS_CALIB = 1.5e-3
+            roughness = float(am_energy / (_ROUGHNESS_CALIB + 1e-12))
+            return max(0.0, min(roughness, 10.0))  # cap at 10 asper
+        except Exception:
+            return 0.0
+
+    def _compute_sharpness_bismarck(self, audio: np.ndarray, sr: int) -> float:
+        """Estimate sharpness in acum (Bismarck 1974 / DIN 45692 approximation).
+
+        Uses Bark-scale spectral centroid with g(z) psychoacoustic weighting.
+        Reference: 1 acum = 1 kHz narrow-band noise at 60 dB SPL.
+        """
+        if len(audio) < int(0.05 * sr):
+            return 0.0
+
+        try:
+            # Bark-scale centre frequencies for 24 critical bands
+            bark_centers_hz = np.array(
+                [
+                    50,
+                    150,
+                    250,
+                    350,
+                    450,
+                    570,
+                    700,
+                    840,
+                    1000,
+                    1170,
+                    1370,
+                    1600,
+                    1850,
+                    2150,
+                    2500,
+                    2900,
+                    3400,
+                    4000,
+                    4800,
+                    5800,
+                    7000,
+                    8500,
+                    10500,
+                    13500,
+                ],
+                dtype=np.float64,
+            )
+            # Corresponding Bark values (Traunmüller 1990)
+            bark_values = np.array(
+                [
+                    0.5,
+                    1.5,
+                    2.5,
+                    3.5,
+                    4.5,
+                    5.5,
+                    6.5,
+                    7.5,
+                    8.5,
+                    9.5,
+                    10.5,
+                    11.5,
+                    12.5,
+                    13.5,
+                    14.5,
+                    15.5,
+                    16.5,
+                    17.5,
+                    18.5,
+                    19.5,
+                    20.5,
+                    21.5,
+                    22.5,
+                    23.5,
+                ],
+                dtype=np.float64,
+            )
+
+            # Bismarck weighting function
+            def _g(z: float) -> float:
+                return 1.0 if z <= 16.0 else 0.066 * np.exp(0.171 * z)
+
+            # Compute band energies via FFT
+            n_fft = min(4096, len(audio))
+            win = np.hanning(n_fft).astype(np.float32)
+            mag = np.abs(np.fft.rfft(audio[:n_fft] * win))
+            freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+
+            # Specific loudness proxy: power per Bark band (unnormalized)
+            N_prime = np.zeros(len(bark_centers_hz))
+            for i, (f_c, bw_hz) in enumerate(zip(bark_centers_hz, np.diff(np.append(bark_centers_hz, 16000.0)))):
+                mask = (freqs >= f_c - bw_hz / 2) & (freqs < f_c + bw_hz / 2)
+                N_prime[i] = float(np.sum(mag[mask] ** 2))
+
+            total_N = float(np.sum(N_prime))
+            if total_N < 1e-12:
+                return 0.0
+
+            g_weights = np.array([_g(z) for z in bark_values])
+            weighted_sum = float(np.sum(N_prime * g_weights * bark_values))
+
+            # Bismarck formula: 0.11 × ∫ N'(z)·g(z)·z dz / ∫ N'(z) dz
+            sharpness = 0.11 * weighted_sum / total_N
+
+            return max(0.0, min(sharpness, 10.0))  # cap at 10 acum
+        except Exception:
+            return 0.0
 
     # ── Salienz-Gewichtung (§2.49) ─────────────────────────────────────────
 

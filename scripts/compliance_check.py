@@ -16,9 +16,9 @@ import io as _io
 import re
 import sys
 import tokenize
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Sequence
 
 # ---------------------------------------------------------------------------
 # Zieldirectories (Produktion) — Tests, Scripts, Models werden nie geprüft
@@ -101,18 +101,20 @@ RULES: list[Rule] = [
         allow_in=["backend/file_import.py"],
         severity="error",
     ),
-    # R05 — CUDA map_location
+    # R05 — CUDA map_location ohne ml_device_manager
     Rule(
         id="R05",
-        description='map_location="cuda" verboten — nur CPU: map_location="cpu"',
+        description='map_location="cuda" ohne ml_device_manager — get_torch_device() verwenden',
         pattern=re.compile(r'map_location\s*=\s*["\']cuda["\']'),
+        allow_in=["backend/core/ml_device_manager.py"],
         severity="error",
     ),
-    # R06 — .to("cuda") / .cuda()
+    # R06 — .to("cuda") / .cuda() ohne ml_device_manager
     Rule(
         id="R06",
-        description='.to("cuda") / .cuda() verboten — CPU-only Build',
+        description='.to("cuda") / .cuda() ohne ml_device_manager — get_torch_device() verwenden',
         pattern=re.compile(r'\.to\s*\(\s*["\']cuda["\']\s*\)|\.cuda\s*\(\s*\)'),
+        allow_in=["backend/core/ml_device_manager.py"],
         severity="error",
     ),
     # R07 — pesq() Metrik
@@ -251,7 +253,6 @@ def _is_in_comment_or_string(line: str, match_start: int) -> bool:
     before = line[:match_start]
     # Alles nach # ist Kommentar (außer innerhalb eines Strings — Näherung)
     if "#" in before:
-        hash_pos = before.index("#")
         # Prüfe ob # innerhalb eines String-Literals liegt (vereinfacht)
         single = before.count("'") % 2
         double = before.count('"') % 2
@@ -262,10 +263,7 @@ def _is_in_comment_or_string(line: str, match_start: int) -> bool:
 
 def _should_skip_file(path: Path, allow_in: list[str]) -> bool:
     path_str = path.as_posix()
-    for allowed in allow_in:
-        if allowed in path_str:
-            return True
-    return False
+    return any(allowed in path_str for allowed in allow_in)
 
 
 def scan_file(path: Path, rules: list[Rule], check_fstrings: bool = True) -> list[Violation]:

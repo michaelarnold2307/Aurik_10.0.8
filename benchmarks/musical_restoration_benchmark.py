@@ -63,6 +63,10 @@ import numpy as np
 # Current Aurik version — bump on each release so reports are version-pinned.
 _AURIK_VERSION: str = "9.10.123"
 
+# §8.1.2 RELEASE_MUST: Minimum fragment duration for AMRB items.
+# Fragments shorter than 30 s cause ±8 OQS variance; reject/warn automatically.
+_MIN_AMRB_FRAGMENT_S: float = 30.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -608,6 +612,19 @@ class MusicalRestorationBenchmark:
         sr = self.config.sample_rate
         n = self.config.n_items_per_scenario
         dur = self.config.duration_s
+
+        # §8.1.2 RELEASE_MUST: Fragment-Mindestlänge 30 s.
+        # Fragmente < 30 s erzeugen ±8 OQS Varianz durch statistische Instabilität.
+        if dur < _MIN_AMRB_FRAGMENT_S:
+            logger.warning(
+                "§8.1.2 AMRB Fragment-Guard: duration_s=%.1f s < _MIN_AMRB_FRAGMENT_S=%.1f s "
+                "(Szenario %s) — erhöhe auf %.1f s, um OQS-Varianz zu vermeiden.",
+                dur,
+                _MIN_AMRB_FRAGMENT_S,
+                sid,
+                _MIN_AMRB_FRAGMENT_S,
+            )
+            dur = _MIN_AMRB_FRAGMENT_S
 
         # P2-1: seed numpy global RNG so degradation functions (np.random.randn,
         # np.random.randint) produce identical results given the same run_seed.

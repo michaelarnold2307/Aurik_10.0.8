@@ -229,25 +229,35 @@ class ClickRemovalPhase(PhaseInterface):
                 np.clip(thresholds["transient_preserve"] + 0.10 * (1.0 - phase_locality_factor), 0.0, 0.99)
             )
 
-        # Process stereo/mono
+        # §2.51 Linked-Stereo: Click-Detektion auf Mono-Mix, Repair synchron auf L+R
         is_stereo = audio.ndim == 2
         if is_stereo:
-            left, stats_left = self._remove_clicks_professional(
-                audio[:, 0], sample_rate, thresholds, preserve_transients, use_ml
+            # Detect clicks on mono downmix for coherent L+R repair
+            mono_mix = np.mean(audio, axis=1)
+            _mono_repaired, stats_mono = self._remove_clicks_professional(
+                mono_mix, sample_rate, thresholds, preserve_transients, use_ml
             )
-            right, stats_right = self._remove_clicks_professional(
-                audio[:, 1], sample_rate, thresholds, preserve_transients, use_ml
+            # Compute gain envelope from mono repair
+            _eps_click = 1e-10
+            _gain_click = np.where(
+                np.abs(mono_mix) > _eps_click,
+                _mono_repaired / (mono_mix + _eps_click * np.sign(mono_mix + _eps_click)),
+                1.0,
             )
+            _gain_click = np.clip(_gain_click, 0.0, 10.0)
+            # Apply identical gain to both channels
+            left = audio[:, 0] * _gain_click
+            right = audio[:, 1] * _gain_click
             result_audio = np.column_stack([left, right])
 
-            # Combine statistics
-            total_clicks = stats_left["total"] + stats_right["total"]
-            ml_repaired_count = stats_left.get("ml_repaired", 0) + stats_right.get("ml_repaired", 0)
+            # Statistics from mono detection
+            total_clicks = stats_mono["total"]
+            ml_repaired_count = stats_mono.get("ml_repaired", 0)
             click_types = {
-                "short": stats_left["short"] + stats_right["short"],
-                "medium": stats_left["medium"] + stats_right["medium"],
-                "long": stats_left["long"] + stats_right["long"],
-                "transients_preserved": stats_left["transients_preserved"] + stats_right["transients_preserved"],
+                "short": stats_mono["short"],
+                "medium": stats_mono["medium"],
+                "long": stats_mono["long"],
+                "transients_preserved": stats_mono["transients_preserved"],
                 "ml_repaired": ml_repaired_count,
             }
         else:

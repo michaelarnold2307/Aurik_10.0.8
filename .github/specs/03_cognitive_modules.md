@@ -10,12 +10,13 @@
 | Modul | Datei | Zweck |
 | --- | --- | --- |
 | `PerceptualEmbedder` | `backend/core/perceptual_embedder.py` | 256-dim L2-normalisierter Einbettungsraum |
-| `CausalDefectReasoner` | `backend/core/causal_defect_reasoner.py` | Bayesianisch: 32 DefectTypes → 35 Kausal-Ursachen |
+| `CausalDefectReasoner` | `backend/core/causal_defect_reasoner.py` | Bayesianisch: 46 DefectTypes → 49 Kausal-Ursachen |
 | `GPParameterOptimizer` | `backend/core/gp_parameter_optimizer.py` | RBF-GP + UCB + MOO Pareto-Front |
 | `PerceptualQualityScorer` | `backend/core/perceptual_quality_scorer.py` | Gammatone-NSIM+MCD+LUFS+MOS |
 | `MusicalGoalsChecker` | `backend/core/musical_goals/musical_goals_metrics.py` | 14 Qualitätsziele |
-| `MediumClassifier` | `backend/core/medium_classifier.py` | 15 Materialtypen + 2 Multichannel (CLAP-ML + DSP) |
-| `DefectScanner` | `backend/core/defect_scanner.py` | 32 DefectType-Werte |
+| `MediumDetector` | `forensics/medium_detector.py` | Autoritative Tonträgerketten-Erkennung (file_ext-aware, §6.7) |
+| `MediumClassifier` (Legacy-Kompat) | `backend/core/medium_classifier.py` | Legacy-Analyse für Bestandsmodule; nicht autoritativ für Transfer-Chain |
+| `DefectScanner` | `backend/core/defect_scanner.py` | 46 DefectType-Werte |
 | `VocalAIEnhancement` | `backend/core/vocal_ai_enhancement.py` | VoiceGender (MALE/FEMALE/CHILD/ANDROGYNOUS) |
 | `FeedbackChain` | `backend/core/feedback_chain.py` | Iterative PQS-Qualitätsschleife |
 | `ExcellenceOptimizer` | `backend/core/excellence_optimizer.py` | GP-Params + MOO |
@@ -83,7 +84,7 @@ sim = embedding.cosine_similarity(other)  # ∈ [-1, 1]
 ## §2.4 CausalDefectReasoner
 
 ```python
-# 35 Kausal-Ursachen (≠ 32 DefectTypes des DefectScanners):
+# 49 Kausal-Ursachen (≠ 46 DefectTypes des DefectScanners):
 # Hinweis: transport_bump (v9.10.57b) und vocal_harshness (v9.10.77) als
 # eigenständige Ursachen ergänzt; Gruppe Pitch/Dynamik dadurch 4→5.
 #
@@ -681,7 +682,7 @@ unterschiedliche Spektral-/Zeit-Behandlung.
 
 # Vocoder & Synthese
 plugins/vocos_plugin.py              → ✅ PRIMÄR (Vocos 48 kHz nativ, Kaskade: 48k→44.1k→24k)
-plugins/bigvgan_v2_plugin.py         → ✅ SEKUNDÄR (BigVGAN-v2, 0,4 GB ONNX/PyTorch, Studio-2026, CPU-only)
+plugins/bigvgan_v2_plugin.py         → ✅ SEKUNDÄR (BigVGAN-v2, 0,4 GB ONNX/PyTorch, Studio-2026, GPU-beschleunigt)
 plugins/hifigan_plugin.py            → ✅ Tertiär-Fallback (3,6 MB ONNX)
 
 # Stem-Separation
@@ -734,7 +735,7 @@ plugins/era_classifier_plugin.py     → EraClassifier (1890–2025)
 ```python
 try:
     import onnxruntime as ort
-    session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(model_path, providers=get_ort_providers("PluginName"))
 except (ImportError, FileNotFoundError):
     session = None  # DSP-Fallback aktiv
 ```

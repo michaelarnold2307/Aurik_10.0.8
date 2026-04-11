@@ -328,13 +328,16 @@ class TestRobustness:
             phases = _select_phases_for(mat, DefectType.HIGH_FREQ_NOISE, QualityMode.BALANCED)
             assert len(phases) == len(set(phases)), f"Doppelte Phasen bei {mat.name}: {phases}"
 
-    def test_tier_0_always_present(self):
-        """Tier-0 Pflichtphasen sind immer enthalten."""
-        for mat in list(MaterialType)[:5]:  # Stichprobe
-            phases = _select_phases_for(mat, DefectType.CLICKS, QualityMode.QUALITY)
-            phase_set = set(phases)
-            for p in TIER_0_PHASES:
-                assert p in phase_set, f"Tier-0 Phase {p} fehlt bei {mat.name}"
+    def test_tier_0_threshold_gated(self):
+        """Tier-0 Phasen werden nur bei echten Defekten aktiviert (§0 Minimal-Intervention)."""
+        for mat in list(MaterialType)[:3]:  # Stichprobe
+            # Phase_30 nur bei DC-OFFSET severity > 0.10
+            phases_dc = _select_phases_for(mat, DefectType.DC_OFFSET, QualityMode.QUALITY)
+            assert "phase_30_dc_offset_removal" in set(phases_dc), f"phase_30 fehlt bei {mat.name} mit DC_OFFSET"
+
+            # Phase_05 nur bei LOW_FREQ_RUMBLE severity > 0.10
+            phases_rumble = _select_phases_for(mat, DefectType.LOW_FREQ_RUMBLE, QualityMode.QUALITY)
+            assert "phase_05_rumble_filter" in set(phases_rumble), f"phase_05 fehlt bei {mat.name} mit RUMBLE"
 
     def test_tier_6_always_present(self):
         """Tier-6 Export-Pflichtphasen sind immer enthalten."""

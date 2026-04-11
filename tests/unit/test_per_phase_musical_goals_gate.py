@@ -423,6 +423,90 @@ class TestPMGGAdaptiveSampleDuration:
             assert math.isfinite(v)
 
 
+class TestPMGGTeamContextPolicy:
+    """§2.54 Team-Koordination: PMGG berücksichtigt Vorphasen-Kontext."""
+
+    def test_35b_phase50_policy_enabled_after_hf_restoration(self):
+        from backend.core.per_phase_musical_goals_gate import _resolve_team_context_policy
+
+        policy = _resolve_team_context_policy(
+            "phase_50_spectral_repair",
+            {
+                "prior_phase_context": {
+                    "harmonic_restoration_applied": True,
+                }
+            },
+        )
+
+        assert policy["reason"] == "phase50_after_hf_restoration"
+        assert policy["threshold_multiplier"] > 1.0
+        assert policy["strength_cap"] < 1.0
+        assert {"brillanz", "transparenz", "timbre_authentizitaet"}.issubset(policy["goal_exclusions"])
+
+    def test_35c_phase50_policy_disabled_without_prior_context(self):
+        from backend.core.per_phase_musical_goals_gate import _resolve_team_context_policy
+
+        policy = _resolve_team_context_policy("phase_50_spectral_repair", {"material_type": "vinyl"})
+
+        assert policy["reason"] == ""
+        assert policy["threshold_multiplier"] == 1.0
+        assert policy["strength_cap"] == 1.0
+        assert policy["goal_exclusions"] == set()
+
+    def test_35d_emergency_retries_blocked_for_phase50_hf_team_context(self):
+        from backend.core.per_phase_musical_goals_gate import _allow_emergency_retries
+
+        allow = _allow_emergency_retries(
+            "phase_50_spectral_repair",
+            worst_priority=2,
+            best_regression=0.20,
+            catastrophic_threshold=0.08,
+            team_policy={"reason": "phase50_after_hf_restoration"},
+        )
+        assert allow is False
+
+    def test_35e_emergency_retries_allowed_without_team_block(self):
+        from backend.core.per_phase_musical_goals_gate import _allow_emergency_retries
+
+        allow = _allow_emergency_retries(
+            "phase_03_denoise",
+            worst_priority=2,
+            best_regression=0.20,
+            catastrophic_threshold=0.08,
+            team_policy={"reason": ""},
+        )
+        assert allow is True
+
+    def test_35f_transition_policy_additive_to_subtractive_applies(self):
+        from backend.core.per_phase_musical_goals_gate import _resolve_team_context_policy
+
+        policy = _resolve_team_context_policy(
+            "phase_03_denoise",
+            {
+                "prior_phase_context": {
+                    "last_phase_type": "ADDITIVE",
+                }
+            },
+        )
+        assert policy["threshold_multiplier"] > 1.0
+        assert policy["strength_cap"] < 1.0
+        assert "brillanz" in policy["goal_exclusions"]
+
+    def test_35g_transition_policy_mlgen_to_subtractive_applies(self):
+        from backend.core.per_phase_musical_goals_gate import _resolve_team_context_policy
+
+        policy = _resolve_team_context_policy(
+            "phase_29_tape_hiss_reduction",
+            {
+                "prior_phase_context": {
+                    "last_phase_type": "ML_GENERATIVE",
+                }
+            },
+        )
+        assert policy["threshold_multiplier"] > 1.0
+        assert "artikulation" in policy["goal_exclusions"]
+
+
 # ----------------------------------------------------------------------
 # Tests §2.29b — PHASE_GOAL_EXCLUSIONS (NatuerlichkeitMetric stable-metric
 # invariante + phase-specific false-positive prevention)
@@ -1324,23 +1408,24 @@ class TestKrumhanslSchmucklerTonalCenter:
         assert 0.0 <= score <= 1.0, f"tonal_center out of bounds on silence: {score}"
 
     def test_82_tonal_center_exclusion_for_selective_nr_only(self):
-        """v9.10.95: K-S invariant to additive noise but NOT to frequency-selective NR.
-        phase_03/phase_29 apply shaped NR -> tonal_center correctly excluded there.
-        Other phases (phase_08, phase_18, phase_49) have K-S-stable operations."""
+        """v9.10.95 / 2026-04-10: K-S not invariant to frequency-selective spectral modification.
+        phase_03/phase_29/phase_49/phase_20: shaped NR or spectral-subtraction dereverb
+        → tonal_center correctly excluded. phase_08/phase_18: additive-only/gating → K-S stable."""
         from backend.core.per_phase_musical_goals_gate import PHASE_GOAL_EXCLUSIONS
 
-        # Frequency-selective NR -> tonal_center excluded (v9.10.95)
-        for phase in ["phase_03", "phase_29"]:
+        # Frequency-selective spectral modification -> tonal_center excluded
+        for phase in ["phase_03", "phase_29", "phase_49", "phase_20"]:
             excl = PHASE_GOAL_EXCLUSIONS.get(phase, set())
             assert "tonal_center" in excl, (
-                f"{phase}: tonal_center MUST be excluded - K-S not invariant to shaped NR (v9.10.95). Current: {excl}"
+                f"{phase}: tonal_center MUST be excluded - K-S not invariant to frequency-selective "
+                f"spectral modification (v9.10.95 / real-run P2 regression confirmed 2026-04-10). Current: {excl}"
             )
 
-        # K-S stable phases -> tonal_center not excluded
-        for phase in ["phase_08", "phase_18", "phase_49"]:
+        # K-S stable phases (no frequency-selective spectral modification) -> tonal_center not excluded
+        for phase in ["phase_08", "phase_18"]:
             excl = PHASE_GOAL_EXCLUSIONS.get(phase, set())
             assert "tonal_center" not in excl, (
-                f"{phase}: tonal_center must NOT be excluded (K-S stable, v9.10.93). Current: {excl}"
+                f"{phase}: tonal_center must NOT be excluded (K-S stable, additive/gating only). Current: {excl}"
             )
 
     def test_83_brillanz_improves_after_denoising(self):
@@ -1567,12 +1652,13 @@ class TestKrumhanslSchmucklerTonalCenter:
         assert excl == expected, f"phase_29: {excl} != {expected}"
 
     def test_94_phase49_exclusions_v9_10_92(self):
-        """phase_49 must exclude only {authentizitaet} per v9.10.96 canonical spec.
-        emotionalitaet entfernt: waerme-ratio §9.7.14 reverb-invariant;
-        brillanz+transparenz crest-proxies §9.7.12/13 SNR-robust."""
+        """phase_49 extended exclusions (2026-04-10): spectral-subtraction dereverb applies
+        frequency-selective gain G(f) identical to OMLSA/NR phases — tonal_center, timbre,
+        artikulation, natuerlichkeit all excluded per real-run P2 catastrophic regression
+        evidence (Δ=0.4667/0.5530 confirmed). brillanz+transparenz+waerme remain SNR-robust."""
         from backend.core.per_phase_musical_goals_gate import PHASE_GOAL_EXCLUSIONS
 
-        expected = {"authentizitaet"}
+        expected = {"authentizitaet", "tonal_center", "timbre_authentizitaet", "artikulation", "natuerlichkeit"}
         excl = PHASE_GOAL_EXCLUSIONS.get("phase_49", set())
         assert excl == expected, f"phase_49: {excl} != {expected}"
 

@@ -286,24 +286,26 @@ class TestPhase04EQCorrection:
 
 
 class TestPhase05RumbleFilter:
+    SR_PHASE = 48000
+
     def setup_method(self):
         from backend.core.phases.phase_05_rumble_filter import RumbleFilterPhase
 
         self.phase = RumbleFilterPhase()
 
     def test_mono_returns_phase_result(self, mono):
-        result = self.phase.process(mono, SR)
+        result = self.phase.process(mono, sample_rate=self.SR_PHASE)
         _assert_phase_result(result, mono)
 
     def test_stereo_returns_phase_result(self, stereo):
-        result = self.phase.process(stereo, SR)
+        result = self.phase.process(stereo, sample_rate=self.SR_PHASE)
         _assert_phase_result(result, stereo)
 
     def test_low_freq_rumble_reduced(self):
         """LF-Rumble (10 Hz) wird stark reduziert."""
         t = np.linspace(0, N / SR, N, endpoint=False)
         rumble = (np.sin(2 * np.pi * 10.0 * t) * 0.5).astype(np.float32)
-        result = self.phase.process(rumble, SR)
+        result = self.phase.process(rumble, sample_rate=self.SR_PHASE)
         _assert_phase_result(result, rumble)
         # Energie bei 10 Hz nach Filterung niedriger
         fft_in = np.abs(np.fft.rfft(rumble.astype(float)))
@@ -313,7 +315,7 @@ class TestPhase05RumbleFilter:
 
     def test_high_freq_preserved(self, sine_mono):
         """440-Hz-Signal bleibt nach Rumble-Filter erhalten."""
-        result = self.phase.process(sine_mono, SR)
+        result = self.phase.process(sine_mono, sample_rate=self.SR_PHASE)
         _assert_phase_result(result, sine_mono)
         rms_out = float(np.sqrt(np.mean(result.audio.astype(float) ** 2)))
         assert rms_out > 0.05  # Signal muss erhalten bleiben
@@ -331,6 +333,30 @@ class TestPhase05RumbleFilter:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_musical_body_preserved_while_rumble_reduced(self):
+        """Rumble entfernen ohne signifikanten Verlust des Musik-Körpers."""
+        t = np.linspace(0, N / SR, N, endpoint=False)
+        music = 0.30 * np.sin(2 * np.pi * 80.0 * t)  # low musical body
+        rumble = 0.25 * np.sin(2 * np.pi * 10.0 * t)  # defect component
+        signal_in = (music + rumble).astype(np.float32)
+
+        result = self.phase.process(signal_in, material_type="vinyl", sample_rate=self.SR_PHASE)
+        _assert_phase_result(result, signal_in)
+
+        in_rms = float(np.sqrt(np.mean(signal_in.astype(np.float64) ** 2) + 1e-12))
+        out_rms = float(np.sqrt(np.mean(result.audio.astype(np.float64) ** 2) + 1e-12))
+        delta_db = 20.0 * np.log10(max(out_rms / in_rms, 1e-30))
+        # Gesamt-RMS darf sinken, weil Defektenergie (10 Hz rumble) entfernt wird.
+        assert delta_db > -3.8
+
+        fft_in = np.abs(np.fft.rfft(signal_in.astype(float)))
+        fft_out = np.abs(np.fft.rfft(result.audio.astype(float)))
+        bin_10 = max(1, int(10 * N / SR))
+        bin_80 = max(1, int(80 * N / SR))
+        assert fft_out[bin_10] < fft_in[bin_10]
+        # Musical low-end (80 Hz) must stay substantially present.
+        assert fft_out[bin_80] > fft_in[bin_80] * 0.65
 
 
 # ---------------------------------------------------------------------------

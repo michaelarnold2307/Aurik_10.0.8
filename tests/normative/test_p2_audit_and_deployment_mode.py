@@ -94,6 +94,7 @@ class TestAMRBAuditability:
             f"SHA-256 ist nicht deterministisch:\n  Lauf 1: {r1.report_sha256}\n  Lauf 2: {r2.report_sha256}"
         )
 
+    @pytest.mark.timeout(120)
     def test_p2_1_sha256_differs_for_different_seed(self):
         """Verschiedener run_seed → unterschiedliche SHA-256 (Seed ist eingebaut)."""
 

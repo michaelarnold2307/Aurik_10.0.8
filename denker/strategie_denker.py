@@ -125,6 +125,22 @@ class StrategieErgebnis:
 # StrategieDenker
 # ---------------------------------------------------------------------------
 
+# Präfixe kritischer Phasen: erhalten immer mindestens das Plan-Qualitäts-Tier.
+# "fast" ist für diese Phasen verboten — sie sind klangkritisch.
+_CRITICAL_PHASE_PREFIXES: frozenset[str] = frozenset(
+    {
+        "phase_01_",  # click_removal — Einzelartefakt-Entfernung
+        "phase_03_",  # denoise — Kernfunktion Denoising
+        "phase_07_",  # harmonic_restoration — Klangtreue
+        "phase_09_",  # crackle_removal — Vinyl-Pflicht
+        "phase_12_",  # wow_flutter_fix — Pitch-Stabilität
+        "phase_23_",  # spectral_repair — Bandbreitenrekonstruktion
+        "phase_29_",  # tape_hiss_reduction — Tape-Material-Pflicht
+        "phase_40_",  # loudness_normalization — EBU R128 Output-Gate
+        "phase_47_",  # truepeak_limiter — Safety-Gate
+    }
+)
+
 
 class StrategieDenker:
     """Plant die Verarbeitungs-Strategie und überwacht das 8×RT-Budget.
@@ -345,6 +361,71 @@ class StrategieDenker:
             rt_factor_current=rt_factor,
             should_exit_early=should_exit,
         )
+
+    def schaetze_phasen_tier(
+        self,
+        plan: StrategiePlan,
+        phase_list: list[str],
+        *,
+        restorability_score: float = 70.0,
+    ) -> dict[str, str]:
+        """Empfiehlt Qualitäts-Tier (\"maximum\" | \"quality\" | \"fast\") pro Phase.
+
+        Regeln (in Prioritätsreihenfolge):
+          1. Studio-2026-Modus → alle Phasen \"maximum\".
+          2. Restorability < 35 + kritische Phase → \"maximum\".
+          3. Enges Budget (max_processing_s < 5× audio_duration) + unkritisch → \"fast\".
+          4. Sonst: plan.quality_mode (\"quality\" als Default).
+
+        Kritische Phasen (_CRITICAL_PHASE_PREFIXES) erhalten niemals \"fast\" —
+        ihr Ergebnis bestimmt Klangtreue und musical-goals direkt.
+
+        Args:
+            plan:                StrategiePlan aus StrategieDenker.plan().
+            phase_list:          Sortierte Phasenliste (aus PhasePlan.phases).
+            restorability_score: Restorability 0–100 (PhysicalCeiling-Schätzung).
+
+        Returns:
+            Dict phase_id → Tier-String. Leer wenn plan None.
+        """
+        if plan is None:
+            return {}
+
+        _is_studio = str(getattr(plan, "quality_mode", "") or "").lower() in (
+            "studio2026",
+            "studio_2026",
+            "maximum",
+        )
+        _low_restorability = float(restorability_score) < 35.0
+        _audio_dur = float(getattr(plan, "audio_duration_s", 1.0) or 1.0)
+        _max_proc = float(getattr(plan, "max_processing_s", _audio_dur * _3X_RT_LIMIT) or _audio_dur * _3X_RT_LIMIT)
+        _tight_budget = _max_proc < 5.0 * _audio_dur
+        _default_tier = "maximum" if _is_studio else str(getattr(plan, "quality_mode", "quality") or "quality")
+
+        tiers: dict[str, str] = {}
+        for phase in phase_list:
+            _is_critical = any(phase.startswith(pfx) for pfx in _CRITICAL_PHASE_PREFIXES)
+
+            if _is_studio or (_low_restorability and _is_critical):
+                tier = "maximum"
+            elif _tight_budget and not _is_critical:
+                tier = "fast"
+            else:
+                tier = _default_tier
+
+            tiers[phase] = tier
+
+        logger.debug(
+            "StrategieDenker.schaetze_phasen_tier(): %d Phasen "
+            "(restorability=%.0f, tight_budget=%s, studio=%s) → %d maximum, %d fast",
+            len(tiers),
+            restorability_score,
+            _tight_budget,
+            _is_studio,
+            sum(1 for t in tiers.values() if t == "maximum"),
+            sum(1 for t in tiers.values() if t == "fast"),
+        )
+        return tiers
 
     @property
     def performance_guard(self) -> Any | None:

@@ -193,11 +193,17 @@ class VersaPlugin:
             pseudo_mos_metric = _pm_mod.pseudo_mos_metric
 
             torch.hub.set_dir(_HUB_CACHE)
+            try:
+                from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                _versa_use_gpu = _get_dev("VersaSingMOS") != "cpu"
+            except Exception:
+                _versa_use_gpu = False
             predictor_dict, predictor_fs = pseudo_mos_setup(
                 predictor_types=["singmos_pro"],
                 predictor_args={"singmos_pro": {"fs": _MODEL_SR}},
                 cache_dir=_HUB_CACHE,
-                use_gpu=False,
+                use_gpu=_versa_use_gpu,
             )
             self._predictor_dict = predictor_dict
             self._predictor_fs = predictor_fs

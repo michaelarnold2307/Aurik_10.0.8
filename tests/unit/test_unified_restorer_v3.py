@@ -644,6 +644,53 @@ class TestRestoreMocked:
         assert calls["file_ext"] == ".mp3"
         assert calls["forensic_medium_result"] is pre_medium
 
+    def test_40e_medium_detector_failure_does_not_call_legacy_classifier(self):
+        """UV3 must not fall back to MediumClassifier when MediumDetector fails."""
+        restorer = UnifiedRestorerV3()
+        audio = np.zeros(9600, dtype=np.float32)  # 0.2 s @ 48 kHz (> min-length guard)
+
+        calls: dict[str, object] = {}
+
+        def _scan_capture(a: np.ndarray, sr: int, _mat: object, **kwargs) -> object:
+            calls["sr"] = int(sr)
+            calls["forensic_medium_result"] = kwargs.get("forensic_medium_result")
+            raise RuntimeError("stop_after_scan")
+
+        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign]
+
+        cached_era = types.SimpleNamespace(decade=1970, material_prior="vinyl", confidence=0.99)
+        cached_genre = types.SimpleNamespace(
+            is_schlager=False,
+            confidence=0.0,
+            genre_label="unknown",
+            bpm=0.0,
+            subgenre="unknown",
+        )
+        cached_restorability = types.SimpleNamespace(restorability_score=70.0, grade="FAIR", predicted_mos=(3.5, 4.1))
+
+        _md = MagicMock()
+        _md.detect.side_effect = RuntimeError("detector down")
+        _legacy = MagicMock(side_effect=AssertionError("legacy MediumClassifier must stay unused"))
+
+        with (
+            patch("forensics.medium_detector.get_medium_detector", return_value=_md),
+            patch("backend.core.medium_classifier.classify_medium", _legacy),
+            pytest.raises(RuntimeError, match="stop_after_scan"),
+        ):
+            restorer.restore(
+                audio,
+                48000,
+                cached_era_result=cached_era,
+                cached_genre_result=cached_genre,
+                cached_restorability_result=cached_restorability,
+                file_path="/tmp/detector_only_regression.mp3",
+            )
+
+        assert _md.detect.call_count == 1
+        assert _legacy.call_count == 0
+        assert calls["sr"] == 48000
+        assert calls["forensic_medium_result"] is None
+
 
 # ---------------------------------------------------------------------------
 # Klasse 9: Phasen-Regressionsprotokoll (§Punkt3)

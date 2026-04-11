@@ -13,7 +13,7 @@ Verwendung::
 Optionen:
     --mode          restoration | studio  (default: restoration)
     --n-items       Stimuli pro Szenario  (default: 5)
-    --duration      Länge je Stimulus in Sekunden (default: 8.0)
+    --duration      Länge je Stimulus in Sekunden (default: 30.0, Minimum: 30.0)
     --scenarios     Teilmenge: tape vinyl shellac digital codec vocal reverb hum dropout composite
     --report-path   Expliziter Ausgabepfad für JSON-Bericht
     --dry-run       Nur DSP-Pass-Through — kein ML, schnell
@@ -49,6 +49,14 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# AMRB Constraints
+# ---------------------------------------------------------------------------
+# Minimum fragment duration for statistically reliable OQS/MUSHRA scoring.
+# Fragments shorter than 30 s produce per-item variance exceeding ±8 OQS points,
+# making OQS ≥ 80 pass/fail gating unreliable. [RELEASE_MUST §8.1.2]
+_MIN_AMRB_FRAGMENT_S: float = 30.0
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -286,6 +294,19 @@ def _run(args: argparse.Namespace) -> int:
         logger.error("AMRB import failed: %s", exc)
         return 1
 
+    # §8.1.2 Minimum fragment duration guard — fragments < 30 s produce OQS variance
+    # exceeding ±8 points, making pass/fail gating unreliable. [RELEASE_MUST]
+    if args.duration < _MIN_AMRB_FRAGMENT_S:
+        logger.warning(
+            "§8.1.2 AMRB: --duration %.1f s liegt unter dem Minimum von %.0f s. "
+            "OQS-Bewertung auf kurzen Fragmenten ist statistisch unzuverlässig (±8 OQS). "
+            "Verwende %.0f s.",
+            args.duration,
+            _MIN_AMRB_FRAGMENT_S,
+            _MIN_AMRB_FRAGMENT_S,
+        )
+        args.duration = _MIN_AMRB_FRAGMENT_S
+
     # Resolve scenario filter
     scenario_filter: list[str] | None = None
     if args.scenarios:
@@ -440,9 +461,9 @@ def main() -> None:
     parser.add_argument(
         "--duration",
         type=float,
-        default=8.0,
+        default=_MIN_AMRB_FRAGMENT_S,
         metavar="S",
-        help="Stimulus-Länge in Sekunden (default: 8.0)",
+        help=f"Stimulus-Länge in Sekunden (default: {_MIN_AMRB_FRAGMENT_S:.0f}, Minimum: {_MIN_AMRB_FRAGMENT_S:.0f})",
     )
     parser.add_argument(
         "--scenarios",

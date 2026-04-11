@@ -126,6 +126,7 @@ class CQTdiffPlusPlugin:
         self._torch_model = None  # torch.jit.ScriptModule (score network + EDM)
         self._model_loaded: bool = False
         self._fallback_active: bool = False
+        self._device: str = "cpu"  # set by _try_load_model
         self._try_load_model()
 
     _BUDGET_NAME: str = "CQTdiffPlus"
@@ -156,10 +157,27 @@ class CQTdiffPlusPlugin:
             torch.set_num_threads(min(4, os.cpu_count() or 2))
             model_path = self.MODELS_DIR / "score_network.pt"
             if model_path.exists():
-                self._torch_model = torch.jit.load(str(model_path), map_location="cpu")
+                try:
+                    from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                    _dev = _get_dev("CQTDiffPlus")
+                except Exception:
+                    _dev = "cpu"
+                if _dev != "cpu":
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        if not _mgr().try_allocate_vram("CQTDiffPlus", self._BUDGET_SIZE_GB):
+                            logger.info("CQTdiff+: VRAM-Budget erschöpft — CPU-Load")
+                            _dev = "cpu"
+                    except Exception:
+                        pass
+                self._torch_model = torch.jit.load(str(model_path), map_location=_dev)
                 self._torch_model.eval()
+                self._torch_model.to(_dev)
+                self._device = _dev
                 self._model_loaded = True
-                logger.info("🔵 CQTdiff: Score-Netzwerk geladen (%s)", model_path)
+                logger.info("🔵 CQTdiff: Score-Netzwerk geladen (%s, device=%s)", model_path, _dev)
                 try:
                     from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
 
@@ -359,14 +377,14 @@ class CQTdiffPlusPlugin:
             known_mask[local_gap_s:local_gap_e] = False
 
             # --- 4. EDM-Sampling mit Replacement ---
-            y_t = torch.from_numpy(y_obs).unsqueeze(0)  # [1, 65536]
-            known_t = torch.from_numpy(known_mask).unsqueeze(0)  # [1, 65536]
+            y_t = torch.from_numpy(y_obs).unsqueeze(0).to(self._device)  # [1, 65536]
+            known_t = torch.from_numpy(known_mask).unsqueeze(0).to(self._device)  # [1, 65536]
 
             # Sigma-Schedule (Karras et al. Eq. 5)
             T = self.DIFFUSION_STEPS
             ro = self._RHO
             s_max, s_min = self._SIGMA_MAX, self._SIGMA_MIN
-            i_steps = torch.arange(0, T + 1, dtype=torch.float32)
+            i_steps = torch.arange(0, T + 1, dtype=torch.float32).to(self._device)
             sigmas = (s_max ** (1 / ro) + i_steps / (T - 1) * (s_min ** (1 / ro) - s_max ** (1 / ro))) ** ro
             sigmas[-1] = 0.0  # finale Step ist 0
 
@@ -408,7 +426,7 @@ class CQTdiffPlusPlugin:
                     x = torch.where(known_t, y_t, x)
 
             # --- 5. NaN/Inf-Guard + Clip ---
-            out_np = x.squeeze(0).numpy()  # [65536]
+            out_np = x.squeeze(0).cpu().numpy()  # [65536]
             del x, y_t, known_t, noise, sigmas, i_steps  # Torch-Tensoren freigeben
             out_np = np.nan_to_num(out_np, nan=0.0, posinf=0.0, neginf=0.0)
             out_np = np.clip(out_np, -1.0, 1.0).astype(np.float32)
@@ -437,6 +455,22 @@ class CQTdiffPlusPlugin:
             return np.clip(result, -1.0, 1.0).astype(np.float32)
 
         except Exception as exc:
+            if self._device != "cpu":
+                logger.warning("CQTdiff+: GPU-Inferenz fehlgeschlagen (%s) — CPU-Retry", exc)
+                try:
+                    if self._torch_model is not None:
+                        self._torch_model.cpu()
+                    self._device = "cpu"
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        _mgr().report_gpu_error("CQTDiffPlus", exc)
+                    except Exception:
+                        pass
+                except Exception as _mv_exc:
+                    logger.debug("CQTdiff+ GPU→CPU move fehlgeschlagen: %s", _mv_exc)
+                    self._device = "cpu"
+                return self._inpaint_diffusion(audio, sr, gap_start, gap_end)
             logger.warning("CQTdiff Diffusion-Fehler: %s — DSP-Fallback", exc, exc_info=True)
             return self._inpaint_dsp_fallback(audio, sr, gap_start, gap_end)
 

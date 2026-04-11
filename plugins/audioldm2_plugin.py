@@ -63,7 +63,9 @@ class AudioLDM2Plugin:
                 logger.warning("AudioLDM2: ML-Budget erschöpft — Modell nicht geladen.")
                 return
         except Exception as _exc:
-            logger.debug("Operation failed (non-critical): %s", _exc)  # Budget-Modul nicht verfügbar — weiter
+            # §OOM-Guard fail-safe: Exception im Budget-Check → Laden verweigern.
+            logger.warning("AudioLDM2: Budget-Check fehlgeschlagen (%s) — Laden verweigert (OOM-Fail-safe).", _exc)
+            return
         for sub in self.DEFAULT_MODEL_SUBPATHS:
             path = self._workspace / sub
             if not path.exists():
@@ -73,10 +75,16 @@ class AudioLDM2Plugin:
 
                 opts = ort.SessionOptions()
                 opts.intra_op_num_threads = 4
+                try:
+                    from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                    _providers = _get_prov("AudioLDM2")
+                except Exception:
+                    _providers = ["CPUExecutionProvider"]
                 self._session = ort.InferenceSession(
                     str(path),
                     sess_options=opts,
-                    providers=["CPUExecutionProvider"],
+                    providers=_providers,
                 )
                 self._input_names = [i.name for i in self._session.get_inputs()]
                 self._ok = True

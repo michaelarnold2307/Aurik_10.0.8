@@ -84,6 +84,11 @@ Ein optionales Roadmap-Ziel ist dafür normativ zu weich.
 | AMRB-09-DROPOUT | Tape-Dropout 50–200 ms | OQS ≥ 80 |
 | AMRB-10-COMPOSITE | Kombinierte Degradierung | OQS ≥ 80 |
 
+**[RELEASE_MUST] Fragment-Mindestlänge**: Jedes AMRB-Stimulusfragment MUSS **≥ 30 s** lang sein.
+Fragmente < 30 s erzeugen OQS-Varianz von ±8 Punkten — ausreichend um einen 80-Punkt-Pass-Fail-Schwellwert
+unzuverlässig zu machen. `run_amrb_baseline.py` erzwingt diesen Guard automatisch (`_MIN_AMRB_FRAGMENT_S = 30.0`)
+und korrigiert kürzere `--duration`-Angaben mit einem Warn-Log. `n_items ≥ 5` bleibt Pflicht (Nightly-Config).
+
 **OS-Führerschaft-Schwelle**: Gesamt-Score ≥ **84.0** UND ≥ 8/10 Szenarien bestanden.
 
 ```python
@@ -167,18 +172,23 @@ Zusätzlich zur Song-Selbstkalibrierung sind folgende Tests verpflichtend:
     - `backend.api.bridge.get_experience_insights()` liefert stabile Rückgabe auch bei fehlenden Feldern.
 3. **Orchestrator-Propagation Test**:
     - `AurikDenker` propagiert `RestaurierErgebnis.metadata` bis `AurikErgebnis.metadata` unverändert (bis auf defensive Defaults).
+4. **PMGG-CIG-Synchronisations-Test (§2.55)**:
+    - `tests/unit/test_pmgg_cig_sync.py` muss bidirektional grün sein
+      (PMGG→CIG und CIG→PMGG für alle P1/P2-Exclusions).
 
-**Invariante:** Änderungen an Bridge/Denker/UI, die Experience-Telemetrie betreffen,
-dürfen ohne diese drei Testklassen nicht als release-fähig gelten.
+**Invariante:** Änderungen an Bridge/Denker/UI/Goal-Gates, die Experience-
+Telemetrie oder PMGG/CIG-Exclusions betreffen, dürfen ohne diese Testklassen
+nicht als release-fähig gelten.
 
 ---
 
-## §9 Performance-Budget (Desktop-Hardware, kein GPU)
+## §9 Performance-Budget (Desktop-Hardware, GPU-Mixed-Mode optional)
 
 > **Kanonische Quelle für RT-Limits:** copilot-instructions.md §2.37 (LIMIT_BALANCED = 32.0× RT).
 > Die nachstehenden Werte gelten **pro Minute Audio** und sind mit PerformanceGuard-Toleranzen kalibriert.
 > VERBOTEN: niedrigere Limits aus Vorgängerversionen (DefectScanner ≤ 2 s, Pipeline ≤ 120 s) verwenden —
 > diese wurden mit v9.10.80 (Quality-First-Hauptlauf) auf die untenstehenden Werte angehoben.
+> **GPU-Beschleunigung** (ROCm/DirectML) reduziert Heavy-Plugin-Inferenz erheblich; die Limits gelten für CPU-only als Worst Case.
 
 | Operation | Limit / Minute Audio |
 | --- | --- |
@@ -326,13 +336,17 @@ Jeder erkannte Defekt wird mit einem **psychoakustischen Salienz-Score** (0.0–
 - ML-Modelle aktiv max.: 16 GB gesamt
 - Großmodelle (MERT 3,9 GB / AudioSR 5,9 GB): nur bei Bedarf (lazy load)
 
-**CPU-Policy:**
+**Device-Policy (§GPU-Mixed-Mode, v9.11.10):**
 
 ```python
-# AUSSCHLIESSLICH CPU — keine GPU-Beschleunigung in Aurik 9.9
-providers = ["CPUExecutionProvider"]   # ONNX-Runtime immer
-model = model.to("cpu")               # PyTorch immer
-torch.set_num_threads(os.cpu_count())  # alle CPU-Kerne nutzen
+# Heavy ML Plugins (>200 MB): GPU wenn verfügbar, CPU-Fallback transparent
+from backend.core.ml_device_manager import get_ort_providers, get_torch_device
+providers = get_ort_providers("PluginName")  # ONNX-Runtime
+device = get_torch_device("PluginName")      # PyTorch
+# Leichtgewichtige Plugins (<200 MB), DSP, Analyse: immer CPU
+providers = ["CPUExecutionProvider"]          # ONNX-Runtime
+model = model.to("cpu")                       # PyTorch
+torch.set_num_threads(os.cpu_count())         # alle CPU-Kerne nutzen
 ```
 
 ---

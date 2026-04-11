@@ -121,7 +121,8 @@ def _progress_cb(pct: int, msg: str, elapsed_s: float = 0.0) -> None:
     if pct > 5 and elapsed_s > 0:
         total_est = elapsed_s / (pct / 100)
         remaining = total_est - elapsed_s
-        eta = f"  ETA: {remaining:.0f}s"
+        _m, _s = divmod(int(remaining), 60)
+        eta = f"  noch ca. {_m}:{_s:02d}" if _m > 0 else f"  noch ca. {_s}s"
     print(f"\r[{bar}] {pct:3d}%{eta}  {msg[:60]}", end="", flush=True)
     if pct >= 100:
         print()

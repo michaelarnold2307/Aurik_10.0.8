@@ -167,6 +167,16 @@ class TestPhase55DiffusionInpainting:
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
 
+    def test_safe_strength_dampens_vocal_vinyl(self, phase55):
+        safe = phase55._derive_safe_inpainting_strength(1.0, "materialtype.vinyl", 0.8)
+        safe = phase55._derive_safe_inpainting_strength(1.0, "vinyl", 0.9)
+        assert safe == pytest.approx(0.58, rel=1e-6)
+        assert safe <= 0.84 * 0.90 + 1e-9
+
+    def test_safe_strength_keeps_nonvocal_unknown(self, phase55):
+        safe = phase55._derive_safe_inpainting_strength(0.6, "unknown", 0.05)
+        assert abs(safe - 0.6) < 1e-9
+
 
 # ===========================================================================
 # 2. Perceptual Feedback-Loop

@@ -395,7 +395,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.no_pending_title": "Keine ausstehenden Dateien",
         "dialog.no_pending_body": "Alle Dateien in der Warteschlange wurden bereits verarbeitet.\n→ Fügen Sie neue Dateien hinzu, um weitere Restaurierungen zu starten.",
         "dialog.low_ram_title": "Zu wenig Arbeitsspeicher",
-        "dialog.low_ram_body": "Es stehen nur {avail} GB freier RAM zur Verfügung.\n\nAurik benötigt mindestens 6 GB freien RAM für die Restaurierung.\n\nBitte schließen Sie andere Programme (Browser, VS Code …) und versuchen Sie es erneut.",
+        "dialog.low_ram_body": "Es steht nur wenig freier Arbeitsspeicher ({avail} GB) zur Verfügung.\n\nAurik benötigt mindestens 6 GB für die Restaurierung.\n\nBitte schließen Sie andere Programme (Browser, Bildbearbeitung …) und versuchen Sie es erneut.",
         "dialog.timeout_title": "Zeitüberschreitung",
         "dialog.timeout_body": "Die Verarbeitung hat das Zeitlimit überschritten und wurde abgebrochen.\n\nBitte starten Sie Aurik neu und versuchen Sie es erneut.",
         "dialog.queue_busy_title": "Verarbeitung läuft",
@@ -420,9 +420,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.oom_recovery_text": "Eine unterbrochene Restaurierung wurde gefunden.",
         "dialog.oom_recovery_info": (
             "Datei: {file}\n"
-            "Fortschritt: {n_done} von {n_total} Phasen abgeschlossen\n"
-            "Fehlgeschlagene Phase: {fail_phase}\n"
-            "Ursache: Speicher\u00fcberlauf\n\n"
+            "Fortschritt: {n_done} von {n_total} Arbeitsschritten abgeschlossen\n"
+            "Unterbrochen bei: {fail_phase}\n"
+            "Ursache: Nicht gen\u00fcgend Arbeitsspeicher\n\n"
             "M\u00f6chten Sie die Restaurierung fortsetzen?\n"
             "Die bisherige Arbeit bleibt erhalten."
         ),
@@ -456,8 +456,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "error.export_failed": "Die Datei konnte nicht gespeichert werden. Bitte prüfen Sie, ob genügend Speicherplatz vorhanden ist.",
         "error.cause_audio_loader_none": "Audio-Lader hat keine Daten zurückgegeben.",
         "error.cause_audio_loader_error": "Audio-Lader lieferte einen internen Fehler.",
-        "error.cause_bridge_symbol_unavailable": "Backend-Schnittstelle ist nicht vollständig verfügbar.",
-        "error.cause_audio_loader_missing": "Kein Audio-Lader verfügbar (Bridge und file_import fehlen).",
+        "error.cause_bridge_symbol_unavailable": "Ein internes Modul konnte nicht geladen werden. Bitte starten Sie Aurik neu.",
+        "error.cause_audio_loader_missing": "Die Audio-Wiedergabe ist nicht verfügbar. Bitte starten Sie Aurik neu.",
         "error.model_unavailable": "Die KI-Unterstützung ist gerade nicht verfügbar. Die klassische Methode wird genutzt — das Ergebnis ist trotzdem sehr gut.",
         "error.ml_model_unavailable": "Die KI-Unterstützung ist gerade nicht verfügbar. Die klassische Methode wird genutzt — das Ergebnis ist trotzdem sehr gut.",
         "error.ram_low": "Die Datei ist sehr groß. Verarbeitung wird in Abschnitten durchgeführt — das dauert etwas länger.",
@@ -522,6 +522,35 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "lyrics.active": "Lautanalyse aktiv — farbige Markierungen zeigen, wie verschiedene Klangtypen im Gesang individuell behandelt werden.",
         # PMGG
         "pmgg.rollback_warning": "Einige Verarbeitungsschritte wurden angepasst, um den Klang zu schützen.",
+        # Tooltips
+        "tooltip.recent_files": "Zuletzt geöffnete Dateien",
+        "tooltip.cancel": "Abbrechen",
+        "tooltip.open_audio": "Audiodatei öffnen (WAV, MP3, FLAC, M4A, AIFF, OGG …)",
+        "tooltip.detected_medium": "<b>Erkanntes Quellformat</b><br>Vinyl, Kassette, CD, MP3 …",
+        "tooltip.stop_playback": "Stoppt nur die Song-Wiedergabe. Die Restaurierung läuft unverändert weiter.",
+        "tooltip.stop_restoration": "Stoppt die laufende Restaurierung sicher (auch: Escape-Taste)",
+        "tooltip.preview_restored": "Erste 5 Sekunden des restaurierten Songs anhören",
+        "tooltip.ab_compare": "Original und restauriertes Audio nebeneinander vergleichen",
+        "tooltip.open_folder": "Ordner mit dem restaurierten Song im Dateimanager öffnen",
+        "tooltip.open_in_player": "Restaurierten Song im Standard-Mediaplayer öffnen",
+        "tooltip.export_sample_rate": "Legt die Abtastrate für alle exportierten Dateien fest.",
+        # Mode selection status
+        "status.mode_studio_selected": "🎯 Studio 2026 gewählt: moderner Klang, etwas längere Laufzeit.",
+        "status.mode_restoration_selected": "💿 Restoration gewählt: sichere Standardwahl, originalgetreu und schonend.",
+        # Defect panel placeholders
+        "ui.defect_placeholder": "Hier erscheinen die erkannten Schäden.",
+        "ui.defect_no_data": "Keine Schadensdaten verfügbar.",
+        "ui.analyzing_wait_short": "— wird analysiert …",
+        # Progress bar format strings
+        "progress.loading_file": "📂\u2002Datei wird geladen …",
+        "progress.exporting": "📤\u2002Ergebnis wird exportiert …",
+        "progress.complete": "✅\u2002Intelligente Korrektur abgeschlossen",
+        "progress.restoring": "⚙️\u2002Song wird restauriert …",
+        "progress.restoring_pct": "⚙️\u2002Song wird restauriert … {pct}\u202f%",
+        "progress.restoring_eta": "⚙️\u2002Song wird restauriert … {pct}\u202f%  ·  noch {eta}",
+        "progress.restoring_eta_defects": "⚙️\u2002Song wird restauriert … {pct}\u202f%  ·  noch {eta}{defects}",
+        "progress.scan_analysis": "🔍\u2002Schadensanalyse … {pct}\u202f%",
+        "progress.analysis_finalizing": "⏳ Analyse wird finalisiert …",
     },
     # ── English (Sekundärsprache) ────────────────────────────────────────────
     "en": {
@@ -578,7 +607,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.processing_running": "Processing in progress …",
         "status.processing_running_spinner": "Processing in progress  {spin}",
         "status.processing_reassure_analysis": "Analysis running — please wait a moment",
-        "status.processing_reassure_long_phase": "AI model computing — this may take a while",
+        "status.processing_reassure_long_phase": "Complex processing step — Aurik is still working, please wait",
         "status.processing_reassure_finalize": "Almost done — quality check running",
         "status.stopping_safely": "Stopping safely …",
         "status.stopping_processing": "Stopping active processing …",
@@ -981,5 +1010,34 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ceiling.adaptive": "Quality targets have been adjusted to match the condition of the recording.",
         "pmgg.rollback_warning": "Some processing steps were adjusted to protect the audio quality.",
         "lyrics.active": "Sound analysis active — colour markings show how different sound types in the vocals are treated individually.",
+        # Tooltips
+        "tooltip.recent_files": "Recently opened files",
+        "tooltip.cancel": "Cancel",
+        "tooltip.open_audio": "Open audio file (WAV, MP3, FLAC, M4A, AIFF, OGG …)",
+        "tooltip.detected_medium": "<b>Detected source format</b><br>Vinyl, cassette, CD, MP3 …",
+        "tooltip.stop_playback": "Stops song playback only. The restoration continues uninterrupted.",
+        "tooltip.stop_restoration": "Stops the current restoration safely (also: Escape key)",
+        "tooltip.preview_restored": "Listen to the first 5 seconds of the restored song",
+        "tooltip.ab_compare": "Compare original and restored audio side by side",
+        "tooltip.open_folder": "Open the folder containing the restored song in the file manager",
+        "tooltip.open_in_player": "Open restored song in default media player",
+        "tooltip.export_sample_rate": "Sets the sample rate for all exported files.",
+        # Mode selection status
+        "status.mode_studio_selected": "🎯 Studio 2026 selected: modern sound, slightly longer processing time.",
+        "status.mode_restoration_selected": "💿 Restoration selected: safe default, faithful and gentle.",
+        # Defect panel placeholders
+        "ui.defect_placeholder": "Detected issues will appear here.",
+        "ui.defect_no_data": "No damage data available.",
+        "ui.analyzing_wait_short": "— analyzing …",
+        # Progress bar format strings
+        "progress.loading_file": "📂\u2002Loading file …",
+        "progress.exporting": "📤\u2002Exporting result …",
+        "progress.complete": "✅\u2002Intelligent restoration complete",
+        "progress.restoring": "⚙️\u2002Restoring song …",
+        "progress.restoring_pct": "⚙️\u2002Restoring song … {pct}\u202f%",
+        "progress.restoring_eta": "⚙️\u2002Restoring song … {pct}\u202f%  ·  {eta} remaining",
+        "progress.restoring_eta_defects": "⚙️\u2002Restoring song … {pct}\u202f%  ·  {eta} remaining{defects}",
+        "progress.scan_analysis": "🔍\u2002Damage analysis … {pct}\u202f%",
+        "progress.analysis_finalizing": "⏳ Finalizing analysis …",
     },
 }

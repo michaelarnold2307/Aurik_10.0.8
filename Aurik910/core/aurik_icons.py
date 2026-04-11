@@ -16,10 +16,6 @@ _lock = threading.Lock()
 # Absolute path to the phase_icons directory shipped with the application.
 _ICON_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "phase_icons")
 
-# Absolute path to the carrier_icons directory.
-_CARRIER_ICON_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "carrier_icons")
-_DEFECT_ICON_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "defect_icons")
-
 # Mapping from emoji/symbol strings (used as keys in _STAGE_VISUALS) to SVG filenames.
 # Each value is the filename stem (without .svg) in the phase_icons directory.
 EMOJI_TO_SVG: dict[str, str] = {
@@ -171,66 +167,3 @@ def get_icon(key: str, size: int = 24) -> object | None:
         px = _make_pixmap(svg_path, size)
         _cache[cache_key] = px
         return px
-
-
-def get_carrier_icon(key: str, size: int = 22) -> object | None:
-    """
-    Return a QPixmap for the given carrier/medium type key at the requested size.
-    SVG files live in resources/carrier_icons/. Result is cached per (key, size).
-    Returns None if PyQt5 is unavailable.
-
-    Args:
-        key:  Medium type string, e.g. "vinyl", "shellac", "cd_digital".
-        size: Square pixel dimension (default 22, matching the HTML label display size).
-
-    Returns:
-        QPixmap or None.
-    """
-    cache_key = (f"__carrier__{key}", size)
-    if cache_key in _cache:
-        return _cache[cache_key]
-
-    with _lock:
-        if cache_key in _cache:
-            return _cache[cache_key]
-
-        svg_path = os.path.join(_CARRIER_ICON_DIR, f"{key}.svg")
-        px = _make_pixmap(svg_path, size)
-        _cache[cache_key] = px
-        return px
-
-
-def get_defect_icon(key: str, size: int = 16) -> object | None:
-    """
-    Return a QPixmap for the given defect type key at the requested size.
-    SVG files live in resources/defect_icons/. Falls back to .png if no .svg exists.
-    Result is cached per (key, size). Returns None if PyQt5 is unavailable.
-
-    Args:
-        key:  Defect type string, e.g. "clicks", "hum", "dropout".
-        size: Square pixel dimension (default 16 for chip-row display).
-
-    Returns:
-        QPixmap or None.
-    """
-    cache_key = (f"__defect__{key}", size)
-    if cache_key in _cache:
-        return _cache[cache_key]
-
-    with _lock:
-        if cache_key in _cache:
-            return _cache[cache_key]
-
-        svg_path = os.path.join(_DEFECT_ICON_DIR, f"{key}.svg")
-        if not os.path.isfile(svg_path):
-            # Fall back to PNG if SVG not present
-            svg_path = os.path.join(_DEFECT_ICON_DIR, f"{key}.png")
-        px = _make_pixmap(svg_path, size)
-        _cache[cache_key] = px
-        return px
-
-
-def clear_cache() -> None:
-    """Flush all cached pixmaps (e.g. after DPI change)."""
-    with _lock:
-        _cache.clear()

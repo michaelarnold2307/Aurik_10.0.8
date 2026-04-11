@@ -189,6 +189,7 @@ def _detect_band_gaps(
     stft_mag: np.ndarray,
     sr: int,
     n_fft: int,
+    gap_fraction_min: float | None = None,
 ) -> list[tuple[int, int]]:
     """
     Detektiert leere Frequenzbänder im STFT-Magnitudenspektrum.
@@ -217,7 +218,9 @@ def _detect_band_gaps(
     empty_fraction = np.mean(stft_mag < threshold_linear, axis=1)
 
     # Bins die dauerhaft extrem leise und weit unter dem Schwellwert sind
-    gap_bins = (empty_fraction >= _GAP_FRACTION_MIN) & (frame_median_db <= _GAP_ENERGY_THRESHOLD_DBFS)
+    # Optionaler Override erlaubt konservativeres Side-Processing ohne globale Mutation.
+    _gap_fraction = float(gap_fraction_min) if gap_fraction_min is not None else _GAP_FRACTION_MIN
+    gap_bins = (empty_fraction >= _gap_fraction) & (frame_median_db <= _GAP_ENERGY_THRESHOLD_DBFS)
 
     # Kontinuierliche Bereiche identifizieren
     gaps: list[tuple[int, int]] = []
@@ -568,13 +571,29 @@ class SpectralBandGapRepairPhase(PhaseInterface):
         self._current_phoneme_timeline = kwargs.get("phoneme_timeline")
         t_start = __import__("time").time()
 
-        # Stereo-Support: Kanäle getrennt verarbeiten
+        # §2.51 M/S: Reparatur auf Mid-Kanal voll, Side konservativ (Stereo-Kohärenz-Invariante).
+        # Verboten: unabhängiges L/R mit gain- oder zeitvarianter Operation.
         if audio.ndim == 2:
-            left = self._process_channel(audio[:, 0], sr, instrument_tag)
-            right = self._process_channel(audio[:, 1], sr, instrument_tag)
-            # MRSA post-processing: zone-specific gain refinement + PGHI
-            left = self._mrsa_gain_refinement(audio[:, 0].astype(np.float64), left.astype(np.float64), sr)
-            right = self._mrsa_gain_refinement(audio[:, 1].astype(np.float64), right.astype(np.float64), sr)
+            _sqrt2 = float(np.sqrt(2.0))
+            mid = (audio[:, 0] + audio[:, 1]) / _sqrt2
+            side = (audio[:, 0] - audio[:, 1]) / _sqrt2
+
+            # Full repair on Mid channel
+            mid_repaired = self._process_channel(mid, sr, instrument_tag)
+            mid_repaired = self._mrsa_gain_refinement(
+                mid.astype(np.float64), mid_repaired.astype(np.float64), sr
+            ).astype(np.float32)
+
+            # Conservative repair on Side channel: gap_fraction_min=0.95 (vs. 0.80 default)
+            # → nur Lücken reparieren, die in ≥95 % der Frames leer sind (robusterer Befund nötig)
+            side_repaired = self._process_channel(side, sr, instrument_tag, gap_fraction_min=0.95)
+            side_repaired = self._mrsa_gain_refinement(
+                side.astype(np.float64), side_repaired.astype(np.float64), sr
+            ).astype(np.float32)
+
+            # M/S decode back to L/R
+            left = (mid_repaired + side_repaired) / _sqrt2
+            right = (mid_repaired - side_repaired) / _sqrt2
             out = np.stack([left.astype(np.float32), right.astype(np.float32)], axis=1)
         else:
             out = self._process_channel(audio, sr, instrument_tag)
@@ -709,8 +728,19 @@ class SpectralBandGapRepairPhase(PhaseInterface):
 
         return np.clip(np.nan_to_num(result), -1.0, 1.0)
 
-    def _process_channel(self, mono: np.ndarray, sr: int, instrument_tag: str) -> np.ndarray:
-        """Verarbeitet einen Kanal (Mono-Array)."""
+    def _process_channel(
+        self,
+        mono: np.ndarray,
+        sr: int,
+        instrument_tag: str,
+        gap_fraction_min: float | None = None,
+    ) -> np.ndarray:
+        """Verarbeitet einen Kanal (Mono-Array).
+
+        Args:
+            gap_fraction_min: Override für _GAP_FRACTION_MIN (None = Standardwert 0.80).
+                              Höherer Wert = konservativer (z.B. 0.95 für Side-Kanal, §2.51).
+        """
         n_fft = self.n_fft
         hop = self.hop_length
 
@@ -734,8 +764,8 @@ class SpectralBandGapRepairPhase(PhaseInterface):
         stft_mag = np.abs(stft_frames).astype(np.float32)
         stft_phase = np.angle(stft_frames).astype(np.float32)
 
-        # Lücken detektieren
-        gaps = _detect_band_gaps(stft_mag, sr, n_fft)
+        # Lücken detektieren — optional konservativer für Side-Kanal (§2.51)
+        gaps = _detect_band_gaps(stft_mag, sr, n_fft, gap_fraction_min=gap_fraction_min)
         if not gaps:
             return mono
 

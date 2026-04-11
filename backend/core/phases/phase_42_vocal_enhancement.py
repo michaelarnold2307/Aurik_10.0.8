@@ -421,13 +421,21 @@ class VocalEnhancement(PhaseInterface):
 
             # Enhance only the vocal stem
             if vocals_stem.ndim == 2:
-                enh_left = self._enhance_channel(
-                    vocals_stem[:, 0], sample_rate, config, harshness_severity, _vocal_gender, material
+                # §2.51 M/S: vocals are centred → enhance Mid only, Side untouched.
+                # Independent L/R _enhance_channel calls introduce time-variant
+                # gain divergence between channels → §2.49 phase-cancellation.
+                _sqrt2_s = np.sqrt(2.0)
+                _v_mid = (vocals_stem[:, 0] + vocals_stem[:, 1]) / _sqrt2_s
+                _v_side = (vocals_stem[:, 0] - vocals_stem[:, 1]) / _sqrt2_s
+                _v_mid_enh = self._enhance_channel(
+                    _v_mid, sample_rate, config, harshness_severity, _vocal_gender, material
                 )
-                enh_right = self._enhance_channel(
-                    vocals_stem[:, 1], sample_rate, config, harshness_severity, _vocal_gender, material
+                enhanced_vocals = np.column_stack(
+                    (
+                        (_v_mid_enh + _v_side) / _sqrt2_s,
+                        (_v_mid_enh - _v_side) / _sqrt2_s,
+                    )
                 )
-                enhanced_vocals = np.column_stack((enh_left, enh_right))
             else:
                 enhanced_vocals = self._enhance_channel(
                     vocals_stem, sample_rate, config, harshness_severity, _vocal_gender, material
@@ -474,13 +482,19 @@ class VocalEnhancement(PhaseInterface):
             # Fallback: process full audio without stem separation
             logger.debug("Phase42: Kein Stem-Sep — Vollbild-Verarbeitung")
             if is_stereo:
-                enhanced_left = self._enhance_channel(
-                    audio[:, 0], sample_rate, config, harshness_severity, _vocal_gender, material
+                # §2.51 M/S: enhance Mid only (vocals centred), Side untouched.
+                _sqrt2_f = np.sqrt(2.0)
+                _f_mid = (audio[:, 0] + audio[:, 1]) / _sqrt2_f
+                _f_side = (audio[:, 0] - audio[:, 1]) / _sqrt2_f
+                _f_mid_enh = self._enhance_channel(
+                    _f_mid, sample_rate, config, harshness_severity, _vocal_gender, material
                 )
-                enhanced_right = self._enhance_channel(
-                    audio[:, 1], sample_rate, config, harshness_severity, _vocal_gender, material
+                enhanced_audio = np.column_stack(
+                    (
+                        (_f_mid_enh + _f_side) / _sqrt2_f,
+                        (_f_mid_enh - _f_side) / _sqrt2_f,
+                    )
                 )
-                enhanced_audio = np.column_stack((enhanced_left, enhanced_right))
             else:
                 enhanced_audio = self._enhance_channel(
                     audio, sample_rate, config, harshness_severity, _vocal_gender, material
@@ -761,7 +775,7 @@ class VocalEnhancement(PhaseInterface):
         except Exception as exc:
             logger.debug("Phase42 mdx23c fehlgeschlagen: %s", exc)
 
-        # ── 3: NMF-β Fallback (§2.47 ML-Failure-Degradationskaskade: NMF-β→HPSS) ──
+        # ── 3: NMF-β Fallback (§2.47 ML-Failure-Degradationskascade: NMF-β→HPSS) ──
         try:
             from plugins.mdx23c_plugin import MDX23CModel as _MDX23CModel
 
@@ -770,13 +784,24 @@ class VocalEnhancement(PhaseInterface):
             inst_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=False)
             voc_nmf = voc_nmf_2d[0] if voc_nmf_2d.ndim == 2 else voc_nmf_2d
             inst_nmf = inst_nmf_2d[0] if inst_nmf_2d.ndim == 2 else inst_nmf_2d
+            # §2.47 sdB ≥ 5 Guard: NMF-β nur wenn Separation-Güte ausreichend.
+            # sdB-Proxy: Verhältnis Vokal-RMS zu Instrument-RMS; < 5 dB → HPSS tertiär.
+            _voc_rms = float(np.sqrt(np.mean(voc_nmf**2) + 1e-12))
+            _inst_rms = float(np.sqrt(np.mean(inst_nmf**2) + 1e-12))
+            _sdb = float(20.0 * np.log10(_voc_rms / (_inst_rms + 1e-12)))
+            if _sdb < 5.0:
+                logger.info(
+                    "Phase42 NMF-β: sdB=%.1f dB < 5 dB → HPSS tertiärer Fallback (§2.47)",
+                    _sdb,
+                )
+                raise ValueError(f"NMF-β sdB {_sdb:.1f} dB < 5 dB threshold")
             n = min(len(audio_mono), len(voc_nmf))
             if audio.ndim == 2:
                 vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], voc_nmf[:n], sr)
             else:
                 vocals_out = voc_nmf[:n]
                 instr_out = inst_nmf[:n]
-            logger.debug("Phase42 NMF-β Fallback erfolgreich (§2.47)")
+            logger.debug("Phase42 NMF-β Fallback erfolgreich (§2.47) sdB=%.1f dB", _sdb)
             return vocals_out, instr_out, 0.45, "nmf_beta_dsp"
         except Exception as exc:
             logger.debug("Phase42 NMF-β fehlgeschlagen: %s — HPSS tertiärer Fallback", exc)

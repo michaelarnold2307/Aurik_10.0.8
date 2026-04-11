@@ -144,6 +144,7 @@ __all__ = [
     "get_ml_memory_budget",
     "get_model_downloader",
     "get_recovery_checkpoint_fns",
+    "get_save_checkpoint_fn",
     # §11 erweiterte Core-Module (bisher nicht bridge-zugänglich)
     "get_german_schlager_classifier_fn",
     "get_harmonic_preservation_guard",
@@ -503,13 +504,34 @@ def get_defect_type() -> type:
 
 
 def get_medium_classifier_fn():
-    """Gibt ``classify_medium``-Funktion zurück (lazy import, §2.5).
+    """Gibt einen MediumDetector-basierten Legacy-Kompat-Callable zurück.
 
-    Signatur: ``classify_medium(mono_audio: np.ndarray, sr: int) -> MediumResult``
+    Signatur-kompatibel zu ``classify_medium(mono_audio, sr)`` für Altaufrufer,
+    intern jedoch detector-only (kein direkter MediumClassifier-Aufruf).
     """
-    from backend.core.medium_classifier import classify_medium  # type: ignore[import]
+    from forensics.medium_detector import get_medium_detector as _get_md  # type: ignore[import]
 
-    return classify_medium
+    class _CompatMediumResult:
+        def __init__(self, primary_material: str, confidence: float, transfer_chain: list[str], chain_label: str):
+            self.material_type = primary_material
+            self.material = primary_material
+            self.primary_material = primary_material
+            self.confidence = float(confidence)
+            self.transfer_chain = list(transfer_chain)
+            self.chain_label = chain_label
+
+    def _classify_medium_compat(mono_audio: np.ndarray, sr: int) -> _CompatMediumResult:
+        _res = _get_md().detect(mono_audio, sr, file_ext="")
+        _chain = list(getattr(_res, "transfer_chain", None) or [str(_res.primary_material)])
+        _chain_label = str(getattr(_res, "chain_label", " -> ".join(_chain)))
+        return _CompatMediumResult(
+            primary_material=str(_res.primary_material),
+            confidence=float(getattr(_res, "confidence", 0.0)),
+            transfer_chain=_chain,
+            chain_label=_chain_label,
+        )
+
+    return _classify_medium_compat
 
 
 def get_era_classifier_fn():
@@ -574,14 +596,13 @@ def get_carrier_forensics_fn():
     Signatur: ``analyze_carrier_forensics(mono: np.ndarray, sr: int) -> dict``
     Rückgabe-Keys: ``"carrier_forensic"`` (str), ``"score"`` (float).
 
-    Intern wird ``classify_medium`` aus ``backend.core.medium_classifier``
-    genutzt (``backend.carrier_forensics`` ist ein veralteter Shim).
+    Intern wird ``MediumDetector.detect`` genutzt (detector-only).
     """
-    from backend.core.medium_classifier import classify_medium as _cm  # type: ignore[import]
+    from forensics.medium_detector import get_medium_detector as _get_md  # type: ignore[import]
 
     def _analyze_carrier_forensics(mono: np.ndarray, sr: int) -> dict:
-        result = _cm(mono, sr)
-        return {"carrier_forensic": result.material_type, "score": float(result.confidence)}
+        result = _get_md().detect(mono, sr, file_ext="")
+        return {"carrier_forensic": str(result.primary_material), "score": float(result.confidence)}
 
     return _analyze_carrier_forensics
 
@@ -705,6 +726,26 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         _cnt = len(_normalized_recommendations)
     _cnt = max(_cnt, len(_normalized_recommendations), 0)
 
+    _tc = _meta.get("team_coordination") if isinstance(_meta.get("team_coordination"), dict) else {}
+    _tc_events_raw = _tc.get("events") if isinstance(_tc.get("events"), list) else []
+    _tc_events: list[dict[str, Any]] = []
+    for _tce in _tc_events_raw:
+        if not isinstance(_tce, dict):
+            continue
+        _tc_events.append(
+            {
+                "phase_id": str(_tce.get("phase_id", "") or ""),
+                "action": str(_tce.get("action", "") or ""),
+                "reason": str(_tce.get("reason", "") or ""),
+                "excluded_goals": list(_tce.get("excluded_goals", []) or []),
+            }
+        )
+    try:
+        _tc_count = int(_tc.get("event_count", len(_tc_events)))
+    except Exception:
+        _tc_count = len(_tc_events)
+    _pt_summary = dict(_tc.get("phase_type_summary", {}) or {})
+
     return {
         "joy_index": _safe01(_joy.get("joy_index", 0.0)),
         "fatigue_index": _safe01(_joy.get("fatigue_index", 0.0)),
@@ -712,6 +753,11 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         "cluster_policy": dict(_cluster) if isinstance(_cluster, dict) else {},
         "recommendations": _normalized_recommendations,
         "recommendation_count": _cnt,
+        "team_coordination": {
+            "event_count": _tc_count,
+            "events": _tc_events,
+            "phase_type_summary": _pt_summary,
+        },
     }
 
 
@@ -991,6 +1037,13 @@ def get_deferred_refinement_job_class() -> type:
     from backend.core.deferred_refinement_job import DeferredRefinementJob  # type: ignore[import]
 
     return DeferredRefinementJob
+
+
+def get_save_checkpoint_fn():
+    """Return ``save_checkpoint`` from recovery_checkpoint (lazy, §2.39)."""
+    from backend.core.recovery_checkpoint import save_checkpoint  # type: ignore[import]
+
+    return save_checkpoint
 
 
 def get_recovery_checkpoint_fns() -> tuple:

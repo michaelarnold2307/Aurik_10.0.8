@@ -107,16 +107,22 @@ class MDX23CModel:
                             logger.warning("MDX23C [%s]: ML-Budget erschöpft — NMF-β-Fallback", self.stem_key)
                             return
                 except Exception:
-                    _rel = None  # Budget-Modul nicht verfügbar
+                    _rel = None  # Budget-Modul nicht verfügbar (harmlos bei raise, kein fail-open da try_alloc bereits im Fehlerpfad)
 
                 opts = ort.SessionOptions()
                 opts.inter_op_num_threads = 1
                 opts.intra_op_num_threads = 4
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                try:
+                    from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                    _mdx23c_prov = _get_prov("MDX23C")
+                except Exception:
+                    _mdx23c_prov = ["CPUExecutionProvider"]
                 self._session = ort.InferenceSession(
                     str(path),
                     sess_options=opts,
-                    providers=["CPUExecutionProvider"],
+                    providers=_mdx23c_prov,
                 )
                 # Dim-T aus Modell-Eingabe ableiten
                 inp_shape = self._session.get_inputs()[0].shape

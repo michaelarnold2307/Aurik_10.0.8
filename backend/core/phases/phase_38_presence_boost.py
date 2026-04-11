@@ -192,10 +192,23 @@ class PresenceBoost(PhaseInterface):
                 # Modern digital: slightly less presence (already bright)
                 config["lower_gain_db"] *= 0.85
                 config["upper_gain_db"] *= 0.85
-        if str(_genre).lower() in ("klassik", "oper"):
+        _genre_lower_38 = str(_genre).lower()
+        if _genre_lower_38 in ("klassik", "oper"):
             # Classical/Opera: reduce presence boost to preserve natural timbre
             config["lower_gain_db"] *= 0.70
             config["upper_gain_db"] *= 0.75
+        elif _genre_lower_38 in ("electronic", "hip-hop"):
+            # Electronic/Hip-Hop: already bright-produced; strong presence can over-sharpen.
+            config["lower_gain_db"] *= 0.80
+            config["upper_gain_db"] *= 0.80
+        elif _genre_lower_38 == "metal":
+            # Metal: high-gain guitars already have mid-presence — boost conservatively.
+            config["lower_gain_db"] *= 0.85
+            config["upper_gain_db"] *= 0.85
+        elif _genre_lower_38 in ("reggae", "dub"):
+            # Reggae/Dub: warm rolled-off production; artificial presence can sound harsh.
+            config["lower_gain_db"] *= 0.75
+            config["upper_gain_db"] *= 0.80
 
         # §2.41 (v9.10.116) SOTA: Ära-bewusste Presence-Center aus SourceFidelityTarget.
         # Verschiedene Mikrofon-Ären haben unterschiedliche Hotspot-Frequenzen:
@@ -223,11 +236,22 @@ class PresenceBoost(PhaseInterface):
             config["upper_gain_db"] = float(np.clip(config["upper_gain_db"] * _hd_boost, 0.0, 10.0))
             logger.debug("Phase 38: harm_density=%.2f → presence_boost×%.2f", _harm_density, _hd_boost)
 
-        # Process each channel
+        # §2.51 M/S-Domain: Presence EQ auf Mid voll, Side konservativ (\u00d72 Threshold)
         if is_stereo:
-            enhanced_left = self._enhance_channel(audio[:, 0], sample_rate, config)
-            enhanced_right = self._enhance_channel(audio[:, 1], sample_rate, config)
-            enhanced_audio = np.column_stack((enhanced_left, enhanced_right))
+            mid = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+            side = (audio[:, 0] - audio[:, 1]) / np.sqrt(2.0)
+            mid_enhanced = self._enhance_channel(mid, sample_rate, config)
+            # Side: konservative Bearbeitung mit halber Gain
+            side_config = dict(config)
+            side_config["lower_gain_db"] = config["lower_gain_db"] * 0.3
+            side_config["upper_gain_db"] = config["upper_gain_db"] * 0.3
+            side_enhanced = self._enhance_channel(side, sample_rate, side_config)
+            enhanced_audio = np.column_stack(
+                (
+                    (mid_enhanced + side_enhanced) / np.sqrt(2.0),
+                    (mid_enhanced - side_enhanced) / np.sqrt(2.0),
+                )
+            )
         else:
             enhanced_audio = self._enhance_channel(audio, sample_rate, config)
 

@@ -179,8 +179,10 @@ class GuitarEnhancementPhase(PhaseInterface):
             # Attack detector: positive derivative of smoothed envelope
             d_env = np.diff(env_smooth, prepend=env_smooth[0])
             attack = np.maximum(0.0, d_env)
-            # Normalize attack to [0, 1]
-            a_max = float(np.max(attack))
+            # §copilot Peak-Guard: percentile(99.9) instead of np.max so that a single
+            # click/impulse artefact in defect-laden material does not drive a_max to an
+            # extreme value that zeroes out all genuine transient boosts.
+            a_max = float(np.percentile(attack, 99.9))
             if a_max > 1e-10:
                 attack = attack / a_max
             # Boost signal at attack moments (wet/dry)
@@ -189,8 +191,16 @@ class GuitarEnhancementPhase(PhaseInterface):
         if x.ndim == 1:
             x = _transient_boost_channel(x)
         else:
-            for ch in range(x.shape[1]):
-                x[:, ch] = _transient_boost_channel(x[:, ch])
+            # §2.51 M/S-Domain: Transient Boost nur auf Mid
+            mid = (x[:, 0] + x[:, 1]) / np.sqrt(2.0)
+            side = (x[:, 0] - x[:, 1]) / np.sqrt(2.0)
+            mid = _transient_boost_channel(mid)
+            x = np.column_stack(
+                [
+                    (mid + side) / np.sqrt(2.0),
+                    (mid - side) / np.sqrt(2.0),
+                ]
+            )
 
         # 3. Genre-adaptiver Harmonic Exciter (band-limited to body resonance region)
         # Limit exciter to 200-5000 Hz to avoid mud (< 200 Hz) and hash (> 5 kHz)
@@ -213,8 +223,16 @@ class GuitarEnhancementPhase(PhaseInterface):
         if x.ndim == 1:
             x = _excite_channel(x)
         else:
-            for ch in range(x.shape[1]):
-                x[:, ch] = _excite_channel(x[:, ch])
+            # §2.51 M/S-Domain: Exciter nur auf Mid
+            mid = (x[:, 0] + x[:, 1]) / np.sqrt(2.0)
+            side = (x[:, 0] - x[:, 1]) / np.sqrt(2.0)
+            mid = _excite_channel(mid)
+            x = np.column_stack(
+                [
+                    (mid + side) / np.sqrt(2.0),
+                    (mid - side) / np.sqrt(2.0),
+                ]
+            )
 
         # 4. Presence-EQ (genre-adaptive)
         if genre == "Rock":

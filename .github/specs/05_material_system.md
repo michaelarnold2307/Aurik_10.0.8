@@ -85,10 +85,10 @@ for phase_id in MATERIAL_PRIORITY_PHASES[material]:
 
 ---
 
-## §6.3 DefectType-Vollkatalog (32 Defekte)
+## §6.3 DefectType-Vollkatalog (46 Defekte)
 
 ```python
-# core/defect_scanner.py — DefectType (Enum, 32 Werte)
+# core/defect_scanner.py — DefectType (Enum, 46 Werte)
 
 # Analoge Kerndefekte:
 CLICKS, CRACKLE, HUM, LOW_FREQ_RUMBLE, DROPOUTS
@@ -217,6 +217,50 @@ DefectScanner-Erkennungsschwellen MÜSSEN **material-adaptiv** sein. Analoge Med
 
 ---
 
+## §6.4b [RELEASE_MUST] `TAPE_HEAD_LEVEL_DIP` Material-Gate mit Cross-Material-Fallback (v9.11.2)
+
+`TAPE_HEAD_LEVEL_DIP` bleibt primär material-gebunden (`tape`, `reel_tape`, `wire_recording`),
+MUSS aber bei starker Morphologie auch bei Fehlklassifikation (z. B. Tape-Transfer als Vinyl markiert)
+erkennbar bleiben.
+
+### Primärregel
+
+- Für Tape-Materialien: voller Score aus `_detect_tape_head_level_dips()`.
+
+### Cross-Material-Fallback (nur bei starker Evidenz)
+
+Fallback darf nur aktivieren, wenn **alle** Kriterien erfüllt sind:
+
+- `severity >= 0.12`
+- `dip_count >= 2`
+- `mean_depth_db >= 6.0`
+- `event_rate_per_s >= 0.15`
+
+Bei aktivem Fallback:
+
+- `severity := severity * 0.75`
+- `confidence := min(confidence, 0.72)`
+- `metadata.cross_material_fallback = True`
+- `metadata.fallback_material_gate_bypassed = <material>`
+
+### Periodizitäts-Marker (Capstan-Signatur)
+
+Wenn mindestens 3 Events vorliegen, ist ein Confidence-Bonus zulässig, falls
+
+- Intervall-`cv < 0.35`
+- `median_interval_s` in `[0.5, 3.5]`
+
+Dann: `confidence += 0.08` (geclippt), plus
+
+- `metadata.is_periodic_capstan`
+- `metadata.median_interval_s`
+
+### Invariante
+
+Sauberes Nicht-Tape-Material darf durch den Fallback nicht flaggen (`severity == 0.0`).
+
+---
+
 ## §6.4 GP-Gedächtnis pro Material & Genre
 
 ```text
@@ -340,13 +384,14 @@ Rückgabe: sortierte Liste `[(material_key, confidence)]` nach Signalketten-Reih
 Wird **automatisch** von `MediumDetector.detect()` aufgerufen wenn `primary_material ∈ {tape, reel_tape, wire_recording}`.
 
 **Erkennungsmethode** (Frequenzband-Heuristik):
+
 - `lf_rms` (300–1000 Hz): NR-unabhängige Referenz (Instrumenten-Grundtöne)
 - `hf_rms` (800–4000 Hz + 4000–12000 Hz): Bandbereich mit stärkstem NR-Einfluss
 - `hf_excess_db` = `20·log10(hf_rms / lf_rms)` − Erwartungswert_für_Material
 - Slope-Analyse: DBX hat uniformen Slope (hf2 ≈ hf1), Dolby B/C wächst Richtung HF
 
 | Typ | hf_excess Schwelle | Charakteristik |
-|---|---|---|
+| --- | --- | --- |
 | Dolby B | ≥ 2.5 dB | +10 dB HF-Anhebung für leise Passagen; ~3-5 dB Durchschnitt |
 | Dolby C | ≥ 5.0 dB | Doppelband, bis +20 dB; stark oberhalb 4 kHz |
 | Dolby S | ≥ 3.5 dB | Dreifachband; ausgeprägt 2–8 kHz |
@@ -354,6 +399,7 @@ Wird **automatisch** von `MediumDetector.detect()` aufgerufen wenn `primary_mate
 | DBX II | ≥ 3.0 dB | Milder: ~6 dB/Oktave |
 
 **Näherungsinversion** (statischer IIR Biquad-Kaskade):
+
 - Dolby B: High-Shelf −4.5 dB @ 3 kHz (Q=0.6) + Peaking −2 dB @ 8 kHz (Q=0.7)
 - Dolby C: High-Shelf −9 dB @ 4 kHz (Q=0.7) + Peaking −3 dB @ 10 kHz (Q=1.0)
 - DBX I/II: gestaffelte High-Shelf-Kette (annähernde Steigung)
@@ -361,6 +407,7 @@ Wird **automatisch** von `MediumDetector.detect()` aufgerufen wenn `primary_mate
 **Integration in `phase_04_eq_correction.py`**: Beide kwargs `dolby_nr_type` und `dolby_nr_confidence` werden nach RIAA/NAB-EQ angewendet. Activation via `kwargs["dolby_nr_type"] = result.dolby_nr_type`.
 
 **`MediumDetectionResult`-Felder** (v9.10.128):
+
 - `dolby_nr_type: str = "none"` — erkannter Typ
 - `dolby_nr_confidence: float = 0.0` — Konfidenz [0..1]
 

@@ -47,7 +47,12 @@ _THRESHOLD_FACTOR = 4.0  # Bin > FACTOR × Median der Nachbarn → verdächtig
 _INTERP_BINS = 2  # ±K Bins für Interpolation
 
 
-def _repair_channel(channel: np.ndarray, sample_rate: int, threshold_factor: float) -> tuple[np.ndarray, int]:
+def _repair_channel(
+    channel: np.ndarray,
+    sample_rate: int,
+    threshold_factor: float,
+    hf_protected_bin_start: int = 0,
+) -> tuple[np.ndarray, int]:
     """
     Spektrale Reparatur eines Mono-Kanals: Frequenz-Achse (Spikes) + Zeit-Achse (Scratches).
 
@@ -62,6 +67,25 @@ def _repair_channel(channel: np.ndarray, sample_rate: int, threshold_factor: flo
         → Time-axis linear interpolation from neighbouring frames
         These correspond to scratches (short-duration broadband damage) and dropouts
         (complete signal absence in a frame).
+
+    Args:
+        channel:               Mono audio (1D float array).
+        sample_rate:           Sample rate (Hz).
+        threshold_factor:      Spike threshold — magnitude ratio to smooth envelope.
+        hf_protected_bin_start: Frequency-bin index above which Pass 1 spike detection is
+                                 disabled.  0 = no protection (default).
+
+    §PriorPhase-Guard (phase_07/phase_06 harmonics):
+        When a prior phase (phase_07 harmonic restoration, phase_06 SBR) adds content
+        at frequencies above the material's natural rolloff, those bins look like
+        "isolated spikes" to Pass 1 because the 11-bin smooth envelope is still near
+        the noise floor (only 1 bin elevated out of 11).  Pass 1 would flag and remove
+        them — reverting the prior restoration.
+
+        Fix: the caller passes hf_protected_bin_start = bin_index(material_rolloff × 0.85).
+        Bins above that index are excluded from Pass 1.  Pass 2 (frame energy dropout)
+        remains active everywhere: it works on whole-frame RMS, not per-bin ratios, and
+        is insensitive to isolated harmonic additions.
     """
     from scipy.ndimage import uniform_filter1d
 
@@ -83,6 +107,16 @@ def _repair_channel(channel: np.ndarray, sample_rate: int, threshold_factor: flo
     mag_smooth = uniform_filter1d(mag, size=_filter_size, axis=0, mode="nearest")
     safe_smooth = np.where(mag_smooth < 1e-10, 1e-10, mag_smooth)
     spike_mask = (mag > threshold_factor * safe_smooth) & (mag >= 1e-10)
+
+    # §PriorPhase-Guard: Exclude HF bins above material rolloff from Pass 1.
+    # Phase_07 (harmonic restoration) synthesises content at frequencies that were
+    # previously near noise floor.  Those isolated peaks trigger the spike_mask
+    # (1 bin elevated / 11-bin window → ratio ≈ 11 >> threshold_factor).
+    # Pass 2 (frame dropout) is NOT masked — it is based on whole-frame RMS,
+    # not per-bin ratio, and does not produce false positives on HF harmonics.
+    if hf_protected_bin_start > 0:
+        hf_start = min(hf_protected_bin_start, _n_freq)
+        spike_mask[hf_start:, :] = False
 
     mag_lo = np.roll(mag, _INTERP_BINS, axis=0)
     mag_hi = np.roll(mag, -_INTERP_BINS, axis=0)
@@ -202,15 +236,71 @@ class SpectralRepairPhase(PhaseInterface):
             )
 
         threshold_factor = float(kwargs.get("threshold_factor", _THRESHOLD_FACTOR))
+        # §2.54 Material-adaptive threshold: degraded analog needs more aggressive repair
+        # (lower threshold_factor = more bins detected as holes = more repairs).
+        _mat_50 = kwargs.get("material_type") or kwargs.get("material")
+        _mat_str_50 = str(_mat_50).lower() if _mat_50 is not None else ""
+        _MATERIAL_THRESHOLD_CAPS_50: dict[str, float] = {
+            "wax_cylinder": 2.0,
+            "shellac": 2.5,
+            "optical_film": 2.5,
+            "wire_recording": 2.5,
+            "vinyl": 3.0,
+            "reel_tape": 3.0,
+            "tape": 3.0,
+            "cassette": 3.0,
+            "radio_broadcast": 3.5,
+            "mp3_low": 3.5,
+            "minidisc": 3.5,
+            "mp3_high": 4.5,
+            "cd_digital": 4.5,
+            "dat": 4.5,
+        }
+        for _mk50, _mv50 in _MATERIAL_THRESHOLD_CAPS_50.items():
+            if _mk50 in _mat_str_50:
+                threshold_factor = min(threshold_factor, _mv50)
+                break
         # Lower effective strength should make detection more conservative.
         threshold_factor_eff = threshold_factor / max(effective_strength, 0.1)
+
+        # §PriorPhase-Guard: Protect HF bins from Pass-1 false-positive spike detection.
+        # Phase_07 (harmonic restoration) and Phase_06 (SBR) synthesise content at
+        # frequencies that were near noise floor before they ran.  The 11-bin local-average
+        # smooth envelope is still near noise floor at those frequencies → ratio ≫ 4.0 →
+        # Pass 1 would flag and inpaint Phase_07/06 output, reverting the restoration.
+        # Fix: exclude bins above 85 % of the material's natural rolloff from Pass 1.
+        # (All codec-artifact spikes occur WITHIN the natural bandwidth, so Pass 1 still
+        # catches them.  Phase_07/06 harmonics are exclusively ABOVE the rolloff.)
+        _ANALOG_ROLLOFF_PROTECTION_HZ: dict[str, float] = {
+            "wax_cylinder": 5_000.0,
+            "wire_recording": 6_000.0,
+            "shellac": 7_000.0,
+            "lacquer_disc": 8_000.0,
+            "cassette": 13_000.0,
+            "vinyl": 14_000.0,
+            "tape": 14_000.0,
+            "reel_tape": 16_000.0,
+        }
+        _bin_hz = sample_rate / _FFT_SIZE  # Hz per STFT bin
+        _rolloff_protection_hz = _ANALOG_ROLLOFF_PROTECTION_HZ.get(_mat_str_50, 0.0)
+        # Also check prefix matching for compound material strings
+        if _rolloff_protection_hz == 0.0:
+            for _k, _v in _ANALOG_ROLLOFF_PROTECTION_HZ.items():
+                if _k in _mat_str_50:
+                    _rolloff_protection_hz = _v
+                    break
+        _hf_protected_bin_start: int = 0
+        if _rolloff_protection_hz > 0.0:
+            _hf_protected_bin_start = max(0, int(_rolloff_protection_hz * 0.85 / _bin_hz))
 
         n_channels = 1 if audio.ndim == 1 else audio.shape[1]
         is_stereo = audio.ndim == 2
         total_bins = 0
 
         if not is_stereo:
-            repaired_c, n_rep = _repair_channel(audio.astype(np.float64), sample_rate, threshold_factor_eff)
+            repaired_c, n_rep = _repair_channel(
+                audio.astype(np.float64), sample_rate, threshold_factor_eff, _hf_protected_bin_start
+            )
             repaired_audio = repaired_c.astype(audio.dtype)
             total_bins = n_rep
         else:
@@ -218,8 +308,10 @@ class SpectralRepairPhase(PhaseInterface):
             _inv_sqrt2 = 1.0 / np.sqrt(2.0)
             mid = (audio[:, 0] + audio[:, 1]).astype(np.float64) * _inv_sqrt2
             side = (audio[:, 0] - audio[:, 1]).astype(np.float64) * _inv_sqrt2
-            repaired_mid, n_mid = _repair_channel(mid, sample_rate, threshold_factor_eff)
-            repaired_side, n_side = _repair_channel(side, sample_rate, threshold_factor_eff * 2.0)
+            repaired_mid, n_mid = _repair_channel(mid, sample_rate, threshold_factor_eff, _hf_protected_bin_start)
+            repaired_side, n_side = _repair_channel(
+                side, sample_rate, threshold_factor_eff * 2.0, _hf_protected_bin_start
+            )
             total_bins = n_mid + n_side
             left = (repaired_mid + repaired_side) * _inv_sqrt2
             right = (repaired_mid - repaired_side) * _inv_sqrt2
@@ -259,6 +351,8 @@ class SpectralRepairPhase(PhaseInterface):
                 "stereo_mode": "ms_domain" if is_stereo else "mono",
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
+                "hf_protected_bin_start": _hf_protected_bin_start,
+                "hf_protection_rolloff_hz": round(_rolloff_protection_hz, 1),
                 "rms_drop_db": round(float(min(0.0, _rms_drop_50)), 3),
                 "loudness_makeup_db": 0.0,
             },

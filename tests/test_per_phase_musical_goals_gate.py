@@ -571,3 +571,38 @@ class TestPreciseMetricOverrides:
         assert scores["artikulation"] == pytest.approx(0.87, abs=1e-9)
         assert scores["separation_fidelity"] == pytest.approx(0.84, abs=1e-9)
         assert scores["transparenz"] == pytest.approx(0.83, abs=1e-9)
+
+
+class TestWetDryBlendStereoSafety:
+    """Stereo wet/dry blend must remain channel-safe and non-silent."""
+
+    def test_50_wet_dry_blend_stereo_low_strength_keeps_shape_and_energy(self):
+        gate = PerPhaseMusicalGoalsGate()
+        rng = np.random.default_rng(123)
+        dry = rng.normal(0.0, 0.15, size=(SR * 3, 2)).astype(np.float32)
+        # Simulate a phase output with slight spectral change.
+        wet = np.clip(dry * 0.9 + rng.normal(0.0, 0.01, size=dry.shape).astype(np.float32), -1.0, 1.0)
+
+        out = gate._wet_dry_blend(dry, wet, strength=0.10)
+
+        assert out.shape == dry.shape
+        assert out.dtype == np.float32
+        assert np.all(np.isfinite(out))
+        # Guard against silent-tail regressions caused by malformed channel-axis STFT.
+        h2 = out[len(out) // 2 :, :]
+        rms_h2 = float(np.sqrt(np.mean(h2**2)))
+        assert rms_h2 > 1e-4
+
+    def test_51_wet_dry_blend_stereo_length_match_no_channel_pad_corruption(self):
+        gate = PerPhaseMusicalGoalsGate()
+        rng = np.random.default_rng(7)
+        dry = rng.normal(0.0, 0.2, size=(10_000, 2)).astype(np.float32)
+        wet_short = dry[:-123].copy()
+
+        out = gate._wet_dry_blend(dry, wet_short, strength=0.20)
+
+        assert out.shape == dry.shape
+        assert np.all(np.isfinite(out))
+        # Last segment must not collapse to all-zero due to invalid 2D padding.
+        tail = out[-500:, :]
+        assert float(np.sqrt(np.mean(tail**2))) > 1e-5

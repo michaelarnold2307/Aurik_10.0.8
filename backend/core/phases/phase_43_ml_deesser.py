@@ -381,22 +381,29 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             processed = processed_ch
             gr_dbs.append(gr_db)
         else:
-            channels = []
-            for ch in range(x.shape[1]):
-                processed_ch, gr_db = _deess_channel(
-                    x[:, ch],
-                    sample_rate,
-                    threshold_db,
-                    ratio,
-                    attack_ms,
-                    release_ms,
-                    freq_low,
-                    freq_high,
-                    strength_cap,
-                )
-                channels.append(processed_ch)
-                gr_dbs.append(gr_db)
-            processed = np.column_stack(channels)
+            # §2.51 Linked-Stereo: Sibilanz-Detektion auf Mono-Mix, identische GR auf L+R
+            mono_mix = np.mean(x, axis=1)
+            _mono_deessed, gr_db_linked = _deess_channel(
+                mono_mix,
+                sample_rate,
+                threshold_db,
+                ratio,
+                attack_ms,
+                release_ms,
+                freq_low,
+                freq_high,
+                strength_cap,
+            )
+            # Compute linked gain from mono
+            _eps_ds = 1e-10
+            _gain_ds = np.where(
+                np.abs(mono_mix) > _eps_ds,
+                _mono_deessed / (mono_mix + _eps_ds * np.sign(mono_mix + _eps_ds)),
+                1.0,
+            )
+            _gain_ds = np.clip(_gain_ds, 0.0, 10.0)
+            processed = np.column_stack([x[:, ch] * _gain_ds for ch in range(x.shape[1])])
+            gr_dbs.append(gr_db_linked)
 
         if 0.0 < _effective_strength < 1.0 and processed.shape == x.shape:
             processed = x + _effective_strength * (processed - x)

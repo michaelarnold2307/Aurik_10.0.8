@@ -216,6 +216,18 @@ _COMPLEXITY_WEIGHT: dict[str, float] = {
     "streaming": 0.50,
 }
 
+# Additive Phasen im §2.46-Sinne (Stufe 5): ergänzen Energie/Spektrum statt zu subtrahieren.
+# Alle anderen _PHASE_MAP-Einträge sind primär subtraktiv (Rauschen, Artefakte entfernen).
+_ADDITIVE_PHASE_PREFIXES: frozenset[str] = frozenset(
+    {
+        "phase_06_",  # frequency_restoration — Bandbreiten-Erweiterung (Träger additiv)
+        "phase_07_",  # harmonic_restoration — Harmonik-Rekonstruktion
+        "phase_21_",  # harmonic_exciter — Oberton-Synthese
+        "phase_38_",  # presence_boost — Präsenz-Anhebung (HF-Additiv)
+        "phase_55_",  # diffusion_inpainting — spektrales Diffusions-Inpainting
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Ergebnis-Datenklassen
@@ -325,6 +337,33 @@ class KettenErgebnis:
         }
 
 
+@dataclass
+class ChainPhasePlan:
+    """§2.46-konformer Pflicht-Phasenplan aus der Trägerketten-Inversion.
+
+    Enthält Phasen, die unabhängig vom DefectScanner-Score aktiv sein MÜSSEN —
+    abgeleitet aus der erkannten Trägerkette (§6.2a Komplement).
+    DefectScanner arbeitet statistisch; tiefe Einzeldefekte können unter Schwelle liegen.
+
+    Reihenfolge-Invariante (§2.46):
+        must_have_phases = (subtraktiv, Inversions-Reihenfolge) + (additiv)
+        d.h.: letzter Träger (Container) → Zwischenstufen → Ursprungsträger → additiv
+    """
+
+    must_have_phases: list[str]
+    """Pflicht-Phasen in §2.46-Inversionsreihenfolge.
+    Subtraktive Phasen (Noise, Artefakte) kommen zuerst; additive (Bandbreite, Harmonik) am Ende."""
+
+    additive_phases: list[str]
+    """Additive Phasen aus dieser Kette (Teilmenge von must_have_phases)."""
+
+    chain_string: str
+    """Ketten-Darstellung für Logging (z. B. 'Vinyl → Kassette → MP3')."""
+
+    stage_count: int
+    """Anzahl erkannter Trägerstufen."""
+
+
 # ---------------------------------------------------------------------------
 # Hauptklasse
 # ---------------------------------------------------------------------------
@@ -422,6 +461,70 @@ class TontraegerketteDenker:
         _file_ext = _os.path.splitext(file_path)[1] if file_path else ""
         raw = self._erkennen(audio, sr, file_ext=_file_ext)
         return self._aufbereiten(raw)
+
+    def leite_phasen_ab(self, ketten_ergebnis: KettenErgebnis) -> ChainPhasePlan:
+        """Leitet §2.46-konformen Pflicht-Phasenplan aus der Trägerkette ab.
+
+        §2.46 Carrier-Chain-Inversion: Container-Träger zuerst bearbeiten, dann
+        Zwischenstufen, zuletzt Ursprungsträger — invers zur Aufnahme-Reihenfolge.
+        Additive Phasen (Bandbreiten-Erweiterung, Harmonik) IMMER nach allen
+        subtraktiven Phasen (§2.46 Stufe-4-vor-5-Invariante).
+
+        Als Komplement zu §6.2a Material-Pflicht-Phasen: erzeugt kettenbasierte
+        Pflicht-Phasen unabhängig vom DefectScanner-Score.
+
+        Args:
+            ketten_ergebnis: KettenErgebnis von TontraegerketteDenker.analysiere().
+
+        Returns:
+            ChainPhasePlan mit must_have_phases in korrekter Inversions-Reihenfolge.
+        """
+        # §2.46 Inversion: letztes Glied (Container) → erstes Glied (Ursprung)
+        if ketten_ergebnis is None:
+            return ChainPhasePlan(must_have_phases=[], additive_phases=[], chain_string="", stage_count=0)
+        if not getattr(ketten_ergebnis, "glieder", None):
+            return ChainPhasePlan(
+                must_have_phases=[],
+                additive_phases=[],
+                chain_string=str(getattr(ketten_ergebnis, "chain_string", "")),
+                stage_count=0,
+            )
+        glieder_inverted = list(reversed(ketten_ergebnis.glieder))
+
+        seen: set[str] = set()
+        subtractive: list[str] = []
+        additive: list[str] = []
+
+        for glied in glieder_inverted:
+            for phase in glied.recommended_phases:
+                if phase in seen:
+                    continue
+                seen.add(phase)
+                # Klassifikation: additiv (Energie-Ergänzung) oder subtraktiv
+                is_additive = any(phase.startswith(pfx) for pfx in _ADDITIVE_PHASE_PREFIXES)
+                if is_additive:
+                    additive.append(phase)
+                else:
+                    subtractive.append(phase)
+
+        # §2.46: subtraktive Phasen vor additiven
+        must_have = subtractive + additive
+
+        logger.debug(
+            "TontraegerketteDenker.leite_phasen_ab(): %s → %d Pflicht-Phasen (%d subtraktiv, %d additiv, %d Stufen)",
+            ketten_ergebnis.chain_string,
+            len(must_have),
+            len(subtractive),
+            len(additive),
+            ketten_ergebnis.generation_count,
+        )
+
+        return ChainPhasePlan(
+            must_have_phases=must_have,
+            additive_phases=additive,
+            chain_string=ketten_ergebnis.chain_string,
+            stage_count=ketten_ergebnis.generation_count,
+        )
 
     # ------------------------------------------------------------------
     # Interne Methoden

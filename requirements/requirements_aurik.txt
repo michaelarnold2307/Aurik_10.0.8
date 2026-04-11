@@ -41,8 +41,15 @@ audioread==3.1.0
 pyloudnorm==0.2.0
 pyFFTW>=0.15.0            # Benötigt libfftw3 (apt: libfftw3-dev); Fallback: numpy.fft (automatisch wenn nicht installiert)
 
-# --- ONNX-Runtime (CPU-only, §9.5) ---
+# --- ONNX-Runtime (GPU-Variante je Plattform wählen — mutually exclusive!) ---
+# Standard CPU-only (Development / kein AMD-GPU):
 onnxruntime==1.23.2
+#
+# AMD GPU Linux (ROCm 6.x):   pip install onnxruntime-rocm  (statt onnxruntime)
+# AMD GPU Windows (DirectML):  pip install onnxruntime-directml  (statt onnxruntime)
+#
+# Hinweis: ml_device_manager.py erkennt automatisch welches Backend verfügbar ist.
+# Auf Systemen ohne passendes onnxruntime-Paket wird CPUExecutionProvider genutzt.
 
 # --- Audio-Qualitätsmetriken ---
 # ⚠ VERBOTEN als Musik-Metrik (§10.2, §4.4):

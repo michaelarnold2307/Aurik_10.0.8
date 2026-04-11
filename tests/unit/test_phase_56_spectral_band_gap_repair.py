@@ -232,3 +232,39 @@ class TestPhase56Consistency:
         result = phase.process(sine_440_2s, sample_rate=SR)
         rms = float(np.sqrt(np.mean(result.audio**2)))
         assert rms > 1e-6, f"Ausgang hat kein Energie: rms={rms}"
+
+
+class TestPhase56StereoParameterFlow:
+    """Regressionsschutz: Side-Konservativität ohne globalen Zustand."""
+
+    def test_stereo_calls_detect_with_local_gap_fraction_and_no_global_mutation(self, monkeypatch):
+        from backend.core.phases import phase_56_spectral_band_gap_repair as m
+
+        phase = m.SpectralBandGapRepairPhase()
+        seen_gap_fractions: list[float | None] = []
+        original_gap_fraction = float(m._GAP_FRACTION_MIN)
+
+        def _spy_detect_band_gaps(
+            stft_mag: np.ndarray,
+            sr: int,
+            n_fft: int,
+            gap_fraction_min: float | None = None,
+        ) -> list[tuple[int, int]]:
+            seen_gap_fractions.append(gap_fraction_min)
+            return []  # force fast path
+
+        monkeypatch.setattr(m, "_detect_band_gaps", _spy_detect_band_gaps)
+
+        t = np.linspace(0, 1.0, SR, endpoint=False, dtype=np.float32)
+        left = (0.3 * np.sin(2 * np.pi * 330.0 * t)).astype(np.float32)
+        right = (0.28 * np.sin(2 * np.pi * 335.0 * t)).astype(np.float32)
+        stereo = np.stack([left, right], axis=1)
+
+        result = phase.process(stereo, sample_rate=SR)
+        assert result.success is True
+        assert result.audio.shape == stereo.shape
+        assert seen_gap_fractions == [None, 0.95], (
+            "Stereo-M/S-Pfad muss Mid mit Standard und Side mit konservativem "
+            f"gap_fraction_min laufen; gesehen={seen_gap_fractions}"
+        )
+        assert float(m._GAP_FRACTION_MIN) == pytest.approx(original_gap_fraction, abs=1e-12)

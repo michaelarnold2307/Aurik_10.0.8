@@ -240,7 +240,7 @@ class TransparentDynamicsV1(PhaseInterface):
         knee_db = material_config["knee_db"]
         mix = float(np.clip(material_config["mix"], 0.0, 1.0)) * effective_strength
 
-        # Convert to mono for analysis (if stereo)
+        # §2.51 Linked-Stereo: Gain-Envelope aus Mono-Downmix, identisch auf L+R
         is_stereo = audio.ndim == 2
         audio_mono = np.mean(audio, axis=1) if is_stereo else audio.copy()
 
@@ -256,7 +256,7 @@ class TransparentDynamicsV1(PhaseInterface):
         # Stage 2: Intelligent Transient Detection
         transient_mask = self._detect_transients(audio_mono)
 
-        # Stage 3: Genre-Adaptive Compression
+        # Stage 3: Genre-Adaptive Compression (on mono for gain computation)
         audio_compressed = self._apply_compression(
             audio_mono,
             ratio=ratio,
@@ -268,16 +268,30 @@ class TransparentDynamicsV1(PhaseInterface):
             transient_mask=transient_mask,
         )
 
-        # Stage 4: Dry/Wet Mix (parallel compression for transparency)
-        audio_mono = mix * audio_compressed + (1.0 - mix) * audio_mono
+        # §2.51 Linked: Compute gain envelope from mono, apply identically to L+R
+        # gain = compressed / original (avoid division by zero)
+        eps = 1e-10
+        gain_envelope = np.where(
+            np.abs(audio_mono) > eps,
+            audio_compressed / (audio_mono + eps * np.sign(audio_mono + eps)),
+            1.0,
+        )
+        # Smooth gain to avoid rapid fluctuations
+        gain_envelope = np.clip(gain_envelope, 0.0, 10.0)
+
+        # Apply gain + dry/wet mix to preserve stereo field
+        if is_stereo:
+            audio_out = np.empty_like(audio)
+            for ch in range(audio.shape[1]):
+                wet = audio[:, ch] * gain_envelope
+                audio_out[:, ch] = mix * wet + (1.0 - mix) * audio[:, ch]
+        else:
+            audio_out = mix * audio_compressed + (1.0 - mix) * audio_mono
 
         # Prevent clipping — §2.49 Peak-Guard: percentile(99.9)
-        peak = float(np.percentile(np.abs(audio_mono), 99.9))
+        peak = float(np.percentile(np.abs(audio_out), 99.9))
         if peak > 0.95:
-            audio_mono = audio_mono * (0.95 / peak)
-
-        # Convert back to stereo if needed
-        audio_out = np.column_stack([audio_mono, audio_mono]) if is_stereo else audio_mono
+            audio_out = audio_out * (0.95 / peak)
 
         audio_out = np.nan_to_num(audio_out, nan=0.0, posinf=0.0, neginf=0.0)
         audio_out = np.clip(audio_out, -1.0, 1.0)

@@ -275,6 +275,7 @@ class RestaurierDenker:
         input_path: str = "",
         output_path: str = "",
         no_rt_limit: bool = False,
+        precomputed_phase_plan: list[str] | None = None,
     ) -> RestaurierErgebnis:
         """Restauriert Audio vollständig mit UnifiedRestorerV3.
 
@@ -394,6 +395,9 @@ class RestaurierDenker:
             # §G1: Pre-Repair-Referenz für referenz-basierte Musical Goals
             if pre_repair_reference is not None:
                 _uv3_kwargs["pre_repair_reference"] = pre_repair_reference
+            # §PID: PhaseInteractionDenker-Plan weitergeben (UV3 wird reiner Executor)
+            if precomputed_phase_plan:
+                _uv3_kwargs["precomputed_phase_plan"] = precomputed_phase_plan
             # §2.39 OOM-Recovery: Pfade für Checkpoint-Persistierung
             if input_path:
                 _uv3_kwargs["input_path"] = input_path
@@ -638,6 +642,11 @@ class RestaurierDenker:
             winning_variant=getattr(raw, "winning_variant", None),
             rollback_triggered=bool(getattr(raw, "rollback_triggered", False)),
             metadata={
+                # §2.53 [RELEASE_MUST]: propagate complete UV3 metadata end-to-end.
+                # Previously only "total_time_seconds" was forwarded — this silently
+                # dropped joy_runtime_index, auto_improvement_recommendations,
+                # song_calibration, and all other §2.53 telemetry fields.
+                **(dict(raw.metadata or {}) if isinstance(getattr(raw, "metadata", None), dict) else {}),
                 "total_time_seconds": float(raw.total_time_seconds or 0.0),
             },
         )

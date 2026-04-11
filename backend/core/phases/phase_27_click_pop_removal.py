@@ -115,6 +115,30 @@ class ClickPopRemoval(PhaseInterface):
         super().__init__()
         self.name = "Click/Pop Removal v3 AR-Residual"
 
+    @staticmethod
+    def _derive_safe_click_strength(
+        effective_strength: float,
+        material_key: str,
+        panns_tags: dict[str, float],
+    ) -> float:
+        """Reduce aggressive click repair on vocal/analog-sensitive material."""
+        strength = float(effective_strength)
+        vocal_prob = max(
+            float(panns_tags.get("Singing voice", 0.0)),
+            float(panns_tags.get("Vocals", 0.0)),
+            float(panns_tags.get("Speech", 0.0)),
+            float(panns_tags.get("Male singing", 0.0)),
+            float(panns_tags.get("Female singing", 0.0)),
+        )
+        is_analog_sensitive = any(
+            token in material_key for token in ("vinyl", "shellac", "wax_cylinder", "wire_recording", "lacquer_disc")
+        )
+        if vocal_prob >= 0.40:
+            strength *= 0.84
+        if is_analog_sensitive:
+            strength *= 0.88
+        return float(np.clip(strength, 0.0, 1.0))
+
     def get_metadata(self) -> PhaseMetadata:
         """Return phase metadata."""
         return PhaseMetadata(
@@ -163,7 +187,10 @@ class ClickPopRemoval(PhaseInterface):
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
-        config["repair_strength"] = float(np.clip(config["repair_strength"] * _effective_strength, 0.0, 1.0))
+        _material_key = str(getattr(material, "name", material)).lower()
+        _panns_tags = {k: float(v) for k, v in kwargs.get("panns_tags", {}).items() if isinstance(v, (int, float, str))}
+        _safe_strength = self._derive_safe_click_strength(_effective_strength, _material_key, _panns_tags)
+        config["repair_strength"] = float(np.clip(config["repair_strength"] * _safe_strength, 0.0, 1.0))
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -179,6 +206,7 @@ class ClickPopRemoval(PhaseInterface):
                     "rt_factor": 0.0,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
+                    "safe_strength": _safe_strength,
                     "processing": "skipped_zero_strength",
                     "rms_drop_db": 0.0,
                     "loudness_makeup_db": 0.0,
@@ -215,6 +243,7 @@ class ClickPopRemoval(PhaseInterface):
                 "stereo_mode": "linked_detection" if is_stereo else "mono",
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "safe_strength": _safe_strength,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },

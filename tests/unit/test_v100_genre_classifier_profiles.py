@@ -177,8 +177,8 @@ class TestV100GenreClassifierProfiles:
         assert len(SCHLAGER_CLAP_PROMPTS) >= 5
 
     def test_17_schlager_confidence_threshold_value(self):
-        """SCHLAGER_CONFIDENCE_THRESHOLD = 0.44 (aktueller Wert laut Code)."""
-        assert SCHLAGER_CONFIDENCE_THRESHOLD == 0.44
+        """SCHLAGER_CONFIDENCE_THRESHOLD = 0.52 (aktueller Wert laut Code)."""
+        assert SCHLAGER_CONFIDENCE_THRESHOLD == 0.52
 
     def test_18_hsi_threshold_equals_082(self):
         """HSI_THRESHOLD = 0.82."""

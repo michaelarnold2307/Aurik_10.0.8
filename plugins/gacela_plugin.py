@@ -156,6 +156,7 @@ class GacelaPlugin:
         self._stft: Any = None
         self._inverter: Any = None
         self._pghi_rec: Any = None  # dsp.pghi.PghiReconstructor, loaded in _try_load
+        self._device: str = "cpu"  # set by _try_load
         self._try_load()
 
     # ── ML-Modell laden ──────────────────────────────────────────────────────
@@ -215,6 +216,27 @@ class GacelaPlugin:
             self._generator.eval()
             for enc in self._encoders:
                 enc.eval()
+
+            # Device-Platzierung
+            try:
+                from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                _dev = _get_dev("Gacela")
+            except Exception:
+                _dev = "cpu"
+            if _dev != "cpu":
+                try:
+                    from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                    if not _mgr().try_allocate_vram("Gacela", self._BUDGET_SIZE_GB):
+                        logger.info("GACELA: VRAM-Budget erschöpft — CPU-Load")
+                        _dev = "cpu"
+                except Exception:
+                    pass
+            self._generator.to(_dev)
+            for enc in self._encoders:
+                enc.to(_dev)
+            self._device = _dev
 
             # STFT-Objekte
             self._stft = GaussTruncTF(hop_size=FFT_HOP_SIZE, stft_channels=FFT_LENGTH)
@@ -317,7 +339,7 @@ class GacelaPlugin:
                 spec = spec_full[: FFT_LENGTH // 2, : SPLIT[0]]  # [512, 480]
                 # Mel-Projektion
                 mel = (self._mel_basis @ spec).astype(np.float32)  # [80, 480]
-                t = torch.from_numpy(mel).unsqueeze(0).unsqueeze(0)  # [1,1,80,480]
+                t = torch.from_numpy(mel).unsqueeze(0).unsqueeze(0).to(self._device)  # [1,1,80,480]
                 t = _time_average(t, TIME_AVG)  # [1,1,80,240]
                 with torch.no_grad():
                     return encoder(t)  # [1,16,5,8]
@@ -326,7 +348,7 @@ class GacelaPlugin:
             enc_R = _encode(right_mono, self._encoders[1])
 
             # Rauschen und Konkatenation
-            noise = torch.rand(1, NOISE_CH, enc_L.size(2), enc_L.size(3), dtype=torch.float32)
+            noise = torch.rand(1, NOISE_CH, enc_L.size(2), enc_L.size(3), dtype=torch.float32).to(self._device)
             x = torch.cat([enc_L, enc_R, noise], dim=1)  # [1,36,5,8]
 
             # Generator-Inferenz
@@ -394,6 +416,24 @@ class GacelaPlugin:
             return np.clip(gap_out, -1.0, 1.0).astype(np.float32)
 
         except Exception as exc:
+            if self._device != "cpu":
+                logger.warning("GACELA: GPU-Inferenz fehlgeschlagen (%s) — CPU-Retry", exc)
+                try:
+                    for _attr in ("_generator", "_border_enc_l", "_border_enc_r", "_spec_inverter"):
+                        _m = getattr(self, _attr, None)
+                        if _m is not None:
+                            _m.cpu()
+                    self._device = "cpu"
+                    try:
+                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+
+                        _mgr().report_gpu_error("Gacela", exc)
+                    except Exception:
+                        pass
+                except Exception as _mv_exc:
+                    logger.debug("GACELA GPU→CPU move fehlgeschlagen: %s", _mv_exc)
+                    self._device = "cpu"
+                return self.inpaint(left_audio, right_audio, native_sr)
             logger.warning("GACELA inpaint() fehlgeschlagen: %s", exc)
             return None
 

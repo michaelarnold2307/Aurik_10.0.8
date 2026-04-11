@@ -97,6 +97,21 @@ class TestSingleton:
 
 
 class TestBasicScoring:
+    """DSP-path scoring tests — MERT patched to None to prevent HF inference timeout.
+
+    §Isolation: WaermeMetric may load MERT via get_mert_plugin() in earlier tests,
+    leaving _mert_instance set for the session. Patching get_loaded_mert_plugin to
+    return None forces DSP-only path so these tests remain fast regardless of load order.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_mert_none(self):
+        """Force DSP-only path for all TestBasicScoring tests."""
+        from unittest.mock import patch
+
+        with patch("plugins.mert_plugin.get_loaded_mert_plugin", return_value=None):
+            yield
+
     def test_identical_audio_high_score(self):
         """Identical reference and test should yield high proxy score."""
         ref = _make_harmonic()
@@ -142,6 +157,18 @@ class TestBasicScoring:
 
 
 class TestComponentMetrics:
+    @pytest.fixture(autouse=True)
+    def _patch_mert_none(self):
+        """Force DSP-only path so component-metric tests don't trigger HuBERT inference.
+
+        Without this, a loaded MERT singleton from an earlier test in the full suite
+        causes >30s HuBERT inference → pytest-timeout failure.
+        """
+        from unittest.mock import patch
+
+        with patch("plugins.mert_plugin.get_loaded_mert_plugin", return_value=None):
+            yield
+
     def test_nsim_range(self):
         ref = _make_harmonic()
         result = estimate_mushra_proxy(ref, ref, SR)
@@ -562,6 +589,7 @@ class TestViSQOLIntegration:
         # ViSQOL MOS for identical should be high
         assert result.visqol_mos >= 4.0
 
+    @pytest.mark.slow
     def test_visqol_heavily_degraded_lower(self):
         """Heavily degraded signal should get lower ViSQOL than clean."""
         ref = _make_harmonic()

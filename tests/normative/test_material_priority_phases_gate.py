@@ -25,7 +25,7 @@ MATERIAL_PRIORITY_PHASES: dict[str, list[str]] = {
         "phase_24_dropout_repair",
         "phase_55_diffusion_inpainting",
     ],
-    "vinyl": ["phase_09_crackle_removal", "phase_12_wow_flutter_fix", "phase_30_dc_offset_removal"],
+    "vinyl": ["phase_09_crackle_removal", "phase_12_wow_flutter_fix", "phase_05_rumble_filter"],
     "shellac": ["phase_03_denoise", "phase_06_frequency_restoration", "phase_01_click_removal"],
     "wax_cylinder": [
         "phase_03_denoise",
@@ -77,6 +77,22 @@ ORDERING_CONSTRAINTS: list[tuple[str, str]] = [
     ("phase_12_wow_flutter_fix", "phase_31_speed_pitch_correction"),
     ("phase_08_transient_preservation", "phase_36_transient_shaper"),
     ("phase_23_spectral_repair", "phase_50_spectral_repair"),
+    # §2.46 Tier-2-Playback (EQ/RIAA) vor Tier-3-Aging und Tier-4-Carrier-NR
+    ("phase_04_eq_correction", "phase_01_click_removal"),
+    ("phase_04_eq_correction", "phase_09_crackle_removal"),
+    ("phase_04_eq_correction", "phase_24_dropout_repair"),
+    ("phase_04_eq_correction", "phase_03_denoise"),
+    ("phase_04_eq_correction", "phase_29_tape_hiss_reduction"),
+    # §2.46 Tier-1-ADC (DC, Rumble) vor Tier-2-Playback (EQ/RIAA)
+    ("phase_30_dc_offset_removal", "phase_04_eq_correction"),
+    ("phase_05_rumble_filter", "phase_04_eq_correction"),
+    # Surface-Noise-Profiling vor Tape-Hiss (Profil muss vor Verwendung existieren)
+    ("phase_28_surface_noise_profiling", "phase_29_tape_hiss_reduction"),
+    # Vinyl Groove-Phasen (Tier-3 Aging) vor Carrier-NR (Tier-4 subtraktiv)
+    ("phase_60_inner_groove_distortion_repair", "phase_03_denoise"),
+    ("phase_60_inner_groove_distortion_repair", "phase_29_tape_hiss_reduction"),
+    ("phase_61_groove_echo_cancellation", "phase_03_denoise"),
+    ("phase_61_groove_echo_cancellation", "phase_29_tape_hiss_reduction"),
 ]
 
 

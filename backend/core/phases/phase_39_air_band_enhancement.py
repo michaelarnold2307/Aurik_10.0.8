@@ -48,6 +48,39 @@ from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, Phase
 
 logger = logging.getLogger(__name__)
 
+# §2.46b Spectral-Tilt-Preservation: material-adaptive tolerance in dB/octave
+_TILT_TOLERANCE_P39: dict[str, float] = {
+    "digital": 1.5,
+    "cd_digital": 1.5,
+    "streaming": 1.5,
+    "tape": 1.875,
+    "reel_tape": 1.875,
+    "vinyl": 2.25,
+    "minidisc": 2.25,
+    "shellac": 3.0,
+    "wax_cylinder": 3.0,
+    "wire_recording": 3.0,
+}
+
+
+def _est_tilt_p39(audio: np.ndarray, sr: int) -> float:
+    """Quick spectral tilt estimate in dB/octave (§2.46b)."""
+    mono = audio[:, 0] if audio.ndim == 2 else audio
+    n = min(len(mono), 8192)
+    if n < 64:
+        return 0.0
+    spec = np.abs(np.fft.rfft(mono[:n] * np.hanning(n))) + 1e-12
+    freqs = np.fft.rfftfreq(n, d=1.0 / sr)
+    valid = (freqs >= 100.0) & (freqs <= sr * 0.45)
+    if np.sum(valid) < 8:
+        return 0.0
+    log_f = np.log2(freqs[valid] + 1e-12)
+    log_m = 20.0 * np.log10(spec[valid])
+    log_f_c = log_f - log_f.mean()
+    log_m_c = log_m - log_m.mean()
+    denom = float(np.dot(log_f_c, log_f_c))
+    return float(np.dot(log_f_c, log_m_c) / denom) if denom > 1e-10 else 0.0
+
 
 class AirBandEnhancement(PhaseInterface):
     """
@@ -212,10 +245,23 @@ class AirBandEnhancement(PhaseInterface):
             elif _dec >= 2000:
                 # Modern: less exciter (already has HF content)
                 config["exciter_mix"] *= 0.75
-        if str(_genre).lower() in ("klassik", "oper"):
+        _genre_lower_39 = str(_genre).lower()
+        if _genre_lower_39 in ("klassik", "oper"):
             # Classical: minimal air exciter to preserve natural overtones
             config["exciter_mix"] *= 0.50
             config["saturation_drive"] *= 0.50
+        elif _genre_lower_39 == "reggae":
+            # Reggae: warm/dark production style \u2014 HF air excitation would strip character.
+            config["exciter_mix"] *= 0.40
+            config["saturation_drive"] *= 0.50
+        elif _genre_lower_39 in ("blues", "folk"):
+            # Blues/Folk: natural warmth and harmonic texture, minimal air processing.
+            config["exciter_mix"] *= 0.65
+            config["saturation_drive"] *= 0.70
+        elif _genre_lower_39 in ("electronic", "hip-hop"):
+            # Electronic/Hip-Hop: typically already has engineered HF presence.
+            config["exciter_mix"] *= 0.70
+            config["saturation_drive"] *= 0.75
 
         # §2.41 (v9.10.116) SOTA: Ära-bewusste Air-Band-Deckelung aus SourceFidelityTarget.
         # Physikalische Invariante (Klangtreue §2.41): Luft-Anhebung nie ÜBER der ären-
@@ -252,16 +298,46 @@ class AirBandEnhancement(PhaseInterface):
         # Measure initial HF energy
         hf_energy_before = self._measure_hf_energy(audio, sample_rate)
 
-        # Process each channel
+        # §2.51 M/S-Domain: Air Band auf Mid; Side unver\u00e4ndert
         if is_stereo:
-            enhanced_left = self._enhance_channel(audio[:, 0], sample_rate, config)
-            enhanced_right = self._enhance_channel(audio[:, 1], sample_rate, config)
-            enhanced_audio = np.column_stack((enhanced_left, enhanced_right))
+            mid = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+            side = (audio[:, 0] - audio[:, 1]) / np.sqrt(2.0)
+            mid_enhanced = self._enhance_channel(mid, sample_rate, config)
+            enhanced_audio = np.column_stack(
+                (
+                    (mid_enhanced + side) / np.sqrt(2.0),
+                    (mid_enhanced - side) / np.sqrt(2.0),
+                )
+            )
         else:
             enhanced_audio = self._enhance_channel(audio, sample_rate, config)
 
         if 0.0 < _effective_strength < 1.0:
             enhanced_audio = audio + _effective_strength * (enhanced_audio - audio)
+
+        # §2.46b Spectral-Tilt-Guard: cap Air-Band synthesis if tilt deviates beyond tolerance
+        _tilt_capped_p39 = False
+        try:
+            _mat_k39 = str(getattr(material, "value", str(material))).lower().replace(" ", "_").replace("-", "_")
+            _tol39 = _TILT_TOLERANCE_P39.get(_mat_k39, 2.0)
+            _tb39 = _est_tilt_p39(audio, sample_rate)
+            _ta39 = _est_tilt_p39(enhanced_audio, sample_rate)
+            _dev39 = abs(_ta39 - _tb39)
+            if _dev39 > _tol39:
+                _cap39 = float(np.clip(1.0 - (_dev39 - _tol39) / (_tol39 * 2.0), 0.5, 1.0))
+                enhanced_audio = _cap39 * enhanced_audio + (1.0 - _cap39) * audio
+                enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
+                _tilt_capped_p39 = True
+                logger.info(
+                    "phase_39 §2.46b tilt-cap: before=%.2f after=%.2f dev=%.2f tol=%.2f cap=%.2f",
+                    _tb39,
+                    _ta39,
+                    _dev39,
+                    _tol39,
+                    _cap39,
+                )
+        except Exception as _tc39:
+            logger.debug("phase_39 §2.46b tilt-cap skipped (graceful): %s", _tc39)
 
         enhanced_audio_pre_guard = enhanced_audio.copy()
 
@@ -327,6 +403,7 @@ class AirBandEnhancement(PhaseInterface):
                 "stereo_side_ratio": guard.stereo_side_ratio,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "spectral_tilt_capped": _tilt_capped_p39,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },

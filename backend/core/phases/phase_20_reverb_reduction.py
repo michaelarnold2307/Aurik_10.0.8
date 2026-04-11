@@ -247,12 +247,27 @@ class ReverbReduction(PhaseInterface):
 
         # §2.20 Genre-adaptive reverb: classical/opera preserve concert hall ambience;
         # Schlager profile may define dereverb_strength_cap.
+        # Defense-in-depth: SongCal genre_reverb_factor already scales strength via PMGG;
+        # these in-phase hardcaps are secondary guards if SongCal propagation fails.
         genre_label = kwargs.get("genre_label", "Unbekannt")
         if genre_label in ("Klassik", "Oper"):
             strength = min(strength, 0.25)
             logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
         elif genre_label == "Jazz":
             strength = min(strength, 0.30)
+            logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
+        elif genre_label == "Reggae":
+            # Dub/Echo-Reverb is an iconic genre-defining device — protect aggressively.
+            strength = min(strength, 0.20)
+            logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
+        elif genre_label == "Gospel":
+            # Church reverb is authenticity, not artifact (§0).
+            strength = min(strength, 0.30)
+            logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
+        elif genre_label == "Folk":
+            # Small-room naturalness is part of the performance — preserve gently.
+            strength = min(strength, 0.40)
+            logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
 
         # §2.14+ Era-adaptive: older recordings (pre-1960) often have room ambience
         # integral to the character — reduce dereverb strength.
@@ -623,15 +638,25 @@ class ReverbReduction(PhaseInterface):
         if rms_in > 1e-8 and rms_change_db < -max_rms_drop_db:
             target_rms_change_db = -max_rms_drop_db
             required_gain_db = target_rms_change_db - rms_change_db
-            current_peak = float(np.percentile(np.abs(processed_audio), 99.9) + 1e-12)
-            max_safe_gain_db = max(0.0, -1.5 - 20.0 * np.log10(current_peak))
-            makeup_gain_db = float(np.clip(required_gain_db, 0.0, max_safe_gain_db))
+            # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
+            # §2.45a-III: soft-limiter only when peak99 > 0.98.
+            makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 processed_audio = np.clip(
                     processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
                     -1.0,
                     1.0,
                 ).astype(np.float32)
+                current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
+                if current_peak > 0.98:
+                    _abs_20 = np.abs(processed_audio)
+                    _over_20 = _abs_20 > 0.92
+                    if np.any(_over_20):
+                        _sign_20 = np.sign(processed_audio)
+                        processed_audio = np.where(
+                            _over_20, _sign_20 * (0.92 + 0.08 * np.tanh((_abs_20 - 0.92) / 0.08)), processed_audio
+                        )
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
                 rms_change_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
                 logger.info(

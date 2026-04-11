@@ -207,11 +207,23 @@ class DynamicRangeExpansion(PhaseInterface):
         # Measure initial dynamic range
         dr_before = self._measure_dynamic_range(audio)
 
-        # Process each channel
+        # §2.51 Linked-Stereo: Gain-Envelope aus \u221a(L\u00b2+R\u00b2)/\u221a2, identisch auf L+R
         if is_stereo:
-            expanded_left = self._expand_channel(audio[:, 0], sample_rate, config)
-            expanded_right = self._expand_channel(audio[:, 1], sample_rate, config)
-            expanded_audio = np.column_stack((expanded_left, expanded_right))
+            mono_sidechain = np.sqrt((audio[:, 0] ** 2 + audio[:, 1] ** 2) / 2.0)
+            expanded_mono = self._expand_channel(mono_sidechain, sample_rate, config)
+            _eps_exp = 1e-10
+            _gain_exp = np.where(
+                np.abs(mono_sidechain) > _eps_exp,
+                expanded_mono / (mono_sidechain + _eps_exp),
+                1.0,
+            )
+            _gain_exp = np.clip(_gain_exp, 0.0, 10.0)
+            expanded_audio = np.column_stack(
+                (
+                    audio[:, 0] * _gain_exp,
+                    audio[:, 1] * _gain_exp,
+                )
+            )
         else:
             expanded_audio = self._expand_channel(audio, sample_rate, config)
 

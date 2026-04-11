@@ -50,6 +50,31 @@ class EmotionalArcResult:
     MAX_KLIMAX_DEVIATION_SEGMENTS = 2
     MAX_KLIMAX_LEVEL_DB = 2.0
 
+    @property
+    def preservation_score(self) -> float:
+        """Skalarer Erhaltungs-Score ∈ [0, 1] für HPG §2.44.
+
+        FIXED v9.11: UV3 nutzt getattr(result, "preservation_score", 1.0) —
+        ohne dieses Property fällt es immer auf den 1.0-Default zurück
+        (emotional_arc_preservation nie unter 1.0, HPG-Faktor wirkungslos).
+
+        Formel:
+            0.50 · arousal_pearson_norm +
+            0.30 · valence_pearson_norm +
+            0.20 · klimax_score
+        Alle negativen Pearson-Werte werden auf 0 geclampt.
+        """
+        if self.skipped:
+            return 1.0  # Kurze Dateien: neutraler Prior
+        ar = max(0.0, self.arousal_pearson)
+        val = max(0.0, self.valence_pearson)
+        _max_dev = max(float(self.MAX_KLIMAX_DEVIATION_SEGMENTS), 1.0)
+        _max_lev = max(float(self.MAX_KLIMAX_LEVEL_DB), 0.1)
+        klimax_pos = max(0.0, 1.0 - self.klimax_peak_deviation / _max_dev)
+        klimax_lev = max(0.0, 1.0 - self.klimax_level_deviation_db / _max_lev)
+        klimax = 0.5 * klimax_pos + 0.5 * klimax_lev
+        return float(0.50 * ar + 0.30 * val + 0.20 * klimax)
+
     def as_dict(self) -> dict:
         return {
             "arousal_pearson": self.arousal_pearson,
@@ -57,6 +82,7 @@ class EmotionalArcResult:
             "klimax_peak_deviation": self.klimax_peak_deviation,
             "klimax_level_deviation_db": self.klimax_level_deviation_db,
             "arc_preserved": self.arc_preserved,
+            "preservation_score": round(self.preservation_score, 4),
             "reason": self.reason,
             "skipped": self.skipped,
         }
@@ -101,13 +127,18 @@ class EmotionalArcPreservationMetric:
         original: np.ndarray,
         restored: np.ndarray,
         sr: int,
+        lyrics_saliency: np.ndarray | None = None,
     ) -> EmotionalArcResult:
         """Misst den Erhalt des emotionalen Bogens.
 
         Args:
-            original: Original-Audio (vor Restaurierung), float32, 1D oder 2D
-            restored: Restauriertes Audio, float32, 1D oder 2D
-            sr:       Sample-Rate, muss 48000 sein
+            original:        Original-Audio (vor Restaurierung), float32, 1D oder 2D
+            restored:        Restauriertes Audio, float32, 1D oder 2D
+            sr:              Sample-Rate, muss 48000 sein
+            lyrics_saliency: Optionales 1D-Array (Länge = n_samples) mit normalisierten
+                             Lyrics-Salienzwerten aus §2.36 LyricsGuidedEnhancement.
+                             Segment-Gewichte werden 1.5× erhöht für Frames > 0.5.
+                             (§2.44: emotional_arc_preservation = Arousal/Valence + Lyrics-Salienz)
 
         Returns:
             EmotionalArcResult mit Pearson-Korrelationen und Klimax-Analyse.
@@ -193,10 +224,24 @@ class EmotionalArcPreservationMetric:
         valence_rest = valence_rest[:n_segs]
 
         # ----------------------------------------------------------------
-        # Pearson-Korrelationen
+        # §2.36/§2.44 Lyrics-Salienz-Gewichte pro Segment
         # ----------------------------------------------------------------
-        ar_pearson = self._pearson(arousal_orig, arousal_rest)
-        val_pearson = self._pearson(valence_orig, valence_rest)
+        _seg_weights = np.ones(n_segs, dtype=np.float32)
+        if lyrics_saliency is not None:
+            _sal = np.asarray(lyrics_saliency, dtype=np.float32)
+            _sal = np.nan_to_num(_sal, nan=0.0, posinf=0.0, neginf=0.0)
+            # Map Lyrics-Saliency auf Segment-Zeitachse (Mittelwert pro Segment)
+            for _si, _start in enumerate(range(0, len(orig_mono) - seg_len + 1, hop_len)):
+                if _si >= n_segs:
+                    break
+                _seg_sal = float(np.mean(_sal[_start : _start + seg_len]))
+                _seg_weights[_si] = 1.5 if _seg_sal > 0.5 else 1.0
+
+        # ----------------------------------------------------------------
+        # Pearson-Korrelationen (salienz-gewichtet wenn lyrics_saliency vorhanden)
+        # ----------------------------------------------------------------
+        ar_pearson = self._weighted_pearson(arousal_orig, arousal_rest, _seg_weights)
+        val_pearson = self._weighted_pearson(valence_orig, valence_rest, _seg_weights)
 
         # ----------------------------------------------------------------
         # Klimax-Peak-Analyse
@@ -327,16 +372,46 @@ class EmotionalArcPreservationMetric:
         )
 
     @staticmethod
+    @staticmethod
     def _pearson(a: np.ndarray, b: np.ndarray) -> float:
         """Pearson-Korrelation, NaN-sicher."""
+        return EmotionalArcPreservationMetric._weighted_pearson(a, b, None)
+
+    @staticmethod
+    def _weighted_pearson(
+        a: np.ndarray,
+        b: np.ndarray,
+        weights: np.ndarray | None,
+    ) -> float:
+        """Gewichtete Pearson-Korrelation (§2.44 Lyrics-Salienz), NaN-sicher.
+
+        weights: 1D-Array gleichlang wie a/b; None oder uniform → ungewichtet.
+        Hoch-salienz-Segmente (weight > 1.0) beeinflussen die Korrelation stärker.
+        """
         try:
             if len(a) < 2 or len(b) < 2:
                 return 1.0
-            std_a = np.std(a)
-            std_b = np.std(b)
+            a = np.asarray(a, dtype=np.float64)
+            b = np.asarray(b, dtype=np.float64)
+            n = min(len(a), len(b))
+            a, b = a[:n], b[:n]
+            if weights is None or len(weights) == 0:
+                w = np.ones(n, dtype=np.float64)
+            else:
+                w = np.asarray(weights[:n], dtype=np.float64)
+                w = np.clip(w, 0.0, None)
+            w_sum = float(np.sum(w))
+            if w_sum < 1e-9:
+                return 1.0
+            w = w / w_sum  # normalize
+            a_mean = float(np.sum(w * a))
+            b_mean = float(np.sum(w * b))
+            cov = float(np.sum(w * (a - a_mean) * (b - b_mean)))
+            std_a = float(np.sqrt(np.sum(w * (a - a_mean) ** 2)))
+            std_b = float(np.sqrt(np.sum(w * (b - b_mean) ** 2)))
             if std_a < 1e-9 or std_b < 1e-9:
                 return 1.0
-            corr = float(np.corrcoef(a, b)[0, 1])
+            corr = cov / (std_a * std_b)
             if not math.isfinite(corr):
                 return 0.0
             return float(np.clip(corr, -1.0, 1.0))
@@ -512,18 +587,20 @@ def measure_emotional_arc(
     original: np.ndarray,
     restored: np.ndarray,
     sr: int,
+    lyrics_saliency: np.ndarray | None = None,
 ) -> EmotionalArcResult:
     """Convenience-Wrapper: Erhalt des emotionalen Bogens prüfen.
 
     Args:
-        original: Original-Audio vor Restaurierung, float32, SR = 48000
-        restored: Restauriertes Audio, float32, SR = 48000
-        sr:       48000 (Pflicht)
+        original:        Original-Audio vor Restaurierung, float32, SR = 48000
+        restored:        Restauriertes Audio, float32, SR = 48000
+        sr:              48000 (Pflicht)
+        lyrics_saliency: Optionales Salienz-Array aus §2.36 LGE (§2.44).
 
     Returns:
         EmotionalArcResult mit Pearson-Korrelationen und Klimax-Analyse.
     """
-    return get_emotional_arc_metric().measure(original, restored, sr)
+    return get_emotional_arc_metric().measure(original, restored, sr, lyrics_saliency=lyrics_saliency)
 
 
 def correct_emotional_arc(

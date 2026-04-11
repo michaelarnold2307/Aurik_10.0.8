@@ -279,6 +279,187 @@ class BanquetStemSeparator:
         return self.metrics
 
 
+class MLStemSeparator:
+    """SOTA ML-basierte Stem-Separation.
+
+    Kaskade nach §4.1 DSP-Entscheidungsmatrix:
+      Tier-1: MelBandRoformer (BSRoformer) — Vocals-SOTA, 860 MB ONNX
+      Tier-2: MDX23C (Kim_Vocal_2 + Kim_Inst) — robuster Fallback
+      Tier-3: HTDemucs-6s — Legacy-Fallback
+      Tier-4: HPSS-Wiener (scipy, DSP-only) — immer verfügbar
+
+    Die Fallback-Kette ist vollständig ML-Failure-safe: kein OOM-Kill kann
+    die Pipeline stoppen, weil Tier-4 ohne ML-Modelle auskommt.
+
+    Anmerkung: try_allocate() für ML-Modelle wird in den jeweiligen Plugins
+    gehandhabt. Diese Klasse delegiert nur ohne Lazy-Load.
+    """
+
+    def __init__(self) -> None:
+        self.metrics: dict = {}
+
+    def separate(self, audio: np.ndarray, sample_rate: int) -> dict[str, np.ndarray]:
+        """Trenne Audio in Stems (vocals, drums, bass, other).
+
+        Parameters
+        ----------
+        audio       : float32 ndarray, mono [samples] oder stereo [samples, 2]
+        sample_rate : int — muss 48000 sein (Pflicht per §2.0)
+
+        Returns
+        -------
+        dict mit keys 'vocals', 'drums', 'bass', 'other' (alle float32)
+        """
+        audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+        orig_dtype = audio.dtype
+
+        # ── Tier-1: MelBandRoformer ───────────────────────────────────────
+        try:
+            from plugins.bs_roformer_plugin import get_bs_roformer
+
+            plugin = get_bs_roformer()
+            # separate() gibt StemSeparationResult zurück; stems = dict[name → array]
+            result = plugin.separate(audio, sample_rate, stems=["vocals", "drums", "bass", "other"])
+            stems = result.stems
+            if stems and "vocals" in stems:
+                out = {
+                    "vocals": np.asarray(stems.get("vocals", np.zeros_like(audio)), dtype=orig_dtype),
+                    "drums": np.asarray(stems.get("drums", np.zeros_like(audio)), dtype=orig_dtype),
+                    "bass": np.asarray(stems.get("bass", np.zeros_like(audio)), dtype=orig_dtype),
+                    "other": np.asarray(stems.get("other", np.zeros_like(audio)), dtype=orig_dtype),
+                }
+                self.metrics = {"backend": "BSRoformer", "quality": "SOTA", "tier": 1}
+                _logger.info("MLStemSeparator: Tier-1 BSRoformer OK")
+                return {k: np.clip(v, -1.0, 1.0).astype(orig_dtype) for k, v in out.items()}
+        except Exception as _err:
+            _logger.warning("MLStemSeparator: BSRoformer fehlgeschlagen (%s) → Tier-2", _err)
+
+        # ── Tier-2: MDX23C ────────────────────────────────────────────────
+        try:
+            from plugins.mdx23c_plugin import get_mdx23c_plugin
+
+            mdx = get_mdx23c_plugin()
+            all_stems = mdx.separate_all_stems(audio, sample_rate, stems=["vocals", "inst"])
+            vocals = np.asarray(all_stems.get("vocals", np.zeros_like(audio)), dtype=orig_dtype)
+            inst = np.asarray(all_stems.get("inst", np.zeros_like(audio)), dtype=orig_dtype)
+            # MDX23C liefert nur vocals + inst; Drums/Bass aus Instrumental via HPSS
+            _length = min(len(inst) if inst.ndim == 1 else inst.shape[0], 48000 * 10)
+            inst_mono = (inst[:_length] if inst.ndim == 1 else inst[:_length].mean(axis=1)).astype(np.float64)
+            from scipy.ndimage import median_filter
+            from scipy.signal import istft as _istft
+            from scipy.signal import stft as _stft
+
+            _np, _nov = 2048, 1536
+            _, _, Zxx = _stft(inst_mono, fs=sample_rate, nperseg=_np, noverlap=_nov)
+            _m = np.abs(Zxx)
+            _h = median_filter(_m, size=(1, 31))
+            _p = median_filter(_m, size=(31, 1))
+            _tot = _h + _p + 1e-12
+            _, _harm = _istft(Zxx * (_h / _tot), fs=sample_rate, nperseg=_np, noverlap=_nov)
+            _, _perc = _istft(Zxx * (_p / _tot), fs=sample_rate, nperseg=_np, noverlap=_nov)
+            n = inst.shape[0] if inst.ndim == 2 else len(inst)
+
+            def _fit(a: np.ndarray, n: int) -> np.ndarray:
+                return a[:n] if len(a) >= n else np.pad(a, (0, n - len(a)))
+
+            harm_a = _fit(_harm, n).astype(orig_dtype)
+            perc_a = _fit(_perc, n).astype(orig_dtype)
+            from scipy.signal import butter, sosfilt
+
+            sos_bass = butter(4, 250.0 / (sample_rate / 2.0), btype="low", output="sos")
+            bass_a = sosfilt(sos_bass, harm_a).astype(orig_dtype)
+            self.metrics = {"backend": "MDX23C+HPSS", "quality": "high", "tier": 2}
+            _logger.info("MLStemSeparator: Tier-2 MDX23C OK")
+            return {
+                "vocals": np.clip(vocals, -1.0, 1.0).astype(orig_dtype),
+                "drums": np.clip(perc_a, -1.0, 1.0).astype(orig_dtype),
+                "bass": np.clip(bass_a, -1.0, 1.0).astype(orig_dtype),
+                "other": np.clip(harm_a - bass_a, -1.0, 1.0).astype(orig_dtype),
+            }
+        except Exception as _err:
+            _logger.warning("MLStemSeparator: MDX23C fehlgeschlagen (%s) → Tier-3", _err)
+
+        # ── Tier-3: HTDemucs ─────────────────────────────────────────────
+        try:
+            from plugins.htdemucs_plugin import get_htdemucs_plugin
+
+            ht = get_htdemucs_plugin()
+            if ht is None:
+                raise RuntimeError("HTDemucs plugin nicht verfügbar")
+            ht_stems = ht.separate(audio, sample_rate)
+            if ht_stems and "vocals" in ht_stems:
+                self.metrics = {"backend": "HTDemucs", "quality": "high", "tier": 3}
+                _logger.info("MLStemSeparator: Tier-3 HTDemucs OK")
+                out = {
+                    "vocals": np.asarray(ht_stems.get("vocals", np.zeros_like(audio)), dtype=orig_dtype),
+                    "drums": np.asarray(ht_stems.get("drums", np.zeros_like(audio)), dtype=orig_dtype),
+                    "bass": np.asarray(ht_stems.get("bass", np.zeros_like(audio)), dtype=orig_dtype),
+                    "other": np.asarray(ht_stems.get("other", np.zeros_like(audio)), dtype=orig_dtype),
+                }
+                return {k: np.clip(v, -1.0, 1.0).astype(orig_dtype) for k, v in out.items()}
+        except Exception as _err:
+            _logger.warning("MLStemSeparator: HTDemucs fehlgeschlagen (%s) → Tier-4 HPSS", _err)
+
+        # ── Tier-4: HPSS-Wiener (kein ML, immer verfügbar) ───────────────
+        _logger.info("MLStemSeparator: Tier-4 HPSS-Wiener DSP-Fallback")
+        self.metrics = {"backend": "HPSS-Wiener", "quality": "basic", "tier": 4}
+        return self._hpss_separate(audio, sample_rate, orig_dtype)
+
+    def _hpss_separate(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        dtype: np.dtype,
+    ) -> dict[str, np.ndarray]:
+        """HPSS-Wiener-Masken Separation (Fitzgerald 2010) — Tier-4 Fallback."""
+        from scipy.ndimage import median_filter
+        from scipy.signal import butter, sosfilt
+        from scipy.signal import istft as _istft
+        from scipy.signal import stft as _stft
+
+        mono = (audio.mean(axis=1) if audio.ndim == 2 else audio).astype(np.float64)
+        n = len(mono)
+        nperseg, noverlap = 2048, 1536
+        _, _, Zxx = _stft(mono, fs=sr, nperseg=nperseg, noverlap=noverlap)
+        mag = np.abs(Zxx)
+        harm_mag = median_filter(mag, size=(1, 31))
+        perc_mag = median_filter(mag, size=(31, 1))
+        total = harm_mag + perc_mag + 1e-12
+        mask_h, mask_p = harm_mag / total, perc_mag / total
+        _, harm_a = _istft(Zxx * mask_h, fs=sr, nperseg=nperseg, noverlap=noverlap)
+        _, perc_a = _istft(Zxx * mask_p, fs=sr, nperseg=nperseg, noverlap=noverlap)
+
+        def _fit(a: np.ndarray) -> np.ndarray:
+            return (a[:n] if len(a) >= n else np.pad(a, (0, n - len(a)))).astype(dtype)
+
+        harm_a = _fit(harm_a)
+        perc_a = _fit(perc_a)
+        sos_bass = butter(4, 250.0 / (sr / 2.0), btype="low", output="sos")
+        bass_a = sosfilt(sos_bass, harm_a).astype(dtype)
+        vocals_a = (harm_a - bass_a).astype(dtype)
+
+        if audio.ndim == 2:  # zurück auf stereo duplizieren
+
+            def _stereo(m: np.ndarray) -> np.ndarray:
+                return np.stack([m, m], axis=1)
+
+            return {
+                "vocals": np.clip(_stereo(vocals_a), -1.0, 1.0).astype(dtype),
+                "drums": np.clip(_stereo(perc_a), -1.0, 1.0).astype(dtype),
+                "bass": np.clip(_stereo(bass_a), -1.0, 1.0).astype(dtype),
+                "other": np.clip(_stereo(harm_a), -1.0, 1.0).astype(dtype),
+            }
+        return {
+            "vocals": np.clip(vocals_a, -1.0, 1.0).astype(dtype),
+            "drums": np.clip(perc_a, -1.0, 1.0).astype(dtype),
+            "bass": np.clip(bass_a, -1.0, 1.0).astype(dtype),
+            "other": np.clip(harm_a, -1.0, 1.0).astype(dtype),
+        }
+
+    def get_metrics(self) -> dict:
+        return self.metrics
+
+
 class StemSeparator:
     """
     Unified API for stem separation.
@@ -298,7 +479,8 @@ class StemSeparator:
             Parameters passed to backend
         """
         if backend == "auto":
-            # Prefer Banquet if available, otherwise spectral
+            # Keep auto-mode deterministic and lightweight in default/test setups.
+            # High-cost ML backend remains available via explicit backend="demucs".
             backend = "banquet" if BANQUET_AVAILABLE else "spectral"
 
         if backend == "banquet":
@@ -313,16 +495,9 @@ class StemSeparator:
 
         if backend == "demucs":
             try:
-                pass
-
-                # DemucsStemSeparator might not be implemented yet
-                # self.backend = DemucsStemSeparator(**backend_kwargs)
-                # self.backend_name = 'demucs'
-                _logger.warning("DemucsStemSeparator not implemented, falling back to spectral")
-                backend = "spectral"
-                self.backend = SpectralStemSeparator(**backend_kwargs)
-            except ImportError:
-                _logger.warning("Demucs not available, falling back to spectral")
+                self.backend = MLStemSeparator(**backend_kwargs)
+            except Exception as _exc:
+                _logger.warning("MLStemSeparator nicht verfügbar (%s), Fallback auf spectral", _exc)
                 backend = "spectral"
                 self.backend = SpectralStemSeparator(**backend_kwargs)
 
@@ -368,11 +543,14 @@ class StemSeparator:
                 "description": "Spectral frequency-based separation",
             }
         elif self.backend_name == "demucs":
+            tier = getattr(self.backend, "metrics", {}).get("tier", "?")
+            quality = getattr(self.backend, "metrics", {}).get("quality", "SOTA")
+            backend_name = getattr(self.backend, "metrics", {}).get("backend", "ML")
             return {
-                "backend": "demucs",
-                "quality": "SOTA",
+                "backend": backend_name,
+                "quality": quality,
                 "speed": "medium",
-                "description": "Deep-Learning-based separation (Demucs)",
+                "description": f"ML Stem-Sep Tier-{tier}: BSRoformer→MDX23C→HTDemucs→HPSS",
             }
         else:
             return {
@@ -381,70 +559,6 @@ class StemSeparator:
                 "speed": "unknown",
                 "description": "Unknown backend",
             }
-
-    class DemucsStemSeparator:
-        """HPSS-basierter Stem-Separator (Fitzgerald 2010) mit Wiener-Masken.
-
-        Dient als robuster CPU-Fallback wenn MDX23C/HTDemucs-ONNX nicht verfügbar.
-        Aktivierung: automatisch durch StemSeparator-Backend-Kaskade.
-        """
-
-        def __init__(self, model_name: str = "htdemucs"):
-            self.model_name = model_name
-
-        def separate(self, audio: np.ndarray, sr: int) -> dict[str, np.ndarray]:
-            """HPSS-basierte Stem-Separation als Fallback ohne Demucs.
-
-            Harmonic-Percussive Source Separation (Fitzgerald 2010):
-              - STFT-basierte Median-Filterung in Zeit (harmonisch) und Frequenz (perkussiv)
-              - Wiener-Maske für sanfte Trennung
-              - Bass <250 Hz als separater Bass-Stem
-            """
-            from scipy.signal import istft, stft
-
-            audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
-            orig_dtype = audio.dtype
-            try:
-                mono = audio.mean(axis=0) if audio.ndim > 1 else audio
-                mono = mono.astype(np.float64)
-                nperseg = 2048
-                noverlap = nperseg * 3 // 4
-                _, _, Zxx = stft(mono, fs=sr, nperseg=nperseg, noverlap=noverlap)
-                mag = np.abs(Zxx)
-                # Harmonisch: Median über Zeit (Spalten)
-                from scipy.ndimage import median_filter
-
-                harm_mag = median_filter(mag, size=(1, 31))
-                # Perkussiv: Median über Frequenz (Zeilen)
-                perc_mag = median_filter(mag, size=(31, 1))
-                # Soft-Maske (Wiener)
-                total = harm_mag + perc_mag + 1e-12
-                mask_h = harm_mag / total
-                mask_p = perc_mag / total
-                Zxx_h = Zxx * mask_h
-                Zxx_p = Zxx * mask_p
-                _, harm_audio = istft(Zxx_h, fs=sr, nperseg=nperseg, noverlap=noverlap)
-                _, perc_audio = istft(Zxx_p, fs=sr, nperseg=nperseg, noverlap=noverlap)
-                n = len(mono)
-                harm_audio = harm_audio[:n] if len(harm_audio) >= n else np.pad(harm_audio, (0, n - len(harm_audio)))
-                perc_audio = perc_audio[:n] if len(perc_audio) >= n else np.pad(perc_audio, (0, n - len(perc_audio)))
-                # Bass: Low-pass <250 Hz aus Harmonisch
-                from scipy.signal import butter, sosfilt
-
-                sos_bass = butter(4, 250.0 / (sr / 2.0), btype="low", output="sos")
-                bass_audio = sosfilt(sos_bass, harm_audio)
-                vocals_audio = harm_audio - bass_audio  # Alles über Bass als Vocals/Other
-                return {
-                    "vocals": vocals_audio.astype(orig_dtype),
-                    "drums": perc_audio.astype(orig_dtype),
-                    "bass": bass_audio.astype(orig_dtype),
-                    "other": ((harm_audio + perc_audio) / 2.0).astype(orig_dtype),
-                }
-            except Exception as e:
-                raise RuntimeError(f"HPSS-Stem-Separation fehlgeschlagen: {e}") from e
-
-        def get_metrics(self) -> dict:
-            return {}
 
     def get_metrics(self) -> dict:
         """Get separation metrics from backend"""
@@ -516,6 +630,8 @@ if __name__ == "__main__":
     from backend.file_import import load_audio_file
 
     _res = load_audio_file(args.input)
+    if _res is None:
+        raise RuntimeError(f"Audiodatei konnte nicht geladen werden: {args.input}")
     audio, sr = _res["audio"], int(_res["sr"])
     _logger.info("Loaded %d Hz, shape %s", sr, audio.shape)
 

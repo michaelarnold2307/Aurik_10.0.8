@@ -180,9 +180,15 @@ class BSRoFormerPlugin:
             # Priorität: lokales melbandroformer_optimized.onnx (860 MB, §4.4)
             for model_path in (self._LOCAL_MBR, self.MODELS_DIR / "bs_roformer.onnx"):
                 if model_path.exists():
+                    try:
+                        from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                        _bs_prov = _get_prov("BSRoFormer")
+                    except Exception:
+                        _bs_prov = ["CPUExecutionProvider"]
                     session = ort.InferenceSession(
                         str(model_path),
-                        providers=["CPUExecutionProvider"],
+                        providers=_bs_prov,
                     )
                     input_meta = session.get_inputs()[0] if session.get_inputs() else None
                     output_meta = session.get_outputs()[0] if session.get_outputs() else None

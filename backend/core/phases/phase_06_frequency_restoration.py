@@ -117,6 +117,20 @@ try:
 except ImportError:
     _PGHI_AVAILABLE_P06 = False
 
+# §2.46b Spectral-Tilt-Preservation-Invariante: material-adaptive tolerance in dB/octave
+_TILT_MATERIAL_TOLERANCE: dict[str, float] = {
+    "digital": 1.5,
+    "cd_digital": 1.5,
+    "streaming": 1.5,
+    "tape": 1.875,
+    "reel_tape": 1.875,
+    "vinyl": 2.25,
+    "minidisc": 2.25,
+    "shellac": 3.0,
+    "wax_cylinder": 3.0,
+    "wire_recording": 3.0,
+}
+
 
 class FrequencyRestorationPhase(PhaseInterface):
     """
@@ -157,12 +171,12 @@ class FrequencyRestorationPhase(PhaseInterface):
         },
         "shellac": {
             "rolloff_hz": 4500,  # Shellac 78rpm (severe mechanical rolloff)
-            "extension_range_hz": [4500, 10000],
-            "restoration_strength": 0.90,
+            "extension_range_hz": [4500, 7000],  # §0 Vintage Aesthetics: ≤ 7 kHz für pre-1940
+            "restoration_strength": 0.80,  # Konservativer — Primum non nocere
             "sbr_ratio": 0.60,  # More harmonic extension needed
-            "transient_synthesis": 0.7,
+            "transient_synthesis": 0.5,  # Reduziert — historisches Material hat weichere Transienten
             "lpc_order": 20,
-            "max_boost_db": 12.0,
+            "max_boost_db": 8.0,  # §0: HF-Halluzination vermeiden bei historischem Träger
         },
         "cd_digital": {
             "rolloff_hz": 20000,  # No rolloff (full bandwidth)
@@ -417,6 +431,44 @@ class FrequencyRestorationPhase(PhaseInterface):
             restored = audio + (restored - audio) * scale_factor
             hf_boost_db = max_boost
 
+        # §2.46b Spectral-Tilt-Preservation-Invariante: cap HF if era tilt would be violated
+        _tilt_cap_meta: dict = {}
+        era_result = kwargs.get("era_result")
+        if era_result is not None and hasattr(era_result, "spectral_tilt"):
+            try:
+                _era_tilt_target = float(era_result.spectral_tilt)
+                # Reuse era_classifier's tilt estimation (no duplication)
+                from backend.core.era_classifier import get_era_classifier as _get_ec
+
+                _era_tilt_post = _get_ec()._estimate_spectral_tilt(
+                    restored[0] if restored.ndim == 2 else restored, sample_rate
+                )
+                _mat_key = str(material_type).lower().replace(" ", "_").replace("-", "_")
+                _mat_tol = _TILT_MATERIAL_TOLERANCE.get(_mat_key, 1.5)
+                _tilt_deviation = abs(_era_tilt_post - _era_tilt_target)
+                if _tilt_deviation > _mat_tol:
+                    # Linear cap: reduce HF-extension contribution proportional to excess
+                    _cap_factor = float(np.clip(1.0 - (_tilt_deviation - _mat_tol) / (_mat_tol * 2.0), 0.5, 1.0))
+                    restored = audio + _cap_factor * (restored - audio)
+                    hf_boost_db = hf_boost_db * _cap_factor
+                    _tilt_cap_meta = {
+                        "post_tilt": round(_era_tilt_post, 3),
+                        "era_tilt": round(_era_tilt_target, 3),
+                        "deviation": round(_tilt_deviation, 3),
+                        "tolerance_dboct": round(_mat_tol, 3),
+                        "cap_factor": round(_cap_factor, 3),
+                    }
+                    logger.debug(
+                        "Phase 06 §2.46b tilt-cap: post=%.2f era=%.2f dev=%.2f tol=%.2f cap=%.2f",
+                        _era_tilt_post,
+                        _era_tilt_target,
+                        _tilt_deviation,
+                        _mat_tol,
+                        _cap_factor,
+                    )
+            except Exception as _tc_ex:
+                logger.debug("Phase 06 tilt-cap failed (graceful skip): %s", _tc_ex)
+
         # NaN/Inf-Guard + Clip (§3.1 Pflicht)
         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
         restored = np.clip(restored, -1.0, 1.0)
@@ -488,6 +540,7 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
                 **ml_metadata,
+                **({"spectral_tilt_capped": _tilt_cap_meta} if _tilt_cap_meta else {}),
             },
         )
 
@@ -763,12 +816,29 @@ class FrequencyRestorationPhase(PhaseInterface):
         n_fft = 4096
 
         if audio.ndim == 2:
-            # Process stereo independently
-            restored_left = self._restore_channel(audio[:, 0], params, enable_sbr, hop_length, n_fft)
-            restored_right = self._restore_channel(audio[:, 1], params, enable_sbr, hop_length, n_fft)
-            # MRSA post-processing: zone-aware gain refinement + PGHI
-            restored_left = self._mrsa_gain_refinement(audio[:, 0], restored_left, self.sample_rate)
-            restored_right = self._mrsa_gain_refinement(audio[:, 1], restored_right, self.sample_rate)
+            # §2.51 M/S processing: derive HF restoration mask from Mid channel only.
+            # SBR and LPC generate new STFT content; if applied independently to L and R
+            # the synthesised harmonics are phase-incoherent across channels → mono-sum
+            # cancellation in 8–20 kHz.  Fix: restore Mid fully, restore Side conservatively
+            # (×0.35 of the Mid gain envelope) to preserve stereo air without introducing
+            # cross-channel HF phase divergence (spec §2.51 — Spectral Repair M/S).
+            mid = (audio[:, 0] + audio[:, 1]) * (1.0 / np.sqrt(2))
+            side = (audio[:, 0] - audio[:, 1]) * (1.0 / np.sqrt(2))
+
+            restored_mid = self._restore_channel(mid, params, enable_sbr, hop_length, n_fft)
+            restored_mid = self._mrsa_gain_refinement(mid, restored_mid, self.sample_rate)
+
+            # Side: apply same structural gain envelope but at reduced strength so that the
+            # stereo field opens up proportionally without independent spectral synthesis.
+            _side_params = dict(params)
+            _side_params["restoration_strength"] = params["restoration_strength"] * 0.35
+            _side_params["sbr_ratio"] = params["sbr_ratio"] * 0.35
+            restored_side = self._restore_channel(side, _side_params, enable_sbr, hop_length, n_fft)
+            restored_side = self._mrsa_gain_refinement(side, restored_side, self.sample_rate)
+
+            # Decode M/S → L/R
+            restored_left = (restored_mid + restored_side) * (1.0 / np.sqrt(2))
+            restored_right = (restored_mid - restored_side) * (1.0 / np.sqrt(2))
             restored = np.column_stack([restored_left, restored_right])
         else:
             restored = self._restore_channel(audio, params, enable_sbr, hop_length, n_fft)

@@ -2,8 +2,80 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# §1.4a Structured FailReason (v9.10.130)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FailReason:
+    """Structured failure reason for critical quality modules.
+
+    §1.4a mandates that PQS, HolisticPerceptualGate, ArtifactFreedomGate,
+    and MusicalGoalsChecker produce structured fail_reason entries on failures.
+
+    Attributes
+    ----------
+    component : str
+        Name of the failing module (e.g. "HolisticPerceptualGate", "ArtifactFreedomGate").
+    error_code : str
+        Machine-readable code (e.g. "HPI_BELOW_ZERO", "ARTIFACT_VETO", "P1_REGRESSION").
+    severity : str
+        One of "failed", "degraded", "warning".
+    action : str
+        What the system did in response (e.g. "rollback", "safe_mode", "bypass").
+    details : str
+        Human-readable explanation.
+    phase_id : str
+        Phase that triggered the failure, if applicable.
+    """
+
+    component: str
+    error_code: str
+    severity: str = "failed"
+    action: str = ""
+    details: str = ""
+    phase_id: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to legacy dict format for backward compatibility."""
+        return {
+            "component": self.component,
+            "error_code": self.error_code,
+            "severity": self.severity,
+            "action": self.action,
+            "details": self.details,
+            "phase_id": self.phase_id,
+        }
+
+
+def make_fail_reason(
+    component: str,
+    error_code: str,
+    *,
+    severity: str = "failed",
+    action: str = "",
+    details: str = "",
+    phase_id: str = "",
+) -> FailReason:
+    """Factory for FailReason — convenience wrapper."""
+    return FailReason(
+        component=component,
+        error_code=error_code,
+        severity=severity,
+        action=action,
+        details=details,
+        phase_id=phase_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PipelineHealthState
+# ---------------------------------------------------------------------------
 
 
 class PipelineHealthState(str, Enum):

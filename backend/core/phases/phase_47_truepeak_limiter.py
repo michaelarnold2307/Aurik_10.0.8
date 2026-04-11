@@ -125,10 +125,18 @@ class TruePeakLimiterPhase(PhaseInterface):
 
         is_stereo = audio.ndim == 2
         if is_stereo:
-            left = self._limit_channel(audio[:, 0], sample_rate, ceiling_lin)
-            right = self._limit_channel(audio[:, 1], sample_rate, ceiling_lin)
-            n = min(len(left), len(right))
-            processed = np.column_stack([left[:n], right[:n]])
+            # §2.51 Linked True Peak: derive gain reduction from the channel with the
+            # higher instantaneous peak so both channels get the same gain curve.
+            # This prevents independent L/R gain divergence → stereo phase cancellation.
+            combined = np.where(np.abs(audio[:, 0]) >= np.abs(audio[:, 1]), audio[:, 0], audio[:, 1])
+            n = len(combined)
+            if n < 16:
+                processed = np.clip(audio, -ceiling_lin, ceiling_lin)
+            else:
+                gain = self._compute_gain_curve(combined, sample_rate, ceiling_lin)
+                left = audio[:n, 0] * gain
+                right = audio[:n, 1] * gain
+                processed = np.column_stack([left, right])
         else:
             processed = self._limit_channel(audio, sample_rate, ceiling_lin)
 
@@ -180,11 +188,19 @@ class TruePeakLimiterPhase(PhaseInterface):
     # Kern-Algorithmus
     # ------------------------------------------------------------------
 
-    def _limit_channel(self, audio: np.ndarray, sample_rate: int, ceiling: float) -> np.ndarray:
-        """Lookahead-Limiter für einen einzelnen Kanal."""
+    def _compute_gain_curve(self, audio: np.ndarray, sample_rate: int, ceiling: float) -> np.ndarray:
+        """Compute per-sample gain reduction curve for True-Peak limiting.
+
+        Separated from _limit_channel so that stereo processing can derive
+        a single linked gain curve from the combined peak of both channels
+        (§2.51 Linked Stereo — avoids independent L/R gain divergence).
+
+        Returns: gain_full array, shape (len(audio),), values in [0, 1].
+        """
         n = len(audio)
         if n < 16:
-            return np.clip(audio, -ceiling, ceiling)
+            # Below ceiling → unity gain; above → hard clip handled by caller
+            return np.ones(n)
 
         # 1. 4× Oversampling
         os_audio = sig.resample_poly(audio, _OVERSAMPLING, 1)
@@ -228,9 +244,17 @@ class TruePeakLimiterPhase(PhaseInterface):
                 gain_smooth[i] = gain_smooth[i - 1] + rel_coeff * (gain_frames[i] - gain_smooth[i - 1])
         gain_smooth = np.clip(gain_smooth, 0.0, 1.0)
 
-        # 7. Gain auf Originalsignal (nicht oversampled) anwenden
+        # 7. Interpolate frame gains back to sample resolution
         gain_full = np.interp(np.arange(n), np.arange(n_frames) * frame_s, gain_smooth)
-        return audio * gain_full[:n]
+        return gain_full[:n]
+
+    def _limit_channel(self, audio: np.ndarray, sample_rate: int, ceiling: float) -> np.ndarray:
+        """Lookahead-Limiter für einen einzelnen Kanal."""
+        n = len(audio)
+        if n < 16:
+            return np.clip(audio, -ceiling, ceiling)
+        gain = self._compute_gain_curve(audio, sample_rate, ceiling)
+        return audio * gain
 
     def _true_peak_dbfs(self, audio: np.ndarray, sample_rate: int) -> float:
         """Misst True-Peak in dBFS durch 4× Oversampling."""

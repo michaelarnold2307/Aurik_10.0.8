@@ -682,11 +682,21 @@ class CrackleRemovalPhase(PhaseInterface):
         _max_drop_09 = float(self._MAX_RMS_DROP_DB.get(material_type, self._MAX_RMS_DROP_DB["unknown"]))
         if _rms_in_09 > 1e-8 and _rms_drop_09 < -_max_drop_09:
             _req_gain_db = -_max_drop_09 - _rms_drop_09
-            _peak_09 = float(np.percentile(np.abs(restored), 99.9) + 1e-12)
-            _max_safe_09 = max(0.0, -1.5 - 20.0 * np.log10(_peak_09))
-            _makeup_09 = float(np.clip(_req_gain_db, 0.0, _max_safe_09))
+            # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
+            # §2.45a-III: soft-limiter only when peak99 > 0.98.
+            _makeup_09 = float(np.clip(_req_gain_db, 0.0, 6.0))
             if _makeup_09 > 0.0:
                 restored = np.clip(restored * (10.0 ** (_makeup_09 / 20.0)), -1.0, 1.0).astype(np.float32)
+                _peak_09 = float(np.percentile(np.abs(restored), 99.9))
+                if _peak_09 > 0.98:
+                    _abs_09 = np.abs(restored)
+                    _over_09 = _abs_09 > 0.92
+                    if np.any(_over_09):
+                        _sign_09 = np.sign(restored)
+                        restored = np.where(
+                            _over_09, _sign_09 * (0.92 + 0.08 * np.tanh((_abs_09 - 0.92) / 0.08)), restored
+                        )
+                restored = np.clip(restored, -1.0, 1.0).astype(np.float32)
                 _rms_out_09 = float(np.sqrt(np.mean(np.asarray(restored, dtype=np.float64) ** 2) + 1e-12))
                 _rms_drop_09 = 20.0 * np.log10(max(_rms_out_09 / _rms_in_09, 1e-30))
                 logger.info(

@@ -200,6 +200,40 @@ class DropoutRepairPhase(PhaseInterface):
         self._current_material: str = "unknown"  # updated per process() call
         self._current_panns_tags: dict[str, float] = {}  # updated per process() call from kwargs
 
+    def _content_adaptive_repair_strength(
+        self,
+        base_strength: float,
+        content_type: str,
+        duration_ms: float,
+    ) -> float:
+        """Reduce synthetic fill ratio for material/content combinations that smear easily."""
+        strength = float(base_strength)
+        _vocal_prob = max(
+            self._current_panns_tags.get("Singing voice", 0.0),
+            self._current_panns_tags.get("Vocals", 0.0),
+            self._current_panns_tags.get("Speech", 0.0),
+            self._current_panns_tags.get("Male singing", 0.0),
+            self._current_panns_tags.get("Female singing", 0.0),
+        )
+        _material = str(self._current_material or "unknown").lower()
+        _is_analog_sensitive = _material in {"vinyl", "shellac", "wax_cylinder", "wire_recording", "lacquer_disc"}
+
+        if _vocal_prob >= 0.35:
+            if content_type == "tonal":
+                strength *= 0.82
+            elif content_type == "mixed":
+                strength *= 0.88
+            else:
+                strength *= 0.92
+
+        if _is_analog_sensitive and duration_ms <= 120.0:
+            if content_type == "tonal":
+                strength *= 0.90
+            elif content_type == "mixed":
+                strength *= 0.94
+
+        return float(np.clip(strength, 0.0, base_strength))
+
     def _has_sufficient_ml_headroom(self, audio: np.ndarray, sample_rate: int) -> bool:
         """Return True when enough physical RAM is available for AudioSR dropout repair.
 
@@ -1292,7 +1326,7 @@ class DropoutRepairPhase(PhaseInterface):
                 repaired_segment = self._repair_hybrid(before, after, end - start)
 
             # Apply repair
-            strength = params["repair_strength"]
+            strength = self._content_adaptive_repair_strength(params["repair_strength"], content_type, duration_ms)
             repaired[start:end] = strength * repaired_segment + (1 - strength) * audio[start:end]
 
             # Crossfade

@@ -169,6 +169,22 @@
         "group": "tests"
       }
     },
+    // ── 4f. REAL-AUDIO-GATE: UAT R5-R12 auf echter MP3-Fixture ─────────
+    {
+      "label": "pytest: Real-Audio-Gate (UAT R5-R12)",
+      "type": "shell",
+      "command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/test_uat_acceptance_criteria.py -p no:xdist -k \"test_restoration_criteria and (R5 or R6 or R7 or R8 or R9 or R10 or R11 or R12)\" --run-heavy-tests --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=180 --tb=short -v --disable-warnings --no-header",
+      "args": [],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
+        "group": "tests"
+      }
+    },
     // ── 5. RAUCH-TEST: Erste 50 Tests zur schnellen Orientierung ─────────
     {
       "label": "pytest: Smoke-Test (50 Tests, maxfail=3)",

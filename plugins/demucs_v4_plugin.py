@@ -88,9 +88,13 @@ class DemucsV4Plugin:
 
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
-            self._session = ort.InferenceSession(
-                self._model_path, sess_options=opts, providers=["CPUExecutionProvider"]
-            )
+            try:
+                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                _providers = _get_prov("DemucsV4")
+            except Exception:
+                _providers = ["CPUExecutionProvider"]
+            self._session = ort.InferenceSession(self._model_path, sess_options=opts, providers=_providers)
             logger.info("Demucs htdemucs_6s ONNX geladen: %s", self._model_path)
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm

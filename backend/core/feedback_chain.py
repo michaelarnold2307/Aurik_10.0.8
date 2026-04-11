@@ -50,6 +50,8 @@ class FeedbackChain:
         use_pqs_in_loop: bool = False,
         use_versa_in_loop: bool = False,
         max_retries: int | None = None,
+        restorability_score: float = 50.0,
+        defect_severity_mean: float = 0.3,
     ) -> None:
         # Legacy-Kompatibilitaet: max_retries entspricht max_iterations.
         if max_retries is not None:
@@ -59,10 +61,13 @@ class FeedbackChain:
         self.sample_rate = int(sample_rate)
         self.excellence_mode = bool(excellence_mode)
         self.material = str(material)
+        self.restorability_score = float(np.clip(restorability_score, 0.0, 100.0))
+        self.defect_severity_mean = float(np.clip(defect_severity_mean, 0.0, 1.0))
         self.use_mert = bool(use_mert)
         self.use_pqs_in_loop = bool(use_pqs_in_loop)
         self.use_versa_in_loop = bool(use_versa_in_loop)
         self.goal_priority_callback: Callable[[np.ndarray, np.ndarray], tuple[bool, str]] | None = None
+        self.goal_weights: dict[str, float] | None = None  # §2.56 Song-Goal-Importance
         self._pqs_score_fn: Callable[[np.ndarray, int], object] | None = None
         self._versa_score_fn: Callable[[np.ndarray, int], object] | None = None
         self._last_score_source: str = "heuristic_rms"
@@ -135,6 +140,89 @@ class FeedbackChain:
         if current_mos >= 3.5:
             return self.convergence_delta  # 0.02 default
         return min(0.05, self.convergence_delta * 2.5)  # 0.05 for poor audio
+
+    # -------------------------------------------------------------------
+    # §2.54 Adaptive thresholds — material/restorability/defect-aware
+    # -------------------------------------------------------------------
+    _POOR_MATERIALS = frozenset(
+        {
+            "shellac",
+            "wax_cylinder",
+            "wire_recording",
+            "acetate_disc",
+        }
+    )
+    _ANALOG_MATERIALS = frozenset(
+        {
+            "vinyl",
+            "tape",
+            "reel_tape",
+            "cassette",
+            "minidisc",
+        }
+    )
+
+    def _compute_adaptive_prune_threshold(self, is_restorative: bool) -> float:
+        """§2.54: Material-adaptive threshold for FeedbackChain phase pruning.
+
+        Restorative phases on severely degraded material need much more
+        lenient thresholds — their MOS-proxy drop is expected (removing
+        energy that was defect, not content).
+
+        Returns a negative float (more negative = more lenient).
+        """
+        # Base: -0.01 enhancement, -0.05 restorative (legacy fallback)
+        base = -0.05 if is_restorative else -0.01
+
+        # Material factor: poor materials get 2x–3x more lenient
+        mat = self.material.lower() if self.material else "unknown"
+        if mat in self._POOR_MATERIALS:
+            mat_factor = 3.0
+        elif mat in self._ANALOG_MATERIALS:
+            mat_factor = 2.0
+        else:
+            mat_factor = 1.0
+
+        # Restorability factor: lower restorability → more lenient
+        # restorability_score 0–100: 0=pristine, 100=heavily degraded
+        rest_factor = 1.0 + (self.restorability_score / 100.0) * 1.5  # [1.0, 2.5]
+
+        # Defect severity: higher → more lenient
+        sev_factor = 1.0 + self.defect_severity_mean * 1.0  # [1.0, 2.0]
+
+        # Combined: base * max(factors) — use max to avoid over-compounding
+        adaptive = base * max(mat_factor, rest_factor, sev_factor)
+        # Clamp: never more lenient than -0.30, never stricter than base
+        return float(np.clip(adaptive, -0.30, base))
+
+    def _compute_adaptive_mos_regression_tolerance(self) -> float:
+        """§2.54: Material-adaptive MOS regression tolerance for iteration stop.
+
+        Poor material with heavy defects needs more tolerance — each
+        iteration may transiently worsen MOS as it repairs deeper damage.
+
+        Returns a positive float (higher = more tolerant).
+        """
+        # Base: 0.05 (legacy fallback)
+        base = 0.05
+
+        mat = self.material.lower() if self.material else "unknown"
+        if mat in self._POOR_MATERIALS:
+            mat_bonus = 0.10  # shellac/wax allow up to 0.15 regression
+        elif mat in self._ANALOG_MATERIALS:
+            mat_bonus = 0.05  # vinyl/tape allow up to 0.10
+        else:
+            mat_bonus = 0.0
+
+        # Higher restorability (more degraded) → more tolerance
+        rest_bonus = (self.restorability_score / 100.0) * 0.08  # up to +0.08
+
+        # Higher defect severity → more tolerance
+        sev_bonus = self.defect_severity_mean * 0.05  # up to +0.05
+
+        tolerance = base + max(mat_bonus, rest_bonus, sev_bonus)
+        # Clamp: [0.03, 0.25] — never allow unlimited regression
+        return float(np.clip(tolerance, 0.03, 0.25))
 
     def run(
         self,
@@ -257,7 +345,34 @@ class FeedbackChain:
                         _test_mos = self._compute_iteration_score(_test_out, _sr)
                         _delta = _test_mos - _base_mos
                         _phase_deltas[str(_pid)] = float(_delta)
-                        if _delta >= -0.01:
+                        # §2.54: Restorative phases (denoise, click, dropout) intentionally
+                        # remove energy → MOS proxy may drop slightly vs. defect-laden
+                        # reference. Use material-adaptive threshold (§2.54) to avoid
+                        # pruning legitimate carrier-repair phases.
+                        _RESTORATIVE_PREFIXES = (
+                            "phase_01",
+                            "phase_02",
+                            "phase_03",
+                            "phase_05",
+                            "phase_09",
+                            "phase_12",
+                            "phase_18",
+                            "phase_20",
+                            "phase_23",
+                            "phase_24",
+                            "phase_27",
+                            "phase_28",
+                            "phase_29",
+                            "phase_30",
+                            "phase_49",
+                            "phase_50",
+                            "phase_55",
+                            "phase_56",
+                            "phase_57",
+                        )
+                        _is_restorative = any(str(_pid).startswith(rp) for rp in _RESTORATIVE_PREFIXES)
+                        _prune_threshold = self._compute_adaptive_prune_threshold(_is_restorative)
+                        if _delta >= _prune_threshold:
                             _surviving_phases.append((_pid, _fn, _kw))
                             logger.debug(
                                 "FeedbackChain: phase %s kept (Δ=%.4f)",
@@ -327,7 +442,7 @@ class FeedbackChain:
                     _curr_goals = _checker.measure_all(_goal_window(candidate), _sr)
                     _analytics_dt = _time_fc.perf_counter() - _t_goals
                     self._last_analytics_overhead_s = getattr(self, "_last_analytics_overhead_s", 0.0) + _analytics_dt
-                    abort_result = _gpp.should_abort_iteration(_prev_goals, _curr_goals)
+                    abort_result = _gpp.should_abort_iteration(_prev_goals, _curr_goals, goal_weights=self.goal_weights)
                     if abort_result.should_abort:
                         _log_entry = f"FeedbackChain Iteration {i} abgebrochen: {abort_result.reason}"
                         _goal_priority_log.append(_log_entry)
@@ -386,8 +501,9 @@ class FeedbackChain:
                 converged = True
                 break
 
-            # Regression guard
-            if history[-1] < history[-2] - 0.05:
+            # §2.54 Adaptive regression guard — material/restorability-aware
+            _mos_regression_tol = self._compute_adaptive_mos_regression_tolerance()
+            if history[-1] < history[-2] - _mos_regression_tol:
                 break
 
             current = candidate

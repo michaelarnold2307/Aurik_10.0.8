@@ -447,15 +447,25 @@ class TapeHissReductionPhase(PhaseInterface):
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
             target_rms_drop_db = -max_rms_drop_db
             required_gain_db = target_rms_drop_db - rms_drop_db
-            current_peak = float(np.percentile(np.abs(processed_audio), 99.9) + 1e-12)
-            max_safe_gain_db = max(0.0, -1.5 - 20.0 * np.log10(current_peak))
-            makeup_gain_db = float(np.clip(required_gain_db, 0.0, max_safe_gain_db))
+            # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
+            # §2.45a-III: soft-limiter only when peak99 > 0.98.
+            makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 processed_audio = np.clip(
                     processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
                     -1.0,
                     1.0,
                 ).astype(np.float32)
+                current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
+                if current_peak > 0.98:
+                    _abs_29 = np.abs(processed_audio)
+                    _over_29 = _abs_29 > 0.92
+                    if np.any(_over_29):
+                        _sign_29 = np.sign(processed_audio)
+                        processed_audio = np.where(
+                            _over_29, _sign_29 * (0.92 + 0.08 * np.tanh((_abs_29 - 0.92) / 0.08)), processed_audio
+                        )
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
                 rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
                 logger.info(
@@ -555,11 +565,18 @@ class TapeHissReductionPhase(PhaseInterface):
             _pmm_centers = np.arange(len(_pmm_gain_t)) * float(_hop) + _hop * 0.5
             _pmm_x = np.arange(len(processed), dtype=np.float32)
             _gain_samples = np.interp(_pmm_x, _pmm_centers, _pmm_gain_t).astype(np.float32)
-            processed = np.clip((processed * _gain_samples).astype(np.float32), -1.0, 1.0)
+            # §2.45a / §2.54: Scale masking suppression toward 1.0 by intensity_scale.
+            # At low PMGG strength (e.g. 0.14) the masking clamp must be near-transparent
+            # — otherwise full suppression runs regardless of strength causing unexpected
+            # RMS drops, makeup-gain overshoot and TFS coherence degradation.
+            _gain_samples_scaled = (1.0 + intensity_scale * (_gain_samples - 1.0)).astype(np.float32)
+            processed = np.clip((processed * _gain_samples_scaled).astype(np.float32), -1.0, 1.0)
             logger.debug(
-                "🎭 PsychoacousticMasking [phase29]: silence=%.1f%% mean_gain=%.3f",
+                "🎭 PsychoacousticMasking [phase29]: silence=%.1f%% mean_gain=%.3f scaled_mean=%.3f (scale=%.2f)",
                 100.0 * float(np.mean(_pmm.silence_frames)),
                 float(np.mean(_pmm_gain_t)),
+                float(np.mean(_gain_samples_scaled)),
+                intensity_scale,
             )
         except Exception as _pmm_exc:
             logger.debug("PsychoacousticMaskingModel nicht verfügbar: %s", _pmm_exc)

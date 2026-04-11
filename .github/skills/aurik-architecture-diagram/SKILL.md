@@ -51,7 +51,7 @@ Für das vollständige Diagramm müssen die Module exakt in dieser Reihenfolge e
    RestorabilityEstimator (DSP < 5s, §2.26)
    EraClassifier (CLAP + DSP-Rolloff, §2.14)
    GermanSchlagerClassifier (6-Schicht Zero-Shot, §2.19)
-   MediumClassifier (17 Materialtypen, §2.1)
+   MediumDetector (Transfer-Chain-System, §6.7)
 
 ② DEFEKTANALYSE
    DefectScanner (24 DefectTypes, §6.3)

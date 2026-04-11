@@ -52,6 +52,39 @@ from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, Phase
 
 logger = logging.getLogger(__name__)
 
+# §2.46b Spectral-Tilt-Preservation: material-adaptive tolerance in dB/octave
+_TILT_TOLERANCE_P23: dict[str, float] = {
+    "digital": 1.5,
+    "cd_digital": 1.5,
+    "streaming": 1.5,
+    "tape": 1.875,
+    "reel_tape": 1.875,
+    "vinyl": 2.25,
+    "minidisc": 2.25,
+    "shellac": 3.0,
+    "wax_cylinder": 3.0,
+    "wire_recording": 3.0,
+}
+
+
+def _est_tilt_p23(audio: np.ndarray, sr: int) -> float:
+    """Quick spectral tilt estimate in dB/octave (§2.46b)."""
+    mono = audio[:, 0] if audio.ndim == 2 else audio
+    n = min(len(mono), 8192)
+    if n < 64:
+        return 0.0
+    spec = np.abs(np.fft.rfft(mono[:n] * np.hanning(n))) + 1e-12
+    freqs = np.fft.rfftfreq(n, d=1.0 / sr)
+    valid = (freqs >= 100.0) & (freqs <= sr * 0.45)
+    if np.sum(valid) < 8:
+        return 0.0
+    log_f = np.log2(freqs[valid] + 1e-12)
+    log_m = 20.0 * np.log10(spec[valid])
+    log_f_c = log_f - log_f.mean()
+    log_m_c = log_m - log_m.mean()
+    denom = float(np.dot(log_f_c, log_f_c))
+    return float(np.dot(log_f_c, log_m_c) / denom) if denom > 1e-10 else 0.0
+
 
 class SpectralRepair(PhaseInterface):
     """
@@ -208,16 +241,20 @@ class SpectralRepair(PhaseInterface):
         n_samples = int(audio.shape[0])
         duration_s = n_samples / float(max(1, sample_rate))
 
-        # Base model 5.9 GB + duration bonus, scaled by channel count.
-        # Empirical: AudioSR keeps overlapping windows in memory → ~1.5 GB/min overhead.
-        required_gb = 5.0
-        if duration_s >= 180.0:
-            required_gb += 2.0
-        elif duration_s >= 60.0:
-            required_gb += 1.0
-        required_gb *= max(1, n_channels)  # stereo doubles working memory
-        required_gb += 1.5 * (duration_s / 60.0)  # inference buffer overhead per minute
+        # Zone-based budget: _run_audiosr_ml() processes in 10-second zones, so only ONE
+        # zone is in memory at a time.  Use zone duration (not full audio duration) to avoid
+        # a false OOM-guard reject for long songs like 225 s tracks.
+        # Model: ~5.8 GB steady-state.  Per-zone DDIM inference (50 steps × 10 s): ~1.5 GB.
+        _AUDIOSR_ZONE_SECONDS = 10
+        duration_for_budget_s = min(duration_s, float(_AUDIOSR_ZONE_SECONDS))
+
+        required_gb = 5.0  # Base model weight budget
+        if duration_for_budget_s >= 60.0:
+            required_gb += 1.0  # only reached if a zone were somehow > 60 s (never)
+        required_gb += 1.5 * (duration_for_budget_s / 60.0)  # per-zone inference overhead
         required_gb = min(required_gb, 22.0)  # sanity cap
+        # Note: n_channels multiplier removed — _repair_with_audiosr processes mono channels
+        # individually (M/S in _repair_channel), so each call is always mono.
 
         available_gb = float(psutil.virtual_memory().available / (1024**3))
         if available_gb < required_gb + 1.5:
@@ -312,6 +349,7 @@ class SpectralRepair(PhaseInterface):
         # Store material as lowercase string value for guard comparison (handles both str and MaterialType enum)
         self._current_material = str(getattr(material, "value", material)).lower()
         self.validate_input(audio)
+        _audio_for_tilt_p23 = audio.copy()  # §2.46b: tilt reference before any processing (incl. Apollo)
 
         is_stereo = audio.ndim == 2
 
@@ -476,6 +514,33 @@ class SpectralRepair(PhaseInterface):
 
         repaired_audio = np.nan_to_num(repaired_audio, nan=0.0, posinf=0.0, neginf=0.0)
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
+
+        # §2.46b Spectral-Tilt-Guard: cap HF inpainting if tilt deviates beyond tolerance
+        # Only applies to spectral inpainting path, not ADMM declipping (no HF synthesis there)
+        _tilt_capped_p23 = False
+        if not _use_admm:
+            try:
+                _mat_k23 = str(self._current_material).lower().replace(" ", "_").replace("-", "_")
+                _tol23 = _TILT_TOLERANCE_P23.get(_mat_k23, 2.0)
+                _tb23 = _est_tilt_p23(_audio_for_tilt_p23, sample_rate)
+                _ta23 = _est_tilt_p23(repaired_audio, sample_rate)
+                _dev23 = abs(_ta23 - _tb23)
+                if _dev23 > _tol23:
+                    _cap23 = float(np.clip(1.0 - (_dev23 - _tol23) / (_tol23 * 2.0), 0.5, 1.0))
+                    repaired_audio = _cap23 * repaired_audio + (1.0 - _cap23) * _audio_for_tilt_p23
+                    repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
+                    _tilt_capped_p23 = True
+                    logger.info(
+                        "phase_23 §2.46b tilt-cap: before=%.2f after=%.2f dev=%.2f tol=%.2f cap=%.2f",
+                        _tb23,
+                        _ta23,
+                        _dev23,
+                        _tol23,
+                        _cap23,
+                    )
+            except Exception as _tc23:
+                logger.debug("phase_23 §2.46b tilt-cap skipped (graceful): %s", _tc23)
+
         return PhaseResult(
             success=True,
             audio=repaired_audio,
@@ -493,6 +558,7 @@ class SpectralRepair(PhaseInterface):
                 "apollo_preproc_hf_gain_db": _apollo_hf_gain_db,
                 "ml_guard_events": list(self._ml_guard_events),
                 "deferred_for_kmv": ["phase_23_spectral_repair"] if self._ml_guard_events else [],
+                "spectral_tilt_capped": _tilt_capped_p23,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },
@@ -680,10 +746,26 @@ class SpectralRepair(PhaseInterface):
         # §DSP-Spezialregeln: MRSA 5-Zone-Reparatur für BALANCED/QUALITY/MAXIMUM
         _mode_upper = QualityModeConfig.get_mode().value.upper()
         if _mode_upper not in ("FAST",) and len(audio) >= sample_rate:
+            # OOM-Preflight: MRSA (5 Zonen × STFT) benötigt ~2 GB für Stereo-Audio.
+            # Unter 4 GB verfügbar → Single-STFT-Fallback um systemd-oomd zu vermeiden.
+            _mrsa_ok = True
             try:
-                return self._repair_channel_mrsa(audio, sample_rate, thresholds, repair_strength)
-            except Exception as _mrsa_err:
-                logger.warning("MRSA-Reparatur fehlgeschlagen (%s), Single-STFT-Fallback", _mrsa_err)
+                import psutil as _psu
+
+                _avail_gb = _psu.virtual_memory().available / (1024**3)
+                if _avail_gb < 4.0:
+                    logger.warning(
+                        "phase_23: MRSA-OOM-Preflight fehlgeschlagen (%.1f GB < 4.0 GB) — Single-STFT-Fallback",
+                        _avail_gb,
+                    )
+                    _mrsa_ok = False
+            except Exception:
+                pass  # psutil nicht verfügbar — MRSA versuchen
+            if _mrsa_ok:
+                try:
+                    return self._repair_channel_mrsa(audio, sample_rate, thresholds, repair_strength)
+                except Exception as _mrsa_err:
+                    logger.warning("MRSA-Reparatur fehlgeschlagen (%s), Single-STFT-Fallback", _mrsa_err)
 
         # Single-STFT fallback (FAST mode or MRSA failure)
         # Apply inpainting strategies
@@ -736,7 +818,8 @@ class SpectralRepair(PhaseInterface):
         zone_stfts = analyze_zones(audio_f32, sample_rate)
         zone_audios: dict[str, np.ndarray] = {}
 
-        for name, zone in zone_stfts.items():
+        for name in list(zone_stfts.keys()):
+            zone = zone_stfts[name]
             magnitude = np.abs(zone.stft)
             phase = np.angle(zone.stft)
             defect_mask = self._detect_defects(magnitude, phase, thresholds)
@@ -744,6 +827,9 @@ class SpectralRepair(PhaseInterface):
             if np.sum(defect_mask) == 0:
                 # No defects in this zone — passthrough (preserve original)
                 zone_audios[name] = synthesize_zone(zone, zone.stft, len(audio))
+                # Release STFT of this zone immediately — no longer needed
+                zone_stfts[name] = zone._replace(stft=np.empty(0, dtype=np.complex64))
+                del magnitude, phase, defect_mask
                 continue
 
             repaired_mag = self._inpaint_magnitude(magnitude, defect_mask)
@@ -752,6 +838,9 @@ class SpectralRepair(PhaseInterface):
             Zxx_blended = zone.stft * (1.0 - blend_mask) + Zxx_repaired * blend_mask
 
             zone_audios[name] = synthesize_zone(zone, Zxx_blended, len(audio))
+            # Release all intermediary arrays and this zone's STFT immediately
+            zone_stfts[name] = zone._replace(stft=np.empty(0, dtype=np.complex64))
+            del magnitude, phase, defect_mask, repaired_mag, Zxx_repaired, blend_mask, Zxx_blended
 
         return merge_zones(zone_audios, zone_stfts, sample_rate, len(audio))
 

@@ -36,7 +36,7 @@ _RES = Path(__file__).parent.parent / "resources"
 try:
     from Aurik910 import __version__ as _VERSION  # type: ignore[attr-defined]
 except Exception:
-    _VERSION = "9.10.120"
+    _VERSION = "9.10.121"
 
 
 class AurikSplashScreen(QWidget):
@@ -71,7 +71,7 @@ class AurikSplashScreen(QWidget):
 
         # App icon
         self._icon: QPixmap | None = None
-        for _ip in (_RES / "icon_premium.svg", _RES / "icon.png"):
+        for _ip in (_RES / "vinyl_gold.png", _RES / "icon_premium.svg", _RES / "icon.png"):
             if _ip.exists():
                 px = QPixmap(str(_ip))
                 if not px.isNull():

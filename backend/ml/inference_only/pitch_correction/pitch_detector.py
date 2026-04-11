@@ -373,8 +373,11 @@ class CREPEPitchDetector:
 
             # Prefer jump deviation if it's significantly larger
             if np.max(np.abs(region_jump_dev)) > np.max(np.abs(region_cents_dev)):
-                mean_dev = np.mean(region_jump_dev[np.abs(region_jump_dev) > 0.1])
                 max_dev = np.max(np.abs(region_jump_dev))
+                # For discrete step errors, frame smoothing can spread a 100-cent jump
+                # over multiple frames and bias the mean downward. Use the jump peak
+                # as representative deviation when jump evidence dominates.
+                mean_dev = float(np.sign(np.sum(region_jump_dev)) * max_dev)
             else:
                 mean_dev = np.mean(region_cents_dev)
                 max_dev = np.max(np.abs(region_cents_dev))

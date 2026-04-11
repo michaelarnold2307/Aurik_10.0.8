@@ -149,6 +149,30 @@ class SurfaceNoiseProfiling(PhaseInterface):
         super().__init__()
         self.name = "Surface Noise Profiling v2 Professional"
 
+    @staticmethod
+    def _derive_safe_surface_strength(
+        effective_strength: float,
+        material_key: str,
+        panns_tags: dict[str, float],
+    ) -> float:
+        """Reduce denoise aggressiveness on vocal/analog-sensitive material."""
+        strength = float(effective_strength)
+        vocal_prob = max(
+            float(panns_tags.get("Singing voice", 0.0)),
+            float(panns_tags.get("Vocals", 0.0)),
+            float(panns_tags.get("Speech", 0.0)),
+            float(panns_tags.get("Male singing", 0.0)),
+            float(panns_tags.get("Female singing", 0.0)),
+        )
+        is_analog_sensitive = any(
+            token in material_key for token in ("vinyl", "shellac", "wax_cylinder", "wire_recording", "lacquer_disc")
+        )
+        if vocal_prob >= 0.40:
+            strength *= 0.82
+        if is_analog_sensitive:
+            strength *= 0.90
+        return float(np.clip(strength, 0.0, 1.0))
+
     def get_metadata(self) -> PhaseMetadata:
         """Return phase metadata."""
         return PhaseMetadata(
@@ -189,6 +213,9 @@ class SurfaceNoiseProfiling(PhaseInterface):
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _material_key = str(getattr(material, "name", material)).lower()
+        _panns_tags = {k: float(v) for k, v in kwargs.get("panns_tags", {}).items() if isinstance(v, (int, float, str))}
+        _safe_strength = self._derive_safe_surface_strength(_effective_strength, _material_key, _panns_tags)
 
         if _effective_strength <= 0.0:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -209,23 +236,33 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         is_stereo = audio.ndim == 2
         config = dict(self.NOISE_CONFIG.get(material, self.NOISE_CONFIG[MaterialType.CD_DIGITAL]))
-        config["over_subtraction_alpha"] = float(1.0 + (config["over_subtraction_alpha"] - 1.0) * _effective_strength)
-        config["spectral_floor"] = float(
-            np.clip(1.0 - (1.0 - config["spectral_floor"]) * _effective_strength, 0.03, 1.0)
-        )
-        config["smoothing_frames"] = int(max(3, round(config["smoothing_frames"] + (1.0 - _effective_strength) * 6.0)))
+        config["over_subtraction_alpha"] = float(1.0 + (config["over_subtraction_alpha"] - 1.0) * _safe_strength)
+        config["spectral_floor"] = float(np.clip(1.0 - (1.0 - config["spectral_floor"]) * _safe_strength, 0.03, 1.0))
+        config["smoothing_frames"] = int(max(3, round(config["smoothing_frames"] + (1.0 - _safe_strength) * 6.0)))
 
-        # Process each channel
+        # §2.51 Linked-Stereo: OMLSA-Gain aus Mid-Sidechain (L+R)/\u221a2, identisch auf L+R
         if is_stereo:
-            denoised_left, noise_db_left = self._denoise_channel(audio[:, 0], sample_rate, config)
-            denoised_right, noise_db_right = self._denoise_channel(audio[:, 1], sample_rate, config)
-            denoised_audio = np.column_stack((denoised_left, denoised_right))
-            avg_noise_db = (noise_db_left + noise_db_right) / 2
+            mid_sidechain = (audio[:, 0] + audio[:, 1]) / np.sqrt(2.0)
+            denoised_mid, noise_db_mid = self._denoise_channel(mid_sidechain, sample_rate, config)
+            _eps_sn = 1e-10
+            _gain_sn = np.where(
+                np.abs(mid_sidechain) > _eps_sn,
+                denoised_mid / (mid_sidechain + _eps_sn * np.sign(mid_sidechain + _eps_sn)),
+                1.0,
+            )
+            _gain_sn = np.clip(_gain_sn, 0.0, 10.0)
+            denoised_audio = np.column_stack(
+                (
+                    audio[:, 0] * _gain_sn,
+                    audio[:, 1] * _gain_sn,
+                )
+            )
+            avg_noise_db = noise_db_mid
         else:
             denoised_audio, avg_noise_db = self._denoise_channel(audio, sample_rate, config)
 
-        if 0.0 < _effective_strength < 1.0:
-            denoised_audio = audio + _effective_strength * (denoised_audio - audio)
+        if 0.0 < _safe_strength < 1.0:
+            denoised_audio = audio + _safe_strength * (denoised_audio - audio)
 
         denoised_audio, loudness_stats = self._apply_material_loudness_preservation(
             audio,
@@ -249,6 +286,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
                 "rt_factor": float(rt_factor),
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "safe_strength": _safe_strength,
                 "rms_drop_db": loudness_stats["rms_drop_db"],
                 "loudness_makeup_db": loudness_stats["makeup_gain_db"],
             },
@@ -272,15 +310,25 @@ class SurfaceNoiseProfiling(PhaseInterface):
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
             target_rms_drop_db = -max_rms_drop_db
             required_gain_db = target_rms_drop_db - rms_drop_db
-            current_peak = float(np.percentile(np.abs(processed_audio), 99.9) + 1e-12)
-            max_safe_gain_db = max(0.0, -1.5 - 20.0 * np.log10(current_peak))
-            makeup_gain_db = float(np.clip(required_gain_db, 0.0, max_safe_gain_db))
+            # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
+            # §2.45a-III: soft-limiter only when peak99 > 0.98.
+            makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 processed_audio = np.clip(
                     processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
                     -1.0,
                     1.0,
                 ).astype(np.float32)
+                current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
+                if current_peak > 0.98:
+                    _abs_28 = np.abs(processed_audio)
+                    _over_28 = _abs_28 > 0.92
+                    if np.any(_over_28):
+                        _sign_28 = np.sign(processed_audio)
+                        processed_audio = np.where(
+                            _over_28, _sign_28 * (0.92 + 0.08 * np.tanh((_abs_28 - 0.92) / 0.08)), processed_audio
+                        )
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
                 rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
                 logger.info(

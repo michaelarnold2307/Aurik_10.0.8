@@ -70,9 +70,17 @@ def apply(
 
     stereo = audio.ndim == 2
     if stereo:
-        left = apply(audio[0], sample_rate, strength=strength, defect_scores=defect_scores)
-        right = apply(audio[1], sample_rate, strength=strength, defect_scores=defect_scores)
-        out = np.stack([left, right], axis=0)
+        # §2.51 Linked-Stereo: LMS auf Mono-Mix, identische Korrektur auf L+R
+        mono_mix = (audio[0] + audio[1]) / 2.0
+        mono_repaired = apply(mono_mix, sample_rate, strength=strength, defect_scores=defect_scores)
+        _eps_pt = 1e-10
+        _gain_pt = np.where(
+            np.abs(mono_mix) > _eps_pt,
+            mono_repaired / (mono_mix + _eps_pt * np.sign(mono_mix + _eps_pt)),
+            1.0,
+        )
+        _gain_pt = np.clip(_gain_pt, 0.0, 10.0)
+        out = np.stack([audio[0] * _gain_pt, audio[1] * _gain_pt], axis=0)
         return np.clip(out, -1.0, 1.0).astype(np.float32)
 
     # Ab hier: Mono-Verarbeitung

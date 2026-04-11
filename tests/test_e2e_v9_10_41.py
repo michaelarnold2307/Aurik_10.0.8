@@ -29,6 +29,7 @@ _PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 _AUDIO_CANDIDATES = [
     _PROJECT_ROOT / "audio_examples" / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
     _PROJECT_ROOT / "audio_examples" / "Elke_Best_Freund.mp3",
+    _PROJECT_ROOT / "test_audio" / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
 ]
 _AUDIO_FILE: pathlib.Path | None = next((p for p in _AUDIO_CANDIDATES if p.exists()), None)
 _OUTPUT_DIR = _PROJECT_ROOT / "test_output"

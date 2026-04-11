@@ -545,6 +545,120 @@ class ExzellenzDenker:
 
         return _best_audio, _best_goals
 
+    def prognostiziere(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        *,
+        defect_result: object | None = None,
+        material: str = "auto",
+    ) -> dict[str, float]:
+        """Schätzt Goal-Risikowahrscheinlichkeiten VOR der Restaurierung.
+
+        Schnelle DSP-Proxies (≤ 200 ms) als Frühwarnsystem für den
+        PhaseInteractionDenker. Ermöglicht prophylaktische Phasen-Aktivierung
+        bevor UV3 läuft — statt P1/P2-Verletzungen erst danach zu heilen (§2.45a).
+
+        Kein ML, kein STFT-Roundtrip — reine Spektralstatistik auf Kurzfenster.
+
+        Gemessene Risiken:
+            Rauschboden       → Natuerlichkeit / Authentizitaet
+            HF-Verlust        → Brillanz / Timbre
+            Transient-Armut   → Groove / MicroDynamics
+            Dropout-Schwere   → Artikulation
+
+        Returns:
+            Dict goal_name → Risikowahrscheinlichkeit ∈ [0, 1].
+            0.0 = sicher, 1.0 = sicher verletzt ohne schützende Phase.
+            Leeres Dict bei internem Fehler (fail-safe).
+        """
+        try:
+            audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+            if audio.size == 0:
+                return {}
+
+            mono = audio if audio.ndim == 1 else audio.mean(axis=0)
+            risk: dict[str, float] = {}
+
+            # ── Rauschboden → Natuerlichkeit / Authentizitaet ─────────────────────
+            # 5. Perzentil der FFT-Magnituden als Rauschboden-Proxy.
+            # Referenz: -70 dBFS = sauber; -40 dBFS = hohes Rauschen.
+            try:
+                n_fft = min(4096, mono.size)
+                if n_fft >= 128:
+                    fft_mag = np.abs(np.fft.rfft(mono[:n_fft]))
+                    noise_floor_db = float(np.percentile(20.0 * np.log10(fft_mag + 1e-10), 5))
+                    # Lineares Risiko zwischen -70 dBFS (0.0) und -40 dBFS (1.0)
+                    noise_risk = float(np.clip((-noise_floor_db - 40.0) / 30.0, 0.0, 1.0))
+                    risk["natuerlichkeit"] = noise_risk
+                    risk["authentizitaet"] = round(noise_risk * 0.80, 3)
+            except Exception:
+                pass
+
+            # ── HF-Verlust → Brillanz / Timbre ───────────────────────────
+            # Welch-PSD: Energie 8 kHz+ / Breitband-Energie.
+            # Referenz: CD (1990er) ≅ 0.10-0.25; Shellac ≅ 0.01-0.03.
+            try:
+                if sr > 0 and mono.size >= sr // 8:
+                    from scipy.signal import welch as _welch
+
+                    _nperseg = min(1024, mono.size)
+                    freqs, psd = _welch(mono, fs=sr, nperseg=_nperseg)
+                    bb_energy = float(np.sum(psd[freqs >= 20])) + 1e-10
+                    hf_energy = float(np.sum(psd[freqs >= 8000]))
+                    hf_ratio = hf_energy / bb_energy
+                    # Risiko steigt wenn hf_ratio < 0.08 (≥ Kassetten/Shellac-Niveau)
+                    hf_risk = float(np.clip(1.0 - hf_ratio / 0.08, 0.0, 1.0))
+                    risk["brillanz"] = hf_risk
+                    risk["timbre"] = round(hf_risk * 0.70, 3)
+            except Exception:
+                pass
+
+            # ── Transient-Armut → Groove / MicroDynamics ─────────────────
+            # Onset-Rate in 10-ms-Fenstern. Referenz: lebendige Musik ≥ 1.5 Onsets/s.
+            # Tiefes Rauschen oder starker Dropout senken die Rate.
+            try:
+                if mono.size >= 4800:
+                    hop = int(sr * 0.010)  # 10 ms
+                    max_frames = min(len(mono) // hop, 1000)  # max 10 s analysieren
+                    env = np.abs(mono[: max_frames * hop])
+                    frames = env.reshape(max_frames, hop)
+                    frame_rms = np.sqrt(np.mean(frames**2, axis=1)) + 1e-8
+                    onsets = float(np.sum(frame_rms[1:] > 3.0 * frame_rms[:-1]))
+                    duration_s = max_frames * hop / max(sr, 1)
+                    onset_rate = onsets / max(duration_s, 0.001)
+                    # Risiko steigt wenn Onset-Rate < 0.8/s (stark gedämpftes Signal)
+                    transient_risk = float(np.clip(1.0 - onset_rate / 0.8, 0.0, 1.0))
+                    risk["groove"] = round(transient_risk * 0.70, 3)
+                    risk["micro_dynamics"] = round(transient_risk * 0.80, 3)
+            except Exception:
+                pass
+
+            # ── Dropout-Schwere → Artikulation ──────────────────────────
+            # Dropout-Severity direkt aus DefectResult (falls verfügbar).
+            try:
+                if defect_result is not None:
+                    scores = getattr(defect_result, "scores", {}) or {}
+                    dropout_sev = 0.0
+                    for k, v in scores.items():
+                        if "dropout" in str(k).lower():
+                            sev = float(getattr(v, "severity", 0.0) if not isinstance(v, (int, float)) else v)
+                            dropout_sev = max(dropout_sev, sev)
+                    if dropout_sev > 0.0:
+                        risk["artikulation"] = float(np.clip(dropout_sev, 0.0, 1.0))
+            except Exception:
+                pass
+
+            logger.debug(
+                "ExzellenzDenker.prognostiziere(): %d Risikofelder: %s",
+                len(risk),
+                {k: f"{v:.2f}" for k, v in risk.items()},
+            )
+            return risk
+        except Exception as exc:
+            logger.debug("ExzellenzDenker.prognostiziere() fehlgeschlagen: %s", exc)
+            return {}
+
     # ── Interne Hilfsmethoden ────────────────────────────────────────────────
 
     def _get_optimizer(self, sr: int = 48_000, material: str = "auto") -> object:

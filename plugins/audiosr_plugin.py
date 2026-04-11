@@ -19,12 +19,14 @@ Referenz:
 
 from __future__ import annotations
 
+import gc
 import importlib
 import logging
 import os
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,10 +37,8 @@ import numpy as np
 _AUDIOSR_ROOT = Path(__file__).parent.parent / "models" / "audiosr"
 _MODEL_SAFETENSORS = _AUDIOSR_ROOT / "audiosr_basic_fp16.safetensors"
 
-# CPU-only-Pflicht (§9.5 copilot-instructions): kein CUDA, kein GPU
-# Vor dem ersten torch-Import setzen, damit CUDA-Initialisierung übersprungen wird.
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-
+# GPU policy: ml_device_manager decides whether to use ROCm/DirectML.
+# CUDA_VISIBLE_DEVICES is no longer suppressed unconditionally.
 # Lazy-geladenes ML-Modell (einmal pro Prozess, Thread-gesichert)
 _ml_model = None
 _ml_model_failed: bool = False  # Sentinel: True → kein Retry nach Fehlschlag (§3.2)
@@ -73,7 +73,12 @@ def _detect_bandwidth(audio: np.ndarray, sr: int) -> float:
 
 
 # AudioSR FP16-on-disk (cast to FP32 at load): ~2.9 GB on disk → ~7 GB peak RSS in RAM (FP32 inference).
-_AUDIOSR_BUDGET_GB: float = 7.0
+_AUDIOSR_BUDGET_GB: float = 5.75  # 2.9 GB FP16 on-disk → ~5.8 GB FP32 steady-state RAM
+# NOTE: ml_memory_budget._preflight_system_memory applies an additional 1.6× peak
+# factor for torch.load() overhead.  _AUDIOSR_BUDGET_GB must therefore represent
+# the *steady-state* runtime RAM, NOT the inflated peak.  safetensors loading is
+# memory-mapped (no double-buffer peak), so ~5.8 GB is the correct upper bound.
+# 5.75 GB × 1.6 + oomd_safe ≈ 13.3 GB required vs. 14+ GB available on 32 GB system.
 
 
 def _get_ml_model() -> object | None:
@@ -116,9 +121,11 @@ def _get_ml_model() -> object | None:
                 if not _try_alloc("AudioSR", _AUDIOSR_BUDGET_GB):
                     return None  # Budget erschöpft → DSP-Fallback
         except Exception as _exc:
-            logger.debug("Operation failed (non-critical): %s", _exc)  # Budget-Modul nicht verfügbar — weiter
+            # §OOM-Guard fail-safe: Exception im Budget-Check → Laden verweigern, nicht zulassen.
+            # Fail-open (weiter laden) wäre bei 5.75 GB ein OOM-Risiko.
+            logger.warning("AudioSR: Budget-Check fehlgeschlagen (%s) — Laden verweigert (OOM-Fail-safe).", _exc)
+            return None
         try:
-            # CUDA_VISIBLE_DEVICES="" wurde bereits am Modulstart gesetzt (§9.5)
             # AudioSR-Paket liegt lokal in models/audiosr/ (kein pip install noetig)
             audiosr_pkg = str(_AUDIOSR_ROOT)
             if audiosr_pkg not in sys.path:
@@ -132,12 +139,15 @@ def _get_ml_model() -> object | None:
                 "AudioSR: Lade ML-Modell von %s (nur einmalig)...",
                 _MODEL_SAFETENSORS.name,
             )
-            # §2.40 Determinismus-Invariante: AudioSR läuft auf CPU (device="cpu").
-            # Falls audiosr-Internals ONNX-Sub-Sessions nutzen, müssen diese
-            # providers=["CPUExecutionProvider"] setzen (kein CUDA, kein GPU-Dispatch).
-            model = build_model(model_name="basic", device="cpu")
+            try:
+                from backend.core.ml_device_manager import get_torch_device as _get_dev
+
+                _asr_device = _get_dev("AudioSR")
+            except Exception:
+                _asr_device = "cpu"
+            model = build_model(model_name="basic", device=_asr_device)
             _ml_model = model
-            logger.info("AudioSR: ML-Modell bereit (CPU, ddim_steps=50).")
+            logger.info("AudioSR: ML-Modell bereit (device=%s, ddim_steps=50).", _asr_device)
             # PLM-Registrierung für LRU-basierte Auto-Eviction
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
@@ -162,9 +172,15 @@ def _get_ml_model() -> object | None:
 def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
     """ML-Inferenz via AudioSR (Liu et al. 2023).
 
-    Schreibt Audio in Temp-WAV, ruft super_resolution() auf, gibt float32-Array zurueck.
+    Zone-by-zone processing: max _AUDIOSR_ZONE_SECONDS pro Aufruf, damit DDIM-Inferenz-Buffer
+    (50 Schritte x Latent-Tensoren) das System nicht in OOM treibt.
     Gibt None zurueck bei Fehler (dann greift DSP-Fallback).
     """
+    # Max Zone-Laenge: AudioSR warnt ab 10.24 s; 10 s pro Zone begrenzt DDIM-Peak-RAM
+    # auf ~2-3 GB/Zone (statt 10-15 GB fuer 225 s in einem Aufruf).
+    _AUDIOSR_ZONE_SECONDS: int = 10
+    _AUDIOSR_ZONE_SAMPLES: int = _AUDIOSR_ZONE_SECONDS * sr  # 480 000 @ 48 kHz
+    _AUDIOSR_FADE_SAMPLES: int = max(1, sr // 200)  # 5 ms boundary fade to suppress clicks
     try:
         # Zuerst Modell laden (injiziert sys.path fuer audiosr-Paket)
         model = _get_ml_model()
@@ -181,29 +197,110 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
         # Sicherstellen: float32, 1D oder [samples, ch] fuer soundfile
         audio_f32 = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         if audio_f32.ndim == 2:
-            wav_data = audio_f32.T  # [samples, channels] fuer soundfile
+            wav_data = audio_f32.T  # [samples, channels] fuer soundfile  → shape (N, ch)
         else:
-            wav_data = audio_f32  # [samples]
+            wav_data = audio_f32  # shape (N,)
 
-        # Temp-WAV schreiben
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-        os.close(tmp_fd)
-        try:
-            sf.write(tmp_path, wav_data, sr)
-            result = super_resolution(
-                model,
-                tmp_path,
-                seed=42,
-                ddim_steps=50,  # Desktop-CPU-Budget
-                guidance_scale=3.5,
-            )
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+        n_total: int = wav_data.shape[0]
 
-        # Ergebnis normalisieren
-        if hasattr(result, "detach"):  # torch.Tensor
-            result = result.detach().cpu().numpy()
-        result = np.squeeze(np.array(result, dtype=np.float32))
+        # --- Zone-Slices berechnen (non-overlapping, Achse 0 = samples) ---
+        zone_slices: list[tuple[int, int]] = []
+        pos = 0
+        while pos < n_total:
+            zone_slices.append((pos, min(pos + _AUDIOSR_ZONE_SAMPLES, n_total)))
+            pos += _AUDIOSR_ZONE_SAMPLES
+
+        n_zones = len(zone_slices)
+        logger.info(
+            "AudioSR: %d zone(s) a max %d s (total %.1f s)",
+            n_zones,
+            _AUDIOSR_ZONE_SECONDS,
+            n_total / max(1, sr),
+        )
+
+        # §2.45a Wall-time-Budget: pro Song max 900 s (15 min CPU) für alle AudioSR-Zonen.
+        # Überschreitung → restliche Zonen als Passthrough (Original-Audio unverändert).
+        # Verhindert unkontrollierten Block auf großen Dateien (z.B. 225 s = 23 Zonen × ~50s CPU).
+        _AUDIOSR_WALL_BUDGET_S: float = 900.0
+        _audiosr_t0: float = time.monotonic()
+
+        zone_results: list[np.ndarray] = []
+        for z_idx, (z_start, z_end) in enumerate(zone_slices):
+            # Wall-time-Budget prüfen: restliche Zonen per Passthrough abschließen
+            if z_idx > 0 and (time.monotonic() - _audiosr_t0) > _AUDIOSR_WALL_BUDGET_S:
+                logger.warning(
+                    "AudioSR: Wall-time budget %.0f s überschritten nach Zone %d/%d "
+                    "(%.1f s verbraucht) — Passthrough für restliche %d Zonen",
+                    _AUDIOSR_WALL_BUDGET_S,
+                    z_idx,
+                    n_zones,
+                    time.monotonic() - _audiosr_t0,
+                    n_zones - z_idx,
+                )
+                for z_start_rem, z_end_rem in zone_slices[z_idx:]:
+                    rem_zone = wav_data[z_start_rem:z_end_rem].copy()
+                    zone_results.append(rem_zone.astype(np.float32))
+                break
+            zone_wav = wav_data[z_start:z_end]
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(tmp_fd)
+            z_result_raw = None
+            try:
+                sf.write(tmp_path, zone_wav, sr)
+                z_result_raw = super_resolution(
+                    model,
+                    tmp_path,
+                    seed=42,
+                    ddim_steps=50,  # Desktop-CPU-Budget (Standard 200 zu langsam)
+                    guidance_scale=3.5,
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+            del zone_wav  # Freigabe vor GC
+
+            # Tensor -> numpy
+            if hasattr(z_result_raw, "detach"):
+                z_result_raw = z_result_raw.detach().cpu().numpy()
+            z_arr = np.squeeze(np.array(z_result_raw, dtype=np.float32))
+            z_arr = np.nan_to_num(z_arr, nan=0.0, posinf=0.0, neginf=0.0)
+            z_arr = np.clip(z_arr, -1.0, 1.0)
+            del z_result_raw
+
+            # 5 ms Fade-in/-out am Zonenrand (kein Knacken an Zonennaehten)
+            fade_n = min(_AUDIOSR_FADE_SAMPLES, z_arr.shape[0])
+            fade_in = np.linspace(0.0, 1.0, fade_n, dtype=np.float32)
+            fade_out = np.linspace(1.0, 0.0, fade_n, dtype=np.float32)
+            if z_idx > 0:  # Fade-in am Zonenstart (ausser erster Zone)
+                if z_arr.ndim > 1:
+                    z_arr[:fade_n] *= fade_in[:, np.newaxis]
+                else:
+                    z_arr[:fade_n] *= fade_in
+            if z_idx < n_zones - 1:  # Fade-out am Zonenende (ausser letzter Zone)
+                if z_arr.ndim > 1:
+                    z_arr[-fade_n:] *= fade_out[:, np.newaxis]
+                else:
+                    z_arr[-fade_n:] *= fade_out
+
+            zone_results.append(z_arr)
+            del z_arr
+
+            # Inferenz-Buffer zwischen Zonen aggressiv freigeben
+            gc.collect()
+            try:
+                import ctypes as _ct
+
+                _ct.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
+
+        # --- Zonen zusammenfuegen ---
+        if len(zone_results) == 1:
+            result = zone_results[0]
+        else:
+            result = np.concatenate(zone_results, axis=0)
+        del zone_results
+
         result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         return np.clip(result, -1.0, 1.0)
 
@@ -559,6 +656,8 @@ class AudioSRPlugin:
             from backend.file_import import load_audio_file
 
             _res = load_audio_file(input_wav, do_carrier_analysis=False)
+            if _res is None:
+                raise RuntimeError(f"AudioSR: Datei konnte nicht geladen werden: {input_wav}")
             audio = np.asarray(_res["audio"], dtype=np.float32)
             sr = int(_res["sr"])
             audio = audio[np.newaxis, :] if audio.ndim == 1 else audio.T  # [channels, samples]

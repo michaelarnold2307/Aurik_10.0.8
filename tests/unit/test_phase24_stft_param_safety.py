@@ -38,3 +38,24 @@ def test_phase24_repair_atonal_short_context_finite():
     assert repaired.shape[0] == gap_length
     assert np.isfinite(repaired).all()
     assert np.max(np.abs(repaired)) <= 1.0 + 1e-12
+
+
+def test_phase24_content_adaptive_strength_dampens_vocal_tonal_vinyl():
+    phase = DropoutRepairPhase()
+    phase._current_material = "vinyl"
+    phase._current_panns_tags = {"Singing voice": 0.8}
+
+    strength = phase._content_adaptive_repair_strength(0.95, "tonal", 60.0)
+
+    assert strength < 0.95
+    assert strength <= 0.95 * 0.82 * 0.90 + 1e-9
+
+
+def test_phase24_content_adaptive_strength_keeps_atonal_nonvocal_base():
+    phase = DropoutRepairPhase()
+    phase._current_material = "tape"
+    phase._current_panns_tags = {"Singing voice": 0.05}
+
+    strength = phase._content_adaptive_repair_strength(0.90, "atonal", 80.0)
+
+    assert abs(strength - 0.90) < 1e-9

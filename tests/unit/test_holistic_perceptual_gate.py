@@ -291,8 +291,13 @@ def test_26_restorability_anchor_detail_keys():
     assert "timbral_ref" in result.detail
 
 
-def test_27_high_restorability_pure_input():
-    """Restorability > 70 → input_weight=1.0, ref_weight=0.0."""
+def test_27_high_restorability_ref_dominant():
+    """Restorability > 70 → input_weight=0.0, ref_weight=1.0 (§2.44 FIX v9.11.2).
+
+    Nach dem Referenz-Paradox-Fix wird bei hoher Restorability NICHT mehr die
+    Ähnlichkeit zum degradierten Input gemessen, sondern die Referenz/direktionale
+    Qualität. input_weight=0.0 verhindert, dass gute Restaurierung bestraft wird.
+    """
     from backend.core.holistic_perceptual_gate import get_holistic_gate
 
     gate = get_holistic_gate()
@@ -302,12 +307,12 @@ def test_27_high_restorability_pure_input():
         patch.object(gate, "_compute_timbral_fidelity", return_value=1.0),
     ):
         result = gate.evaluate_restoration(audio, audio, SR, restorability_score=80.0)
-    assert result.detail["input_weight"] == 1.0
-    assert result.detail["ref_weight"] == 0.0
+    assert result.detail["input_weight"] == 0.0
+    assert result.detail["ref_weight"] == 1.0
 
 
-def test_28_mid_restorability_blended():
-    """Restorability 50–70 → input_weight=0.6, ref_weight=0.4."""
+def test_28_mid_restorability_ref_dominant():
+    """Restorability 50–70 → input_weight=0.35, ref_weight=0.65 (§2.44 FIX v9.11.2)."""
     from backend.core.holistic_perceptual_gate import get_holistic_gate
 
     gate = get_holistic_gate()
@@ -317,12 +322,12 @@ def test_28_mid_restorability_blended():
         patch.object(gate, "_compute_timbral_fidelity", return_value=1.0),
     ):
         result = gate.evaluate_restoration(audio, audio, SR, restorability_score=60.0)
-    assert result.detail["input_weight"] == 0.6
-    assert result.detail["ref_weight"] == 0.4
+    assert result.detail["input_weight"] == 0.35
+    assert result.detail["ref_weight"] == 0.65
 
 
 def test_29_low_restorability_ref_dominant():
-    """Restorability ≤ 50 → input_weight=0.3, ref_weight=0.7."""
+    """Restorability ≤ 50 → input_weight=0.2, ref_weight=0.8 (§2.44 FIX v9.11.2)."""
     from backend.core.holistic_perceptual_gate import get_holistic_gate
 
     gate = get_holistic_gate()
@@ -332,12 +337,12 @@ def test_29_low_restorability_ref_dominant():
         patch.object(gate, "_compute_timbral_fidelity", return_value=1.0),
     ):
         result = gate.evaluate_restoration(audio, audio, SR, restorability_score=30.0)
-    assert result.detail["input_weight"] == 0.3
-    assert result.detail["ref_weight"] == 0.7
+    assert result.detail["input_weight"] == 0.2
+    assert result.detail["ref_weight"] == 0.8
 
 
 def test_30_restorability_50_boundary_blended():
-    """Restorability = 50 (Grenzfall) → blended (50–70 Bereich)."""
+    """Restorability = 50 (Grenzfall) → blended (50–70 Bereich, §2.44 FIX v9.11.2)."""
     from backend.core.holistic_perceptual_gate import get_holistic_gate
 
     gate = get_holistic_gate()
@@ -347,8 +352,8 @@ def test_30_restorability_50_boundary_blended():
         patch.object(gate, "_compute_timbral_fidelity", return_value=1.0),
     ):
         result = gate.evaluate_restoration(audio, audio, SR, restorability_score=50.0)
-    assert result.detail["input_weight"] == 0.6
-    assert result.detail["ref_weight"] == 0.4
+    assert result.detail["input_weight"] == 0.35
+    assert result.detail["ref_weight"] == 0.65
 
 
 # ── §2.44 update_reference_memory + EMA ───────────────────────────────────
@@ -606,7 +611,7 @@ def test_42_reference_used_in_hpi_low_restorability():
         material="shellac",
         era_bin="pre-1960",
     )
-    assert result.detail["ref_weight"] == 0.7
+    assert result.detail["ref_weight"] == 0.8
     assert result.hpi > 0
 
 

@@ -1161,7 +1161,7 @@ CAUSE_PARAMS: dict[str, dict[str, Any]] = {
         "eq_high_shelf_hz": 8000.0,
     },
     "dc_offset": {
-        "hpf_cutoff_hz": 5.0,
+        "hpf_cutoff_hz": 10.0,
         "normalization_lufs": -23.0,
     },
     "digital_clip": {

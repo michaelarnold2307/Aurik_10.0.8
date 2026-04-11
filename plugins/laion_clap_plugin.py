@@ -238,9 +238,15 @@ class LAIONCLAPPlugin:
                     raise MemoryError("LaionCLAP_ONNX: Budget erschöpft")
 
                 try:
+                    try:
+                        from backend.core.ml_device_manager import get_ort_providers as _get_prov
+
+                        _clap_providers = _get_prov("LaionCLAP_ONNX")
+                    except Exception:
+                        _clap_providers = ["CPUExecutionProvider"]
                     self._audio_session = ort.InferenceSession(
                         str(audio_enc_path),
-                        providers=["CPUExecutionProvider"],
+                        providers=_clap_providers,
                     )
                 except Exception:
                     if _ml_release_onnx is not None:

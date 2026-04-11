@@ -403,6 +403,15 @@ class HybridDereverb:
             else:
                 mono_in = audio_in
 
+            # §2.54 U-Net/STFT shape guard: pad input to next multiple of 512 to prevent
+            # internal tensor dimension mismatches in SGMSE+/ResembleEnhance architectures
+            # (e.g. "size of tensor a (3841) must match tensor b (3843)").
+            _orig_mono_len = len(mono_in)
+            _pad_mult = 512
+            _padded_len = ((_orig_mono_len + _pad_mult - 1) // _pad_mult) * _pad_mult
+            if _padded_len != _orig_mono_len:
+                mono_in = np.pad(mono_in, (0, _padded_len - _orig_mono_len))
+
             if self._sgmse_active:
                 # §4.4 Primär: SGMSE+ — enhance(audio, sr) → SGMSEResult
                 result = dccrn_plugin.enhance(mono_in, sample_rate)
@@ -417,6 +426,9 @@ class HybridDereverb:
                 enhanced = dccrn_plugin.enhance(mono_in, sample_rate)
                 enhanced = np.asarray(enhanced, dtype=np.float32)
                 metadata["model"] = "resemble_enhance"
+
+            # Trim back to original length (undo padding)
+            enhanced = enhanced[:_orig_mono_len]
 
             # Stereo wiederherstellen — in der gleichen Format-Konvention wie der Eingang.
             if audio.ndim == 2:

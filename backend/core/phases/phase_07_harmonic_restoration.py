@@ -100,6 +100,39 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# §2.46b Spectral-Tilt-Preservation: material-adaptive tolerance in dB/octave
+_TILT_TOLERANCE_P07: dict[str, float] = {
+    "digital": 1.5,
+    "cd_digital": 1.5,
+    "streaming": 1.5,
+    "tape": 1.875,
+    "reel_tape": 1.875,
+    "vinyl": 2.25,
+    "minidisc": 2.25,
+    "shellac": 3.0,
+    "wax_cylinder": 3.0,
+    "wire_recording": 3.0,
+}
+
+
+def _est_tilt_p07(audio: np.ndarray, sr: int) -> float:
+    """Quick spectral tilt estimate in dB/octave (§2.46b)."""
+    mono = audio[:, 0] if audio.ndim == 2 else audio
+    n = min(len(mono), 8192)
+    if n < 64:
+        return 0.0
+    spec = np.abs(np.fft.rfft(mono[:n] * np.hanning(n))) + 1e-12
+    freqs = np.fft.rfftfreq(n, d=1.0 / sr)
+    valid = (freqs >= 100.0) & (freqs <= sr * 0.45)
+    if np.sum(valid) < 8:
+        return 0.0
+    log_f = np.log2(freqs[valid] + 1e-12)
+    log_m = 20.0 * np.log10(spec[valid])
+    log_f_c = log_f - log_f.mean()
+    log_m_c = log_m - log_m.mean()
+    denom = float(np.dot(log_f_c, log_f_c))
+    return float(np.dot(log_f_c, log_m_c) / denom) if denom > 1e-10 else 0.0
+
 
 class HarmonicRestorationPhase(PhaseInterface):
     """
@@ -210,6 +243,20 @@ class HarmonicRestorationPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        # §2.54 AudioSR post-processing guard: when AudioSR (phase_23) has already
+        # extended the bandwidth + synthesised harmonics, additional harmonic
+        # restoration at phase_07 is redundant and causes PMGG regressions
+        # (regression ≈ 0.20 at minimum strength).  Scale down by 75 % so that
+        # the effectve strength falls below the params["strength"] < 0.1 passthrough
+        # threshold for most materials, triggering a clean bypass.
+        _audiosr_applied = bool(kwargs.get("audiosr_applied", False))
+        if _audiosr_applied:
+            _effective_strength = float(np.clip(_effective_strength * 0.25, 0.0, 1.0))
+            logger.debug(
+                "phase_07: audiosr_applied=True → strength scaled to %.3f (post-AudioSR guard)",
+                _effective_strength,
+            )
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -327,6 +374,30 @@ class HarmonicRestorationPhase(PhaseInterface):
         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
         restored = np.clip(restored, -1.0, 1.0)
 
+        # §2.46b Spectral-Tilt-Guard: cap HF harmonic synthesis if tilt deviates beyond tolerance
+        _tilt_capped_p07 = False
+        try:
+            _mat_k07 = str(material_type).lower().replace(" ", "_").replace("-", "_")
+            _tol07 = _TILT_TOLERANCE_P07.get(_mat_k07, 2.0)
+            _tb07 = _est_tilt_p07(audio, sample_rate)
+            _ta07 = _est_tilt_p07(restored, sample_rate)
+            _dev07 = abs(_ta07 - _tb07)
+            if _dev07 > _tol07:
+                _cap07 = float(np.clip(1.0 - (_dev07 - _tol07) / (_tol07 * 2.0), 0.5, 1.0))
+                restored = _cap07 * restored + (1.0 - _cap07) * audio
+                restored = np.clip(restored, -1.0, 1.0)
+                _tilt_capped_p07 = True
+                logger.info(
+                    "phase_07 §2.46b tilt-cap: before=%.2f after=%.2f dev=%.2f tol=%.2f cap=%.2f",
+                    _tb07,
+                    _ta07,
+                    _dev07,
+                    _tol07,
+                    _cap07,
+                )
+        except Exception as _tc07:
+            logger.debug("phase_07 §2.46b tilt-cap skipped (graceful): %s", _tc07)
+
         # §2.47 PMGG-Retry: phase_locality_factor als finaler Wet/Dry-Regler
         if _effective_strength < 1.0:
             restored = audio + _effective_strength * (restored - audio)
@@ -362,6 +433,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "execution_time_seconds": execution_time,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "spectral_tilt_capped": _tilt_capped_p07,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },

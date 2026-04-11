@@ -92,11 +92,13 @@ class KickDrumEnhancer:
         report : dict
             Processing report
         """
-        # Handle stereo
+        # §2.51 Linked-Stereo: gain envelope from √(L²+R²)/√2 sidechain
         if audio.ndim == 2:
-            left, report_l = self._process_channel(audio[:, 0], sr)
-            right, _report_r = self._process_channel(audio[:, 1], sr)
-            return np.stack([left, right], axis=-1), report_l
+            mono_sc = np.sqrt((audio[:, 0] ** 2 + audio[:, 1] ** 2) / 2.0)
+            mono_enh, report_l = self._process_channel(mono_sc, sr)
+            _eps = 1e-10
+            _g = np.clip(np.where(np.abs(mono_sc) > _eps, mono_enh / (mono_sc + _eps), 1.0), 0.0, 10.0)
+            return np.stack([audio[:, 0] * _g, audio[:, 1] * _g], axis=-1), report_l
         else:
             return self._process_channel(audio, sr)
 
@@ -233,11 +235,13 @@ class SnareCrackEnhancer:
         report : dict
             Processing report
         """
-        # Handle stereo
+        # §2.51 Linked-Stereo: gain envelope from √(L²+R²)/√2 sidechain
         if audio.ndim == 2:
-            left, report_l = self._process_channel(audio[:, 0], sr)
-            right, _report_r = self._process_channel(audio[:, 1], sr)
-            return np.stack([left, right], axis=-1), report_l
+            mono_sc = np.sqrt((audio[:, 0] ** 2 + audio[:, 1] ** 2) / 2.0)
+            mono_enh, report_l = self._process_channel(mono_sc, sr)
+            _eps = 1e-10
+            _g = np.clip(np.where(np.abs(mono_sc) > _eps, mono_enh / (mono_sc + _eps), 1.0), 0.0, 10.0)
+            return np.stack([audio[:, 0] * _g, audio[:, 1] * _g], axis=-1), report_l
         else:
             return self._process_channel(audio, sr)
 
@@ -385,11 +389,13 @@ class HiHatClarifier:
         report : dict
             Processing report
         """
-        # Handle stereo
+        # §2.51 Linked-Stereo: gain envelope from √(L²+R²)/√2 sidechain
         if audio.ndim == 2:
-            left, report_l = self._process_channel(audio[:, 0], sr)
-            right, _report_r = self._process_channel(audio[:, 1], sr)
-            return np.stack([left, right], axis=-1), report_l
+            mono_sc = np.sqrt((audio[:, 0] ** 2 + audio[:, 1] ** 2) / 2.0)
+            mono_enh, report_l = self._process_channel(mono_sc, sr)
+            _eps = 1e-10
+            _g = np.clip(np.where(np.abs(mono_sc) > _eps, mono_enh / (mono_sc + _eps), 1.0), 0.0, 10.0)
+            return np.stack([audio[:, 0] * _g, audio[:, 1] * _g], axis=-1), report_l
         else:
             return self._process_channel(audio, sr)
 
@@ -523,11 +529,13 @@ class CymbalShimmerEnhancer:
         report : dict
             Processing report
         """
-        # Handle stereo
+        # §2.51 Linked-Stereo: gain envelope from √(L²+R²)/√2 sidechain
         if audio.ndim == 2:
-            left, report_l = self._process_channel(audio[:, 0], sr)
-            right, _report_r = self._process_channel(audio[:, 1], sr)
-            return np.stack([left, right], axis=-1), report_l
+            mono_sc = np.sqrt((audio[:, 0] ** 2 + audio[:, 1] ** 2) / 2.0)
+            mono_enh, report_l = self._process_channel(mono_sc, sr)
+            _eps = 1e-10
+            _g = np.clip(np.where(np.abs(mono_sc) > _eps, mono_enh / (mono_sc + _eps), 1.0), 0.0, 10.0)
+            return np.stack([audio[:, 0] * _g, audio[:, 1] * _g], axis=-1), report_l
         else:
             return self._process_channel(audio, sr)
 
