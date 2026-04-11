@@ -2693,6 +2693,7 @@ class DefectScanner:
         locations: list[tuple[float, float]] = []
         magnitudes: list[float] = []
         bump_scores: list[float] = []
+        suppressed_head_dip_like = 0
 
         i = 0
         while i < n_frames:
@@ -2711,10 +2712,24 @@ class DefectScanner:
                         i += 1
                 event_len = end_frame - start_frame
                 if min_frames_evt <= event_len <= max_frames_evt:
+                    evt_ratios = rms_ratio[start_frame:end_frame]
+
+                    # Tape-head level dips are gradual 80-400 ms envelope drops.
+                    # The crucial discriminator vs. transport bumps is morphology:
+                    # they stay below the local level for most of the event and do
+                    # not show a positive in-event recovery/thump.
+                    _looks_like_head_level_dip = (
+                        event_len * hop_s >= 0.120
+                        and float(np.mean(evt_ratios < 0.70)) >= 0.80
+                        and float(np.max(evt_ratios)) < 0.90
+                    )
+                    if _looks_like_head_level_dip:
+                        suppressed_head_dip_like += 1
+                        continue
+
                     t_start = max(0.0, float(start_frame * hop) / sr - 0.015)
                     t_end = min(float(n) / sr, float(end_frame * hop + win) / sr + 0.015)
                     locations.append((t_start, t_end))
-                    evt_ratios = rms_ratio[start_frame:end_frame]
                     magnitudes.append(float(np.max(np.abs(1.0 - evt_ratios))))
                     bump_scores.append(float(np.mean(score_arr[start_frame:end_frame])))
             else:
@@ -2741,12 +2756,13 @@ class DefectScanner:
         confidence = float(np.clip(0.60 + 0.08 * n_bumps, 0.60, 0.95))
 
         logger.info(
-            "transport_bump detection: n_bumps=%d, density=%.1f/min, max_mag=%.3f, mean_score=%.2f, severity=%.3f",
+            "transport_bump detection: n_bumps=%d, density=%.1f/min, max_mag=%.3f, mean_score=%.2f, severity=%.3f, suppressed_head_dip_like=%d",
             n_bumps,
             bump_density,
             max_mag,
             mean_score,
             severity,
+            suppressed_head_dip_like,
         )
 
         return DefectScore(
@@ -2759,6 +2775,7 @@ class DefectScanner:
                 "bump_density_per_min": round(bump_density, 2),
                 "max_magnitude": round(max_mag, 4),
                 "mean_multi_feature_score": round(mean_score, 2),
+                "suppressed_head_dip_like": suppressed_head_dip_like,
                 "magnitudes": [round(float(m), 4) for m in magnitudes[:30]],
             },
         )

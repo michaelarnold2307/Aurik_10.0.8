@@ -84,6 +84,38 @@ def _make_stereo(mono: np.ndarray) -> np.ndarray:
     return np.column_stack([mono, mono * 0.95])
 
 
+def _make_gradual_level_dip_audio(
+    sr: int = SR,
+    duration: float = 12.0,
+    dip_times: tuple[float, ...] = (1.0, 2.5, 4.0, 5.5, 7.0, 8.5, 10.0),
+    freq: float = 440.0,
+) -> np.ndarray:
+    """Create cassette-like gradual level dips without transport-bump thumps."""
+    n = int(sr * duration)
+    t = np.linspace(0, duration, n, endpoint=False)
+    audio = (np.sin(2 * np.pi * freq * t) * 0.3).astype(np.float32)
+
+    dip_duration_s = 0.20
+    dip_samples = int(dip_duration_s * sr)
+    fade_down = int(0.080 * sr)
+    snap_back = int(0.020 * sr)
+    hold = max(1, dip_samples - fade_down - snap_back)
+    linear_depth = 10.0 ** (-12.0 / 20.0)
+
+    for dip_s in dip_times:
+        start = int(dip_s * sr)
+        end = start + dip_samples
+        if end > len(audio):
+            continue
+        env = np.ones(dip_samples, dtype=np.float64)
+        env[:fade_down] = 1.0 - (1.0 - linear_depth) * (0.5 - 0.5 * np.cos(np.pi * np.arange(fade_down) / fade_down))
+        env[fade_down : fade_down + hold] = linear_depth
+        env[fade_down + hold :] = np.linspace(linear_depth, 1.0, snap_back)
+        audio[start:end] *= env.astype(np.float32)
+
+    return audio.astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # 1. DefectType.TRANSPORT_BUMP existiert
 # ---------------------------------------------------------------------------
@@ -208,6 +240,12 @@ class TestDetectTransportBump:
         scanner = self._scanner()
         result = scanner._detect_transport_bump(_sine())
         assert isinstance(result, DefectScore)
+
+    def test_15_gradual_level_dips_not_misclassified_as_transport_bump(self):
+        scanner = self._scanner()
+        audio = _make_gradual_level_dip_audio()
+        result = scanner._detect_transport_bump(audio)
+        assert result.severity < 0.20, f"Gradual level dips misclassified as transport bump: {result.severity}"
 
 
 # ---------------------------------------------------------------------------

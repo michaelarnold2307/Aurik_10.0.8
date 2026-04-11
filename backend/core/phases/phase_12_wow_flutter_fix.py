@@ -424,9 +424,12 @@ class WowFlutterFix(PhaseInterface):
             )
             # Tape level stabilization even when pitch confidence is too low
             n_level_dips_repaired = 0
+            # CASSETTE + multi-chain (e.g. vinyl→tape→mp3): trigger also when
+            # TAPE_HEAD_LEVEL_DIP was detected via defect_locations (§2.46a transfer chain)
             _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
             _mat_enum = material if isinstance(material, MaterialType) else None
-            if _mat_enum in _TAPE_LEVEL_MATERIALS and _effective_strength > 0.0:
+            _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
+            if (_mat_enum in _TAPE_LEVEL_MATERIALS or _has_tape_dip_defect) and _effective_strength > 0.0:
                 audio, n_level_dips_repaired = self._stabilize_tape_level(audio, sample_rate, _effective_strength)
                 if n_level_dips_repaired > 0:
                     logger.info(
@@ -497,7 +500,8 @@ class WowFlutterFix(PhaseInterface):
             n_level_dips_repaired = 0
             _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
             _mat_enum = material if isinstance(material, MaterialType) else None
-            if _mat_enum in _TAPE_LEVEL_MATERIALS and _effective_strength > 0.0:
+            _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
+            if (_mat_enum in _TAPE_LEVEL_MATERIALS or _has_tape_dip_defect) and _effective_strength > 0.0:
                 audio, n_level_dips_repaired = self._stabilize_tape_level(audio, sample_rate, _effective_strength)
                 if n_level_dips_repaired > 0:
                     logger.info(
@@ -660,10 +664,13 @@ class WowFlutterFix(PhaseInterface):
         # irregularity in cassette recordings.  These dips fall through Phase 24 dropout
         # repair (threshold too aggressive for gradual 60-100 ms fades) and are not
         # covered by transport_bump repair (which requires DefectScanner locations).
+        # Also triggers for multi-chain material (e.g. vinyl→tape→mp3) when
+        # TAPE_HEAD_LEVEL_DIP was detected via defect_locations (§2.46a).
         n_level_dips_repaired = 0
         _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
         _mat_enum = material if isinstance(material, MaterialType) else None
-        if _mat_enum in _TAPE_LEVEL_MATERIALS and _effective_strength > 0.0:
+        _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
+        if (_mat_enum in _TAPE_LEVEL_MATERIALS or _has_tape_dip_defect) and _effective_strength > 0.0:
             restored, n_level_dips_repaired = self._stabilize_tape_level(restored, sample_rate, _effective_strength)
             if n_level_dips_repaired > 0:
                 restored_mono = np.mean(restored, axis=1) if is_stereo else restored
