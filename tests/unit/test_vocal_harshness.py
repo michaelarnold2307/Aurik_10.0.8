@@ -240,6 +240,13 @@ class TestVocalHarshnessReasoning:
         phases = CAUSE_TO_PHASES["vocal_harshness"]
         assert "phase_23_spectral_repair" in phases
 
+    def test_reasoner_recommends_phase42_for_strong_harshness(self):
+        from backend.core.causal_defect_reasoner import CausalDefectReasoner
+
+        reasoner = CausalDefectReasoner()
+        plan = reasoner.reason({"vocal_harshness": 1.0}, material="cd_digital")
+        assert "phase_42_vocal_enhancement" in plan.recommended_phases
+
 
 # ============================================================
 # Phase 42 — Harshness reduction integration

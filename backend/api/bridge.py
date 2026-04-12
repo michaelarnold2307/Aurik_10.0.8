@@ -99,6 +99,7 @@ __all__ = [
     # NaN/Inf-Guard
     "export_guard",
     "validate_export_quality",
+    "build_export_quality_gate_payload",
     "get_adaptive_goals_fn",
     # Audio-Verarbeitung (Hilfsmittel)
     "get_audio_exporter_class",
@@ -178,6 +179,12 @@ __all__ = [
 
 _ANALYSIS_CACHE_MAX = 64
 _CONTENT_CHUNK = 4096  # Bytes vom Anfang + Ende für SHA-256 Content-Key
+_CONTENT_KEY_CACHE_MAX = 512
+
+
+# Fast path for repeated cache lookups: (path, size, mtime_ns) -> content-key
+_content_key_cache: OrderedDict[tuple[str, int, int], str] = OrderedDict()
+_content_key_lock = threading.Lock()
 
 
 class _AnalysisLruCache:
@@ -263,18 +270,41 @@ def content_cache_key(file_path: str) -> str:
         A 64-character hex string suitable as a cache key, or the path
         itself on I/O error.
     """
+    normalized_path = os.path.normpath(os.path.realpath(file_path))
     try:
-        size = os.path.getsize(file_path)
-        with open(file_path, "rb") as fh:
+        stat_result = os.stat(normalized_path)
+    except OSError:
+        return file_path
+
+    size = int(stat_result.st_size)
+    mtime_ns = int(getattr(stat_result, "st_mtime_ns", int(stat_result.st_mtime * 1_000_000_000)))
+    meta_key = (normalized_path, size, mtime_ns)
+
+    with _content_key_lock:
+        cached = _content_key_cache.get(meta_key)
+        if cached is not None:
+            _content_key_cache.move_to_end(meta_key)
+            return cached
+
+    try:
+        with open(normalized_path, "rb") as fh:
             head = fh.read(_CONTENT_CHUNK)
             if size > _CONTENT_CHUNK * 2:
                 fh.seek(-_CONTENT_CHUNK, 2)
                 tail = fh.read(_CONTENT_CHUNK)
             else:
                 tail = b""
-        return hashlib.sha256(head + tail + str(size).encode()).hexdigest()
+        digest = hashlib.sha256(head + tail + str(size).encode()).hexdigest()
     except OSError:
         return file_path
+
+    with _content_key_lock:
+        _content_key_cache[meta_key] = digest
+        _content_key_cache.move_to_end(meta_key)
+        while len(_content_key_cache) > _CONTENT_KEY_CACHE_MAX:
+            _content_key_cache.popitem(last=False)
+
+    return digest
 
 
 # Singleton caches — one per analysis type for independent eviction
@@ -448,6 +478,13 @@ def get_restorer_classes() -> tuple[type, type]:
     from backend.core.unified_restorer_v3 import RestorationConfig, UnifiedRestorerV3  # type: ignore[import]
 
     return RestorationConfig, UnifiedRestorerV3
+
+
+def get_unified_restorer_v3_instance():
+    """Gibt den UV3-Prozess-Singleton zurück (lazy import über Bridge)."""
+    from backend.core.unified_restorer_v3 import get_unified_restorer_v3  # type: ignore[import]
+
+    return get_unified_restorer_v3()
 
 
 def get_aurik_denker_class() -> type:
@@ -694,6 +731,8 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     )
     _song_cal = _meta.get("song_calibration") if isinstance(_meta.get("song_calibration"), dict) else {}
     _cluster = _song_cal.get("cluster_policy") if isinstance(_song_cal.get("cluster_policy"), dict) else {}
+    _fqf = _meta.get("fallback_quality_floor") if isinstance(_meta.get("fallback_quality_floor"), dict) else {}
+    _rc = _meta.get("recovery_certainty") if isinstance(_meta.get("recovery_certainty"), dict) else {}
 
     _recommendations = _auto.get("recommendations") if isinstance(_auto.get("recommendations"), list) else []
 
@@ -705,6 +744,15 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         if not np.isfinite(vf):
             return 0.0
         return float(np.clip(vf, 0.0, 1.0))
+
+    def _safe_float(v: Any, default: float = 0.0) -> float:
+        try:
+            vf = float(v)
+        except Exception:
+            return float(default)
+        if not np.isfinite(vf):
+            return float(default)
+        return vf
 
     _normalized_recommendations: list[dict[str, Any]] = []
     for _r in _recommendations:
@@ -745,10 +793,24 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     except Exception:
         _tc_count = len(_tc_events)
     _pt_summary = dict(_tc.get("phase_type_summary", {}) or {})
+    _fqf_trace_raw = _fqf.get("recovery_trace") if isinstance(_fqf.get("recovery_trace"), list) else []
+    _fqf_trace: list[dict[str, Any]] = []
+    for _tr in _fqf_trace_raw:
+        if not isinstance(_tr, dict):
+            continue
+        _fqf_trace.append(
+            {
+                "attempt": int(_tr.get("attempt", 0)) if isinstance(_tr.get("attempt", 0), (int, float)) else 0,
+                "candidate": str(_tr.get("candidate", "") or ""),
+                "action": str(_tr.get("action", "") or ""),
+                "result": str(_tr.get("result", "") or ""),
+            }
+        )
 
     return {
         "joy_index": _safe01(_joy.get("joy_index", 0.0)),
         "fatigue_index": _safe01(_joy.get("fatigue_index", 0.0)),
+        "frisson_index": _safe01(_joy.get("frisson_index", 0.0)),
         "cluster_key": str(_song_cal.get("cluster_key", "") or ""),
         "cluster_policy": dict(_cluster) if isinstance(_cluster, dict) else {},
         "recommendations": _normalized_recommendations,
@@ -758,6 +820,53 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
             "events": _tc_events,
             "phase_type_summary": _pt_summary,
         },
+        "fallback_quality_floor": {
+            "triggered": bool(_fqf.get("triggered", False)),
+            "passed": bool(_fqf.get("passed", True)),
+            "status": str(_fqf.get("status", "passed") or "passed"),
+            "reason": str(_fqf.get("reason", "") or ""),
+            "recovered": bool(_fqf.get("recovered", False)),
+            "attempts": int(_fqf.get("attempts", 0)) if isinstance(_fqf.get("attempts", 0), (int, float)) else 0,
+            "fallback_count": (
+                int(_fqf.get("fallback_count", 0)) if isinstance(_fqf.get("fallback_count", 0), (int, float)) else 0
+            ),
+            "artifact_freedom": _safe01(_fqf.get("artifact_freedom", 1.0)),
+            "hpi_passed": bool(_fqf.get("hpi_passed", False)),
+            "hpi": _safe_float(_fqf.get("hpi", 0.0), 0.0),
+            "best_candidate": str(_fqf.get("best_candidate", "") or ""),
+            "recovery_trace": _fqf_trace,
+        },
+        "recovery_certainty": {
+            "recoverability_ceiling": _safe01(_rc.get("recoverability_ceiling", 0.0)),
+            "uncertainty_index": _safe01(_rc.get("uncertainty_index", 1.0)),
+            "conservative_audio_scalar": _safe01(_rc.get("conservative_audio_scalar", 1.0)),
+            "confidence_band": str(_rc.get("confidence_band", "") or ""),
+            "restorability_score": _safe_float(_rc.get("restorability_score", 0.0), 0.0),
+            "transfer_generation_count": int(_rc.get("transfer_generation_count", 0))
+            if isinstance(_rc.get("transfer_generation_count", 0), (int, float))
+            else 0,
+            "hf_loss_db": _safe_float(_rc.get("hf_loss_db", 0.0), 0.0)
+            if isinstance(_rc.get("hf_loss_db", None), (int, float))
+            else None,
+        },
+        # §0/§2.46 HF-Hallucination-Guard: Treffer-Aggregation für UI-Klangtreue-Hinweis
+        "hf_hallucination_guard": (lambda _hfg=_meta.get("hf_hallucination_guard", {}): {
+            "guard_fired_count": int(_hfg.get("guard_fired_count", 0) or 0),
+            "phases_guarded": list(_hfg.get("phases_guarded", []) or []),
+            "max_delta_ratio": _safe_float(_hfg.get("max_delta_ratio", 0.0), 0.0),
+            "min_cap_hz": _safe_float(_hfg.get("min_cap_hz", 0.0), 0.0)
+            if isinstance(_hfg.get("min_cap_hz", None), (int, float))
+            else None,
+        })(),
+        # §2.46b Spectral Tilt Drift Guard: Treffer-Aggregation für UI-Klangtreue-Hinweis
+        "spectral_tilt_guard": (lambda _stg=_meta.get("spectral_tilt_guard", {}): {
+            "guard_fired_count": int(_stg.get("guard_fired_count", 0) or 0),
+            "phases_guarded": list(_stg.get("phases_guarded", []) or []),
+            "max_deviation_db_per_oct": _safe_float(_stg.get("max_deviation_db_per_oct", 0.0), 0.0),
+            "max_wet_cap_applied": _safe_float(_stg.get("max_wet_cap_applied", 0.0), 0.0),
+        })(),
+        # §2.47b JND Sub-Threshold Phase Telemetrie — für Diagnose und UI
+        "sub_threshold_phases": list(_meta.get("sub_threshold_phases", []) or []),
     }
 
 
@@ -977,6 +1086,120 @@ def validate_export_quality(result: object) -> tuple[bool, list[str]]:
         return True, []
 
 
+def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
+    """Build export_workflow-compatible quality_gate payload from a result object.
+
+    This is the canonical bridge-side payload builder used by frontend/CLI callers
+    before calling ``backend.core.export_workflow.export_audio``.
+    """
+    passed, warnings = validate_export_quality(result)
+    meta = getattr(result, "metadata", None)
+    if not isinstance(meta, dict):
+        meta = {}
+
+    fail_reasons = meta.get("fail_reasons") if isinstance(meta.get("fail_reasons"), list) else []
+    primary_fail_reason = str(meta.get("fail_reason", "") or "")
+    degradation_status = str(meta.get("degradation_status", "") or "")
+    fqf = meta.get("fallback_quality_floor") if isinstance(meta.get("fallback_quality_floor"), dict) else {}
+
+    fqf_triggered = bool(fqf.get("triggered", False))
+    fqf_status = str(fqf.get("status", "")).strip().lower()
+    fqf_attempts_raw = fqf.get("attempts", 0)
+    fqf_attempts = int(fqf_attempts_raw) if isinstance(fqf_attempts_raw, (int, float)) else 0
+
+    # Deterministic coupling: if fallback floor indicates recovered/degraded, do not
+    # emit a contradictory passed=True payload.
+    if fqf_triggered and fqf_status in {"recovered", "degraded", "failed", "fail"}:
+        passed = False
+        if not primary_fail_reason:
+            primary_fail_reason = str(fqf.get("reason", "fallback_quality_floor_triggered") or "fallback_quality_floor_triggered")
+        if not degradation_status:
+            degradation_status = "recovered" if fqf_status == "recovered" else "degraded"
+
+    if not primary_fail_reason and fail_reasons:
+        first = fail_reasons[0]
+        if isinstance(first, dict):
+            primary_fail_reason = str(first.get("error_code", "QUALITY_GATE_FAILED") or "QUALITY_GATE_FAILED")
+    if not primary_fail_reason and warnings:
+        primary_fail_reason = str(warnings[0])
+
+    if not degradation_status:
+        degradation_status = "ok" if passed else "degraded"
+
+    return {
+        "passed": bool(passed),
+        "fail_reason": primary_fail_reason,
+        "fail_reasons": list(fail_reasons),
+        "required_gates": ["musical_goals", "pqs", "oqs", "fallback_quality_floor"],
+        "recovery_attempted": bool(fqf_attempts > 0),
+        "best_possible_reached": bool(fqf_status == "recovered"),
+        "degradation_status": degradation_status,
+        "fallback_quality_floor": dict(fqf),
+        "warnings": [str(w) for w in warnings],
+    }
+
+
+def build_export_metadata(result: object, **tag_kwargs):
+    """Build an ExportMetadata instance populated with fidelity-guard telemetry.
+
+    Reads ``spectral_tilt_guard`` and ``hf_hallucination_guard`` from
+    ``result.metadata`` (both written by UV3) and stores them under the
+    ``fidelity_guards`` field so they appear in the JSON sidecar written by
+    ``backend.core.export_workflow._write_metadata_sidecar``.
+
+    Args:
+        result: RestorationResult (or any object with a ``.metadata`` dict).
+        **tag_kwargs: Optional id-tag overrides forwarded to ExportMetadata
+                      (title, artist, album, …).
+
+    Returns:
+        Populated ExportMetadata instance (``fidelity_guards`` is None when
+        both guards are absent from result metadata).
+    """
+    from backend.core.export_workflow import ExportMetadata
+
+    meta = getattr(result, "metadata", None)
+    if not isinstance(meta, dict):
+        meta = {}
+
+    def _safe_guard(raw: object) -> dict | None:
+        """Return guard dict with only JSON-safe numeric / list values, or None."""
+        if not isinstance(raw, dict):
+            return None
+        out: dict = {}
+        for k, v in raw.items():
+            if isinstance(v, (int, float, str, bool)):
+                try:
+                    import math
+                    out[k] = 0.0 if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v
+                except Exception:
+                    pass
+            elif isinstance(v, (list, tuple)):
+                out[k] = [str(x) for x in v]
+        return out or None
+
+    _stg = _safe_guard(meta.get("spectral_tilt_guard"))
+    _hfg = _safe_guard(meta.get("hf_hallucination_guard"))
+    _guards: dict | None = None
+    if _stg is not None or _hfg is not None:
+        _guards = {}
+        if _stg is not None:
+            _guards["spectral_tilt_guard"] = _stg
+        if _hfg is not None:
+            _guards["hf_hallucination_guard"] = _hfg
+
+    em = ExportMetadata(
+        title=tag_kwargs.get("title") or None,
+        artist=tag_kwargs.get("artist") or None,
+        album=tag_kwargs.get("album") or None,
+        date=tag_kwargs.get("date") or None,
+        genre=tag_kwargs.get("genre") or None,
+        comment=tag_kwargs.get("comment") or None,
+        fidelity_guards=_guards,
+    )
+    return em
+
+
 # ---------------------------------------------------------------------------
 # Warmup  (Modell-Vorinitialisierung im Hintergrund, §9.7.4)
 # ---------------------------------------------------------------------------
@@ -1022,6 +1245,20 @@ def warmup_models_background() -> None:
         except Exception as _e:
             logger.debug("bridge: %s.%s übersprungen: %s", _mod, _accessor, _e)
     logger.info("bridge: warmup complete")
+
+
+def warmup_rocm() -> None:
+    """AMD ROCm GPU-Warmup — eliminiert HIP JIT cold-start-Latenz.
+
+    Delegiert an ``ml_device_manager.warmup_rocm_gpu()``.
+    Sicheres No-op auf CPU-only und non-AMD Systemen.
+    """
+    try:
+        from backend.core.ml_device_manager import warmup_rocm_gpu as _wup
+
+        _wup()
+    except Exception as _exc:
+        logger.debug("bridge.warmup_rocm: non-critical: %s", _exc)
 
 
 # ---------------------------------------------------------------------------

@@ -345,6 +345,16 @@ class SpectralRepair(PhaseInterface):
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
+        _progress_cb = kwargs.get("progress_sub_callback")
+
+        def _report_progress(pct: float, label: str) -> None:
+            if callable(_progress_cb):
+                try:
+                    _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
+                except Exception:
+                    pass
+
+        _report_progress(2.0, "Spektralreparatur: Vorbereitung")
         self._ml_guard_events = []
         # Store material as lowercase string value for guard comparison (handles both str and MaterialType enum)
         self._current_material = str(getattr(material, "value", material)).lower()
@@ -440,6 +450,7 @@ class SpectralRepair(PhaseInterface):
                         self._current_material,
                         _apollo_hf_gain_db,
                     )
+                    _report_progress(20.0, "Spektralreparatur: Apollo-Vorverarbeitung")
             except Exception as _apollo_exc:
                 logger.debug("Apollo pre-processing skipped (non-critical): %s", _apollo_exc)
 
@@ -473,9 +484,11 @@ class SpectralRepair(PhaseInterface):
                 _sqrt2 = np.sqrt(2.0)
                 _mid = (audio[:, 0] + audio[:, 1]) / _sqrt2
                 _side = (audio[:, 0] - audio[:, 1]) / _sqrt2
+                _report_progress(35.0, "Spektralreparatur: ADMM Mid-Kanal")
                 _repaired_mid = self._admm_declip(_mid, _clip_level, sample_rate)
                 # Side: declip mildly (half strength) to avoid breaking stereo field
                 _side_clip = float(np.clip(_clip_level * 1.05, 0.85, 1.0))
+                _report_progress(55.0, "Spektralreparatur: ADMM Side-Kanal")
                 _repaired_side = self._admm_declip(_side, _side_clip, sample_rate)
                 repaired_audio = np.column_stack(
                     (
@@ -484,6 +497,7 @@ class SpectralRepair(PhaseInterface):
                     )
                 )
             else:
+                _report_progress(60.0, "Spektralreparatur: ADMM")
                 repaired_audio = self._admm_declip(audio, _clip_level, sample_rate)
         else:
             # Process via standard spectral inpainting — §2.51 M/S for stereo.
@@ -492,10 +506,32 @@ class SpectralRepair(PhaseInterface):
                 _sqrt2 = np.sqrt(2.0)
                 _mid = (audio[:, 0] + audio[:, 1]) / _sqrt2
                 _side = (audio[:, 0] - audio[:, 1]) / _sqrt2
-                _repaired_mid = self._repair_channel(_mid, sample_rate, stft_cfg, thresholds, repair_strength)
+                _report_progress(35.0, "Spektralreparatur: Mid-Kanal")
+                _repaired_mid = self._repair_channel(
+                    _mid,
+                    sample_rate,
+                    stft_cfg,
+                    thresholds,
+                    repair_strength,
+                    progress_cb=lambda p, lbl: _report_progress(
+                        35.0 + 20.0 * float(np.clip(p, 0.0, 100.0)) / 100.0,
+                        f"Spektralreparatur Mid: {lbl}",
+                    ),
+                )
                 # Side: minimal repair at half strength to preserve stereo field
                 _side_strength = repair_strength * 0.5
-                _repaired_side = self._repair_channel(_side, sample_rate, stft_cfg, thresholds, _side_strength)
+                _report_progress(55.0, "Spektralreparatur: Side-Kanal")
+                _repaired_side = self._repair_channel(
+                    _side,
+                    sample_rate,
+                    stft_cfg,
+                    thresholds,
+                    _side_strength,
+                    progress_cb=lambda p, lbl: _report_progress(
+                        55.0 + 20.0 * float(np.clip(p, 0.0, 100.0)) / 100.0,
+                        f"Spektralreparatur Side: {lbl}",
+                    ),
+                )
                 repaired_audio = np.column_stack(
                     (
                         (_repaired_mid + _repaired_side) / _sqrt2,
@@ -503,7 +539,18 @@ class SpectralRepair(PhaseInterface):
                     )
                 )
             else:
-                repaired_audio = self._repair_channel(audio, sample_rate, stft_cfg, thresholds, repair_strength)
+                _report_progress(60.0, "Spektralreparatur: Inpainting")
+                repaired_audio = self._repair_channel(
+                    audio,
+                    sample_rate,
+                    stft_cfg,
+                    thresholds,
+                    repair_strength,
+                    progress_cb=lambda p, lbl: _report_progress(
+                        35.0 + 40.0 * float(np.clip(p, 0.0, 100.0)) / 100.0,
+                        f"Spektralreparatur: {lbl}",
+                    ),
+                )
 
         # Calculate metrics
         defect_reduction = self._calculate_defect_reduction(audio, repaired_audio, sample_rate)
@@ -514,6 +561,7 @@ class SpectralRepair(PhaseInterface):
 
         repaired_audio = np.nan_to_num(repaired_audio, nan=0.0, posinf=0.0, neginf=0.0)
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
+        _report_progress(78.0, "Spektralreparatur: Qualitätsmetriken")
 
         # §2.46b Spectral-Tilt-Guard: cap HF inpainting if tilt deviates beyond tolerance
         # Only applies to spectral inpainting path, not ADMM declipping (no HF synthesis there)
@@ -541,7 +589,19 @@ class SpectralRepair(PhaseInterface):
             except Exception as _tc23:
                 logger.debug("phase_23 §2.46b tilt-cap skipped (graceful): %s", _tc23)
 
-        return PhaseResult(
+        # §4.5 Psychoacoustic Masking Clamp — only repair audible spectral gaps
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            repaired_audio = apply_psychoacoustic_masking_clamp(
+                audio, repaired_audio, sample_rate,
+                strength=_effective_strength, mode="additive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase23 masking clamp non-blocking: %s", _pm_exc)
+
+        _report_progress(92.0, "Spektralreparatur: Abschluss")
+
+        _result = PhaseResult(
             success=True,
             audio=repaired_audio,
             execution_time_seconds=execution_time,
@@ -564,6 +624,8 @@ class SpectralRepair(PhaseInterface):
             },
             warnings=[] if rt_factor < 0.6 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
+        _report_progress(100.0, "Spektralreparatur: fertig")
+        return _result
 
     def _admm_declip(
         self,
@@ -698,8 +760,17 @@ class SpectralRepair(PhaseInterface):
         stft_cfg: dict[str, int],
         thresholds: dict[str, float],
         repair_strength: float,
+        progress_cb=None,
     ) -> np.ndarray:
         """Repair a single audio channel using spectral inpainting."""
+        def _report(pct: float, label: str) -> None:
+            if callable(progress_cb):
+                try:
+                    progress_cb(float(np.clip(pct, 0.0, 100.0)), label)
+                except Exception:
+                    pass
+
+        _report(8.0, "STFT")
         # Compute STFT
         _f, _t, Zxx = signal.stft(
             audio,
@@ -713,12 +784,14 @@ class SpectralRepair(PhaseInterface):
         # Magnitude and phase
         magnitude = np.abs(Zxx)
         phase = np.angle(Zxx)
+        _report(22.0, "Defekterkennung")
 
         # Detect defects using DSP (always)
         defect_mask = self._detect_defects(magnitude, phase, thresholds)
 
         if np.sum(defect_mask) == 0:
             # No defects detected
+            _report(100.0, "Keine Defekte")
             return audio
 
         # Calculate defect severity for adaptive ML decision
@@ -735,7 +808,9 @@ class SpectralRepair(PhaseInterface):
             if audiosr is not None:
                 # ML-based repair with AudioSR
                 log_mode_decision("phase_23", True, f"Defect severity: {defect_severity:.2%}")
+                _report(55.0, "AudioSR")
                 repaired_audio = self._repair_with_audiosr(audio, sample_rate, defect_mask, repair_strength, audiosr)
+                _report(98.0, "AudioSR fertig")
                 return repaired_audio
             else:
                 logger.warning("AudioSR unavailable, falling back to DSP")
@@ -763,13 +838,27 @@ class SpectralRepair(PhaseInterface):
                 pass  # psutil nicht verfügbar — MRSA versuchen
             if _mrsa_ok:
                 try:
-                    return self._repair_channel_mrsa(audio, sample_rate, thresholds, repair_strength)
+                    _report(45.0, "MRSA-Start")
+                    out = self._repair_channel_mrsa(
+                        audio,
+                        sample_rate,
+                        thresholds,
+                        repair_strength,
+                        progress_cb=lambda p, lbl: _report(
+                            45.0 + 50.0 * float(np.clip(p, 0.0, 100.0)) / 100.0,
+                            f"MRSA: {lbl}",
+                        ),
+                    )
+                    _report(98.0, "MRSA fertig")
+                    return out
                 except Exception as _mrsa_err:
                     logger.warning("MRSA-Reparatur fehlgeschlagen (%s), Single-STFT-Fallback", _mrsa_err)
 
         # Single-STFT fallback (FAST mode or MRSA failure)
         # Apply inpainting strategies
+        _report(60.0, "Inpainting Magnitude")
         repaired_magnitude = self._inpaint_magnitude(magnitude, defect_mask)
+        _report(72.0, "Inpainting Phase")
         repaired_phase = self._inpaint_phase(phase, defect_mask)
 
         # Reconstruct complex spectrogram
@@ -778,15 +867,30 @@ class SpectralRepair(PhaseInterface):
         # Blend original and repaired
         Zxx_blended = Zxx * (1 - defect_mask * repair_strength) + Zxx_repaired * (defect_mask * repair_strength)
 
-        # Inverse STFT
-        _, audio_repaired = signal.istft(
-            Zxx_blended,
-            fs=sample_rate,
-            window="hann",
-            nperseg=stft_cfg["nperseg"],
-            noverlap=stft_cfg["noverlap"],
-            nfft=stft_cfg["nfft"],
-        )
+        # Phase-kohärente Rekonstruktion via PGHI (§2.47 VERBOTEN: direktes ISTFT nach Spektralmodifikation)
+        try:
+            from dsp.pghi import pghi_reconstruct_from_stft as _pghi_istft_p23
+            _hop_p23 = stft_cfg["nperseg"] - stft_cfg["noverlap"]
+            audio_repaired = _pghi_istft_p23(
+                Zxx_blended,
+                sr=sample_rate,
+                win_size=stft_cfg["nperseg"],
+                hop=_hop_p23,
+                use_original_phase=False,
+                n_samples=len(audio),
+            )
+            audio_repaired = np.asarray(audio_repaired, dtype=np.float64)
+        except (ImportError, Exception) as _pghi_err_p23:
+            logger.debug("PGHI-Fallback auf scipy.signal.istft (phase_23): %s", _pghi_err_p23)
+            _, audio_repaired = signal.istft(
+                Zxx_blended,
+                fs=sample_rate,
+                window="hann",
+                nperseg=stft_cfg["nperseg"],
+                noverlap=stft_cfg["noverlap"],
+                nfft=stft_cfg["nfft"],
+            )
+        _report(98.0, "Rekonstruktion")
 
         return audio_repaired[: len(audio)]
 
@@ -796,6 +900,7 @@ class SpectralRepair(PhaseInterface):
         sample_rate: int,
         thresholds: dict[str, float],
         repair_strength: float,
+        progress_cb=None,
     ) -> np.ndarray:
         """Repair single audio channel using 5-zone MRSA (§DSP-Spezialregeln).
 
@@ -817,8 +922,15 @@ class SpectralRepair(PhaseInterface):
         audio_f32 = np.asarray(audio, dtype=np.float32)
         zone_stfts = analyze_zones(audio_f32, sample_rate)
         zone_audios: dict[str, np.ndarray] = {}
+        _zone_names = list(zone_stfts.keys())
+        _n_zones = max(1, len(_zone_names))
 
-        for name in list(zone_stfts.keys()):
+        for _zi, name in enumerate(_zone_names):
+            if callable(progress_cb):
+                try:
+                    progress_cb(5.0 + 90.0 * (_zi / _n_zones), f"Zone {name}")
+                except Exception:
+                    pass
             zone = zone_stfts[name]
             magnitude = np.abs(zone.stft)
             phase = np.angle(zone.stft)
@@ -842,6 +954,11 @@ class SpectralRepair(PhaseInterface):
             zone_stfts[name] = zone._replace(stft=np.empty(0, dtype=np.complex64))
             del magnitude, phase, defect_mask, repaired_mag, Zxx_repaired, blend_mask, Zxx_blended
 
+        if callable(progress_cb):
+            try:
+                progress_cb(100.0, "Zonen-Merge")
+            except Exception:
+                pass
         return merge_zones(zone_audios, zone_stfts, sample_rate, len(audio))
 
     def _repair_with_audiosr(
@@ -876,20 +993,53 @@ class SpectralRepair(PhaseInterface):
         try:
             if not self._has_sufficient_ml_headroom(audio, sample_rate):
                 return audio
-            # AudioSR.process() erwartet (audio: np.ndarray, sr: int, target_sr: int)
-            # — keine Dateipfade. Das Plugin übernimmt Resampling und DSP-Fallback intern.
-            target_sr = 48000
-            repaired = audiosr.process(audio, sample_rate, target_sr)
 
-            # Sicherstellen, dass Länge identisch mit Eingang
-            if len(repaired) != len(audio):
-                from scipy.signal import resample as _resample
+            def _repair_single_channel(channel_audio: np.ndarray) -> np.ndarray:
+                # AudioSR.process() erwartet (audio: np.ndarray, sr: int, target_sr: int)
+                # — keine Dateipfade. Das Plugin übernimmt Resampling und DSP-Fallback intern.
+                target_sr = 48000
+                repaired_channel = audiosr.process(channel_audio, sample_rate, target_sr)
+                repaired_channel = np.asarray(repaired_channel, dtype=np.float32)
+                repaired_channel = np.squeeze(repaired_channel)
 
-                repaired = _resample(repaired, len(audio))
+                if repaired_channel.ndim != 1:
+                    logger.warning(
+                        "AudioSR returned unexpected shape %s for mono channel — falling back to passthrough",
+                        repaired_channel.shape,
+                    )
+                    repaired_channel = channel_audio
 
-            # Blend based on repair_strength
-            audio_final = audio * (1 - repair_strength) + repaired.astype(audio.dtype) * repair_strength
-            return audio_final[: len(audio)]
+                if len(repaired_channel) != len(channel_audio):
+                    from scipy.signal import resample as _resample
+
+                    repaired_channel = _resample(repaired_channel, len(channel_audio))
+
+                audio_final = (
+                    channel_audio * (1 - repair_strength)
+                    + repaired_channel.astype(channel_audio.dtype) * repair_strength
+                )
+                return audio_final[: len(channel_audio)]
+
+            audio_arr = np.asarray(audio)
+            if audio_arr.ndim == 1:
+                return _repair_single_channel(audio_arr)
+
+            if audio_arr.ndim == 2:
+                # UV3 uses channels-first stereo (2, N). Some standalone phase tests/use-cases
+                # still provide samples-first (N, 2). Preserve the incoming orientation.
+                if audio_arr.shape[0] <= 2 and audio_arr.shape[1] > 2:
+                    repaired_channels = [_repair_single_channel(audio_arr[ch]) for ch in range(audio_arr.shape[0])]
+                    return np.stack(repaired_channels, axis=0).astype(audio_arr.dtype, copy=False)
+
+                if audio_arr.shape[1] <= 2 and audio_arr.shape[0] > 2:
+                    repaired_channels = [_repair_single_channel(audio_arr[:, ch]) for ch in range(audio_arr.shape[1])]
+                    return np.column_stack(repaired_channels).astype(audio_arr.dtype, copy=False)
+
+            logger.warning(
+                "AudioSR repair received unsupported audio shape %s — falling back to passthrough",
+                audio_arr.shape,
+            )
+            return audio
 
         except Exception as e:
             logger.error("AudioSR processing failed: %s, falling back to DSP", e)

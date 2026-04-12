@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -333,6 +334,9 @@ class MertPlugin:
         self._analysis_cache: dict[str, MertAnalysis] = {}
         self._analysis_cache_lock = threading.Lock()
         self._analysis_cache_max_entries = 64
+        if os.getenv("AURIK_SAFE_VALIDATION_PROFILE", "0") == "1":
+            self._try_load_local_dsp()
+            return
         self._try_load_model()
 
     def _try_load_model(self) -> None:
@@ -635,8 +639,11 @@ class MertPlugin:
         if self._model_type in ("mert_hf", "mert_fairseq") and len(resampled) < _MIN_MODEL_SAMPLES:
             resampled = np.pad(resampled, (0, _MIN_MODEL_SAMPLES - len(resampled)))
 
-        # OOM-Guard: cap inference audio at 30 s center-crop (HF/ONNX/fairseq)
-        _MAX_MERT_SAMPLES = int(30 * self._target_sr)
+        # OOM-Guard + CPU-latency cap: 10 s center-crop keeps token-length at
+        # ~750 (24 kHz / 320-stride), reducing O(n²) attention cost ~9× vs 30 s.
+        # 30 s triggered >180 s CPU inference for MERT-330M.  Quality impact is
+        # negligible: the embedding-norm proxy saturates well within 10 s.
+        _MAX_MERT_SAMPLES = int(10 * self._target_sr)
         if len(resampled) > _MAX_MERT_SAMPLES:
             _off = (len(resampled) - _MAX_MERT_SAMPLES) // 2
             resampled = resampled[_off : _off + _MAX_MERT_SAMPLES]
@@ -680,6 +687,10 @@ class MertPlugin:
             import torch
 
             inputs = self._processor(audio, sampling_rate=self._target_sr, return_tensors="pt")
+            # Move to device: required when model runs on GPU (ROCm/CUDA).
+            _dev = getattr(self, "_device", "cpu")
+            if str(_dev) not in ("", "cpu"):
+                inputs = {k: v.to(_dev) for k, v in inputs.items() if isinstance(v, torch.Tensor)}
             with torch.no_grad():
                 # Request only the final hidden state to keep metric inference bounded.
                 outputs = self._model(**inputs, output_hidden_states=False)

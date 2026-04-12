@@ -7,6 +7,7 @@ import logging
 import sys
 
 import numpy as np
+import pytest
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -24,7 +25,7 @@ def test_phase12_ml_routing():
         print("✓ Phase 12 import successful")
     except ImportError as e:
         print(f"✗ Failed to import Phase 12: {e}")
-        return False
+        pytest.fail(f"Failed to import Phase 12: {e}")
 
     # Create audio with simulated wow/flutter (5 seconds, 48 kHz)
     duration = 5.0
@@ -73,7 +74,7 @@ def test_phase12_ml_routing():
         import traceback
 
         traceback.print_exc()
-        return False
+        pytest.fail(f"FAST mode failed: {e}")
 
     # Test 2: BALANCED mode (ML-Hybrid with adaptive strategy)
     print("\n" + "-" * 80)
@@ -132,9 +133,10 @@ def test_phase12_ml_routing():
     print("✓ Graceful fallback to YIN if ML unavailable")
     print("\nIntegration Status: SUCCESS ✅")
 
-    return True
-
 
 if __name__ == "__main__":
-    success = test_phase12_ml_routing()
-    sys.exit(0 if success else 1)
+    try:
+        test_phase12_ml_routing()
+    except Exception:
+        sys.exit(1)
+    sys.exit(0)

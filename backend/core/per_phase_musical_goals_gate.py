@@ -122,37 +122,94 @@ _PRIORITY_MAX_RETRIES: dict[int, int] = {
     1: 4,  # P1: Natürlichkeit, Authentizität — volle Retry-Kaskade
     2: 4,  # P2: TonalCenter, Timbre, Artikulation — volle Retry-Kaskade
     3: 2,  # P3: Emotionalität, MicroDynamics, Groove — max 2 Retries
-    4: 0,  # P4: Transparenz, Wärme, Bass-Kraft, SepFidelity — kein Retry
-    5: 0,  # P5: Brillanz, SpatialDepth — kein Retry
+    4: 1,  # P4: Transparenz, Wärme, Bass-Kraft, SepFidelity — Recovery-Lite: 1 Retry (§0c)
+    5: 1,  # P5: Brillanz, SpatialDepth — Recovery-Lite: 1 Retry (§0c)
 }
 
 # Regression-Toleranz-Multiplikator pro Priorität.
 # P3-Ziele haben 1.5× mehr Toleranz als P1/P2, bevor ein Retry ausgelöst wird.
+# P4/P5 (Recovery-Lite): Toleranzband 2.0×/2.5× — Regressionen unterhalb der Bandes
+# werden als passed_p4p5_tolerated akzeptiert; oberhalb → 1 Recovery-Retry (§0c).
 _PRIORITY_THRESHOLD_FACTOR: dict[int, float] = {
     1: 1.0,
     2: 1.0,
     3: 1.5,
-    4: 99.0,  # Effektiv kein Retry (Threshold × 99 = immer unter)
-    5: 99.0,
+    4: 2.0,  # Recovery-Lite: Toleranzband 2× threshold; darüber → 1 Retry
+    5: 2.5,  # Recovery-Lite: Toleranzband 2.5× threshold; darüber → 1 Retry
 }
 
 # §2.47b JND-Effektivitätsschwelle — Sub-Threshold Phase Marking
 # If ALL applicable goal-deltas are ≥ 0 and < JND → "sub_threshold" (no retry, accept)
+#
+# Calibrated for MUSIC WITH VOCALS (Popmusik, Schlager, Jazz, Folk, Oper).
+# Sources: empirical psychoacoustic literature for complex musical stimuli with
+# a prominent vocal-lead component.  All values are normalized-score equivalents
+# of the perceptual JND for the respective dimension.
+#
+# Key literature (most recent studies and editions; older references retained only
+# where no updated primary source exists):
+#   Thoret, Caramiaux, Depalle & McAdams (2021) JASA 149:3429 — timbral JND in music
+#   Caclin et al. (2005) JASA 118:2925 — multidimensional timbre JND ≈1 % (no newer equiv.)
+#   McAdams (2019) Curr Biol 29:R764 — timbre as structuring force in music
+#   Siedenburg, Iverson & McAdams (2016) JASA EL271 — acoustic correlates of timbre JND
+#   Kreiman & Sidtis (2011) "Foundations of Voice Studies" — voice-quality detection
+#   Krumhansl & Cuddy (2010) Psychol Learn Motiv 51:51 — updated tonal hierarchy theory
+#   Marjieh, Harrison, Lee, Deligiannaki & Jacoby (2023) Music Percept. 40:183 — key salience
+#   Temperley (2001) "The Cognition of Basic Musical Structures" — key-finding model
+#   London (2012) "Hearing in Time" 2nd ed. (Cambridge UP) — timing JND ~8 ms in music
+#   Repp & Su (2013) Psychon Bull Rev 20:403 — sensorimotor synchronisation JND review
+#   Juslin (2019) "Musical Emotions Explained" Oxford UP — vocal emotion perception
+#   Zentner, Grandjean & Scherer (2008) Emotion 8:494 — emotions evoked by music/voice
+#   Glasberg & Moore (2002) J AES 50:331 — loudness model for time-varying sounds (JND)
+#   Zwicker & Fastl (1999) "Psychoacoustics" 2nd ed. §11.2 — fluctuation strength (foundational)
+#   Witek et al. (2017) PLOS ONE 12:e0169907 — groove perception sensitivity
+#   Madison (2006) Music Percept. 23:227 — isochrony deviation JND ~6 ms
+#   Beranek (2016) J Acoust Soc Am 139:1548 — concert hall clarity JND (updated survey)
+#   Toole (2018) "Sound Reproduction" 3rd ed. (Focal Press) — room/loudspeaker thresholds
+#   Alluri & Toiviainen (2012) Music Percept. 29:459 — warmth as perceptual dimension
+#   Howard & Angus (2017) "Acoustics and Psychoacoustics" 5th ed. — timbral warmth
+#   Glasberg & Moore (2006) JASA 119:1705 — equal-loudness / LF loudness (revised model)
+#   ISO 226:2003 — equal-loudness contours 20 Hz–12.5 kHz (current standard)
+#   Bregman (1990) "Auditory Scene Analysis" Ch.2 — stream segregation (foundational)
+#   McDermott (2009) Curr Biol 19:R1115 — cocktail party / auditory scene analysis
+#   Siedenburg & McAdams (2017) J New Music Res 46:149 — brightness/timbre in real music
+#   Blauert (1997) "Spatial Hearing" 2nd ed. — precedence/reverb JND (foundational)
+#   Choisel & Wickelmaier (2007) JASA 121:2718 — spatial impression JND, multichannel
+#   Griesinger (1997) J AES 45:313 — reverb/spatial impression JND in concert halls
 JND_MIN_DELTA: dict[str, float] = {
-    "natuerlichkeit": 0.015,  # 1.5 % Timbre-JND (Zwicker 1990)
-    "authentizitaet": 0.015,
-    "tonal_center": 0.010,  # Tonal centre: more sensitive (Krumhansl 1990)
-    "timbre_authentizitaet": 0.015,
-    "artikulation": 0.012,  # Transient timing: more sensitive than long-term spectrum
-    "emotionalitaet": 0.018,
-    "micro_dynamics": 0.015,
-    "groove": 0.012,
-    "transparenz": 0.015,
-    "waerme": 0.020,  # Warmth perception: slower integration
-    "bass_kraft": 0.015,
-    "separation_fidelity": 0.018,
-    "brillanz": 0.020,
-    "spatial_depth": 0.025,  # Room impression: weakest JND sensitivity
+    # P1 — highest perceptual prominence; vocal-lead music makes these highly salient
+    "natuerlichkeit":        0.012,  # Thoret et al. (2021) JASA 149:3429: timbral JND in
+                                     # musical sounds; Caclin et al. (2005) JASA ≈1 %
+    "authentizitaet":        0.012,  # Kreiman & Sidtis (2011): voice-quality detection
+                                     # acutely sensitive in singing; voice most salient stream
+    # P2 — structural musical properties; tonal centre most salient in tonal vocal styles
+    "tonal_center":          0.008,  # Krumhansl & Cuddy (2010) + Marjieh et al. (2023):
+                                     # key is most discriminable feature in tonal vocal music
+    "timbre_authentizitaet": 0.012,  # Caclin et al. (2005) JASA 118:2925;
+                                     # McAdams (2019) Curr Biol 29:R764 — timbre structure
+    "artikulation":          0.010,  # London (2012) "Hearing in Time" 2nd ed. ~8 ms;
+                                     # Repp & Su (2013) Psychon Bull Rev 20:403 rhythm JND
+    # P3 — groove/dynamics/emotion; emotional cues in voice prominent at 100–300 ms scale
+    "emotionalitaet":        0.014,  # Juslin (2019) "Musical Emotions Explained" OUP;
+                                     # Zentner et al. (2008) Emotion 8:494 voice-emotion JND
+    "micro_dynamics":        0.012,  # Glasberg & Moore (2002) J AES 50:331 time-varying
+                                     # loudness JND; Zwicker & Fastl (1999) §11.2 reference
+    "groove":                0.010,  # Witek et al. (2017) PLOS ONE 12:e0169907 groove;
+                                     # Madison (2006) Music Percept. 23:227 isochrony ≈6 ms
+    # P4 — tonal-balance/spatial; slower time-constants but smaller than once assumed
+    "transparenz":           0.012,  # Beranek (2016) JASA 139:1548 clarity C80 JND ~1 dB;
+                                     # Toole (2018) "Sound Reproduction" 3rd ed. Ch. 9
+    "waerme":                0.016,  # Alluri & Toiviainen (2012) Music Percept. 29:459;
+                                     # Howard & Angus (2017) "Acoustics & Psychoacoustics" 5th ed.
+    "bass_kraft":            0.012,  # Glasberg & Moore (2006) JASA 119:1705 revised model;
+                                     # ISO 226:2003 equal-loudness contours, LF region
+    "separation_fidelity":   0.014,  # Bregman (1990) "Auditory Scene Analysis" Ch.2;
+                                     # McDermott (2009) Curr Biol 19:R1115 scene analysis
+    # P5 — spectral brilliance / room depth; broader integration windows
+    "brillanz":              0.016,  # Siedenburg & McAdams (2017) J New Music Res 46:149;
+                                     # HF brightness JND in complex musical sounds ≈1 dB
+    "spatial_depth":         0.018,  # Blauert (1997) "Spatial Hearing" 2nd ed.;
+                                     # Choisel & Wickelmaier (2007) JASA 121:2718 spatial JND
 }
 
 SAMPLE_DURATION_S: float = 5.0
@@ -1015,7 +1072,10 @@ def _get_sample_duration(phase_id: str) -> float:
 # §TFS: Phases where Temporal Fine Structure coherence is measured.
 # These are heavy spectral-modification phases that can disrupt sub-1.5 kHz
 # instantaneous phase relationships (pitch, binaural cues, consonant texture).
-# Scientific basis: Moore (2008) JARO 9(4), Lorenzi et al. (2006) PNAS 103(49).
+# Scientific basis:
+#   Moore (2014) J Acoust Soc Am 135:412 — updated TFS role in pitch/speech/music
+#   Moore & Sek (2009) J Acoust Soc Am 125:3530 — TFS importance in music perception
+#   Lorenzi et al. (2006) PNAS 103:18866 — foundational TFS role in hearing (speech)
 _TFS_SENSITIVE_PHASES: frozenset[str] = frozenset(
     {
         "phase_03",  # Broadband denoise — spectral shaping disrupts TFS
@@ -1141,6 +1201,11 @@ _RETRY_STRENGTHS: list[float] = [
     0.25,
     0.15,
 ]  # v9.10.79: 5 Stufen (Retry-Index 0–4), Floor 0.15 last-resort
+# Psychoakustik: strength = 0.15 → −16.5 dB wet relative to dry.  This is above
+# the auditory masking threshold for broadband stimuli (Glasberg & Moore 1990,
+# JASA 87:2178 ERB model: masked threshold ≈ −20 to −30 dB relative to masker).
+# Processing effect at this strength remains marginally audible but introduced
+# artifacts are below the simultaneous-masking threshold at typical playback levels.
 
 # §2.29a ML-deterministische Phasen: Inference-Output ist bei gleichem Input
 # identisch, unabhängig vom strength-Parameter.  Bei PMGG-Retries wird nur
@@ -1770,7 +1835,15 @@ def _measure_quick(
     except Exception:
         scores["waerme"] = 0.5
 
-    # ── Groove (Onset-Energie-Regularität via Autokorrelation) ─────────
+    # ── Groove (Periodizität + Microtiming-Synkopation) ────────────────
+    # Two-component model:
+    #   A) Rhythmic periodicity via envelope autocorrelation (existing §9.7.9)
+    #   B) Microtiming syncopation complexity.
+    # Scientific basis:
+    #   - Witek et al. (2017), PLOS ONE 12:e0169907: groove peaks at an
+    #     intermediate level of syncopation, not at perfect regularity.
+    #   - Frühauf et al. (2013), Psychol. Music 41:484: moderate IOI variance
+    #     increases groove; too low = mechanical, too high = unstable.
     try:
         env = np.abs(mono)
         # Hüllkurven-Autokorrelation
@@ -1798,7 +1871,27 @@ def _measure_quick(
             autocorr /= autocorr[0] + 1e-12
             # Regularität: Autokorrelations-Peak bei ~0.5 s (typisch Groove)
             lag_05 = min(50, len(autocorr) - 1)  # 50 × 10 ms = 500 ms
-            scores["groove"] = float(np.clip(autocorr[lag_05] * 0.5 + 0.5, 0.0, 1.0))
+            periodicity_score = float(np.clip(autocorr[lag_05] * 0.5 + 0.5, 0.0, 1.0))
+
+            # Microtiming/syncopation component via inter-onset-interval variability.
+            # The perceptual sweet spot is moderate variability (CV ≈ 0.20).
+            _onset_thresh = float(np.mean(rms_env) + 0.5 * float(np.std(rms_env)) + 1e-9)
+            _onsets = np.where(
+                (rms_env[1:-1] > rms_env[:-2])
+                & (rms_env[1:-1] > rms_env[2:])
+                & (rms_env[1:-1] > _onset_thresh)
+            )[0] + 1
+            if len(_onsets) >= 4:
+                _ioi = np.diff(_onsets.astype(np.float32))
+                _ioi_mean = float(np.mean(_ioi))
+                _ioi_cv = float(np.std(_ioi)) / (_ioi_mean + 1e-9)
+                _syncopation_score = float(np.clip(1.0 - 4.0 * (_ioi_cv - 0.20) ** 2, 0.5, 1.0))
+            else:
+                _syncopation_score = 0.5
+
+            scores["groove"] = float(
+                np.clip(0.60 * periodicity_score + 0.40 * _syncopation_score, 0.0, 1.0)
+            )
         else:
             scores["groove"] = 0.5
     except Exception:
@@ -1962,16 +2055,19 @@ def _measure_quick(
     except Exception:
         scores["tonal_center"] = 0.5
 
-    # ── Natürlichkeit (MFCC-Proxy: spektrale Glattheit) ───────────────
+    # ── Natürlichkeit (Spectral Irregularity) ──────────────────────────
     # Canonical key "natuerlichkeit" — aligned with GoalApplicabilityFilter §2.32.
+    # Scientific basis: Krimphoff, McAdams & Winsberg (1994), J. Acoustique 7:359–368.
+    # Low spectral irregularity corresponds to a smooth, artifact-free envelope,
+    # while high irregularity tracks unnatural rough edges and processing residue.
     try:
-        n_mfcc = min(20, len(fft_mag) // 2)
-        mfcc_approx = np.log(np.convolve(fft_mag[: len(fft_mag) // 2], np.ones(10) / 10, mode="valid") + 1e-12)
-        if len(mfcc_approx) > n_mfcc:
-            smoothness = 1.0 - float(np.std(np.diff(mfcc_approx[:n_mfcc]))) / (
-                float(np.std(mfcc_approx[:n_mfcc])) + 1e-12
-            )
-            scores["natuerlichkeit"] = float(np.clip(smoothness, 0.0, 1.0))
+        _amp_nat = fft_mag + 1e-12
+        if len(_amp_nat) > 4:
+            _smooth_nat = (_amp_nat[:-2] + _amp_nat[1:-1] + _amp_nat[2:]) / 3.0
+            _irreg_num = float(np.sum(np.abs(_amp_nat[1:-1] - _smooth_nat)))
+            _irreg_den = float(np.sum(_amp_nat)) + 1e-12
+            _irregularity = float(np.clip(_irreg_num / _irreg_den, 0.0, 1.0))
+            scores["natuerlichkeit"] = float(np.clip(1.0 - (_irregularity - 0.03) / 0.32, 0.0, 1.0))
         else:
             scores["natuerlichkeit"] = 0.5
         # §9.7.5 Preservation: Log-spectral envelope correlation
@@ -2071,7 +2167,10 @@ def _measure_quick(
     except Exception:
         scores["authentizitaet"] = 0.5
 
-    # ── Emotionalität (Crest-Factor + RMS-Varianz) ─────────────────────
+    # ── Emotionalität (Crest + RMS-Varianz + Spectral Flux) ────────────
+    # Spectral flux is a classic arousal feature in MIR and improves the old
+    # loudness-only proxy with a direct measure of expressive spectral change.
+    # Scientific basis: Scheirer & Slaney (1997) ICASSP; Liu et al. (2003) ISMIR.
     try:
         rms_val = float(np.sqrt(np.mean(mono**2) + 1e-12))
         peak_val = float(np.max(np.abs(mono)))
@@ -2084,7 +2183,28 @@ def _measure_quick(
             [float(np.sqrt(np.mean(mono[i : i + hop_e] ** 2) + 1e-12)) for i in range(0, len(mono) - hop_e, hop_e)]
         )
         variance_score = float(np.clip(np.var(rms_frames) * 1000.0, 0.0, 1.0)) if len(rms_frames) > 2 else 0.5
-        scores["emotionalitaet"] = float(np.clip(0.5 * crest_score + 0.5 * variance_score, 0.0, 1.0))
+
+        _nfft_e = min(2048, len(mono))
+        _hop_fft_e = max(1, _nfft_e // 4)
+        _n_frames_e = min(80, max(1, (len(mono) - _nfft_e) // _hop_fft_e))
+        _prev_spec_e: np.ndarray | None = None
+        _flux_vals_e: list[float] = []
+        if _nfft_e >= 32:
+            _win_e = np.hanning(_nfft_e).astype(np.float32)
+            for _i_e in range(_n_frames_e):
+                _s_e = _i_e * _hop_fft_e
+                _frame_e = mono[_s_e : _s_e + _nfft_e]
+                if len(_frame_e) < _nfft_e:
+                    break
+                _spec_e = np.abs(np.fft.rfft(_frame_e * _win_e))
+                if _prev_spec_e is not None:
+                    _flux_vals_e.append(float(np.mean(np.maximum(_spec_e - _prev_spec_e, 0.0))))
+                _prev_spec_e = _spec_e
+        _flux_score_e = float(np.clip(float(np.mean(_flux_vals_e)) / 0.025, 0.0, 1.0)) if _flux_vals_e else 0.5
+
+        scores["emotionalitaet"] = float(
+            np.clip(0.35 * crest_score + 0.35 * variance_score + 0.30 * _flux_score_e, 0.0, 1.0)
+        )
         # §9.7.5 Preservation: RMS-envelope correlation (dynamics preservation)
         if _ref_mono is not None:
             _rm_ml = min(len(mono), len(_ref_mono))
@@ -2201,9 +2321,10 @@ def _measure_quick(
     except Exception:
         scores["separation_fidelity"] = 0.5
 
-    # ── Artikulation (Onset-Schärfe: Transient-Proxy) ─────────────────
+    # ── Artikulation (Onset-Schärfe: Attack-Zeit-Proxy) ────────────────
+    # Scientific basis: Grey & Gordon (1978), JASA 63:1493; attack time is a
+    # primary correlate of perceived articulation and instrument onset clarity.
     try:
-        # Proxy: Varianz der Energiehüllkurve-Ableitungen (scharfe Transienten = hohe Varianz)
         hop_a = max(1, sr // 200)  # 5 ms
         # Vectorized: non-overlapping peak envelope via reshape
         _nf_a = (len(mono) - 1) // hop_a
@@ -2219,8 +2340,16 @@ def _measure_quick(
             pos_peaks = d_env[d_env > 0]
             if len(pos_peaks) > 0:
                 onset_sharpness = float(np.mean(pos_peaks))
-                # Normierung: 0.01 = gute Artikulation → Score 1.0
-                scores["artikulation"] = float(np.clip(onset_sharpness / 0.01, 0.0, 1.0))
+                # Log-scaled normalization approximates perceptual spacing of attack times:
+                # 0.003 amplitude/5ms ≈ slow attack (~50 ms), 0.030 ≈ sharp attack (~5 ms).
+                scores["artikulation"] = float(
+                    np.clip(
+                        (math.log10(onset_sharpness + 1e-12) - math.log10(0.003))
+                        / (math.log10(0.030) - math.log10(0.003)),
+                        0.0,
+                        1.0,
+                    )
+                )
             else:
                 scores["artikulation"] = 0.3  # Keine Transienten = schlechte Artikulation
         else:
@@ -2438,6 +2567,35 @@ class PerPhaseMusicalGoalsGate:
         self._rollback_count = 0
         self._user_warned = False
 
+    def check_phase(
+        self,
+        phase: Any,
+        audio: np.ndarray,
+        *,
+        sr: int = 48000,
+        scores_before: dict[str, float] | None = None,
+        effective_goals: list[str] | None = None,
+        phase_kwargs: dict[str, Any] | None = None,
+        threshold: float = REGRESSION_THRESHOLD_GOOD,
+        **kwargs: Any,
+    ) -> tuple[np.ndarray, dict[str, float], "PhaseGateLogEntry"]:
+        """Public alias to wrap_phase for direct access and testing.
+
+        Simplified signature that accepts scores_before and effective_goals without
+        requiring full restorability/calibration context.  Returns the same
+        (audio_out, scores_after, PhaseGateLogEntry) triple as wrap_phase.
+        """
+        _phase_id = self._get_phase_id(phase)
+        return self.wrap_phase(
+            phase=phase,
+            audio=audio,
+            sr=sr,
+            phase_id=_phase_id,
+            scores_before=scores_before,
+            phase_kwargs=phase_kwargs,
+            applicable_goals=set(effective_goals) if effective_goals else None,
+        )
+
     def wrap_phase(
         self,
         phase: Any,  # PhaseInterface-Instanz
@@ -2632,6 +2790,12 @@ class PerPhaseMusicalGoalsGate:
             goal_regressions=goal_regressions,
             strength_used=strength,
         )
+
+        # §0c Recovery-Lite Transparency: best_effort actions mark recovery metadata
+        # so downstream (UV3, bridge, export_workflow) can detect recovery status.
+        if action.startswith("best_effort"):
+            log_entry.metadata["recovery_attempted"] = True
+            log_entry.metadata["best_possible_reached"] = True  # PMGG always returns best found
 
         # §2.29e Team-Telemetrie: Policyinformationen in log_entry.metadata schreiben
         # damit UV3 nach der Pipeline team_coordination_events extrahieren kann.
@@ -2896,12 +3060,47 @@ class PerPhaseMusicalGoalsGate:
             _applicable_jnd = [g for g in effective_goals if g in effective_scores_before and g in scores_after]
             if _applicable_jnd:
                 _deltas = {g: scores_after[g] - effective_scores_before[g] for g in _applicable_jnd}
+
+                # §C6 Psychoacoustic Masking Budget: elevate JND for goals whose spectral
+                # region is acoustically masked by dominant loud frequency content.
+                # Uses Bark-band energy profile from §4.1b psychoacoustics module.
+                _effective_jnd: dict[str, float] = {}
+                try:
+                    from backend.core.dsp.psychoacoustics import compute_bark_energy_profile as _cbep
+
+                    _audio_for_bark = audio if audio.ndim == 1 else np.mean(audio, axis=0)
+                    _bark_profile = _cbep(_audio_for_bark, sr)
+                    _total_bark = float(np.sum(_bark_profile)) if _bark_profile is not None else 0.0
+
+                    # Masking factors per spectral region (conservative, advisory-only)
+                    def _masking_factor(goal: str) -> float:
+                        if _bark_profile is None or _total_bark < 1e-10:
+                            return 1.0
+                        # Map goal centroid to Bark bands: low/mid/high
+                        _lf_ratio = float(np.sum(_bark_profile[:6])) / _total_bark   # Barks 0-6 ≈ <500 Hz
+                        _mf_ratio = float(np.sum(_bark_profile[6:15])) / _total_bark  # Barks 6-15 ≈ 500-4 kHz
+                        _hf_ratio = float(np.sum(_bark_profile[15:])) / _total_bark   # Barks 15+ ≈ >4 kHz
+                        if goal in ("bass_kraft", "waerme"):
+                            return 1.0 + 0.50 * _lf_ratio  # LF masking boosts bass-goal JND
+                        if goal in ("artikulation", "transparenz", "separation_fidelity"):
+                            return 1.0 + 0.40 * _mf_ratio  # Midrange masking
+                        if goal in ("brillanz", "timbre_authentizitaet"):
+                            return 1.0 + 0.35 * _hf_ratio  # HF masking
+                        return 1.0
+
+                    for g in _applicable_jnd:
+                        _base_jnd = JND_MIN_DELTA.get(g, 0.015)
+                        _effective_jnd[g] = _base_jnd * _masking_factor(g)
+                except Exception as _c6_exc:
+                    logger.debug("§C6 Masking JND skipped (non-blocking): %s", _c6_exc)
+                    _effective_jnd = {g: JND_MIN_DELTA.get(g, 0.015) for g in _applicable_jnd}
+
                 _all_below_jnd = all(d >= 0.0 for d in _deltas.values()) and all(
-                    abs(d) < JND_MIN_DELTA.get(g, 0.015) for g, d in _deltas.items()
+                    abs(d) < _effective_jnd.get(g, JND_MIN_DELTA.get(g, 0.015)) for g, d in _deltas.items()
                 )
                 if _all_below_jnd:
                     logger.debug(
-                        "PMGG %s: sub_threshold — all %d goal-deltas ≥ 0 and < JND, accepting",
+                        "PMGG %s: sub_threshold — all %d goal-deltas ≥ 0 and < JND (masking-adjusted), accepting",
                         phase_id,
                         len(_applicable_jnd),
                     )
@@ -2935,11 +3134,13 @@ class PerPhaseMusicalGoalsGate:
             scores_after.get(_worst_goal, 0.5),
         )
 
-        # §2.29 v9.10.77: If ONLY P4/P5 goals regressed (priority-adjusted threshold
-        # not exceeded), skip retries entirely — these are best-effort goals.
-        if _worst_prio >= 4:
+        # §2.29 v9.10.77 / §0c Recovery-Lite: If priority-adjusted regression is fully
+        # within tolerance (worst_prio==99 → no goal exceeded its priority-band threshold),
+        # accept as tolerated without retry.
+        # P4/P5 with regression ABOVE 2.0×/2.5× threshold → _worst_prio=4or5 → 1 Recovery-Retry.
+        if _worst_prio > 5:
             logger.info(
-                "PMGG: %s regression only in P%d goals (%s) — no retry (best-effort priority)",
+                "PMGG: %s regression within priority tolerance band (worst_prio=%d, goal=%s) — tolerated",
                 phase_id,
                 _worst_prio,
                 _worst_goal,

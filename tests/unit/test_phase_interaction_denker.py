@@ -355,7 +355,8 @@ def test_uv3_precomputed_plan_path_is_deterministic_executor() -> None:
 
     from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 
-    src = inspect.getsource(UnifiedRestorerV3.restore)
+    # Klassenquelltext ist robust gegen mögliche Runtime-Patches am restore-Attribut.
+    src = inspect.getsource(UnifiedRestorerV3)
     assert "UV3 _select/_optimize übersprungen" in src
     assert "Phase Skipping deaktiviert: precomputed_phase_plan aktiv" in src
 

@@ -136,6 +136,7 @@ def _repair_channel(
 
     if n_time_repaired > 0 and n_time_repaired < _n_time * 0.5:
         # Only repair if <50% of frames damaged (full silence passes through intact)
+        # ── Initial seed: linear interpolation between nearest undamaged frames ──
         for t_idx in np.where(damaged_frames)[0]:
             # Find nearest undamaged neighbours on each side
             lo = t_idx - 1
@@ -154,6 +155,54 @@ def _repair_channel(
                 mag_rep[:, t_idx] = mag_rep[:, lo]
             elif hi < _n_time:
                 mag_rep[:, t_idx] = mag_rep[:, hi]
+
+        # ── STFT-Consistency projection (Siedenburg & Dörfler 2013, JASA) ────────
+        # Iteratively enforce time-frequency consistency for the inpainted frames
+        # while keeping undamaged frames anchored to their original values.
+        # This propagates spectral structure from known frames into gaps, exploiting
+        # the redundancy of the STFT frame (each sample contributes to multiple frames).
+        _N_CONSISTENCY_ITER = 5
+        _known_mask = ~damaged_frames           # (n_time,) — True = undamaged
+        _mag_anchor = mag[:, _known_mask].copy()  # original magnitudes for known frames
+        _ph_anchor = phase[:, _known_mask].copy()  # original phases for known frames
+
+        for _ci in range(_N_CONSISTENCY_ITER):
+            # Reconstruct time-domain signal from current spectrogram estimate
+            _Zxx_ci = mag_rep * np.exp(1j * phase)
+            try:
+                _, _td_ci = sig.istft(
+                    _Zxx_ci,
+                    fs=sample_rate,
+                    window=_WIN,
+                    nperseg=_FFT_SIZE,
+                    noverlap=_FFT_SIZE - _HOP,
+                )
+                _n_need = len(channel)
+                if len(_td_ci) >= _n_need:
+                    _td_ci = _td_ci[:_n_need]
+                else:
+                    _td_ci = np.pad(_td_ci, (0, _n_need - len(_td_ci)))
+                # Re-STFT — updated phase arises naturally from consistent TD signal
+                _, _, _Zxx_new = sig.stft(
+                    _td_ci,
+                    fs=sample_rate,
+                    window=_WIN,
+                    nperseg=_FFT_SIZE,
+                    noverlap=_FFT_SIZE - _HOP,
+                )
+                _mag_new = np.abs(_Zxx_new)
+                _ph_new = np.angle(_Zxx_new)
+                # Trim / pad to original STFT dimensions
+                if _mag_new.shape[1] < _n_time:
+                    _mag_new = np.pad(_mag_new, ((0, 0), (0, _n_time - _mag_new.shape[1])), mode="edge")
+                    _ph_new = np.pad(_ph_new, ((0, 0), (0, _n_time - _ph_new.shape[1])), mode="edge")
+                mag_rep = _mag_new[:_n_freq, :_n_time]
+                phase = _ph_new[:_n_freq, :_n_time]
+                # Projection step: re-impose known-frame constraint (POCS)
+                mag_rep[:, _known_mask] = _mag_anchor
+                phase[:, _known_mask] = _ph_anchor
+            except Exception:
+                break  # Consistency iteration failed; keep current estimate
 
     n_repaired = n_freq_repaired + n_time_repaired
 
@@ -179,7 +228,10 @@ class SpectralRepairPhase(PhaseInterface):
     _NAME = "Spectral Repair (STFT Inpainting)"
     description = (
         "Erkennt und repariert isolierte spektrale Bin-Spikes (Artefakte, Kratzer, "
-        "Datenfehler) mittels STFT-Analyse und linearer Interpolation aus Nachbar-Bins. "
+        "Datenfehler) mittels STFT-Analyse. "
+        "Pass 1: Frequenz-Achsen-Spike-Reparatur per Nachbar-Bin-Interpolation. "
+        "Pass 2: Zeit-Achsen-Dropout-Reparatur via iterativer STFT-Konsistenz-Projektion "
+        "(Siedenburg & Dörfler 2013). "
         "Kein ML, volle DSP-Transparenz."
     )
 
@@ -189,9 +241,9 @@ class SpectralRepairPhase(PhaseInterface):
             name=self._NAME,
             category=PhaseCategory.DEFECT_REMOVAL,
             priority=7,
-            version="2.0.0",
+            version="2.1.0",
             dependencies=[],
-            estimated_time_factor=0.08,
+            estimated_time_factor=0.10,
             memory_requirement_mb=150,
             is_cpu_intensive=True,
             is_io_intensive=False,
@@ -334,6 +386,16 @@ class SpectralRepairPhase(PhaseInterface):
             total_bins,
             repair_ratio,
         )
+
+        # §4.5 Psychoacoustic Masking Clamp — only repair where audible (§0 Primum non nocere)
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            repaired_audio = apply_psychoacoustic_masking_clamp(
+                audio, repaired_audio, sample_rate,
+                strength=effective_strength, mode="additive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase50 masking clamp non-blocking: %s", _pm_exc)
 
         repaired_audio = np.nan_to_num(repaired_audio, nan=0.0, posinf=0.0, neginf=0.0)
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)

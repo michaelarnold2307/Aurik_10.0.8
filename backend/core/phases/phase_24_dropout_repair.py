@@ -189,6 +189,8 @@ class DropoutRepairPhase(PhaseInterface):
         ("air", 128, 32, 16000, 24000),
     )
     _MRSA_CROSSFADE_BW_HZ: float = 100.0
+    _MRSA_MAX_ANALYSIS_WIN: int = 16384
+    _MRSA_MAX_CONTEXT_SECONDS: float = 2.0
 
     def __init__(self):
         """Initialize Phase 24 Dropout Repair."""
@@ -1550,15 +1552,14 @@ class DropoutRepairPhase(PhaseInterface):
             if f_lo_z >= nyq:
                 continue
 
-            # Derive context frames from before/after at zone resolution.
-            # Use up to one window of context for spectral estimation.
-            ctx_len = max(win, gap_len + win)
+            # Bound context and FFT size for deterministic runtime in long-gap cases.
+            max_ctx_len = int(sr * self._MRSA_MAX_CONTEXT_SECONDS)
+            ctx_len = min(max(win, gap_len + win), max_ctx_len)
             ctx_bef = before[-min(ctx_len, len(before)) :]
             ctx_aft = after[: min(ctx_len, len(after))]
 
-            # Cap effective window to actual context length to avoid scipy warnings
-            # ("nperseg > input length") when context is shorter than the zone window.
-            eff_win = min(win, len(ctx_bef), len(ctx_aft), len(audio_fill))
+            # Cap effective window to context length and runtime-safe upper bound.
+            eff_win = min(win, len(ctx_bef), len(ctx_aft), len(audio_fill), self._MRSA_MAX_ANALYSIS_WIN)
             if eff_win < 4:
                 continue  # Too short for meaningful spectral estimation at this zone
             eff_hop = max(1, int(hop * eff_win / win))  # Scale hop proportionally

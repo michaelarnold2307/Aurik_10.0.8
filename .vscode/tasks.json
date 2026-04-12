@@ -121,11 +121,11 @@
         "group": "tests"
       }
     },
-    // ── 4c. CHUNK B: Integration + Normative + Regression ─────────────
+    // ── 4c. CHUNK B: Integration + Normative ──────────────────────────
     {
-      "label": "pytest: Chunk B (integration + normative + regression)",
+      "label": "pytest: Chunk B (integration + normative)",
       "type": "shell",
-      "command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/integration tests/normative tests/regression -p no:xdist -m \"not e2e and not ml\" --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=45 --tb=line -q --disable-warnings --no-header --maxfail=5",
+      "command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests/integration tests/normative -p no:xdist -m \"not e2e and not ml\" --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=45 --tb=line -q --disable-warnings --no-header --maxfail=5",
       "args": [],
       "isBackground": false,
       "problemMatcher": [],
@@ -141,7 +141,7 @@
     {
       "label": "pytest: Chunk C (restliche tests/, ohne unit+goals+integration)",
       "type": "shell",
-      "command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests -p no:xdist -m \"not e2e and not ml\" --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=45 --tb=line -q --disable-warnings --no-header --maxfail=5 --ignore=tests/unit --ignore=tests/musical_goals --ignore=tests/integration --ignore=tests/normative --ignore=tests/regression",
+      "command": "\"${workspaceFolder}/.venv_aurik/bin/python\" -m pytest tests -p no:xdist -m \"not e2e and not ml\" --override-ini=\"addopts=--strict-markers --import-mode=importlib\" --timeout=45 --tb=line -q --disable-warnings --no-header --maxfail=5 --ignore=tests/unit --ignore=tests/musical_goals --ignore=tests/integration --ignore=tests/normative",
       "args": [],
       "isBackground": false,
       "problemMatcher": [],

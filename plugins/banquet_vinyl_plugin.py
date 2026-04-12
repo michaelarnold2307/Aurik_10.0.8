@@ -108,7 +108,7 @@ class BanquetVinylPlugin:
             # 'Starts must be a 1-D array' at optimisation time.
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
             try:
-                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                 _providers = _get_prov("BanquetVinyl")
             except Exception:

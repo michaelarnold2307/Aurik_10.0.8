@@ -14,6 +14,11 @@ Referenz:
     Russell (1980): „A circumplex model of affect"
     Thayer (1989): „The biopsychology of mood and arousal"
     Kim & André (2008): „Emotion recognition based on physiological changes in music listening"
+    Eerola & Vuoskoski (2011): „A comparison of the discrete and dimensional models of emotion
+        in music" Psychol. Music 39(4):406-429 — Modus (Dur/Moll) ist stärkster
+        Valenz-Prädiktor (r=0.63); Spektral-Flachheit kein signifikanter Prädiktor.
+    Krumhansl (1990): „Cognitive foundations of musical pitch" Oxford Univ. Press.
+        Major/Minor Tonstufen-Hierarchie-Profile aus Tonhöhen-Primings-Experiment.
 """
 
 from __future__ import annotations
@@ -26,6 +31,25 @@ from dataclasses import dataclass
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Krumhansl-Schmuckler Key-Profile (Krumhansl 1990, Table 1)
+# ---------------------------------------------------------------------------
+# Major template: normalized hierarchy ratings from probe-tone experiment.
+# Minor template: averaged over harmonic and melodic minor ratings.
+# Starting pitch class: C (index 0), chromatic order C C# D D# E F F# G G# A A# B.
+_KK_MAJOR = np.array(
+    [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
+    dtype=np.float64,
+)
+_KK_MINOR = np.array(
+    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
+    dtype=np.float64,
+)
+# Pre-center both templates (Pearson correlation works on centered vectors)
+_KK_MAJOR = _KK_MAJOR - _KK_MAJOR.mean()
+_KK_MINOR = _KK_MINOR - _KK_MINOR.mean()
 
 
 # ---------------------------------------------------------------------------
@@ -352,16 +376,54 @@ class EmotionalArcPreservationMetric:
             _centroid_norm = float(np.clip(_centroid_hz / max(sr / 2.0, 1.0), 0.0, 1.0))
             arousal_list.append(rms * 0.55 + _centroid_norm * 0.45)
 
-            # Valence: Harmonizitäts-Proxy via Spektral-Flachheit-Inverse
-            # (hohe Spektral-Flachheit = viel Rauschen = geringe Harmonizität)
+            # Valence: Tonart-Modus (Dur/Moll) via Krumhansl-Schmuckler Key-Finding
+            # Literature: Eerola & Vuoskoski (2011) Psychol. Music 39(4):406-429
+            #   → Modus (Dur/Moll) ist stärkster akustischer Valenz-Prädiktor (r=0.63).
+            #   → Spektral-Flachheit ist kein signifikanter Valenz-Prädiktor.
+            # Literature: Krumhansl (1990) Cognitive foundations of musical pitch.
+            #   → Key-Profile aus Tonstufen-Hierarchie-Experiment (Table 1).
+            # Algorithmus: Pitch-Class-Profile (PCP) → Korrelation mit 24 Tonarten →
+            #   valence = (max Dur-Korr − max Moll-Korr + 1) / 2 ∈ [0, 1]
             try:
-                n_fft = min(2048, len(seg))
-                spec = np.abs(np.fft.rfft(seg[:n_fft], n=n_fft)) + 1e-9
-                geo_mean = np.exp(np.mean(np.log(spec + 1e-9)))
-                arith_mean = np.mean(spec)
-                flatness = float(geo_mean / (arith_mean + 1e-12))
-                harmonicity = 1.0 - float(np.clip(flatness, 0.0, 1.0))
-                valence_list.append(harmonicity)
+                _n_fft_v = min(2048, len(seg))
+                _seg_v = seg[:_n_fft_v]
+                _spec_v = np.abs(np.fft.rfft(_seg_v, n=_n_fft_v)) ** 2
+                _freqs_v = np.fft.rfftfreq(_n_fft_v, 1.0 / sr)
+                # 12-Bin Pitch Class Profile: Energie pro Halbton summieren
+                _pcp = np.zeros(12, dtype=np.float64)
+                _A4_HZ = 440.0
+                for _k in range(1, len(_freqs_v)):
+                    _f = _freqs_v[_k]
+                    if _f < 40.0 or _f > min(5000.0, sr * 0.5):
+                        continue
+                    _semitone = int(round(12.0 * math.log2(_f / _A4_HZ))) % 12
+                    _pcp[_semitone] += float(_spec_v[_k])
+                _pcp_sum = float(_pcp.sum())
+                if _pcp_sum > 1e-12:
+                    _pcp_centered = _pcp / _pcp_sum - (_pcp / _pcp_sum).mean()
+                else:
+                    _pcp_centered = _pcp
+                # Korrelation mit Dur- und Moll-Profil für alle 12 Tonarten (Rotationen)
+                _best_major = -2.0
+                _best_minor = -2.0
+                for _root in range(12):
+                    _major_rot = np.roll(_KK_MAJOR, _root)
+                    _minor_rot = np.roll(_KK_MINOR, _root)
+                    _denom_m = float(
+                        np.sqrt(np.dot(_pcp_centered, _pcp_centered) * np.dot(_major_rot, _major_rot)) + 1e-12
+                    )
+                    _denom_n = float(
+                        np.sqrt(np.dot(_pcp_centered, _pcp_centered) * np.dot(_minor_rot, _minor_rot)) + 1e-12
+                    )
+                    _r_major = float(np.dot(_pcp_centered, _major_rot)) / _denom_m
+                    _r_minor = float(np.dot(_pcp_centered, _minor_rot)) / _denom_n
+                    if _r_major > _best_major:
+                        _best_major = _r_major
+                    if _r_minor > _best_minor:
+                        _best_minor = _r_minor
+                # Valenz: Dur→1.0, Moll→0.0; normiert auf [0, 1] via (diff + 1) / 2
+                _valence_raw = float(np.clip((_best_major - _best_minor + 1.0) * 0.5, 0.0, 1.0))
+                valence_list.append(_valence_raw)
             except Exception:
                 valence_list.append(0.5)
 

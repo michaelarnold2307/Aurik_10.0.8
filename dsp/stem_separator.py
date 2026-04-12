@@ -400,10 +400,111 @@ class MLStemSeparator:
         except Exception as _err:
             _logger.warning("MLStemSeparator: HTDemucs fehlgeschlagen (%s) → Tier-4 HPSS", _err)
 
-        # ── Tier-4: HPSS-Wiener (kein ML, immer verfügbar) ───────────────
-        _logger.info("MLStemSeparator: Tier-4 HPSS-Wiener DSP-Fallback")
-        self.metrics = {"backend": "HPSS-Wiener", "quality": "basic", "tier": 4}
+        # ── Tier-4: NMF-β-Separation (sdB ≥ 5 dB guard) ─────────────────
+        # §2.47 VERBOTEN: MDX23C-Fallback darf nicht direkt auf HPSS fallen —
+        # NMF-β-Separation muss als Zwischenstufe versucht werden.
+        try:
+            _nmf_result = self._nmf_beta_separate(audio, sample_rate, orig_dtype)
+            if _nmf_result is not None:
+                _logger.info("MLStemSeparator: Tier-4 NMF-β DSP-Fallback OK (sdB ≥ 5 dB)")
+                self.metrics = {"backend": "NMF-beta", "quality": "basic", "tier": 4}
+                return _nmf_result
+            _logger.info("MLStemSeparator: NMF-β sdB < 5 dB → Tier-5 HPSS")
+        except Exception as _err:
+            _logger.warning("MLStemSeparator: NMF-β fehlgeschlagen (%s) → Tier-5 HPSS", _err)
+
+        # ── Tier-5: HPSS-Wiener (tertiärer Fallback, kein ML) ────────────
+        _logger.info("MLStemSeparator: Tier-5 HPSS-Wiener DSP-Fallback")
+        self.metrics = {"backend": "HPSS-Wiener", "quality": "basic", "tier": 5}
         return self._hpss_separate(audio, sample_rate, orig_dtype)
+
+    def _nmf_beta_separate(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        dtype: np.dtype,
+    ) -> dict[str, np.ndarray] | None:
+        """NMF-β-Separation (Kullback-Leibler, n_components=8) — Tier-4.
+
+        Quality guard: if signal-to-distortion ratio (sdB) < 5 dB, returns None
+        so the caller falls through to HPSS (Tier-5).
+
+        Implements §2.47: MDX23C-Fallback must traverse NMF-β before HPSS.
+        """
+        from scipy.signal import istft as _istft
+        from scipy.signal import stft as _stft
+
+        try:
+            from sklearn.decomposition import NMF as _NMF
+        except ImportError:
+            return None  # sklearn missing → caller falls to HPSS
+
+        mono = (audio.mean(axis=1) if audio.ndim == 2 else audio).astype(np.float64)
+        n = len(mono)
+        nperseg, noverlap = 2048, 1536
+        _, _, Zxx = _stft(mono, fs=sr, nperseg=nperseg, noverlap=noverlap)
+        mag = np.abs(Zxx).astype(np.float32)
+
+        n_components = 8
+        model = _NMF(n_components=n_components, beta_loss="kullback-leibler", solver="mu", max_iter=60, random_state=0)
+        W = model.fit_transform(mag)  # (n_freq, n_comp)
+        H = model.components_               # (n_comp, n_time)
+
+        # Assign each component: high temporal variance → percussive; else harmonic
+        temporal_var = np.var(H, axis=1)
+        is_perc = temporal_var > np.median(temporal_var)
+        W_harm = W[:, ~is_perc].sum(axis=1, keepdims=True) if (~is_perc).any() else W.mean(axis=1, keepdims=True)
+        W_perc = W[:, is_perc].sum(axis=1, keepdims=True) if is_perc.any() else np.zeros_like(W_harm)
+
+        # Build Wiener-style masks over full spectrogram
+        mag_harm = W_harm * H[~is_perc].sum(axis=0, keepdims=True) if (~is_perc).any() else np.zeros_like(mag)
+        mag_perc = W_perc * H[is_perc].sum(axis=0, keepdims=True) if is_perc.any() else np.zeros_like(mag)
+        total = mag_harm + mag_perc + 1e-10
+        mask_h = mag_harm / total
+        mask_p = mag_perc / total
+
+        _, harm_a = _istft(Zxx * mask_h, fs=sr, nperseg=nperseg, noverlap=noverlap)
+        _, perc_a = _istft(Zxx * mask_p, fs=sr, nperseg=nperseg, noverlap=noverlap)
+
+        def _fit(a: np.ndarray) -> np.ndarray:
+            return (a[:n] if len(a) >= n else np.pad(a, (0, n - len(a)))).astype(dtype)
+
+        harm_a = _fit(harm_a)
+        perc_a = _fit(perc_a)
+
+        # sdB quality guard: reconstruction sdB ≥ 5 dB
+        recon = (harm_a + perc_a).astype(np.float64)
+        orig_f = mono.astype(np.float64)
+        err = orig_f - recon
+        signal_power = float(np.mean(orig_f ** 2))
+        noise_power = float(np.mean(err ** 2)) + 1e-15
+        sdb = 10.0 * np.log10(signal_power / noise_power) if signal_power > 0 else 0.0
+        if sdb < 5.0:
+            _logger.debug("NMF-β sdB=%.1f dB < 5 dB — quality guard failed", sdb)
+            return None
+
+        from scipy.signal import butter, sosfilt
+
+        sos_bass = butter(4, 250.0 / (sr / 2.0), btype="low", output="sos")
+        bass_a = sosfilt(sos_bass, harm_a).astype(dtype)
+        vocals_a = (harm_a - bass_a).astype(dtype)
+
+        if audio.ndim == 2:
+            def _stereo(m: np.ndarray) -> np.ndarray:
+                return np.stack([m, m], axis=1)
+
+            return {
+                "vocals": np.clip(_stereo(vocals_a), -1.0, 1.0).astype(dtype),
+                "drums": np.clip(_stereo(perc_a), -1.0, 1.0).astype(dtype),
+                "bass": np.clip(_stereo(bass_a), -1.0, 1.0).astype(dtype),
+                "other": np.clip(_stereo(harm_a), -1.0, 1.0).astype(dtype),
+            }
+        return {
+            "vocals": np.clip(vocals_a, -1.0, 1.0).astype(dtype),
+            "drums": np.clip(perc_a, -1.0, 1.0).astype(dtype),
+            "bass": np.clip(bass_a, -1.0, 1.0).astype(dtype),
+            "other": np.clip(harm_a, -1.0, 1.0).astype(dtype),
+        }
 
     def _hpss_separate(
         self,

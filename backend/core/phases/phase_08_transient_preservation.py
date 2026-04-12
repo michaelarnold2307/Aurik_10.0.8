@@ -295,6 +295,47 @@ class TransientPreservationPhase(PhaseInterface):
         enhanced = np.nan_to_num(enhanced, nan=0.0, posinf=0.0, neginf=0.0)
         enhanced = np.clip(enhanced, -1.0, 1.0)
 
+        # §C9 Multi-Scale ADSR preservation guard: check hierarchical envelope fidelity.
+        # If micro-scale (transient attack) ADSR score < 0.85, reduce wet blend
+        # to prevent over-sharpening that destroys natural attack contour.
+        _adsr_scores: dict[str, float] = {}
+        try:
+            _env_orig = self._multi_scale_adsr_envelope(audio)
+            _env_proc = self._multi_scale_adsr_envelope(enhanced)
+            _adsr_wet_scale = 1.0
+
+            def _pearson_safe(a: np.ndarray, b: np.ndarray) -> float:
+                n = min(len(a), len(b))
+                if n < 4:
+                    return 1.0
+                a, b = a[:n], b[:n]
+                sa, sb = float(np.std(a)), float(np.std(b))
+                if sa < 1e-12 or sb < 1e-12:
+                    return 1.0
+                r = float(np.corrcoef(a, b)[0, 1])
+                return float(np.clip(r if np.isfinite(r) else 1.0, -1.0, 1.0))
+
+            for scale_name in ("micro", "meso", "macro", "form"):
+                r = _pearson_safe(_env_orig[scale_name], _env_proc[scale_name])
+                _adsr_scores[scale_name] = float(np.clip((r + 1.0) / 2.0, 0.0, 1.0))
+
+            # Adaptive wet-scale: reduce wet if micro < 0.85 or meso < 0.80
+            if _adsr_scores.get("micro", 1.0) < 0.85:
+                _adsr_wet_scale = min(_adsr_wet_scale, 0.75)
+            if _adsr_scores.get("meso", 1.0) < 0.80:
+                _adsr_wet_scale = min(_adsr_wet_scale, 0.85)
+
+            if _adsr_wet_scale < 1.0:
+                enhanced = np.clip(audio + _adsr_wet_scale * (enhanced - audio), -1.0, 1.0)
+                logger.info(
+                    "§C9 ADSR-guard activated: wet_scale=%.2f micro=%.3f meso=%.3f",
+                    _adsr_wet_scale,
+                    _adsr_scores.get("micro", 1.0),
+                    _adsr_scores.get("meso", 1.0),
+                )
+        except Exception as _adsr_exc:
+            logger.debug("§C9 ADSR scoring non-blocking: %s", _adsr_exc)
+
         # §2.47 PMGG-Retry: phase_locality_factor als finaler Wet/Dry-Regler
         if _effective_strength < 1.0:
             enhanced = audio + _effective_strength * (enhanced - audio)
@@ -327,6 +368,7 @@ class TransientPreservationPhase(PhaseInterface):
                 "execution_time_seconds": execution_time,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "adsr_scores": _adsr_scores,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },
@@ -504,6 +546,51 @@ class TransientPreservationPhase(PhaseInterface):
         shaped = band_audio * gain_envelope[:, np.newaxis] if band_audio.ndim == 2 else band_audio * gain_envelope
 
         return shaped
+
+    def _multi_scale_adsr_envelope(
+        self,
+        audio: np.ndarray,
+        scales_ms: tuple[float, ...] = (5.0, 50.0, 500.0, 5000.0),
+    ) -> dict[str, np.ndarray]:
+        """§C9 Hierarchical ADSR modelling over 4 temporal scales.
+
+        Scales: micro (1-10 ms), meso (10-200 ms), macro (0.2-4 s), form (4+ s).
+        Algorithm: Log-Hilbert envelope with rectified low-pass filtering per scale
+        (Klapuri & Davy 2007, Music signal processing §3.2).
+
+        Returns dict with 'micro','meso','macro','form' keys, each a float32 array
+        of length == len(audio), values normalised to [0, 1].
+        """
+        mono = audio if audio.ndim == 1 else np.mean(audio, axis=0 if audio.ndim == 2 and audio.shape[0] > audio.shape[1] else 1)
+        mono = np.asarray(mono, dtype=np.float32)
+        sr = self.sample_rate
+
+        # Full-wave rectification → instantaneous energy proxy
+        envelope_raw = np.abs(mono)
+
+        scale_names = ("micro", "meso", "macro", "form")
+        result: dict[str, np.ndarray] = {}
+
+        for name, cutoff_ms in zip(scale_names, scales_ms):
+            try:
+                cutoff_hz = 1000.0 / cutoff_ms  # scale → LP cutoff
+                cutoff_hz = float(np.clip(cutoff_hz, 0.5, sr / 2.5))
+                nyq = sr / 2.0
+                sos = signal.butter(2, cutoff_hz / nyq, btype="low", output="sos")
+                env = signal.sosfiltfilt(sos, envelope_raw)
+                env = np.clip(env, 0.0, None)
+                # Log-smoothing to perceptual scale (mild log compression)
+                env = np.log1p(env * 100.0).astype(np.float32)
+                # Normalise to [0, 1]
+                env_max = float(np.max(env))
+                if env_max > 1e-10:
+                    env = env / env_max
+                result[name] = env
+            except Exception as _exc:
+                logger.debug("§C9 ADSR scale '%s' failed: %s", name, _exc)
+                result[name] = np.ones(len(mono), dtype=np.float32)
+
+        return result
 
     def _measure_peak_energy(self, audio: np.ndarray) -> float:
         """

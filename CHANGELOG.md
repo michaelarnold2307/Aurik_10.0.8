@@ -2,6 +2,149 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.14 — Musical Chills (Frisson) Telemetry + Studio-Only Coupling (Apr 2026)
+
+### Zusammenfassung
+
+Literaturbasierte Gänsehaut-Propensity integriert mit strikt modusgebundener Wirkung:
+
+- Restoration: deaktiviert (kein Audio-Impact)
+- Studio 2026: konservative, bounded Mikro-Kopplung auf implizite Strength/Wet-Dry
+
+**Hintergrund:** Forschung zeigt, dass musikalische Gänsehaut (Frisson) vier Kernauslöser hat:
+
+- Erwartungsaufbau + überraschende Auflösung (Blood & Zatorre 2001, Salimpoor 2011)
+- Dynamische Kontraste, Stimm-/Chor-Eintritt (Grewe 2007)
+- Transient-Schärfe und Artikulation (Harrison & Loui 2014)
+- Räumliche Immersion und Authentizität (Panksepp 1995)
+
+**Implementierung:**
+
+1. Neuer `frisson_index` (0..1) in `joy_runtime_index.components` (§2.53 Experience-Closed-Loop)
+   - Formel: `0.26·emotional_arc + 0.18·micro_dynamics + 0.14·emotionalitaet + 0.14·artikulation + 0.10·spatial_depth + 0.08·transparenz + 0.10·tonal_center + 0.10·artifact_freedom − 0.16·fatigue_index`
+
+- Restoration: advisory-only, kein Impact auf PMGG, CIG, AFG, HPI, Phase-Auswahl
+- Studio 2026: kleiner, gedeckelter Audio-Impact über `frisson_audio_scalar ∈ [0.94, 1.06]` (nur implizite Parameter)
+- Wird auch in Joy-Index mit 0.08-Gewicht eingearbitet (leichte Erhöhung des Freude-Scores wenn Frisson hoch)
+
+2. UI-Anzeige: "Gaensehaut X%" in Status-Zeile und Ergebnis-Banner (neben Freude/Ermüdung)
+
+3. Bridge-Propagation: `get_experience_insights()` gibt `frisson_index` sicher (NaN-frei) zurück
+
+**Code-Stellen:**
+
+- `backend/core/unified_restorer_v3.py`: `_compute_joy_fatigue_runtime_index()` Zeile 1511–1558, 6579, 6646–6650
+- `backend/api/bridge.py`: `get_experience_insights()` Zeile 752
+- `Aurik910/ui/modern_window.py`: Status & Banner Zeile 15314–15315, 16412–16414
+
+**Validierung:**,
+
+- `tests/unit/test_unified_restorer_stability_guard.py`: Monotonie- und Bounds-Tests (grün)
+- `tests/unit/test_253_experience_propagation.py`: Bridge-Contract, NaN-Sanitizing (grün)
+- 28/28 Unit-Tests bestanden, 0 Fehler
+
+**Unverändert sicher:**
+
+- Keine neuen harten Gates und keine Schwellenanpassung in PMGG/CIG/AFG/HPI
+- Alle Safety-Gates (PMGG/CIG/AFG/HPI) unberührt
+- Bestehende Musical-Goals-Schwellwerte unverändert
+
+---
+
+## Version 9.11.13 — Literature-Based DSP Algorithm Upgrades (Apr 2026)
+
+### Zusammenfassung
+
+Zwei literaturbasierte DSP-Upgrades für Gap-Filling (Phase 09) und Time-Axis Inpainting (Phase 50):
+
+1. **Phase 09: LPC-basierte AR-Lücken-Interpolation** (`backend/core/phases/phase_09_crackle_removal.py`)
+   - `_interpolate_hybrid()` war bisher ein leerer Stub (rief `_interpolate_linear()` auf, kein Hybridverhalten).
+   - Ersetzt durch vollständige LPC/AR-Vorhersage: Vorwärts-AR aus Pre-Gap-Kontext + Rückwärts-AR aus Post-Gap-Kontext, linear übergeblendet.
+   - Stabilisierung: Alle AR-Pole außerhalb des Einheitskreises werden auf |z| < 0.995 gespiegelt (Rabiner & Schafer 1978), verhindert exponentielle Divergenz, die Yule-Walker alleine nicht verhindert.
+   - Boundary-Crossfade (5 ms taper) vermeidet Stufen-Diskontinuitäten an Lückenrändern.
+   - Neue Hilfsfunktionen: `_ar_fill_channel()`, `_ar_predict()` (Singleton-kompatibel, kein globaler State).
+   - Betrifft: Shellac-Material (params["interpolation"] = "hybrid") und alle Gaps ≤ 50 ms in anderen Materialien.
+   - Wissenschaftliche Referenz: Lagrange & Marchand (2007) „Long Interpolation of Audio Signals using Linear Prediction", Godsill & Rayner (1998) „Digital Audio Restoration".
+
+2. **Phase 50: STFT-Konsistenz-Projektion für Zeit-Achsen-Inpainting** (`backend/core/phases/phase_50_spectral_repair.py`)
+   - Pass 2 (Time-Axis-Dropout-Reparatur) verwendet jetzt iterative STFT-Konsistenz-Projektion (5 Iterationen) statt einmaliger linearer Interpolation.
+   - Algorithmus: Initialisierung mit linearer Interpolation → ISTFT → erneut STFT → undamaged Frames re-ankern → wiederholen (POCS-Schema).
+   - Die Redundanz des STFT-Frames wird genutzt, um Spektralstruktur aus unbeschädigten Frames in Lücken zu propagieren.
+   - Version: 2.0.0 → 2.1.0; `estimated_time_factor`: 0.08 → 0.10 (leicht erhöht wg. 5 Iterationen).
+   - Wissenschaftliche Referenz: Siedenburg & Dörfler (2013) „Audio Inpainting", Journal of the Acoustical Society of America.
+
+3. **Neue Tests** (`tests/unit/test_literature_algorithms.py`)
+   - 21 Tests: Phase 09 AR-Shape, Stabilität, Konvergenz, Boundary-Glattheit, Hybrid-Dispatch; Phase 50 Dropout-Fill, POCS-Convergence, Known-Frame-Preservation, Shape/NaN.
+
+### Zusammenfassung
+
+Zentrale, song-adaptive Harmonisierung für alle 64 Phasen ergänzt, ohne per-Phase-Umverdrahtung. Ziel: weniger unnötige Rollbacks bei unverändert strikten Klangtreue-Gates.
+
+1. **Globaler Adaptions-Skalar für alle Phasen (01-64)**
+
+- `backend/core/unified_restorer_v3.py`
+- Neu: `UnifiedRestorerV3._compute_harmonic_adaptation_scalar(...)`
+- Kombiniert §2.56 Goal-Weights + Restorability + Interventionsfamilie + Materialkontext in einen bounded Skalar `0.72..1.18`.
+- Injektion in `_profiled_phase_call()` als `harmonic_adaptation_scalar` für alle Phasen.
+- Wirkt smooth über `strength` (nur implizit, explizite PMGG-Stärken bleiben führend) und `wet/dry`.
+
+2. **Stabile Modul-Accessors für Test-/Integrations-Patchpoints**
+
+- `backend/core/unified_restorer_v3.py`
+- Neu: `get_artifact_freedom_gate()` und `estimate_goal_importance(...)` als modulweite Accessor-Funktionen.
+- UV3 nutzt diese Accessors statt lokaler Inline-Imports, damit Monkeypatching stabil bleibt.
+
+### Normatives Delta (Spezifikation & Dokumentation)
+
+- **`.github/copilot-instructions.md`**: Neuer Abschnitt `§2.56a Global All-Phase Harmonic Adaptation` ergänzt; VERBOTEN-Tabelle um Zeile „§2.56 nur in Gates nutzen" erweitert; §2.56 Integrations-Zeile um UV3 all-phase Kopplung aktualisiert.
+- **`.github/specs/02_pipeline_architecture.md`**: Vollständige normative Sektion `§2.56a [RELEASE_MUST]` vor `Kanonische RestorationResult-Definition` eingefügt; SongGoalImportance- und Phasen-Ausführungs-Knoten im Pipeline-Diagramm auf §2.56a aktualisiert.
+- **`.github/specs/01_musical_goals.md`**: Querverweiskommentar in den normativen Callsites von GoalPriorityProtocol ergänzt — UV3 `_profiled_phase_call` liest `goal_weights` für §2.56a all-phase Kopplung.
+- Redaktionelle Harmonisierung aller drei Dokumente: einheitliche Terminologie (`harmonic_adaptation_scalar`, `wet/dry`, `PMGG/Team-Policy/Hard-Cap`).
+
+### Validierung
+
+- `tests/unit/test_unified_restorer_v3.py`: 115/115 grün
+- `tests/unit/test_cumulative_interaction_guard.py`: 41/41 grün
+
+## Version 9.11.11 — Harmonic Guard Harmonization (Apr 2026)
+
+### Zusammenfassung
+
+Neue song-adaptive Guard-Algorithmen zur Reduktion von False-Positive-Rollbacks bei unverändert harter Klangtreue-Schutzfunktion.
+
+1. **Critical-Pair §2.48 harmonisiert mit §2.56**
+
+- `backend/core/cumulative_interaction_guard.py`
+- Critical-Pair-Threshold nutzt jetzt zusätzlich `guard_goal`-Gewichte aus Song-Goal-Importance.
+- Hohe Goal-Relevanz → strengerer Threshold; niedrige Relevanz → toleranter, innerhalb bestehender Safety-Bounds.
+
+2. **Kontext-Injektion für phaseninterne Adaptive Guards**
+
+- `backend/core/unified_restorer_v3.py`
+- `_profiled_phase_call()` injiziert zentral `song_goal_weights` und `restorability_score` in Phase-kwargs.
+
+3. **Phase 20/49 C80-D50 adaptive Clarity-Limits**
+
+- `backend/core/phases/phase_20_reverb_reduction.py`
+- `backend/core/phases/phase_49_advanced_dereverb.py`
+- Statische C80/D50 Schwellwerte durch song-adaptive Limits ergänzt:
+  - `c80_down_limit_db`
+  - `c80_soft_limit_db`
+  - `c80_hard_limit_db`
+  - `d50_limit`
+- Limits moduliert durch Goal-Importance + Restorability (harmonische Integration ohne Abschwächung der Sicherheitsinvarianten).
+
+4. **AFG Roughness/Sharpness song-adaptiv**
+
+- `backend/core/artifact_freedom_gate.py`
+- §2.49c-Rauheits/Schärfe-Toleranz wird mit Goal-Importance + Restorability skaliert (materialadaptive Basis bleibt erhalten).
+
+### Validierung
+
+- `tests/unit/test_cumulative_interaction_guard.py`: neue §2.56 Critical-Pair-Weight-Tests grün
+- `tests/unit/test_phases_mid_late.py`: Phase 20/49 adaptive Clarity-Guard-Tests grün
+- `tests/unit/test_artifact_freedom_gate.py`: 35/35 grün
+
 ## Version 9.11.10 — GPU-Mixed-Mode: Vollständige Plugin-Integration + Spec-Harmonisierung (Apr 2026)
 
 ### Zusammenfassung

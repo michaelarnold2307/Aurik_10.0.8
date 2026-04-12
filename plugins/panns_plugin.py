@@ -150,7 +150,7 @@ class PANNsPlugin:
                 logger.debug("Operation failed (non-critical): %s", _exc)
 
             try:
-                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                 _providers = _get_prov("PANNs")
             except Exception:

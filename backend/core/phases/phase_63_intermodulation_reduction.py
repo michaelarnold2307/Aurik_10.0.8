@@ -345,6 +345,17 @@ class IntermodulationReductionPhase(PhaseInterface):
         result_audio = apply(audio, sample_rate, strength=_effective_strength, defect_scores=_defect_scores)
         elapsed = _time.perf_counter() - t0
 
+        # §4.5 Psychoacoustic Masking Clamp — only reduce audible intermodulation
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            result_audio = apply_psychoacoustic_masking_clamp(
+                audio, result_audio, sample_rate,
+                strength=_effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            import logging as _log63
+            _log63.getLogger(__name__).debug("Phase63 masking clamp non-blocking: %s", _pm_exc)
+
         _rms_out = float(np.sqrt(np.mean(np.asarray(result_audio, dtype=np.float64) ** 2) + 1e-12))
         _rms_drop = 20.0 * np.log10(max(_rms_out / _rms_in, 1e-30)) if _rms_in > 1e-8 else 0.0
         return PhaseResult(

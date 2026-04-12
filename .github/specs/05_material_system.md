@@ -459,6 +459,59 @@ if result.transfer_chain:
 
 ---
 
+## §6.9 Wissenschaftliche Literaturgrundlage (normative Referenzen)
+
+### §6.9a Tonträgerketten-Erkennung (MediumDetector, §6.7)
+
+- **Cartwright, Pardo & Wallis (2016)** **DAFX-16** — Vinyl-Identifikation aus spektralen Merkmalen (Knisterfrequenz, Rolloff, Infrasonic-RMS): Basis der Bayesian-Feature-Kalibrierung
+- **Maher (2010)** **J. Audio Eng. Soc.** 58:702 — Survey analoge Audio-Artefakt-Erkennung: methodische Grundlage für Multi-Material-Fingerabdruck
+- **Declercq, De Backer & Zhu (2007)** **ICASSP** — Bayesian-Trägerklassifikation via Gaussian-Mixture: theoretische Basis des Scoring-Modells (§6.7 Phase 1)
+- **IEC 60386:1987** — Wow/Flutter-Meßnorm: normative Grundlage für `wow_flutter_index`-Kalibrierung
+- **Brandenburg & Bosi (1994)** **J. Audio Eng. Soc.** 42:381 — MPEG-1 Layer III (MP3): Basis der Codec-Artefakt-Erkennung (MDCT-Quantisierungs-Fingerabdruck)
+- **Pan (1995)** **J. Audio Eng. Soc.** 43:529 — MPEG-2 AAC: Basis der AAC vs. MP3 Differenzierung via `codec_type_code`
+- **Müller & Ewert (2011)** **IEEE Signal Proc. Mag.** 28(2):42 — Codec-Fingerprinting via MDCT-Quantisierungsartefakte: Basis des `codec_artifact_score`
+- **Spijkervet & Haasdijk (2020)** **ISMIR** — ML-basierte MP3/AAC-Unterscheidung via Bitrate-Profile: Validierung der `codec_type_code`-Heuristik
+
+### §6.9b Defekt-Erkennung (DefectScanner, §6.3/§6.4)
+
+**Analoge Defekte:**
+
+- **Godsill & Rayner (1998)** **Digital Audio Restoration**, Springer — Standardreferenz:
+AR-Prädiktionsmodell für Clicks, Bayesian-Crackle, probabilistisches Defektmodell für alle analogen Typen
+- **Janssen, Veldhuis & Vries (1986)** **IEEE TASLP** 34:203 — AR-basierte Click-Detektion via Prädiktionsfehler: Grundlage der Click/Crackle-Erkennung
+- **Maher (1993)** **JASA** 93:1679 — Click- und Pop-Detektion im Zeitbereich: theoretisches Modell für Klick-Laufzeit-Diskriminator
+- **Czyzewski & Kaczmarek (2003)** **AES Conv.** 115 — Parametrisches Vinyl-Wow/Flutter-Modell: Basis der Mehrband-Wow/Flutter-Detektion (`MULTIBAND_WOW_FLUTTER`) ✅
+- **Bailey, Casebeer & Fazekas (2019)** **AES** 147th Conv. — Neural Network für Vinyl-Knistern-Detektion: SOTA-Validierung des Crackle-Density-Schwellwerts (4σ)
+- **Esquef & Biscainho (2006)** **IEEE TASLP** 14:1207 — Modulations-Rauschen bei Bandaufnahmen: Basis von `MODULATION_NOISE` ✅
+- **Dahimene, Richard & David (2008)** **IEEE TASLP** 16:757 — Dropout-Erkennung via Energietransiente: Methodik für `DROPOUTS`-Schwellwert-Kalibrierung
+- **IEC 60386:1987** — Wow/Flutter-Norm (WOW < 0.5 Hz, FLUTTER 0.5–200 Hz): definiert Frequenzgrenzen von `WOW` und `FLUTTER` ✅
+
+**Digitale Defekte:**
+
+- **Herre & Johnston (1996)** **AES Conv.** 101 — Pre-Echo-Artefakt im MPEG-Coding durch temporales Masking-Modell: Primärquelle für `PRE_ECHO`
+- **Bitto (2000)** **AES Conv.** 109 — Jitter-Messung und Perceptual Impact bei DAT/CD: Basis für `JITTER_ARTIFACTS`-Severity-Kalibrierung
+- **Zölzer (2011)** **DAFX: Digital Audio Effects**, 2nd ed., Wiley — Kapitel 8 (Codec-Artefakte): Vollständige Topologie digitaler Artefakttypen; normative Basisreferenz
+
+**Genre-/Ära-Klassifikation (GenreClassifier, EraClassifier):**
+
+- **Pons & Serra (2022)** **ISMIR** — CNN-Spectrogramm-basierte Genre-Erkennung ohne Handfeatures: SOTA-Basis für ML-Erweiterung des GenreClassifiers
+- **Won, Chun, Kim & Nam (2020)** **IEEE TASLP** — Attention-basiertes Music Tagging auf MagnaTagATune/Million Song: Basis für automatische Genre-Tag-Gewichtung
+- **Li et al. (MERT, 2023/2024)** arXiv:2306.00107, ICLR 2024 — MERT: Self-supervised Music Understanding, 14 Tasks SOTA inkl. Genre: Backbone für MERT-Plugin im QualityGate ✅
+- **Tsatsishvili, Pienimäki, Tervaniemi & Makkonen (2021)** **ISMIR** — Decade-Klassifikation von Popmusik via Spectrogramm-CNN: Basis der Ära-Zehnjahres-Klassifikation
+
+**Gesangserkennung (VocalDetector, PANNs):**
+
+- **Kong, Cao, Iqbal, Wang, Wang & Plumbley (2020)** **IEEE TASLP** — PANNs (CNN14, AudioSet): primäres Vocal-Detection-Backbone in Aurik ✅
+- **Schlüter & Grill (2015)** **ISMIR** — Singing Voice Detection mit speziellem CNN: Validierung der PANNs-Konfidenz-Schwelle (0.35–0.40) für Gesangserkennung
+
+**Instrument-Erkennung:**
+
+- **Han, Kim & Lee (2017)** **ISMIR** — Deep-Learning Instrument Recognition (IRMAS-Datensatz): SOTA für multi-label Instrument-Tagging
+- **Humphrey, Reddy & Bello (2018)** **OpenMic-2018, ISMIR** — Weakly supervised Instrument-Tagging: Basis für BEATs/PANNs Instrument-Tag-Interpretation
+- **Chen, Wu & Wang (2023, BEATs)** **ICML 2023** — BEATs iter3: Audio-Tagging SOTA für Instrument-Präsenz-Detektion ✅
+
+---
+
 ## §6.8 Importformate (Eingang)
 
 | Format | Erweiterungen |

@@ -138,23 +138,46 @@ def _to_mono(audio: np.ndarray) -> np.ndarray:
 
 def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
     """
-    f₀-Schätzung: CREPE → pYIN → Sinus-Autokorrelation.
+    f0 estimation cascade: FCPE -> RMVPE -> PESTO -> pYIN -> autocorrelation.
 
     Returns:
         Medianer f₀ in Hz oder None wenn keine Stimmigkeit erkennbar.
     """
-    # Tier-1: FCPE/CREPE (ML, genaueste Schätzung)
-    if _CREPE_OK and _get_pitch_plugin is not None:
-        try:
-            pitch_plugin = _get_pitch_plugin()
-            result = pitch_plugin.analyze(mono, sr)
-            # CrepeResult: f0_hz [N], voiced_prob [N]
-            voiced_mask = result.voiced_prob >= 0.55
-            voiced = result.f0_hz[voiced_mask]
-            if len(voiced) > 5:
-                return float(np.median(voiced[voiced > 20.0]))
-        except Exception as exc:
-            logger.debug("FCPE/CREPE f₀-Schätzung fehlgeschlagen: %s", exc)
+    # Tier-1: FCPE
+    try:
+        from plugins.fcpe_plugin import get_fcpe_plugin
+
+        result = get_fcpe_plugin().analyze(mono, sr)
+        voiced_mask = result.voiced_prob >= 0.55
+        voiced = result.f0_hz[voiced_mask]
+        if len(voiced) > 5:
+            return float(np.median(voiced[voiced > 20.0]))
+    except Exception as exc:
+        logger.debug("FCPE f0 estimation failed: %s", exc)
+
+    # Tier-2: RMVPE
+    try:
+        from plugins.rmvpe_plugin import get_rmvpe_plugin
+
+        result = get_rmvpe_plugin().analyze(mono, sr)
+        voiced_mask = result.voiced_prob >= 0.55
+        voiced = result.f0_hz[voiced_mask]
+        if len(voiced) > 5:
+            return float(np.median(voiced[voiced > 20.0]))
+    except Exception as exc:
+        logger.debug("RMVPE f0 estimation failed: %s", exc)
+
+    # Tier-3: PESTO
+    try:
+        from plugins.pesto_plugin import get_pesto_plugin
+
+        result = get_pesto_plugin().analyze(mono, sr)
+        voiced_mask = result.voiced_prob >= 0.55
+        voiced = result.f0_hz[voiced_mask]
+        if len(voiced) > 5:
+            return float(np.median(voiced[voiced > 20.0]))
+    except Exception as exc:
+        logger.debug("PESTO f0 estimation failed: %s", exc)
 
     # Tier-2: pYIN über librosa
     if _LIBROSA_OK:

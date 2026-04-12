@@ -1,84 +1,21 @@
 {
+  "timestamp": "2026-04-12T12:01:13.852942",
   "backend_log": "logs/aurik_backend.log",
-  "checks": [
-    {
-      "evidence": "AurikDenker.denke() gestartet gefunden",
-      "id": "entry_denker",
-      "passed": true,
-      "required": true,
-      "title": "AurikDenker Einstieg genutzt"
-    },
-    {
-      "evidence": "mode=restoration/studio_2026 vorhanden",
-      "id": "mode_contract",
-      "passed": true,
-      "required": true,
-      "title": "Nur erlaubter Betriebsmodus"
-    },
-    {
-      "evidence": "Cached Defect/PreAnalysis im Lauf genutzt",
-      "id": "preanalysis_handover",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.47a PreAnalysis-Handover sichtbar"
-    },
-    {
-      "evidence": "\ud83d\udd0d MediumDetector fresh_count=0 (cached ignoriert)",
-      "id": "medium_detect_single",
-      "passed": true,
-      "required": true,
-      "title": "MediumDetector im Lauf nicht mehrfach aktiv"
-    },
-    {
-      "evidence": "artifact_freedom=1.000",
-      "id": "artifact_gate",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.49 Artifact-Freedom Gate erf\u00fcllt"
-    },
-    {
-      "evidence": "HPI-Eintrag vorhanden",
-      "id": "hpi_gate",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.44 HPI-Gate protokolliert"
-    },
-    {
-      "evidence": "Joy-Index-Signal gefunden",
-      "id": "exp_joy_runtime",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.53 joy_runtime_index propagiert"
-    },
-    {
-      "evidence": "Auto-Improve-Signal gefunden",
-      "id": "exp_auto_improve",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.53 auto_improvement_recommendations propagiert"
-    },
-    {
-      "evidence": "cluster_policy gefunden",
-      "id": "exp_cluster_policy",
-      "passed": true,
-      "required": true,
-      "title": "\u00a72.53 cluster_policy propagiert"
-    },
-    {
-      "evidence": "Kein expliziter Exzellenz-API-Hinweis im Log (inconclusive)",
-      "id": "exzellenz_api_contract",
-      "passed": false,
-      "required": false,
-      "title": "\u00a72.53a Exzellenz-API-Pfad erkennbar"
-    }
-  ],
-  "compliance_ok": true,
   "frontend_log": "logs/aurik_frontend.out",
   "latest_run_window": {
-    "end_line": 13980,
-    "start_line": 10673
+    "start_line": -1,
+    "end_line": -1
   },
-  "required_passed": 9,
-  "required_total": 9,
-  "timestamp": "2026-04-10T23:43:40.571869"
+  "compliance_ok": false,
+  "required_passed": 0,
+  "required_total": 1,
+  "checks": [
+    {
+      "id": "entry_denker",
+      "title": "AurikDenker Einstieg genutzt",
+      "passed": false,
+      "required": true,
+      "evidence": "Kein AurikDenker-Start im Backend-Log"
+    }
+  ]
 }

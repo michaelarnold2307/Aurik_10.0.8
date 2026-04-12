@@ -229,7 +229,17 @@ def _overall_rms(audio: np.ndarray) -> float:
 
 
 def _try_mp_senet_refine(audio: np.ndarray, sr: int) -> tuple[np.ndarray | None, str]:
-    """Try MP-SENet refinement. Returns (audio_or_none, model_used)."""
+    """Try MP-SENet refinement with ml_memory_budget guard. Returns (audio_or_none, model_used)."""
+    # §2.47 ml_memory_budget guard (250 MB for MP-SENet)
+    _dfn_release = None
+    try:
+        from backend.core.ml_memory_budget import try_allocate as _try_alloc_43, release as _rel_43
+        if not _try_alloc_43("MpSeNet_phase43", 0.25):
+            logger.debug("MP-SENet phase_43: ml_memory_budget insufficient — DSP-Fallback")
+            return None, "unavailable"
+        _dfn_release = _rel_43
+    except ImportError:
+        pass  # budget tracking unavailable — allow inference
     try:
         from plugins.mp_senet_plugin import get_mp_senet_plugin
 
@@ -239,6 +249,9 @@ def _try_mp_senet_refine(audio: np.ndarray, sr: int) -> tuple[np.ndarray | None,
     except Exception as exc:
         logger.debug("Phase 43 MP-SENet refinement unavailable: %s", exc)
         return None, "unavailable"
+    finally:
+        if _dfn_release is not None:
+            _dfn_release("MpSeNet_phase43")
 
 
 class AdaptiveDeEsserPhase(PhaseInterface):

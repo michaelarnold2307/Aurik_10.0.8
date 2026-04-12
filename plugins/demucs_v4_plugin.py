@@ -89,7 +89,7 @@ class DemucsV4Plugin:
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
             try:
-                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                 _providers = _get_prov("DemucsV4")
             except Exception:

@@ -82,6 +82,12 @@ _SIGMA_MAX = 0.3  # Maximale Rausch-Standardabweichung
 # §0 Primum-non-nocere: Material-Bandbreiten-Cap verhindert HF-Halluzination
 # beim Inpainting historischer Träger (wax_cylinder BW ≤ 5 kHz, wire_rec. ≤ 6 kHz).
 # Ohne Cap generiert AR/Diffusion synthetische Obertöne, die nie vorhanden waren.
+# Literature anchors for the caps:
+#   - Wax cylinders: typically ~2.5–4.5 kHz useful bandwidth; 5 kHz used here as
+#     conservative upper safety cap (Casey, Sound Directions 2007; IASA TC-04).
+#   - Wire recording: typically ~4–6 kHz depending on transport speed and head design;
+#     6 kHz used as the hard upper bound (Morton 2006; ARSC preservation notes).
+#   - Shellac: archival transfer practice usually preserves content below ~7 kHz.
 _MATERIAL_BW_CAP_HZ: dict[str, float] = {
     "wax_cylinder": 5000.0,  # Mechanische Aufzeichnung 1900–1930
     "wire_recording": 6000.0,  # Stahlbandfone 1940–1955
@@ -270,6 +276,120 @@ def _inpaint_gap_dsp(
     return np.clip(x, -1.0, 1.0)
 
 
+def _nmf_gap_fallback(
+    channel: np.ndarray,
+    start: int,
+    end: int,
+    sr: int,
+) -> np.ndarray:
+    """NMF-\u03b2 (IS-Divergenz, \u03b2=0) per-Gap-Inpainting — letzter DSP-Fallback (§2.47).
+
+    Wenn _inpaint_gap_dsp scheitert, rekonstruiert dieser Fallback das Lücken-Segment
+    durch NMF-Komponentenlernen auf dem umgebenden Kontext und überträgt die spektrale
+    Struktur auf die Lücke. Reproduzierbar via deterministischem RNG-Seed.
+
+    Algorithmus:
+        1. Kontext-Fenster (±context_samples) via STFT analysieren
+        2. NMF-Komponentenzerlegung (Rang 8, 10 multiplikative IS-Divergenz-Schritte)
+        3. Durchschnittliche Aktivierung → Lücken-Magnitude
+        4. Phasenkontinuität via Velocity-Fortsetzung (δφ aus Kontext)
+        5. Phasen-kohärente Rekonstruktion via PGHI (Fallback: ISTFT)
+
+    Reference: Févotte & Idier (2011) — NMF mit β-Divergenz (β=0 ≡ IS-Divergenz).
+    """
+    gap_len = end - start
+    if gap_len <= 0:
+        return channel[start:end]
+
+    _n_fft = 1024
+    _hop = 256
+    ctx_samples = min(max(gap_len * 4, _n_fft * 2), len(channel) // 4)
+
+    ctx_start = max(0, start - ctx_samples)
+    ctx_end = min(len(channel), end + ctx_samples)
+    context = channel[ctx_start:ctx_end].astype(np.float64)
+
+    from scipy import signal as _sps
+
+    freqs_ctx, times_ctx, Z_ctx = _sps.stft(
+        context, fs=sr, window="hann", nperseg=_n_fft, noverlap=_n_fft - _hop
+    )
+    mag_ctx = np.abs(Z_ctx)  # (n_bins, n_frames)
+    n_bins, n_frames = mag_ctx.shape
+    if n_frames < 4 or n_bins < 4:
+        # Fallback: zeros
+        return np.zeros(gap_len, dtype=np.float32)
+
+    # NMF-β (IS-Divergenz, β=0): multiplicative update rules (Févotte 2011)
+    _rank = min(8, n_frames // 2)
+    _eps = 1e-10
+    _rng = np.random.default_rng(seed=int(np.abs(np.sum(context[:min(64, len(context))])) * 1e4 + start) % (2**31))
+    _W = _rng.random((n_bins, _rank)) + 0.1  # basis spectra (n_bins, rank)
+    _H = _rng.random((_rank, n_frames)) + 0.1  # activations (rank, n_frames)
+
+    for _ in range(10):
+        _WH = _W @ _H + _eps
+        # IS-divergence updates (β=0)
+        _H *= (_W.T @ (mag_ctx / _WH**2)) / (_W.T @ (1.0 / _WH) + _eps)
+        _WH = _W @ _H + _eps
+        _W *= ((mag_ctx / _WH**2) @ _H.T) / ((1.0 / _WH) @ _H.T + _eps)
+
+    # Estimate gap magnitude from average activations
+    gap_start_ctx = start - ctx_start
+    gap_end_ctx = end - ctx_start
+    gap_duration = gap_len / sr
+    n_gap_frames = max(1, int(np.round(gap_duration * sr / _hop)))
+    avg_H = np.mean(_H, axis=1, keepdims=True)  # (rank, 1)
+    gap_mag = (_W @ (avg_H * np.ones((1, n_gap_frames)))).clip(0.0)  # (n_bins, n_gap_frames)
+
+    # Phase velocity continuation from left context edge
+    left_frame = max(0, gap_start_ctx // _hop - 1)
+    if left_frame >= 1:
+        phi_t1 = np.angle(Z_ctx[:, left_frame])
+        phi_t0 = np.angle(Z_ctx[:, left_frame - 1])
+        delta_phi = phi_t1 - phi_t0
+    else:
+        phi_t1 = np.zeros(n_bins)
+        delta_phi = np.zeros(n_bins)
+
+    gap_phase = np.zeros((n_bins, n_gap_frames))
+    for i in range(n_gap_frames):
+        gap_phase[:, i] = phi_t1 + delta_phi * (i + 1)
+
+    Z_gap = gap_mag * np.exp(1j * gap_phase)
+
+    # Phase-coherent reconstruction via PGHI (§2.47 VERBOTEN: direktes ISTFT)
+    try:
+        from dsp.pghi import pghi_reconstruct as _pghi_rec
+        _initial_phase_gap = gap_phase.astype(np.float32)
+        _gap_audio = _pghi_rec(
+            gap_mag.astype(np.float32),
+            sr=sr,
+            win_size=_n_fft,
+            hop=_hop,
+            initial_phase=_initial_phase_gap,
+        )
+    except (ImportError, Exception) as _pghi_err:
+        logger.debug("phase_55 NMF-gap PGHI-Fallback: %s", _pghi_err)
+        _, _gap_audio = _sps.istft(Z_gap, fs=sr, window="hann", nperseg=_n_fft, noverlap=_n_fft - _hop)
+
+    _gap_audio = np.asarray(_gap_audio, dtype=np.float64)
+
+    # Trim/pad to exact gap length
+    if len(_gap_audio) >= gap_len:
+        _gap_audio = _gap_audio[:gap_len]
+    else:
+        _gap_audio = np.pad(_gap_audio, (0, gap_len - len(_gap_audio)))
+
+    # Energy normalisation to match context boundary
+    ctx_border_rms = float(np.sqrt(np.mean(channel[max(0, start - 64) : start] ** 2)) + 1e-10)
+    rec_rms = float(np.sqrt(np.mean(_gap_audio**2)) + 1e-10)
+    _gap_audio = _gap_audio * (ctx_border_rms / rec_rms)
+
+    _gap_audio = np.nan_to_num(_gap_audio, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(_gap_audio, -1.0, 1.0).astype(np.float32)
+
+
 def _try_cqtdiff_plus_plugin(audio: np.ndarray, start: int, end: int, sample_rate: int) -> np.ndarray | None:
     """
     CQTdiff Inpainting für Lücken ≥ 50 ms (Moliner & Välimäki 2022, §4.5 Aurik-Spec).
@@ -361,6 +481,152 @@ def _try_diffwave_plugin(audio: np.ndarray, start: int, end: int, sample_rate: i
         return None
 
 
+def _try_consistency_model_inpainting(
+    channel: np.ndarray, start: int, end: int, sample_rate: int
+) -> np.ndarray | None:
+    """Priority 0.8: Consistency Model inpainting (Song et al. 2023, ICML).
+
+    Single-step diffusion via consistency distillation — 10–100× faster than DDPM,
+    comparable quality for audio gaps of any size. Runs even during ml_thrashing since
+    the model requires less GPU/CPU than multi-step diffusion.
+
+    Returns filled gap segment or None if plugin unavailable.
+    """
+    assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
+    gap_len = end - start
+    if gap_len <= 0:
+        return None
+    try:
+        import os as _os
+        import sys
+
+        _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
+        if _os.path.abspath(_plugins_dir) not in sys.path:
+            sys.path.insert(0, _os.path.abspath(_plugins_dir))
+
+        from plugins.consistency_inpaint_plugin import get_consistency_inpaint_plugin
+
+        cm = get_consistency_inpaint_plugin()
+        if cm is None:
+            return None
+
+        # Context window: 300 ms before and after gap (enough for musical phrase context)
+        ctx_samples = min(int(0.30 * sample_rate), start)
+        ctx_l = channel[max(0, start - ctx_samples) : start]
+        ctx_r = channel[end : min(len(channel), end + ctx_samples)]
+
+        result = cm.inpaint(ctx_l, ctx_r, gap_len, sample_rate)
+        if result is None or len(result) == 0:
+            return None
+
+        result = np.nan_to_num(np.asarray(result, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(result[:gap_len], -1.0, 1.0)
+    except Exception as _exc:
+        logger.debug("_try_consistency_model_inpainting failed (non-critical): %s", _exc)
+        return None
+
+
+def _try_dac_token_inpainting(
+    channel: np.ndarray, start: int, end: int, sample_rate: int
+) -> np.ndarray | None:
+    """Priority 1.5: DAC discrete audio codec token inpainting (Kumar et al. 2024).
+
+    Encodes context into discrete audio tokens, inpaints the missing token sequence
+    via causal AR / masked prediction, decodes back to waveform. Produces harmonically
+    coherent fills for long gaps (≥ 50 ms) where CQTdiff+ is unavailable.
+
+    Returns filled gap segment or None if plugin unavailable.
+    """
+    assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
+    gap_len = end - start
+    if gap_len <= 0:
+        return None
+    try:
+        import os as _os
+        import sys
+
+        _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
+        if _os.path.abspath(_plugins_dir) not in sys.path:
+            sys.path.insert(0, _os.path.abspath(_plugins_dir))
+
+        from plugins.dac_plugin import get_dac_plugin
+
+        dac = get_dac_plugin()
+        if dac is None:
+            return None
+
+        # Context window: 500 ms (larger for token-based model)
+        ctx_samples = min(int(0.50 * sample_rate), start)
+        ctx_l = channel[max(0, start - ctx_samples) : start]
+        ctx_r = channel[end : min(len(channel), end + ctx_samples)]
+
+        result = dac.inpaint(ctx_l, ctx_r, gap_len, sample_rate)
+        if result is None or len(result) == 0:
+            return None
+
+        result = np.nan_to_num(np.asarray(result, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(result[:gap_len], -1.0, 1.0)
+    except Exception as _exc:
+        logger.debug("_try_dac_token_inpainting failed (non-critical): %s", _exc)
+        return None
+
+
+def _is_ml_thrashing() -> bool:
+    """Return True when ML paths should be avoided due to active swap thrashing."""
+    try:
+        from backend.core.ml_memory_budget import is_system_thrashing
+
+        return bool(is_system_thrashing())
+    except Exception:
+        return False
+
+
+def _conservative_boundary_fill(channel: np.ndarray, start: int, end: int) -> np.ndarray:
+    """Fill gap with a boundary-constrained cosine interpolation."""
+    gap_len = max(0, end - start)
+    if gap_len <= 0:
+        return np.zeros(0, dtype=np.float32)
+
+    left = float(channel[start - 1]) if start > 0 else 0.0
+    right = float(channel[end]) if end < len(channel) else left
+    t = np.linspace(0.0, 1.0, gap_len, dtype=np.float32)
+    fade = 0.5 - 0.5 * np.cos(np.pi * t)
+    seg = (1.0 - fade) * left + fade * right
+    return np.clip(np.nan_to_num(seg, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(np.float32)
+
+
+def _gap_candidate_is_damaging(candidate: np.ndarray, channel: np.ndarray, start: int, end: int) -> bool:
+    """Detect boundary/energy anomalies that indicate risky inpainting output."""
+    gap_len = max(0, end - start)
+    if gap_len <= 2 or len(candidate) == 0:
+        return False
+
+    seg = np.asarray(candidate, dtype=np.float32)[:gap_len]
+    if not np.isfinite(seg).all():
+        return True
+
+    left_ctx = channel[max(0, start - 256) : start]
+    right_ctx = channel[end : min(len(channel), end + 256)]
+    if len(left_ctx) == 0 and len(right_ctx) == 0:
+        return False
+    ctx = np.concatenate((left_ctx[-128:], right_ctx[:128]))
+
+    left_edge = float(channel[start - 1]) if start > 0 else float(seg[0])
+    right_edge = float(channel[end]) if end < len(channel) else float(seg[-1])
+
+    jump_l = abs(float(seg[0]) - left_edge)
+    jump_r = abs(float(seg[-1]) - right_edge)
+    ctx_delta = np.diff(ctx.astype(np.float32)) if len(ctx) > 4 else np.array([0.0], dtype=np.float32)
+    median_ctx_step = float(np.median(np.abs(ctx_delta))) + 1e-6
+    jump_limit = max(0.18, 10.0 * median_ctx_step)
+    if jump_l > jump_limit or jump_r > jump_limit:
+        return True
+
+    ctx_p99 = float(np.percentile(np.abs(ctx), 99.0)) + 1e-6 if len(ctx) > 8 else 1e-3
+    seg_p99 = float(np.percentile(np.abs(seg), 99.0))
+    return bool(seg_p99 > ctx_p99 * 2.5)
+
+
 def _process_channel(
     channel: np.ndarray,
     sample_rate: int,
@@ -390,28 +656,85 @@ def _process_channel(
         "max_gap_ms": 0.0,
         "plugin_used": False,
         "pre_repaired_skipped": n_skipped,
+        "damage_guard_activations": 0,
+        "ml_thrashing_guard": False,
     }
+
+    ml_thrashing = _is_ml_thrashing()
+    if ml_thrashing:
+        stats["ml_thrashing_guard"] = True
+        logger.warning(
+            "phase_55: ML-Thrashing erkannt — konservativer DSP-Pfad zum Schutz von Musik/Sprache aktiv"
+        )
 
     for start, end in gaps:
         gap_ms = (end - start) / sample_rate * 1000
 
         # Adaptive Schrittzahl je nach Lückengröße
         n_steps = _adaptive_steps(gap_ms)
+        if ml_thrashing:
+            n_steps = min(n_steps, 32)
 
-        # Priorität 1: CQTdiff (≥ 50 ms Lücken, harmonisch kohärent, §4.5 Spec-Pflicht)
-        plugin_result = _try_cqtdiff_plus_plugin(channel, start, end, sample_rate)
-        if plugin_result is not None:
-            result[start:end] = plugin_result[: end - start]
-            stats["plugin_used"] = True
-        else:
-            # Priorität 2: FlowMatchingPlugin (Lipman 2023)
+        # Priorität 0 [TIER-0]: FlowMatchingPlugin (Lipman et al. 2023, §4.4 SOTA-Matrix primär)
+        # Flow Matching: 4–16 Schritte statt 50–200 DDPM-Schritte → 10–50× schneller,
+        # gleichwertige oder bessere Qualität. Aktiviert für Lücken aller Größen (20 ms – 30 s).
+        plugin_result = None
+        if not ml_thrashing:
             plugin_result = _try_flow_matching_plugin(channel, start, end, sample_rate)
+        if plugin_result is not None:
+            candidate = plugin_result[: end - start]
+            stats["plugin_used"] = True
+            stats["flow_matching_tier0_used"] = stats.get("flow_matching_tier0_used", 0) + 1
+        else:
+            # Priorität 0.8: Consistency Model (Song et al. 2023) — 1-Schritt-Diffusions-Inpainting.
+            # Läuft auch bei ml_thrashing, da deutlich ressourceneffizienter als Multi-Step-Diffusion.
+            plugin_result = _try_consistency_model_inpainting(channel, start, end, sample_rate)
             if plugin_result is not None:
-                result[start:end] = plugin_result[: end - start]
+                logger.debug("phase_55: Consistency Model Inpainting OK (gap=%.1f ms)", gap_ms)
+                candidate = plugin_result[: end - start]
                 stats["plugin_used"] = True
+                stats["consistency_model_used"] = stats.get("consistency_model_used", 0) + 1
             else:
-                # Priorität 3: DSP-Diffusion (NMF-β / AR-Inpainting — Letzfall)
-                result[start:end] = _inpaint_gap_dsp(channel, start, end, sample_rate, n_steps)
+                # Priorität 1: CQTdiff+ (≥ 50 ms Lücken, harmonisch kohärent, §4.5 Spec)
+                if not ml_thrashing:
+                    plugin_result = _try_cqtdiff_plus_plugin(channel, start, end, sample_rate)
+                if plugin_result is not None:
+                    candidate = plugin_result[: end - start]
+                    stats["plugin_used"] = True
+                else:
+                    # Priorität 1.5: DAC Token Inpainting (Kumar et al. 2024) — diskrete Codec-Token.
+                    # Musikalisch kohärente Fills für Lücken ≥ 50 ms, wenn CQTdiff+ nicht verfügbar.
+                    if not ml_thrashing and gap_ms >= 50.0:
+                        plugin_result = _try_dac_token_inpainting(channel, start, end, sample_rate)
+                        if plugin_result is not None:
+                            logger.debug("phase_55: DAC Token Inpainting OK (gap=%.1f ms)", gap_ms)
+                            candidate = plugin_result[: end - start]
+                            stats["plugin_used"] = True
+                            stats["dac_token_used"] = stats.get("dac_token_used", 0) + 1
+
+                    if plugin_result is None:
+                        # Priorität 2+: DSP AR-Diffusion → NMF-β IS-Divergenz (§2.47 Fallback-Pflicht)
+                        try:
+                            candidate = _inpaint_gap_dsp(channel, start, end, sample_rate, n_steps)
+                        except Exception as _dsp_exc:
+                            logger.debug("DSP-AR-Diffusion fehlgeschlagen — NMF-\u03b2-Fallback (gap %d:%d): %s", start, end, _dsp_exc)
+                            candidate = _nmf_gap_fallback(channel, start, end, sample_rate)
+
+        if _gap_candidate_is_damaging(candidate, channel, start, end):
+            stats["damage_guard_activations"] += 1
+            logger.warning(
+                "phase_55: Damage-Guard für Gap [%d:%d] (%.1f ms) aktiviert — ersetze riskante Rekonstruktion",
+                start,
+                end,
+                gap_ms,
+            )
+            candidate = _conservative_boundary_fill(channel, start, end)
+
+        result[start:end] = np.clip(
+            np.nan_to_num(candidate[: end - start], nan=0.0, posinf=0.0, neginf=0.0),
+            -1.0,
+            1.0,
+        )
 
         # §0 BW-Cap: historische Träger dürfen keine HF-Details halluzinieren
         if bw_cap_hz is not None:
@@ -500,6 +823,94 @@ class DiffusionInpaintingPhase(PhaseInterface):
             description="Masked Diffusion Inpainting für Audio-Lücken und Dropouts >20ms",
         )
 
+    def _nmf_spectral_inpainting_fallback(
+        self, audio: np.ndarray, sr: int, strength: float = 0.5
+    ) -> np.ndarray:
+        """NMF-\u03b2 (IS-Divergenz, \u03b2=0) Ganzsignal-Inpainting — absoluter letzter Fallback (§2.47).
+
+        Wird aufgerufen wenn alle Kanal-Verarbeitungspfade (_process_channel) fehlschlagen.
+        Zerlegt das gesamte Spektrum in NMF-Komponenten und rekonstruiert Niedrigenergie-Regionen
+        (\u22641. Quartil), die wahrscheinlich beschädigt sind, via NMF-Schätzung.
+
+        Args:
+            audio:    Input audio (mono 1-D oder Stereo N×2).
+            sr:       Sample-Rate (muss 48000 Hz sein).
+            strength: Blend-Faktor für NMF-Reparatur in Niedrigenergie-Bins (0–1).
+
+        Returns:
+            Inpainted audio, identical shape to input, NaN/Inf-frei, ∈ [-1, 1].
+        """
+        from scipy import signal as _sps
+
+        _n_fft = 2048
+        _hop = 512
+        _is_stereo = audio.ndim == 2
+        _mono = np.mean(audio, axis=1) if _is_stereo else audio.copy()
+        _mono = _mono.astype(np.float64)
+
+        _, _, _Z = _sps.stft(_mono, fs=sr, nperseg=_n_fft, noverlap=_n_fft - _hop, window="hann")
+        _mag = np.abs(_Z)
+        _phase = np.angle(_Z)
+
+        _n_freq, _n_time = _mag.shape
+        _rank = min(16, max(2, _n_time // 4))
+        if _n_time < 4:
+            return audio.copy()
+
+        _eps = 1e-10
+        _rng = np.random.default_rng(seed=42)  # deterministic — reproducible for same input
+        _W = _rng.random((_n_freq, _rank)) + 0.1  # basis spectra
+        _H = _rng.random((_rank, _n_time)) + 0.1  # activations
+
+        for _ in range(10):  # IS-divergence multiplicative updates (\u03b2=0)
+            _WH = _W @ _H + _eps
+            _H *= (_W.T @ (_mag / _WH**2)) / (_W.T @ (1.0 / _WH) + _eps)
+            _WH = _W @ _H + _eps
+            _W *= ((_mag / _WH**2) @ _H.T) / ((1.0 / _WH) @ _H.T + _eps)
+
+        _reconstructed_mag = _W @ _H
+
+        # Apply NMF reconstruction only to lowest-quartile energy bins (likely damage)
+        _energy_mask = _mag < np.percentile(_mag, 25)
+        _mag_repaired = np.where(
+            _energy_mask,
+            (1.0 - strength) * _mag + strength * _reconstructed_mag,
+            _mag,
+        )
+
+        # Phase-coherent ISTFT via PGHI (§2.47)
+        try:
+            from dsp.pghi import pghi_reconstruct as _pghi_fb
+            _repaired_mono = _pghi_fb(
+                _mag_repaired.astype(np.float32),
+                sr=sr,
+                win_size=_n_fft,
+                hop=_hop,
+                initial_phase=_phase.astype(np.float32),
+            )
+            _repaired_mono = np.asarray(_repaired_mono, dtype=np.float64)
+        except (ImportError, Exception) as _pghi_fb_err:
+            logger.debug("phase_55 NMF-fallback PGHI-Fallback: %s", _pghi_fb_err)
+            _Z_repaired = _mag_repaired * np.exp(1j * _phase)
+            _, _repaired_mono = _sps.istft(_Z_repaired, fs=sr, nperseg=_n_fft, noverlap=_n_fft - _hop, window="hann")
+
+        _repaired_mono = np.asarray(_repaired_mono, dtype=np.float64)
+        if len(_repaired_mono) > len(_mono):
+            _repaired_mono = _repaired_mono[:len(_mono)]
+        elif len(_repaired_mono) < len(_mono):
+            _repaired_mono = np.pad(_repaired_mono, (0, len(_mono) - len(_repaired_mono)))
+
+        _repaired_mono = np.nan_to_num(_repaired_mono, nan=0.0, posinf=0.0, neginf=0.0)
+        _repaired_mono = np.clip(_repaired_mono, -1.0, 1.0)
+
+        if _is_stereo:
+            _ratio = _repaired_mono / (_mono + np.sign(_mono + 1e-30) * 1e-10)
+            _ratio = np.clip(_ratio, 0.0, 10.0)
+            _out = np.column_stack([audio[:, 0] * _ratio, audio[:, 1] * _ratio])
+            return np.clip(np.nan_to_num(_out, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(np.float32)
+
+        return _repaired_mono.astype(np.float32)
+
     def process(
         self,
         audio: np.ndarray,
@@ -553,6 +964,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
         # §11.7a: Bereits von RekonstruktionsDenker reparierte Gap-Regionen
         _repaired_gaps: list[tuple[int, int]] = kwargs.get("repaired_gap_samples", [])
         _n_repaired_skipped = 0
+        _damage_guard_hits = 0
+        _thrash_guard_active = False
 
         if audio.ndim == 1:
             # Mono
@@ -564,6 +977,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
             max_gap_ms = stats["max_gap_ms"]
             plugin_used = stats["plugin_used"]
             _n_repaired_skipped = stats.get("pre_repaired_skipped", 0)
+            _damage_guard_hits = int(stats.get("damage_guard_activations", 0))
+            _thrash_guard_active = bool(stats.get("ml_thrashing_guard", False))
         else:
             # §2.51 Linked-Stereo: Gap-Detektion auf Mono-Mix, kohärente Reparatur
             # Detect gaps on mono downmix to ensure identical gap regions for L+R
@@ -585,6 +1000,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 max_gap_ms = max(max_gap_ms, stats["max_gap_ms"])
                 plugin_used = plugin_used or stats["plugin_used"]
                 _n_repaired_skipped += stats.get("pre_repaired_skipped", 0)
+                _damage_guard_hits += int(stats.get("damage_guard_activations", 0))
+                _thrash_guard_active = _thrash_guard_active or bool(stats.get("ml_thrashing_guard", False))
 
                 quality_scores.append(_reconstruction_quality_score(audio[:, ch], ch_rep, mono_gaps))
 
@@ -607,6 +1024,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
                 "total_gap_ms": round(total_gap_ms, 2),
                 "max_gap_ms": round(max_gap_ms, 2),
                 "plugin_used": plugin_used,
+                "damage_guard_activations": int(_damage_guard_hits),
+                "ml_thrashing_guard": bool(_thrash_guard_active),
                 "reconstruction_quality": round(quality, 4),
                 "diffusion_steps": f"{_DIFFUSION_STEPS}/{_DIFFUSION_STEPS_MED}/{_DIFFUSION_STEPS_LONG} (adaptive)",
                 "min_gap_ms": min_gap_ms,

@@ -44,6 +44,7 @@ class TestAMRBAuditability:
             enable_mushra_proxy=False,
             enable_musical_goals=False,
             enable_formal_session=False,
+            enforce_min_fragment_guard=False,
         )
         return run_benchmark(config)
 
@@ -85,6 +86,7 @@ class TestAMRBAuditability:
                 enable_mushra_proxy=False,
                 enable_musical_goals=False,
                 enable_formal_session=False,
+                enforce_min_fragment_guard=False,
             )
             return run_benchmark(config)
 
@@ -113,6 +115,7 @@ class TestAMRBAuditability:
                 enable_mushra_proxy=False,
                 enable_musical_goals=False,
                 enable_formal_session=False,
+                enforce_min_fragment_guard=False,
             )
             return run_benchmark(config)
 

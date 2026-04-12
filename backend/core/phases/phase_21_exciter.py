@@ -259,6 +259,17 @@ class Exciter(PhaseInterface):
 
         excited_audio = np.nan_to_num(excited_audio, nan=0.0, posinf=0.0, neginf=0.0)
         excited_audio = np.clip(excited_audio, -1.0, 1.0)
+
+        # §4.5 Psychoacoustic Masking Clamp — fulfill docstring: harmonic excitation only where audible
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            excited_audio = apply_psychoacoustic_masking_clamp(
+                audio, excited_audio, sample_rate,
+                strength=_effective_strength, mode="additive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase21 masking clamp non-blocking: %s", _pm_exc)
+
         return PhaseResult(
             success=True,
             audio=excited_audio,

@@ -27,7 +27,7 @@ def test_phase20_ml_routing():
         print("✓ Phase 20 import successful")
     except ImportError as e:
         print(f"✗ Failed to import Phase 20: {e}")
-        return False
+        pytest.fail(f"Phase 20 import failed: {e}")
 
     # Create synthetic reverberant audio (5 seconds, 48 kHz)
     duration = 5.0
@@ -80,7 +80,7 @@ def test_phase20_ml_routing():
         import traceback
 
         traceback.print_exc()
-        return False
+        pytest.fail(f"FAST mode failed: {e}")
 
     # Test 2: BALANCED mode (ML-Hybrid with adaptive strategy)
     print("\n" + "-" * 80)
@@ -141,9 +141,11 @@ def test_phase20_ml_routing():
     print("✓ Graceful fallback to DSP if ML unavailable")
     print("\nIntegration Status: SUCCESS ✅")
 
-    return True
-
 
 if __name__ == "__main__":
-    success = test_phase20_ml_routing()
-    sys.exit(0 if success else 1)
+    try:
+        test_phase20_ml_routing()
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ TEST FEHLGESCHLAGEN: {e}")
+        sys.exit(1)

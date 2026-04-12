@@ -70,6 +70,37 @@ def _stereo_audio(secs: float = 1.2) -> np.ndarray:
     return np.stack([mono, mono * 0.85], axis=0)
 
 
+def _inject_long_level_dips(audio: np.ndarray, dip_times: list[float], dip_duration_s: float = 0.18) -> np.ndarray:
+    out = audio.copy()
+    dip_samples = int(SR * dip_duration_s)
+    fade_down = int(0.080 * SR)
+    snap_back = int(0.030 * SR)
+    hold = max(1, dip_samples - fade_down - snap_back)
+    min_gain = 10.0 ** (-12.0 / 20.0)
+    env = np.concatenate(
+        [
+            np.linspace(1.0, min_gain, fade_down, dtype=np.float32),
+            np.full(hold, min_gain, dtype=np.float32),
+            np.linspace(min_gain, 1.0, snap_back, dtype=np.float32),
+        ]
+    )[:dip_samples]
+    for ts in dip_times:
+        start = int(ts * SR)
+        end = start + dip_samples
+        if end > len(out):
+            continue
+        out[start:end] *= env
+    return out.astype(np.float32)
+
+
+def _musical_harmonic_stack(secs: float = 4.0, f0: float = 100.0) -> np.ndarray:
+    t = np.linspace(0, secs, int(SR * secs), endpoint=False, dtype=np.float32)
+    x = np.zeros_like(t)
+    for mult, amp in [(1, 0.22), (2, 0.14), (3, 0.09), (4, 0.06)]:
+        x += amp * np.sin(2.0 * np.pi * (f0 * mult) * t)
+    return np.clip(x, -1.0, 1.0).astype(np.float32)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. DefectType Enum — All 12 members exist
 # ══════════════════════════════════════════════════════════════════════════════
@@ -167,6 +198,26 @@ class TestDetectionMethods:
         result = scanner.scan(audio, SR)
         score = result.scores[DefectType.MOTOR_INTERFERENCE]
         assert float(score.severity) < 0.30
+
+    def test_sticky_shed_detects_long_contact_loss_dips(self) -> None:
+        from backend.core.defect_scanner import MaterialType
+
+        scanner = DefectScanner(sample_rate=SR)
+        audio = _sine(440.0, 8.0).astype(np.float32)
+        audio = _inject_long_level_dips(audio, dip_times=[1.0, 2.4, 3.8, 5.2, 6.6], dip_duration_s=0.18)
+        result = scanner.scan(audio, SR, material_type=MaterialType.TAPE)
+        score = result.scores[DefectType.STICKY_SHED_RESIDUE]
+        assert float(score.severity) > 0.10
+        assert int(score.metadata.get("n_long_events", 0)) >= 2
+
+    def test_motor_interference_rejects_musical_harmonic_stack(self) -> None:
+        from backend.core.defect_scanner import MaterialType
+
+        scanner = DefectScanner(sample_rate=SR)
+        audio = _musical_harmonic_stack()
+        result = scanner.scan(audio, SR, material_type=MaterialType.VINYL)
+        score = result.scores[DefectType.MOTOR_INTERFERENCE]
+        assert float(score.severity) < 0.40
 
 
 # ══════════════════════════════════════════════════════════════════════════════

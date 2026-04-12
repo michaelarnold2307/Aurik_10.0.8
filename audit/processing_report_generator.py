@@ -26,6 +26,7 @@ Date: 2026-02-10
 
 import json
 import logging
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -164,6 +165,33 @@ class ProcessingReport:
             "processing_time_sec": self.processing_time_sec,
             "sections": [s.to_dict() for s in self.sections],
         }
+
+
+def _processing_report_from_dict(payload: dict[str, Any]) -> ProcessingReport:
+    """Reconstruct ProcessingReport from serialized payload."""
+    report = ProcessingReport(
+        report_id=str(payload.get("report_id", "")),
+        timestamp=str(payload.get("timestamp", "")),
+        aurik_version=str(payload.get("aurik_version", "1.0.0")),
+        input_file=str(payload.get("input_file", "")),
+        output_file=str(payload.get("output_file", "")),
+        overall_summary=str(payload.get("overall_summary", "")),
+        overall_confidence=float(payload.get("overall_confidence", 0.0) or 0.0),
+        processing_time_sec=float(payload.get("processing_time_sec", 0.0) or 0.0),
+    )
+    for section in payload.get("sections", []) or []:
+        try:
+            report.add_section(
+                ReportSection(
+                    section_type=ReportSectionType(str(section.get("section_type", "warnings"))),
+                    title=str(section.get("title", "")),
+                    content=dict(section.get("content", {}) or {}),
+                    summary=str(section.get("summary", "")),
+                )
+            )
+        except Exception as exc:
+            logger.debug("Skipping malformed report section during reconstruction: %s", exc)
+    return report
 
 
 class ReportExporter:
@@ -416,6 +444,50 @@ class ReportExporter:
             return False
 
     @staticmethod
+    def _export_pdf_via_subprocess(report: ProcessingReport, output_path: Path) -> bool:
+        """Fallback: render PDF in a fresh Python process to avoid poisoned matplotlib state."""
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        if os.environ.get("AURIK_PDF_SUBPROCESS") == "1":
+            return False
+
+        payload = report.to_dict()
+        with tempfile.TemporaryDirectory(prefix="aurik_pdf_") as tmpdir:
+            payload_path = Path(tmpdir) / "report_payload.json"
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            script = (
+                "import json, os, sys; "
+                "from pathlib import Path; "
+                "from audit.processing_report_generator import _processing_report_from_dict, ReportExporter; "
+                "payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')); "
+                "report=_processing_report_from_dict(payload); "
+                "os.environ['AURIK_PDF_SUBPROCESS']='1'; "
+                "raise SystemExit(0 if ReportExporter.export_pdf(report, Path(sys.argv[2])) else 1)"
+            )
+            env = dict(os.environ)
+            env["AURIK_PDF_SUBPROCESS"] = "1"
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(payload_path), str(output_path)],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "PDF subprocess fallback failed (code=%s): %s",
+                    result.returncode,
+                    (result.stderr or result.stdout).strip(),
+                )
+                return False
+            return True
+
+    @staticmethod
     def export_pdf(report: ProcessingReport, output_path: Path) -> bool:
         """Export report as a multi-page PDF with tables and Musical Goals radar chart.
 
@@ -434,13 +506,44 @@ class ReportExporter:
             True if successful.
         """
         try:
-            import matplotlib
+            with warnings.catch_warnings():
+                # pyparsing 3.3+ can emit parseString deprecation warnings while
+                # matplotlib parses font patterns during import. In strict test mode
+                # (-W error::Warning), suppress only this known third-party warning.
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*parseString.*deprecated.*",
+                    category=Warning,
+                )
+                try:
+                    from pyparsing.warnings import PyparsingDeprecationWarning as _PypDW
 
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            from matplotlib.backends.backend_pdf import PdfPages
+                    warnings.filterwarnings("ignore", category=_PypDW)
+                except ImportError:
+                    pass
+                import sys
+                import matplotlib
+
+                # A previous failed matplotlib import can leave a half-initialized
+                # module in sys.modules (missing rcParams). In strict warning/error
+                # test runs this happens after third-party deprecation warnings.
+                if not hasattr(matplotlib, "rcParams"):
+                    for _mod_name in list(sys.modules):
+                        if _mod_name == "matplotlib" or _mod_name.startswith("matplotlib."):
+                            sys.modules.pop(_mod_name, None)
+                    import matplotlib  # re-import clean module
+
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                from matplotlib.backends.backend_pdf import PdfPages
         except ImportError:
             logger.error("matplotlib not installed — PDF export unavailable")
+            return False
+        except Exception as e:
+            logger.error(f"matplotlib import failed for PDF export: {e}")
+            if ReportExporter._export_pdf_via_subprocess(report, output_path):
+                logger.info("PDF report exported via subprocess fallback: %s", output_path)
+                return True
             return False
 
         try:
@@ -915,7 +1018,8 @@ class ProcessingReportGenerator:
 
     def _create_confidence_section(self, confidence_scores: dict[str, float]) -> ReportSection:
         """Create Confidence Scores section."""
-        avg_confidence = np.mean(list(confidence_scores.values()))
+        vals = list(confidence_scores.values())
+        avg_confidence = float(np.mean(vals)) if vals else 0.0
 
         return ReportSection(
             section_type=ReportSectionType.CONFIDENCE_SCORES,

@@ -281,6 +281,7 @@ class PsychoacousticMaskingLoss(nn.Module):
 
         # Bark scale boundaries (approximation)
         self.bark_boundaries = self._compute_bark_boundaries()
+        self.register_buffer("_stft_window", torch.hann_window(self.n_fft), persistent=False)
 
     def _compute_bark_boundaries(self) -> torch.Tensor:
         """Compute Bark scale band boundaries."""
@@ -330,11 +331,14 @@ class PsychoacousticMaskingLoss(nn.Module):
             loss: Psychoacoustically weighted loss
             details: Dictionary with loss components
         """
+        stft_window = self._stft_window.to(device=output.device, dtype=output.dtype)
+
         # Compute STFT
         output_stft = torch.stft(
             output.squeeze(1) if output.ndim == 3 else output,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
+            window=stft_window,
             return_complex=True,
             center=True,
         )
@@ -343,6 +347,7 @@ class PsychoacousticMaskingLoss(nn.Module):
             target.squeeze(1) if target.ndim == 3 else target,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
+            window=stft_window,
             return_complex=True,
             center=True,
         )
@@ -401,6 +406,7 @@ class MusicalFeatureLoss(nn.Module):
         self.harmonic_weight = harmonic_weight
         self.rhythmic_weight = rhythmic_weight
         self.timbral_weight = timbral_weight
+        self.register_buffer("_timbral_stft_window", torch.hann_window(2048), persistent=False)
 
     def compute_harmonic_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute loss based on harmonic content preservation."""
@@ -433,11 +439,13 @@ class MusicalFeatureLoss(nn.Module):
 
         n_fft = 2048
         hop_length = 512
+        stft_window = self._timbral_stft_window.to(device=output.device, dtype=output.dtype)
 
         output_spec = torch.stft(
             output.squeeze(1) if output.ndim == 3 else output,
             n_fft=n_fft,
             hop_length=hop_length,
+            window=stft_window,
             return_complex=True,
             center=True,
         )
@@ -446,6 +454,7 @@ class MusicalFeatureLoss(nn.Module):
             target.squeeze(1) if target.ndim == 3 else target,
             n_fft=n_fft,
             hop_length=hop_length,
+            window=stft_window,
             return_complex=True,
             center=True,
         )

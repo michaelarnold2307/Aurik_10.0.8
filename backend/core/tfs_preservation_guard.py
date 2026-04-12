@@ -181,53 +181,48 @@ class TFSPreservationGuard:
             try:
                 b, a = butter(4, [f_lo / nyquist, f_hi / nyquist], btype="band")
                 orig_band = filtfilt(b, a, orig_m)
-                rest_band = filtfilt(b, a, rest_m)
             except Exception:
                 logger.debug("TFS: filter failed for fc=%.0f Hz, skipping", fc)
                 continue
 
-            # Instantaneous phase via Hilbert analytic signal
-            orig_analytic = hilbert(orig_band)
-            rest_analytic = hilbert(rest_band)
-
-            orig_phase = np.angle(orig_analytic)
-            rest_phase = np.angle(rest_analytic)
-
             # Frame-wise energy and coherence (only voiced frames)
             n_frames = max(1, min_len // self._FRAME_SAMPLES)
-            phase_diffs: list[np.ndarray] = []
-            n_voiced = 0
-
+            trim_len = n_frames * self._FRAME_SAMPLES
             energy_floor_lin = 10.0 ** (self._ENERGY_FLOOR_DB / 20.0)
 
-            for fi in range(n_frames):
-                s = fi * self._FRAME_SAMPLES
-                e = s + self._FRAME_SAMPLES
-                if e > min_len:
-                    break
+            band_frames = orig_band[:trim_len].reshape(n_frames, self._FRAME_SAMPLES)
+            frame_peaks = np.max(np.abs(band_frames), axis=1)
+            valid_peak_mask = np.isfinite(frame_peaks) & (frame_peaks > 0.0)
+            frame_rms = np.zeros(n_frames, dtype=np.float64)
+            if np.any(valid_peak_mask):
+                norm_frames = band_frames[valid_peak_mask] / frame_peaks[valid_peak_mask, None]
+                frame_rms[valid_peak_mask] = frame_peaks[valid_peak_mask] * np.sqrt(
+                    np.mean(norm_frames * norm_frames, axis=1) + 1e-15
+                )
 
-                frame = orig_band[s:e]
-                # Numerically stable RMS to avoid overflow on rare filter bursts.
-                frame_peak = float(np.max(np.abs(frame)))
-                if not np.isfinite(frame_peak) or frame_peak <= 0.0:
-                    continue
-                frame_norm = frame / frame_peak
-                frame_rms = frame_peak * float(np.sqrt(np.mean(frame_norm * frame_norm) + 1e-15))
-                if frame_rms < energy_floor_lin:
-                    continue  # silent frame — TFS meaningless
-
-                n_voiced += 1
-                # Phase difference (wrapped to [-π, π])
-                dp = orig_phase[s:e] - rest_phase[s:e]
-                phase_diffs.append(dp)
+            voiced_mask = frame_rms >= energy_floor_lin
+            n_voiced = int(np.count_nonzero(voiced_mask))
 
             if n_voiced < 3:
                 # Not enough voiced frames to measure TFS — skip band
                 # (do NOT assume perfect coherence; exclude from aggregate)
                 continue
 
+            try:
+                rest_band = filtfilt(b, a, rest_m)
+            except Exception:
+                logger.debug("TFS: restored-band filter failed for fc=%.0f Hz, skipping", fc)
+                continue
+
+            # Instantaneous phase via Hilbert analytic signal.
+            # Run only for bands that passed the voiced-energy gate.
+            orig_phase = np.angle(hilbert(orig_band))
+            rest_phase = np.angle(hilbert(rest_band))
+
             # Circular coherence: |mean(e^{j·Δφ})|
-            all_diffs = np.concatenate(phase_diffs)
+            all_diffs = (orig_phase[:trim_len] - rest_phase[:trim_len]).reshape(n_frames, self._FRAME_SAMPLES)[
+                voiced_mask
+            ]
             coherence = float(np.abs(np.mean(np.exp(1j * all_diffs))))
             coherence = float(np.nan_to_num(np.clip(coherence, 0.0, 1.0), nan=1.0))
 

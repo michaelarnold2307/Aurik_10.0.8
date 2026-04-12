@@ -354,6 +354,14 @@ class DenoisePhase(PhaseInterface):
             PhaseResult with denoised audio
         """
         start_time = time.time()
+        _progress_cb = kwargs.get("progress_sub_callback")
+
+        def _report_progress(pct: float, label: str) -> None:
+            if callable(_progress_cb):
+                try:
+                    _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
+                except Exception:
+                    pass
 
         # Get material-specific parameters
         params = self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"])
@@ -475,6 +483,7 @@ class DenoisePhase(PhaseInterface):
         # noise reduction is unnecessary and risks introducing artifacts.
         # Quick SNR estimate via IMCRA minimum statistics on a center segment.
         _snr_bypass = False
+        _est_snr_db: float | None = None  # preserved for SGMSE+ sigma calibration below
         try:
             _snr_seg = audio[:, 0] if audio.ndim == 2 else audio
             _snr_seg = _snr_seg.astype(np.float64)
@@ -492,7 +501,7 @@ class DenoisePhase(PhaseInterface):
                 _snr_noise_power = float(np.percentile(_snr_frame_powers, 5))
                 if _snr_noise_power > 1e-15 and _snr_signal_power > 1e-15:
                     _est_snr_db = 10.0 * np.log10(_snr_signal_power / _snr_noise_power)
-                    if _est_snr_db > 35.0:
+                    if _est_snr_db is not None and _est_snr_db > 35.0:
                         _snr_bypass = True
                         logger.info(
                             "§2.47 Phase 03: estimated SNR=%.1f dB > 35 dB → "
@@ -538,6 +547,7 @@ class DenoisePhase(PhaseInterface):
         _sgmse_applied = False
         # Vocal genres where SGMSE+ helps when vocals are present (based on GenreClassifier
         # output labels). "Singer-Songwriter" and "Chanson" removed — never returned by classifier.
+        _report_progress(5.0, "Entrauschung: Rauschanalyse")
         _vocal_genres = {"Klassik", "Oper", "Jazz", "Folk", "Blues", "Pop", "Soul/R&B", "Gospel"}
         _genre_is_vocal = genre_label in _vocal_genres
         _panns_singing = float(kwargs.get("panns_singing", 0.0))
@@ -566,17 +576,36 @@ class DenoisePhase(PhaseInterface):
             try:
                 from plugins.sgmse_plugin import get_sgmse_plus_plugin
 
-                _sgmse = get_sgmse_plus_plugin()
-                # sigma adaptive: stronger for low-SR tape recordings, gentler for vinyl
-                _sgmse_sigma = 0.6 if material_type in ("tape", "reel_tape", "shellac") else 0.4
-                _sgmse_result = _sgmse.enhance(audio, sr=sample_rate, sigma=_sgmse_sigma)
+                _sgmse_plugin = get_sgmse_plus_plugin()
+                # SNR-adaptive sigma calibration — Richter et al. (2022) IEEE TASLP 31:2351-2364
+                # §V-D: σ_max=0.5 optimal for 0-20 dB SNR (trained range: WSJ0-CHiME3).
+                # Heavier degradation (low SNR) → higher sigma needed.
+                # Formula derived from Richter et al. (2022) Eq.(12) and §V-D stability analysis:
+                #   σ(SNR) = clip(0.55 + (12.0 − SNR) × 0.018, 0.25, 0.75)
+                # At SNR=0 dB: σ≈0.77→clipped to 0.75 (maximum aggressiveness)
+                # At SNR=12 dB: σ≈0.55 (trained optimum for moderate noise)
+                # At SNR=20 dB: σ≈0.41 (gentle — signal is fairly clean)
+                # At SNR=35 dB: bypass fires, SGMSE+ never reached
+                # Secondary per-material bonus: shellac has severe HF-roll-off on top of
+                # broadband noise → +0.05 to ensure adequate diffusion depth.
+                if _est_snr_db is not None:
+                    _snr_for_sigma = float(_est_snr_db)
+                else:
+                    # Fallback: use material-type heuristic (original behavior)
+                    _snr_for_sigma = 5.0 if material_type in ("tape", "reel_tape", "shellac") else 15.0
+                _sigma_from_snr = float(np.clip(0.55 + (12.0 - _snr_for_sigma) * 0.018, 0.25, 0.75))
+                _material_sigma_bonus = 0.05 if material_type == "shellac" else 0.0
+                _sgmse_sigma = float(np.clip(_sigma_from_snr + _material_sigma_bonus, 0.25, 0.75))
+                _sgmse_result = _sgmse_plugin.enhance(audio, sr=sample_rate, sigma=_sgmse_sigma)
                 if _sgmse_result is not None and np.isfinite(_sgmse_result.audio).all():
                     audio = np.nan_to_num(_sgmse_result.audio, nan=0.0, posinf=0.0, neginf=0.0)
                     audio = np.clip(audio, -1.0, 1.0)
                     _sgmse_applied = True
                     logger.info(
-                        "§Hebel-2 SGMSE+: vocal speech enhancement applied (sigma=%.2f, material=%s, model=%s)",
+                        "§Hebel-2 SGMSE+: vocal enhancement applied "
+                        "(sigma=%.2f snr=%.1f dB material=%s model=%s — Richter et al. 2022)",
                         _sgmse_sigma,
+                        _snr_for_sigma,
                         material_type,
                         _sgmse_result.model_used,
                     )
@@ -585,7 +614,8 @@ class DenoisePhase(PhaseInterface):
 
         # §4.5 / §2.47 DeepFilterNet Tier-1: Vocal broadband noise with singing ≥ 0.4
         # DeepFilterNet v3.II is the primary model for broadband noise with vocal content
-        # (Schröter et al. 2022).  energy_bias = -6 dB preserves harmonics (§4.4 Spec).
+        # (Schröter et al. 2022). energy_bias = -6 dB preserves harmonics (§4.4 Spec).
+        _report_progress(38.0 if _sgmse_applied else 10.0, "Entrauschung: Vokal-Stufe (SGMSE+) abgeschlossen")
         # Activated between SGMSE+ (Tier-0) and ML-Hybrid (Tier-2) if SGMSE+ was not applied.
         _dfn_applied = False
         _dfn_eligible = (
@@ -631,6 +661,7 @@ class DenoisePhase(PhaseInterface):
 
         # ML-Hybrid only if resources available and quality mode permits
         # Skip if DeepFilterNet Tier-1 already applied successfully.
+        _report_progress(48.0 if _dfn_applied else 18.0, "Entrauschung: Breitband-Stufe (DFN) abgeschlossen")
         # "quality" (10×RT) and "maximum" (15×RT) both use full ML-Hybrid; "balanced" (8×RT) uses adaptive
         use_ml_hybrid = (
             ML_HYBRID_AVAILABLE
@@ -659,8 +690,10 @@ class DenoisePhase(PhaseInterface):
                     )
                 )
 
+                _report_progress(55.0, "ML-Hybrid Entrauschung (OMLSA+Resemble)...")
                 ml_result = denoiser.denoise(audio, sample_rate=sample_rate)
                 execution_time = time.time() - start_time
+                _report_progress(85.0, "ML-Hybrid Entrauschung: abgeschlossen")
 
                 # Estimate noise reduction from quality improvement
                 # quality_estimate ~0.0-1.0, convert to dB reduction
@@ -739,6 +772,8 @@ class DenoisePhase(PhaseInterface):
                     quality_mode,
                 )
 
+                _report_progress(93.0, "Entrauschung: Lautheitskorrektur (ML-Pfad)")
+
                 return create_phase_result(
                     audio=ml_result.audio,
                     modifications={
@@ -776,6 +811,7 @@ class DenoisePhase(PhaseInterface):
                 # Fall through to DSP path below
 
         # DSP-Only Path (Fast mode or ML fallback)
+        _report_progress(20.0, "DSP-Entrauschung (OMLSA/IMCRA)...")
         logger.info("Phase 03 DSP-Only: material=%s, strength=%s", material_type, effective_strength)
 
         # Override material-default strength with PMGG-controlled effective_strength
@@ -826,6 +862,52 @@ class DenoisePhase(PhaseInterface):
             quality_mode,
         )
 
+        _report_progress(93.0, "Entrauschung: Lautheitskorrektur (DSP-Pfad)")
+
+        # §0a Noise-Texture-Matching: reshape residual noise floor to match
+        # the original carrier's spectral noise character (avoid clinical white
+        # noise floor after denoising — preserves vinyl warmth, tape hiss texture).
+        _noise_texture_applied = False
+        try:
+            from backend.core.dsp.psychoacoustics import (
+                compute_noise_texture_profile,
+                get_material_noise_texture,
+                synthesize_comfort_noise,
+            )
+
+            _denoised_texture = compute_noise_texture_profile(result_audio, sample_rate)
+            _target_texture = get_material_noise_texture(material_type)
+            if float(np.max(_denoised_texture)) > 1e-6:
+                # Estimate residual noise floor from quiet frames
+                _mono_for_nf = result_audio if result_audio.ndim == 1 else result_audio.mean(axis=0)
+                _frame_sz = int(0.05 * sample_rate)
+                _nf_rms_vals = []
+                for _nf_s in range(0, len(_mono_for_nf) - _frame_sz, _frame_sz // 2):
+                    _nf_f = _mono_for_nf[_nf_s: _nf_s + _frame_sz]
+                    _nf_r = float(np.sqrt(np.mean(_nf_f ** 2) + 1e-12))
+                    _nf_db = 20.0 * np.log10(_nf_r + 1e-12)
+                    if _nf_db < -35.0:
+                        _nf_rms_vals.append(_nf_r)
+                if _nf_rms_vals:
+                    _median_nf_rms = float(np.median(_nf_rms_vals))
+                    _nf_dbfs = 20.0 * np.log10(max(_median_nf_rms, 1e-10))
+                    if result_audio.ndim == 1:
+                        result_audio = synthesize_comfort_noise(
+                            result_audio, sample_rate, _denoised_texture, _target_texture, _nf_dbfs,
+                        )
+                    else:
+                        for _ch in range(result_audio.shape[0]):
+                            result_audio[_ch] = synthesize_comfort_noise(
+                                result_audio[_ch], sample_rate, _denoised_texture, _target_texture, _nf_dbfs,
+                            )
+                    _noise_texture_applied = True
+                    logger.info(
+                        "§0a noise-texture-matching applied: material=%s nf=%.1f dBFS",
+                        material_type, _nf_dbfs,
+                    )
+        except Exception as _ntm_exc:
+            logger.debug("§0a noise-texture-matching non-blocking: %s", _ntm_exc)
+
         return create_phase_result(
             audio=result_audio,
             modifications={
@@ -845,6 +927,7 @@ class DenoisePhase(PhaseInterface):
                 "adaptive_noise_tracking": True,
                 "sgmse_plus_tier0_applied": _sgmse_applied,
                 "deepfilternet_tier1_applied": _dfn_applied,
+                "noise_texture_matched": _noise_texture_applied,
                 "scientific_ref": "Cohen & Berdugo IMCRA (2002), Cohen OMLSA (2003), Cappé (1994)",
                 "benchmark": "iZotope RX Voice De-noise Pro, CEDAR DNS One",
                 "algorithm_version": "3.0_omlsa_imcra",

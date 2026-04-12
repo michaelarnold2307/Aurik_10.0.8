@@ -427,9 +427,14 @@ def restore_tape(audio: np.ndarray, sample_rate: int, **kwargs) -> MaterialResto
         lag = int(np.clip(lag, -max_lag, max_lag))
         if abs(lag) > 0:
             if lag > 0:
-                out[1] = np.roll(out[1], -lag)
+                # Shift left with zero-fill (no circular wrap from start to tail)
+                out[1, :-lag] = out[1, lag:]
+                out[1, -lag:] = 0.0
             else:
-                out[0] = np.roll(out[0], lag)
+                # Shift left by |lag| with zero-fill (lag is negative here)
+                _k = abs(lag)
+                out[0, :-_k] = out[0, _k:]
+                out[0, -_k:] = 0.0
             applied.append(f"azimuth_correction (lag={lag} samples)")
 
     return MaterialRestorationResult(

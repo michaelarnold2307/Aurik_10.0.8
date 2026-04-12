@@ -420,8 +420,25 @@ class CQTdiffPlusPlugin:
             import librosa
 
             n = min(len(original), len(restored), sr * 4)  # max. 4 s
-            c1 = librosa.feature.chroma_stft(y=original[:n].astype(np.float32), sr=sr)
-            c2 = librosa.feature.chroma_stft(y=restored[:n].astype(np.float32), sr=sr)
+            if n < 64:
+                return 0.9
+            n_fft = int(min(1024, n))
+            if n_fft % 2 == 1:
+                n_fft -= 1
+            n_fft = max(64, n_fft)
+            hop_length = max(16, n_fft // 4)
+            c1 = librosa.feature.chroma_stft(
+                y=original[:n].astype(np.float32),
+                sr=sr,
+                n_fft=n_fft,
+                hop_length=hop_length,
+            )
+            c2 = librosa.feature.chroma_stft(
+                y=restored[:n].astype(np.float32),
+                sr=sr,
+                n_fft=n_fft,
+                hop_length=hop_length,
+            )
             corr = float(np.corrcoef(c1.ravel(), c2.ravel())[0, 1])
             return float(np.clip(np.nan_to_num(corr), -1.0, 1.0))
         except Exception:

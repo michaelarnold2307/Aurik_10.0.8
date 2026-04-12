@@ -3,6 +3,21 @@
 > **Einzige normative Quelle** für alle Goal-Schwellwerte, Prioritäten, Adaptive Thresholds
 > und Applicability-Regeln. Alle anderen Dateien **referenzieren** hierher.
 
+## §1.0a [RELEASE_MUST] Universaler Zielraum (All-Import Contract)
+
+Die 14 Musical Goals sind **nicht** auf einen einzelnen Song oder ein Einzelgenre optimiert,
+sondern auf den vollständigen Importraum von Aurik (Material × Ära × Genre × Defektschwere).
+
+**Verbindlich:**
+
+1. Goal-Optimierung muss über eine repräsentative Import-Matrix stabil bleiben.
+2. Song-spezifische Heuristiken (Dateiname/Artist/Einzelsong-Whitelists) sind verboten.
+3. Anpassung von Goal-Schwellwerten oder Retry-Politiken ist nur zulässig, wenn die
+    Gesamtqualität über die Matrix nicht regressiert (kein „lokaler Song-Gewinn" bei
+    globalem Qualitätsverlust).
+
+Diese Invariante konkretisiert §0 Klangwahrheit für den gesamten Produktbetrieb.
+
 ---
 
 ## §1.2 Die 14 Musikalischen Ziele (Musical Goals) — vollständige Tabelle
@@ -66,8 +81,8 @@ PRIORITY_MAP: dict[str, int] = {
     "waerme":                4,
     "bass_kraft":            4,
     "separation_fidelity":   4,
-    "brillanz":              5,   # best-effort, kein Misserfolg bei Nichterfüllung
-    "spatial_depth":         5,   # best-effort
+    "brillanz":              5,   # Recovery-Lite: darf Endresultat nicht unkontrolliert regressieren
+    "spatial_depth":         5,   # Recovery-Lite: darf Endresultat nicht unkontrolliert regressieren
 }
 ABORT_PRIORITY_THRESHOLD: int = 2  # Stufe 1+2 verschlechtert → Iteration sofort abbrechen
 REGRESSION_EPSILON: float = 0.001
@@ -92,8 +107,8 @@ PMGG-Retries werden prioritätsabhängig budgetiert:
 | P1 | 4 | 1.0× | Volle Retry-Kaskade + Emergency |
 | P2 | 4 | 1.0× | Volle Retry-Kaskade + Emergency |
 | P3 | 2 | 1.5× (mildere Erkennung) | Reduzierte Kaskade, kein Emergency |
-| P4 | 0 | 99.0× (effektiv deaktiviert) | Nur Logging (`passed_p4p5_tolerated`) |
-| P5 | 0 | 99.0× (effektiv deaktiviert) | Nur Logging (`passed_p4p5_tolerated`) |
+| P4 | 1 | 2.0× (Recovery-Lite) | 1 konservativer Retry, kein Emergency |
+| P5 | 1 | 2.5× (Recovery-Lite) | 1 konservativer Retry, kein Emergency |
 
 Implementierung: `per_phase_musical_goals_gate.py` — `_PRIORITY_MAX_RETRIES`, `_PRIORITY_THRESHOLD_FACTOR`, `_max_regression_priority_aware()`.
 
@@ -110,6 +125,10 @@ if abort_result.should_abort:
 # In ExcellenceOptimizer — MOO-Pareto-Konflikt:
 conflict_result = gpp.resolve_conflict(goal_a, goal_b, delta_a, delta_b)
 # conflict_result.winner = priorisiertes Ziel
+
+# In UnifiedRestorerV3._profiled_phase_call() — §2.56a all-phase coupling:
+# goal_weights steuern bounded harmonic_adaptation_scalar (advisory-only),
+# der implizite strength/wet-dry für alle Phasen 01-64 harmonisiert.
 ```
 
 ## §2.35 Vocal-Exzellenz-Zusatzmetriken (PFLICHT fuer Gesangsmaterial)
@@ -371,7 +390,7 @@ Die Berechnung erfolgt in **5 multiplikativen Stufen** + Soft-Cap + Bounds:
 | 1a | **Genre-Profil** (16 Profile: Klassik, Oper, Jazz, Rock, Metal, Electronic, Hip-Hop, Pop, Schlager, Soul/R&B, Blues, Country, Folk, Reggae, Latin, Funk, Gospel) | `genre_label` → Alias-Resolution (`_GENRE_ALIASES`) → Basis-Gewichte. Unbekannt → neutral (1.0) |
 | 1b | **Ära-Modifikator** (1900er–1980er) multiplikativ auf Genre | `era_decade` → z.B. 1920er: Brillanz ×0.5 (7 kHz Bandbreite) |
 | 1c | **Material-Modifikator** (trägertypisch) | `material_type` → z.B. Vinyl: Bass ×1.3, Shellac: Transparenz ×0.7 |
-| 1d | **Vokal-Boost** (konfidenzgewichtet) | `vocal_detected`, `vocal_confidence` → Artikulation ×1.2, Emotionalität ×1.1 |
+| 1d | **Vokal-Boost** (konfidenzgewichtet) | `vocal_detected`, `vocal_confidence` → Artikulation ×1.3, Emotionalität ×1.2, Authentizität ×1.2, TransparenzVokal ×1.15, TonalCenter ×1.12, TimbreAuth ×1.1, SeparationFidelity ×1.1 (Quellen: Kreiman & Sidtis 2011; Marjieh et al. 2023; Bregman 1990; McDermott 2009 Curr Biol; London 2012; Repp & Su 2013) |
 | 1e | **Restorability-Adjustment** | `restorability_score` < 40 → P3–P5-Gewichte ×0.85 |
 | 1f | **Studio 2026-Modus** | `is_studio_2026` → Transparenz ×1.2, Brillanz ×1.2, Separation ×1.1 |
 
@@ -423,7 +442,7 @@ Die Berechnung erfolgt in **5 multiplikativen Stufen** + Soft-Cap + Bounds:
 | ID | Interaktion | Bedingung | Effekt |
 | --- | --- | --- | --- |
 | 5a | Roughness × Low SNR | rough > 0.3 AND snr < 20 dB | transparenz ↑↑, artikulation ↑ (Intelligibilitätskrise) |
-| 5b | HNR × Vocal | HNR > 5 dB AND vocal_detected | timbre ↑, natuerlichkeit ↑ (Vokalharmonien schützen) |
+| 5b | HNR × Vocal | HNR > 5 dB AND vocal_detected | timbre ↑, natuerlichkeit ↑, separation_fidelity ↑ (Bregman 1990 + McDermott 2009: Stimme/Begleittrennung ist Primär-Streamtask bei Vokalmusik) |
 | 5c | Low BW × Dark Centroid | BW < 10 kHz AND centroid < 5 Bark | brillanz ↓↓, waerme ↑ (physikalisch unmöglich zu restaurieren) |
 | 5d | Coherence × Tonality | coherence > 0.5 AND tonality > 0.4 | tonal_center ↑↑ (definierendes Merkmal des Songs) |
 | 5e | Dynamic × Transient | crest > 10 dB AND density > 5/s | groove ↑, micro_dynamics ↑ (perkussiv UND dynamisch) |

@@ -237,6 +237,56 @@ def test_joy_fatigue_runtime_index_increases_with_better_scores():
     )
     assert float(high["joy_index"]) > float(low["joy_index"])
     assert float(high["fatigue_index"]) < float(low["fatigue_index"])
+    assert 0.0 <= float(low.get("frisson_index", 0.0)) <= 1.0
+    assert 0.0 <= float(high.get("frisson_index", 0.0)) <= 1.0
+    assert float(high.get("frisson_index", 0.0)) > float(low.get("frisson_index", 0.0))
+
+
+def test_frisson_audio_scalar_disabled_in_restoration_mode():
+    scalar = UnifiedRestorerV3._compute_frisson_audio_impact_scalar(
+        studio_mode=False,
+        phase_family="harmonic_enhancement",
+        goal_weights={
+            "emotionalitaet": 1.5,
+            "micro_dynamics": 1.4,
+            "artikulation": 1.3,
+            "spatial_depth": 1.4,
+            "transparenz": 1.2,
+            "tonal_center": 1.1,
+        },
+    )
+    assert abs(float(scalar) - 1.0) < 1e-9
+
+
+def test_frisson_audio_scalar_active_and_bounded_in_studio_mode():
+    scalar_enh = UnifiedRestorerV3._compute_frisson_audio_impact_scalar(
+        studio_mode=True,
+        phase_family="harmonic_enhancement",
+        goal_weights={
+            "emotionalitaet": 1.6,
+            "micro_dynamics": 1.5,
+            "artikulation": 1.4,
+            "spatial_depth": 1.4,
+            "transparenz": 1.3,
+            "tonal_center": 1.2,
+        },
+    )
+    scalar_sub = UnifiedRestorerV3._compute_frisson_audio_impact_scalar(
+        studio_mode=True,
+        phase_family="subtractive_cleanup",
+        goal_weights={
+            "emotionalitaet": 1.6,
+            "micro_dynamics": 1.5,
+            "artikulation": 1.4,
+            "spatial_depth": 1.4,
+            "transparenz": 1.3,
+            "tonal_center": 1.2,
+        },
+    )
+    assert 0.94 <= float(scalar_enh) <= 1.06
+    assert 0.94 <= float(scalar_sub) <= 1.06
+    assert float(scalar_enh) > 1.0
+    assert float(scalar_sub) <= 1.0
 
 
 def test_auto_improvement_recommendations_contains_actionable_items():

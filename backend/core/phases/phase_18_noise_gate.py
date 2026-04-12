@@ -61,6 +61,23 @@ from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, Phase
 logger = logging.getLogger(__name__)
 
 
+def _rms_dbfs_gated(sig: np.ndarray) -> float:
+    """§2.45a-I: Frame-basierter RMS in dBFS, ignoriert Frames < −50 dBFS (Stille).
+
+    Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
+    """
+    _mono = np.mean(sig, axis=1).astype(np.float64) if sig.ndim == 2 else sig.astype(np.float64)
+    _frame = 480  # 10 ms @ 48 kHz
+    _active = [
+        _mono[i : i + _frame]
+        for i in range(0, len(_mono) - _frame, _frame)
+        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
+    ]
+    if not _active:
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean([np.mean(r ** 2) for r in _active])) + 1e-10))
+
+
 class NoiseGate(PhaseInterface):
     """
     Professional Multi-Band Frequency-Dependent Noise Gate.
@@ -335,6 +352,16 @@ class NoiseGate(PhaseInterface):
             _rescued = _music_silence_wet_post * gated_audio + (1.0 - _music_silence_wet_post) * audio
             gated_audio = np.clip(_rescued, -1.0, 1.0)
 
+        # §4.5 Psychoacoustic Masking Clamp — protect musically masked gate regions
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            gated_audio = apply_psychoacoustic_masking_clamp(
+                audio, gated_audio, sample_rate,
+                strength=_effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase18 masking clamp non-blocking: %s", _pm_exc)
+
         # Metrics
         rms_original = np.sqrt(np.mean(audio**2))
         rms_gated = np.sqrt(np.mean(gated_audio**2))
@@ -464,9 +491,12 @@ class NoiseGate(PhaseInterface):
         material_key = getattr(material, "name", str(material)).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
 
-        rms_in = float(np.sqrt(np.mean(np.asarray(original_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30)) if rms_in > 1e-8 else 0.0
+        # §2.45a-I Gated-RMS: ignoriert Stille-Frames < −50 dBFS
+        _rms_in_db = _rms_dbfs_gated(np.asarray(original_audio, dtype=np.float32))
+        _rms_out_db = _rms_dbfs_gated(np.asarray(processed_audio, dtype=np.float32))
+        rms_in = float(10.0 ** (_rms_in_db / 20.0))
+        rms_out = float(10.0 ** (_rms_out_db / 20.0))
+        rms_drop_db = (_rms_out_db - _rms_in_db) if _rms_in_db > -90.0 else 0.0
         makeup_gain_db = 0.0
 
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
@@ -514,12 +544,28 @@ class NoiseGate(PhaseInterface):
         if use_vad:
             silero = self._get_silero_vad()
             if silero is not None:
+                # §2.47 ml_memory_budget guard (80 MB for Silero VAD)
+                _vad_budget_ok = False
+                _vad_release = None
                 try:
-                    log_mode_decision("phase_18", True, "Using Silero VAD for intelligent gating")
-                    # Get voice activity probabilities (0-1 for each frame)
-                    vad_probabilities = self._detect_voice_activity(audio, sample_rate, silero)
-                except Exception as e:
-                    logger.warning("Silero VAD failed: %s, using DSP only", e)
+                    from backend.core.ml_memory_budget import try_allocate as _try_alloc_18, release as _rel_18
+                    if _try_alloc_18("SileroVAD_phase18", 0.08):
+                        _vad_budget_ok = True
+                        _vad_release = _rel_18
+                    else:
+                        logger.debug("SileroVAD_phase18: ml_memory_budget insufficient — DSP-Fallback")
+                except ImportError:
+                    _vad_budget_ok = True  # budget tracking unavailable — allow inference
+                if _vad_budget_ok:
+                    try:
+                        log_mode_decision("phase_18", True, "Using Silero VAD for intelligent gating")
+                        # Get voice activity probabilities (0-1 for each frame)
+                        vad_probabilities = self._detect_voice_activity(audio, sample_rate, silero)
+                    except Exception as e:
+                        logger.warning("Silero VAD failed: %s, using DSP only", e)
+                    finally:
+                        if _vad_release is not None:
+                            _vad_release("SileroVAD_phase18")
             else:
                 log_mode_decision("phase_18", False, "Silero VAD unavailable")
         else:

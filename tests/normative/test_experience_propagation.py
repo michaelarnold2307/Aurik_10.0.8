@@ -121,6 +121,72 @@ class TestBridgeExperienceInsights:
         result = get_experience_insights(MockResult())
         assert isinstance(result, dict)
 
+    def test_get_experience_insights_contains_fallback_quality_floor(self):
+        """Bridge must propagate fallback_quality_floor in a frontend-safe shape."""
+        from backend.api.bridge import get_experience_insights
+
+        class MockResult:
+            metadata = {
+                "fallback_quality_floor": {
+                    "triggered": True,
+                    "passed": False,
+                    "status": "recovered",
+                    "reason": "fallback_quality_floor_recovered_with_checkpoint",
+                    "recovered": True,
+                    "attempts": 1,
+                    "fallback_count": 2,
+                    "artifact_freedom": 0.94,
+                    "hpi_passed": False,
+                    "hpi": -0.12,
+                    "best_candidate": "hpi_best_checkpoint",
+                    "recovery_trace": [{"attempt": 1, "candidate": "hpi_best_checkpoint", "result": "applied"}],
+                }
+            }
+
+        result = get_experience_insights(MockResult())
+        assert "fallback_quality_floor" in result
+        fqf = result["fallback_quality_floor"]
+        assert fqf["triggered"] is True
+        assert fqf["status"] == "recovered"
+        assert fqf["fallback_count"] == 2
+        assert isinstance(fqf["recovery_trace"], list)
+
+    def test_build_export_quality_gate_payload_includes_fqf_flags(self):
+        """Bridge must emit export_workflow-compatible quality_gate payload."""
+        from backend.api.bridge import build_export_quality_gate_payload
+
+        class MockResult:
+            quality_estimate = 0.9
+            metadata = {
+                "fail_reasons": [],
+                "degradation_status": "ok",
+                "fallback_quality_floor": {
+                    "triggered": True,
+                    "status": "recovered",
+                    "attempts": 1,
+                    "reason": "fallback_quality_floor_recovered_with_checkpoint",
+                },
+            }
+
+        payload = build_export_quality_gate_payload(MockResult())
+        assert payload["passed"] is False
+        assert payload["recovery_attempted"] is True
+        assert payload["best_possible_reached"] is True
+        assert isinstance(payload["fallback_quality_floor"], dict)
+
+    def test_build_export_quality_gate_payload_defaults_without_metadata(self):
+        """Payload builder must be resilient for metadata-less results."""
+        from backend.api.bridge import build_export_quality_gate_payload
+
+        class MockResult:
+            quality_estimate = 0.8
+            metadata = None
+
+        payload = build_export_quality_gate_payload(MockResult())
+        assert "passed" in payload
+        assert "required_gates" in payload
+        assert payload["recovery_attempted"] is False
+
 
 # ---------------------------------------------------------------------------
 # §2.53 Team Coordination Propagation

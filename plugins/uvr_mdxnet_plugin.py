@@ -58,7 +58,7 @@ class UVRMDXNetPlugin:
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
             try:
-                from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                 prov = _get_prov("MDXNet")
             except Exception:
@@ -145,12 +145,18 @@ class UVRMDXNetPlugin:
 
             g = gcd(sr, _SR)
             mono = resample_poly(mono, _SR // g, sr // g).astype(np.float32)
+
+        # Snapshot sessions to avoid races with lifecycle eviction while processing.
+        sessions = tuple(self._sessions)
+        if not sessions:
+            return self._hpss_fallback(mono)
+
         n = len(mono)
         mag, cplx = self._stft_mag(mono)  # [3072, frames]
         n_frames = mag.shape[1]
         masks_sum = np.zeros_like(mag)
 
-        for sess in self._sessions:
+        for sess in sessions:
             mask_out = np.zeros_like(mag)
             for s in range(0, n_frames, _CHUNK):
                 e = min(s + _CHUNK, n_frames)
@@ -170,7 +176,7 @@ class UVRMDXNetPlugin:
                     mask_out[:, s:e] = 0.5
             masks_sum += mask_out
 
-        mask = np.clip(masks_sum / len(self._sessions), 0, 1)
+        mask = np.clip(masks_sum / float(len(sessions)), 0, 1)
         inst_spec = mask * np.abs(cplx) * np.exp(1j * np.angle(cplx))
         inst = self._istft(inst_spec, n)
         # Zurück auf Eingangs-SR

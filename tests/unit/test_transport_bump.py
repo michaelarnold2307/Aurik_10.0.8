@@ -247,6 +247,15 @@ class TestDetectTransportBump:
         result = scanner._detect_transport_bump(audio)
         assert result.severity < 0.20, f"Gradual level dips misclassified as transport bump: {result.severity}"
 
+    def test_16_dat_material_not_hard_gated_for_transport_bump(self):
+        from backend.core.defect_scanner import DefectType, MaterialType
+
+        scanner = self._scanner()
+        audio = _make_bump_audio(amp_deviation=0.7, pitch_deviation=0.05)
+        result = scanner.scan(audio, SR, material_type=MaterialType.DAT)
+        score = result.scores[DefectType.TRANSPORT_BUMP]
+        assert float(score.severity) > 0.05, "DAT transport bump should not be hard-gated to zero"
+
 
 # ---------------------------------------------------------------------------
 # 3. CausalDefectReasoner — routing & priors

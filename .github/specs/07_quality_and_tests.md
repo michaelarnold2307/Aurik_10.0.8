@@ -135,6 +135,40 @@ item_seed = _sid_offset(scenario_id)  # RICHTIG
 | Mikro-Dynamik-Erhalt | Pearson LUFS-Profil (400 ms) ≥ 0.92, Crest-Faktor ≤ 1.5 dB |
 | Tests grün | Alle bestehenden Pytest-IDs (CI: `pytest --collect-only -q \| tail -1`) |
 
+## §8.2a [RELEASE_MUST] Universal-Fidelity-Gate (All Imports)
+
+Maximale Klangtreue ist nur erfüllt, wenn die Qualitätsziele über **alle** Importklassen
+robust gelten, nicht nur für Einzelbeispiele.
+
+**Pflicht-Gates:**
+
+1. **Matrix-Gate**: Material × Qualitätsmodus × Kontext (Ära/Genre) muss grün sein.
+2. **Shape/SR-Invarianten-Gate**: keine verdeckten Layout-/Samplerate-Verletzungen.
+3. **Fallback-Konsistenz-Gate**: OOM/ML-Ausfälle dürfen Qualität degradieren, aber nie
+    den Signalvertrag (Länge, Kanäle, Headroom, End-Gates) brechen.
+
+Ein Feature gilt nur dann als produktionsreif, wenn diese Gates ohne song-spezifische
+Sonderbehandlung bestehen.
+
+## §8.2b [RELEASE_MUST] Maximal-umsetzbare Recovery bei Gate-Fail (kein Blind-Hardstop)
+
+Ziel ist das bestmögliche reale Ergebnis pro Song, nicht ein formaler Abbruch.
+Ein finaler Quality-Gate-Fail triggert deshalb eine verpflichtende Recovery-Kaskade.
+
+**Verbindlich:**
+
+1. Bei `quality_gate.passed=False` MUSS Aurik eine Recovery-Suche durchführen:
+    adaptive Strength-Reduktion, Checkpoint-Rollback, alternative sichere Kette,
+    material-/restorability-adaptive Parameter.
+2. Export ist zulässig, wenn kein besseres sicheres Ergebnis mehr erreichbar ist,
+    aber nur mit explizitem Status (`recovered` oder `degraded`) und vollständiger Fail-Ursache.
+3. Verboten sind beide Extreme:
+    a) blinder Hardstop ohne Recovery-Suche,
+    b) stilles „best-effort success" ohne transparente Degradationskennzeichnung.
+
+Diese Regel stellt sicher, dass Aurik immer das maximal umsetzbare Ergebnis liefert,
+ohne Qualitätsversagen zu verschleiern.
+
 ---
 
 ## §8.3 Perceptuelle Verpflichtungen
@@ -654,5 +688,8 @@ assert scores["waerme"] >= 0.88
 ```python
 assert config.enable_performance_guard is True
 assert config.enable_phase_gate is True
-assert len(result.phase_gate_log or []) <= 4   # max. 4 best-effort Phasen gesamt (PMGG darf nie skippen)
+# Keine starre Obergrenze für Recovery-Schritte: entscheidend ist, dass
+# best_effort-Ereignisse transparent protokolliert und nicht als stiller
+# Success gewertet werden.
+assert all("action" in e for e in (result.phase_gate_log or []))
 ```

@@ -596,7 +596,9 @@ class AutonomousRestorationEngine:
         if not hasattr(audio, "astype"):
             raise TypeError(f"audio muss np.ndarray sein, nicht {type(audio).__name__!r}.")
         audio = audio.astype(np.float32)
-        peak = np.max(np.abs(audio))
+        # §DSP-Invariante: np.percentile(99.9) statt np.max — Impuls-Artefakt
+        # darf Normalisierung nicht blockieren (copilot-instructions.md VERBOTEN).
+        peak = float(np.percentile(np.abs(audio), 99.9))
         if peak > 1.0:
             logger.info("Audio-Normalisierung: Peak %.4f → 1.0", peak)
             audio = audio / peak

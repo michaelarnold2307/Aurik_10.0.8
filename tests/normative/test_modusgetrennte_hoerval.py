@@ -127,7 +127,8 @@ class TestHPIGateModeDispatch:
         import importlib
 
         mod = importlib.import_module(src)
-        source_code = open(mod.__file__).read()
+        with open(mod.__file__, encoding="utf-8") as handle:
+            source_code = handle.read()
         assert "timbral_fidelity" in source_code or "timbral" in source_code
         assert "artifact_freedom" in source_code
 
@@ -140,7 +141,8 @@ class TestHPIGateModeDispatch:
         import importlib
 
         mod = importlib.import_module(src)
-        source_code = open(mod.__file__).read()
+        with open(mod.__file__, encoding="utf-8") as handle:
+            source_code = handle.read()
         assert "studio_quality_gain" in source_code or "pqs_improvement" in source_code
 
 

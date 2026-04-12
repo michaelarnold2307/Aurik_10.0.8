@@ -20,6 +20,9 @@ import types
 import numpy as np
 import pytest
 
+# E2E pipeline tests are excluded from fast normative runs via marker filters.
+pytestmark = [pytest.mark.normative, pytest.mark.e2e]
+
 # ---------------------------------------------------------------------------
 # Synthetisches Vinyl-Signal
 # ---------------------------------------------------------------------------
@@ -224,7 +227,6 @@ class TestVinylPipelineE2E:
     def test_hpi_restorability_not_always_70(self, restoration_result):
         """§2.44 HPG bekommt echte Restorability (nicht immer 70.0)."""
         # Indirekt verifizierbar über hpi_detail in fail_reasons oder meta
-        getattr(restoration_result, "metadata", {}) or {}
         # Wir prüfen dass quality_estimate vorhanden und plausibel ist
         qe = getattr(restoration_result, "quality_estimate", None)
         if qe is not None:

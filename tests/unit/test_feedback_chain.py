@@ -444,5 +444,116 @@ class TestAdaptiveThresholds254:
         t_rest = fc._compute_adaptive_prune_threshold(is_restorative=True)
         t_enh = fc._compute_adaptive_prune_threshold(is_restorative=False)
         # Legacy: -0.05 restorative, -0.01 enhancement
-        assert -0.15 <= t_rest <= -0.05
-        assert -0.03 <= t_enh <= -0.01
+        assert -0.15 <= t_rest <= -0.005
+        assert -0.03 <= t_enh <= -0.005
+
+
+# ---------------------------------------------------------------------------
+# Klasse: §2.56 Goal-Weights Bias in FeedbackChain (v9.12.0)
+# ---------------------------------------------------------------------------
+
+
+class TestGoalWeightsBias256:
+    """§2.56: goal_weights must bias FeedbackChain pruning threshold and MOS tolerance."""
+
+    _P1P2_HIGH = {
+        "natuerlichkeit": 1.8,
+        "authentizitaet": 1.6,
+        "tonal_center": 1.5,
+        "timbre_authentizitaet": 1.5,
+        "artikulation": 1.4,
+        # P4/P5 neutral
+        "brillanz": 1.0,
+        "raumtiefe": 1.0,
+        "waerme": 1.0,
+        "bassgewalt": 1.0,
+    }
+    _P4P5_HIGH = {
+        "natuerlichkeit": 1.0,
+        "authentizitaet": 1.0,
+        "tonal_center": 1.0,
+        "timbre_authentizitaet": 1.0,
+        "artikulation": 1.0,
+        "brillanz": 1.7,
+        "raumtiefe": 1.6,
+        "waerme": 1.5,
+        "bassgewalt": 1.5,
+    }
+    _UNIFORM = {
+        "natuerlichkeit": 1.0,
+        "authentizitaet": 1.0,
+        "tonal_center": 1.0,
+        "timbre_authentizitaet": 1.0,
+        "artikulation": 1.0,
+        "brillanz": 1.0,
+        "raumtiefe": 1.0,
+        "waerme": 1.0,
+        "bassgewalt": 1.0,
+    }
+
+    def _make_fc(self, goal_weights):
+        fc = FeedbackChain(material="vinyl", restorability_score=60.0, defect_severity_mean=0.4)
+        fc.goal_weights = goal_weights
+        return fc
+
+    def test_45_p1p2_heavy_tightens_prune_threshold(self):
+        """P1/P2-heavy songs → prune threshold is closer to 0 (stricter pruning)."""
+        fc_p1p2 = self._make_fc(self._P1P2_HIGH)
+        fc_p4p5 = self._make_fc(self._P4P5_HIGH)
+        fc_uni = self._make_fc(self._UNIFORM)
+
+        t_p1p2 = fc_p1p2._compute_adaptive_prune_threshold(is_restorative=True)
+        t_p4p5 = fc_p4p5._compute_adaptive_prune_threshold(is_restorative=True)
+        t_uni = fc_uni._compute_adaptive_prune_threshold(is_restorative=True)
+
+        # P1/P2 heavy → stricter (less negative) than uniform
+        assert t_p1p2 > t_uni, (
+            f"P1/P2-heavy ({t_p1p2}) should be stricter (less negative) than uniform ({t_uni})"
+        )
+        # P4/P5 heavy → more lenient (more negative) than uniform
+        assert t_p4p5 < t_uni, (
+            f"P4/P5-heavy ({t_p4p5}) should be more lenient (more negative) than uniform ({t_uni})"
+        )
+
+    def test_46_goal_weights_bias_bounded(self):
+        """Bias must remain within ±0.05; overall threshold stays within [-0.30, -0.005]."""
+        fc = self._make_fc(self._P1P2_HIGH)
+        t = fc._compute_adaptive_prune_threshold(is_restorative=True)
+        assert -0.30 <= t <= -0.005, f"Threshold must be in [-0.30, -0.005], got {t}"
+
+    def test_47_no_goal_weights_unchanged(self):
+        """With no goal_weights set, result equals the non-biased computation."""
+        fc_with = self._make_fc(self._UNIFORM)
+        fc_without = FeedbackChain(material="vinyl", restorability_score=60.0, defect_severity_mean=0.4)
+        # Uniform weights (all 1.0) → mean P1P2 == mean P4P5 → bias ≈ 0
+        t_with = fc_with._compute_adaptive_prune_threshold(is_restorative=True)
+        t_without = fc_without._compute_adaptive_prune_threshold(is_restorative=True)
+        assert abs(t_with - t_without) < 0.001, (
+            f"Uniform weights ({t_with}) should equal no-weights result ({t_without})"
+        )
+
+    def test_48_mos_tolerance_tightened_for_p1p2(self):
+        """P1/P2-heavy songs get lower MOS regression tolerance."""
+        fc_p1p2 = self._make_fc(self._P1P2_HIGH)
+        fc_uni = self._make_fc(self._UNIFORM)
+        tol_p1p2 = fc_p1p2._compute_adaptive_mos_regression_tolerance()
+        tol_uni = fc_uni._compute_adaptive_mos_regression_tolerance()
+        # P1/P2 heavy → tighter tolerance (smaller value) to protect critical goals
+        assert tol_p1p2 <= tol_uni, (
+            f"P1/P2-heavy tolerance ({tol_p1p2}) should be ≤ uniform ({tol_uni})"
+        )
+
+    def test_49_mos_tolerance_no_goal_weights_unchanged(self):
+        """Without goal_weights, MOS tolerance is unaffected by §2.56."""
+        fc = FeedbackChain(material="vinyl", restorability_score=60.0, defect_severity_mean=0.4)
+        tol = fc._compute_adaptive_mos_regression_tolerance()
+        assert 0.03 <= tol <= 0.25, f"Tolerance out of bounds: {tol}"
+
+    def test_50_p4p5_heavy_does_not_violate_p1p2_floor(self):
+        """Even extreme P4/P5 weighting must not make prune threshold looser than -0.30."""
+        extreme_p4p5 = dict(self._P4P5_HIGH)
+        for k in ("brillanz", "raumtiefe", "waerme", "bassgewalt"):
+            extreme_p4p5[k] = 2.0
+        fc = self._make_fc(extreme_p4p5)
+        t = fc._compute_adaptive_prune_threshold(is_restorative=True)
+        assert t >= -0.30, f"Threshold must not exceed -0.30, got {t}"

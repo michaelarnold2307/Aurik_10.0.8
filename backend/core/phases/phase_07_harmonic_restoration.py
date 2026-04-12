@@ -134,6 +134,122 @@ def _est_tilt_p07(audio: np.ndarray, sr: int) -> float:
     return float(np.dot(log_f_c, log_m_c) / denom) if denom > 1e-10 else 0.0
 
 
+# §C5 DDSP-Inversion: physical harmonic synthesis filling missing/weak partials
+# Engel et al. (ICLR 2020) — NumPy/SciPy eigen-implementation (no ML required)
+_MATERIAL_INHARMONICITY_BETA: dict[str, float] = {
+    # Piano strings: Fletcher 1964 inharmonicity constant
+    "digital": 1e-4,
+    "cd_digital": 1e-4,
+    "streaming": 5e-5,
+    # Vinyl emboss-chain can add slight nonlinear distortion of partials
+    "vinyl": 8e-5,
+    # Tape: gentle wow/flutter → tiny f0 jitter, treat as inharmonicity <= 5e-5
+    "tape": 5e-5,
+    "reel_tape": 5e-5,
+    # Shellac: no notable inharmonicity in the steel-needle transfer
+    "shellac": 0.0,
+    "wax_cylinder": 0.0,
+    "wire_recording": 0.0,
+    "minidisc": 5e-5,
+}
+
+
+def _ddsp_harmonic_inversion(
+    audio: np.ndarray,
+    sr: int,
+    f0_info: list,
+    n_harmonics: int = 64,
+    material_type: str = "digital",
+) -> tuple[np.ndarray, float] | tuple[None, float]:
+    """§C5 DDSP-Inversion — physical additive synthesis of missing/weak partials.
+
+    Algorithm (Engel et al. ICLR 2020, NumPy/SciPy eigen-impl):
+    1. Per f0: compute n_harmonics partial frequencies fₖ = k × f0 × (1 + β×k²)
+       using material-specific inharmonicity β (Fletcher 1964 for strings).
+    2. Measure STFT magnitude at each partial bin.
+    3. Flag partials as "missing": |A_k| < 0.15 × |A_1| (too weak relative to fundamental).
+    4. Synthesise missing partials via instantaneous-phase integration:
+       φₖ(t) = 2π × Σ fₖ × (1/sr)  (exact phase coherence, no phase smearing).
+    5. Apply exponential amplitude envelope (Terhardt 1982): A_k(t) decays with harmonic order.
+    6. Wet cap: synthesized signal amplitude ≤ 60% of fundamental RMS (Minimal-Intervention §0).
+
+    Returns (synthesized_signal, inharmonicity_beta) or (None, 0.0) on failure.
+    """
+    assert sr == 48000, "phase_07 DDSP expects 48 kHz processing SR"
+    if not f0_info or len(audio) < sr // 10:
+        return None, 0.0
+
+    beta = _MATERIAL_INHARMONICITY_BETA.get(str(material_type).lower(), 1e-4)
+    n = len(audio)
+
+    # STFT for amplitude estimation
+    n_fft = min(4096, n)
+    hop = n_fft // 4
+    win = np.hanning(n_fft)
+    n_frames = max(1, (n - n_fft) // hop + 1)
+    stft_mag = np.zeros((n_fft // 2 + 1, n_frames), dtype=np.float32)
+    for fi in range(n_frames):
+        s = fi * hop
+        frame = audio[s : s + n_fft]
+        if len(frame) < n_fft:
+            frame = np.pad(frame, (0, n_fft - len(frame)))
+        stft_mag[:, fi] = np.abs(np.fft.rfft(frame * win)).astype(np.float32)
+
+    freq_res = sr / n_fft  # Hz per bin
+    synthesised = np.zeros(n, dtype=np.float32)
+    t = np.arange(n, dtype=np.float64) / sr
+
+    for f0, salience, _miss_orders in f0_info:
+        if f0 < 55.0 or f0 > 4000.0:
+            continue
+
+        # Fundamental amplitude (time-averaged over STFT)
+        f0_bin = int(round(f0 / freq_res))
+        f0_bin = min(f0_bin, stft_mag.shape[0] - 1)
+        amp_f0 = float(np.mean(stft_mag[f0_bin, :]) + 1e-12)
+
+        missing_mask = np.zeros(n_harmonics, dtype=bool)
+        amp_k = np.zeros(n_harmonics, dtype=np.float64)
+
+        for k in range(1, n_harmonics + 1):
+            # Fletcher (1964) inharmonicity: stretched partial frequency
+            f_k = f0 * k * float(np.sqrt(1.0 + beta * k * k))
+            if f_k >= sr / 2.0:
+                break
+            bin_k = min(int(round(f_k / freq_res)), stft_mag.shape[0] - 1)
+            a_k = float(np.mean(stft_mag[bin_k, :]))
+            amp_k[k - 1] = a_k
+            # Terhardt (1982) psychoacoustic decay: expected amp ∝ 0.84^(k-1) × amp_f0
+            expected_k = amp_f0 * (0.84 ** (k - 1))
+            if a_k < 0.15 * expected_k:
+                missing_mask[k - 1] = True  # partial is suppressed / missing
+
+        # Synthesise only missing partials
+        for k in range(1, n_harmonics + 1):
+            if not missing_mask[k - 1]:
+                continue
+            f_k = f0 * k * float(np.sqrt(1.0 + beta * k * k))
+            if f_k >= sr / 2.0:
+                break
+            # Instantaneous phase integration
+            phi = 2.0 * np.pi * f_k * t  # exact phase (no smearing)
+            # Target amplitude based on Terhardt decay + salience
+            a_target = amp_f0 * (0.84 ** (k - 1)) * float(salience)
+            synthesised += (a_target * np.sin(phi)).astype(np.float32)
+
+    # Wet cap: synthesised amplitude ≤ 60% of input RMS (§0 Minimal-Intervention)
+    rms_in = float(np.sqrt(np.mean(audio**2)) + 1e-12)
+    rms_syn = float(np.sqrt(np.mean(synthesised**2)) + 1e-12)
+    if rms_syn > 0.60 * rms_in:
+        synthesised = synthesised * (0.60 * rms_in / rms_syn)
+
+    synthesised = np.nan_to_num(synthesised, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    if np.all(np.abs(synthesised) < 1e-10):
+        return None, beta
+
+    return synthesised, beta
+
+
 class HarmonicRestorationPhase(PhaseInterface):
     """
     Professional Harmonic Restoration Phase v2.0
@@ -318,6 +434,29 @@ class HarmonicRestorationPhase(PhaseInterface):
         missing_harmonics: dict[str, list[int]] = (
             {f"{f0:.0f}Hz": orders for f0, _sal, orders in f0_info} if f0_info else {}
         )
+
+        # §C5 DDSP-Inversion: Engel et al. (ICLR 2020) — physical harmonic synthesis.
+        # Estimates additive synthesis parameters (f0, per-partial amplitude) from STFT
+        # and synthesizes only the MISSING/WEAK partials (Minimal-Intervention §0).
+        _ddsp_audio: np.ndarray | None = None
+        _ddsp_inharmonicity: float = 0.0
+        _ddsp_used = False
+        try:
+            _ddsp_audio, _ddsp_inharmonicity = _ddsp_harmonic_inversion(
+                _mono, sample_rate, f0_info, n_harmonics=64, material_type=str(material_type)
+            )
+            if _ddsp_audio is not None and _effective_strength >= 0.3:
+                # Blend DDSP result into main audio at conservative wet (≤ 0.35)
+                _ddsp_wet = float(np.clip(params["blend"] * 0.50, 0.0, 0.35))
+                if audio.ndim == 2:
+                    _ddsp_audio_stereo = np.column_stack([_ddsp_audio, _ddsp_audio])
+                    audio = np.clip(audio + _ddsp_wet * (_ddsp_audio_stereo - audio), -1.0, 1.0)
+                else:
+                    audio = np.clip(audio + _ddsp_wet * (_ddsp_audio - audio), -1.0, 1.0)
+                _mono = np.mean(audio, axis=1) if audio.ndim == 2 else audio  # re-derive mono
+                _ddsp_used = True
+        except Exception as _ddsp_exc:
+            logger.debug("§C5 DDSP-Inversion skipped (non-blocking): %s", _ddsp_exc)
 
         # Step 2: Apply multi-mode saturation — §2.51 M/S: harmonics only on Mid channel.
         if audio.ndim == 2:

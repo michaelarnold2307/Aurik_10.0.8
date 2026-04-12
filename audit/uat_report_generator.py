@@ -106,6 +106,11 @@ class UATReportGenerator:
                     "-m",
                     "pytest",
                     "tests/test_uat_acceptance_criteria.py",
+                    "-p",
+                    "no:xdist",
+                    "--run-heavy-tests",
+                    '--override-ini=addopts=--strict-markers --import-mode=importlib',
+                    "--timeout=180",
                     "-v",
                     "--tb=short",
                     "--no-header",
@@ -113,12 +118,12 @@ class UATReportGenerator:
                 ],
                 cwd=self.workspace_root,
                 capture_output=True,
-                timeout=300,
+                timeout=1200,
                 text=True,
             )
             return result.returncode, result.stdout + result.stderr
         except subprocess.TimeoutExpired:
-            print("[WARNING] Pytest timeout after 300s")
+            print("[WARNING] Pytest timeout after 1200s")
             return 1, "Pytest timeout"
         except Exception as e:
             print(f"[ERROR] Pytest execution failed: {e}")

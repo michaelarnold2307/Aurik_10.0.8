@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -71,6 +72,9 @@ class IntroducedArtifactDetector:
     # Min. Residuum-RMS für echte ML-Halluzination (≈ −30 dBFS):
     # Unterhalb dieser Schwelle ist das Residuum zu leise für eine wahrnehmbare Halluzination.
     HALLUCINATION_MIN_RMS: float = 0.032
+    # Runtime guards for long real-audio tracks (UAT): keep detector bounded.
+    MAX_HALLUCINATION_WINDOWS: int = 48
+    HALLUCINATION_DETECT_BUDGET_S: float = 8.0
 
     @staticmethod
     def _sanitize_audio(audio: np.ndarray) -> np.ndarray:
@@ -173,14 +177,35 @@ class IntroducedArtifactDetector:
         win = max(1, int(2.0 * sr))
         hop = max(1, int(1.0 * sr))
         artifacts: list[ArtifactRegion] = []
-        for s in range(0, len(residuum) - win, hop):
+        starts = list(range(0, len(residuum) - win, hop))
+        if len(starts) > self.MAX_HALLUCINATION_WINDOWS:
+            stride = max(1, int(np.ceil(len(starts) / float(self.MAX_HALLUCINATION_WINDOWS))))
+            starts = starts[::stride]
+
+        _t0 = time.perf_counter()
+        for s in starts:
+            if (time.perf_counter() - _t0) > self.HALLUCINATION_DETECT_BUDGET_S:
+                logger.warning(
+                    "IAD hallucination guard: time budget %.1fs exceeded after %d windows — early stop",
+                    self.HALLUCINATION_DETECT_BUDGET_S,
+                    len(artifacts),
+                )
+                break
             frame = residuum[s : s + win]
             # Energie-Gate: Residuum muss wahrnehmbar sein (>= HALLUCINATION_MIN_RMS)
             # Verhindert False-Positives durch numerisches Rauschen bei leichten Phasen-änderungen
             frame_rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
             if frame_rms < self.HALLUCINATION_MIN_RMS:
                 continue
-            h = self._harmonicity(frame, sr)
+            # Lightweight decimation keeps harmonicity robust while reducing FFT cost.
+            if len(frame) >= 8192 and sr >= 32000:
+                frame_eval = frame[::2]
+                sr_eval = sr // 2
+            else:
+                frame_eval = frame
+                sr_eval = sr
+
+            h = self._harmonicity(frame_eval, sr_eval)
             if h > self.HARMONICITY_THRESHOLD:
                 artifacts.append(ArtifactRegion("ml_hallucination", s, s + win, float(np.clip(h, 0.0, 1.0)), float(h)))
         return artifacts

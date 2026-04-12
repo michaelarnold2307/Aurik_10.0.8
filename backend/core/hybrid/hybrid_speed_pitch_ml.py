@@ -11,7 +11,7 @@ Architektur:
    - Globale Pitch-Schätzung (gemittelt über 2-5 Sekunden)
    - Robust bei verrauschten Signalen
 
-2. Stufe 2: CREPE ML Pitch-Detektion (Kim et al. 2018)
+2. Stufe 2: RMVPE/PESTO ML Pitch-Detektion
    - CNN-basiertes Pitch-Tracking
    - ±1 Cent Genauigkeit
    - Verhindert Oktavfehler
@@ -20,8 +20,8 @@ Architektur:
 Strategy-Modi:
 - PYIN_ONLY: Schnelle pYIN-DSP-Detektion (FAST-Modus)
 - CREPE_ONLY: Reines ML (kein DSP-Preprocessing)
-- ADAPTIVE: pYIN → CREPE falls Konfidenz < 0.7 (BALANCED-Modus)
-- HYBRID: Immer pYIN + CREPE kombiniert (MAXIMUM-Modus)
+- ADAPTIVE: pYIN -> ML falls Konfidenz < 0.7 (BALANCED-Modus)
+- HYBRID: Immer pYIN + ML kombiniert (MAXIMUM-Modus)
 
 VERBOTEN (§4.2): klassisches YIN (de Cheveigné 2002) als primäre Methode
 Erfüllt: Mauch & Dixon (2014) pYIN mit HMM Voiced-Klassifikation
@@ -123,7 +123,7 @@ class HybridSpeedPitch:
         """
         self.config = config or SpeedPitchConfig()
 
-        # Lazy-load CREPE plugin
+        # Lazy-load ML pitch plugin chain
         self.crepe = None
         if self.config.strategy in [
             PitchDetectionStrategy.CREPE_ONLY,
@@ -133,11 +133,11 @@ class HybridSpeedPitch:
             self._init_crepe()
 
     def _init_crepe(self) -> None:
-        """Initialize pitch plugin: FCPE → RMVPE → CREPE cascade (§4.4 Spec).
+        """Initialize pitch plugin: FCPE -> RMVPE -> PESTO -> pYIN (§4.4 Spec).
 
         Order: Tier-1 FCPE, Tier-2 RMVPE (Wei et al. ICASSP 2023, ~30 % lower pitch
-        error for vocals), Tier-3 CREPE (legacy fallback only).
-        VERBOTEN: FCPE → CREPE → RMVPE (RMVPE muss vor CREPE stehen — §4.4).
+        error for vocals), Tier-3 PESTO, Tier-4 CREPE legacy fallback.
+        VERBOTEN: FCPE -> CREPE -> RMVPE (RMVPE muss vor CREPE stehen — §4.4).
         """
         try:
             from plugins.fcpe_plugin import get_fcpe_plugin
@@ -156,12 +156,21 @@ class HybridSpeedPitch:
             return
         except Exception as e:
             logger.debug("RMVPE nicht verfügbar (%s) — CREPE-Fallback (§4.4 Tier-3)", e)
-        # Tier-3: CREPE (legacy — only if RMVPE unavailable)
+        # Tier-3: PESTO
+        try:
+            from plugins.pesto_plugin import get_pesto_plugin
+
+            self.crepe = get_pesto_plugin()  # type: ignore[assignment]
+            logger.info("PESTO plugin loaded for Phase 31 speed/pitch detection (§4.4 Tier-3)")
+            return
+        except Exception as e:
+            logger.debug("PESTO nicht verfügbar (%s) — CREPE-Legacy-Fallback (§4.4 Tier-4)", e)
+        # Tier-4: CREPE (legacy — only if PESTO unavailable)
         try:
             from plugins.crepe_plugin import CREPEPlugin
 
             self.crepe = CREPEPlugin()
-            logger.info("CREPE plugin loaded for Phase 31 speed/pitch detection (§4.4 Tier-3 legacy)")
+            logger.info("CREPE plugin loaded for Phase 31 speed/pitch detection (§4.4 Tier-4 legacy)")
         except Exception as e:
             logger.warning("Kein Pitch-ML-Plugin verfügbar: %s", e)
             self.crepe = None
@@ -209,7 +218,7 @@ class HybridSpeedPitch:
 
             logger.info("pYIN: pitch=%.2f Hz, confidence=%.3f", pyin_pitch, pyin_confidence)
 
-        # Stufe 2: CREPE-Detektion (bedingt)
+        # Stufe 2: ML-Detektion (bedingt: RMVPE/PESTO/CREPE)
         should_apply_crepe = False
 
         if strategy == PitchDetectionStrategy.CREPE_ONLY or strategy == PitchDetectionStrategy.HYBRID:
@@ -218,14 +227,14 @@ class HybridSpeedPitch:
             # CREPE anwenden wenn pYIN-Konfidenz niedrig
             if (pyin_confidence or 0.0) < self.config.confidence_threshold:
                 logger.info(
-                    f"pYIN confidence {pyin_confidence:.3f} < {self.config.confidence_threshold} → CREPE anwenden"
+                    f"pYIN confidence {pyin_confidence:.3f} < {self.config.confidence_threshold} -> ML anwenden"
                 )
                 should_apply_crepe = True
             else:
-                logger.info("pYIN confidence %.3f ausreichend → CREPE überspringen", pyin_confidence)
+                logger.info("pYIN confidence %.3f ausreichend -> ML überspringen", pyin_confidence)
 
         if should_apply_crepe and self.crepe is not None:
-            logger.info("Stufe 2: CREPE ML-Pitch-Detektion (Kim et al. 2018)...")
+            logger.info("Stufe 2: ML-Pitch-Detektion (RMVPE/PESTO/CREPE)...")
             crepe_pitch, crepe_confidence = self._apply_crepe_global(audio, sample_rate)
             crepe_applied = True
 
@@ -327,7 +336,7 @@ class HybridSpeedPitch:
 
     def _apply_crepe_global(self, audio: np.ndarray, sample_rate: int) -> tuple[float, float]:
         """
-        Apply CREPE for global pitch detection.
+        Apply ML pitch detector (RMVPE/PESTO/CREPE) for global pitch detection.
 
         Args:
             audio: Mono audio
@@ -337,11 +346,11 @@ class HybridSpeedPitch:
             (global_pitch, confidence)
         """
         if self.crepe is None:
-            logger.warning("CREPE nicht verfügbar, Fallback auf pYIN")
+            logger.warning("ML-Pitch-Plugin nicht verfügbar, Fallback auf pYIN")
             return self._apply_pyin_global(audio, sample_rate)
 
         try:
-            # Run CREPE on full audio (it will return time-series)
+            # Run selected ML model on full audio (returns time-series)
             result = self.crepe.analyze(audio, sample_rate)
 
             # Extract pitch trajectory and confidence
@@ -366,7 +375,7 @@ class HybridSpeedPitch:
             return float(global_pitch), float(global_confidence)
 
         except Exception as e:
-            logger.error("CREPE processing failed: %s", e)
+            logger.error("ML pitch processing failed: %s", e)
             return 0.0, 0.0
 
     def _combine_estimates(

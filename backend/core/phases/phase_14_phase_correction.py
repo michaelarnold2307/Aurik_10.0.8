@@ -428,7 +428,9 @@ class PhaseCorrection(PhaseInterface):
         elif delay_int < 0:
             corrected_left = np.roll(left, delay_int)
             corrected_right = right.copy()
-            corrected_left[: abs(delay_int)] = 0.0
+            # np.roll(..., negative) shifts left and wraps start-samples to the tail.
+            # Zero the TAIL (not the head) to avoid synthetic end-spikes.
+            corrected_left[-abs(delay_int) :] = 0.0
         else:
             corrected_left = left.copy()
             corrected_right = right.copy()

@@ -871,6 +871,17 @@ class DeEsserPhase(PhaseInterface):
         if 0.0 < _effective_strength < 1.0:
             deessed_audio = enhanced_audio + _effective_strength * (deessed_audio - enhanced_audio)
             deessed_audio = np.clip(deessed_audio, -1.0, 1.0)
+
+        # §4.5 Psychoacoustic Masking Clamp — only reduce sibilance above masking threshold
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            deessed_audio = apply_psychoacoustic_masking_clamp(
+                audio, deessed_audio, sample_rate,
+                strength=_effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase19 masking clamp non-blocking: %s", _pm_exc)
+
         return PhaseResult(
             success=True,
             audio=deessed_audio,

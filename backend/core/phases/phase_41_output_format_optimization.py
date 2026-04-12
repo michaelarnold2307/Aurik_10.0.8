@@ -202,11 +202,21 @@ class OutputFormatOptimization(PhaseInterface):
                 },
             )
 
-        output_sr = self.OUTPUT_SAMPLE_RATE.get(material, 44100)
-        output_bit_depth = self.OUTPUT_BIT_DEPTH.get(material, 16)
+        intended_output_sr = self.OUTPUT_SAMPLE_RATE.get(material, 44100)
+        intended_output_bit_depth = self.OUTPUT_BIT_DEPTH.get(material, 16)
         lufs_target = self.LUFS_TARGET.get(material, -16.0)
         true_peak_ceiling = self.TRUE_PEAK_CEILING.get(material, -1.0)
         dither_type = self.DITHER_TYPE.get(material, "tpdf")
+
+        # Phase 41 runs inside the fixed 48 kHz restoration pipeline.
+        # Delivery-format conversion belongs to the export layer, not to an
+        # in-graph phase: resampling to material-specific rates and bit-depth
+        # reduction inside UV3 corrupt downstream metrics and can destabilize
+        # late-stage quality gates. Keep the live pipeline at the current
+        # sample rate and float precision, and expose the intended delivery
+        # format only as metadata for the exporter.
+        output_sr = sample_rate
+        output_bit_depth = 32
 
         quality_mode = str(kwargs.get("quality_mode", "balanced")).lower()
         if quality_mode in ("quality", "maximum", "studio2026"):
@@ -299,6 +309,8 @@ class OutputFormatOptimization(PhaseInterface):
                 "input_sample_rate": sample_rate,
                 "output_sample_rate": output_sr,
                 "output_bit_depth": output_bit_depth,
+                "intended_output_sample_rate": intended_output_sr,
+                "intended_output_bit_depth": intended_output_bit_depth,
                 "lufs_before": float(lufs_before),
                 "lufs_after": float(lufs_after),
                 "peak_reduction_db": float(peak_reduction_db),
@@ -315,6 +327,9 @@ class OutputFormatOptimization(PhaseInterface):
                 "version": "2.0",
                 "quality_mode": quality_mode,
                 "hq_scale": hq_scale,
+                "pipeline_safe_format_optimization": True,
+                "intended_output_sample_rate": intended_output_sr,
+                "intended_output_bit_depth": intended_output_bit_depth,
                 "output_guard_enabled": output_guard_enabled,
                 "output_guard_fallback": guard.fallback,
                 "output_guard_reason": guard.reason,
@@ -406,14 +421,19 @@ class OutputFormatOptimization(PhaseInterface):
         return audio_limited, peak_reduction_db
 
     def _measure_true_peak_linear(self, audio: np.ndarray) -> float:
-        """Measure inter-sample true peak using 4x oversampling."""
+        """Measure inter-sample true peak using 4x oversampling.
+
+        §DSP-Invariante: np.percentile(99.9) statt np.max — ein einzelner
+        Crackle/Click-Spike nach 4x-Übersampling darf nicht die gesamte
+        Gain-Reduction blockieren und das Programmpegel absenken.
+        """
         audio_arr = np.nan_to_num(np.asarray(audio, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         if audio_arr.ndim == 1:
             audio_up = signal.resample_poly(audio_arr, 4, 1)
-            return float(np.max(np.abs(audio_up)))
+            return float(np.percentile(np.abs(audio_up), 99.9))
 
         audio_up = signal.resample_poly(audio_arr, 4, 1, axis=0)
-        return float(np.max(np.abs(audio_up)))
+        return float(np.percentile(np.abs(audio_up), 99.9))
 
     def _apply_pow_r_type3_dither(self, audio: np.ndarray, bit_depth: int = 16) -> np.ndarray:
         """Apply POW-r Type 3 noise-shaped dither (Wannamaker et al. 1992).

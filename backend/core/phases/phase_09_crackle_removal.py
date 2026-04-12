@@ -1148,8 +1148,134 @@ class CrackleRemovalPhase(PhaseInterface):
     def _interpolate_hybrid(
         self, audio: np.ndarray, before_start: int, gap_start: int, gap_end: int, after_end: int
     ) -> np.ndarray:
-        """Hybrid interpolation (linear + spectral smoothing)."""
-        return self._interpolate_linear(audio, gap_start, gap_end)
+        """LPC-based AR gap interpolation (Lagrange & Marchand 2007, Godsill & Rayner 1998).
+
+        For gaps ≤ 50 ms: forward AR prediction from pre-gap context blended with
+        backward AR prediction from post-gap context (linear crossfade).
+        Fallback to spectral interpolation for longer gaps.
+
+        LPC order follows §spec VERBOTEN rule: min 16, target 30–40 @ 48 kHz.
+        """
+        gap_len = gap_end - gap_start
+        _max_ar_gap = int(0.050 * self.sample_rate)  # 50 ms = 2400 samples @ 48 kHz
+
+        if gap_len > _max_ar_gap:
+            return self._interpolate_spectral(audio, before_start, gap_start, gap_end, after_end, None)
+
+        try:
+            if audio.ndim == 2:
+                result = np.zeros((gap_len, audio.shape[1]), dtype=audio.dtype)
+                for ch in range(audio.shape[1]):
+                    result[:, ch] = self._ar_fill_channel(
+                        audio[:, ch], gap_start, gap_end, before_start, after_end
+                    )
+                return result
+            return self._ar_fill_channel(audio, gap_start, gap_end, before_start, after_end)
+        except Exception as exc:
+            logger.debug("AR interpolation failed (%s), falling back to linear.", exc)
+            return self._interpolate_linear(audio, gap_start, gap_end)
+
+    def _ar_fill_channel(
+        self,
+        ch: np.ndarray,
+        gap_start: int,
+        gap_end: int,
+        before_start: int,
+        after_end: int,
+    ) -> np.ndarray:
+        """AR forward+backward prediction for a single audio channel gap."""
+        gap_len = gap_end - gap_start
+        ctx_len = min(512, gap_start - before_start, after_end - gap_end)
+        # §spec: LPC order 30–40 @ 48 kHz; adapt to available context
+        order = min(40, max(16, min(ctx_len // 4, gap_len // 2)))
+
+        ctx_fwd = ch[max(0, gap_start - ctx_len) : gap_start]
+        ctx_bwd_raw = ch[gap_end : min(len(ch), gap_end + ctx_len)]
+
+        fwd = self._ar_predict(ctx_fwd, gap_len, order)
+        bwd_rev = self._ar_predict(ctx_bwd_raw[::-1], gap_len, order)
+        bwd = bwd_rev[::-1]
+
+        # Linear crossfade: forward dominates near gap start, backward near gap end
+        t = np.linspace(0.0, 1.0, gap_len)
+        blended = (1.0 - t) * fwd + t * bwd
+
+        # Boundary crossfade: 5 ms taper to actual adjacent samples prevents
+        # step discontinuities that would create audible clicks at gap edges.
+        _cf_len = min(int(0.005 * self.sample_rate), gap_len // 4, 60)
+        if _cf_len > 0:
+            t_cf = np.linspace(0.0, 1.0, _cf_len)
+            start_val = float(ch[gap_start - 1]) if gap_start > 0 else 0.0
+            end_val = float(ch[gap_end]) if gap_end < len(ch) else 0.0
+            blended[:_cf_len] = (1.0 - t_cf) * start_val + t_cf * blended[:_cf_len]
+            blended[-_cf_len:] = (1.0 - t_cf[::-1]) * end_val + t_cf[::-1] * blended[-_cf_len:]
+
+        return blended.astype(ch.dtype)
+
+    def _ar_predict(self, context: np.ndarray, n_samples: int, order: int) -> np.ndarray:
+        """One-step-ahead AR synthesis via Yule-Walker LPC (order 30–40 @ 48 kHz).
+
+        The Yule-Walker normal equations yield AR coefficients a such that
+        x_hat[n] = a[0]*x[n-1] + a[1]*x[n-2] + ... + a[p-1]*x[n-p].
+        We then synthesise n_samples steps into the gap using these coefficients.
+
+        Stability guarantee: all AR poles are reflected into |z| < 0.995 (root
+        stabilisation; Rabiner & Schafer 1978).  This prevents exponential divergence
+        which Yule-Walker does not guard against on its own.
+        """
+        if len(context) < order + 2:
+            return np.zeros(n_samples, dtype=np.float32)
+        try:
+            from scipy.linalg import solve_toeplitz
+
+            n = len(context)
+            ctx_f64 = context.astype(np.float64)
+            # Unbiased autocorrelation lags 0..order with energy normalisation
+            r = np.array(
+                [float(np.dot(ctx_f64[: n - k], ctx_f64[k:])) / n for k in range(order + 1)]
+            )
+            # Tikhonov regularisation + 1 % diagonal leakage (improves conditioning,
+            # biases poles inward, prevents singular Toeplitz matrix)
+            r[0] = r[0] * 1.01 + 1e-9
+            # Solve: T(r[0:order]) @ a = -r[1:order+1]
+            a_coeffs = solve_toeplitz(r[:order], -r[1 : order + 1])
+
+            # ── Stability check: reflect poles inside unit circle (max |z| = 0.995) ──
+            # AR polynomial: A(z) = 1 - a[0]z^{-1} - ... - a[p-1]z^{-p}
+            # written in descending power form for np.roots: [1, -a[0], ..., -a[p-1]]
+            _MAX_POLE_MAG = 0.995
+            ar_poly = np.concatenate([[1.0], -a_coeffs])
+            roots = np.roots(ar_poly)
+            mags = np.abs(roots)
+            if np.any(mags >= _MAX_POLE_MAG):
+                # Reflect each unstable root to |z| = _MAX_POLE_MAG
+                roots_stable = np.where(
+                    mags >= _MAX_POLE_MAG,
+                    roots * (_MAX_POLE_MAG / (mags + 1e-12)),
+                    roots,
+                )
+                # Reconstruct polynomial from stabilised roots (ensure real output)
+                ar_poly_stable = np.poly(roots_stable).real
+                a_coeffs = -ar_poly_stable[1 : order + 1]
+
+            # Forward synthesis: x[n] = a[0]*x[n-1] + a[1]*x[n-2] + ...
+            buf = np.array(ctx_f64[-order:], dtype=np.float64)
+            out = np.empty(n_samples, dtype=np.float64)
+            for i in range(n_samples):
+                val = float(np.dot(a_coeffs, buf[::-1]))
+                # Inline stability clamp — catches any residual excursion
+                val = max(-2.0, min(2.0, val))
+                out[i] = val
+                buf = np.roll(buf, -1)
+                buf[-1] = val
+            result = out.astype(context.dtype)
+            # Final NaN/Inf guard
+            if not np.all(np.isfinite(result)):
+                return np.zeros(n_samples, dtype=np.float32)
+            return result
+        except Exception as exc:
+            logger.debug("AR prediction failed (%s), returning zeros.", exc)
+            return np.zeros(n_samples, dtype=np.float32)
 
     def _interpolate_linear(self, audio: np.ndarray, gap_start: int, gap_end: int) -> np.ndarray:
         """Linear interpolation."""

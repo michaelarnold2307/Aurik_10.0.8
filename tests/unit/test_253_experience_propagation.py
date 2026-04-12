@@ -175,6 +175,7 @@ class TestBridgeExperienceInsights:
         required = {
             "joy_index",
             "fatigue_index",
+            "frisson_index",
             "cluster_key",
             "cluster_policy",
             "recommendations",
@@ -201,7 +202,7 @@ class TestBridgeExperienceInsights:
         from backend.api.bridge import get_experience_insights
 
         result = get_experience_insights(self._make_ergebnis(_expected_253_metadata()))
-        for key in ("joy_index", "fatigue_index"):
+        for key in ("joy_index", "fatigue_index", "frisson_index"):
             assert math.isfinite(result[key]), f"{key} ist NaN/Inf"
 
     def test_correct_joy_value_extracted(self):
@@ -254,3 +255,13 @@ class TestBridgeExperienceInsights:
         assert isinstance(result["joy_index"], float)
         assert math.isfinite(result["joy_index"])
         assert result["joy_index"] == pytest.approx(0.0, abs=0.01)
+
+    def test_nan_in_frisson_index_sanitized(self):
+        """NaN in frisson_index wird auf 0.0 sanitisiert."""
+        from backend.api.bridge import get_experience_insights
+
+        meta = {"joy_runtime_index": {"joy_index": 0.4, "fatigue_index": 0.2, "frisson_index": float("nan")}}
+        result = get_experience_insights(self._make_ergebnis(meta))
+        assert isinstance(result["frisson_index"], float)
+        assert math.isfinite(result["frisson_index"])
+        assert result["frisson_index"] == pytest.approx(0.0, abs=0.01)

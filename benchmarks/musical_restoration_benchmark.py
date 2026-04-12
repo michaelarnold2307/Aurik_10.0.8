@@ -366,6 +366,9 @@ class BenchmarkConfig:
     enable_mushra_proxy: bool = True
     enable_musical_goals: bool = True
     enable_formal_session: bool = True
+    # Keep 30 s minimum fragment guard for benchmark-quality runs; tests/audits
+    # may disable this explicitly to avoid synthetic structure-test timeouts.
+    enforce_min_fragment_guard: bool = True
     # P2-1: reproducibility — fixed seed for deterministic stimulus generation
     run_seed: int = 42
     # P2-1: version pinning for audit trail
@@ -615,7 +618,17 @@ class MusicalRestorationBenchmark:
 
         # §8.1.2 RELEASE_MUST: Fragment-Mindestlänge 30 s.
         # Fragmente < 30 s erzeugen ±8 OQS Varianz durch statistische Instabilität.
-        if dur < _MIN_AMRB_FRAGMENT_S:
+        # Lightweight audit runs (no proxy, no goals, no formal session) may
+        # disable this guard explicitly via config to keep CI structure tests fast.
+        _enforce_fragment_guard = bool(
+            self.config.enforce_min_fragment_guard
+            and (
+                self.config.enable_mushra_proxy
+                or self.config.enable_musical_goals
+                or self.config.enable_formal_session
+            )
+        )
+        if _enforce_fragment_guard and dur < _MIN_AMRB_FRAGMENT_S:
             logger.warning(
                 "§8.1.2 AMRB Fragment-Guard: duration_s=%.1f s < _MIN_AMRB_FRAGMENT_S=%.1f s "
                 "(Szenario %s) — erhöhe auf %.1f s, um OQS-Varianz zu vermeiden.",
@@ -625,6 +638,12 @@ class MusicalRestorationBenchmark:
                 _MIN_AMRB_FRAGMENT_S,
             )
             dur = _MIN_AMRB_FRAGMENT_S
+        elif (not _enforce_fragment_guard) and dur < _MIN_AMRB_FRAGMENT_S:
+            logger.debug(
+                "AMRB Fragment-Guard für Lightweight-Audit deaktiviert: scenario=%s duration_s=%.1f",
+                sid,
+                dur,
+            )
 
         # P2-1: seed numpy global RNG so degradation functions (np.random.randn,
         # np.random.randint) produce identical results given the same run_seed.

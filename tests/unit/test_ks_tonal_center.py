@@ -55,13 +55,22 @@ _MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98,
 
 def _ks_detect_key(chroma: np.ndarray) -> tuple[int, str, float]:
     """Krumhansl-Schmuckler key detection. Returns (root, mode, correlation)."""
+
+    def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
+        a0 = a - float(np.mean(a))
+        b0 = b - float(np.mean(b))
+        denom = float(np.linalg.norm(a0) * np.linalg.norm(b0))
+        if denom <= 1e-12:
+            return 0.0
+        return float(np.dot(a0, b0) / denom)
+
     best_corr = -2.0
     best_root = 0
     best_mode = "major"
     for root in range(12):
         rotated = np.roll(chroma, -root)
-        corr_maj = float(np.corrcoef(rotated, _MAJOR_PROFILE)[0, 1])
-        corr_min = float(np.corrcoef(rotated, _MINOR_PROFILE)[0, 1])
+        corr_maj = _safe_corr(rotated, _MAJOR_PROFILE)
+        corr_min = _safe_corr(rotated, _MINOR_PROFILE)
         if corr_maj > best_corr:
             best_corr = corr_maj
             best_root = root

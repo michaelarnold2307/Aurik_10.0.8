@@ -2,10 +2,39 @@
 Defect Scanner for Aurik 9.0 - Defect-First Architecture
 =========================================================
 
-Erkennt und bewertet 15 Defekttypen in Audio-Materialien mit material-adaptiven
+Erkennt und bewertet 46 Defekttypen in Audio-Materialien mit material-adaptiven
 Thresholds. Ersetzt das Medium-First Detection System aus v8.0.
 
 Performance-Budget: Max 5% der Gesamtzeit (< 30s für 3:45 Audio)
+
+Wissenschaftliche Grundlage (normative Literatur, §6.9b):
+
+Analoge Defekte:
+    - Godsill & Rayner (1998) Digital Audio Restoration, Springer
+        AR-Prädiktionsmodell für Clicks, Bayesian-Crackle, probabilistisches
+        Defektmodell — Standardreferenz für alle analogen Defekttypen
+    - Janssen, Veldhuis & Vries (1986) IEEE TASLP 34:203
+        AR-basierte Click-Detektion via Prädiktionsfehler — Grundlage Click/Crackle
+    - Maher (1993) J. Acoust. Soc. Am. 93:1679
+        Click- und Pop-Detektion im Zeitbereich — Laufzeit-Diskriminator
+    - Czyzewski & Kaczmarek (2003) AES Conv. 115
+        Parametrisches Vinyl-Wow/Flutter-Modell — Mehrband-WF-Detektion
+    - Bailey, Casebeer & Fazekas (2019) AES 147th Conv.
+        Neural Network Vinyl-Knistern-Detektion — SOTA-Validierung crackle 4σ-Schwelle
+    - Esquef & Biscainho (2006) IEEE TASLP 14:1207
+        Modulations-Rauschen bei Bandaufnahmen — Basis MODULATION_NOISE
+    - Dahimene, Richard & David (2008) IEEE TASLP 16:757
+        Dropout-Erkennung via Energietransiente — DROPOUTS-Schwellwert-Kalibrierung
+    - IEC 60386:1987
+        Wow/Flutter-Messnorm — definiert Frequenzgrenzen WOW (<0.5 Hz) / FLUTTER (0.5–200 Hz)
+
+Digitale Defekte:
+    - Herre & Johnston (1996) AES Conv. 101
+        Pre-Echo-Artefakt im MPEG-Coding via temporales Masking — Primärquelle PRE_ECHO
+    - Bitto (2000) AES Conv. 109
+        Jitter-Messung und Perceptual Impact bei DAT/CD — JITTER_ARTIFACTS-Kalibrierung
+    - Zölzer (2011) DAFX: Digital Audio Effects, 2nd ed., Wiley
+        Kapitel 8 (Codec-Artefakte) — vollständige Topologie digitaler Artefakttypen
 
 Author: Aurik 9.0 Development Team
 Version: 9.0.0
@@ -78,8 +107,8 @@ class DefectType(Enum):
     """
 
     # --- Ursprüngliche 11 ---
-    CLICKS = "clicks"
-    CRACKLE = "crackle"
+    CLICKS = "clicks"  # Impulsartige Einzelstörungen — Janssen, Veldhuis & Vries (1986) IEEE TASLP 34:203; Godsill & Rayner (1998) Springer
+    CRACKLE = "crackle"  # Hochdichte Impulsfolgen (Vinyl-Knistern) — Bailey, Casebeer & Fazekas (2019) AES 147th Conv.; Godsill & Rayner (1998)
     HUM = "hum"
     WOW = "wow"  # Tonhöhenschwankung < 0.5 Hz (IEC 60386 — Motorexzentrizität, Plattenteller-Gleichlaufschwankung)
     FLUTTER = "flutter"  # Tonhöhenschwankung 0.5–200 Hz (IEC 60386 — mechanische Vibration, Führungsrolle, Bandantrieb)
@@ -89,7 +118,7 @@ class DefectType(Enum):
     HIGH_FREQ_NOISE = "high_freq_noise"
     COMPRESSION_ARTIFACTS = "compression_artifacts"
     PHASE_ISSUES = "phase_issues"
-    DROPOUTS = "dropouts"
+    DROPOUTS = "dropouts"  # Kurzzeit-Pegeleinbrüche durch Bandmaterial-Aussetzer — Dahimene, Richard & David (2008) IEEE TASLP 16:757
     # --- Weltklasse-Erweiterung Runde 1 ---
     CLIPPING = "clipping"  # Amplituden-Übersteuerung (Hard/Soft Clip)
     DC_OFFSET = "dc_offset"  # Gleichspannungsversatz
@@ -100,14 +129,14 @@ class DefectType(Enum):
     PRINT_THROUGH = "print_through"  # Magnetisches Übersprechen bei Tape (Pre-Echo)
     # --- Weltklasse-Erweiterung Runde 3 ---
     QUANTIZATION_NOISE = "quantization_noise"  # Quantisierungsrauschen (niedrige Bit-Tiefe / Resampling)
-    JITTER_ARTIFACTS = "jitter_artifacts"  # Zeitgitter-Fehler bei D/A-Wandlung (CD, DAT, Streaming)
+    JITTER_ARTIFACTS = "jitter_artifacts"  # Zeitgitter-Fehler bei D/A-Wandlung (CD, DAT, Streaming) — Bitto (2000) AES Conv. 109
     DYNAMIC_COMPRESSION_EXCESS = "dynamic_compression_excess"  # Übermäßige Dynamikkompression (Loudness War)
     # --- Spec §6.3: fehlende DefectTypes für 24-Wert-Katalog ---
     SOFT_SATURATION = "soft_saturation"  # Tube-/Tape-Sättigung (gerade Obertöne) — BEWAHREN! (§2.1, §6.3)
     HEAD_WEAR = "head_wear"  # Kopf-/Azimuth-Fehler, komplette Frequenzband-Auslöschung → phase_56 (§4.5, §7.2)
     AZIMUTH_ERROR = "azimuth_error"  # Kopf-Schrägstellung → HF-Phasen-Slope L/R > 20°/kHz (IEC 60386) → phase_56
     TRANSIENT_SMEARING = "transient_smearing"  # Ansatz-Verschmierung durch Kompression/Limiter — GrooveMetric-relevant
-    PRE_ECHO = "pre_echo"  # MP3/AAC Temporal-Masking-Artefakt: Rauschen *vor* Transienten durch lange Codec-Analysefenster (§6.3)
+    PRE_ECHO = "pre_echo"  # MP3/AAC Temporal-Masking-Artefakt: Rauschen *vor* Transienten durch lange Codec-Analysefenster — Herre & Johnston (1996) AES Conv. 101 (§6.3)
     # --- Spec §6.3 v9.10.46c: 3 neue DefectTypes → 27 Gesamtanzahl ---
     RIAA_CURVE_ERROR = "riaa_curve_error"  # Falsche Disc-Entzerrungskurve (Shellac/früher Vinyl: AES/NAB/FFRR/Columbia) → phase_04 + phase_06
     ALIASING = (
@@ -980,6 +1009,15 @@ class DefectScanner:
                 )
                 material_type = None
 
+        # Normalize channel layout once: accept both (n_samples, n_channels) and
+        # channel-first (n_channels, n_samples) without degenerating to 2-sample mono.
+        if audio.ndim == 2 and audio.shape[0] <= 2 and audio.shape[1] > audio.shape[0]:
+            audio = audio.T
+            logger.debug(
+                "DefectScanner.scan(): channel-first input normalized to shape=%s",
+                audio.shape,
+            )
+
         # §9.7.1 SHA256-Cache — bei identischem Eingangssignal sofort zurückgeben
         _sr_for_key = sample_rate if sample_rate is not None else self.sample_rate
         _cache_key = _audio_scan_cache_key(audio, _sr_for_key, material_type)
@@ -1750,6 +1788,40 @@ class DefectScanner:
                 logger.debug("[SCAN] MediumDetector FEHLER: %s", _fmd_err)
                 logger.debug("ForensicMediumDetector nicht verfügbar: %s", _fmd_err)
 
+        # §9.x Cross-chain defect fallback: tape-stage defects (BIAS_ERROR, ALIASING)
+        # that were material-gated on the primary medium may still be audible when the
+        # transfer chain includes a tape stage.  Pattern mirrors §9.1a TAPE_HEAD_LEVEL_DIP.
+        _chain_has_tape = self._chain_contains_tape(_fmd_result)
+
+        _bias_current = scores.get(DefectType.BIAS_ERROR)
+        if _bias_current is not None and _bias_current.metadata.get("medium_gated") and _chain_has_tape:
+            _x_bias = self._detect_bias_error(audio_mono, _bypass_material_gate=True)
+            if self._should_keep_cross_material_bias_error(_x_bias):
+                _x_bias.severity = float(np.clip(_x_bias.severity * 0.70, 0.0, 1.0))
+                _x_bias.confidence = float(np.clip(min(_x_bias.confidence, 0.68), 0.05, 0.95))
+                _x_bias.metadata["cross_material_fallback"] = True
+                _x_bias.metadata["fallback_primary_material"] = str(getattr(material_type, "value", material_type))
+                scores[DefectType.BIAS_ERROR] = _x_bias
+                logger.info(
+                    "DefectScanner: BIAS_ERROR cross-chain fallback: chain=%s → severity=%.3f",
+                    getattr(_fmd_result, "transfer_chain", "?"),
+                    _x_bias.severity,
+                )
+
+        _alias_current = scores.get(DefectType.ALIASING)
+        if _alias_current is not None and _alias_current.metadata.get("medium_gated") and _chain_has_tape:
+            _x_alias = self._detect_aliasing(audio_mono, _bypass_material_gate=True)
+            if self._should_keep_cross_material_aliasing(_x_alias):
+                _x_alias.severity = float(np.clip(_x_alias.severity * 0.75, 0.0, 1.0))
+                _x_alias.confidence = float(np.clip(min(_x_alias.confidence, 0.60), 0.05, 0.95))
+                _x_alias.metadata["cross_material_fallback"] = True
+                scores[DefectType.ALIASING] = _x_alias
+                logger.info(
+                    "DefectScanner: ALIASING cross-chain fallback: chain=%s → severity=%.3f",
+                    getattr(_fmd_result, "transfer_chain", "?"),
+                    _x_alias.severity,
+                )
+
         _prog(100)
         _scan_result = DefectAnalysisResult(
             material_type=material_type,
@@ -1862,7 +1934,7 @@ class DefectScanner:
         click_rate = np.sum(diff > np.percentile(diff, 99.9)) / len(audio) * self.sample_rate
 
         # Spectral analysis
-        freqs, psd = signal.welch(audio, self.sample_rate, nperseg=2048)
+        freqs, psd = signal.welch(audio, self.sample_rate, nperseg=max(1, min(2048, len(audio))))
         _psd_total = np.maximum(np.sum(psd), 1e-12)  # §3.1: Zero-Division-Guard bei Stille
 
         # High-freq energy (8kHz+)
@@ -1942,7 +2014,7 @@ class DefectScanner:
         # === Feature-Extraction ===
 
         # 1. Rumble-Detection (Vinyl-typisch)
-        freqs, psd = signal.welch(audio_mono, self.sample_rate, nperseg=4096)
+        freqs, psd = signal.welch(audio_mono, self.sample_rate, nperseg=max(1, min(4096, len(audio_mono))))
         _psd_tot = np.maximum(np.sum(psd), 1e-12)  # §3.1: Zero-Division-Guard bei Stille
         rumble_energy = np.sum(psd[freqs < 60]) / _psd_tot
 
@@ -2204,6 +2276,18 @@ class DefectScanner:
         # Severity: click-rate per second (uses full count, not capped)
         duration = len(audio) / self.sample_rate
         click_rate = len(verified_groups) / duration
+
+        # Janssen (1986) / Godsill & Rayner (1998): AR-prediction-residual augmentation.
+        # LPC order 30 (spec §: 30–40 @ 48 kHz) detects clicks in harmonically rich
+        # signals where diff-based thresholding can miss them (false negatives for 1940s–
+        # 1960s shellac/vinyl recordings with strong carrier noise masking impulsive clicks).
+        try:
+            ar_rate = self._ar_click_residual_rate(audio)
+            # AR augments diff-based severity; never reduces (conservative lower-bound)
+            click_rate = max(click_rate, ar_rate * 0.80)
+        except Exception as _ar_exc:  # noqa: BLE001
+            logger.debug("AR click augmentation failed: %s", _ar_exc)
+
         severity = min(1.0, click_rate / 20)  # 20 clicks/sec = severity 1.0
 
         return DefectScore(
@@ -2217,6 +2301,78 @@ class DefectScanner:
                 "rejected_as_transients": len(click_groups) - len(verified_groups),
             },
         )
+
+    def _ar_click_residual_rate(self, audio: np.ndarray) -> float:
+        """Janssen (1986) / Godsill & Rayner (1998) AR prediction-error click rate.
+
+        Fits LPC order 30 (spec §: 30–40 @ 48 kHz) to 50 ms non-overlapping blocks
+        and counts samples where the prediction residual exceeds 6× the block residual
+        std. This catches clicks hidden in harmonically rich signals where inter-sample
+        difference thresholding underestimates click density (false negatives in 1920s–
+        1960s material with simultaneous carrier noise and impulsive disturbances).
+
+        Returns clicks-per-second (float). Analyses max. 30 s for efficiency.
+        """
+        try:
+            from scipy.linalg import solve_toeplitz as _solve_toeplitz
+        except ImportError:
+            return 0.0
+
+        lpc_order = 30  # spec: 30–40 @ 48 kHz
+        seg_n = max(lpc_order * 6, int(0.050 * self.sample_rate))  # ≥50 ms
+        # Limit to first 30 s (representative for click rate estimation)
+        max_samples = int(30 * self.sample_rate)
+        analysis = audio[:max_samples].astype(np.float64)
+        if analysis.ndim == 2:
+            analysis = np.mean(analysis, axis=1)
+
+        n = len(analysis)
+        if n < seg_n * 3:
+            return 0.0
+
+        n_blocks = n // seg_n
+        total_clicks = 0
+
+        for i in range(n_blocks):
+            seg = analysis[i * seg_n : (i + 1) * seg_n]
+
+            # Yule-Walker autocorrelation via FFT (efficient for long segments)
+            ac_full = np.real(
+                np.fft.irfft(
+                    np.abs(np.fft.rfft(seg, n=2 * len(seg))) ** 2
+                )
+            )
+            r = ac_full[: lpc_order + 1]
+            if not np.isfinite(r[0]) or r[0] < 1e-20:
+                continue
+
+            try:
+                a_lpc = _solve_toeplitz(r[:lpc_order], r[1 : lpc_order + 1])
+            except (np.linalg.LinAlgError, ValueError):
+                continue
+            if not np.all(np.isfinite(a_lpc)):
+                continue
+
+            # AR prediction via convolution: residual[n] = seg[n] - Σ a[k]*seg[n-k-1]
+            pred_filt = np.r_[1.0, -a_lpc]
+            residual = np.abs(np.convolve(seg, pred_filt, mode="full")[: len(seg)])
+            residual[:lpc_order] = 0.0  # startup region invalid
+
+            valid_resid = residual[lpc_order:]
+            resid_std = float(np.std(valid_resid)) + 1e-10
+            # Janssen threshold: residual > 6× std (calibrated for k=5–8 range)
+            ar_clicks_mask = valid_resid > 6.0 * resid_std
+            if ar_clicks_mask.any():
+                hits = np.where(ar_clicks_mask)[0]
+                cluster_gap = max(1, int(0.001 * self.sample_rate))
+                clustered = 1
+                for j in range(1, len(hits)):
+                    if hits[j] - hits[j - 1] > cluster_gap:
+                        clustered += 1
+                total_clicks += clustered
+
+        analysis_duration = (n_blocks * seg_n) / self.sample_rate
+        return total_clicks / max(analysis_duration, 1.0)
 
     def _detect_crackle(self, audio: np.ndarray) -> DefectScore:
         """Erkennt Crackle (kontinuierliches leises Knistern, z.B. Vinyl-Surface-Noise).
@@ -4177,19 +4333,75 @@ class DefectScanner:
         sev_hf = float(np.clip((hf_var_ratio - 0.15) / 0.5, 0.0, 1.0))
         sev_sb = float(np.clip((sideband_ratio - 3.0) / 10.0, 0.0, 1.0))
 
-        raw_severity = 0.25 * sev_zc + 0.30 * sev_if + 0.25 * sev_hf + 0.20 * sev_sb
+        # Bitto (2000) FM sideband analysis: D/A clock jitter creates symmetric
+        # sidebands around prominent spectral peaks at ±f_jitter offset. Find peaks
+        # with SNR > 20 dB above local noise floor, then measure energy at ±500 Hz
+        # and ±1 kHz offsets relative to peak amplitude. High sideband-to-peak ratio
+        # confirms jitter origin over other causes of HF variance.
+        sev_bitto = 0.0
+        try:
+            fft_n = min(32768, 2 ** int(np.log2(max(4096, n))))
+            center_start = max(0, n // 2 - fft_n // 2)
+            spectrum_seg = audio[center_start : center_start + fft_n]
+            if len(spectrum_seg) == fft_n:
+                win_b = np.hanning(fft_n)
+                spec_b = np.abs(np.fft.rfft(spectrum_seg * win_b))
+                freqs_b = np.fft.rfftfreq(fft_n, 1.0 / self.sample_rate)
+                freq_res = self.sample_rate / fft_n  # Hz per bin
+                # Find peaks with local SNR > 20 dB  in 2–12 kHz range (jitter-sensitive)
+                jitter_band = (freqs_b >= 2000) & (freqs_b <= 12000)
+                spec_jb = spec_b[jitter_band]
+                freqs_jb = freqs_b[jitter_band]
+                if len(spec_jb) > 20:
+                    local_median = np.median(spec_jb) + 1e-12
+                    peak_thresh = local_median * 10.0  # 20 dB above median
+                    peak_mask = spec_jb > peak_thresh
+                    peak_indices = np.where(peak_mask)[0]
+                    if len(peak_indices) > 0:
+                        sideband_ratios_b: list[float] = []
+                        for pi in peak_indices[:10]:  # max 10 peaks
+                            f_peak = freqs_jb[pi]
+                            peak_amp = spec_jb[pi]
+                            for f_offset in (500.0, 1000.0, 2000.0):
+                                lo_bin = int((f_peak - f_offset) / freq_res)
+                                hi_bin = int((f_peak + f_offset) / freq_res)
+                                lo_ok = 0 <= lo_bin < len(spec_b)
+                                hi_ok = 0 <= hi_bin < len(spec_b)
+                                if lo_ok and hi_ok:
+                                    sb_energy = (spec_b[lo_bin] + spec_b[hi_bin]) / 2.0
+                                    sideband_ratios_b.append(sb_energy / max(peak_amp, 1e-12))
+                        if sideband_ratios_b:
+                            mean_sb_ratio = float(np.mean(sideband_ratios_b))
+                            # Jitter sidebands: ratio typically 0.05–0.30; pure signal < 0.01
+                            sev_bitto = float(np.clip((mean_sb_ratio - 0.03) / 0.25, 0.0, 1.0))
+        except Exception:  # noqa: BLE001
+            pass
 
-        # Material-aware: digital sources more likely to have jitter
+        raw_severity = 0.22 * sev_zc + 0.26 * sev_if + 0.22 * sev_hf + 0.16 * sev_sb + 0.14 * sev_bitto
+
+        # Bitto (2000): FM sidebands are the most specific D/A-clock-jitter indicator.
+        # For cd_digital/dat, Bitto's analysis is directly applicable and deserves the
+        # highest weight. For analog sources, wow/flutter is the relevant mechanism;
+        # sideband weight must be reduced (analog sidebands ≠ D/A jitter).
+        # All weight rows sum to 1.0: zc + if + hf + sb + bitto
         _mat = getattr(self, "material_type", None)
         _DIGITAL_MATS = {"cd_digital", "dat", "mp3_low", "mp3_high", "aac", "streaming", "minidisc"}
+        _ANALOG_MATS = {"vinyl", "tape", "reel_tape", "shellac", "shellac_78", "cassette", "wax_cylinder"}
         if _mat is None:
             mat_name = ""
         elif isinstance(_mat, Enum):
             mat_name = str(_mat.value)
         else:
             mat_name = str(_mat)
-        if mat_name in _DIGITAL_MATS:
-            raw_severity *= 1.2  # boost for digital media
+        if mat_name in {"cd_digital", "dat"}:
+            # Bitto directly applicable: weight 0.28 (highest); compensated from zc+hf
+            raw_severity = 0.17 * sev_zc + 0.26 * sev_if + 0.13 * sev_hf + 0.16 * sev_sb + 0.28 * sev_bitto
+        elif mat_name in _DIGITAL_MATS:
+            # Digital but not raw D/A chain: moderate Bitto boost
+            raw_severity = 0.20 * sev_zc + 0.26 * sev_if + 0.18 * sev_hf + 0.16 * sev_sb + 0.20 * sev_bitto
+        elif mat_name in _ANALOG_MATS:
+            # Analog: D/A jitter not applicable; Bitto weight minimized
+            raw_severity = 0.26 * sev_zc + 0.26 * sev_if + 0.24 * sev_hf + 0.20 * sev_sb + 0.04 * sev_bitto
 
         threshold = self.thresholds.get(DefectType.JITTER_ARTIFACTS, 0.6)
         if raw_severity < threshold * 0.4:
@@ -4208,6 +4420,7 @@ class DefectScanner:
                 "if_variance": round(if_variance, 3),
                 "hf_var_ratio": round(hf_var_ratio, 3),
                 "sideband_ratio": round(sideband_ratio, 3),
+                "bitto_sideband_sev": round(sev_bitto, 3),
                 "n_segments": n_segs,
             },
         )
@@ -4654,7 +4867,7 @@ class DefectScanner:
         except Exception:
             return DefectScore(DefectType.VOCAL_HARSHNESS, 0.0, 0.3)
 
-    def _detect_bias_error(self, audio: np.ndarray) -> DefectScore:
+    def _detect_bias_error(self, audio: np.ndarray, _bypass_material_gate: bool = False) -> DefectScore:
         """Detect BIAS_ERROR: wrong AC-bias level on magnetic tape recording.
 
         Over-bias → HF rolloff earlier than expected (spectral slope too steep
@@ -4671,7 +4884,7 @@ class DefectScanner:
         material_name = str(getattr(self.material_type, "value", self.material_type)).lower()
         # "cassette" is a MediumDetector alias that maps to MaterialType.TAPE="tape" — include both
         tape_materials = {"tape", "reel_tape", "wire_recording", "cassette"}
-        if material_name not in tape_materials:
+        if material_name not in tape_materials and not _bypass_material_gate:
             return DefectScore(
                 defect_type=DefectType.BIAS_ERROR,
                 severity=0.0,
@@ -5026,6 +5239,44 @@ class DefectScanner:
         mean_depth_db = float(score.metadata.get("mean_depth_db", 0.0))
         event_rate = float(score.metadata.get("event_rate_per_s", 0.0))
         return severity >= 0.12 and dip_count >= 2 and mean_depth_db >= 6.0 and event_rate >= 0.15
+
+    @staticmethod
+    def _chain_contains_tape(fmd_result: object) -> bool:
+        """Return True if the transfer chain contains any tape-based medium.
+
+        Used for cross-chain BIAS_ERROR and ALIASING fallback: when the primary
+        material is digital/vinyl but the chain includes a tape stage, tape-specific
+        spectral defects can survive the transfer.
+        """
+        try:
+            chain = str(getattr(fmd_result, "transfer_chain", "") or getattr(fmd_result, "chain", "")).lower()
+            return any(t in chain for t in ("tape", "reel_tape", "cassette", "wire_recording"))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _should_keep_cross_material_bias_error(score: "DefectScore") -> bool:
+        """Keep bias-error evidence when primary material is non-tape but chain has a tape stage.
+
+        Bias errors leave a strong spectral slope anomaly (over-bias: steep HF rolloff;
+        under-bias: elevated uncorrelated HF noise) that survives lossy transcoding.
+        Criteria (all must hold):
+          - severity >= 0.18  (clear spectral slope deviation above noise)
+          - confidence >= 0.55 (multi-band regression confident)
+        """
+        return float(score.severity) >= 0.18 and float(score.confidence) >= 0.55
+
+    @staticmethod
+    def _should_keep_cross_material_aliasing(score: "DefectScore") -> bool:
+        """Keep aliasing evidence for digital material with analog-source transfer chain.
+
+        Pre-1990s ADC digitizations (archived as cassette→cd/mp3) often lacked proper
+        AA filters; near-Nyquist energy plateau remains detectable even after transcoding.
+        Criteria:
+          - severity >= 0.20
+          - confidence >= 0.40
+        """
+        return float(score.severity) >= 0.20 and float(score.confidence) >= 0.40
 
     def _detect_riaa_curve_error(self, audio: np.ndarray) -> DefectScore:
         """Detect RIAA_CURVE_ERROR: wrong EQ curve applied during vinyl/disc digitization.
@@ -5499,7 +5750,7 @@ class DefectScanner:
         except Exception:
             return DefectScore(DefectType.PRE_ECHO, 0.0, 0.3)
 
-    def _detect_aliasing(self, audio: np.ndarray) -> DefectScore:
+    def _detect_aliasing(self, audio: np.ndarray, _bypass_material_gate: bool = False) -> DefectScore:
         """Detect ALIASING: spurious near-Nyquist energy without natural musical source.
 
         Anti-aliasing filter failure during digitization → elevated spectral floor
@@ -5507,9 +5758,11 @@ class DefectScanner:
         """
         # Digital sources (cd_digital, dat, mp3_*, aac, streaming, minidisc) have proper
         # anti-aliasing filters by design — aliasing is not physically possible.
+        # Exception: cross-chain fallback (_bypass_material_gate=True) allows detection
+        # for pre-1990s digitizations archived via digital format (missing AA filter).
         _DIGITAL_MATS = {"cd_digital", "dat", "mp3_low", "mp3_high", "aac", "streaming", "minidisc"}
         _mat = getattr(self, "material_type", None)
-        if _mat is not None:
+        if _mat is not None and not _bypass_material_gate:
             _mat_name = str(_mat.value) if isinstance(_mat, Enum) else str(_mat)
             if _mat_name in _DIGITAL_MATS:
                 return DefectScore(
@@ -5748,9 +6001,15 @@ class DefectScanner:
                             s1 = np.abs(np.fft.rfft(trans_seg[:min_l]))
                             s2 = np.abs(np.fft.rfft(ghost_seg[:min_l]))
                             if len(s1) > 4:
-                                c = float(np.corrcoef(s1, s2)[0, 1])
-                                if not np.isnan(c):
-                                    best_corrs.append(max(0.0, c))
+                                # Stable correlation without np.corrcoef warnings on
+                                # near-constant spectra (important for -W error test runs).
+                                s1c = s1 - float(np.mean(s1))
+                                s2c = s2 - float(np.mean(s2))
+                                denom = float(np.linalg.norm(s1c) * np.linalg.norm(s2c))
+                                if denom > 1e-12:
+                                    c = float(np.dot(s1c, s2c) / denom)
+                                    if np.isfinite(c):
+                                        best_corrs.append(max(0.0, c))
 
             if not best_ratios:
                 return DefectScore(DefectType.GROOVE_ECHO, 0.0, 0.5)
@@ -5764,7 +6023,18 @@ class DefectScanner:
 
             threshold = self.thresholds.get(DefectType.GROOVE_ECHO, 0.5)
             if raw_sev < threshold * 0.1:
-                return DefectScore(DefectType.GROOVE_ECHO, 0.0, 0.5)
+                return DefectScore(
+                    DefectType.GROOVE_ECHO,
+                    0.0,
+                    0.5,
+                    locations=self._sample_locations_evenly(echo_locations, self._LOCATION_CAP_UNCAPPED),
+                    metadata={
+                        "mean_ratio": round(mean_ratio, 4),
+                        "spectral_corr": round(mean_corr, 4),
+                        "n_echoes": len(best_ratios),
+                        "below_threshold": True,
+                    },
+                )
             confidence = float(np.clip(0.4 + mean_corr * 0.3, 0.3, 0.90))
             return DefectScore(
                 DefectType.GROOVE_ECHO,
@@ -6199,37 +6469,57 @@ class DefectScanner:
             rms_db = 20.0 * np.log10(rms_env + 1e-12)
 
             # Detect short dips (10–100 ms duration, >4 dB depth)
+            # and longer contact-loss dips (100–300 ms, >2.5 dB depth).
             median_rms = float(np.median(rms_db))
             dip_threshold = median_rms - 4.0
             in_dip = rms_db < dip_threshold
             dip_events = []
+            long_dip_events = []
             dip_start = None
             for i, is_dipped in enumerate(in_dip):
                 if is_dipped and dip_start is None:
                     dip_start = i
                 elif not is_dipped and dip_start is not None:
                     dip_len_ms = (i - dip_start) * hop * 1000.0 / sr
+                    depth = median_rms - float(np.min(rms_db[dip_start:i]))
                     if 10.0 <= dip_len_ms <= 100.0:
-                        depth = median_rms - float(np.min(rms_db[dip_start:i]))
                         dip_events.append((dip_start, i, depth, dip_len_ms))
+                    elif 100.0 < dip_len_ms <= 300.0 and depth >= 2.5:
+                        long_dip_events.append((dip_start, i, depth, dip_len_ms))
                     dip_start = None
 
-            if len(dip_events) < 2:
+            all_events = dip_events + long_dip_events
+            if len(all_events) < 2:
                 return DefectScore(DefectType.STICKY_SHED_RESIDUE, 0.0, 0.5)
 
-            mean_depth = float(np.mean([d[2] for d in dip_events]))
-            mean_duration = float(np.mean([d[3] for d in dip_events]))
-            event_rate = len(dip_events) / (n / sr)  # events per second
+            mean_depth = float(np.mean([d[2] for d in all_events]))
+            mean_duration = float(np.mean([d[3] for d in all_events]))
+            event_rate = len(all_events) / (n / sr)  # events per second
 
-            raw_sev = float(np.clip(event_rate * 2.0, 0.0, 0.5))
-            raw_sev += float(np.clip(mean_depth / 15.0, 0.0, 0.3))
-            raw_sev += float(np.clip(len(dip_events) / 20.0, 0.0, 0.2))
+            # Boundary-modulation cue: sticky shed often causes noisy, unstable
+            # transitions at dip boundaries (binder residue on head path).
+            rms_diff = np.abs(np.diff(rms_db))
+            boundary_spikes = []
+            for s_idx, e_idx, *_ in all_events:
+                _lo = max(0, s_idx - 2)
+                _hi = min(len(rms_diff), e_idx + 1)
+                if _lo < _hi:
+                    boundary_spikes.append(float(np.max(rms_diff[_lo:_hi])))
+            _global_q75 = float(np.percentile(rms_diff, 75)) + 1e-12
+            _boundary_mean = float(np.mean(boundary_spikes)) if boundary_spikes else 0.0
+            modulation_score = float(np.clip((_boundary_mean / _global_q75 - 1.2) / 2.0, 0.0, 1.0))
+
+            raw_sev = float(np.clip(event_rate * 1.6, 0.0, 0.45))
+            raw_sev += float(np.clip(mean_depth / 18.0, 0.0, 0.25))
+            raw_sev += float(np.clip(len(dip_events) / 20.0, 0.0, 0.15))
+            raw_sev += float(np.clip(len(long_dip_events) / 12.0, 0.0, 0.15))
+            raw_sev += 0.20 * modulation_score
             raw_sev = float(np.clip(raw_sev, 0.0, 1.0))
 
             threshold = self.thresholds.get(DefectType.STICKY_SHED_RESIDUE, 0.5)
             if raw_sev < threshold * 0.1:
                 return DefectScore(DefectType.STICKY_SHED_RESIDUE, 0.0, 0.5)
-            locations = [(d[0] * hop / sr, d[1] * hop / sr) for d in dip_events]
+            locations = [(d[0] * hop / sr, d[1] * hop / sr) for d in all_events]
             confidence = float(np.clip(0.4 + event_rate * 0.1, 0.3, 0.90))
             return DefectScore(
                 DefectType.STICKY_SHED_RESIDUE,
@@ -6237,10 +6527,13 @@ class DefectScanner:
                 confidence,
                 locations=locations,
                 metadata={
-                    "n_events": len(dip_events),
+                    "n_events": len(all_events),
+                    "n_short_events": len(dip_events),
+                    "n_long_events": len(long_dip_events),
                     "mean_depth_db": round(mean_depth, 2),
                     "mean_duration_ms": round(mean_duration, 1),
                     "events_per_second": round(event_rate, 3),
+                    "boundary_modulation_score": round(modulation_score, 3),
                 },
             )
         except Exception:
@@ -6249,70 +6542,123 @@ class DefectScanner:
     def _detect_multiband_wow_flutter(self, audio: np.ndarray) -> DefectScore:
         """Detect frequency-dependent wow/flutter (head gap geometry artifact).
 
-        In some tape machines, wow/flutter varies across the frequency spectrum
-        due to head gap geometry and tape contact characteristics.
+        Uses STFT-based instantaneous frequency tracking (weighted spectral centroid)
+        per octave band to discriminate head-gap multiband flutter (band-dependent
+        pitch deviation) from normal musical complexity (affects all bands similarly).
 
-        Algorithm (Czyzewski 2023):
-        1. Split spectrum into 4 octave bands (250, 500, 1000, 2000 Hz centers)
-        2. Measure pitch stability independently per band
-        3. If pitch instability differs significantly across bands → multiband flutter
+        Replaces ZCR-based approach (v9.10.98) which false-positives on polyphonic
+        music: ZCR variance is driven by timbre/dynamics, not pitch instability.
+
+        Algorithm:
+        1. Compute full STFT (100 ms hop for pitch-rate resolution)
+        2. For each of 4 octave-band centres (250, 500, 1000, 2000 Hz):
+           a. Extract dominant frequency via power-weighted centroid per frame
+           b. Restrict to active frames (energy > 30th percentile)
+           c. Frame-to-frame deviation in cents → std(deviation) = instability
+        3. CV across bands: low = uniform flutter/music, high = multiband flutter
+        4. raw_sev = instability level + cross-band variation
 
         Scientific basis: Czyzewski et al. (2023), "Frequency-Dependent Speed
-        Fluctuation Analysis in Audio Tape Recordings".
+        Fluctuation Analysis in Audio Tape Recordings"; IEC 60386:1972 §4.
         """
         n = len(audio)
         sr = self.sample_rate
         if n < sr * 3:
             return DefectScore(DefectType.MULTIBAND_WOW_FLUTTER, 0.0, 0.3)
         try:
+            # Single full STFT — reused for all bands (no repeated filter-bank passes)
+            n_fft = min(4096, n)
+            hop = max(1, n_fft // 4)
+            win = np.hanning(n_fft)
+            freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
+
+            n_frames_total = max(1, (n - n_fft) // hop)
+            # Cap at 6000 frames (~100s at 48kHz/1024-hop) for performance
+            use_frames = min(n_frames_total, 6000)
+            stft_mag = np.zeros((len(freqs), use_frames), dtype=np.float32)
+            for fi in range(use_frames):
+                start = fi * hop
+                frame = audio[start : start + n_fft]
+                if len(frame) < n_fft:
+                    break
+                stft_mag[:, fi] = np.abs(np.fft.rfft(frame * win)).astype(np.float32)
+
             band_centers = [250, 500, 1000, 2000]
-            band_instabilities = []
+            band_instabilities: list[float] = []
+
+            # Global broadband power for relative-energy gating per band
+            # (prevents float32 quantization noise from activating empty bands)
+            global_power_mean = float(stft_mag.sum(axis=0).mean()) + 1e-12
 
             for fc in band_centers:
-                # Bandpass filter (±0.5 octave)
-                f_low = fc / 1.414
-                f_high = min(fc * 1.414, sr / 2 - 1)
+                f_low = max(50.0, fc / 1.414)
+                f_high = min(fc * 1.414, float(sr) / 2.0 - 10.0)
                 if f_high <= f_low:
                     continue
-                sos = signal.butter(4, [f_low, f_high], btype="bandpass", fs=sr, output="sos")
-                filtered = signal.sosfilt(sos, audio)
+                band_mask = (freqs >= f_low) & (freqs <= f_high)
+                if not band_mask.any():
+                    continue
 
-                # Measure pitch instability in this band via zero-crossing rate variance
-                hop = max(1, int(0.050 * sr))  # 50 ms frames
-                n_f = max(1, (len(filtered) - hop) // hop)
-                zcr_per_frame = []
-                for i in range(n_f):
-                    frame = filtered[i * hop : (i + 1) * hop]
-                    zcr = float(np.sum(np.abs(np.diff(np.sign(frame))) > 0)) / len(frame)
-                    zcr_per_frame.append(zcr)
+                band_freqs = freqs[band_mask]
+                band_mag = stft_mag[band_mask, :use_frames]  # (n_band_bins, use_frames)
+                mag_sum = band_mag.sum(axis=0) + 1e-12  # (use_frames,)
 
-                if len(zcr_per_frame) > 5:
-                    instability = float(np.std(zcr_per_frame) / (np.mean(zcr_per_frame) + 1e-12))
-                    band_instabilities.append(instability)
+                # Skip band if signal energy is negligible (tone not present in band).
+                # Without this guard, spectral leakage from other bands produces
+                # numerically unstable centroid estimates → false-positive instability.
+                # Use relative threshold (vs broadband) to be robust to float32 noise.
+                band_peak_energy = float(np.percentile(mag_sum, 90))
+                if band_peak_energy / global_power_mean < 0.001:
+                    continue
+
+                # Dominant frequency: power-weighted centroid (more stable than peak bin)
+                dominant_freq = np.dot(band_freqs, band_mag) / mag_sum
+
+                # Active frames: above the larger of 30th percentile or 5% of peak
+                # to avoid including near-silence micro-frames in stability estimate.
+                q30 = max(float(np.percentile(mag_sum, 30)), band_peak_energy * 0.05)
+                active = mag_sum > q30
+                if active.sum() < 10:
+                    continue
+                dom_active = dominant_freq[active]
+                if len(dom_active) < 4:
+                    continue
+
+                # Frame-to-frame deviation in cents
+                # 1 cent = 1/100 semitone; Δcents ≈ 1200 × Δf / f_ref
+                diffs = np.diff(dom_active)
+                diffs_cents = np.clip(np.abs(1200.0 * diffs / (dom_active[:-1] + 1e-6)), 0.0, 50.0)
+                # std of per-frame deviation = instability measure (in cents/hop)
+                band_instabilities.append(float(np.std(diffs_cents)))
 
             if len(band_instabilities) < 3:
                 return DefectScore(DefectType.MULTIBAND_WOW_FLUTTER, 0.0, 0.4)
 
-            # Frequency-dependence: coefficient of variation across bands
             mean_inst = float(np.mean(band_instabilities))
+            # CV across bands: head-gap flutter is band-selective → high CV
+            # Normal wow/flutter: affects all bands equally → low CV
             cv = float(np.std(band_instabilities) / (mean_inst + 1e-12))
 
-            # High CV = different instability per band = multiband flutter
-            raw_sev = float(np.clip(cv * 2.0, 0.0, 0.6))
-            raw_sev += float(np.clip(mean_inst * 3.0, 0.0, 0.4))
-            raw_sev = float(np.clip(raw_sev, 0.0, 1.0))
+            # Severity model:
+            #   avg_inst_norm:  mean instability > 10 cents/hop → saturates at 0.5
+            #   cv_sev:         cv > 0.35 contributes up to 0.5 (band-selective flutter)
+            avg_inst_norm = float(np.clip(mean_inst / 10.0, 0.0, 0.5))
+            cv_sev = float(np.clip((cv - 0.35) / 0.65, 0.0, 0.5))
+            raw_sev = float(np.clip(avg_inst_norm + cv_sev, 0.0, 1.0))
 
             threshold = self.thresholds.get(DefectType.MULTIBAND_WOW_FLUTTER, 0.5)
             if raw_sev < threshold * 0.1:
                 return DefectScore(DefectType.MULTIBAND_WOW_FLUTTER, 0.0, 0.5)
-            confidence = float(np.clip(0.4 + cv * 0.2, 0.3, 0.90))
+
+            confidence = float(np.clip(0.50 + cv * 0.20, 0.35, 0.85))
             return DefectScore(
                 DefectType.MULTIBAND_WOW_FLUTTER,
                 float(np.clip(raw_sev, 0.0, 1.0)),
                 confidence,
                 metadata={
-                    "band_instabilities": [round(b, 4) for b in band_instabilities],
+                    "band_instabilities_cents": [round(b, 3) for b in band_instabilities],
                     "cv_across_bands": round(cv, 4),
+                    "mean_instability_cents": round(mean_inst, 3),
                 },
             )
         except Exception:
@@ -6410,21 +6756,13 @@ class DefectScanner:
             float(np.percentile(spec_db, 20))
             freq_res = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 1.0
 
-            # Motor frequencies: 33⅓ rpm = 0.556 Hz, 45 rpm = 0.75 Hz, 78 rpm = 1.3 Hz
-            # Higher harmonics land in 80–300 Hz range
-            motor_freqs = []
-            for base in [0.556, 0.75, 1.3]:
-                for h in range(50, 400):
-                    f = base * h
-                    if 60 < f < 350:
-                        motor_freqs.append(f)
-
-            # Combine with generic motor harmonic series
-            motor_freqs.extend([80, 100, 120, 133, 150, 160, 180, 200, 240, 250, 267, 300])
-            motor_freqs = sorted({int(f) for f in motor_freqs if 60 < f < 350})
+            # Canonical motor-related harmonics in 80–300 Hz.
+            # Keep this set sparse: a dense pseudo-continuous grid creates false
+            # positives on musical harmonic stacks (bass/cello).
+            motor_freqs = [80, 100, 120, 133, 150, 160, 180, 200, 240, 250, 267, 300]
 
             # Check for peaks at motor frequencies (broad peaks, not sharp peaks like hum)
-            motor_peaks = []
+            motor_peaks: list[tuple[float, float]] = []
             for f in motor_freqs:
                 idx = int(f / freq_res)
                 if 0 < idx < len(spec_db) - 2:
@@ -6435,25 +6773,73 @@ class DefectScanner:
                     local_median = float(np.median(surround))
                     prominence = local_level - local_median
                     if prominence > 3.0:  # Broader threshold than hum (which uses sharper peaks)
-                        motor_peaks.append(prominence)
+                        motor_peaks.append((float(f), prominence))
 
             if len(motor_peaks) < 3:
                 return DefectScore(DefectType.MOTOR_INTERFERENCE, 0.0, 0.5)
 
-            mean_prominence = float(np.mean(motor_peaks))
+            mean_prominence = float(np.mean([p for _, p in motor_peaks]))
             raw_sev = float(np.clip(mean_prominence / 15.0, 0.0, 0.6))
             raw_sev += float(np.clip(len(motor_peaks) / 15.0, 0.0, 0.4))
             raw_sev = float(np.clip(raw_sev, 0.0, 1.0))
+
+            # Additional anti-false-positive guard for musical harmonic stacks:
+            # if one low-frequency fundamental explains most 80–400 Hz energy via
+            # its first harmonics, this is likely music (bass note), not motor hum.
+            harmonic_series_energy_ratio = 0.0
+            low_mask = (freqs >= 80.0) & (freqs <= 400.0)
+            low_total = float(np.sum(spec[low_mask]) + 1e-20)
+            f0_search_mask = (freqs >= 80.0) & (freqs <= 180.0)
+            if np.any(f0_search_mask) and low_total > 0.0:
+                f0_idx_local = int(np.argmax(spec[f0_search_mask]))
+                f0_idx = f0_idx_local + int(np.argmax(f0_search_mask))
+                f0 = float(freqs[f0_idx])
+                harmonic_energy = 0.0
+                for k in range(1, 5):
+                    h_freq = k * f0
+                    if h_freq > 400.0:
+                        break
+                    h_idx = int(h_freq / max(freq_res, 1e-9))
+                    lo = max(0, h_idx - 1)
+                    hi = min(len(spec), h_idx + 2)
+                    harmonic_energy += float(np.max(spec[lo:hi]))
+                harmonic_series_energy_ratio = float(np.clip(harmonic_energy / low_total, 0.0, 1.0))
+                if harmonic_series_energy_ratio >= 0.60:
+                    raw_sev *= 0.25
+
+            # Anti-false-positive guard: musical bass harmonics (e.g. 100/200/300 Hz)
+            # can look like motor series. If most detected peaks fit one harmonic
+            # ladder, attenuate motor severity heavily.
+            harmonic_fit_ratio = 0.0
+            peak_freqs = [f for f, _ in motor_peaks]
+            for f0 in peak_freqs:
+                if not (70.0 <= f0 <= 180.0):
+                    continue
+                matched = 0
+                for f in peak_freqs:
+                    k = max(1, int(round(f / f0)))
+                    if abs(f - k * f0) <= 6.0:
+                        matched += 1
+                harmonic_fit_ratio = max(harmonic_fit_ratio, matched / max(1, len(peak_freqs)))
+            if harmonic_fit_ratio >= 0.75 and len(peak_freqs) >= 4:
+                raw_sev *= 0.35
 
             threshold = self.thresholds.get(DefectType.MOTOR_INTERFERENCE, 0.5)
             if raw_sev < threshold * 0.1:
                 return DefectScore(DefectType.MOTOR_INTERFERENCE, 0.0, 0.5)
             confidence = float(np.clip(0.4 + len(motor_peaks) * 0.03, 0.3, 0.90))
+            if harmonic_fit_ratio >= 0.75 and len(peak_freqs) >= 4:
+                confidence = float(np.clip(confidence * 0.7, 0.3, 0.90))
             return DefectScore(
                 DefectType.MOTOR_INTERFERENCE,
                 float(np.clip(raw_sev, 0.0, 1.0)),
                 confidence,
-                metadata={"n_motor_peaks": len(motor_peaks), "mean_prominence_db": round(mean_prominence, 2)},
+                metadata={
+                    "n_motor_peaks": len(motor_peaks),
+                    "mean_prominence_db": round(mean_prominence, 2),
+                    "harmonic_fit_ratio": round(harmonic_fit_ratio, 3),
+                    "harmonic_series_energy_ratio": round(harmonic_series_energy_ratio, 3),
+                },
             )
         except Exception:
             return DefectScore(DefectType.MOTOR_INTERFERENCE, 0.0, 0.3)

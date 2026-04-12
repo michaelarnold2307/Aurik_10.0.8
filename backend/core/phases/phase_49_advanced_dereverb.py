@@ -99,6 +99,40 @@ class AdvancedDereverbPhase(PhaseInterface):
         "unknown": 2.0,
     }
 
+    def _adaptive_clarity_limits(self, kwargs: dict[str, object]) -> tuple[float, float, float, float]:
+        """Compute song-adaptive C80/D50 guard limits.
+
+        Keeps §4.5c behavior but adapts limits with §2.56 goal-importance context.
+        Returns: (c80_down_limit_db, c80_soft_limit_db, c80_hard_limit_db, d50_limit)
+        """
+        _gw = kwargs.get("song_goal_weights")
+        _w_nat = 1.0
+        _w_auth = 1.0
+        _w_timbre = 1.0
+        _w_trans = 1.0
+        _w_art = 1.0
+        _w_bril = 1.0
+        if isinstance(_gw, dict):
+            _w_nat = float(np.clip(float(_gw.get("natuerlichkeit", 1.0)), 0.30, 2.00))
+            _w_auth = float(np.clip(float(_gw.get("authentizitaet", 1.0)), 0.30, 2.00))
+            _w_timbre = float(np.clip(float(_gw.get("timbre_authentizitaet", 1.0)), 0.30, 2.00))
+            _w_trans = float(np.clip(float(_gw.get("transparenz", 1.0)), 0.30, 2.00))
+            _w_art = float(np.clip(float(_gw.get("artikulation", 1.0)), 0.30, 2.00))
+            _w_bril = float(np.clip(float(_gw.get("brillanz", 1.0)), 0.30, 2.00))
+
+        _preserve_w = float(np.clip((_w_nat + _w_auth + _w_timbre) / 3.0, 0.30, 2.00))
+        _clarity_w = float(np.clip((_w_trans + _w_art + _w_bril) / 3.0, 0.30, 2.00))
+
+        _rest = float(np.clip(float(kwargs.get("restorability_score", 65.0)), 0.0, 100.0))
+        _rest_factor = float(np.clip(1.0 + (50.0 - _rest) / 250.0, 0.85, 1.20))
+
+        _ratio = float(np.sqrt(_clarity_w / max(_preserve_w, 1e-6)))
+        c80_down_limit = float(np.clip((-2.0 * _rest_factor) / np.sqrt(max(_preserve_w, 1e-6)), -3.2, -1.2))
+        c80_soft_limit = float(np.clip(4.0 * _ratio * _rest_factor, 2.8, 5.2))
+        c80_hard_limit = float(np.clip(6.0 * _ratio * _rest_factor, 4.2, 7.5))
+        d50_limit = float(np.clip(0.12 * _ratio * _rest_factor, 0.08, 0.18))
+        return c80_down_limit, c80_soft_limit, c80_hard_limit, d50_limit
+
     def get_metadata(self) -> PhaseMetadata:
         return PhaseMetadata(
             phase_id=self._PHASE_ID,
@@ -154,6 +188,8 @@ class AdvancedDereverbPhase(PhaseInterface):
             )
 
         strength = effective_strength
+        _vocal_conf_49 = float(kwargs.get("vocal_confidence", kwargs.get("panns_singing_confidence", 0.0)))
+        _vocal_detected_49 = bool(kwargs.get("vocal_detected", False)) or (_vocal_conf_49 >= 0.35)
 
         # §2.20 Genre-adaptive dereverb hardcap (defense-in-depth — SongCal is primary guard).
         _genre_label_49 = str(kwargs.get("genre_label", ""))
@@ -172,6 +208,17 @@ class AdvancedDereverbPhase(PhaseInterface):
         elif _genre_label_49 == "Jazz":
             strength = min(strength, 0.35)  # Club-Atmosphäre bewahren
             logger.debug("Phase 49: Genre=Jazz → strength capped to %.2f", strength)
+
+        if _vocal_detected_49:
+            _vocal_cap_49 = float(np.clip(0.36 - 0.10 * _vocal_conf_49, 0.26, 0.36))
+            if strength > _vocal_cap_49:
+                logger.debug(
+                    "Phase 49: vocal guard active (conf=%.2f) → strength %.2f -> %.2f",
+                    _vocal_conf_49,
+                    strength,
+                    _vocal_cap_49,
+                )
+                strength = _vocal_cap_49
 
         protect_transients: bool = bool(kwargs.get("protect_transients", True))
         # Store material type for EMA-alpha selection in _dereverb_channel
@@ -193,11 +240,22 @@ class AdvancedDereverbPhase(PhaseInterface):
                 try:
                     # sigma: adaptiv aus strength — stärkerer Nachhall braucht höheres sigma
                     _sigma = float(np.clip(0.25 + strength * 0.65, 0.25, 0.90))
-                    _sgmse_result = _sgmse_factory_49().enhance(audio, sample_rate, sigma=_sigma)
+                    _ml_runtime_budget_s = float(np.clip(kwargs.get("ml_runtime_budget_s", 60.0), 20.0, 120.0))
+                    _sgmse_result = _sgmse_factory_49().enhance(
+                        audio,
+                        sample_rate,
+                        sigma=_sigma,
+                        max_runtime_s=_ml_runtime_budget_s,
+                    )
                     processed = np.asarray(_sgmse_result.audio, dtype=np.float32)
                     _sgmse_used = True
                     _ml_model_name = f"SGMSE+ ({_sgmse_result.model_used})"
-                    logger.info("Phase 49: Tier-0 SGMSE+ OK (sigma=%.2f, model=%s)", _sigma, _sgmse_result.model_used)
+                    logger.info(
+                        "Phase 49: Tier-0 SGMSE+ OK (sigma=%.2f, model=%s, budget=%.1fs)",
+                        _sigma,
+                        _sgmse_result.model_used,
+                        _ml_runtime_budget_s,
+                    )
                     if _progress_sub_cb is not None:
                         _progress_sub_cb(80.0, "Nachhall-Entfernung (SGMSE+-Nachbearbeitung)", 0.0)
                 except Exception as _sgmse_err:
@@ -244,22 +302,24 @@ class AdvancedDereverbPhase(PhaseInterface):
         attenuation_guard_triggered = False
         attenuation_guard_factor = 1.0
 
-        rms_before = float(np.sqrt(np.mean(audio**2)))
-        rms_processed = float(np.sqrt(np.mean(processed**2)))
-        rms_drop_db = 20.0 * np.log10(max(rms_processed / (rms_before + 1e-10), 1e-30))
+        rms_before_db = self._rms_dbfs_gated(audio)
+        rms_processed_db = self._rms_dbfs_gated(processed)
+        rms_drop_db = rms_processed_db - rms_before_db if rms_before_db > -80.0 else 0.0
 
         # Safety rescue for catastrophic dereverb attenuation. If the raw processed
         # signal collapses energy too aggressively, reduce wet mix preemptively.
         _max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(self._current_material, self._MAX_RMS_DROP_DB["unknown"]))
-        if rms_drop_db < -_max_rms_drop_db and wet_mix > 0.0:
+        if rms_before_db > -80.0 and rms_drop_db < -_max_rms_drop_db and wet_mix > 0.0:
             attenuation_guard_triggered = True
             attenuation_guard_factor = float(np.clip(_max_rms_drop_db / (abs(rms_drop_db) + 1e-9), 0.35, 1.0))
             wet_mix *= attenuation_guard_factor
 
         # --- §4.5c Early-Reflection-Guard: C80/D50 clarity-based wet-mix limiting ---
+        # §4.5c Early-Reflection-Guard: C80/D50 clarity-based wet-mix limiting
         # Measure C80 (Kuttruff 2009) on original and processed signal.
         # Spec limits: ΔC80 ≤ 6 dB, ΔD50 ≤ 0.12.  Values exceeding bounds → reduce wet_mix
         # or blend early reflections back (alpha=0.35 for first 50 ms).
+        _c80_down_lim, _c80_soft_lim, _c80_hard_lim, _d50_lim = self._adaptive_clarity_limits(kwargs)
         c80_pre = self._measure_c80_proxy(audio, sample_rate)
         c80_post = self._measure_c80_proxy(processed, sample_rate)
         delta_c80 = c80_post - c80_pre
@@ -271,23 +331,28 @@ class AdvancedDereverbPhase(PhaseInterface):
         d50_post = self._measure_d50_proxy(processed, sample_rate)
         delta_d50 = d50_post - d50_pre
 
-        if delta_c80 < -2.0:
+        if delta_c80 < _c80_down_lim:
             # C80 degraded — full rollback to original dry signal
-            logger.warning("Phase 49 C80-guard: ΔC80=%.2f dB below −2 dB → rollback to dry", delta_c80)
+            logger.warning(
+                "Phase 49 C80-guard: ΔC80=%.2f dB below %.2f dB → rollback to dry",
+                delta_c80,
+                _c80_down_lim,
+            )
             processed = audio.copy()
             wet_mix = 0.0
             c80_guard_triggered = True
-        elif delta_c80 > 6.0:
+        elif delta_c80 > _c80_hard_lim:
             # Excessive clarity boost → scale wet_mix proportionally
-            _c80_scale = float(np.clip(6.0 / (delta_c80 + 1e-9), 0.30, 1.0))
+            _c80_scale = float(np.clip(_c80_hard_lim / (delta_c80 + 1e-9), 0.30, 1.0))
             wet_mix *= _c80_scale
             c80_guard_triggered = True
             logger.info(
-                "Phase 49 C80-guard: ΔC80=%.2f dB > 6 dB → wet_mix scaled to %.3f",
+                "Phase 49 C80-guard: ΔC80=%.2f dB > %.2f dB → wet_mix scaled to %.3f",
                 delta_c80,
+                _c80_hard_lim,
                 wet_mix,
             )
-        elif delta_c80 > 4.0:
+        elif delta_c80 > _c80_soft_lim:
             # Moderate clarity boost → blend 35 % of original early reflections
             # back into the first 50 ms (spec §4.5c alpha=0.35 early-reflection blend)
             early_blend_triggered = True
@@ -305,13 +370,14 @@ class AdvancedDereverbPhase(PhaseInterface):
             processed = _proc64.astype(np.float32)
             logger.info("Phase 49 C80-guard: ΔC80=%.2f dB — early-reflection blend 35 %% applied (50 ms)", delta_c80)
 
-        # §4.5c D50 secondary guard: ΔD50 > 0.12 → further reduce wet
-        if abs(delta_d50) > 0.12 and not c80_guard_triggered:
-            _d50_scale = float(np.clip(0.12 / (abs(delta_d50) + 1e-9), 0.30, 1.0))
+        # §4.5c D50 secondary guard: adaptive ΔD50 limit
+        if abs(delta_d50) > _d50_lim and not c80_guard_triggered:
+            _d50_scale = float(np.clip(_d50_lim / (abs(delta_d50) + 1e-9), 0.30, 1.0))
             wet_mix *= _d50_scale
             logger.info(
-                "Phase 49 D50-guard: ΔD50=%.3f > 0.12 → wet_mix scaled to %.3f",
+                "Phase 49 D50-guard: ΔD50=%.3f > %.3f → wet_mix scaled to %.3f",
                 delta_d50,
+                _d50_lim,
                 wet_mix,
             )
 
@@ -320,9 +386,9 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # Final dry/wet rescue: keep dereverb effective, but do not allow an
         # audible loudness collapse after all clarity guards have been applied.
-        rms_after_blend = float(np.sqrt(np.mean(processed**2)))
-        rms_drop_after_blend_db = 20.0 * np.log10(max(rms_after_blend / (rms_before + 1e-10), 1e-30))
-        if rms_drop_after_blend_db < -_max_rms_drop_db and wet_mix > 0.0:
+        rms_after_blend_db = self._rms_dbfs_gated(processed)
+        rms_drop_after_blend_db = rms_after_blend_db - rms_before_db if rms_before_db > -80.0 else 0.0
+        if rms_before_db > -80.0 and rms_drop_after_blend_db < -_max_rms_drop_db and wet_mix > 0.0:
             _rescue_wet = float(
                 np.clip(wet_mix * (_max_rms_drop_db / (abs(rms_drop_after_blend_db) + 1e-9)), 0.20, wet_mix)
             )
@@ -330,9 +396,8 @@ class AdvancedDereverbPhase(PhaseInterface):
             wet_mix = _rescue_wet
 
         elapsed = time.time() - t0
-        rms_after = float(np.sqrt(np.mean(processed**2)))
-        # Guard: log10(0) => RuntimeWarning bei Stille-Eingaben; clamp auf >= 1e-30
-        rms_change_db = 20.0 * np.log10(max(rms_after / (rms_before + 1e-10), 1e-30))
+        rms_after_db = self._rms_dbfs_gated(processed)
+        rms_change_db = rms_after_db - rms_before_db if rms_before_db > -80.0 else 0.0
 
         logger.info(
             "Phase 49 WPE-Dereverb: strength=%.2f, RMS-Δ=%.2f dB, t=%.2fs",
@@ -343,6 +408,17 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         processed = np.nan_to_num(processed, nan=0.0, posinf=0.0, neginf=0.0)
         processed = np.clip(processed, -1.0, 1.0)
+
+        # §4.5 Psychoacoustic Masking Clamp — preserve inaudible reverb tail
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            processed = apply_psychoacoustic_masking_clamp(
+                audio, processed, sample_rate,
+                strength=effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase49 masking clamp non-blocking: %s", _pm_exc)
+
         return PhaseResult(
             success=True,
             audio=processed,
@@ -369,8 +445,14 @@ class AdvancedDereverbPhase(PhaseInterface):
                 "c80_pre": float(c80_pre),
                 "c80_post": float(c80_post),
                 "delta_c80": float(delta_c80),
+                "c80_down_limit_db": float(_c80_down_lim),
+                "c80_soft_limit_db": float(_c80_soft_lim),
+                "c80_hard_limit_db": float(_c80_hard_lim),
+                "d50_limit": float(_d50_lim),
                 "c80_guard_triggered": c80_guard_triggered,
                 "early_blend_triggered": early_blend_triggered,
+                "vocal_guard_active": bool(_vocal_detected_49),
+                "vocal_confidence": float(_vocal_conf_49),
             },
             metrics={"rms_change_db": rms_change_db, "strength": strength, "effective_strength": effective_strength},
         )
@@ -378,6 +460,26 @@ class AdvancedDereverbPhase(PhaseInterface):
     # ------------------------------------------------------------------
     # Kern-Implementierung
     # ------------------------------------------------------------------
+
+    def _rms_dbfs_gated(self, audio: np.ndarray, gate_dbfs: float = -50.0) -> float:
+        """Frame-wise RMS over active music frames only (§2.45a-I)."""
+        _x = np.asarray(audio, dtype=np.float32)
+        _mono = np.mean(_x, axis=1) if _x.ndim == 2 else _x
+        if _mono.size < 480:
+            _rms = float(np.sqrt(np.mean(_mono.astype(np.float64) ** 2) + 1e-12))
+            return float(20.0 * np.log10(_rms + 1e-10))
+        _frame = 480
+        _vals = []
+        for _i in range(0, len(_mono) - _frame + 1, _frame):
+            _seg = _mono[_i : _i + _frame]
+            _r = float(np.sqrt(np.mean(_seg.astype(np.float64) ** 2) + 1e-12))
+            _db = float(20.0 * np.log10(_r + 1e-10))
+            if _db > gate_dbfs:
+                _vals.append(_r * _r)
+        if not _vals:
+            return -96.0
+        _rms = float(np.sqrt(np.mean(_vals) + 1e-12))
+        return float(20.0 * np.log10(_rms + 1e-10))
 
     def _measure_c80_proxy(self, audio: np.ndarray, sr: int) -> float:
         """Estimate Clarity C80 from time-domain energy ratio (Kuttruff 2009).
@@ -432,6 +534,18 @@ class AdvancedDereverbPhase(PhaseInterface):
             )
             return np.clip(audio.copy(), -1.0, 1.0)
 
+        # §C2 Blind RIR: refine WPE delay D using predelay estimate
+        _rir_params = self._estimate_blind_rir(audio, sample_rate)
+        _predelay_samples = max(0, int(_rir_params["predelay_ms"] / 1000.0 * sample_rate))
+        _drr_db = float(_rir_params["drr_db"])
+        logger.debug(
+            "§C2 Blind RIR: rt60=%.2fs predelay=%.1fms EDT=%.2fs DRR=%.1fdB",
+            _rir_params["rt60_s"],
+            _rir_params["predelay_ms"],
+            _rir_params["edt_s"],
+            _drr_db,
+        )
+
         # 1. Transientenmaske
         transient_mask: np.ndarray | None = None
         if protect_transients:
@@ -444,18 +558,24 @@ class AdvancedDereverbPhase(PhaseInterface):
         # 3. WPE: iterative Nachhall-Schätzung & Subtraktion
         enhanced = stft_matrix.copy()
         t60_frames = max(1, int(t60 * sample_rate / self._HOP_SIZE))
-        D = max(2, min(6, int(t60_frames * 0.25)))  # ~25 % von T60
+        # §C2: Add predelay frames to WPE delay D for more accurate onset alignment
+        _predelay_frames = max(0, _predelay_samples // self._HOP_SIZE)
+        D = max(2, min(6, int(t60_frames * 0.25) + _predelay_frames))  # ~25% T60 + predelay
         K = max(3, min(12, int(t60_frames * 0.60)))  # ~60 % von T60
+        # §C2: DRR-adaptive iteration count — anechoic signal (DRR > 15 dB) → 1 iteration enough
+        _iterations = 1 if _drr_db > 15.0 else self._WPE_ITERATIONS
         logger.debug(
-            "Phase 49 Schroeder T60=%.2fs → WPE D=%d K=%d (t60_frames=%d)",
+            "Phase 49 Schroeder T60=%.2fs + §C2 predelay=%dframes → WPE D=%d K=%d iter=%d (t60_frames=%d)",
             t60,
+            _predelay_frames,
             D,
             K,
+            _iterations,
             t60_frames,
         )
         _, F = stft_matrix.shape
 
-        for _iteration in range(self._WPE_ITERATIONS):
+        for _iteration in range(_iterations):
             power = np.abs(enhanced) ** 2
             # alpha=0.90 is fast (high noise-floor reactivity) — good for vinyl/cassette
             # reverb bursts.  Tape material has a longer reverb tail and gentler room
@@ -496,6 +616,78 @@ class AdvancedDereverbPhase(PhaseInterface):
     # ------------------------------------------------------------------
     # WPE-Hilfsmethoden
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _estimate_blind_rir(audio: np.ndarray, sample_rate: int) -> dict[str, float]:
+        """§C2 Blind Room Impulse Response estimation via autocorrelation.
+
+        Estimates key RIR parameters from the reverberant speech/music signal
+        without requiring a clean reference (no anechoic chamber needed).
+
+        Method:
+        1. T60 via Schroeder (1965) backward integration (existing method).
+        2. Predelay: first significant autocorrelation peak lag after t=0
+           (delay before room reflections arrive, typically 0-15 ms in studios).
+        3. Early decay time (EDT, 0 to -10 dB) via EDC slope (Beranek 2016).
+        4. Direct-to-reverberant ratio (DRR) proxy: ratio of first 5 ms RMS
+           to full signal RMS (Vesa & Harma 2005 blind DRR estimate).
+
+        Returns dict with 'rt60_s', 'predelay_ms', 'edt_s', 'drr_db'.
+
+        References:
+            Schroeder (1965) JASA 37:409.
+            Vesa & Harma (2005) Proc. ICASSP — blind DRR.
+            Beranek (2016) JASA 139:1548 — EDT and RT relationship.
+        """
+        result = {"rt60_s": 0.4, "predelay_ms": 0.0, "edt_s": 0.25, "drr_db": 6.0}
+        try:
+            x = np.asarray(audio, dtype=np.float64)
+            x = x - float(np.mean(x))  # DC removal
+
+            # 1. T60 via EDC
+            energy = x**2
+            edc = np.cumsum(energy[::-1])[::-1]
+            peak = float(edc.max())
+            if peak < 1e-14:
+                return result
+            edc_db = 10.0 * np.log10(edc / peak + 1e-14)
+
+            below5 = np.where(edc_db <= -5.0)[0]
+            below35 = np.where(edc_db <= -35.0)[0]
+            if len(below5) > 0 and len(below35) > 0 and below35[0] > below5[0]:
+                t30 = (below35[0] - below5[0]) / float(sample_rate)
+                result["rt60_s"] = float(np.clip(2.0 * t30, 0.05, 3.0))
+
+            # 2. Predelay via normalized autocorrelation
+            max_lag = int(0.020 * sample_rate)  # Search up to 20 ms
+            if len(x) > 2 * max_lag:
+                ac = np.correlate(x[:max_lag * 4], x[:max_lag * 4], mode="full")
+                ac = ac[len(ac)//2:]  # Keep positive lags only
+                ac_norm = ac / (float(ac[0]) + 1e-14)
+                # Find first local peak after lag=0
+                for lag in range(2, min(max_lag, len(ac_norm) - 1)):
+                    if ac_norm[lag] > ac_norm[lag - 1] and ac_norm[lag] > ac_norm[lag + 1] and ac_norm[lag] > 0.05:
+                        result["predelay_ms"] = float(lag / sample_rate * 1000.0)
+                        break
+
+            # 3. EDT: 0 to -10 dB slope of EDC (Beranek 2016 definition)
+            below0 = np.where(edc_db <= 0.0)[0]
+            below10 = np.where(edc_db <= -10.0)[0]
+            if len(below0) > 0 and len(below10) > 0 and below10[0] > below0[0]:
+                edt_t = (below10[0] - below0[0]) / float(sample_rate)
+                result["edt_s"] = float(np.clip(edt_t * 6.0, 0.02, 2.0))  # Extrapolate to -60 dB
+
+            # 4. DRR proxy: first 5 ms vs full (Vesa & Harma 2005)
+            direct_window = int(0.005 * sample_rate)
+            if direct_window > 0:
+                rms_direct = float(np.sqrt(np.mean(x[:direct_window]**2)) + 1e-14)
+                rms_total = float(np.sqrt(np.mean(x**2)) + 1e-14)
+                ddRR = 20.0 * np.log10(rms_direct / rms_total)
+                result["drr_db"] = float(np.clip(ddRR, -20.0, 30.0))
+
+        except Exception as _rir_exc:
+            logger.debug("§C2 Blind RIR estimation non-blocking: %s", _rir_exc)
+        return result
 
     @staticmethod
     def _estimate_t60_schroeder(audio: np.ndarray, sample_rate: int) -> float:

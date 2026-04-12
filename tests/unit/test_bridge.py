@@ -358,6 +358,98 @@ class TestExperienceInsights:
         res = bridge.get_experience_insights(r)
         assert res["recommendation_count"] == 1
 
+    def test_recovery_certainty_defaults(self, bridge):
+        r = _DummyResult({})
+        res = bridge.get_experience_insights(r)
+        assert "recovery_certainty" in res
+        rc = res["recovery_certainty"]
+        assert rc["recoverability_ceiling"] == 0.0
+        assert rc["uncertainty_index"] == 1.0
+        assert rc["conservative_audio_scalar"] == 1.0
+        assert rc["confidence_band"] == ""
+
+    def test_recovery_certainty_sanitized(self, bridge):
+        r = _DummyResult(
+            {
+                "recovery_certainty": {
+                    "recoverability_ceiling": 1.4,
+                    "uncertainty_index": -1.0,
+                    "conservative_audio_scalar": 0.87,
+                    "confidence_band": "medium",
+                    "restorability_score": 73.2,
+                    "transfer_generation_count": 3,
+                    "hf_loss_db": -21.5,
+                }
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        rc = res["recovery_certainty"]
+        assert rc["recoverability_ceiling"] == 1.0
+        assert rc["uncertainty_index"] == 0.0
+        assert rc["conservative_audio_scalar"] == pytest.approx(0.87, abs=1e-6)
+        assert rc["confidence_band"] == "medium"
+        assert rc["restorability_score"] == pytest.approx(73.2, abs=1e-6)
+        assert rc["transfer_generation_count"] == 3
+        assert rc["hf_loss_db"] == pytest.approx(-21.5, abs=1e-6)
+
+    def test_spectral_tilt_guard_defaults(self, bridge):
+        r = _DummyResult({})
+        res = bridge.get_experience_insights(r)
+        assert "spectral_tilt_guard" in res
+        tg = res["spectral_tilt_guard"]
+        assert tg["guard_fired_count"] == 0
+        assert tg["phases_guarded"] == []
+        assert tg["max_deviation_db_per_oct"] == 0.0
+        assert tg["max_wet_cap_applied"] == 0.0
+
+    def test_spectral_tilt_guard_sanitized(self, bridge):
+        r = _DummyResult(
+            {
+                "spectral_tilt_guard": {
+                    "guard_fired_count": 3,
+                    "phases_guarded": ["phase_06_frequency_restoration", "phase_39_air_band_enhancement"],
+                    "max_deviation_db_per_oct": 2.37,
+                    "max_wet_cap_applied": 0.72,
+                }
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        tg = res["spectral_tilt_guard"]
+        assert tg["guard_fired_count"] == 3
+        assert len(tg["phases_guarded"]) == 2
+        assert tg["max_deviation_db_per_oct"] == pytest.approx(2.37, abs=1e-6)
+        assert tg["max_wet_cap_applied"] == pytest.approx(0.72, abs=1e-6)
+
+    def test_hf_hallucination_guard_defaults(self, bridge):
+        """HF-Guard-Schlüssel ist vorhanden und zeigt Null-Zustand wenn keine Phasen feuerten."""
+        r = _DummyResult({})
+        res = bridge.get_experience_insights(r)
+        assert "hf_hallucination_guard" in res
+        hf = res["hf_hallucination_guard"]
+        assert hf["guard_fired_count"] == 0
+        assert hf["phases_guarded"] == []
+        assert hf["max_delta_ratio"] == pytest.approx(0.0, abs=1e-9)
+        assert hf["min_cap_hz"] is None
+
+    def test_hf_hallucination_guard_populated(self, bridge):
+        """Wenn hf_hallucination_guard in metadata vorhanden, wird es korrekt weitergegeben."""
+        r = _DummyResult(
+            {
+                "hf_hallucination_guard": {
+                    "guard_fired_count": 2,
+                    "phases_guarded": ["phase_06_frequency_restoration", "phase_55_harmonic_exciter"],
+                    "max_delta_ratio": 0.12,
+                    "min_cap_hz": 7000.0,
+                }
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        hf = res["hf_hallucination_guard"]
+        assert hf["guard_fired_count"] == 2
+        assert "phase_06_frequency_restoration" in hf["phases_guarded"]
+        assert hf["max_delta_ratio"] == pytest.approx(0.12, abs=1e-6)
+        assert hf["min_cap_hz"] == pytest.approx(7000.0, abs=0.1)
+
 
 # ---------------------------------------------------------------------------
 # 7. warmup_models_background — kein blockierendes sleep() (§9.7.4)

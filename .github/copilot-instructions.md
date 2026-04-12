@@ -34,6 +34,27 @@
 
 > §0 ist **normativ übergeordnet**: Wenn eine technische Regel (PMGG-Threshold, Metrik-Schwellwert, Phase-Pflicht) dem Klangergebnis schadet, ist das ein Bug in der Regel — nicht im Klang.
 
+### §0c [RELEASE_MUST] Universalitäts-Invariante — alle Importsongs
+
+Der Qualitätsanspruch gilt **universell für jede Importdatei** (Genre, Ära, Material, Länge, Defektprofil) und darf
+niemals auf einen einzelnen Referenzsong optimiert werden.
+
+**Verbindliche Invarianten:**
+
+1. **Keine song-spezifischen Sonderregeln** im Produktionscode (z. B. Dateiname, Artist, statischer Song-Key,
+  einmalige „Fixes" für ein einzelnes Beispiel).
+2. **SOTA-übergreifende Robustheit**: Jede Optimierung muss in material-/kontextübergreifenden Gates
+  nachweisen, dass sie auf einer repräsentativen Matrix (Material × Modus × Kontext) stabil ist.
+3. **Maximal-umsetzbare Recovery statt Hardstop**: Bei fehlgeschlagenem End-Gate MUSS Aurik das
+  bestmögliche sichere Ergebnis suchen (Strength-Reduktion, alternatives Checkpoint,
+  material-adaptive Recovery-Kaskade). Ein früher Hardstop ohne Recovery-Suche ist unzulässig.
+  Ergebnisstatus bleibt transparent (degraded/recovered), darf aber nicht als stiller Erfolg maskiert werden.
+4. **Allgemeingültigkeit vor Einzelfallgewinn**: Eine Änderung, die einen Song verbessert, aber die
+  mittlere Qualität über die Import-Matrix verschlechtert, ist normativ unzulässig.
+
+**Rationale:** Aurik ist ein universelles Restaurationssystem. "Maximale Klangtreue" bedeutet
+"maximale Treue pro Songklasse im gesamten Importraum", nicht "bestes Ergebnis für den aktuell geladenen Song".
+
 ## Architektur dieser Richtlinien
 
 Diese Datei ist der **Slim Core** (~250 Zeilen) — wird in **jeder** Konversation geladen.
@@ -68,7 +89,7 @@ Detailwissen liegt in **aufgabenspezifischen Skills** unter `.github/skills/*/SK
 
 - Nutzerinteraktion: **genau eine Entscheidung** — `Restoration` oder `Studio 2026`
 - Pflicht-Einstieg: `AurikDenker.denke(audio, sr, mode, progress_callback)` — kein UI-Bypass
-- Export nur nach bestandenem Qualitäts-Gate (Musical Goals + PQS + Safety-Invarianten)
+- Bei fehlgeschlagenem Qualitäts-Gate: verpflichtende Recovery-Kaskade bis zum maximal umsetzbaren sicheren Ergebnis; Export nur mit transparentem Status (`recovered`/`degraded`) und vollständigem Fail-Reason.
 
 ## Pfad-Mapping (verbindlich)
 
@@ -148,6 +169,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | Lautheitsmessung ohne ISO 532-1 | `np.mean(audio**2)` oder LUFS-only nach Rumble/Multiband-Phasen | `compute_specific_loudness_zwicker(audio, sr)` → ΔN > 2.0 sone = FAIL, Dry/Wet-Rescue (§4.1b) |
 | JND-blinde PMGG-Phase-Akzeptanz | Phase mit allen Deltas > 0 und < JND wird identisch zu signifikant positiver Phase behandelt | `JND_MIN_DELTA` Dict in `_run_with_retry()`: wenn alle Deltas ≥ 0 UND alle < JND → `sub_threshold`, kein Retry, `metadata["sub_threshold_phases"]` (§2.47b) |
 | Uniforme Goal-Gewichtung | Alle 14 Goals gleich gewichtet via Minimax (`_max_regression` ohne Weights) | `estimate_goal_importance()` → Per-Song-Profil → `goal_weights` in PMGG/CIG/GPP/FC (§2.56) |
+| §2.56 nur in Gates nutzen | `goal_weights` ausschließlich für PMGG/CIG verwenden; Phasen laufen mit statischer Strength/Wetness | Globale all-phase Kopplung in UV3 `_profiled_phase_call`: `_compute_harmonic_adaptation_scalar(...)` (advisory-only), wirkt auf implizite `strength` + wet/dry, explizite PMGG-Strength bleibt führend (§2.56a) |
 
 ### Sprachkonvention
 - **UI-Texte, Fehlermeldungen**: Deutsch (Ursache + Lösungsvorschlag)
@@ -264,7 +286,20 @@ Die 14 Goals bilden eine **Pareto-Front**: nicht alle gleichzeitig maximierbar. 
 
 **Soft-Cap**: `w > 1.5 → 1.5 + excess/(1+3·excess)` (Asymptote 1.83); `w < 0.5` analog (0.17). Danach P1/P2-Floor ≥ 0.70, Hard-Bounds [0.30, 2.00].
 
-**Integration**: PMGG (`weighted_reg = reg × weight`), CIG (gewichtete Drift), GoalPriorityProtocol (gewichtete Conflict-Resolution + Abort), FeedbackChain (gewichtete GPP-Prüfung).
+**Integration**: PMGG (`weighted_reg = reg × weight`), CIG (gewichtete Drift), GoalPriorityProtocol (gewichtete Conflict-Resolution + Abort), FeedbackChain (gewichtete GPP-Prüfung), UV3 all-phase Kopplung über `_compute_harmonic_adaptation_scalar(...)` in `_profiled_phase_call` (advisory-only: explizite PMGG-Strength gewinnt).
+
+### [RELEASE_MUST] §2.56a Global All-Phase Harmonic Adaptation (v9.11.12)
+
+Alle 64 Phasen müssen harmonisch auf denselben Song-Kontext reagieren, ohne Einzelphasen-Hardcoding.
+
+- Ort: `backend/core/unified_restorer_v3.py` (`_profiled_phase_call`)
+- Pflicht-Funktion: `_compute_harmonic_adaptation_scalar(phase_id, phase_family, goal_weights, restorability_score, material_key)`
+- Wirkung: multiplikative, bounded Anpassung auf implizite `strength` und `wet/dry`
+- Bound: `harmonic_adaptation_scalar ∈ [0.72, 1.18]` (mit Pullback von Randwerten)
+- Advisory-only: wenn `strength` explizit gesetzt wurde (PMGG/Team-Policy/Hard-Cap), darf §2.56a diesen Wert nicht überschreiben
+- Fehlertoleranz: Ausnahme im Adaptionspfad darf Pipeline nicht blockieren (debug-log + neutraler Skalar 1.0)
+
+**Normativer Zweck**: weniger False-Positive-Rollbacks bei gleichbleibend harten Safety-Gates (§2.44, §2.48, §2.49).
 
 **Messverfahren-VERBOTEN**: Lag-1-HNR (`_compute_hnr`), 46ms-Coherence (`_estimate_harmonic_coherence`), `np.max()`-Crest, RMS-Flux-Transients. → Spec 01 §2.56e.
 
@@ -391,6 +426,12 @@ Neue Zielpriorität: **maximales Hörerlebnis** wird im Produktionslauf als expl
     - Info-Banner: Cluster-Policy + Top Auto-Improve-Empfehlungen.
 5. Fehlerverhalten ist **non-blocking**: fehlende Experience-Telemetrie darf den Export nicht stoppen,
     MUSS aber als degrade-hinweis protokolliert werden (kein stilles Ignorieren).
+6. `joy_runtime_index.components` MUSS folgende Advisory-Metriken enthalten (v9.11.14 Literature-Based):
+    - `frisson_index` (0..1): musikalische Gänsehaut-Propensity aus Erwartungsbogen, Dynamik, Articulation, Raumtiefe (Blood & Zatorre 2001, Grewe 2007, Harrison & Loui 2014)
+    - Alle Sub-Komponenten NaN/Inf-frei, clipped [0, 1]
+  - **Mode-Policy**: Restoration = advisory-only (kein Audio-Impact); Studio 2026 = konservative bounded Mikro-Kopplung auf implizite Strength/Wet-Dry erlaubt
+  - Keine Kopplung auf harte Gates (PMGG/CIG/AFG/HPI) und keine Überschreibung expliziter PMGG-Strength
+  - UI zeigt "Gaensehaut X%" neben Freude/Ermüdung im Status und Ergebnis-Banner
 
 ### [RELEASE_MUST] §2.53a Exzellenz-API-Kompatibilitätsvertrag (v9.11.1)
 

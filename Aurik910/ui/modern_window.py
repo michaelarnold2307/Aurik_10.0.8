@@ -14,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,9 @@ try:
     )
     from backend.api.bridge import (
         clear_medium_cache as _bridge_clear_medium_cache,
+    )
+    from backend.api.bridge import (
+        build_export_quality_gate_payload as _build_export_quality_gate_payload,
     )
     from backend.api.bridge import (
         export_guard as _export_guard,
@@ -129,7 +133,10 @@ try:
         get_restorer_classes as _bridge_get_restorer_classes,
     )
     from backend.api.bridge import (
-        get_save_checkpoint_fn as _bridge_get_save_checkpoint_fn,
+        get_save_checkpoint_fn as _bridge_get_save_checkpoint_fn,  # type: ignore[assignment]
+    )
+    from backend.api.bridge import (
+        get_unified_restorer_v3_instance as _bridge_get_unified_restorer_v3_instance,
     )
     from backend.api.bridge import (
         normalize_pipeline_health_state as _bridge_normalize_pipeline_health_state,  # type: ignore[assignment]
@@ -161,6 +168,19 @@ except ImportError:
 
     def _validate_export_quality(result: object) -> tuple:  # type: ignore[misc]
         return True, []
+
+    def _build_export_quality_gate_payload(result: object) -> dict:  # type: ignore[misc]
+        return {
+            "passed": True,
+            "fail_reason": "",
+            "fail_reasons": [],
+            "required_gates": ["musical_goals", "pqs", "oqs", "fallback_quality_floor"],
+            "recovery_attempted": False,
+            "best_possible_reached": False,
+            "degradation_status": "ok",
+            "fallback_quality_floor": {},
+            "warnings": [],
+        }
 
     def cache_defect_result(file_path: str, result: object) -> None:  # type: ignore[misc]
         return  # no-op: Bridge nicht verfügbar, Defekt-Cache deaktiviert
@@ -206,7 +226,7 @@ except ImportError:
     def _bridge_get_recovery_checkpoint_fns() -> tuple:  # type: ignore[misc]
         return (lambda: None), (lambda: []), (lambda _p: None)  # type: ignore[return-value]
 
-    def _bridge_get_save_checkpoint_fn():  # type: ignore[misc]
+    def _bridge_get_save_checkpoint_fn() -> Callable[..., str | None]:  # type: ignore[misc]
         return lambda **kw: None  # no-op: Bridge nicht verfügbar
 
     # Bridge-Fallbacks: geben None zurück (§11.4 Bridge-Fallback)
@@ -259,6 +279,9 @@ except ImportError:
         return None
 
     def _bridge_get_restorer_classes() -> object | None:  # type: ignore[misc]
+        return None
+
+    def _bridge_get_unified_restorer_v3_instance() -> object | None:  # type: ignore[misc]
         return None
 
     _bridge_PreAnalysisResult = None  # type: ignore[assignment,misc]  # noqa: N816
@@ -373,7 +396,7 @@ from Aurik910.i18n import get_language, set_language, t
 try:
     from Aurik910 import __version__ as _AURIK_VERSION
 except Exception:
-    _AURIK_VERSION = "9.10.121"
+    _AURIK_VERSION = "9.11.8"
 
 # SVG-Phasen-Icons (2.5D mystisch-profi)
 try:
@@ -1130,6 +1153,35 @@ class BatchProcessingThread(QThread):
             self.all_finished.emit()
             return
 
+        # AMD ROCm warmup — eliminiert HIP JIT cold-start-Latenz vor dem ersten Plugin-Call
+        # Läuft nur wenn ROCm verfügbar; ist auf CPU-only und DirectML ein No-op.
+        try:
+            from backend.api.bridge import warmup_rocm as _warmup_rocm
+            _warmup_rocm()
+        except Exception as _wup_exc:
+            logger.debug("ROCm warmup im BatchProcessingThread fehlgeschlagen (unkritisch): %s", _wup_exc)
+
+        _last_defect_emit_sig: tuple[Any, ...] | None = None
+
+        def _emit_defect_update(payload: dict) -> None:
+            """Emit defect_update only when the semantic payload changed."""
+            nonlocal _last_defect_emit_sig
+
+            _status = str(payload.get("status", "") or "")
+            _active = tuple(sorted(str(x) for x in (payload.get("_active_defects") or [])))
+            _numerics = tuple(
+                sorted(
+                    (k, round(float(v), 4))
+                    for k, v in payload.items()
+                    if isinstance(v, (int, float))
+                )
+            )
+            _sig = (_status, _active, _numerics)
+            if _sig == _last_defect_emit_sig:
+                return
+            _last_defect_emit_sig = _sig
+            self.defect_update.emit(payload)
+
         while not self._stop_requested:
             # P0: Qt-Interrupt-Check (Escape / _cancel_processing)
             if self.isInterruptionRequested():
@@ -1397,7 +1449,7 @@ class BatchProcessingThread(QThread):
                             )
                         _scan_source = "retry"
                 defects = _defect_analysis_to_display(_scan.scores, status="detected")
-                self.defect_update.emit(defects)
+                _emit_defect_update(defects)
                 logger.info(
                     "BatchDiag: defect analysis done (source=%s)",
                     _scan_source,
@@ -1425,7 +1477,7 @@ class BatchProcessingThread(QThread):
                 # Phase 2: Correction starting
                 defects_correcting = defects.copy()
                 defects_correcting["status"] = "correcting"
-                self.defect_update.emit(defects_correcting)
+                _emit_defect_update(defects_correcting)
 
                 # ML-Plugin-Status: Phasen-Namen → aktive Plugin-Schlüsselwörter
                 # Two-tier matching:
@@ -2131,7 +2183,7 @@ class BatchProcessingThread(QThread):
                             if _defect_reduced_phase:
                                 if _current_plugin and hasattr(self, "waveform_widget"):
                                     self.waveform_widget._active_tool = _current_plugin
-                                self.defect_update.emit({**_current_defect_scores, "status": "correcting"})
+                                _emit_defect_update({**_current_defect_scores, "status": "correcting"})
 
                             _last_phase_key[0] = _phase_key
                             _last_raw_phase_id[0] = _raw_pid
@@ -2163,7 +2215,7 @@ class BatchProcessingThread(QThread):
                                         ):
                                             _active_keys.append(_adk)
                             if _active_keys:
-                                self.defect_update.emit(
+                                _emit_defect_update(
                                     {**_current_defect_scores, "status": "correcting", "_active_defects": _active_keys}
                                 )
                             else:
@@ -2473,7 +2525,7 @@ class BatchProcessingThread(QThread):
                         _completed_display[_ck] = 0 if isinstance(_cv, (int, float)) else _cv
                     _completed_display["_locations"] = {}
                     _completed_display["status"] = "completed"
-                self.defect_update.emit(_completed_display)
+                _emit_defect_update(_completed_display)
 
                 # ML-Plugin-Status: Live-Ergebnis aus _live_ml_seen (während denke() gesammelt)
                 # + Nachberechnung aus phases_executed für Plugins die keine progress-Meldung gesendet haben
@@ -2579,6 +2631,7 @@ class BatchProcessingThread(QThread):
 
                 # §G2: Export-Quality-Gate — prüft Chroma/LUFS/Goals/quality_estimate vor Export
                 _eq_passed, _eq_warnings = _validate_export_quality(result)
+                _eq_payload = _build_export_quality_gate_payload(result)
                 if _eq_warnings:
                     for _eqw in _eq_warnings:
                         logger.warning("Export-Quality: %s", _eqw)
@@ -2622,12 +2675,23 @@ class BatchProcessingThread(QThread):
                 if _fmt_key in _fmt_cfg and _AudioExporter is not None:
                     _bit_depth, _extra_kwargs = _fmt_cfg[_fmt_key]
                     _exporter = _AudioExporter()
+                    _meta_for_export = {
+                        "quality_gate_passed": str(bool(_eq_payload.get("passed", _eq_passed))),
+                        "quality_gate_degradation_status": str(_eq_payload.get("degradation_status", "ok")),
+                        "quality_gate_fail_reason": str(_eq_payload.get("fail_reason", "")),
+                        "quality_gate_recovery_attempted": str(bool(_eq_payload.get("recovery_attempted", False))),
+                        "quality_gate_best_possible_reached": str(bool(_eq_payload.get("best_possible_reached", False))),
+                        "fallback_quality_floor_status": str(
+                            (_eq_payload.get("fallback_quality_floor", {}) or {}).get("status", "passed")
+                        ),
+                    }
                     _exporter.export(
                         write_audio,
                         write_sr,
                         Path(item.output_file),
                         bit_depth=_bit_depth,
                         quality="veryhigh",
+                        metadata=_meta_for_export,
                         normalize=False,
                         **_extra_kwargs,
                     )
@@ -3347,9 +3411,36 @@ class WaveformWidget(QWidget):
         self._morph_phase_type: str = "generic"
         self._morph_timer = QTimer(self)
         self._morph_timer.timeout.connect(self._tick_morph)
+        # ── Live level monitoring (§2.45a RMS drift indicator) ───────────────
+        # Gated RMS of original audio in dBFS — set at file load, reset at
+        # restoration complete.  Used to compute per-phase level delta for the
+        # Pegel-Badge so users can distinguish normal processing attenuation
+        # (noise removal ≈ −3 … −12 dB expected) from §2.45a violations.
+        self._orig_waveform_rms_db: float = 0.0
+        # Current live level delta vs. original (dB). None = live mode inactive.
+        self._live_level_delta_db: float | None = None
 
     def update_waveform(self, audio, sr):
-        """Update waveform data and reset view window."""
+        """Update waveform data and reset view window.
+
+        Zoom state is preserved when the new audio has the same duration as the
+        currently displayed audio (< 0.5 % deviation).  This prevents a jarring
+        visual reset when BatchProcessingThread re-emits the same file resampled
+        to 48 kHz — the waveform content is identical from the user's perspective.
+        """
+        # Detect same-duration update (e.g. SR normalisation 44100 → 48000 on the
+        # same file).  Duration equality means the zoom fractions remain valid.
+        _preserve_zoom = False
+        if (
+            self.audio_data is not None
+            and self.audio_data.size > 0
+            and isinstance(audio, np.ndarray)
+            and audio.size > 0
+        ):
+            _old_dur = self.audio_data.shape[0] / max(1, self.sample_rate)
+            _new_dur = audio.shape[0] / max(1, sr)
+            _preserve_zoom = abs(_old_dur - _new_dur) / max(_old_dur, 1e-6) < 0.005
+
         self.audio_data = audio
         self.sample_rate = sr
         # Cache the full-track peak so _draw_channel can use it as fallback
@@ -3357,15 +3448,18 @@ class WaveformWidget(QWidget):
         # NOTE: np.percentile(99.9) instead of np.max — impulse artifacts (clicks,
         # crackles) must not dominate the display scale and cause catastrophic
         # visual jumps after click/crackle removal phases.
-        if isinstance(audio, np.ndarray) and audio.size > 0:
-            _fp = float(np.percentile(np.abs(audio), 99.9))
-            self._full_track_peak = _fp if _fp > 1e-6 else 0.0
-        else:
-            self._full_track_peak = 0.0
-        # Reset zoom/pan to show full file on new load
-        self._view_start = 0.0
-        self._view_end = 1.0
-        # Reset repair tracking for new audio
+        # When zoom is preserved we also keep the existing peak so that the display
+        # scale is stable across the SR-normalisation re-render.
+        if not _preserve_zoom:
+            if isinstance(audio, np.ndarray) and audio.size > 0:
+                _fp = float(np.percentile(np.abs(audio), 99.9))
+                self._full_track_peak = _fp if _fp > 1e-6 else 0.0
+            else:
+                self._full_track_peak = 0.0
+            # Reset zoom/pan to show full file on new load
+            self._view_start = 0.0
+            self._view_end = 1.0
+        # Always reset repair tracking — a new processing run begins here
         self._repair_history.clear()
         self._resolved_locations.clear()
         self._active_tool = ""
@@ -3374,6 +3468,12 @@ class WaveformWidget(QWidget):
             self._morph_timer.stop()
         self._morph_diff = None
         self._morph_t = 1.0
+        # Compute gated-RMS reference for level delta badge (§2.45a).
+        # Only update when zoom is not preserved (= new file or completed restoration).
+        if not _preserve_zoom and isinstance(audio, np.ndarray) and audio.size > 0:
+            self._orig_waveform_rms_db = self._compute_gated_rms_db(audio)
+        # Live mode inactive — hide level delta badge.
+        self._live_level_delta_db = None
         self.update()
 
     def set_display_peak_reference(self, peak_amplitude: float | None) -> None:
@@ -3383,6 +3483,21 @@ class WaveformWidget(QWidget):
             return
         peak_value = float(peak_amplitude)
         self._display_peak_reference = peak_value if peak_value > 1e-6 else None
+
+    @staticmethod
+    def _compute_gated_rms_db(audio: np.ndarray) -> float:
+        """Gated RMS in dBFS per §2.45a-I: only frames > −50 dBFS contribute."""
+        _flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        _frame = 480  # ≈10 ms @ 48 kHz
+        _n = len(_flat) // _frame
+        if _n < 1:
+            return -120.0
+        _frms = np.sqrt(np.mean(_flat[: _n * _frame].reshape(_n, _frame) ** 2, axis=1))
+        _gate = _frms > (10 ** (-50.0 / 20.0))  # ≈ 0.00316
+        if not np.any(_gate):
+            return -120.0
+        _grms = float(np.sqrt(np.mean(_frms[_gate] ** 2)))
+        return 20.0 * math.log10(max(_grms, 1e-10))
 
     def update_audio_live(self, audio, sr):
         """Animate phase transition showing what changed in the signal.
@@ -3395,6 +3510,19 @@ class WaveformWidget(QWidget):
             self._morph_timer.stop()
         _prev = self.audio_data
         has_after = audio is not None and audio.size > 0
+
+        # ── Live level delta badge (§2.45a) ──────────────────────────────────
+        # Compare gated RMS of current phase output vs. original to distinguish
+        # expected processing attenuation (noise removal: −3 … −12 dB normal for
+        # vinyl/shellac) from potential §2.45a loudness-drift violations.
+        if has_after and self._orig_waveform_rms_db < -0.5:
+            try:
+                _cur_rms_db = self._compute_gated_rms_db(audio)
+                _delta = _cur_rms_db - self._orig_waveform_rms_db
+                # Only show badge when change is audible (> 2 dB).
+                self._live_level_delta_db = _delta if abs(_delta) >= 2.0 else None
+            except Exception:
+                self._live_level_delta_db = None
 
         if _prev is not None and _prev.size > 0 and has_after and audio.shape == _prev.shape:
             self._morph_diff = _prev - audio
@@ -4766,6 +4894,9 @@ class WaveformWidget(QWidget):
         # Stage-Visualization-Overlay (aktive Restaurierungsstufe)
         self._draw_stage_overlay(painter, plot_x, plot_y, plot_width, plot_height)
 
+        # Pegel-Delta-Badge (§2.45a — nur während Live-Restaurierung sichtbar)
+        self._draw_level_delta_badge(painter, plot_x, plot_y, plot_width, plot_height)
+
         # Lyrics-Timeline-Overlay (§2.36, Taste L) — nur wenn aktiv
         _lt = getattr(self, "_lyrics_transcription", None)
         if _lt is not None:
@@ -4797,7 +4928,7 @@ class WaveformWidget(QWidget):
                 # Zeitstempel neben dem Cursor
                 # Versetze nach unten wenn Stage-Overlay aktiv (30px-Panel am Top belegt Zeile 0–30)
                 if self.audio_data is not None and self.sample_rate > 0:
-                    _n = self.audio_data.shape[0]
+                    _n = len(self.audio_data)
                     _t_s = self._playhead_pos * (_n / self.sample_rate)
                     _m, _s = divmod(int(_t_s), 60)
                     _t_str = f"{_m}:{_s:02d}"
@@ -5847,6 +5978,52 @@ class WaveformWidget(QWidget):
                     _trail_x, text_y, _tw, text_h, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, _tt
                 )
 
+        painter.restore()
+
+    def _draw_level_delta_badge(self, painter, x, y, width, height):
+        """Draw gated-RMS level-delta indicator during live phase updates.
+
+        Placed in the bottom-left of the waveform plot area, just above the time
+        axis.  Color-coded per expected processing attenuation ranges:
+          - >= −2 dB and <= +2 dB  : not shown (normal micro-variation)
+          - −2 … −12 dB            : amber   (expected noise/EQ attenuation)
+          - < −12 dB               : red     (heavy drop — possible §2.45a issue)
+          - > +2 dB                : blue    (gain increase — enhancement phase)
+        """
+        _delta = self._live_level_delta_db
+        if _delta is None:
+            return
+
+        _sign = "+" if _delta >= 0 else ""
+        _text = f"Pegel: {_sign}{_delta:.1f} dB"
+
+        if _delta < -12.0:
+            _br, _bg_b, _bb = 160, 60, 60          # red background
+            _tr, _tg, _tb = 255, 190, 190           # red text
+        elif _delta < -2.0:
+            _br, _bg_b, _bb = 140, 90, 20           # amber background
+            _tr, _tg, _tb = 255, 210, 90            # amber text
+        else:
+            _br, _bg_b, _bb = 40, 90, 160           # blue background
+            _tr, _tg, _tb = 130, 200, 255           # blue text
+
+        painter.save()
+        _font = QFont(self.font().family(), 7, QFont.Weight.Bold)
+        painter.setFont(_font)
+        _fm = painter.fontMetrics()
+        _tw = _fm.horizontalAdvance(_text) + 12
+        _th = _fm.height() + 4
+        # Position: bottom-left, 8 px from left edge, 6 px above time axis
+        _bx = int(x) + 8
+        _by = int(y + height) - _th - 6
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(_br, _bg_b, _bb, 160)))
+        painter.drawRoundedRect(_bx, _by, _tw, _th, 3, 3)
+        painter.setPen(QPen(QColor(min(255, _br + 40), min(255, _bg_b + 40), min(255, _bb + 40), 180), 0.8))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(_bx, _by, _tw, _th, 3, 3)
+        painter.setPen(QColor(_tr, _tg, _tb, 240))
+        painter.drawText(_bx, _by, _tw, _th, Qt.AlignmentFlag.AlignCenter, _text)
         painter.restore()
 
     # ── Category-specific animated effects ────────────────────────────────
@@ -9661,9 +9838,19 @@ class ModernMainWindow(QMainWindow):
         # Playhead timing (updated by _playhead_timer)
         self._playback_start_time: float = 0.0
         self._playback_audio_duration: float = 0.0
+        # Playback device-SR pre-cache: avoids real-time resample stutter.
+        # Tuple (source_id, source_sr, device_sr, data_float32) or None.
+        # Invalidated whenever a new file loads or the restored audio changes.
+        self._playback_device_cache: tuple | None = None
+        self._playback_warmup_token: int = 0  # invalidates stale warmup threads
         # Live-Visualisierung: serieller Stereo-Update-Puffer für mono Phasen-Outputs
         self._live_stereo_view_audio: np.ndarray | None = None
         self._live_serial_next_channel: int = 0
+        # Live-Preview: aktueller Phasen-Zwischenstand — spielbar während Restaurierung.
+        # Wird nach jeder Phase als Snapshot gespeichert; beim Drücken von
+        # btn_play_restored während laufender Batch-Verarbeitung verwendet.
+        self._live_preview_audio: np.ndarray | None = None
+        self._live_preview_sr: int = 48000
 
         # Drag & Drop aktivieren
         self.setAcceptDrops(True)
@@ -10526,7 +10713,7 @@ class ModernMainWindow(QMainWindow):
         self.defect_count_live_label.setStyleSheet(
             "color: #90A4AE; font-size: 8pt; background: transparent; padding: 2px 0;"
         )
-        self.defect_count_live_label.setVisible(False)
+        self.defect_count_live_label.hide()  # initially hidden; revealed on first scan
 
         # Header-Zeile: nur Abschnittstitel (Zähler erscheint unterhalb der Chips)
         _defect_header = QWidget()
@@ -10927,9 +11114,7 @@ class ModernMainWindow(QMainWindow):
         self.btn_play_restored.setEnabled(False)
         self.btn_play_restored.setFixedHeight(self._sp(38))
         self.btn_play_restored.setStyleSheet(_ab_style_rest)
-        self.btn_play_restored.clicked.connect(
-            lambda: self._rest_audio is not None and self._play_audio(self._rest_audio, self._rest_sr)
-        )
+        self.btn_play_restored.clicked.connect(self._play_restored_or_preview)
         ab_row_layout.addWidget(self.btn_play_restored)
 
         # ── A/B Sync-Loop: gleiche Position, nahtloser Quellwechsel (v9.10.111) ──
@@ -12728,8 +12913,7 @@ class ModernMainWindow(QMainWindow):
 
             if _preanalysis_pending and _p >= 99.8:
                 _finalizing_text = "⏳ Analyse wird finalisiert …"
-                _bar.setRange(0, 10000)
-                _bar.setValue(9900)
+                _bar.setRange(0, 0)
                 _bar.setFormat(_finalizing_text)
                 if hasattr(self, "status_text"):
                     self.status_text.setText(_finalizing_text)
@@ -12904,6 +13088,66 @@ class ModernMainWindow(QMainWindow):
             self._orig_audio = _audio
             self._orig_sr = _sr
             self._rest_audio = None  # zurücksetzen nach neuem File
+            # Live-Preview zurücksetzen — kein Zwischenstand vom vorherigen Song
+            self._live_preview_audio = None
+            self._live_preview_sr = 48000
+
+            # Playback pre-warmup: resample to device SR in background so the
+            # first play-click is stutter-free.  Invalidate any previous cache.
+            self._playback_device_cache = None
+            self._playback_warmup_token += 1
+            _warmup_token = self._playback_warmup_token
+            _warmup_audio = _audio
+            _warmup_sr = _sr
+
+            def _warmup_device_cache(
+                _w_audio=_warmup_audio,
+                _w_sr=_warmup_sr,
+                _w_token=_warmup_token,
+                _w_self=self,
+            ) -> None:
+                """Pre-resample audio to output device SR and cache it.
+
+                Runs in a daemon thread immediately after the file loads.
+                Eliminates the real-time resample that caused stutter on the
+                first play-click with PulseAudio/ALSA bridges.
+                """
+                try:
+                    if not _SD_AVAILABLE or _sd is None:
+                        return
+                    _dev = _sd.query_devices(kind="output")
+                    _dev_sr = (
+                        int(round(float(_dev.get("default_samplerate", 0.0))))
+                        if isinstance(_dev, dict)
+                        else 0
+                    )
+                    import math as _math
+                    # Prepare float32 contiguous data
+                    data = np.ascontiguousarray(_w_audio, dtype=np.float32)
+                    if data.ndim == 1:
+                        data = data.reshape(-1, 1)
+                    if _dev_sr > 0 and abs(_dev_sr - _w_sr) >= 2000:
+                        from scipy.signal import resample_poly as _rp_w
+                        _g = _math.gcd(_w_sr, _dev_sr)
+                        data = _rp_w(
+                            data, _dev_sr // _g, _w_sr // _g, axis=0
+                        ).astype(np.float32, copy=False)
+                        cached_sr = _dev_sr
+                    else:
+                        cached_sr = _w_sr
+                    data = np.ascontiguousarray(data, dtype=np.float32)
+                    # Staleness guard — discard if user already loaded another file
+                    if getattr(_w_self, "_playback_warmup_token", 0) != _w_token:
+                        return
+                    _w_self._playback_device_cache = (id(_w_audio), _w_sr, cached_sr, data)
+                    logger.debug(
+                        "Playback warmup done: source_sr=%d → device_sr=%d, shape=%s",
+                        _w_sr, cached_sr, data.shape,
+                    )
+                except Exception as _exc:
+                    logger.debug("Playback warmup cache failed (non-blocking): %s", _exc)
+
+            threading.Thread(target=_warmup_device_cache, daemon=True).start()
 
             # ── Pre-Analyse-Synchronisation (Defektanalyse + Ära/Genre) ──────────
             # Both analysis threads must complete before Magic Buttons are enabled.
@@ -13723,28 +13967,53 @@ class ModernMainWindow(QMainWindow):
                     data = data / (np.abs(data).max() + 1e-9)
                 play_sr = int(sr)
 
-                # Stabilize playback on Linux/ALSA/Pulse by adapting to the
-                # output device default sample-rate when it differs strongly.
-                # This prevents periodic underruns on some drivers.
-                try:
-                    if _sd is not None:
-                        _dev = _sd.query_devices(kind="output")
-                        _dev_sr = (
-                            int(round(float(_dev.get("default_samplerate", 0.0)))) if isinstance(_dev, dict) else 0
-                        )
-                        if _dev_sr > 0 and abs(_dev_sr - play_sr) >= 2000:
-                            from scipy.signal import resample_poly as _rp
+                # ── Device-SR adaption: hit pre-warmed cache first ────────────────
+                # The warmup thread resampled to device SR in the background after
+                # file-load.  Cache hit eliminates a blocking resample that caused
+                # stutter on the very first play-click (PulseAudio/ALSA bridges).
+                _cache = getattr(self, "_playback_device_cache", None)
+                if (
+                    isinstance(_cache, tuple)
+                    and len(_cache) >= 4
+                    and _cache[0] == id(prepared_audio)
+                    and _cache[1] == sr
+                ):
+                    _cache_tuple = _cache
+                    data = _cache_tuple[3]  # already float32, shape (N, C)
+                    play_sr = _cache_tuple[2]
+                    logger.debug("Playback: using pre-warmed device-SR cache (sr=%d)", play_sr)
+                else:
+                    # Cache miss (first play before warmup finished, or restored audio):
+                    # resample inline.  Result is saved so subsequent seeks are instant.
+                    try:
+                        if _sd is not None:
+                            _dev = _sd.query_devices(kind="output")
+                            _dev_sr = (
+                                int(round(float(_dev.get("default_samplerate", 0.0))))
+                                if isinstance(_dev, dict)
+                                else 0
+                            )
+                            if _dev_sr > 0 and abs(_dev_sr - play_sr) >= 2000:
+                                from scipy.signal import resample_poly as _rp
 
-                            _g = math.gcd(play_sr, _dev_sr)
-                            _up = _dev_sr // _g
-                            _down = play_sr // _g
-                            data = _rp(data, _up, _down, axis=0).astype(np.float32, copy=False)
-                            play_sr = _dev_sr
-                except Exception as exc:
-                    logger.debug("A/B playback device-rate adaption skipped: %s", exc)
+                                _g = math.gcd(play_sr, _dev_sr)
+                                _rs = _rp(data, _dev_sr // _g, play_sr // _g, axis=0).astype(
+                                    np.float32, copy=False
+                                )
+                                data = np.ascontiguousarray(_rs, dtype=np.float32)
+                                play_sr = _dev_sr
+                            # Opportunistically fill cache for next seek
+                            if getattr(self, "_playback_warmup_token", -1) >= 0:
+                                self._playback_device_cache = (
+                                    id(prepared_audio), sr, play_sr, data
+                                )
+                    except Exception as exc:
+                        logger.debug("A/B playback device-rate adaption skipped: %s", exc)
 
                 # Use sd.play() (callback mode) — avoids ALSA mmap_begin crashes
                 # that occur with OutputStream.write() on PulseAudio/ALSA bridges.
+                # latency='high' uses a ~200 ms ring buffer instead of the default
+                # ~10 ms ('low'), eliminating periodic underruns on PulseAudio bridges.
                 if data.ndim == 1:
                     data2 = data.reshape(-1, 1)
                 else:
@@ -13762,7 +14031,7 @@ class ModernMainWindow(QMainWindow):
                 with self._sd_lock:
                     if _sd is None:
                         return
-                    _sd.play(data_to_play, samplerate=play_sr, blocking=False)
+                    _sd.play(data_to_play, samplerate=play_sr, blocking=False, latency="high")
 
                 # Poll until natural end or external stop request
                 while not finished_evt.is_set():
@@ -13859,12 +14128,40 @@ class ModernMainWindow(QMainWindow):
             _dm, _ds = divmod(int(_dur), 60)
             self._playback_time_label.setText(f"{_em}:{_es:02d} / {_dm}:{_ds:02d}")
 
+    def _play_restored_or_preview(self) -> None:
+        """Spielt restauriertes Audio oder — während laufender Restaurierung — den
+        aktuellen Zwischenstand (Snapshot der zuletzt abgeschlossenen Phase).
+
+        Die Restaurierung läuft unverändert weiter; Playback und Pipeline laufen
+        auf getrennten Threads.
+        """
+        if self._rest_audio is not None:
+            self._play_audio(self._rest_audio, self._rest_sr)
+            return
+        _preview = getattr(self, "_live_preview_audio", None)
+        _preview_sr = int(getattr(self, "_live_preview_sr", 48000))
+        if _preview is not None:
+            self._play_audio(_preview, _preview_sr)
+
     def _update_ab_player_state(self):
         """A/B-Player Buttons je nach verfügbaren Audiodaten aktivieren."""
         if hasattr(self, "btn_play_original"):
             self.btn_play_original.setEnabled(self._orig_audio is not None)
         if hasattr(self, "btn_play_restored"):
-            self.btn_play_restored.setEnabled(self._rest_audio is not None)
+            _processing = bool(getattr(self, "batch_thread", None) and self.batch_thread.isRunning())
+            _has_preview = getattr(self, "_live_preview_audio", None) is not None
+            _has_rest = self._rest_audio is not None
+            self.btn_play_restored.setEnabled(_has_rest or (_processing and _has_preview))
+            # Live-Label während Restaurierung
+            if _processing and _has_preview and not _has_rest:
+                self.btn_play_restored.setText("🎧  Jetzt hören")
+                self.btn_play_restored.setToolTip(
+                    "Zwischenstand der Restaurierung anhören (Snapshot der letzten Phase).\n"
+                    "Die Restaurierung läuft im Hintergrund weiter."
+                )
+            else:
+                self.btn_play_restored.setText(f"▶  {t('action.listen_restored')}")
+                self.btn_play_restored.setToolTip("")
         # A/B-Sync-Loop erfordert beide Versionen
         if hasattr(self, "btn_ab_sync"):
             _both = self._orig_audio is not None and self._rest_audio is not None
@@ -14709,25 +15006,33 @@ class ModernMainWindow(QMainWindow):
         )
 
     def _on_watchdog_timeout(self):
-        """Watchdog feuert: Verarbeitung hat das Timeout überschritten — sichere asynchrone Beendigung."""
+        """§0c Watchdog: Zeitlimit — graceful stop statt hartem Kill.
+
+        Signalisiert UV3, das bisher beste Checkpoint-Ergebnis zu exportieren,
+        dann gibt der Batch-Thread 60 s um sauber zu enden. Keine Datenverluste.
+        Erst danach: requestInterruption + ggf. terminate als letzte Notlösung.
+        """
         if not (self.batch_thread and self.batch_thread.isRunning()):
             return  # normaler Abschluss — kein Handlungsbedarf
-        logger.error("Watchdog ausgelöst: Verarbeitung hat Timeout überschritten — sichere Stop-Sequenz startet.")
-        self._request_processing_stop("watchdog_timeout", timeout_s=2.0)
-        self.title_bar.set_status(t("dialog.timeout_title"), "#B87A7A")
-        _msg = (
-            "⏰ Die Restaurierung hat zu lange gedauert und wurde automatisch gestoppt.\n"
-            "Mögliche Ursache: Die Audiodatei ist sehr lang oder komplex.\n"
-            "→ Starten Sie Aurik neu und versuchen Sie es mit einer kürzeren Datei."
+        logger.warning(
+            "§0c Watchdog ausgelöst: Zeitlimit erreicht — graceful stop, bestes Checkpoint-Ergebnis wird exportiert"
         )
-        if hasattr(self, "detected_medium_label"):
-            self.detected_medium_label.setText(_msg)
-        self.status_text.setText(t("dialog.timeout_title") + " — " + t("status.cancelled"))
-        QMessageBox.warning(
-            self,
-            t("dialog.timeout_title"),
-            t("dialog.timeout_body"),
-        )
+
+        # 1. UV3 signalisieren: Phase-Loop bricht nach aktueller Phase ab → best checkpoint.
+        try:
+            _uv3 = _bridge_get_unified_restorer_v3_instance()
+            if _uv3 is not None:
+                _uv3.request_graceful_stop()
+        except Exception as _gs_exc:
+            logger.debug("UV3 graceful stop Signalisierung fehlgeschlagen (non-critical): %s", _gs_exc)
+
+        # 2. Status-Anzeige: Recovery läuft, kein Fehler
+        self.title_bar.set_status("Zeitlimit — bestes Ergebnis wird gespeichert …", "#B8A068")
+        self.status_text.setText("⏳ Bestes bisher erreichtes Ergebnis wird exportiert …")
+
+        # 3. Batch-Thread 60 s Zeit geben, graceful zu enden (AudioSR-Timeout ≤ 180 s,
+        #    aber nach graceful_stop_event bricht die Phase-Loop sofort nach AudioSR-Return ab).
+        self._request_processing_stop("watchdog_timeout", timeout_s=60.0)
 
     def _tick_heartbeat(self):
         """Animierter Spinner + Progress-Polling alle 200 ms.
@@ -14806,7 +15111,7 @@ class ModernMainWindow(QMainWindow):
                             if hasattr(self, "progress_bar"):
                                 _overall_pct = self.progress_bar.value() / 100.0
                                 _eta_short = self._format_eta_short(_rem)
-                                _pct_de = f"{_overall_pct:.1f}".replace(".", ",")
+                                _pct_de = f"{_overall_pct:.2f}".replace(".", ",")
                                 if _def_suffix:
                                     self.progress_bar.setFormat(
                                         t(
@@ -14828,7 +15133,7 @@ class ModernMainWindow(QMainWindow):
                             # Keine ETA verfügbar — nur Prozentzahl anzeigen
                             if hasattr(self, "progress_bar"):
                                 _overall_pct = self.progress_bar.value() / 100.0
-                                _pct_de = f"{_overall_pct:.1f}".replace(".", ",")
+                                _pct_de = f"{_overall_pct:.2f}".replace(".", ",")
                                 self.progress_bar.setFormat(t("progress.restoring_pct", pct=_pct_de))
 
                         # _repair_hint: nur zeigen wenn nicht veraltet (d.h. aktuell
@@ -14933,8 +15238,7 @@ class ModernMainWindow(QMainWindow):
                 if list_item.data(Qt.ItemDataRole.UserRole) == item_id:
                     _q_item = self.batch_queue.get_item(item_id)
                     if _q_item is not None:
-                        list_item.setText(f"⏳ {Path(_q_item.input_file).name} ({progress // 100}%)")
-                    break
+                        list_item.setText(f"⏳ {Path(_q_item.input_file).name} ({progress / 100:.2f}%)")
 
     def _on_item_finished(self, item_id):
         """Handle item completion — Queue-Update + Stats.
@@ -14977,7 +15281,43 @@ class ModernMainWindow(QMainWindow):
             if isinstance(_ra, np.ndarray) and _ra.size > 0:
                 self._rest_audio = _ra
                 self._rest_sr = 48000  # Aurik interne SR immer 48 kHz
-                QTimer.singleShot(0, self._update_ab_player_state)
+                # Live-Preview jetzt nicht mehr benötigt — restauriertes Audio ist final
+                self._live_preview_audio = None
+                self._live_preview_sr = 48000
+                # Invalidate playback cache so the next play-click pre-warms immediately
+                self._playback_device_cache = None
+                self._playback_warmup_token += 1
+                _wt = self._playback_warmup_token
+                _wa = _ra
+                _ws = 48000
+
+                def _warmup_rest(_w_audio=_wa, _w_sr=_ws, _w_token=_wt, _w_self=self):
+                    try:
+                        if not _SD_AVAILABLE or _sd is None:
+                            return
+                        _dev = _sd.query_devices(kind="output")
+                        _dev_sr = (
+                            int(round(float(_dev.get("default_samplerate", 0.0))))
+                            if isinstance(_dev, dict) else 0
+                        )
+                        data = np.ascontiguousarray(_w_audio, dtype=np.float32)
+                        if data.ndim == 1:
+                            data = data.reshape(-1, 1)
+                        cached_sr = _w_sr
+                        if _dev_sr > 0 and abs(_dev_sr - _w_sr) >= 2000:
+                            import math as _mw
+                            from scipy.signal import resample_poly as _rpw
+                            _g = _mw.gcd(_w_sr, _dev_sr)
+                            data = _rpw(data, _dev_sr // _g, _w_sr // _g, axis=0).astype(np.float32, copy=False)
+                            cached_sr = _dev_sr
+                        data = np.ascontiguousarray(data, dtype=np.float32)
+                        if getattr(_w_self, "_playback_warmup_token", 0) == _w_token:
+                            _w_self._playback_device_cache = (id(_w_audio), _w_sr, cached_sr, data)
+                            logger.debug("Playback warmup (restored): device_sr=%d, shape=%s", cached_sr, data.shape)
+                    except Exception as _exc:
+                        logger.debug("Playback warmup (restored) failed: %s", _exc)
+
+                threading.Thread(target=_warmup_rest, daemon=True).start()
                 # Vorschau-Button im Ergebnis-Banner aktivieren (kein Autoplay)
                 if hasattr(self, "_btn_preview_restored"):
                     self._btn_preview_restored.setEnabled(True)
@@ -14988,9 +15328,13 @@ class ModernMainWindow(QMainWindow):
                 self._latest_experience_insights = dict(_xp or {})
                 _joy = float((_xp or {}).get("joy_index", 0.0) or 0.0)
                 _fat = float((_xp or {}).get("fatigue_index", 0.0) or 0.0)
-                if hasattr(self, "status_text") and (_joy > 0.0 or _fat > 0.0):
+                _frisson = float((_xp or {}).get("frisson_index", 0.0) or 0.0)
+                if hasattr(self, "status_text") and (_joy > 0.0 or _fat > 0.0 or _frisson > 0.0):
                     self._apply_status_text_style("success" if _joy >= 0.72 else "warning")
-                    self.status_text.setText(f"Erlebnis-Index: Freude {_joy * 100:.0f}% · Ermüdung {_fat * 100:.0f}%")
+                    self.status_text.setText(
+                        f"Erlebnis-Index: Freude {_joy * 100:.0f}% · Ermüdung {_fat * 100:.0f}% · "
+                        f"Gaensehaut {_frisson * 100:.0f}%"
+                    )
             except Exception as _xp_exc:
                 logger.debug("Experience-Insights-Update fehlgeschlagen: %s", _xp_exc)
 
@@ -15649,8 +15993,9 @@ class ModernMainWindow(QMainWindow):
                 rest_audio = _normalize_audio(rest_audio)
                 self._rest_audio = rest_audio
                 self._rest_sr = int(rest_sr)
-
-                # ── Schritt 1: Korrelations-MOS (Fallback / Basisschätzung) ──
+                # Invalidate playback cache for restored audio
+                self._playback_device_cache = None
+                self._playback_warmup_token += 1
                 corr = 1.0
                 if self._orig_audio is not None:
                     o_mono = np.mean(self._orig_audio, axis=1) if self._orig_audio.ndim > 1 else self._orig_audio
@@ -15702,9 +16047,14 @@ class ModernMainWindow(QMainWindow):
                 mushra_itu: str = ""
                 joy_index: float = 0.0
                 fatigue_index: float = 0.0
+                frisson_index: float = 0.0
                 cluster_key: str = ""
                 cluster_policy: dict = {}
                 auto_recommendations: list[dict] = []
+                # §0/§2.46 Klangtreue-Garantie: HF-Halluzinations-Guard + Recovery-Certainty
+                _xp_recovery_certainty: dict = {}
+                _xp_hf_guard: dict = {}
+                _xp_tilt_guard: dict = {}
                 quality_before_score: float = 0.0
                 quality_after_score: float = 0.0
                 quality_delta: float = 0.0
@@ -15848,6 +16198,7 @@ class ModernMainWindow(QMainWindow):
                         _xp = _bridge_get_experience_insights(r)
                         joy_index = float((_xp or {}).get("joy_index", 0.0) or 0.0)
                         fatigue_index = float((_xp or {}).get("fatigue_index", 0.0) or 0.0)
+                        frisson_index = float((_xp or {}).get("frisson_index", 0.0) or 0.0)
                         cluster_key = str((_xp or {}).get("cluster_key", "") or "")
                         cluster_policy = (
                             dict((_xp or {}).get("cluster_policy", {}))
@@ -15856,6 +16207,13 @@ class ModernMainWindow(QMainWindow):
                         )
                         _rec_list = (_xp or {}).get("recommendations", [])
                         auto_recommendations = list(_rec_list) if isinstance(_rec_list, list) else []
+                        # §0/§2.46 Klangtreue-Garantie: Recovery-Certainty + HF-Guard
+                        _rc_raw = (_xp or {}).get("recovery_certainty", {})
+                        _xp_recovery_certainty = dict(_rc_raw) if isinstance(_rc_raw, dict) else {}
+                        _hf_raw = (_xp or {}).get("hf_hallucination_guard", {})
+                        _xp_hf_guard = dict(_hf_raw) if isinstance(_hf_raw, dict) else {}
+                        _tg_raw = (_xp or {}).get("spectral_tilt_guard", {})
+                        _xp_tilt_guard = dict(_tg_raw) if isinstance(_tg_raw, dict) else {}
                     except Exception as _xp_exc:
                         logger.debug("Experience-Insights-Lesen fehlgeschlagen: %s", _xp_exc)
 
@@ -16081,9 +16439,11 @@ class ModernMainWindow(QMainWindow):
                     banner_sections.append(f"💡  Pipeline-Tier: {pipeline_tier}")
 
                 # Runtime-Erlebnisindikatoren (geschlossenes Produktions-Feedback)
-                if joy_index > 0.0 or fatigue_index > 0.0:
+                if joy_index > 0.0 or fatigue_index > 0.0 or frisson_index > 0.0:
                     banner_sections.append(
-                        f"🎧  Erlebnis-Index: Freude {joy_index * 100:.0f}%  ·  Ermüdung {fatigue_index * 100:.0f}%"
+                        "🎧  Erlebnis-Index: "
+                        f"Freude {joy_index * 100:.0f}%  ·  Ermuedung {fatigue_index * 100:.0f}%  ·  "
+                        f"Gaensehaut {frisson_index * 100:.0f}%"
                     )
                 if cluster_key:
                     _cluster_note = f"🧬  Cluster-Policy: {cluster_key}"
@@ -16133,6 +16493,34 @@ class ModernMainWindow(QMainWindow):
                     banner_sections.append(
                         "🏆  Das Beste aus dieser Aufnahme wurde herausgeholt — physikalische Grenzen erreicht."
                     )
+
+                # §0/§2.46 Klangtreue-Garantie: Recovery-Ceiling + HF-Schutznachweis
+                _fidelity_parts: list[str] = []
+                _rc_ceiling = float(_xp_recovery_certainty.get("recoverability_ceiling", 0.0) or 0.0)
+                _rc_band = str(_xp_recovery_certainty.get("confidence_band", "") or "")
+                if _rc_ceiling > 0.0:
+                    _band_de = {
+                        "high": "hoch",
+                        "medium": "mittel",
+                        "low": "niedrig",
+                        "very_low": "sehr niedrig",
+                    }.get(_rc_band, _rc_band)
+                    _ceil_pct = int(round(_rc_ceiling * 100))
+                    _fidelity_parts.append(
+                        f"~{_ceil_pct}% Klangpotential rekonstruierbar"
+                        + (f" · Konfidenz: {_band_de}" if _band_de else "")
+                    )
+                _hf_fires = int(_xp_hf_guard.get("guard_fired_count", 0) or 0)
+                _hf_min_cap = _xp_hf_guard.get("min_cap_hz", None)
+                if _hf_fires > 0 and isinstance(_hf_min_cap, (int, float)) and _hf_min_cap > 0:
+                    _hf_khz = f"{_hf_min_cap / 1000:.0f}"
+                    _fidelity_parts.append(f"HF-Limite ≤{_hf_khz} kHz eingehalten ({_hf_fires}×)")
+                _tg_fires = int(_xp_tilt_guard.get("guard_fired_count", 0) or 0)
+                _tg_max_dev = float(_xp_tilt_guard.get("max_deviation_db_per_oct", 0.0) or 0.0)
+                if _tg_fires > 0:
+                    _fidelity_parts.append(f"Era-Tilt geschützt ({_tg_fires}×, max Δ={_tg_max_dev:.2f} dB/oct)")
+                if _fidelity_parts:
+                    banner_sections.append("🔒  Klangtreue: " + "  ·  ".join(_fidelity_parts))
 
                 def _update_gui():
                     # Radar-Chart aktualisieren
@@ -16481,6 +16869,27 @@ class ModernMainWindow(QMainWindow):
             elif isinstance(_audio_live, np.ndarray) and _audio_live.ndim == 2 and _audio_live.shape[1] == 2:
                 # Full stereo update available — reset serial buffer to true live audio.
                 self._live_stereo_view_audio = _audio_live.astype(np.float32, copy=True)
+
+            # ── Live-Preview-Snapshot für Midprocess-Playback ─────────────────────
+            # Speichert eine Kopie des aktuellen Phasen-Outputs, damit der User per
+            # btn_play_restored -> _play_restored_or_preview() reinhören kann während
+            # die Restaurierung läuft.  copy() ist nötig, da _audio_live nach der nächsten
+            # Phase überschrieben wird.  Kein Lock nötig: GUI-Thread liest/schreibt beide.
+            try:
+                if isinstance(_audio_live, np.ndarray) and _audio_live.size > 0:
+                    self._live_preview_audio = _audio_live.copy()
+                    self._live_preview_sr = int(sr)
+                    # Aktiviere den "Jetzt hören"-Button falls noch nicht geschehen.
+                    if hasattr(self, "btn_play_restored") and self._rest_audio is None:
+                        if not self.btn_play_restored.isEnabled():
+                            self.btn_play_restored.setEnabled(True)
+                            self.btn_play_restored.setText("🎧  Jetzt hören")
+                            self.btn_play_restored.setToolTip(
+                                "Zwischenstand der Restaurierung anhören (Snapshot der letzten Phase).\n"
+                                "Die Restaurierung läuft im Hintergrund weiter."
+                            )
+            except Exception:
+                pass  # preview is optional — never block the pipeline
 
             # Synchronisation: Stage-Badge VOR audio_data setzen, damit morph-Animation
             # die korrekte Phasenfarbe/Effekt-Kategorie verwendet. Das Badge zeigt damit

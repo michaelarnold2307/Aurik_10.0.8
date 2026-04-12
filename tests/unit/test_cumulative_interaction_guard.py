@@ -794,3 +794,35 @@ def test_34_adaptive_critical_pair_threshold_vinyl_permissive():
     assert cd_threshold >= base * 2.0, (
         f"CD-Threshold ({cd_threshold:.3f}) sollte nicht zu weit von Basis ({base:.3f}) geöffnet werden"
     )
+
+
+def test_35_critical_pair_threshold_respects_song_goal_weights():
+    """§2.56: guard_goal weight must influence critical-pair threshold.
+
+    Higher weight for natuerlichkeit => stricter threshold (less negative).
+    Lower weight => more permissive threshold (more negative).
+    """
+
+    from backend.core.cumulative_interaction_guard import InteractionGuardState, get_interaction_guard
+
+    guard = get_interaction_guard()
+    base = -0.03
+
+    state_high = InteractionGuardState()
+    state_high.material_type = "vinyl"
+    state_high.restorability_score = 55.0
+    state_high.goal_weights = {"natuerlichkeit": 2.0}
+
+    state_low = InteractionGuardState()
+    state_low.material_type = "vinyl"
+    state_low.restorability_score = 55.0
+    state_low.goal_weights = {"natuerlichkeit": 0.3}
+
+    thr_high = guard._compute_adaptive_pair_threshold(base, state_high, guard_goal="natuerlichkeit")
+    thr_low = guard._compute_adaptive_pair_threshold(base, state_low, guard_goal="natuerlichkeit")
+
+    # Higher weight => stricter threshold => closer to zero (numerically larger)
+    assert thr_high > thr_low, f"Expected stricter threshold for high weight: high={thr_high:.3f}, low={thr_low:.3f}"
+    # Keep existing safety bounds intact
+    assert base * 5.0 <= thr_high <= base
+    assert base * 5.0 <= thr_low <= base

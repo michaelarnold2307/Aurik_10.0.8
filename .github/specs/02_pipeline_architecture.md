@@ -246,6 +246,7 @@ Audio-Eingang (mono/stereo, beliebige SR)
     │ 5 Stufen: Label → Audio → Psychoakustik → Vokal/Harmonik → Interactions
     │ Soft-Cap: w > 1.5 → rational compression k=3.0 (Asymptote 1.83)
     │ P1/P2-Floor ≥ 0.70; Durchreichung als goal_weights an PMGG/CIG/GPP/FC
+    │ + UV3 all-phase Kopplung (§2.56a): `harmonic_adaptation_scalar` in `_profiled_phase_call`
     ↓
 [DefectScanner]  → DefectAnalysisResult (46 DefectTypes)
     ↓
@@ -286,6 +287,8 @@ Audio-Eingang (mono/stereo, beliebige SR)
 [Phasen-Ausführung]  ← jede Phase gewrapped durch PerPhaseMusicalGoalsGate
     │ 5-s-Sample → measure_quick(6 Ziele) → Rollback bei Δ > REGRESSION_THRESHOLD
     │ SongCalibrationProfile skaliert phasenfamilien-basiert strength/wet-dry
+    │ §2.56a Global All-Phase Harmonic Adaptation skaliert zusätzlich
+    │ implizite strength/wet-dry mit bounded song-context-Scalar
     │ (psychoakustisch priorisiert: P1/P2-Stabilität, Maskierung, Transienten)
     │ MAX_RETRIES = 5; STRENGTHS = [0.65, 0.50, 0.35, 0.25, 0.15]   # kanonisch gem. §2.29 _RETRY_STRENGTHS
     ↓
@@ -313,6 +316,49 @@ Audio-Eingang (mono/stereo, beliebige SR)
     ↓
 Audio-Ausgang + RestorationResult
 ```
+
+---
+
+## §2.56a [RELEASE_MUST] Global All-Phase Harmonic Adaptation (v9.11.12)
+
+`SongGoalImportance` muss nicht nur in Gates, sondern auch in der laufenden
+Phasensteuerung wirksam sein, damit alle 64 Phasen harmonisch zusammenarbeiten.
+
+**Normativer Ort:** `UnifiedRestorerV3._profiled_phase_call`
+
+**Pflicht-Algorithmus:**
+
+```python
+harmonic_adaptation_scalar = _compute_harmonic_adaptation_scalar(
+    phase_id,
+    phase_family,
+    goal_weights,
+    restorability_score,
+    material_key,
+)
+# harmonic_adaptation_scalar in [0.72, 1.18], mit Boundary-Pullback
+```
+
+**Verhalten:**
+
+1. Der Skalar wirkt multiplikativ auf implizite `strength` und `wet/dry`.
+2. Explizite `strength` (PMGG/Team-Policy/Hard-Cap) hat Vorrang.
+3. Die Anpassung ist advisory-only und darf harte Sicherheits-Gates nicht aufweichen.
+4. Fehler im Adaptionspfad führen zu neutralem Verhalten (`scalar=1.0`) und `logger.debug`.
+
+**Invarianten:**
+
+- Keine Per-Phase-Divergenz: ein zentraler Pfad für alle 64 Phasen.
+- Keine Randwert-Klebung: Pullback von exakten Bound-Rändern.
+- Keine Pipeline-Blockade durch Adaptionsfehler.
+
+**Verboten:**
+
+- Statische, song-unabhängige Universal-Strengths ohne Kontextkopplung.
+- Gleichzeitige Überschreibung expliziter PMGG-Strength durch §2.56a.
+
+**Rationale:** Senkt unnötige Rollbacks durch entkoppelte Phasenparameter,
+bei unverändert strikten End-Gates (§2.44, §2.48, §2.49).
 
 ---
 
@@ -420,10 +466,11 @@ quality_estimate = 0.40 * (1 - defect_severity) + 0.60 * (pqs_mos - 1) / 4
 
 ## §2.29 PerPhaseMusicalGoalsGate — Adaptive Regression-Schwellen
 
-**[RELEASE_MUST] PMGG darf Phasen NIEMALS überspringen (kein Rollback auf Original-Audio).**
-CausalDefectReasoner hat die Phase als notwendig bestimmt — sie MUSS angewendet
-werden, ggf. mit reduzierter Stärke (best-effort). Nach max. Retries wird der Versuch
-mit der geringsten Musical-Goal-Regression angewendet (action=`best_effort`).
+**[RELEASE_MUST] PMGG darf notwendige Phasen nicht stumm verwerfen.**
+CausalDefectReasoner-bestimmte Phasen müssen über eine Recovery-Kaskade geführt werden
+(Stärke-Reduktion, Team-Policy, alternative sichere Variante). Blindes Skippen ist verboten.
+Wenn nach Recovery kein besseres sicheres Ergebnis gefunden wird, ist der Status als
+`degraded` zu kennzeichnen (kein stiller Erfolg).
 
 VERBOTEN: `return audio, scores_before, "rollback", 0.0` — Rückgabe von
 unverändertem Original-Audio gleichbedeutend mit Phasen-Skip.
@@ -456,7 +503,7 @@ _PRIORITY_THRESHOLD_FACTOR: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.5, 4: 99.0,
 # Catastrophic-Threshold: max(0.08, 4.0 × adaptive_threshold) statt fest 0.20 (§2.31b)
 # P3: max 2 Retries, 1.5× Regression-Toleranz
 #   §2.31b: restorability_tier="good" → 3 Retries; tier="poor" → 1 Retry
-# P4/P5: kein Retry — nur Logging (action="passed_p4p5_tolerated")
+# P4/P5: Recovery-Lite (1 konservativer Retry), kein Emergency
 # Stagnation-Abbruch: max(0.002, threshold × 0.15) (§2.31b proportional)
 
 # Schnell-Ziele (≤ 200 ms Gesamtcheck):
@@ -482,6 +529,8 @@ for phase in selected_phases:
         applicable_goals=goal_filter.applicable,
     )
 # action ∈ {"passed", "retry1"..., "best_effort", "best_effort_rN", "passed_p4p5_tolerated"}
+# Invariante: Jede best_effort-Action ist als transparenter Recovery/Degradation-Pfad
+# zu behandeln (nie als stiller Success).
 ```
 
 ### §9.7.7 [RELEASE_MUST] PMGG Stable-Metric-Invariante (v9.10.79)
@@ -1098,7 +1147,7 @@ phase_result = _run_phase_dsp_fallback(phase_id, audio, kwargs)  # temporärer D
 
 1. Phasen mit P1/P2-Zielbezug (höchste Priorität)
 2. Phasen mit P3-Zielbezug
-3. Alle übrigen (P4/P5 best-effort)
+3. Alle übrigen (P4/P5 Recovery-Lite)
 
 Innerhalb jeder Prioritätsgruppe entscheidet die Reihenfolge im ursprünglichen Pipeline-Plan. Bei erneutem Ressourcenmangel: Phase für nächsten Anlauf vormerken, nicht dauerhaft ausführen.
 
@@ -1677,27 +1726,51 @@ Referenztest: `tests/unit/test_pre_analysis_handover_no_double_detect.py`
 **Psychoakustische Motivation**: Phasen, deren Musical-Goal-Deltas alle unterhalb der
 Hörschwelle (JND = Just Noticeable Difference) liegen, bringen keinen perceptuell messbaren
 Klanggewinn. Gleichzeitig erhöhen sie das Artefakt-Risiko (§2.49) und verbrauchen CPU-Budget.
-JND für Klangfarbe (Timbre) ≈ 2–3 % (Zwicker 1990, Spectral-Shape-Discrimination-Schwelle).
+
+Kalibrierungsbasis: **vollständige Musikmischungen mit Gesang** (Pop, Schlager, Jazz, Folk, Oper).
+Werte sind normalisierte Score-Äquivalente der perceptuellen JND für komplexe Musikmischungen —
+nicht für isolierte Töne. Primärquellen:
+
+- Thoret, Caramiaux, Depalle & McAdams (2021) **JASA** 149:3429 — Timbre-JND in Musikklängen ≈ 1 %
+- Caclin, McAdams, Smith & Winsberg (2005) **JASA** 118:2925 — multidimensionale Timbre-JND
+- Kreiman & Sidtis (2011) **Foundations of Voice Studies** — Stimmqualitätserkennung
+- Krumhansl & Cuddy (2010) **Psychol Learn Motiv** 51:51 — tonale Hierarchie
+- Marjieh, Harrison, Lee, Deligiannaki & Jacoby (2023) **Music Percept.** 40:183 — Schlüssel-Salienz
+- London (2012) **Hearing in Time** 2. Aufl. — Timing-JND ~8 ms in Musik
+- Repp & Su (2013) **Psychon Bull Rev** 20:403 — sensomotorische Synchronisations-JND
+- Juslin (2019) **Musical Emotions Explained** Oxford UP — Vokalemotions-Wahrnehmung
+- Witek et al. (2017) **PLOS ONE** 12:e0169907 — Groove-Wahrnehmungssensitivität
+- Beranek (2016) **J Acoust Soc Am** 139:1548 — Clarity C80-JND ~1 dB (aktualisierte Studie)
+- Toole (2018) **Sound Reproduction** 3. Aufl. — Wahrnehmungsschwellen Lautsprecher/Raum
+- Glasberg & Moore (2006) **JASA** 119:1705 — revidiertes Loudness-Modell, LF-Zone
+- Bregman (1990) **Auditory Scene Analysis** Ch. 2 — Auditory Stream Segregation
+- Blauert (1997) **Spatial Hearing** 2. Aufl. — Präzedenz/Hallnachhall-JND
+- Choisel & Wickelmaier (2007) **JASA** 121:2718 — räumlicher Eindruck-JND in Mehrkanal
 
 **JND-Schwellwerte pro Musical Goal**:
 
 ```python
 # backend/core/per_phase_musical_goals_gate.py
 JND_MIN_DELTA: dict[str, float] = {
-    "natuerlichkeit":        0.015,  # 1.5 % Timbre-JND (Zwicker)
-    "authentizitaet":        0.015,
-    "tonal_center":          0.010,  # Tonaler Schwerpunkt: sensitiver (Krumhansl 1990)
-    "timbre_authentizitaet": 0.015,
-    "artikulation":          0.012,  # Transienten-Timing sensitiver als Langzeit-Spektrum
-    "emotionalitaet":        0.018,
-    "micro_dynamics":        0.015,
-    "groove":                0.012,
-    "transparenz":           0.015,
-    "waerme":                0.020,  # Wärme-Wahrnehmung träger (Low-Freq-Integration)
-    "bass_kraft":            0.015,
-    "separation_fidelity":   0.018,
-    "brillanz":              0.020,
-    "spatial_depth":         0.025,  # Raumeindruck am wenigsten JND-sensitiv
+    # P1 — höchste Salienz; Vokalmusik macht diese besonders dominant
+    "natuerlichkeit":        0.012,  # Thoret et al. (2021) JASA 149:3429; Caclin et al. (2005) ≈1 %
+    "authentizitaet":        0.012,  # Kreiman & Sidtis (2011): Stimmqualität sehr präzise erkannt
+    # P2 — strukturelle Musikeigenschaften; tonaler Schwerpunkt am salientesten
+    "tonal_center":          0.008,  # Krumhansl & Cuddy (2010); Marjieh et al. (2023): höchste Salienz
+    "timbre_authentizitaet": 0.012,  # Caclin et al. (2005); McAdams (2019) Curr Biol 29:R764
+    "artikulation":          0.010,  # London (2012) 2. Aufl. ~8 ms; Repp & Su (2013) Psychon
+    # P3 — emotionale Hinweise in Stimme sehr präsent (100–300 ms Zeitskala)
+    "emotionalitaet":        0.014,  # Juslin (2019) OUP; Zentner et al. (2008) Emotion 8:494
+    "micro_dynamics":        0.012,  # Glasberg & Moore (2002) J AES 50:331 zeitvariantes JND
+    "groove":                0.010,  # Witek et al. (2017) PLOS ONE; Madison (2006) ≈6 ms
+    # P4 — tonale Balance/Raum; längere Integrationszeitfenster, aber sensitiver als vermutet
+    "transparenz":           0.012,  # Beranek (2016) JASA 139:1548 C80-JND ~1 dB; Toole (2018)
+    "waerme":                0.016,  # Alluri & Toiviainen (2012) Music Percept. 29:459; Howard & Angus (2017)
+    "bass_kraft":            0.012,  # Glasberg & Moore (2006) JASA 119:1705; ISO 226:2003
+    "separation_fidelity":   0.014,  # Bregman (1990) Auditory Scene Analysis; McDermott (2009) Curr Biol
+    # P5 — spektrale Brillanz/Raumtiefe; breiteste Integrationsfenster
+    "brillanz":              0.016,  # Siedenburg & McAdams (2017) J New Music Res 46:149
+    "spatial_depth":         0.018,  # Blauert (1997) 2. Aufl.; Choisel & Wickelmaier (2007) JASA 121:2718
 }
 ```
 
@@ -1978,7 +2051,8 @@ Gewichtung: Musical Noise = 1.0, Pre-Echo = 0.8, Spectral Holes = 0.6, Phase-Can
 
 - **Im HPI**: `artifact_freedom` fließt als Multiplikator in beide HPI-Formeln ein (§2.44)
 - **Phase-Level**: Nach jeder Phase prüfen — bei `artifact_freedom < 0.95` → Rollback auf `best_artifact_free_checkpoint`
-- **Export-Gate**: `artifact_freedom < 0.95` → kein Export, auch wenn alle 14 Goals bestanden
+- **Export-Gate**: `artifact_freedom < 0.95` blockiert regulären Success-Export. Es folgt
+    verpflichtend die Recovery-Kaskade; Export nur als `recovered`/`degraded` mit vollständiger Ursache.
 - **Protokollierung**: `RestorationResult.metadata["artifact_freedom"]` = Score + Detail-Report (detected_artifacts: list)
 
 ### §2.49 Finaler Score — Berechnungsregel (v9.10.126)

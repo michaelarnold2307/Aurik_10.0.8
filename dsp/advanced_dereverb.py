@@ -518,6 +518,9 @@ class AdvancedDereverb:
         # Stage 3: Late reflection cancellation (final polish)
         audio_final, metrics_late = self.late_reflection.process(audio_stage2, sr)
 
+        # Guard: no clipping artefacts from cumulative gain (§0 Primum non nocere)
+        audio_final = np.clip(audio_final, -1.0, 1.0)
+
         # Complete metrics
         metrics = {
             "processed": True,

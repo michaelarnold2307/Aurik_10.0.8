@@ -88,6 +88,7 @@ CAUSES = [
     "pitch_drift",  # Konstanter Geschwindigkeitsfehler (Motor/Tape-Stretch)
     "reverb_excess",  # Übermäßiger Raumhall
     "transient_smearing",  # Ansatzverschmierung (Comp/Limiter)
+    "vocal_harshness",  # Vokale Härte/Verzerrung (2-6 kHz)
     "sibilance",  # Zischlautüberbetonung > 6 kHz
     # ── Vintage (Schutz) ────────────────────────────────────────────────────
     "soft_saturation",  # Tube-/Tape-Sättigung — BEWAHREN, P(phases) = leer
@@ -212,7 +213,7 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "stylus_damage": 0.15,
         "sticky_shed_residue": 0.01,
         "multiband_wow_flutter": 0.01,
-        "generation_loss": 0.02,
+        "generation_loss": 0.05,  # vinyl→cassette→cd dubbing chains common in 1970s–1990s
         "motor_interference": 0.1,
     },
     "shellac": {
@@ -417,7 +418,7 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "stylus_damage": 0.01,
         "sticky_shed_residue": 0.01,
         "multiband_wow_flutter": 0.01,
-        "generation_loss": 0.01,
+        "generation_loss": 0.06,  # mp3_low endpoint of multi-gen tape→cd→mp3 chains
         "motor_interference": 0.01,
     },
     "mp3_high": {
@@ -468,7 +469,7 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "stylus_damage": 0.01,
         "sticky_shed_residue": 0.01,
         "multiband_wow_flutter": 0.01,
-        "generation_loss": 0.01,
+        "generation_loss": 0.04,  # mp3_high endpoint of dubbing chains
         "motor_interference": 0.01,
     },
     "aac": {
@@ -570,7 +571,7 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "stylus_damage": 0.01,
         "sticky_shed_residue": 0.01,
         "multiband_wow_flutter": 0.01,
-        "generation_loss": 0.01,
+        "generation_loss": 0.03,  # cd_digital often from analog masters with generation loss
         "motor_interference": 0.01,
     },
     "streaming": {
@@ -621,7 +622,7 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "stylus_damage": 0.01,
         "sticky_shed_residue": 0.01,
         "multiband_wow_flutter": 0.01,
-        "generation_loss": 0.01,
+        "generation_loss": 0.04,  # streaming masters often from multi-gen source chains
         "motor_interference": 0.01,
     },
     "dat": {
@@ -881,6 +882,10 @@ MATERIAL_PRIORS: dict[str, dict[str, float]] = {
         "motor_interference": 0.1,
     },
 }
+
+# Ensure newly introduced causes are present in every material prior table.
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("vocal_harshness", 0.01)
 
 # Phase-Empfehlungen pro Ursache (kanonische phase_id = Dateiname ohne .py)
 CAUSE_TO_PHASES: dict[str, list[str]] = {
@@ -1190,6 +1195,11 @@ CAUSE_PARAMS: dict[str, dict[str, Any]] = {
     "reverb_excess": {
         "dereverb_strength": 0.70,
         "dry_level": 0.85,
+    },
+    "vocal_harshness": {
+        "deesser_strength": 0.65,
+        "presence_attenuation_db": 2.5,
+        "vocal_harshness_threshold": 0.35,
     },
     "low_freq_rumble": {
         "hpf_cutoff_hz": 30.0,
@@ -1840,6 +1850,18 @@ def _likelihood_transient_smearing(sf: SpectralFeatures, defect_scores: dict[str
     return float(np.clip(p, 0.0, 1.0))
 
 
+def _likelihood_vocal_harshness(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:
+    """P(Merkmale | vocal_harshness) — Vokalhärte im Präsenzband (2-6 kHz)."""
+    p = 0.0
+    harsh_sev = float(defect_scores.get("vocal_harshness", 0.0))
+    p += _sigmoid_score(harsh_sev, k=8, x0=0.20) * 0.55
+    sib_sev = float(defect_scores.get("sibilance", 0.0))
+    p += _sigmoid_score(sib_sev, k=6, x0=0.20) * 0.20
+    p += _gaussian_score(sf.hf_energy_ratio, mu=0.38, sigma=0.18) * 0.15
+    p += _gaussian_score(sf.spectral_rolloff_hz, mu=7000.0, sigma=2500.0) * 0.10
+    return float(np.clip(p, 0.0, 1.0))
+
+
 def _likelihood_clipping(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:
     """P(Merkmale | clipping) — Generisches Clipping (analog + digital)."""
     p = 0.0
@@ -2139,6 +2161,7 @@ LIKELIHOOD_FNS = {
     "pre_echo": _likelihood_pre_echo,
     "low_freq_rumble": _likelihood_low_freq_rumble,
     "transient_smearing": _likelihood_transient_smearing,
+    "vocal_harshness": _likelihood_vocal_harshness,
     "clipping": _likelihood_clipping,
     "riaa_curve_error": _likelihood_riaa_curve_error,
     "aliasing": _likelihood_aliasing,
@@ -2316,6 +2339,11 @@ class CausalDefectReasoner:
 
         for cause in CAUSES:
             prior = priors.get(cause, 1.0 / len(CAUSES))
+            # Strong direct evidence for vocal harshness must not be drowned by global digital priors.
+            if cause == "vocal_harshness":
+                _vh_sev = float(defect_scores.get("vocal_harshness", 0.0))
+                if _vh_sev > 0.0:
+                    prior = max(prior, min(0.28, 0.03 + 0.25 * _vh_sev))
             likelihood = LIKELIHOOD_FNS[cause](sf, defect_scores)
             posteriors[cause] = prior * likelihood
 

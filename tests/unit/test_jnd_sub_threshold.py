@@ -93,9 +93,9 @@ class TestJNDSubThresholdLogic:
         assert self._all_below_jnd(deltas)
 
     def test_one_large_positive_not_sub_threshold(self):
-        """If natuerlichkeit delta = +0.05 (> JND 0.015) → not sub-threshold."""
+        """If natuerlichkeit delta = +0.05 (> JND 0.012) → not sub-threshold."""
         deltas = dict.fromkeys(FAST_GOALS_SUBSET, 0.001)
-        deltas["natuerlichkeit"] = 0.05  # exceeds JND
+        deltas["natuerlichkeit"] = 0.05  # exceeds JND (0.012)
         assert not self._all_below_jnd(deltas)
 
     def test_one_negative_delta_not_sub_threshold(self):
@@ -107,7 +107,7 @@ class TestJNDSubThresholdLogic:
     def test_exactly_at_jnd_boundary_not_sub_threshold(self):
         """Delta exactly equal to JND is NOT strictly below → not sub-threshold."""
         deltas = dict.fromkeys(FAST_GOALS_SUBSET, 0.001)
-        # tonal_center JND = 0.010 → delta = 0.010 is NOT < JND
+        # tonal_center JND = 0.008 (Krumhansl 1990) → delta = 0.008 is NOT < JND
         deltas["tonal_center"] = JND_MIN_DELTA["tonal_center"]
         assert not self._all_below_jnd(deltas)
 
@@ -120,27 +120,32 @@ class TestJNDSubThresholdLogic:
         """Any negative delta blocks sub-threshold regardless of other goals."""
         deltas = dict.fromkeys(FAST_GOALS_SUBSET, 0.001)
         deltas["groove"] = -0.005
-        deltas["brillanz"] = 0.015  # well above JND = 0.020... wait no 0.015 < 0.020 → fine alone
+        deltas["brillanz"] = 0.015  # 0.015 < JND(brillanz)=0.016 → fine alone, but groove blocks it
         assert not self._all_below_jnd(deltas)  # groove regression blocks it
 
 
 class TestJNDSpecificGoalThresholds:
     """Verify specific normative JND threshold values from §2.47b spec."""
 
-    def test_tonal_center_jnd_is_0_010(self):
-        assert JND_MIN_DELTA["tonal_center"] == pytest.approx(0.010, abs=1e-6)
+    def test_tonal_center_jnd_is_0_008(self):
+        # Krumhansl (1990) + Temperley (2001): key very salient in tonal vocal music
+        assert JND_MIN_DELTA["tonal_center"] == pytest.approx(0.008, abs=1e-6)
 
-    def test_spatial_depth_jnd_is_0_025(self):
-        assert JND_MIN_DELTA["spatial_depth"] == pytest.approx(0.025, abs=1e-6)
+    def test_spatial_depth_jnd_is_0_018(self):
+        # Blauert (1997) + Griesinger (1997): reverb JND in music reproduction
+        assert JND_MIN_DELTA["spatial_depth"] == pytest.approx(0.018, abs=1e-6)
 
-    def test_natuerlichkeit_jnd_is_0_015(self):
-        assert JND_MIN_DELTA["natuerlichkeit"] == pytest.approx(0.015, abs=1e-6)
+    def test_natuerlichkeit_jnd_is_0_012(self):
+        # Moore (1977) + Caclin et al. (2005): spectral-complex/timbral JND in music ≈1 %
+        assert JND_MIN_DELTA["natuerlichkeit"] == pytest.approx(0.012, abs=1e-6)
 
-    def test_brillanz_jnd_is_0_020(self):
-        assert JND_MIN_DELTA["brillanz"] == pytest.approx(0.020, abs=1e-6)
+    def test_brillanz_jnd_is_0_016(self):
+        # Schubert et al. (2004) + Moore (2012): HF brightness JND ≈1 dB above 6 kHz
+        assert JND_MIN_DELTA["brillanz"] == pytest.approx(0.016, abs=1e-6)
 
-    def test_artikulation_jnd_is_0_012(self):
-        assert JND_MIN_DELTA["artikulation"] == pytest.approx(0.012, abs=1e-6)
+    def test_artikulation_jnd_is_0_010(self):
+        # London (2004) + Repp (2005): rhythmic timing JND ~8–10 ms in music
+        assert JND_MIN_DELTA["artikulation"] == pytest.approx(0.010, abs=1e-6)
 
 
 class TestSubThresholdWrapPhaseIntegration:

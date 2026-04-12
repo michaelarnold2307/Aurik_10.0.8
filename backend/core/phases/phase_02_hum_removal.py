@@ -284,13 +284,26 @@ class HumRemovalPhase(PhaseInterface):
         # Step 3: Apply adaptive comb filters (DSP stage)
         is_stereo = audio.ndim == 2
         if is_stereo:
-            left, stats_left = self._apply_adaptive_comb(audio[:, 0], harmonic_data, params)
-            right, stats_right = self._apply_adaptive_comb(audio[:, 1], harmonic_data, params)
-            result_audio = np.column_stack([left, right])
+            # §2.51: M/S-Domain — electrical hum is coherent (in Mid), Side unverändert
+            _sqrt2_inv = 1.0 / np.sqrt(2.0)
+            _mid = (audio[:, 0] + audio[:, 1]) * _sqrt2_inv
+            _side = (audio[:, 0] - audio[:, 1]) * _sqrt2_inv
 
-            # Combine statistics
-            total_reduction = (stats_left["reduction_db"] + stats_right["reduction_db"]) / 2
-            total_harmonics = stats_left["harmonics_removed"] + stats_right["harmonics_removed"]
+            # Apply adaptive comb filter ONLY to Mid — identical zero-phase filter on both channels
+            _mid_clean, stats = self._apply_adaptive_comb(_mid, harmonic_data, params)
+
+            # Side: apply lighter notch (hum leaks into side at ~-20 dB), max 40% depth
+            _params_side = dict(params)
+            _params_side["q_factor"] = params.get("q_factor", 30.0) * 2.5  # Enger Notch = geringere Tiefe
+            _side_clean, _ = self._apply_adaptive_comb(_side, harmonic_data, _params_side)
+
+            # Reconstruct L/R from M/S
+            _left = (_mid_clean + _side_clean) / np.sqrt(2.0)
+            _right = (_mid_clean - _side_clean) / np.sqrt(2.0)
+            result_audio = np.column_stack([_left, _right])
+
+            total_reduction = stats["reduction_db"]
+            total_harmonics = stats["harmonics_removed"]
         else:
             result_audio, stats = self._apply_adaptive_comb(audio, harmonic_data, params)
             total_reduction = stats["reduction_db"]

@@ -254,6 +254,8 @@ class ArtifactFreedomGate:
         sr: int,
         material_type: str = "digital",
         phase_id: str = "",
+        goal_weights: dict[str, float] | None = None,
+        restorability_score: float | None = None,
     ) -> ArtifactFreedomResult:
         """Evaluate artifact freedom of restored audio vs original.
 
@@ -263,6 +265,8 @@ class ArtifactFreedomGate:
             sr: sample rate
             material_type: carrier type for adaptive thresholds
             phase_id: phase identifier — used to select detector set (restorative vs enhancement)
+            goal_weights: optional §2.56 per-song goal-weights for adaptive annoyance guard
+            restorability_score: optional restorability context (0-100) for adaptive tolerance
 
         Returns:
             ArtifactFreedomResult with artifact_freedom score and details
@@ -363,11 +367,49 @@ class ArtifactFreedomGate:
                 sharp_orig = self._compute_sharpness_bismarck(orig_mono, sr)
                 sharp_rest = self._compute_sharpness_bismarck(rest_mono, sr)
                 mat_tol = _ROUGHNESS_MATERIAL_TOLERANCE.get(mat_key, 1.0)
+                # §2.56 harmonization: adaptive tolerance based on song priorities.
+                # Preserve-heavy songs (nat/auth/timbre important) => stricter annoyance guard.
+                # Clarity-heavy songs (trans/art/brillanz important) => slightly more tolerance.
+                _preserve_w = 1.0
+                _clarity_w = 1.0
+                if isinstance(goal_weights, dict) and goal_weights:
+                    _preserve_w = float(
+                        np.clip(
+                            (
+                                float(goal_weights.get("natuerlichkeit", 1.0))
+                                + float(goal_weights.get("authentizitaet", 1.0))
+                                + float(goal_weights.get("timbre_authentizitaet", 1.0))
+                            )
+                            / 3.0,
+                            0.30,
+                            2.00,
+                        )
+                    )
+                    _clarity_w = float(
+                        np.clip(
+                            (
+                                float(goal_weights.get("transparenz", 1.0))
+                                + float(goal_weights.get("artikulation", 1.0))
+                                + float(goal_weights.get("brillanz", 1.0))
+                            )
+                            / 3.0,
+                            0.30,
+                            2.00,
+                        )
+                    )
+
+                _rest = 65.0 if restorability_score is None else float(np.clip(restorability_score, 0.0, 100.0))
+                # Harder material (low restorability) gets slightly more tolerance.
+                _rest_tol = float(np.clip(1.0 + (55.0 - _rest) / 250.0, 0.85, 1.20))
+                # If preserve-weight is high, tolerance should shrink; if clarity-weight is high, expand.
+                _goal_tol = float(np.clip(np.sqrt(_clarity_w / max(_preserve_w, 1e-6)), 0.80, 1.25))
+                _adaptive_tol = mat_tol * _rest_tol * _goal_tol
+
                 _roughness_delta = max(0.0, rough_rest - rough_orig)
                 _sharpness_delta = max(0.0, sharp_rest - sharp_orig)
-                if _roughness_delta > _ROUGHNESS_FLAG_ASPER * mat_tol:
+                if _roughness_delta > _ROUGHNESS_FLAG_ASPER * _adaptive_tol:
                     _rs_penalty -= 0.05
-                if _sharpness_delta > _SHARPNESS_FLAG_ACUM * mat_tol:
+                if _sharpness_delta > _SHARPNESS_FLAG_ACUM * _adaptive_tol:
                     _rs_penalty -= 0.10
             except Exception as _ex:
                 logger.debug("roughness/sharpness guard failed: %s", _ex)
@@ -420,6 +462,78 @@ class ArtifactFreedomGate:
             sharpness_delta_acum=round(_sharpness_delta, 4),
             roughness_sharpness_penalty=round(_rs_penalty, 4),
         )
+
+    # ── §B4 Temporal Masking Helper ────────────────────────────────────────
+
+    @staticmethod
+    def _compute_temporal_masking_weights(
+        audio: np.ndarray,
+        sr: int,
+        artifacts: "list[DetectedArtifact]",
+    ) -> "list[float]":
+        """Psychoacoustic temporal masking weight per artifact (B4, ISO 532-1 §3.1).
+
+        Forward masking: loud transient masks artefacts up to 200 ms AFTER it.
+        Backward masking: 5 ms BEFORE a loud transient, artefacts are weakly masked.
+
+        Returns a weight ∈ (0, 1] per artifact — multiply artifact salience_weighted_score
+        by this weight before accumulating the penalty.
+
+        Design:
+          - Forward mask decay: w = 0.15 + 0.85 * (lag_ms / 200)           for lag ≤ 200 ms
+          - Backward mask:      w = 0.10                                     for lag ≤ 5 ms
+          - Outside any masking window: w = 1.0 (full penalty)
+        """
+        if not artifacts:
+            return []
+
+        # Detect loud transients: 10 ms frames, peaks ≥ -20 dBFS relative to signal peak
+        frame_len = max(1, int(0.010 * sr))
+        hop = max(1, frame_len // 2)
+        n_frames = max(1, (len(audio) - frame_len) // hop)
+
+        frame_rms: list[float] = []
+        for i in range(n_frames):
+            s = i * hop
+            seg = audio[s : s + frame_len]
+            frame_rms.append(float(np.sqrt(np.mean(seg**2) + 1e-12)))
+
+        if not frame_rms:
+            return [1.0] * len(artifacts)
+
+        peak_rms = float(np.percentile(frame_rms, 99))
+        threshold_rms = peak_rms * 10.0 ** (-20.0 / 20.0)  # -20 dBFS relative to peak
+
+        transient_positions_s: list[float] = []
+        for i, rms_val in enumerate(frame_rms):
+            if rms_val >= threshold_rms:
+                transient_positions_s.append(float(i * hop) / sr)
+
+        if not transient_positions_s:
+            return [1.0] * len(artifacts)
+
+        fwd_mask_s = 0.200   # 200 ms forward masking window
+        bwd_mask_s = 0.005   # 5 ms backward masking window
+
+        weights: list[float] = []
+        for art in artifacts:
+            art_center_s = float(art.start_sample + (art.end_sample - art.start_sample) / 2.0) / sr
+            best_w = 1.0  # default: no masking
+
+            for t_s in transient_positions_s:
+                lag = art_center_s - t_s  # positive = after transient
+
+                if 0.0 <= lag <= fwd_mask_s:
+                    # Forward masking: linearly decays from 0.15 (at transient) to 1.0 (at 200 ms)
+                    w = 0.15 + 0.85 * (lag / fwd_mask_s)
+                    best_w = min(best_w, w)
+                elif -bwd_mask_s <= lag < 0.0:
+                    # Backward masking: strong suppression (artefact before loud event)
+                    best_w = min(best_w, 0.10)
+
+            weights.append(best_w)
+
+        return weights
 
     # ── Detector: Musical Noise ────────────────────────────────────────────
 
@@ -478,6 +592,31 @@ class ArtifactFreedomGate:
             rest_spectrum = np.abs(np.fft.rfft(restored[start:end] * win))
             orig_spectrum = np.abs(np.fft.rfft(orig[start:end] * win))
 
+            # §2.49c ERB-weighted simultaneous masking threshold (ISO 11172-3):
+            # Spectral peaks that are below the psychoacoustic masking threshold
+            # of the surrounding signal are inaudible and must not be flagged.
+            # Masking model: spreading function spans ±1.5 ERB from each bin;
+            # masking threshold ≈ signal_level − (14.5 + bark_distance × 7.5) dB.
+            _rest_mag_db = 20.0 * np.log10(rest_spectrum + 1e-12)
+            _n_bins = len(rest_spectrum)
+            _freq_axis = np.arange(_n_bins) * sr / (2.0 * _n_bins)
+            # ERB approximation: ERB(f) ≈ 24.7 * (4.37 * f/1000 + 1) (Glasberg & Moore 1990)
+            _erb_widths = 24.7 * (4.37 * _freq_axis / 1000.0 + 1.0)
+            _masking_threshold = np.full(_n_bins, -120.0, dtype=np.float64)
+            # Simplified spreading: for each bin, masking from ±2 ERB neighbours
+            for _mb in range(_n_bins):
+                if _rest_mag_db[_mb] < -60.0:
+                    continue
+                _erb_w = max(1.0, _erb_widths[_mb])
+                _spread_hz = 2.0 * _erb_w
+                _spread_bins = max(1, int(_spread_hz / max(1.0, sr / (2.0 * _n_bins))))
+                _lo = max(0, _mb - _spread_bins)
+                _hi = min(_n_bins, _mb + _spread_bins + 1)
+                _mask_level = _rest_mag_db[_mb] - 14.5  # simultaneous masking offset
+                _masking_threshold[_lo:_hi] = np.maximum(
+                    _masking_threshold[_lo:_hi], _mask_level
+                )
+
             # Median neighbor comparison: peak must exceed neighbors by threshold
             for j in range(2, len(mag_db) - 2):
                 neighbors = np.median(mag_db[max(0, j - 5) : j + 6])
@@ -486,6 +625,10 @@ class ArtifactFreedomGate:
                     # Directional guard: skip if restored energy ≤ original energy
                     # at this bin — the phase removed a peak (correct), not added one.
                     if rest_spectrum[j] <= orig_spectrum[j] * 1.05:
+                        continue
+                    # ERB masking guard: skip if the artifact peak is below
+                    # the psychoacoustic masking threshold — it is inaudible.
+                    if j < _n_bins and mag_db[j] < _masking_threshold[j]:
                         continue
                     freq_hz = float(j * sr / (2 * len(spectrum)))
                     artifacts.append(
@@ -499,6 +642,16 @@ class ArtifactFreedomGate:
                         )
                     )
                     break  # one per frame
+
+        # §B4: Apply temporal masking — artefacts near loud transients are less perceptible
+        if artifacts:
+            try:
+                _rest_mono_mn = restored if restored.ndim == 1 else np.mean(restored, axis=0)
+                mask_weights = self._compute_temporal_masking_weights(_rest_mono_mn, sr, artifacts)
+                for art, mw in zip(artifacts, mask_weights):
+                    art.salience_weighted_score = getattr(art, "salience_weighted_score", 1.0) * mw
+            except Exception as _tm_exc:
+                logger.debug("§B4 temporal-masking (musical_noise) non-blocking: %s", _tm_exc)
 
         return artifacts
 
@@ -640,6 +793,31 @@ class ArtifactFreedomGate:
         # without false-triggering on natural HF roll-off after restoration.
         drop_db = orig_db - rest_db
         hole_mask = passband_mask & (drop_db > 15.0)
+
+        # §2.49c ERB-weighted masking: spectral holes that are below the
+        # simultaneous masking threshold of the *restored* signal are
+        # inaudible — don't flag them.  Same spreading model as musical noise.
+        _n_bins_sh = len(rest_db)
+        _freq_axis_sh = np.arange(_n_bins_sh) * sr / float(n_fft)
+        _erb_w_sh = 24.7 * (4.37 * _freq_axis_sh / 1000.0 + 1.0)
+        _mask_th_sh = np.full(_n_bins_sh, -120.0, dtype=np.float64)
+        for _mb_sh in range(_n_bins_sh):
+            if rest_db[_mb_sh] < -60.0:
+                continue
+            _spread_hz_sh = 2.0 * max(1.0, _erb_w_sh[_mb_sh])
+            _spread_bins_sh = max(1, int(_spread_hz_sh / max(1.0, float(sr) / n_fft)))
+            _lo_sh = max(0, _mb_sh - _spread_bins_sh)
+            _hi_sh = min(_n_bins_sh, _mb_sh + _spread_bins_sh + 1)
+            _ml_sh = rest_db[_mb_sh] - 14.5
+            _mask_th_sh[_lo_sh:_hi_sh] = np.maximum(_mask_th_sh[_lo_sh:_hi_sh], _ml_sh)
+        # Holes where the dropped energy was below masking threshold are masked
+        _audible_hole = np.copy(hole_mask)
+        for _hb in np.where(hole_mask)[0]:
+            if rest_db[_hb] > _mask_th_sh[_hb]:
+                pass  # audible — keep in hole_mask
+            else:
+                _audible_hole[_hb] = False
+        hole_mask = _audible_hole
 
         if not np.any(hole_mask):
             return artifacts

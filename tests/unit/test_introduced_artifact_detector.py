@@ -286,3 +286,24 @@ def test_25_very_long_audio():
     r = detect_introduced_artifacts(orig, rest, SR)
     assert math.isfinite(r.total_contaminated_fraction)
     assert 0.0 <= r.total_contaminated_fraction <= 1.0
+
+
+def test_26_ml_hallucination_window_cap_limits_runtime_cost(monkeypatch):
+    from backend.core.introduced_artifact_detector import IntroducedArtifactDetector
+
+    iad = IntroducedArtifactDetector()
+    # Force every frame through harmonicity path.
+    iad.HALLUCINATION_MIN_RMS = 0.0
+    iad.MAX_HALLUCINATION_WINDOWS = 5
+
+    calls = {"n": 0}
+
+    def _fake_harmonicity(frame, sr):
+        calls["n"] += 1
+        return 0.0
+
+    monkeypatch.setattr(iad, "_harmonicity", _fake_harmonicity)
+    residuum = (np.random.randn(SR * 120) * 0.1).astype(np.float32)  # 2 min
+
+    _ = iad._detect_ml_hallucinations(residuum, SR)
+    assert calls["n"] <= iad.MAX_HALLUCINATION_WINDOWS

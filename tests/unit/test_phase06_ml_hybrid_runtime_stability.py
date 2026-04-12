@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import psutil
 import scipy.signal as signal
@@ -125,3 +127,93 @@ def test_phase06_skips_audiosr_for_short_clip_guard(monkeypatch) -> None:
     assert result.metadata.get("strategy_used") == "dsp_only"
     assert "short_clip_guard" in str(result.metadata.get("ml_reason", ""))
     assert called["plugin"] is False
+
+
+def test_phase06_skips_audiosr_on_thrashing_guard(monkeypatch) -> None:
+    import backend.core.phases.phase_06_frequency_restoration as p06
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: _FreeMemVM())
+    monkeypatch.setattr(p06, "_get_audiosr_plugin", lambda: _FakeAudioSRPlugin())
+    monkeypatch.setattr("backend.core.ml_memory_budget.is_system_thrashing", lambda: True)
+
+    phase = FrequencyRestorationPhase(sample_rate=48_000)
+    audio = np.zeros((2, 512), dtype=np.float32)
+    monkeypatch.setattr(phase, "_restore_highs_professional", lambda a, _p, _sbr: a.copy())
+
+    restored, meta = phase._restore_frequency_ml_hybrid(
+        audio,
+        params={"rolloff_hz": 6000.0, "restoration_strength": 0.7},
+        material_type="shellac",
+        quality_mode="maximum",
+        enable_sbr=True,
+        audiosr_min_duration_s=0.0,
+    )
+
+    assert restored.shape == audio.shape
+    assert meta.get("strategy_used") == "dsp_only"
+    assert meta.get("ml_reason") == "audiosr_thrashing_guard"
+
+
+def test_phase06_releases_plm_active_flag_on_timeout(monkeypatch) -> None:
+    import backend.core.phases.phase_06_frequency_restoration as p06
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: _FreeMemVM())
+    monkeypatch.setattr("backend.core.ml_memory_budget.is_system_thrashing", lambda: False)
+
+    phase = FrequencyRestorationPhase(sample_rate=48_000)
+    audio = np.zeros((2, 512), dtype=np.float32)
+    monkeypatch.setattr(phase, "_restore_highs_professional", lambda a, _p, _sbr: a.copy())
+
+    class _DummyPlugin:
+        def process(self, audio: np.ndarray, sr: int, target_sr: int = 48_000) -> np.ndarray:
+            _ = (audio, sr, target_sr)
+            return np.asarray(audio, dtype=np.float32)
+
+    monkeypatch.setattr(p06, "_get_audiosr_plugin", lambda: _DummyPlugin())
+
+    class _FakePLM:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool]] = []
+
+        def set_active(self, name: str, active: bool) -> None:
+            self.calls.append((name, active))
+
+    fake_plm = _FakePLM()
+
+    monkeypatch.setattr(
+        "backend.core.plugin_lifecycle_manager.get_plugin_lifecycle_manager",
+        lambda: fake_plm,
+    )
+    monkeypatch.setattr(
+        "backend.core.plugin_lifecycle_manager.touch_plugin",
+        lambda _name: None,
+    )
+
+    class _FastTimeoutThread:
+        def __init__(self, target, daemon=True):
+            _ = daemon
+            self._target = target
+
+        def start(self):
+            return None
+
+        def join(self, timeout=None):
+            _ = timeout
+            return None
+
+    monkeypatch.setattr(threading, "Thread", _FastTimeoutThread)
+
+    restored, meta = phase._restore_frequency_ml_hybrid(
+        audio,
+        params={"rolloff_hz": 6000.0, "restoration_strength": 0.7},
+        material_type="shellac",
+        quality_mode="maximum",
+        enable_sbr=True,
+        audiosr_min_duration_s=0.0,
+    )
+
+    assert restored.shape == audio.shape
+    assert meta.get("strategy_used") == "dsp_only"
+    assert meta.get("ml_error") == "timeout"
+    assert ("AudioSR", True) in fake_plm.calls
+    assert ("AudioSR", False) in fake_plm.calls

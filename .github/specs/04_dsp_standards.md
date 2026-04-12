@@ -136,7 +136,7 @@ def hz_to_mel(f_hz: float) -> float:
 | Dropout < 50 ms | DSP: **NMF-β + Sinusoidal** | Consistent Wiener | ~~Yule-Walker AR~~ |
 | Dropout 50–999 ms | ML: **CQTdiff+** → DiffWave | Spectral Interpolation | ~~einfaches AR~~ |
 | Codec-Artefakte | ML: **Apollo** (Band-Sequence Mamba) | Spectral Repair + PGHI | ~~EQ-Anhebung~~ |
-| Pitch-Tracking (mono/Gesang) | ML: **FCPE** → CREPE → RMVPE (nur wenn stabil verifiziert) | PESTO → pYIN | ~~YIN~~ |
+| Pitch-Tracking (mono/Gesang) | ML: **FCPE** → **RMVPE** (Wei et al. ICASSP 2023, −30 % Pitch-Fehler bei Gesang) | PESTO → pYIN | ~~YIN~~, ~~CREPE als Tier-2~~ |
 | Polyphoner Pitch | ML: **BasicPitch** | Spektrale Peak-Verfolgung | ~~CREPE mono~~ |
 | Instrument-Resonanz | DSP: **DDSP** (Eigenimpl.) | Sinusoidal + Stoch. | ~~fixe Formant-EQ~~ |
 | Formanten F1–F4 | ML: **DeepFormants CNN** (ONNX) | LPC (Burg, Ordnung **30–40 bei 48 kHz-SR**, alternativ: Downsampling auf 16 kHz → LPC Ord. 16 → Upsampling) | ~~LPC < 12~~ |
@@ -317,7 +317,7 @@ VERBOTEN: Griffin-Lim als Endschritt in Studio-2026
 ### Pit-Korrektur (Phase 12, 31)
 
 ```text
-Primär: FCPE → CREPE → RMVPE (nur wenn stabil verifiziert) + DTW
+Primär: FCPE → RMVPE (Wei et al. ICASSP 2023) + DTW
 Bei Gesang (PANNs Vocals ≥ 0.4):
     PSOLA (Moulines & Charpentier 1990) — formanterhaltend bei Transposition > ±2 Halbton
     Phase-Vocoder: nur für perkussive / nicht-vokale Segmente (HPSS-detektiert)
@@ -338,7 +338,7 @@ B-Schätzung per Oktavlage (aus MIDI-Pitch oder f₀-Track):
     MIDI 72–108 (2–5-Oktave,     1047–4186 Hz):B ∈ [0.002, 0.008]
 
 Schätzung (wenn kein MIDI-Input):
-    1. f₀ per FCPE/CREPE → nächster MIDI-Pitch
+    1. f₀ per FCPE → RMVPE → nächster MIDI-Pitch
     2. Partials f_2, f_3, f_4 aus Spektrum detektieren
     3. B = mean([(f_n / (n · f_0))² - 1] / n²)  für n = 2..4
     4. B im zulässigen Bereich für die Oktavlage klemmen (s. o.)

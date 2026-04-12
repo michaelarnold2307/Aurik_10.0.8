@@ -1475,3 +1475,58 @@ class TestMidPipelineCalibrationStep:
         result = self._FN(scores, profile, "33pct", 5, 15)
         assert result is not None
         assert result["global_scalar"] == pytest.approx(0.88)
+
+
+# ---------------------------------------------------------------------------
+# §2.46b Spectral Tilt Drift Guard — _estimate_spectral_tilt_quick + Instance
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateSpectralTiltQuick:
+    """§2.46b: _estimate_spectral_tilt_quick() static method sanity checks."""
+
+    def test_returns_float_for_sine(self):
+        audio = _sine(2.0, freq=440.0)
+        result = UnifiedRestorerV3._estimate_spectral_tilt_quick(audio, SR)
+        assert result is not None
+        assert isinstance(result, float)
+        assert np.isfinite(result)
+        assert -12.0 <= result <= 2.0
+
+    def test_returns_float_for_stereo(self):
+        audio = _stereo(2.0)
+        result = UnifiedRestorerV3._estimate_spectral_tilt_quick(audio, SR)
+        assert result is not None
+        assert isinstance(result, float)
+
+    def test_does_not_raise_on_empty_audio(self):
+        audio = np.zeros(0, dtype=np.float32)
+        result = UnifiedRestorerV3._estimate_spectral_tilt_quick(audio, SR)
+        assert result is None or isinstance(result, float)
+
+    def test_bright_vs_dark_signal_direction(self):
+        freqs = np.fft.rfftfreq(4096, 1.0 / SR)
+        spec_bright = np.ones(len(freqs))
+        audio_bright = np.fft.irfft(spec_bright, n=8192).astype(np.float32)[:8192]
+        spec_dark = np.where(freqs > 0, 1.0 / (freqs + 1.0) ** 2, 1e-10)
+        audio_dark = np.fft.irfft(spec_dark, n=8192).astype(np.float32)[:8192]
+        tilt_bright = UnifiedRestorerV3._estimate_spectral_tilt_quick(audio_bright, SR)
+        tilt_dark = UnifiedRestorerV3._estimate_spectral_tilt_quick(audio_dark, SR)
+        if tilt_bright is not None and tilt_dark is not None:
+            assert tilt_bright > tilt_dark
+
+
+class TestEraSpectralTiltInstance:
+    """§2.46b: _era_spectral_tilt Instanzvariable."""
+
+    def test_defaults_to_none(self):
+        cfg = RestorationConfig(mode=QualityMode.BALANCED, deployment_mode=DeploymentMode.PRODUCT)
+        restorer = UnifiedRestorerV3(cfg)
+        assert hasattr(restorer, "_era_spectral_tilt")
+        assert restorer._era_spectral_tilt is None
+
+    def test_can_be_set(self):
+        cfg = RestorationConfig(mode=QualityMode.BALANCED, deployment_mode=DeploymentMode.PRODUCT)
+        restorer = UnifiedRestorerV3(cfg)
+        restorer._era_spectral_tilt = -5.2
+        assert restorer._era_spectral_tilt == pytest.approx(-5.2)

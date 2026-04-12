@@ -705,6 +705,14 @@ class CumulativeInteractionGuard:
             _phase_exclusions = _resolve_phase_specific_drift_exclusions(phase_id)
             # §2.56: Per-goal weights amplify drift for important goals
             _gw = getattr(state, "goal_weights", None)
+            # §4.5 JND sub-threshold filtering — perceptual drift weighting
+            # Drifts below the Just-Noticeable Difference are inaudible and must not
+            # accumulate into false rollback triggers (§0 Klangwahrheit, §2.54 Messen-Handeln-Validieren).
+            _JND_PER_GOAL = {
+                "natuerlichkeit": 0.015, "authentizitaet": 0.015,
+                "tonal_center": 0.020, "timbre_authentizitaet": 0.018,
+                "artikulation": 0.018,
+            }
             for g in P1_P2_GOALS:
                 if _is_subtractive and g in _DEFECT_INFLATED_SUBTRACTIVE_GOALS:
                     continue  # tonal_center für SUBTRACTIVE-Phasen nicht prüfen (§2.29c)
@@ -712,6 +720,10 @@ class CumulativeInteractionGuard:
                     continue
                 if g in current_goals and g in state.pre_pipeline_goals:
                     raw_drift = current_goals[g] - state.pre_pipeline_goals[g]
+                    # §4.5 JND: sub-threshold drift is perceptually irrelevant
+                    _jnd = _JND_PER_GOAL.get(g, 0.015)
+                    if -_jnd < raw_drift < 0:
+                        raw_drift = 0.0  # inaudible regression → neutral
                     # §2.56: Weight amplifies negative drift for important goals
                     w = _gw.get(g, 1.0) if _gw else 1.0
                     cumulative_drift[g] = raw_drift * w if raw_drift < 0 else raw_drift
@@ -912,7 +924,11 @@ class CumulativeInteractionGuard:
                     if guard_goal in goals and guard_goal in state.pre_pipeline_goals:
                         drift = goals[guard_goal] - state.pre_pipeline_goals[guard_goal]
                         # §2.54: adaptive threshold — analog material tolerates more drift
-                        effective_max_reg = self._compute_adaptive_pair_threshold(max_reg, state)
+                        effective_max_reg = self._compute_adaptive_pair_threshold(
+                            max_reg,
+                            state,
+                            guard_goal=guard_goal,
+                        )
                         if drift < effective_max_reg:
                             return (
                                 f"{description}: {guard_goal} drift={drift:+.3f} < "
@@ -924,6 +940,7 @@ class CumulativeInteractionGuard:
         self,
         base_threshold: float,
         state: InteractionGuardState,
+        guard_goal: str | None = None,
     ) -> float:
         """§2.54 Scale critical-pair regression threshold for material/restorability.
 
@@ -955,6 +972,19 @@ class CumulativeInteractionGuard:
         rest_factor = 1.0 + max(0.0, (55.0 - restorability) / 55.0)  # 1.0–2.0 range
 
         effective = base_threshold * mat_scale * rest_factor
+
+        # §2.56 Song-Goal-Importance for critical-pair checks.
+        # High weight for guard_goal => stricter threshold (closer to 0).
+        # Low weight => more permissive threshold (more negative).
+        if guard_goal and state.goal_weights:
+            try:
+                goal_weight = float(np.clip(state.goal_weights.get(guard_goal, 1.0), 0.30, 2.00))
+            except Exception:
+                goal_weight = 1.0
+            # For negative thresholds, dividing by sqrt(weight) yields:
+            # weight>1 => less negative (stricter), weight<1 => more negative (permissive).
+            effective = effective / float(np.sqrt(max(goal_weight, 1e-6)))
+
         # base_threshold is negative; clip: most permissive (5×) ← → strictest (1×)
         return float(np.clip(effective, 5.0 * base_threshold, base_threshold))
 

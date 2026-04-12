@@ -260,13 +260,31 @@ class TapeSaturation(PhaseInterface):
         is_stereo = audio.ndim == 2
 
         if is_stereo:
-            # Process each channel
-            left_saturated = self._saturate_multi_band(audio[:, 0], sample_rate, drive, tape_speed, hysteresis)
-            right_saturated = self._saturate_multi_band(audio[:, 1], sample_rate, drive, tape_speed, hysteresis)
+            # §2.51: M/S-Domain — tape saturation (nichtlinear) nur auf Mid anwenden
+            # Analog zu phase_21_exciter: "Excitation nur auf Mid, Side unverändert"
+            _sqrt2_inv = 1.0 / np.sqrt(2.0)
+            _mid = (audio[:, 0] + audio[:, 1]) * _sqrt2_inv
+            _side = (audio[:, 0] - audio[:, 1]) * _sqrt2_inv
 
-            # Ensure same length
-            min_len = min(len(left_saturated), len(right_saturated))
-            saturated = np.column_stack([left_saturated[:min_len], right_saturated[:min_len]])
+            # Full saturation on Mid (carries the musical content, tape intermodulation)
+            _mid_sat = self._saturate_multi_band(_mid, sample_rate, drive, tape_speed, hysteresis)
+
+            # Side: very light saturation (<=30% drive) to avoid L/R spatial artifacts
+            _side_drive = drive * 0.30
+            if _side_drive > 0.01:
+                _side_sat = self._saturate_multi_band(_side, sample_rate, _side_drive, tape_speed, hysteresis * 0.5)
+            else:
+                _side_sat = _side
+
+            # Ensure length coherence
+            _min_len = min(len(_mid_sat), len(_side_sat), audio.shape[0])
+            _mid_sat = _mid_sat[:_min_len]
+            _side_sat = _side_sat[:_min_len]
+
+            # Reconstruct L/R from M/S
+            _left = (_mid_sat + _side_sat) / np.sqrt(2.0)
+            _right = (_mid_sat - _side_sat) / np.sqrt(2.0)
+            saturated = np.column_stack([_left, _right])
         else:
             saturated = self._saturate_multi_band(audio, sample_rate, drive, tape_speed, hysteresis)
 

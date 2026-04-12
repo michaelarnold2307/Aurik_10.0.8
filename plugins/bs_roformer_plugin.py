@@ -181,7 +181,7 @@ class BSRoFormerPlugin:
             for model_path in (self._LOCAL_MBR, self.MODELS_DIR / "bs_roformer.onnx"):
                 if model_path.exists():
                     try:
-                        from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                        from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                         _bs_prov = _get_prov("BSRoFormer")
                     except Exception:

@@ -57,7 +57,7 @@ class TestImportAndConstants:
         assert CausalDefectReasoner is not None
 
     def test_02_causes_list_length(self):
-        assert len(CAUSES) == 48
+        assert len(CAUSES) == 49
 
     def test_03_causes_contains_soft_saturation(self):
         assert "soft_saturation" in CAUSES
@@ -72,6 +72,11 @@ class TestImportAndConstants:
         # Alle 34 Ursachen müssen im CAUSE_TO_PHASES-Mapping vorhanden sein
         for cause in CAUSES:
             assert cause in CAUSE_TO_PHASES, f"{cause} not in CAUSE_TO_PHASES"
+
+    def test_06a_causes_cover_all_phase_mappings(self):
+        # Bidirektionale Konsistenz: Kein Mapping-Eintrag darf außerhalb von CAUSES liegen.
+        for cause in CAUSE_TO_PHASES:
+            assert cause in CAUSES, f"{cause} in CAUSE_TO_PHASES but not in CAUSES"
 
     def test_06b_likelihood_fns_cover_all_causes(self):
         # Alle 34 Ursachen müssen eine Likelihood-Funktion haben

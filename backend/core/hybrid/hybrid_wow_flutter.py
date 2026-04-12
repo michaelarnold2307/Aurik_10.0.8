@@ -2,7 +2,7 @@
 Hybrid Wow/Flutter Correction - AURIK 9.0 Phase 12 ML-Hybrid
 =============================================================
 
-Zwei-Stufen-Pitch-Detektion: pYIN (DSP) + CREPE (ML) für überlegene Genauigkeit.
+Zwei-Stufen-Pitch-Detektion: pYIN (DSP) + RMVPE/PESTO (ML) für überlegene Genauigkeit.
 §4.2-konform: klassisches YIN (de Cheveigné 2002) ist VERBOTEN als primäre Methode.
 
 Architektur:
@@ -11,7 +11,7 @@ Architektur:
    - Kumulative mittlere normalisierte Differenz (probabilistisch)
    - Robust bei verrauschten/historischen Signalen
 
-2. Stufe 2: CREPE ML Pitch-Detektion (Kim et al. 2018)
+2. Stufe 2: RMVPE/PESTO ML Pitch-Detektion
    - CNN-basiertes Pitch-Tracking
    - ±1 Cent Genauigkeit
    - Verhindert Oktavfehler
@@ -19,8 +19,8 @@ Architektur:
 
 Strategy-Modi:
 - PYIN_ONLY: Schnelle pYIN-DSP-Detektion
-- CREPE_ONLY: Reines ML (kein DSP-Preprocessing)
-- HYBRID: pYIN → CREPE-Verfeinerung für unsichere Regionen
+- CREPE_ONLY: Reines ML (kompatibler Name; nutzt bestes verfügbares ML-Modell)
+- HYBRID: pYIN -> ML-Verfeinerung für unsichere Regionen
 - ADAPTIVE: Auswahl nach Konfidenz-Scores
 
 Korrektur-Pipeline:
@@ -336,7 +336,7 @@ class HybridWowFlutter:
         """
         self.config = config or WowFlutterConfig()
 
-        # Lazy-load CREPE plugin
+        # Lazy-load ML pitch plugin chain
         self.crepe = None
         if self.config.strategy in [
             PitchDetectionStrategy.CREPE_ONLY,
@@ -346,11 +346,11 @@ class HybridWowFlutter:
             self._init_crepe()
 
     def _init_crepe(self) -> None:
-        """Initialize pitch plugin: FCPE → RMVPE → CREPE cascade (§4.4 Spec).
+        """Initialize pitch plugin: FCPE -> RMVPE -> PESTO -> pYIN (§4.4 Spec).
 
         Order: Tier-1 FCPE, Tier-2 RMVPE (Wei et al. ICASSP 2023, ~30 % lower pitch
-        error for vocals), Tier-3 CREPE (legacy fallback only).
-        VERBOTEN: FCPE → CREPE → RMVPE (RMVPE muss vor CREPE stehen — §4.4).
+        error for vocals), Tier-3 PESTO, Tier-4 CREPE legacy fallback.
+        VERBOTEN: FCPE -> CREPE -> RMVPE (RMVPE muss vor CREPE stehen — §4.4).
         """
         try:
             from plugins.fcpe_plugin import get_fcpe_plugin
@@ -369,12 +369,21 @@ class HybridWowFlutter:
             return
         except Exception as e:
             logger.debug("RMVPE nicht verfügbar (%s) — CREPE-Fallback (§4.4 Tier-3)", e)
-        # Tier-3: CREPE (legacy — only if RMVPE unavailable)
+        # Tier-3: PESTO
+        try:
+            from plugins.pesto_plugin import get_pesto_plugin
+
+            self.crepe = get_pesto_plugin()  # type: ignore[assignment]
+            logger.info("PESTO plugin geladen für wow/flutter-Detektion (§4.4 Tier-3)")
+            return
+        except Exception as e:
+            logger.debug("PESTO nicht verfügbar (%s) — CREPE-Fallback (§4.4 Tier-4)", e)
+        # Tier-4: CREPE (legacy — only if PESTO unavailable)
         try:
             from plugins.crepe_plugin import get_crepe_plugin
 
             self.crepe = get_crepe_plugin()
-            logger.info("CREPE plugin geladen für wow/flutter-Detektion (§4.4 Tier-3 legacy)")
+            logger.info("CREPE plugin geladen für wow/flutter-Detektion (§4.4 Tier-4 legacy)")
         except Exception as e:
             logger.warning("Kein Pitch-ML-Plugin verfügbar (%s) — pYIN-Fallback", e)
             self.crepe = None
@@ -424,21 +433,21 @@ class HybridWowFlutter:
                 logger.info("pYIN-Konfidenz ausreichend (%.3f), CREPE überspringen", mean_confidence)
                 strategy = PitchDetectionStrategy.PYIN_ONLY
 
-        # Stufe 2: CREPE ML-Verfeinerung (falls nötig)
+        # Stufe 2: ML-Verfeinerung (RMVPE/PESTO/CREPE; falls nötig)
         if strategy in [PitchDetectionStrategy.CREPE_ONLY, PitchDetectionStrategy.HYBRID]:
             if self.crepe is not None:
-                logger.info("Stufe 2: CREPE ML-Pitch-Detektion (Kim et al. 2018)...")
+                logger.info("Stufe 2: ML-Pitch-Detektion (RMVPE/PESTO/CREPE)...")
                 pitch_crepe, confidence_crepe = self._apply_crepe(audio, sample_rate)
                 crepe_applied = True
                 valid_crepe = confidence_crepe[confidence_crepe > 0]
                 metadata["crepe"] = {
                     "mean_confidence": float(np.mean(valid_crepe)) if len(valid_crepe) > 0 else 0.0,
                     "num_estimates": int(np.sum(pitch_crepe > 0)),
-                    "model": self.config.crepe_model,
+                    "model": getattr(self.crepe, "model_used", self.config.crepe_model),
                 }
 
                 mean_confidence_crepe = float(np.mean(valid_crepe)) if len(valid_crepe) > 0 else 0.0
-                logger.info("CREPE abgeschlossen: mean confidence=%.3f", mean_confidence_crepe)
+                logger.info("ML-Stufe abgeschlossen: mean confidence=%.3f", mean_confidence_crepe)
 
                 pitch_trajectory = pitch_crepe
                 confidence = confidence_crepe
@@ -449,7 +458,7 @@ class HybridWowFlutter:
                         pitch_pyin, confidence_pyin, pitch_crepe, confidence_crepe
                     )
             else:
-                logger.warning("CREPE nicht verfügbar, nutze pYIN-Ergebnis")
+                logger.warning("ML-Pitch-Plugin nicht verfügbar, nutze pYIN-Ergebnis")
                 if not pyin_applied:
                     pitch_trajectory, confidence = self._apply_pyin(audio, sample_rate)
                     pyin_applied = True

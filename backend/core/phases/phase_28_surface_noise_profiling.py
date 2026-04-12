@@ -264,6 +264,31 @@ class SurfaceNoiseProfiling(PhaseInterface):
         if 0.0 < _safe_strength < 1.0:
             denoised_audio = audio + _safe_strength * (denoised_audio - audio)
 
+        # §4.5 Psychoacoustic Masking Clamp: protect musically masked regions
+        # from unnecessary surface-noise removal (§0 Primum non nocere).
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+
+            _mono_orig = audio if audio.ndim == 1 else audio.mean(axis=1)
+            _mono_proc = denoised_audio if denoised_audio.ndim == 1 else denoised_audio.mean(axis=1)
+            _masked_mono = apply_psychoacoustic_masking_clamp(
+                _mono_orig, _mono_proc, sample_rate,
+                strength=_safe_strength, mode="subtractive",
+            )
+            if audio.ndim == 2:
+                _gain_mask = np.where(
+                    np.abs(_mono_proc) > 1e-10,
+                    _masked_mono / (_mono_proc + 1e-10),
+                    1.0,
+                )
+                _gain_mask = np.clip(_gain_mask, 0.0, 2.0)
+                denoised_audio = denoised_audio * _gain_mask[:, np.newaxis]
+            else:
+                denoised_audio = _masked_mono
+            denoised_audio = np.clip(denoised_audio, -1.0, 1.0)
+        except Exception as _pm_exc:
+            logger.debug("Phase28 masking clamp non-blocking: %s", _pm_exc)
+
         denoised_audio, loudness_stats = self._apply_material_loudness_preservation(
             audio,
             denoised_audio,

@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import numpy as np
+import pytest
 
 from dsp.automatic_dehum import AutomaticDehum
 
@@ -46,10 +47,10 @@ def test_dehum_basic():
         print(f"   Hum Reduktion: {np.abs(noisy_signal).max() - np.abs(result).max():.4f}")
     except AttributeError as e:
         print(f"❌ FEHLER: {e}")
-        return False
+        pytest.fail(f"AutomaticDehum.dehum() AttributeError: {e}")
     except Exception as e:
         print(f"❌ FEHLER: {e}")
-        return False
+        pytest.fail(f"AutomaticDehum.dehum() failed: {e}")
 
     # Test 2: Multi-Pass wie in unified_restorer_v2.py
     print("\n[Test 2] Multi-Pass (3x) wie in unified_restorer_v2.py...")
@@ -83,24 +84,23 @@ def test_dehum_basic():
 
         except Exception as e:
             print(f"   Pass {pass_num + 1} fehlgeschlagen: {e}")
-            return False
+            pytest.fail(f"Multi-pass {pass_num+1} failed: {e}")
 
     if best_x is not None:
         print(f"✅ Multi-Pass erfolgreich! Best Quality: {best_quality:.3f}")
     else:
         print("❌ Kein gültiges Ergebnis!")
-        return False
+        pytest.fail("Multi-pass: kein gültiges Ergebnis")
 
     print("\n" + "=" * 80)
     print("✅✅✅ ALLE TESTS BESTANDEN ✅✅✅")
     print("=" * 80)
-    return True
 
 
 if __name__ == "__main__":
     try:
-        success = test_dehum_basic()
-        sys.exit(0 if success else 1)
+        test_dehum_basic()
+        sys.exit(0)
     except Exception as e:
         print(f"\n❌ TEST FEHLGESCHLAGEN: {e}")
         import traceback

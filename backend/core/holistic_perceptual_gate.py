@@ -146,6 +146,13 @@ class HolisticPerceptualGate:
 
         hpi = mert_sim * timbral * artifact_freedom * emotional_arc_score
 
+        # §B3 NORESQA integration: Non-intrusive MOS proxy modulates HPI weakly
+        # (Manocha & Kumar 2022, INTERSPEECH). Acts as a soft quality sanity check.
+        # Weight 0.15 keeps it advisory: noresqa_ensemble ∈ [0.85, 1.00]
+        noresqa_score = self._compute_noresqa_score(restored, sr)
+        noresqa_ensemble = 0.85 + 0.15 * noresqa_score
+        hpi = hpi * noresqa_ensemble
+
         # §2.44: RestorabilityEstimator > 0.85 → stricter gate
         if restorability_score > 85.0:
             hpi = hpi * 0.95
@@ -190,6 +197,25 @@ class HolisticPerceptualGate:
                     details=f"HPI={hpi:.4f} <= 0",
                 )
 
+        # §2.44-lit PEAQ/MUSHRA-inspired additive diagnostic (ISO 16832 + ITU-R BS.1387 + BS.1534).
+        # MUSHRA and PEAQ use weighted linear combination of quality factors.
+        # The product formula here treats each factor as independently necessary
+        # (Lagrange-multiplier semantics: zero in any dimension = complete failure).
+        # The additive alternative is computed ONLY for comparative diagnostics —
+        # if product HPI fails while PEAQ-additive passes, a single factor collapse may
+        # indicate a false rollback worth inspecting in logs.
+        _peaq_additive = float(
+            np.clip(0.40 * mert_sim + 0.35 * timbral + 0.25 * float(emotional_arc_score), 0.0, 1.0)
+        )
+        _peaq_hpi_val = float(np.clip(_peaq_additive * artifact_freedom, 0.0, 1.0))
+        if not passed and _peaq_hpi_val > 0.30 and artifact_freedom >= 0.95:
+            logger.warning(
+                "§2.44 HPI-Diskrepanz (PEAQ-Lit-Vergleich): product=%.4f FAIL aber PEAQ-additiv=%.4f PASS "
+                "(mert=%.3f timbral=%.3f emotional=%.3f) — Single-Factor-Kollaps prüfen "
+                "[ISO 16832 / ITU-R BS.1387]",
+                hpi, _peaq_hpi_val, mert_sim, timbral, float(emotional_arc_score),
+            )
+
         return HPIResult(
             hpi=round(hpi, 4),
             passed=passed,
@@ -209,8 +235,11 @@ class HolisticPerceptualGate:
                 "genre": genre,
                 "material": material,
                 "era_bin": era_bin,
-                # §2.44 VERBOTEN-Tabelle: mert_proxy_used=True wenn VERSA nicht verfügbar
                 "mert_proxy_used": self._mert_proxy_used,
+                "noresqa_score": round(noresqa_score, 4),
+                "noresqa_ensemble": round(noresqa_ensemble, 4),
+                # §2.44-lit: PEAQ/MUSHRA additive metric for comparative diagnostics
+                "peaq_additive_hpi": round(_peaq_hpi_val, 4),
             },
         )
 
@@ -243,6 +272,7 @@ class HolisticPerceptualGate:
                 entry.embedding = (1.0 - _EMA_ALPHA) * entry.embedding + _EMA_ALPHA * embedding
                 entry.obs_count += 1
                 entry.calibrated = entry.obs_count >= _MIN_OBS_CALIBRATED
+
             else:
                 self._ref_memory[key] = _RefEntry(
                     embedding=embedding.copy(),
@@ -662,6 +692,94 @@ class HolisticPerceptualGate:
         clarity_score = float(np.clip(0.5 + crest_improvement * 0.5, 0.0, 1.0))
 
         return float(np.clip(0.6 * noise_score + 0.4 * clarity_score, 0.0, 1.0))
+
+    def _compute_noresqa_score(self, audio: np.ndarray, sr: int) -> float:
+        """§B3 NORESQA: Non-intrusive quality estimation (Manocha & Kumar, INTERSPEECH 2022).
+
+        Attempts to use NoresqaPlugin if available; falls back to a DSP proxy that
+        combines spectral flatness, SNR estimate, and harmonic coherence — all
+        reference-free indicators of audio quality aligned with MOS correlates.
+
+        Returns a score in [0, 1] (1.0 = highest quality). Non-blocking.
+        """
+        try:
+            from plugins.noresqa_plugin import get_noresqa_plugin  # type: ignore
+
+            _plg = get_noresqa_plugin()
+            if _plg is not None:
+                mono = audio if audio.ndim == 1 else np.mean(audio, axis=0)
+                score = float(_plg.score(mono.astype(np.float32), sr))
+                return float(np.clip(score, 0.0, 1.0))
+        except Exception:  # plugin not installed → DSP fallback
+            pass
+
+        # DSP proxy: three reference-free quality correlates
+        try:
+            mono = np.asarray(
+                audio if audio.ndim == 1 else np.mean(audio, axis=0), dtype=np.float32
+            )
+            mono = np.nan_to_num(mono, nan=0.0, posinf=0.0, neginf=0.0)
+            if len(mono) < 1024:
+                return 1.0
+
+            n_fft = min(4096, len(mono))
+            win = np.hanning(n_fft)
+            spec = np.abs(np.fft.rfft(mono[:n_fft] * win)) + 1e-12
+
+            # a) Spectral Flatness (Wiener entropy) — lower = more tonal = higher quality
+            geo_mean = float(np.exp(np.mean(np.log(spec))))
+            arith_mean = float(np.mean(spec))
+            sfm = float(np.clip(geo_mean / (arith_mean + 1e-12), 0.0, 1.0))
+            # SFM near 0 = very tonal (music), near 1 = noise-like
+            # Quality proxy: music should be 0.05–0.40 → map via gaussIan around 0.15
+            sfm_score = float(np.clip(np.exp(-((sfm - 0.15) ** 2) / 0.08), 0.0, 1.0))
+
+            # b) Noise Floor Estimate via 5th percentile (low = cleaner signal)
+            frame_len = max(512, n_fft // 8)
+            hop = frame_len // 2
+            n_frames = max(1, (len(mono) - frame_len) // hop)
+            frame_rmss = [
+                float(np.sqrt(np.mean(mono[i * hop : i * hop + frame_len] ** 2) + 1e-12))
+                for i in range(min(n_frames, 200))
+            ]
+            if frame_rmss:
+                noise_floor_db = 20.0 * float(np.log10(float(np.percentile(frame_rmss, 5)) + 1e-12))
+            else:
+                noise_floor_db = -60.0
+            # Map [-80, -20] dBFS → [1, 0]
+            snr_score = float(np.clip((-noise_floor_db - 20.0) / 60.0, 0.0, 1.0))
+
+            # c) Harmonic coherence: autocorrelation peak ratio at fundamental period
+            # Use 50 ms window in the most energetic segment
+            win_len = int(0.05 * sr)
+            if win_len >= 64 and len(mono) >= win_len:
+                # Find most energetic 50 ms segment
+                n_seg = max(1, (len(mono) - win_len) // (win_len // 2))
+                energies_seg = [
+                    float(np.mean(mono[i * (win_len // 2) : i * (win_len // 2) + win_len] ** 2))
+                    for i in range(min(n_seg, 100))
+                ]
+                best_seg = int(np.argmax(energies_seg)) * (win_len // 2)
+                segment = mono[best_seg : best_seg + win_len]
+                ac = np.correlate(segment, segment, mode="full")[len(segment) - 1 :]
+                ac = ac / (ac[0] + 1e-12)
+                # Look for AC peak in F0 range 80–800 Hz → lags [sr//800, sr//80]
+                lag_min = max(1, int(sr / 800))
+                lag_max = min(len(ac) - 1, int(sr / 80))
+                if lag_max > lag_min:
+                    peak_lag = int(np.argmax(ac[lag_min : lag_max + 1])) + lag_min
+                    harmonic_coh = float(np.clip(ac[peak_lag], 0.0, 1.0))
+                else:
+                    harmonic_coh = 0.5
+            else:
+                harmonic_coh = 0.5
+
+            # Weighted combo (balanced: SFM captures tonal structure, SNR cleanness, HC harmonicity)
+            proxy = 0.35 * sfm_score + 0.40 * snr_score + 0.25 * harmonic_coh
+            return float(np.clip(proxy, 0.0, 1.0))
+        except Exception as _exc:
+            logger.debug("NORESQA DSP-proxy error (non-blocking): %s", _exc)
+            return 1.0  # neutral: don't penalise when guard fails
 
     def _compute_studio_quality_gain(
         self,

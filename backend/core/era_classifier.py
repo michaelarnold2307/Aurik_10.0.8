@@ -1292,6 +1292,11 @@ class EraClassifier:
         except Exception as _exc:
             logger.debug("Operation failed (non-critical): %s", _exc)
 
+        # Codec-BW plausibility gate (Müller & Ewert 2011; Spijkervet 2020):
+        # Modern recordings (≥2000) show fullBW (>18 kHz) + moderate-to-high SNR.
+        # Pre-1960 era assignments with fullBW contradict carrier-chain physics.
+        result = _apply_codec_bw_plausibility_gate(result, highband_presence, snr_db)
+
         with self._ram_cache_lock:
             self._ram_cache[sha] = result
         logger.info(
@@ -1511,6 +1516,74 @@ def get_era_classifier() -> EraClassifier:
             if _instance is None:
                 _instance = EraClassifier()
     return _instance
+
+
+def _apply_codec_bw_plausibility_gate(
+    era_result: EraResult,
+    highband_presence: float,
+    snr_db: float,
+) -> EraResult:
+    """Apply a weak plausibility correction based on HF-bandwidth and SNR signals.
+
+    Two scenarios are addressed (Müller & Ewert 2011; Spijkervet & Haasdijk 2020):
+
+    1. **Modern BW + old era**: highband_presence > 0.88 (nearly full 20 kHz BW) +
+       snr_db > 35 dB strongly implies a digital/streaming source.  If era says
+       pre-1960, the assignment is physically implausible — gently reduce confidence
+       and nudge material_prior toward 'unknown' to avoid blocking downstream
+       restoration phases.
+
+    2. **Full BW + modern era aligned**: highband_presence > 0.85 + snr_db > 30 dB +
+       decade >= 2000 → reinforce confidence slightly (×1.08, capped at 0.88) because
+       the DSP features are coherent with the era prediction.
+
+    The gate is intentionally soft (confidence only, no decade change) to preserve
+    §0 Minimal-Intervention.  Decade changes require cross-source evidence.
+
+    Args:
+        era_result:        EraResult from Tier-1/2/3.
+        highband_presence: Proportion of HF energy (> 8 kHz) as seen from
+                           _estimate_highband_presence().  [0, 1].
+        snr_db:            Estimated SNR in dB from _estimate_snr().
+
+    Returns:
+        Original or gently adjusted EraResult.
+    """
+    if era_result is None:
+        return era_result
+
+    # Scenario 1: full-BW + high-SNR but pre-1960 era → implausible carrier physics
+    if highband_presence > 0.88 and snr_db > 35.0 and era_result.decade < 1960:
+        new_conf = float(np.clip(era_result.confidence * 0.75, 0.25, 0.80))
+        # Don't change decade — we may still be right (1950s recording digitized as FLAC)
+        # but drop material_prior so downstream doesn't over-invest in analog restoration
+        logger.info(
+            "EraClassifier BW-plausibility gate: pre-1960 era but fullBW+highSNR "
+            "(highband=%.2f, snr=%.1f dB, decade=%d) → confidence %.2f → %.2f, prior='unknown'",
+            highband_presence,
+            snr_db,
+            era_result.decade,
+            era_result.confidence,
+            new_conf,
+        )
+        return dc_replace(era_result, confidence=new_conf, material_prior="unknown")
+
+    # Scenario 2: fullBW + modern era agreement → reinforce confidence
+    if highband_presence > 0.85 and snr_db > 30.0 and era_result.decade >= 2000:
+        new_conf = float(np.clip(era_result.confidence * 1.08, era_result.confidence, 0.88))
+        if new_conf > era_result.confidence:
+            logger.debug(
+                "EraClassifier BW-plausibility gate: modern era reinforced "
+                "(highband=%.2f, snr=%.1f dB, decade=%d) → confidence %.2f → %.2f",
+                highband_presence,
+                snr_db,
+                era_result.decade,
+                era_result.confidence,
+                new_conf,
+            )
+            return dc_replace(era_result, confidence=new_conf)
+
+    return era_result
 
 
 def classify_era(audio: np.ndarray, sr: int) -> EraResult:

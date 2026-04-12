@@ -240,8 +240,12 @@ class PhaseConductor:
         grid = _REFERENCE_GRID.get(grid_key, _REFERENCE_GRID["unknown"])
         state_vec = current_state.as_vec()
 
-        # Nearest-Neighbor (Mahal.-Distanz approximiert: euklidisch mit Gewichten)
-        dists = np.linalg.norm(grid[:, :4] - state_vec, axis=1)
+        # Psychoacoustic weighting: noise-floor and harmonic coherence dominate
+        # perceived restoration headroom more strongly than HF ratio alone.
+        # Scientific basis: Zwicker & Fastl (2007) masking/noise salience;
+        # Virtanen et al. (2007) harmonicity as a restoration quality prior.
+        _distance_weights = np.array([1.35, 0.85, 1.00, 1.25], dtype=np.float64)
+        dists = np.linalg.norm((grid[:, :4] - state_vec) * _distance_weights, axis=1)
         nn_idx = int(np.argmin(dists))
         nn_dist = float(dists[nn_idx])
         ideal_strength = float(grid[nn_idx, 4])

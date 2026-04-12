@@ -175,6 +175,41 @@ class ReverbReduction(PhaseInterface):
         self._force_dsp_only_due_ml_error: bool = False
         self._ml_disable_reason: str = ""
 
+    def _adaptive_clarity_limits(self, kwargs: dict[str, object]) -> tuple[float, float, float, float]:
+        """Compute song-adaptive C80/D50 guard limits.
+
+        Uses §2.56 per-song goal weights as a modulation signal while keeping
+        §4.5c base guard semantics intact.
+        Returns: (c80_down_limit_db, c80_soft_limit_db, c80_hard_limit_db, d50_limit)
+        """
+        _gw = kwargs.get("song_goal_weights")
+        _w_nat = 1.0
+        _w_auth = 1.0
+        _w_timbre = 1.0
+        _w_trans = 1.0
+        _w_art = 1.0
+        _w_bril = 1.0
+        if isinstance(_gw, dict):
+            _w_nat = float(np.clip(float(_gw.get("natuerlichkeit", 1.0)), 0.30, 2.00))
+            _w_auth = float(np.clip(float(_gw.get("authentizitaet", 1.0)), 0.30, 2.00))
+            _w_timbre = float(np.clip(float(_gw.get("timbre_authentizitaet", 1.0)), 0.30, 2.00))
+            _w_trans = float(np.clip(float(_gw.get("transparenz", 1.0)), 0.30, 2.00))
+            _w_art = float(np.clip(float(_gw.get("artikulation", 1.0)), 0.30, 2.00))
+            _w_bril = float(np.clip(float(_gw.get("brillanz", 1.0)), 0.30, 2.00))
+
+        _preserve_w = float(np.clip((_w_nat + _w_auth + _w_timbre) / 3.0, 0.30, 2.00))
+        _clarity_w = float(np.clip((_w_trans + _w_art + _w_bril) / 3.0, 0.30, 2.00))
+
+        _rest = float(np.clip(float(kwargs.get("restorability_score", 65.0)), 0.0, 100.0))
+        _rest_factor = float(np.clip(1.0 + (50.0 - _rest) / 250.0, 0.85, 1.20))
+
+        _ratio = float(np.sqrt(_clarity_w / max(_preserve_w, 1e-6)))
+        c80_down_limit = float(np.clip((-2.0 * _rest_factor) / np.sqrt(max(_preserve_w, 1e-6)), -3.2, -1.2))
+        c80_soft_limit = float(np.clip(4.0 * _ratio * _rest_factor, 2.8, 5.2))
+        c80_hard_limit = float(np.clip(6.0 * _ratio * _rest_factor, 4.2, 7.5))
+        d50_limit = float(np.clip(0.12 * _ratio * _rest_factor, 0.08, 0.18))
+        return c80_down_limit, c80_soft_limit, c80_hard_limit, d50_limit
+
     def get_metadata(self) -> PhaseMetadata:
         return PhaseMetadata(
             phase_id="phase_20_reverb_reduction",
@@ -268,6 +303,20 @@ class ReverbReduction(PhaseInterface):
             # Small-room naturalness is part of the performance — preserve gently.
             strength = min(strength, 0.40)
             logger.debug("Phase 20: Genre=%s → reverb strength capped to %.2f", genre_label, strength)
+
+        # Vocal-preservation: avoid over-dereverb on singing-heavy content.
+        _vocal_conf_20 = float(kwargs.get("vocal_confidence", kwargs.get("panns_singing_confidence", 0.0)))
+        _vocal_detected_20 = bool(kwargs.get("vocal_detected", False)) or (_vocal_conf_20 >= 0.35)
+        if _vocal_detected_20:
+            _vocal_cap_20 = float(np.clip(0.38 - 0.10 * _vocal_conf_20, 0.28, 0.38))
+            if strength > _vocal_cap_20:
+                logger.debug(
+                    "Phase 20: vocal guard active (conf=%.2f) → strength %.2f -> %.2f",
+                    _vocal_conf_20,
+                    strength,
+                    _vocal_cap_20,
+                )
+                strength = _vocal_cap_20
 
         # §2.14+ Era-adaptive: older recordings (pre-1960) often have room ambience
         # integral to the character — reduce dereverb strength.
@@ -380,6 +429,8 @@ class ReverbReduction(PhaseInterface):
                         "phase_locality_factor": phase_locality_factor,
                         "effective_strength": _effective_strength,
                         "loudness_makeup_db": float(_makeup_gain_db),
+                        "vocal_guard_active": bool(_vocal_detected_20),
+                        "vocal_confidence": float(_vocal_conf_20),
                     },
                     warnings=warnings,
                     modifications={},
@@ -527,6 +578,7 @@ class ReverbReduction(PhaseInterface):
         _early_blend_triggered = False
         _delta_c80 = 0.0
         _delta_d50 = 0.0
+        _c80_down_lim, _c80_soft_lim, _c80_hard_lim, _d50_lim = self._adaptive_clarity_limits(kwargs)
         try:
             _mono_in = audio[0] if audio.ndim == 2 else audio
             _mono_out = reduced[0] if reduced.ndim == 2 else reduced
@@ -548,23 +600,28 @@ class ReverbReduction(PhaseInterface):
                 _d50_post = float(np.clip(float(np.sum(_mono_out[:_e50] ** 2)) / _e_total_out, 0.0, 1.0))
                 _delta_d50 = _d50_post - _d50_pre
 
-                if _delta_c80 < -2.0:
+                if _delta_c80 < _c80_down_lim:
                     # C80 degraded → rollback to dry
-                    logger.warning("Phase 20 §4.5c C80-guard: ΔC80=%.2f dB < −2 dB → rollback", _delta_c80)
+                    logger.warning(
+                        "Phase 20 §4.5c C80-guard: ΔC80=%.2f dB < %.2f dB → rollback",
+                        _delta_c80,
+                        _c80_down_lim,
+                    )
                     reduced = audio.copy()
                     _c80_guard_triggered = True
-                elif _delta_c80 > 6.0:
+                elif _delta_c80 > _c80_hard_lim:
                     # Excessive clarity boost → scale wet proportionally
-                    _c80_wet_scale = float(np.clip(6.0 / (_delta_c80 + 1e-9), 0.30, 1.0))
+                    _c80_wet_scale = float(np.clip(_c80_hard_lim / (_delta_c80 + 1e-9), 0.30, 1.0))
                     reduced = audio + _c80_wet_scale * (reduced - audio)
                     reduced = np.clip(reduced, -1.0, 1.0)
                     _c80_guard_triggered = True
                     logger.info(
-                        "Phase 20 §4.5c C80-guard: ΔC80=%.2f dB > 6 dB → wet scaled to %.2f",
+                        "Phase 20 §4.5c C80-guard: ΔC80=%.2f dB > %.2f dB → wet scaled to %.2f",
                         _delta_c80,
+                        _c80_hard_lim,
                         _c80_wet_scale,
                     )
-                elif _delta_c80 > 4.0:
+                elif _delta_c80 > _c80_soft_lim:
                     # Moderate boost → blend 35 % early reflections back (spec α=0.35, 50 ms)
                     _early_win = int(sample_rate * 0.050)
                     _alpha = 0.35
@@ -585,17 +642,28 @@ class ReverbReduction(PhaseInterface):
                     )
 
                 # §4.5c D50 secondary guard: ΔD50 > 0.12 → reduce wet further
-                if abs(_delta_d50) > 0.12 and not _c80_guard_triggered:
-                    _d50_scale = float(np.clip(0.12 / (abs(_delta_d50) + 1e-9), 0.30, 1.0))
+                if abs(_delta_d50) > _d50_lim and not _c80_guard_triggered:
+                    _d50_scale = float(np.clip(_d50_lim / (abs(_delta_d50) + 1e-9), 0.30, 1.0))
                     reduced = audio + _d50_scale * (reduced - audio)
                     reduced = np.clip(reduced, -1.0, 1.0)
                     logger.info(
-                        "Phase 20 §4.5c D50-guard: ΔD50=%.3f > 0.12 → wet scaled to %.2f",
+                        "Phase 20 §4.5c D50-guard: ΔD50=%.3f > %.3f → wet scaled to %.2f",
                         _delta_d50,
+                        _d50_lim,
                         _d50_scale,
                     )
         except Exception as _c80_exc:
             logger.debug("Phase 20 C80/D50-guard skipped (non-critical): %s", _c80_exc)
+
+        # §4.5 Psychoacoustic Masking Clamp — preserve reverb tails below masking threshold
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            reduced = apply_psychoacoustic_masking_clamp(
+                audio, reduced, sample_rate,
+                strength=_effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase20 masking clamp non-blocking: %s", _pm_exc)
 
         return PhaseResult(
             success=True,
@@ -615,11 +683,53 @@ class ReverbReduction(PhaseInterface):
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "delta_c80": float(_delta_c80),
+                "c80_down_limit_db": float(_c80_down_lim),
+                "c80_soft_limit_db": float(_c80_soft_lim),
+                "c80_hard_limit_db": float(_c80_hard_lim),
+                "d50_limit": float(_d50_lim),
                 "c80_guard_triggered": _c80_guard_triggered,
                 "early_blend_triggered": _early_blend_triggered,
                 "loudness_makeup_db": float(_makeup_gain_db),
+                "vocal_guard_active": bool(_vocal_detected_20),
+                "vocal_confidence": float(_vocal_conf_20),
             },
         )
+
+    def _rms_dbfs_gated(self, audio: np.ndarray, gate_dbfs: float = -50.0) -> float:
+        """Frame-wise RMS over active music frames only (§2.45a-I)."""
+        _x = np.asarray(audio, dtype=np.float32)
+        _mono = np.mean(_x, axis=1) if _x.ndim == 2 else _x
+        if _mono.size < 480:
+            _rms = float(np.sqrt(np.mean(_mono.astype(np.float64) ** 2) + 1e-12))
+            return float(20.0 * np.log10(_rms + 1e-10))
+        _frame = 480
+        _vals = []
+        for _i in range(0, len(_mono) - _frame + 1, _frame):
+            _seg = _mono[_i : _i + _frame]
+            _r = float(np.sqrt(np.mean(_seg.astype(np.float64) ** 2) + 1e-12))
+            _db = float(20.0 * np.log10(_r + 1e-10))
+            if _db > gate_dbfs:
+                _vals.append(_r * _r)
+        if not _vals:
+            return -96.0
+        _rms = float(np.sqrt(np.mean(_vals) + 1e-12))
+        return float(20.0 * np.log10(_rms + 1e-10))
+
+    def _musical_gain_envelope(self, audio: np.ndarray, gain: float, sr: int) -> np.ndarray:
+        """Apply gain only on musical frames (§2.45a-II), keep silence untouched."""
+        _x = np.asarray(audio, dtype=np.float32)
+        _mono = np.mean(_x, axis=1) if _x.ndim == 2 else _x
+        _frame = max(1, int(0.010 * sr))
+        _env = np.ones(len(_mono), dtype=np.float32)
+        for _i in range(0, len(_mono) - _frame + 1, _frame):
+            _seg = _mono[_i : _i + _frame]
+            _r = float(np.sqrt(np.mean(_seg.astype(np.float64) ** 2) + 1e-12))
+            _db = float(20.0 * np.log10(_r + 1e-10))
+            if _db > -50.0:
+                _env[_i : _i + _frame] = gain
+        if _x.ndim == 2:
+            return (_x * _env[:, None]).astype(np.float32)
+        return (_x * _env).astype(np.float32)
 
     def _apply_material_loudness_preservation(
         self,
@@ -630,23 +740,21 @@ class ReverbReduction(PhaseInterface):
         material_key = getattr(material, "value", getattr(material, "name", str(material))).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
 
-        rms_in = float(np.sqrt(np.mean(np.asarray(original_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_change_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30)) if rms_in > 1e-8 else 0.0
+        rms_in_db = self._rms_dbfs_gated(original_audio)
+        rms_out_db = self._rms_dbfs_gated(processed_audio)
+        rms_change_db = rms_out_db - rms_in_db if rms_in_db > -80.0 else 0.0
         makeup_gain_db = 0.0
 
-        if rms_in > 1e-8 and rms_change_db < -max_rms_drop_db:
+        if rms_in_db > -80.0 and rms_change_db < -max_rms_drop_db:
             target_rms_change_db = -max_rms_drop_db
             required_gain_db = target_rms_change_db - rms_change_db
             # §2.45a-II fix: apply full gain — peak-headroom cap disabled (see phase_05 fix).
             # §2.45a-III: soft-limiter only when peak99 > 0.98.
             makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
-                processed_audio = np.clip(
-                    processed_audio * (10.0 ** (makeup_gain_db / 20.0)),
-                    -1.0,
-                    1.0,
-                ).astype(np.float32)
+                _gain = float(10.0 ** (makeup_gain_db / 20.0))
+                processed_audio = self._musical_gain_envelope(processed_audio, _gain, sr=48000)
+                processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
                 if current_peak > 0.98:
                     _abs_20 = np.abs(processed_audio)
@@ -657,8 +765,8 @@ class ReverbReduction(PhaseInterface):
                             _over_20, _sign_20 * (0.92 + 0.08 * np.tanh((_abs_20 - 0.92) / 0.08)), processed_audio
                         )
                 processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
-                rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
-                rms_change_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30))
+                rms_out_db = self._rms_dbfs_gated(processed_audio)
+                rms_change_db = rms_out_db - rms_in_db if rms_in_db > -80.0 else 0.0
                 logger.info(
                     "Phase 20 loudness-preservation: material=%s rms_change=%.2f dB via makeup %.2f dB",
                     material_key,

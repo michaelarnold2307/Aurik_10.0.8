@@ -201,6 +201,11 @@ class GermanSchlagerClassifier:
         onset = self._onset_rate(mono, sr_a)
         dr_db = self._dynamic_range_db(mono, sr_a)
         non_schlager_scores = self._compute_non_schlager_scores(centroid, onset, hsi, dr_db, bpm)
+        # Kong et al. (2020) PANNs: learned tag priors are fused conservatively
+        # and only allowed to increase confidence where DSP evidence is compatible.
+        _panns_prior = self._compute_panns_genre_prior(mono, sr_a)
+        if _panns_prior:
+            non_schlager_scores = self._fuse_non_schlager_with_panns(non_schlager_scores, _panns_prior)
         alt_genre, alt_conf = self._pick_non_schlager_genre(non_schlager_scores)
 
         # Post-classification veto: Schlager features + German vocal override misleading
@@ -245,8 +250,23 @@ class GermanSchlagerClassifier:
         )
         open_set_unknown = self._is_open_set_unknown(top_genres)
         if not is_schlager and open_set_unknown:
-            genre_label = "Unbekannt"
-            confidence = 0.0
+            # PANNs-rescue: when DSP fails to exceed open-set threshold, try PANNs
+            # prior as a fallback (Kong et al. 2020). Only applies when a single genre
+            # has unambiguously high PANNs confidence (≥ 0.60) to avoid overconfident
+            # rescue on ambiguous material. Advisory-only: Schlager decision is immune.
+            _rescue_genre, _rescue_conf = self._panns_open_set_rescue(_panns_prior)
+            if _rescue_genre:
+                genre_label = _rescue_genre
+                confidence = _rescue_conf
+                open_set_unknown = False
+                logger.debug(
+                    "GenreClassifier: PANNs open-set rescue → %s (conf=%.2f)",
+                    _rescue_genre,
+                    _rescue_conf,
+                )
+            else:
+                genre_label = "Unbekannt"
+                confidence = 0.0
 
         # Tonart (einfache Schätzung)
         key = self._estimate_key(mono, sr_a)
@@ -1624,6 +1644,95 @@ class GermanSchlagerClassifier:
             "Gospel": float(np.clip(gospel_s, 0.0, 1.0)),
             "Reggae": float(np.clip(reggae_s, 0.0, 1.0)),
         }
+
+    def _compute_panns_genre_prior(self, audio: np.ndarray, sr: int) -> dict[str, float]:
+        """Compute conservative genre priors from PANNs tags.
+
+        Literature: Kong et al. (2020) PANNs (IEEE TASLP) and Won et al. (2020)
+        show robust cross-dataset music-tag priors. We use them as a weak prior
+        only (advisory): priors can increase compatible DSP scores, never force
+        a label on their own.
+        """
+        try:
+            from plugins.panns_plugin import classify_audio as _panns_classify_audio
+
+            _tags = _panns_classify_audio(audio, sr)
+        except Exception:
+            return {}
+        if not isinstance(_tags, dict) or not _tags:
+            return {}
+
+        def _t(name: str) -> float:
+            return float(np.clip(float(_tags.get(name, 0.0) or 0.0), 0.0, 1.0))
+
+        _guitar = max(_t("Guitar"), _t("Electric guitar"))
+        _drum = max(_t("Drum"), _t("Percussion"))
+        _keys = max(_t("Keyboard (musical)"), _t("Piano"))
+        _voc = max(_t("Singing voice"), _t("Vocals"))
+        _brass = max(_t("Brass instrument"), _t("Trumpet"), _t("Saxophone"))
+
+        # Priors are intentionally soft and sparse to avoid destabilizing DSP rules.
+        return {
+            "Rock": float(np.clip(max(_t("Rock music"), 0.65 * _guitar + 0.45 * _drum), 0.0, 1.0)),
+            "Jazz": float(np.clip(max(_t("Jazz"), 0.55 * _brass + 0.35 * _keys), 0.0, 1.0)),
+            "Klassik": float(np.clip(max(_t("Classical music"), 0.45 * _keys + 0.35 * _t("Bowed string instrument")), 0.0, 1.0)),
+            "Electronic": float(np.clip(max(_t("Electronic music"), 0.60 * _keys + 0.25 * _drum), 0.0, 1.0)),
+            "Pop": float(np.clip(0.50 * _voc + 0.25 * _t("Music"), 0.0, 1.0)),
+        }
+
+    def _fuse_non_schlager_with_panns(
+        self,
+        dsp_scores: dict[str, float],
+        panns_priors: dict[str, float],
+    ) -> dict[str, float]:
+        """Fuse DSP scores with PANNs priors using a conservative max-only blend.
+
+        75/25 blend is applied only as an upper candidate and then maxed with
+        original DSP score. This means priors cannot reduce scores and therefore
+        cannot undo existing validated DSP behavior.
+        """
+        if not isinstance(dsp_scores, dict) or not isinstance(panns_priors, dict):
+            return dsp_scores
+        fused = dict(dsp_scores)
+        for genre, dsp_val in dsp_scores.items():
+            prior = float(np.clip(float(panns_priors.get(genre, 0.0) or 0.0), 0.0, 1.0))
+            blended = float(np.clip(0.75 * float(dsp_val) + 0.25 * prior, 0.0, 1.0))
+            fused[genre] = float(max(float(dsp_val), blended))
+        return fused
+
+    def _panns_open_set_rescue(self, panns_prior: dict[str, float]) -> tuple[str, float]:
+        """Rescue open-set 'Unbekannt' using a clear PANNs signal (Kong et al. 2020).
+
+        Only rescues when a single genre exceeds 0.60 and no other genre is within
+        0.20 of it (unambiguous signal). Returned confidence is deliberately reduced
+        to 0.40 (just above open-set min) to mark low DSP agreement.
+
+        Returns:
+            (genre_label, confidence) or ("", 0.0) when no rescue applies.
+        """
+        if not panns_prior:
+            return "", 0.0
+        sorted_priors = sorted(panns_prior.items(), key=lambda x: x[1], reverse=True)
+        if not sorted_priors:
+            return "", 0.0
+        best_genre, best_score = sorted_priors[0]
+        if best_score < 0.60:
+            return "", 0.0
+        second_score = sorted_priors[1][1] if len(sorted_priors) > 1 else 0.0
+        if (best_score - second_score) < 0.20:
+            return "", 0.0  # ambiguous — no rescue
+        # Map PANNs Genre-keys (English) to internal labels
+        _panns_to_internal = {
+            "Rock": "Rock",
+            "Jazz": "Jazz",
+            "Klassik": "Klassik",
+            "Electronic": "Electronic",
+            "Pop": "Pop",
+        }
+        label = _panns_to_internal.get(best_genre, "")
+        if not label:
+            return "", 0.0
+        return label, float(np.clip(0.40 + 0.10 * (best_score - 0.60) / 0.40, 0.40, 0.50))
 
     def _pick_non_schlager_genre(self, scores: dict[str, float]) -> tuple[str, float]:
         if not scores:

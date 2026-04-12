@@ -342,9 +342,10 @@ class FcpePlugin:
 
             seg = audio[: min(len(audio), int(sr * 30.0))]
             # fmin must satisfy: at least 2 periods fit within frame_length.
-            # At 48 kHz with default frame_length=2048: min_fmin = sr / 1024 = 46.875 Hz.
-            # librosa.note_to_hz('C1') = 32.703 Hz is TOO LOW → use max with safe limit.
-            _fmin_safe = max(float(librosa.note_to_hz("C1")), float(sr) / 1024.0)
+            # Use a small safety margin above the exact boundary to avoid
+            # floating-point edge warnings in librosa.pyin for sr=48k/frame=2048.
+            _fmin_min_hz = (float(sr) / 1024.0) * 1.01
+            _fmin_safe = max(float(librosa.note_to_hz("C1")), _fmin_min_hz)
             f0, _, voiced_probs = librosa.pyin(seg, fmin=_fmin_safe, fmax=2_000.0, sr=sr)
             f0 = np.nan_to_num(f0.astype(np.float32))
             voiced_probs = np.nan_to_num(voiced_probs.astype(np.float32))

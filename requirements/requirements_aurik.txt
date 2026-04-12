@@ -20,9 +20,10 @@
 # ============================================================================
 
 # --- Build/Packaging-Abhängigkeiten (pkg_resources-Kompatibilität) ---
-# setuptools ≥ 81.x entfernt pkg_resources; librosa/intervals.py importiert pkg_resources.
-# Constraint Pflicht bis librosa pkg_resources-Abhängigkeit entfernt hat.
-setuptools>=60,<81
+# setuptools 80.x emittiert bereits die pkg_resources-Deprecation-Warnung
+# (resampy/librosa Importpfad). Bis der Upstream pkg_resources entfernt,
+# pinnen wir auf den letzten stabilen Bereich ohne diesen Warn-Trigger.
+setuptools>=60,<80
 
 # --- Backend-Hilfsbibliotheken ---
 requests==2.32.5

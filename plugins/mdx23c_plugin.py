@@ -114,7 +114,7 @@ class MDX23CModel:
                 opts.intra_op_num_threads = 4
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 try:
-                    from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                    from backend.core.ml_device_manager import get_ort_providers_fp16 as _get_prov
 
                     _mdx23c_prov = _get_prov("MDX23C")
                 except Exception:

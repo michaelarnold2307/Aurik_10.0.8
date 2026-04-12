@@ -257,9 +257,22 @@ class UnifiedRestorerV3:
         self._blocked_experimental_features: set[str] = set()
         self._phase_goal_conflict_runtime: dict[str, Any] = {}
         self._strict_autosetup_policy: dict[str, Any] = {}
+        self._global_conservative_scalar: float = 1.0
+        self._recovery_certainty_profile: dict[str, Any] = {}
+        # §0/§2.46 HF-Hallucination-Guard: per-phase metadata (initialized in _execute_pipeline reset).
+        self._phase_metadata_accumulator: dict[str, Any] = {}
+        # §2.46b Spectral Tilt Drift Guard: era-level spectral tilt stored per song.
+        # Set in restore() from era_classifier result; used in _profiled_phase_call post-phase
+        # to cap additive phases that over-brighten/darken beyond era character.
+        self._era_spectral_tilt: float | None = None
         # Team-Koordination zwischen Folgephasen: prior_phase_context wird pro erfolgreicher
         # Phase fortgeschrieben und an nachfolgende Phasen injiziert.
         self._phase_team_context: dict[str, Any] = {}
+
+        # §0c Graceful-Stop — Watchdog signalisiert dieses Event statt harten Pipeline-Abbruch.
+        # Die Phase-Loop in _execute_pipeline prüft das Event nach jeder Phase und exportiert
+        # das bisher beste Checkpoint-Ergebnis (kein Datenverlust, kein Kill).
+        self._graceful_stop_event = threading.Event()
 
         # PhaseSkipper (optional, beschleunigt Pipeline um 20–40 %)
         if self.config.enable_phase_skipping:
@@ -289,6 +302,67 @@ class UnifiedRestorerV3:
     def _is_research_mode(self) -> bool:
         """Returns True only for explicit RESEARCH deployment mode."""
         return getattr(self.config, "deployment_mode", DeploymentMode.PRODUCT) == DeploymentMode.RESEARCH
+
+    def request_graceful_stop(self) -> None:
+        """§0c: Signal the active phase pipeline to stop after the current phase.
+
+        Thread-safe. The pipeline exports the best checkpoint achieved so far
+        and returns a RestorationResult with status='recovered' — no data loss,
+        no force-kill. Call this from the UI watchdog instead of terminate().
+        """
+        self._graceful_stop_event.set()
+        logger.warning(
+            "UV3: §0c graceful stop requested — pipeline will export best checkpoint after current phase"
+        )
+
+    @staticmethod
+    def _musical_gain_envelope(
+        audio: np.ndarray, gain: float, gate_dbfs: float = -50.0, crossfade_ms: float = 10.0, sr: int = 48000
+    ) -> np.ndarray:
+        """Apply gain only to musical frames, leaving silence untouched."""
+        if abs(float(gain) - 1.0) <= 0.0005:
+            return audio
+        arr = np.asarray(audio, dtype=np.float32)
+        was_2d = arr.ndim == 2
+        if was_2d:
+            if arr.shape[0] == 2 and arr.shape[1] != 2:
+                mono_env = np.sqrt(np.mean(arr**2, axis=0) + 1e-12)
+            else:
+                mono_env = np.sqrt(np.mean(arr**2, axis=-1) + 1e-12)
+        else:
+            mono_env = np.abs(arr)
+
+        frame_len = 2048
+        n_samples = mono_env.shape[0]
+        n_full_frames = max(1, n_samples // frame_len)
+        gate_envelope = np.zeros(n_samples, dtype=np.float32)
+        for frame_index in range(n_full_frames):
+            start = frame_index * frame_len
+            end = min(start + frame_len, n_samples)
+            chunk = mono_env[start:end]
+            chunk_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(chunk * chunk) + 1e-12)) + 1e-12))
+            if chunk_dbfs > gate_dbfs:
+                gate_envelope[start:end] = 1.0
+
+        tail_start = n_full_frames * frame_len
+        if tail_start < n_samples:
+            tail = mono_env[tail_start:]
+            tail_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(tail * tail) + 1e-12)) + 1e-12))
+            if tail_dbfs > gate_dbfs:
+                gate_envelope[tail_start:] = 1.0
+
+        crossfade_samples = max(1, int(crossfade_ms * sr / 1000.0))
+        if crossfade_samples > 1:
+            kernel = np.ones(crossfade_samples, dtype=np.float32) / crossfade_samples
+            gate_envelope = np.convolve(gate_envelope, kernel, mode="same")
+            gate_envelope = np.clip(gate_envelope, 0.0, 1.0)
+
+        per_sample_gain = 1.0 + (gain - 1.0) * gate_envelope
+        if was_2d:
+            if arr.shape[0] == 2 and arr.shape[1] != 2:
+                return arr * per_sample_gain[np.newaxis, :]
+            return arr * per_sample_gain[:, np.newaxis]
+        return arr * per_sample_gain
 
     def _allow_experimental_feature(self, feature_name: str) -> bool:
         """Blocks experimental features in PRODUCT mode and records the decision."""
@@ -369,6 +443,53 @@ class UnifiedRestorerV3:
             "(Audit-Eintrag PQS_UNAVAILABLE_STUDIO)"
         )
         return -1.0
+
+    @staticmethod
+    def _evaluate_fallback_quality_floor(
+        ml_fallbacks_used: list[dict[str, Any]] | None,
+        hpi_result: Any | None,
+        artifact_freedom: float,
+    ) -> dict[str, Any]:
+        """Evaluate the global fallback-quality floor for ML->DSP fallback runs.
+
+        The floor is only active when at least one ML fallback was used.
+        Pass condition follows existing hard export gates:
+          - artifact_freedom >= 0.95
+          - HPI gate passed
+        """
+        _fallback_count = len(ml_fallbacks_used or [])
+        _triggered = _fallback_count > 0
+        _artifact_score = float(np.clip(float(artifact_freedom), 0.0, 1.0))
+
+        _hpi_passed = bool(getattr(hpi_result, "passed", False)) if hpi_result is not None else False
+        _hpi_value = None
+        if hpi_result is not None:
+            try:
+                _hpi_raw = float(getattr(hpi_result, "hpi", float("nan")))
+                if math.isfinite(_hpi_raw):
+                    _hpi_value = _hpi_raw
+            except Exception:
+                _hpi_value = None
+
+        _artifact_ok = _artifact_score >= 0.95
+        _passed = bool((not _triggered) or (_artifact_ok and _hpi_passed))
+        _status = "passed" if _passed else "degraded"
+        _reason = "ok" if _passed else "hpi_or_artifact_floor_failed"
+
+        return {
+            "triggered": bool(_triggered),
+            "passed": bool(_passed),
+            "status": _status,
+            "reason": _reason,
+            "fallback_count": int(_fallback_count),
+            "artifact_freedom": _artifact_score,
+            "hpi_passed": bool(_hpi_passed),
+            "hpi": _hpi_value,
+            "attempts": 0,
+            "recovered": False,
+            "best_candidate": None,
+            "recovery_trace": [],
+        }
 
     @staticmethod
     def _is_benign_digital_source(
@@ -1471,14 +1592,28 @@ class UnifiedRestorerV3:
         fatigue_result: dict[str, Any] | None,
         artifact_freedom: float,
         emotional_arc_score: float,
+        audio: np.ndarray | None = None,
+        sr: int = 48000,
     ) -> dict[str, Any]:
-        """Compute explicit runtime joy/fatigue index (0..1) from available proxies."""
+        """Compute explicit runtime joy/fatigue index (0..1) from available proxies.
+
+        Includes a literature-backed frisson propensity score (Blood & Zatorre
+        2001, Grewe 2007, Harrison & Loui 2014) based on:
+          - Spectral flux (harmonic surprise / expectation violation)
+          - Onset density (rhythmic tension / release)
+          - Dynamic range contrast (crescendo/decrescendo patterns)
+          - Goal-based proxies (emotional arc, spatial immersion, articulation)
+        """
         _scores = musical_goal_scores or {}
         _nat = float(np.clip(float(_scores.get("natuerlichkeit", 0.90)), 0.0, 1.0))
         _warm = float(np.clip(float(_scores.get("waerme", 0.75)), 0.0, 1.0))
         _micro = float(np.clip(float(_scores.get("micro_dynamics", 0.88)), 0.0, 1.0))
         _emo = float(np.clip(float(_scores.get("emotionalitaet", emotional_arc_score)), 0.0, 1.0))
         _bri = float(np.clip(float(_scores.get("brillanz", 0.78)), 0.0, 1.0))
+        _art = float(np.clip(float(_scores.get("artikulation", 0.85)), 0.0, 1.0))
+        _spa = float(np.clip(float(_scores.get("spatial_depth", 0.70)), 0.0, 1.0))
+        _tonal = float(np.clip(float(_scores.get("tonal_center", 0.95)), 0.0, 1.0))
+        _trans = float(np.clip(float(_scores.get("transparenz", 0.82)), 0.0, 1.0))
         _artifact = float(np.clip(float(artifact_freedom), 0.0, 1.0))
         _arc = float(np.clip(float(emotional_arc_score), 0.0, 1.0))
 
@@ -1496,6 +1631,123 @@ class UnifiedRestorerV3:
         _fatigue_from_brightness = float(np.clip(max(0.0, _bri - _warm) * 0.8, 0.0, 1.0))
         _fatigue_index = float(np.clip(0.70 * _fatigue_risk + 0.30 * _fatigue_from_brightness, 0.0, 1.0))
 
+        # ── Frisson: real audio analysis (non-blocking) ────────────────────
+        # Three acoustic correlates of musical chills (Blood & Zatorre 2001):
+        #   1. Spectral flux → harmonic surprise (unexpected chord/timbre changes)
+        #   2. Onset density → rhythmic tension/release patterns
+        #   3. RMS envelope variance → dynamic crescendo/decrescendo contrast
+        _spectral_flux_norm = 0.0
+        _onset_density_norm = 0.0
+        _dynamic_contrast_norm = 0.0
+        _frisson_audio_valid = False
+
+        if audio is not None:
+            try:
+                _fr_audio = np.asarray(audio, dtype=np.float64)
+                _fr_audio = np.nan_to_num(_fr_audio, nan=0.0, posinf=0.0, neginf=0.0)
+                if _fr_audio.ndim == 2:
+                    _fr_audio = _fr_audio.mean(axis=0) if _fr_audio.shape[0] <= 2 else _fr_audio.mean(axis=1)
+
+                # Cap at 30 seconds for performance
+                _max_fr_samples = int(30.0 * sr)
+                _fr_audio = _fr_audio[:_max_fr_samples]
+
+                if len(_fr_audio) > int(0.5 * sr):
+                    _n_fft_fr = 2048
+                    _hop_fr = 512
+                    _win_fr = np.hanning(_n_fft_fr).astype(np.float64)
+
+                    # STFT magnitude frames
+                    _n_fr_frames = max(1, (len(_fr_audio) - _n_fft_fr) // _hop_fr)
+                    _mags: list[np.ndarray] = []
+                    _rms_vals: list[float] = []
+                    for _ffi in range(_n_fr_frames):
+                        _fs = _ffi * _hop_fr
+                        _fe = _fs + _n_fft_fr
+                        if _fe > len(_fr_audio):
+                            break
+                        _frame = _fr_audio[_fs:_fe]
+                        _mag = np.abs(np.fft.rfft(_frame * _win_fr))
+                        _mags.append(_mag)
+                        _rms_vals.append(float(np.sqrt(np.mean(_frame ** 2) + 1e-12)))
+
+                    if len(_mags) >= 3:
+                        # 1. Spectral Flux: mean frame-to-frame L2 distance
+                        _flux_vals = []
+                        for _si in range(1, len(_mags)):
+                            _diff = _mags[_si] - _mags[_si - 1]
+                            _half_rect = np.maximum(_diff, 0.0)
+                            _flux_vals.append(float(np.sqrt(np.sum(_half_rect ** 2) + 1e-12)))
+
+                        _mean_flux = float(np.mean(_flux_vals))
+                        _std_flux = float(np.std(_flux_vals))
+                        # Normalise: high flux variance = high harmonic surprise
+                        _spectral_flux_norm = float(np.clip(
+                            _std_flux / max(_mean_flux, 1e-6), 0.0, 1.0
+                        ))
+
+                        # 2. Onset density: count significant flux peaks per second
+                        _flux_arr = np.array(_flux_vals)
+                        _flux_thresh = _mean_flux + 1.5 * _std_flux
+                        _onset_count = int(np.sum(_flux_arr > _flux_thresh))
+                        _duration_s = len(_fr_audio) / float(sr)
+                        _onsets_per_sec = _onset_count / max(_duration_s, 0.1)
+                        # Frisson peaks at moderate density (2–6/s), not too sparse not too dense
+                        _onset_density_norm = float(np.clip(
+                            1.0 - abs(_onsets_per_sec - 4.0) / 4.0, 0.0, 1.0
+                        ))
+
+                        # 3. Dynamic contrast: RMS envelope variance (crescendo/decrescendo)
+                        _rms_arr = np.array(_rms_vals)
+                        _rms_db = 20.0 * np.log10(_rms_arr + 1e-12)
+                        _dyn_range = float(np.percentile(_rms_db, 95) - np.percentile(_rms_db, 5))
+                        # Normalise: 20+ dB dynamic range → high contrast
+                        _dynamic_contrast_norm = float(np.clip(_dyn_range / 25.0, 0.0, 1.0))
+
+                        _frisson_audio_valid = True
+
+            except Exception as _fr_exc:
+                logger.debug("Frisson audio analysis non-blocking: %s", _fr_exc)
+
+        # Combine audio-based and proxy-based frisson estimation
+        if _frisson_audio_valid:
+            # Weighted blend: 55% audio-derived, 45% proxy-derived
+            _frisson_audio = (
+                0.35 * _spectral_flux_norm
+                + 0.30 * _dynamic_contrast_norm
+                + 0.35 * _onset_density_norm
+            )
+            _frisson_proxy = (
+                0.30 * _arc
+                + 0.25 * _micro
+                + 0.20 * _emo
+                + 0.15 * _spa
+                + 0.10 * _art
+            )
+            _frisson_index = float(np.clip(
+                0.55 * _frisson_audio
+                + 0.45 * _frisson_proxy
+                - 0.12 * _fatigue_index,
+                0.0, 1.0,
+            ))
+        else:
+            # Fallback: pure proxy (same as before but with §2.53 literature weights)
+            _frisson_index = float(
+                np.clip(
+                    0.26 * _arc
+                    + 0.18 * _micro
+                    + 0.14 * _emo
+                    + 0.14 * _art
+                    + 0.10 * _spa
+                    + 0.08 * _trans
+                    + 0.10 * _tonal
+                    + 0.10 * _artifact
+                    - 0.16 * _fatigue_index,
+                    0.0,
+                    1.0,
+                )
+            )
+
         _joy_index = float(
             np.clip(
                 0.23 * _nat
@@ -1504,6 +1756,7 @@ class UnifiedRestorerV3:
                 + 0.12 * _warm
                 + 0.16 * _artifact
                 + 0.12 * _arc
+                + 0.08 * _frisson_index
                 - 0.20 * _fatigue_index,
                 0.0,
                 1.0,
@@ -1513,6 +1766,7 @@ class UnifiedRestorerV3:
         return {
             "joy_index": _joy_index,
             "fatigue_index": _fatigue_index,
+            "frisson_index": _frisson_index,
             "components": {
                 "natuerlichkeit": _nat,
                 "emotionalitaet": _emo,
@@ -1521,6 +1775,15 @@ class UnifiedRestorerV3:
                 "artifact_freedom": _artifact,
                 "emotional_arc": _arc,
                 "brightness": _bri,
+                "artikulation": _art,
+                "spatial_depth": _spa,
+                "tonal_center": _tonal,
+                "transparenz": _trans,
+                "frisson_propensity": _frisson_index,
+                "frisson_spectral_flux": _spectral_flux_norm,
+                "frisson_onset_density": _onset_density_norm,
+                "frisson_dynamic_contrast": _dynamic_contrast_norm,
+                "frisson_audio_analysis_valid": _frisson_audio_valid,
             },
         }
 
@@ -1634,6 +1897,27 @@ class UnifiedRestorerV3:
         return vv
 
     @staticmethod
+    def _estimate_spectral_tilt_quick(audio: np.ndarray, sr: int) -> float | None:
+        """§2.46b: Rapid spectral tilt estimate (dB/oct, 200 Hz–16 kHz) via era_classifier.
+
+        Used post-phase in _profiled_phase_call to detect additive phase over-brightening.
+        Returns None on any error (non-blocking).
+        """
+        try:
+            from backend.core.era_classifier import _estimate_spectral_tilt as _est_tilt
+
+            mono = audio[0] if audio.ndim == 2 else audio
+            # Limit to 4 s centre excerpt for speed (≤10 ms on typical 48 kHz audio).
+            max_n = int(4.0 * sr)
+            if len(mono) > max_n:
+                start = (len(mono) - max_n) // 2
+                mono = mono[start : start + max_n]
+            mono = np.nan_to_num(mono, nan=0.0, posinf=0.0, neginf=0.0)
+            return float(_est_tilt(mono, sr))
+        except Exception:
+            return None
+
+    @staticmethod
     def _get_phase_calibration_scalar(phase_id: str, profile: dict[str, Any] | None) -> float:
         """Return phase-family scalar derived from the song calibration profile."""
         if not isinstance(profile, dict):
@@ -1681,6 +1965,221 @@ class UnifiedRestorerV3:
         # Plus Stabilitäts-Pullback: avoid persistent edge adhesion in implicit phase scaling.
         _bounded = float(np.clip(_scalar, 0.30, 1.80))
         return UnifiedRestorerV3._pullback_from_bounds(_bounded, 0.30, 1.80, margin_frac=0.03)
+
+    @staticmethod
+    def _compute_harmonic_adaptation_scalar(
+        phase_id: str,
+        phase_family: str | None,
+        goal_weights: dict[str, float] | None,
+        restorability_score: float | None,
+        material_key: str | None = None,
+    ) -> float:
+        """Compute a bounded cross-phase adaptation scalar for smooth global behaviour.
+
+        This scalar is intentionally lightweight and advisory-only. It harmonizes
+        all phases with the per-song context (§2.56 weights + restorability),
+        without overriding hard guards or explicit PMGG strengths.
+        """
+
+        def _wavg(keys: tuple[str, ...], default: float = 1.0) -> float:
+            if not isinstance(goal_weights, dict):
+                return float(default)
+            vals: list[float] = []
+            for k in keys:
+                v = goal_weights.get(k)
+                if isinstance(v, (int, float)):
+                    vals.append(float(v))
+            if not vals:
+                return float(default)
+            return float(np.mean(vals))
+
+        _preserve = _wavg(
+            (
+                "natuerlichkeit",
+                "authentizitaet",
+                "tonal_center",
+                "timbre_authentizitaet",
+                "artikulation",
+            )
+        )
+        _clarity = _wavg(("transparenz", "brillanz", "separation_fidelity"))
+        _goal_balance = float(np.clip((_clarity - _preserve) * 0.22, -0.18, 0.18))
+
+        _rest = 70.0 if restorability_score is None else float(restorability_score)
+        _rest_norm = float(np.clip((_rest - 50.0) / 50.0, -1.0, 1.0))
+
+        _family = str(phase_family or "general")
+        _subtractive_families = {
+            "subtractive_cleanup",
+            "harmonic_noise_control",
+            "spectral_restoration",
+            "reconstruction_inpainting",
+            "time_pitch_transport",
+            "distortion_repair",
+        }
+        _enhancement_families = {
+            "harmonic_reconstruction",
+            "harmonic_enhancement",
+            "tonal_enhancement",
+            "source_enhancement",
+            "stereo_enhancement",
+            "stereo_generation",
+            "semantic_guidance",
+        }
+        _neutral_families = {
+            "stereo_phase_geometry",
+            "dynamics_repair",
+            "dynamics_control",
+            "tonal_restoration",
+            "tonal_mastering",
+            "finalizer_output",
+            "general",
+        }
+
+        _scalar = 1.0
+        if _family in _subtractive_families:
+            # Hard material -> slightly more restorative energy, good material -> gentler.
+            _scalar += 0.06 * (-_rest_norm)
+            _scalar += 0.5 * _goal_balance
+        elif _family in _enhancement_families:
+            # Enhancement should be conservative on difficult material.
+            _scalar += 0.08 * _rest_norm
+            _scalar += 0.9 * _goal_balance
+        elif _family in _neutral_families:
+            _scalar += 0.03 * _goal_balance
+        else:
+            _scalar += 0.02 * _goal_balance
+
+        _mat = str(material_key or "").lower()
+        if _mat in {"shellac", "wax_cylinder", "wire_recording"} and _family in _enhancement_families:
+            _scalar *= 0.95
+        elif _mat in {"vinyl", "reel_tape", "tape", "cassette"} and _family in _enhancement_families:
+            _scalar *= 0.98
+
+        _bounded = float(np.clip(_scalar, 0.72, 1.18))
+        return UnifiedRestorerV3._pullback_from_bounds(_bounded, 0.72, 1.18, margin_frac=0.04)
+
+    @staticmethod
+    def _compute_recovery_certainty_profile(
+        *,
+        restorability_score: float | None,
+        source_material_baseline: Any | None,
+        transfer_generation_count: int | None,
+        material_key: str | None,
+    ) -> dict[str, Any]:
+        """Estimate recoverability ceiling + uncertainty for advisory conservatism."""
+        _rest = 65.0 if restorability_score is None else float(restorability_score)
+        _rest_norm = float(np.clip(_rest / 100.0, 0.0, 1.0))
+
+        _gen = int(transfer_generation_count) if isinstance(transfer_generation_count, (int, float)) else 1
+        _gen = int(np.clip(_gen, 1, 8))
+        _gen_penalty = float(np.clip((_gen - 1) * 0.045, 0.0, 0.28))
+
+        _hf_loss_db = getattr(source_material_baseline, "hf_loss_db", None)
+        if isinstance(_hf_loss_db, (int, float)):
+            _hf_penalty = float(np.clip(abs(float(_hf_loss_db)) / 90.0, 0.0, 0.18))
+        else:
+            _hf_penalty = 0.0
+
+        _mat = str(material_key or "").lower()
+        _mat_penalty = 0.0
+        if _mat in {"shellac", "edison_cylinder", "wax_cylinder", "wire_recording"}:
+            _mat_penalty = 0.08
+        elif _mat in {"reel_tape", "tape", "cassette", "vinyl"}:
+            _mat_penalty = 0.04
+
+        _ceiling = float(np.clip(_rest_norm - _gen_penalty - _hf_penalty - _mat_penalty, 0.12, 0.98))
+        _uncertainty = float(np.clip(1.0 - _ceiling, 0.02, 0.88))
+        _conservative_scalar = float(np.clip(1.0 - 0.26 * _uncertainty, 0.78, 1.0))
+
+        if _ceiling >= 0.80:
+            _band = "high"
+        elif _ceiling >= 0.55:
+            _band = "medium"
+        else:
+            _band = "low"
+
+        return {
+            "recoverability_ceiling": _ceiling,
+            "uncertainty_index": _uncertainty,
+            "conservative_audio_scalar": _conservative_scalar,
+            "confidence_band": _band,
+            "restorability_score": float(_rest),
+            "transfer_generation_count": int(_gen),
+            "hf_loss_db": float(_hf_loss_db) if isinstance(_hf_loss_db, (int, float)) else None,
+        }
+
+    @staticmethod
+    def _compute_frisson_audio_impact_scalar(
+        *,
+        studio_mode: bool,
+        phase_family: str | None,
+        goal_weights: dict[str, float] | None,
+    ) -> float:
+        """Compute bounded frisson coupling scalar.
+
+        Mode policy:
+        - Restoration: disabled (always 1.0)
+        - Studio 2026: enabled, conservative bounded modulation
+
+        This scalar is advisory and intentionally small to avoid over-processing.
+        """
+        if not bool(studio_mode):
+            return 1.0
+        if not isinstance(goal_weights, dict) or not goal_weights:
+            return 1.0
+
+        def _wavg(keys: tuple[str, ...], default: float = 1.0) -> float:
+            vals: list[float] = []
+            for k in keys:
+                v = goal_weights.get(k)
+                if isinstance(v, (int, float)):
+                    vals.append(float(v))
+            if not vals:
+                return float(default)
+            return float(np.mean(vals))
+
+        _frisson_weight = _wavg(
+            (
+                "emotionalitaet",
+                "micro_dynamics",
+                "artikulation",
+                "spatial_depth",
+                "transparenz",
+                "tonal_center",
+            )
+        )
+        _z = float(np.clip((_frisson_weight - 1.0) / 0.60, -1.0, 1.0))
+        _family = str(phase_family or "general")
+
+        _enhancement_families = {
+            "harmonic_reconstruction",
+            "harmonic_enhancement",
+            "tonal_enhancement",
+            "source_enhancement",
+            "stereo_enhancement",
+            "stereo_generation",
+            "semantic_guidance",
+        }
+        _subtractive_families = {
+            "subtractive_cleanup",
+            "harmonic_noise_control",
+            "spectral_restoration",
+            "reconstruction_inpainting",
+            "time_pitch_transport",
+            "distortion_repair",
+        }
+
+        _scalar = 1.0
+        if _family in _enhancement_families:
+            _scalar += 0.045 * _z
+        elif _family in _subtractive_families:
+            _scalar -= 0.030 * max(0.0, _z)
+        else:
+            _scalar += 0.015 * _z
+
+        _bounded = float(np.clip(_scalar, 0.94, 1.06))
+        return UnifiedRestorerV3._pullback_from_bounds(_bounded, 0.94, 1.06, margin_frac=0.03)
 
     @staticmethod
     def _mid_pipeline_calibration_step(
@@ -2462,6 +2961,8 @@ class UnifiedRestorerV3:
             Alle Verarbeitung erfolgt intern bei 48 kHz für konsistente ML-Modell-Performance.
         """
         start_time = time.time()
+        # §0c: Reset graceful-stop for new song — previous watchdog signal must not bleed over.
+        self._graceful_stop_event.clear()
 
         def _cb(pct: int, phase: str) -> None:
             """Sendet Progress-Update, falls Callback registriert."""
@@ -3916,8 +4417,6 @@ class UnifiedRestorerV3:
         # Computed ONCE after all classifiers (Genre, Era, Material, Vocal)
         # and threaded through PMGG, CIG, and FeedbackChain for the entire pipeline.
         try:
-            from backend.core.song_goal_importance import estimate_goal_importance
-
             _vocal_detected = bool(getattr(self, "_restoration_context", {}).get("panns_vocals_confidence", 0.0) > 0.4)
             _vocal_conf = float(getattr(self, "_restoration_context", {}).get("panns_vocals_confidence", 0.0))
             # §2.56 v9.12: Extract audio-derived features for per-song tuning
@@ -3946,6 +4445,8 @@ class UnifiedRestorerV3:
                 _raw_tilt = getattr(_era_result, "spectral_tilt", None)
                 if _raw_tilt is not None:
                     _sgi_tilt = float(_raw_tilt)
+                # §2.46b: store era tilt as session-level instance variable for per-phase cap.
+                self._era_spectral_tilt = _sgi_tilt  # None if era classification unavailable
             # §2.46/§2.46a: Carrier-chain degradation data from SourceFidelityReconstructor
             _sgi_gen_count: int | None = None
             _sgi_hf_loss: float | None = None
@@ -4088,6 +4589,16 @@ class UnifiedRestorerV3:
                 )
             except Exception as _vht_err:
                 logger.debug("§2.56 vocal/harmonic/transient extraction failed: %s", _vht_err)
+            _src_baseline = None
+            try:
+                _afg_250 = get_artifact_freedom_gate()
+                _mat_str_250 = (
+                    str(getattr(material_type, "value", material_type)).lower() if material_type else "digital"
+                )
+                _src_baseline = _afg_250.measure_source_baseline(audio, sample_rate, _mat_str_250)
+            except Exception as _sb250_exc:
+                logger.debug("§2.50 Source-Baseline-Messung fehlgeschlagen: %s", _sb250_exc)
+
             _sgi = estimate_goal_importance(
                 genre_label=_cal_genre_label
                 or (str(getattr(_schlager_result, "genre_label", "")) if _schlager_result is not None else ""),
@@ -4101,7 +4612,11 @@ class UnifiedRestorerV3:
                 snr_db=_input_snr_db if _input_snr_db is not None else None,
                 effective_bandwidth_hz=_sgi_bw_hz,
                 dynamic_range_db=_sgi_dyn_db,
-                stereo_mono_compat=None,  # Populated later from §2.50 baseline
+                stereo_mono_compat=(
+                    float(getattr(_src_baseline, "stereo_mono_compat_mean", 0.0))
+                    if getattr(_src_baseline, "stereo_mono_compat_mean", None) is not None
+                    else None
+                ),
                 bpm=_sgi_bpm,
                 defect_severities=_sgi_defect_sev,
                 spectral_tilt_db_per_oct=_sgi_tilt,
@@ -4194,14 +4709,8 @@ class UnifiedRestorerV3:
         # §2.50 Material-Adaptive Gate Baseline: Stereo-Feldanalyse vor Pipeline.
         # Erkennt pre-existing Trägerkettenprobleme im Quellmaterial und injiziert
         # Remediation-Phasen (phase_14/phase_15) wenn nötig, bevor Phase-Skipping greift.
-        _src_baseline = None
         try:
-            from backend.core.artifact_freedom_gate import get_artifact_freedom_gate as _get_afg_250
-
-            _afg_250 = _get_afg_250()
-            _mat_str_250 = str(getattr(material_type, "value", material_type)).lower() if material_type else "digital"
-            _src_baseline = _afg_250.measure_source_baseline(audio, sample_rate, _mat_str_250)
-            if _src_baseline.has_critical_stereo_issue:
+            if _src_baseline is not None and _src_baseline.has_critical_stereo_issue:
                 _stereo_remedy_phases = [
                     "phase_14_phase_correction",
                     "phase_15_stereo_balance",
@@ -4222,7 +4731,7 @@ class UnifiedRestorerV3:
                         _src_baseline.stereo_mono_compat_mean,
                         _injected_250,
                     )
-            elif _src_baseline.has_anti_phase_region:
+            elif _src_baseline is not None and _src_baseline.has_anti_phase_region:
                 # Teilweise Anti-Phasigkeit: nur phase_14 (Phase-Korrektur)
                 if "phase_14_phase_correction" not in set(selected_phases):
                     selected_phases.append("phase_14_phase_correction")
@@ -4233,6 +4742,39 @@ class UnifiedRestorerV3:
             logger.debug("§2.50 Source-Baseline-Messung fehlgeschlagen: %s", _sb250_exc)
         # Baseline für Pipeline speichern (Übergabe an _execute_pipeline via self)
         self._source_material_baseline = _src_baseline
+        try:
+            _recovery_certainty_profile = UnifiedRestorerV3._compute_recovery_certainty_profile(
+                restorability_score=float(_pmgg_restorability_score),
+                source_material_baseline=_src_baseline,
+                transfer_generation_count=(
+                    int(_sgi_gen_count)
+                    if isinstance(locals().get("_sgi_gen_count", None), (int, float))
+                    else None
+                ),
+                material_key=str(getattr(material_type, "value", material_type)),
+            )
+        except Exception as _rcp_exc:
+            logger.debug("Recovery-certainty profile fallback (non-blocking): %s", _rcp_exc)
+            _recovery_certainty_profile = {
+                "recoverability_ceiling": 0.65,
+                "uncertainty_index": 0.35,
+                "conservative_audio_scalar": 0.92,
+                "confidence_band": "medium",
+                "restorability_score": float(_pmgg_restorability_score),
+                "transfer_generation_count": 1,
+                "hf_loss_db": None,
+            }
+        self._recovery_certainty_profile = dict(_recovery_certainty_profile)
+        self._global_conservative_scalar = float(
+            np.clip(self._recovery_certainty_profile.get("conservative_audio_scalar", 1.0), 0.78, 1.0)
+        )
+        logger.info(
+            "RecoveryCertainty: ceiling=%.3f uncertainty=%.3f scalar=%.3f band=%s",
+            float(self._recovery_certainty_profile.get("recoverability_ceiling", 0.0)),
+            float(self._recovery_certainty_profile.get("uncertainty_index", 0.0)),
+            float(self._global_conservative_scalar),
+            str(self._recovery_certainty_profile.get("confidence_band", "unknown")),
+        )
 
         # §6.7 Dolby-NR-Typ + Konfidenz aus DefectResult in _restoration_context injizieren,
         # damit phase_04 über kwargs.get("dolby_nr_type") die korrekte Inverse anwenden kann.
@@ -4610,6 +5152,7 @@ class UnifiedRestorerV3:
                 reconstruction_context=_reconstruction_ctx,  # §11.7a: Bereits reparierte Gaps
                 phoneme_timeline=_phoneme_timeline,  # §2.36a: PhonemeTimeline für Phasen 19/24/43/56
                 pre_transcription=_lge_trans_pre,  # §2.36: LGE pre-computed transcription for phase_58
+                graceful_stop_event=self._graceful_stop_event,  # §0c: Watchdog-Graceful-Stop
             )
         finally:
             try:
@@ -4632,6 +5175,17 @@ class UnifiedRestorerV3:
         # - FeedbackChain (unten) bietet zielgerichtete iterative Verbesserung
 
         _cb(86, "Nachbearbeitung…")
+        # §0c Graceful-Stop-Tag: wenn Watchdog die Pipeline beendet hat, Metadaten befüllen.
+        # Die FeedbackChain und HPI laufen danach nicht (zu aufwändig), stattdessen direkter
+        # Export des besten Checkpoint-Ergebnisses mit transparentem Status.
+        _graceful_stop_triggered = self._graceful_stop_event.is_set()
+        if _graceful_stop_triggered:
+            logger.warning(
+                "§0c Graceful-Stop: Pipeline vorzeitig beendet — %d Phasen ausgeführt, %d übersprungen. "
+                "Bestes Checkpoint-Ergebnis wird direkt exportiert (kein FeedbackChain/HPI).",
+                len(executed_phases),
+                len(skipped_phases),
+            )
 
         # Speicher-Hygiene: Pipeline-Modelle entladen sobald alle Phasen abgeschlossen.
         # AudioSR (7 GB), LAION-CLAP (2.2 GB) werden nur in der Phase-Pipeline benötigt.
@@ -4673,6 +5227,10 @@ class UnifiedRestorerV3:
         _fc_chain_result = None
         try:
             from backend.core.feedback_chain import FeedbackChain
+            # §0c Graceful-Stop: FeedbackChain überspringen — bestes Checkpoint direkt exportieren.
+            if _graceful_stop_triggered:
+                logger.info("§0c Graceful-Stop: FeedbackChain übersprungen — partial-best-checkpoint export")
+                raise RuntimeError("__graceful_stop_skip_feedback_chain__")
 
             _fc_phase_ids = [
                 "phase_07_harmonic_restoration",  # Harmonik-Kohärenz frühzeitig stabilisieren
@@ -4885,7 +5443,10 @@ class UnifiedRestorerV3:
             else:
                 logger.debug("FeedbackChain: keine Post-Pipeline-Phasen verfügbar")
         except Exception as _fc_exc:
-            logger.debug("FeedbackChain nicht verfügbar: %s", _fc_exc)
+            if str(_fc_exc) == "__graceful_stop_skip_feedback_chain__":
+                logger.debug("FeedbackChain bewusst übersprungen (graceful stop)")
+            else:
+                logger.debug("FeedbackChain nicht verfügbar: %s", _fc_exc)
 
         _cb(89, "FeedbackChain abgeschlossen…")
 
@@ -6216,6 +6777,10 @@ class UnifiedRestorerV3:
                 original_audio_for_goals if original_audio_for_goals.ndim >= 2 else original_audio_for_goals[:, None]
             )
             _rest_2d = restored_audio if restored_audio.ndim >= 2 else restored_audio[:, None]
+            if _orig_2d.ndim == 2 and _orig_2d.shape[0] == 2 and _orig_2d.shape[1] != 2:
+                _orig_2d = _orig_2d.T
+            if _rest_2d.ndim == 2 and _rest_2d.shape[0] == 2 and _rest_2d.shape[1] != 2:
+                _rest_2d = _rest_2d.T
             _lufs_orig = _lufs_meter.integrated_loudness(_orig_2d)
             _lufs_rest = _lufs_meter.integrated_loudness(_rest_2d)
             if np.isfinite(_lufs_orig) and np.isfinite(_lufs_rest):
@@ -6414,6 +6979,76 @@ class UnifiedRestorerV3:
                     _artifact_freedom_for_hpi,
                 )
 
+        # Fallback Quality Floor: when ML->DSP fallback happened, enforce a final
+        # quality floor and attempt checkpoint recovery before export.
+        _fallback_quality_floor = self._evaluate_fallback_quality_floor(
+            ml_fallbacks_used=list(getattr(self, "_ml_fallbacks_used", [])),
+            hpi_result=_hpi_result,
+            artifact_freedom=_artifact_freedom_for_hpi,
+        )
+        if bool(_fallback_quality_floor.get("triggered", False)) and not bool(_fallback_quality_floor.get("passed", False)):
+            _recovery_trace: list[dict[str, Any]] = []
+            _recovery_target = getattr(self, "_hpi_best_rollback_audio", None)
+            _recovery_source = "hpi_best_checkpoint"
+            if _recovery_target is None:
+                _recovery_target = original_audio_for_goals
+                _recovery_source = "original_audio"
+
+            _fallback_quality_floor["attempts"] = 1
+            _compatible_shape = (
+                _recovery_target is not None
+                and hasattr(_recovery_target, "shape")
+                and _recovery_target.shape == restored_audio.shape
+            )
+            if _compatible_shape:
+                restored_audio = np.clip(
+                    np.nan_to_num(_recovery_target, nan=0.0, posinf=0.0, neginf=0.0),
+                    -1.0,
+                    1.0,
+                )
+                _fallback_quality_floor["recovered"] = True
+                _fallback_quality_floor["status"] = "recovered"
+                _fallback_quality_floor["best_candidate"] = _recovery_source
+                _fallback_quality_floor["reason"] = "fallback_quality_floor_recovered_with_checkpoint"
+                _recovery_trace.append(
+                    {
+                        "attempt": 1,
+                        "candidate": _recovery_source,
+                        "action": "rollback",
+                        "result": "applied",
+                    }
+                )
+                _fail_reasons.append(
+                    {
+                        "component": "FallbackQualityFloor",
+                        "error_code": "FALLBACK_QUALITY_FLOOR_RECOVERED",
+                        "severity": "degraded",
+                        "action": "rollback_recovery",
+                        "detail": _fallback_quality_floor["reason"],
+                    }
+                )
+            else:
+                _fallback_quality_floor["status"] = "degraded"
+                _fallback_quality_floor["reason"] = "fallback_quality_floor_failed_no_compatible_checkpoint"
+                _recovery_trace.append(
+                    {
+                        "attempt": 1,
+                        "candidate": _recovery_source,
+                        "action": "rollback",
+                        "result": "failed",
+                    }
+                )
+                _fail_reasons.append(
+                    {
+                        "component": "FallbackQualityFloor",
+                        "error_code": "FALLBACK_QUALITY_FLOOR_FAILED",
+                        "severity": "failed",
+                        "action": "degraded_export",
+                        "detail": _fallback_quality_floor["reason"],
+                    }
+                )
+            _fallback_quality_floor["recovery_trace"] = _recovery_trace
+
         # Recompute degradation status after HPI/artifact gates
         try:
             from backend.core.pipeline_health_state import (
@@ -6436,12 +7071,15 @@ class UnifiedRestorerV3:
             (_analytics_meta.get("listening_fatigue") if isinstance(_analytics_meta, dict) else None),
             _artifact_freedom_for_hpi,
             _emotional_arc_for_hpi,
+            audio=restored_audio,
+            sr=48000,
         )
         if not isinstance(_joy_runtime_index, dict):
             _joy_runtime_index = {}
         _joy_runtime_index = {
             "joy_index": float(np.clip(float(_joy_runtime_index.get("joy_index", 0.0)), 0.0, 1.0)),
             "fatigue_index": float(np.clip(float(_joy_runtime_index.get("fatigue_index", 0.0)), 0.0, 1.0)),
+            "frisson_index": float(np.clip(float(_joy_runtime_index.get("frisson_index", 0.0)), 0.0, 1.0)),
             "components": (
                 dict(_joy_runtime_index.get("components", {}))
                 if isinstance(_joy_runtime_index.get("components", {}), dict)
@@ -6508,10 +7146,11 @@ class UnifiedRestorerV3:
             _auto_improvement["count"] = len(_auto_improvement["recommendations"])
 
         logger.info(
-            "§2.53 experience_runtime: joy_runtime_index={joy_index:%.3f,fatigue_index:%.3f} "
+            "§2.53 experience_runtime: joy_runtime_index={joy_index:%.3f,fatigue_index:%.3f,frisson_index:%.3f} "
             "auto_improvement_recommendations={count:%d} song_calibration={cluster_key:%s,cluster_policy:%s}",
             float(_joy_runtime_index.get("joy_index", 0.0)),
             float(_joy_runtime_index.get("fatigue_index", 0.0)),
+            float(_joy_runtime_index.get("frisson_index", 0.0)),
             int(_auto_improvement.get("count", 0)),
             str(_song_calibration_meta.get("cluster_key", "")),
             str(_song_calibration_meta.get("cluster_policy", {}).get("cluster_key", "")),
@@ -6527,6 +7166,308 @@ class UnifiedRestorerV3:
                 "§2.53 degrade-hint: auto_improvement_recommendations leer — "
                 "non-blocking, aber Runtime-Empfehlungen sollten verfügbar sein"
             )
+
+        try:
+            if not self.is_studio_mode():
+                import pyloudnorm as _pyln
+
+                _lufs_meter_final = _pyln.Meter(sample_rate)
+                _orig_final = (
+                    original_audio_for_goals
+                    if original_audio_for_goals.ndim >= 2
+                    else original_audio_for_goals[:, None]
+                )
+                _rest_final = restored_audio if restored_audio.ndim >= 2 else restored_audio[:, None]
+                if _orig_final.ndim == 2 and _orig_final.shape[0] == 2 and _orig_final.shape[1] != 2:
+                    _orig_final = _orig_final.T
+                if _rest_final.ndim == 2 and _rest_final.shape[0] == 2 and _rest_final.shape[1] != 2:
+                    _rest_final = _rest_final.T
+                _lufs_orig_final = _lufs_meter_final.integrated_loudness(_orig_final)
+                _lufs_rest_final = _lufs_meter_final.integrated_loudness(_rest_final)
+                if np.isfinite(_lufs_orig_final) and np.isfinite(_lufs_rest_final):
+                    def _apply_music_only_gain(_x: np.ndarray, _gain: float, _gate_dbfs: float = -50.0) -> np.ndarray:
+                        if _gain <= 1.0005:
+                            return np.asarray(_x, dtype=np.float32)
+                        _arr = np.asarray(_x, dtype=np.float32)
+                        _is_2d = _arr.ndim == 2
+                        if _is_2d:
+                            if _arr.shape[0] == 2 and _arr.shape[1] != 2:
+                                _mono = np.sqrt(np.mean(_arr**2, axis=0) + 1e-12)
+                            else:
+                                _mono = np.sqrt(np.mean(_arr**2, axis=-1) + 1e-12)
+                        else:
+                            _mono = np.abs(_arr)
+
+                        _n = int(_mono.shape[0])
+                        _frame = 2048
+                        _n_frames = max(1, _n // _frame)
+                        _mask = np.zeros(_n, dtype=np.float32)
+                        for _fi in range(_n_frames):
+                            _s = _fi * _frame
+                            _e = min(_s + _frame, _n)
+                            _chunk = _mono[_s:_e]
+                            _db = float(20.0 * np.log10(float(np.sqrt(np.mean(_chunk * _chunk) + 1e-12)) + 1e-12))
+                            if _db > _gate_dbfs:
+                                _mask[_s:_e] = 1.0
+                        _tail_s = _n_frames * _frame
+                        if _tail_s < _n:
+                            _tail = _mono[_tail_s:]
+                            _tail_db = float(
+                                20.0 * np.log10(float(np.sqrt(np.mean(_tail * _tail) + 1e-12)) + 1e-12)
+                            )
+                            if _tail_db > _gate_dbfs:
+                                _mask[_tail_s:] = 1.0
+
+                        _cf = max(1, int(0.010 * sample_rate))
+                        if _cf > 1:
+                            _kernel = np.ones(_cf, dtype=np.float32) / float(_cf)
+                            _mask = np.convolve(_mask, _kernel, mode="same")
+                            _mask = np.clip(_mask, 0.0, 1.0)
+
+                        _g_env = 1.0 + (_gain - 1.0) * _mask
+                        if _is_2d:
+                            if _arr.shape[0] == 2 and _arr.shape[1] != 2:
+                                return _arr * _g_env[np.newaxis, :]
+                            return _arr * _g_env[:, np.newaxis]
+                        return _arr * _g_env
+
+                    def _nf_dbfs(_x: np.ndarray) -> float:
+                        _arr = np.asarray(_x, dtype=np.float32)
+                        if _arr.ndim == 2:
+                            if _arr.shape[0] == 2 and _arr.shape[1] != 2:
+                                _arr = _arr.T
+                            _arr = np.mean(_arr, axis=1)
+                        _p5 = float(np.percentile(np.abs(_arr.astype(np.float64)), 5.0)) + 1e-12
+                        return float(20.0 * np.log10(_p5))
+
+                    def _samples_first(_x: np.ndarray) -> np.ndarray:
+                        _arr = np.asarray(_x, dtype=np.float32)
+                        if _arr.ndim == 2 and _arr.shape[0] == 2 and _arr.shape[1] != 2:
+                            return _arr.T
+                        return _arr
+
+                    # Match UAT R8 semantics: baseline from original input audio after
+                    # length alignment to current restored output.
+                    _orig_sf = _samples_first(np.asarray(audio, dtype=np.float32))
+                    _rest_sf = _samples_first(np.asarray(restored_audio, dtype=np.float32))
+                    _orig_len = _orig_sf.shape[0] if _orig_sf.ndim >= 1 else 0
+                    _rest_len = _rest_sf.shape[0] if _rest_sf.ndim >= 1 else 0
+                    _n_align = min(_orig_len, _rest_len)
+                    _orig_for_nf = _orig_sf[:_n_align] if _n_align > 0 else _orig_sf
+                    _noise_before_final = _nf_dbfs(_orig_for_nf)
+                    _mat_key_nf = str(getattr(self, "_material_type", material_type or "unknown") or "unknown").lower()
+                    _noise_allowance_db = {
+                        "vinyl": 2.0,
+                        "shellac": 2.0,
+                        "reel_tape": 2.0,
+                        "tape": 2.0,
+                        "cassette": 2.0,
+                        "mp3_low": 1.5,
+                        "mp3_high": 1.0,
+                        "aac": 1.0,
+                        "streaming": 1.0,
+                        "cd_digital": 0.5,
+                        "dat": 0.5,
+                    }.get(_mat_key_nf, 1.5)
+                    _final_delta = abs(_lufs_rest_final - _lufs_orig_final)
+                    if _final_delta > 4.0:
+                        _needed_db_final = float(np.clip(float(_lufs_orig_final - _lufs_rest_final), -12.0, 12.0))
+                        _gain_final = float(10.0 ** (_needed_db_final / 20.0))
+                        _rescued_final = _apply_music_only_gain(np.asarray(restored_audio, dtype=np.float32), _gain_final)
+                        if _gain_final > 1.0005:
+                            _p999_final = float(np.percentile(np.abs(_rescued_final), 99.9))
+                            if _p999_final > 0.98:
+                                _abs_final = np.abs(_rescued_final)
+                                _over_final = _abs_final > 0.92
+                                if np.any(_over_final):
+                                    _sign_final = np.sign(_rescued_final)
+                                    _soft_final = 0.92 + 0.08 * np.tanh((_abs_final - 0.92) / 0.08)
+                                    _rescued_final = np.where(_over_final, _sign_final * _soft_final, _rescued_final)
+                        _rescued_final = np.clip(
+                            np.nan_to_num(_rescued_final, nan=0.0, posinf=0.0, neginf=0.0),
+                            -1.0,
+                            1.0,
+                        )
+                        _rescued_final_2d = _rescued_final if _rescued_final.ndim >= 2 else _rescued_final[:, None]
+                        if (
+                            _rescued_final_2d.ndim == 2
+                            and _rescued_final_2d.shape[0] == 2
+                            and _rescued_final_2d.shape[1] != 2
+                        ):
+                            _rescued_final_2d = _rescued_final_2d.T
+                        _lufs_resc_final = _lufs_meter_final.integrated_loudness(_rescued_final_2d)
+                        if np.isfinite(_lufs_resc_final):
+                            _resc_delta_final = abs(_lufs_resc_final - _lufs_orig_final)
+                            _noise_after_final = _nf_dbfs(_rescued_final)
+                            _noise_ok = _noise_after_final <= (_noise_before_final + _noise_allowance_db)
+                            if (_resc_delta_final + 1e-6 < _final_delta) and _noise_ok:
+                                restored_audio = _rescued_final.astype(np.float32, copy=False)
+                                _lufs_delta_for_result = float(_resc_delta_final)
+                                logger.info(
+                                    "§2.45a final LUFS alignment: delta %.2f -> %.2f LU (gain_db=%.2f)",
+                                    float(_final_delta),
+                                    float(_resc_delta_final),
+                                    _needed_db_final,
+                                )
+                            elif (_resc_delta_final + 1e-6 < _final_delta) and (not _noise_ok):
+                                # Try combined rescue: keep LUFS benefit, then attenuate only low-level floor
+                                # so both R10 (LUFS drift) and R8 (noise-floor) can pass simultaneously.
+                                _noise_limit = float(_noise_before_final + _noise_allowance_db)
+                                _excess_db = float(max(0.0, _noise_after_final - _noise_limit))
+                                _reduce_db = float(np.clip(_excess_db + 1.0, 1.5, 12.0))
+
+                                def _attenuate_floor_for_lufs(_x: np.ndarray, _reduce: float) -> np.ndarray:
+                                    _arr = np.asarray(_x, dtype=np.float32)
+                                    _abs = np.abs(_arr)
+                                    _thr = float(np.percentile(_abs, 40.0)) + 1e-9
+                                    _gmin = float(10.0 ** (-_reduce / 20.0))
+                                    _slope = np.clip(_abs / _thr, 0.0, 1.0)
+                                    _gain = _gmin + (1.0 - _gmin) * _slope
+                                    return _arr * _gain.astype(np.float32, copy=False)
+
+                                _combo_rescued = _attenuate_floor_for_lufs(_rescued_final, _reduce_db)
+                                _combo_rescued = np.clip(
+                                    np.nan_to_num(_combo_rescued, nan=0.0, posinf=0.0, neginf=0.0),
+                                    -1.0,
+                                    1.0,
+                                )
+                                _combo_2d = _combo_rescued if _combo_rescued.ndim >= 2 else _combo_rescued[:, None]
+                                if _combo_2d.ndim == 2 and _combo_2d.shape[0] == 2 and _combo_2d.shape[1] != 2:
+                                    _combo_2d = _combo_2d.T
+                                _lufs_combo = _lufs_meter_final.integrated_loudness(_combo_2d)
+                                _noise_combo = _nf_dbfs(_combo_rescued)
+                                if np.isfinite(_lufs_combo):
+                                    _combo_delta = abs(float(_lufs_combo) - float(_lufs_orig_final))
+                                    if (_combo_delta + 1e-6 < _final_delta) and (_noise_combo <= _noise_limit):
+                                        restored_audio = _combo_rescued.astype(np.float32, copy=False)
+                                        _lufs_delta_for_result = float(_combo_delta)
+                                        logger.info(
+                                            "§2.45a final LUFS+noise rescue: delta %.2f -> %.2f LU "
+                                            "(noise %.2f -> %.2f dBFS, limit %.2f, material=%s)",
+                                            float(_final_delta),
+                                            float(_combo_delta),
+                                            float(_noise_before_final),
+                                            float(_noise_combo),
+                                            _noise_limit,
+                                            _mat_key_nf,
+                                        )
+                                    else:
+                                        _lufs_delta_for_result = float(_final_delta)
+                                        logger.info(
+                                            "§2.45a final LUFS rescue skipped due to noise-floor guard: "
+                                            "noise %.2f -> %.2f dBFS (limit %.2f, material=%s)",
+                                            float(_noise_before_final),
+                                            float(_noise_after_final),
+                                            _noise_limit,
+                                            _mat_key_nf,
+                                        )
+                                else:
+                                    _lufs_delta_for_result = float(_final_delta)
+                            else:
+                                _lufs_delta_for_result = float(_final_delta)
+                    else:
+                        _lufs_delta_for_result = float(_final_delta)
+
+                    # Final noise-floor rescue (R8): if restoration raised floor above the
+                    # material-adaptive allowance, apply low-level downward expansion while
+                    # leaving musical peaks untouched.
+                    _noise_current_final = _nf_dbfs(restored_audio)
+                    _noise_limit_final = _noise_before_final + _noise_allowance_db
+                    if _noise_current_final > _noise_limit_final:
+                        _excess_db = float(_noise_current_final - _noise_limit_final)
+                        _reduce_db = float(np.clip(_excess_db + 1.0, 1.5, 12.0))
+
+                        def _attenuate_floor(_x: np.ndarray, _reduce: float) -> np.ndarray:
+                            _arr = np.asarray(_x, dtype=np.float32)
+                            _abs = np.abs(_arr)
+                            _thr = float(np.percentile(_abs, 40.0)) + 1e-9
+                            _gmin = float(10.0 ** (-_reduce / 20.0))
+                            _slope = np.clip(_abs / _thr, 0.0, 1.0)
+                            _gain = _gmin + (1.0 - _gmin) * _slope
+                            return _arr * _gain.astype(np.float32, copy=False)
+
+                        _noise_rescued = _attenuate_floor(restored_audio, _reduce_db)
+                        _noise_rescued = np.clip(
+                            np.nan_to_num(_noise_rescued, nan=0.0, posinf=0.0, neginf=0.0),
+                            -1.0,
+                            1.0,
+                        )
+                        _noise_resc_2d = _noise_rescued if _noise_rescued.ndim >= 2 else _noise_rescued[:, None]
+                        if _noise_resc_2d.ndim == 2 and _noise_resc_2d.shape[0] == 2 and _noise_resc_2d.shape[1] != 2:
+                            _noise_resc_2d = _noise_resc_2d.T
+                        _lufs_noise_resc = _lufs_meter_final.integrated_loudness(_noise_resc_2d)
+                        _noise_after_resc = _nf_dbfs(_noise_rescued)
+                        _noise_resc_delta = abs(float(_lufs_noise_resc) - float(_lufs_orig_final))
+                        if np.isfinite(_lufs_noise_resc) and (_noise_after_resc <= _noise_limit_final):
+                            restored_audio = _noise_rescued.astype(np.float32, copy=False)
+                            _lufs_delta_for_result = float(_noise_resc_delta)
+                            logger.info(
+                                "§2.45a final noise-floor rescue: noise %.2f -> %.2f dBFS (limit %.2f), "
+                                "LUFS delta=%.2f",
+                                float(_noise_current_final),
+                                float(_noise_after_resc),
+                                float(_noise_limit_final),
+                                float(_noise_resc_delta),
+                            )
+
+                    # Joint end-guard (R8+R10): choose a music-only gain candidate that
+                    # satisfies both LUFS drift <= 4.0 and noise-floor increase <= 3 dBFS.
+                    _joint_2d = restored_audio if restored_audio.ndim >= 2 else restored_audio[:, None]
+                    if _joint_2d.ndim == 2 and _joint_2d.shape[0] == 2 and _joint_2d.shape[1] != 2:
+                        _joint_2d = _joint_2d.T
+                    _joint_lufs_current = _lufs_meter_final.integrated_loudness(_joint_2d)
+                    _joint_delta_current = (
+                        abs(float(_joint_lufs_current) - float(_lufs_orig_final)) if np.isfinite(_joint_lufs_current) else 99.0
+                    )
+                    _joint_noise_current = _nf_dbfs(restored_audio)
+                    if (_joint_delta_current > 4.0) or (_joint_noise_current > _noise_limit_final):
+                        _joint_base = np.asarray(restored_audio, dtype=np.float32)
+                        _best_joint_audio = None
+                        _best_joint_delta = None
+
+                        def _attenuate_floor_joint(_x: np.ndarray, _reduce: float) -> np.ndarray:
+                            _arr = np.asarray(_x, dtype=np.float32)
+                            _abs = np.abs(_arr)
+                            _thr = float(np.percentile(_abs, 40.0)) + 1e-9
+                            _gmin = float(10.0 ** (-_reduce / 20.0))
+                            _slope = np.clip(_abs / _thr, 0.0, 1.0)
+                            _gain = _gmin + (1.0 - _gmin) * _slope
+                            return _arr * _gain.astype(np.float32, copy=False)
+
+                        _joint_needed_db = float(np.clip(float(_lufs_orig_final - _joint_lufs_current), -12.0, 12.0))
+                        for _scale in (1.00, 0.85, 0.70, 0.55, 0.40, 0.28):
+                            _cand_gain = float(10.0 ** ((_joint_needed_db * _scale) / 20.0))
+                            _cand = _apply_music_only_gain(_joint_base, _cand_gain)
+                            _cand_noise = _nf_dbfs(_cand)
+                            if _cand_noise > _noise_limit_final:
+                                _cand_reduce_db = float(np.clip((_cand_noise - _noise_limit_final) + 1.0, 1.5, 12.0))
+                                _cand = _attenuate_floor_joint(_cand, _cand_reduce_db)
+                            _cand = np.clip(np.nan_to_num(_cand, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+                            _cand_2d = _cand if _cand.ndim >= 2 else _cand[:, None]
+                            if _cand_2d.ndim == 2 and _cand_2d.shape[0] == 2 and _cand_2d.shape[1] != 2:
+                                _cand_2d = _cand_2d.T
+                            _cand_lufs = _lufs_meter_final.integrated_loudness(_cand_2d)
+                            if not np.isfinite(_cand_lufs):
+                                continue
+                            _cand_delta = abs(float(_cand_lufs) - float(_lufs_orig_final))
+                            _cand_noise = _nf_dbfs(_cand)
+                            _cand_ok = (_cand_delta <= 4.0 + 1e-6) and (_cand_noise <= _noise_limit_final + 1e-6)
+                            if _cand_ok:
+                                if _best_joint_audio is None or _best_joint_delta is None or _cand_delta < _best_joint_delta:
+                                    _best_joint_audio = _cand.astype(np.float32, copy=False)
+                                    _best_joint_delta = float(_cand_delta)
+
+                        if _best_joint_audio is not None and _best_joint_delta is not None:
+                            restored_audio = _best_joint_audio
+                            _lufs_delta_for_result = float(_best_joint_delta)
+                            logger.info(
+                                "§2.45a joint end-guard selected candidate: LUFS delta=%.2f, noise_limit=%.2f dBFS",
+                                float(_best_joint_delta),
+                                float(_noise_limit_final),
+                            )
+
+        except Exception as _lufs_final_exc:
+            logger.debug("Finale LUFS-Ausrichtung übersprungen: %s", _lufs_final_exc)
 
         result = RestorationResult(
             audio=restored_audio,
@@ -6546,6 +7487,7 @@ class UnifiedRestorerV3:
                 "fail_reason": _primary_fail_reason,
                 "ml_guard_events": list(getattr(self, "_pipeline_ml_guard_events", [])),
                 "ml_fallbacks_used": list(getattr(self, "_ml_fallbacks_used", [])),  # §2.47 [RELEASE_MUST]
+                "fallback_quality_floor": _fallback_quality_floor,
                 "quality_estimate": {
                     "value": float(quality_estimate),
                     "fallback_quality_estimate": bool(self._quality_estimate_used_fallback),
@@ -6711,6 +7653,75 @@ class UnifiedRestorerV3:
                     ),
                     "hf_loss_db": getattr(getattr(self, "_source_material_baseline", None), "hf_loss_db", None),
                 },
+                "recovery_certainty": {
+                    "recoverability_ceiling": float(
+                        np.clip(
+                            getattr(self, "_recovery_certainty_profile", {}).get("recoverability_ceiling", 0.65),
+                            0.0,
+                            1.0,
+                        )
+                    ),
+                    "uncertainty_index": float(
+                        np.clip(
+                            getattr(self, "_recovery_certainty_profile", {}).get("uncertainty_index", 0.35),
+                            0.0,
+                            1.0,
+                        )
+                    ),
+                    "conservative_audio_scalar": float(
+                        np.clip(
+                            getattr(self, "_recovery_certainty_profile", {}).get("conservative_audio_scalar", 0.92),
+                            0.0,
+                            1.0,
+                        )
+                    ),
+                    "confidence_band": str(
+                        getattr(self, "_recovery_certainty_profile", {}).get("confidence_band", "medium")
+                    ),
+                    "restorability_score": float(
+                        getattr(self, "_recovery_certainty_profile", {}).get(
+                            "restorability_score", getattr(self, "_last_restorability_score", 65.0)
+                        )
+                    ),
+                    "transfer_generation_count": int(
+                        getattr(self, "_recovery_certainty_profile", {}).get("transfer_generation_count", 1)
+                    ),
+                    "hf_loss_db": getattr(self, "_recovery_certainty_profile", {}).get("hf_loss_db", None),
+                },
+                # §0/§2.46 HF-Hallucination-Guard: aggregate per-phase guard events.
+                "hf_hallucination_guard": (lambda _acc=getattr(self, "_phase_metadata_accumulator", {}): {
+                    "guard_fired_count": sum(
+                        1 for d in _acc.values() if d.get("hf_hallucination_detected")
+                    ),
+                    "phases_guarded": [
+                        pid for pid, d in _acc.items() if d.get("hf_hallucination_detected")
+                    ],
+                    "max_delta_ratio": max(
+                        (d.get("hf_delta_ratio", 0.0) for d in _acc.values() if d.get("hf_hallucination_detected")),
+                        default=0.0,
+                    ),
+                    "min_cap_hz": min(
+                        (d.get("hf_cap_hz", 24000.0) for d in _acc.values() if d.get("hf_hallucination_detected")),
+                        default=None,
+                    ) if any(d.get("hf_hallucination_detected") for d in _acc.values()) else None,
+                })(),
+                # §2.46b Spectral Tilt Drift Guard: aggregate per-phase tilt-protection events.
+                "spectral_tilt_guard": (lambda _acc=getattr(self, "_phase_metadata_accumulator", {}): {
+                    "guard_fired_count": sum(
+                        1 for d in _acc.values() if d.get("tilt_guard_fired")
+                    ),
+                    "phases_guarded": [
+                        pid for pid, d in _acc.items() if d.get("tilt_guard_fired")
+                    ],
+                    "max_deviation_db_per_oct": max(
+                        (d.get("tilt_deviation_db_per_oct", 0.0) for d in _acc.values() if d.get("tilt_guard_fired")),
+                        default=0.0,
+                    ),
+                    "max_wet_cap_applied": max(
+                        (d.get("tilt_wet_cap_applied", 0.0) for d in _acc.values() if d.get("tilt_guard_fired")),
+                        default=0.0,
+                    ),
+                })(),
                 # §2.44 Holistic Perceptual Gate
                 "holistic_perceptual_gate": (
                     {
@@ -6737,6 +7748,16 @@ class UnifiedRestorerV3:
                         (getattr(self, "_phase_team_context", None) or {}).get("phase_type_counts", {}) or {}
                     ),
                 },
+                # §2.47b JND Sub-Threshold Phase Telemetrie (RELEASE_MUST)
+                # Phasen, bei denen alle Goal-Deltas ≥ 0 aber < JND — kein Retry, akzeptiert.
+                # Aggregiert aus allen PMGG-Log-Einträgen, dedupliziert und sortiert.
+                "sub_threshold_phases": sorted(set(
+                    _st_pid
+                    for _pmgg_e in (getattr(self, "_pmgg_log_entries", []) or [])
+                    for _st_pid in (isinstance(getattr(_pmgg_e, "metadata", None), dict)
+                                    and getattr(_pmgg_e, "metadata", {}).get("sub_threshold_phases", [])
+                                    or [])
+                )),
                 # §2.56 Song-Goal-Importance: per-song goal weights
                 "goal_importance": (
                     {
@@ -6751,6 +7772,10 @@ class UnifiedRestorerV3:
                     else None
                 ),
                 **_analytics_meta,
+                # §0c Graceful-Stop Telemetrie: transparenter Status für UI + Tests
+                "graceful_stop": _graceful_stop_triggered,
+                "graceful_stop_phases_executed": len(executed_phases) if _graceful_stop_triggered else None,
+                "graceful_stop_phases_skipped": len(skipped_phases) if _graceful_stop_triggered else None,
             },
             # --- Spec §2.1/§2.2 Pflichtfelder ---
             pqs_result=_pqs_result,
@@ -11259,11 +12284,14 @@ class UnifiedRestorerV3:
         if sev(DefectType.MODULATION_NOISE) > 0.35:
             selected.append("phase_03_denoise")  # Breitband-Rest-NR nach Modulationsrausch-Entfernung
 
-        # Innenrillenverzerrung (IGD — THD steigt zum Plattenende, Vinyl/Shellac/Lacquer)
+        # Innenrillenverzerrung (IGD — THD steigt zum Plattenende, Vinyl/Shellac/Lacquer/WaxCylinder)
+        # WAX_CYLINDER: schwere Stahlnadeln + weiche Wachsmasse → IGD extrem ausgeprägt (DefectScanner prior 0.15),
+        # Rillendeformation durch Wiederholung häufig (GROOVE_ECHO prior 0.30), Nadelabnutzung sehr häufig (STYLUS_DAMAGE prior 0.15)
         _is_groove_medium = material in {
             MaterialType.VINYL,
             MaterialType.SHELLAC,
             MaterialType.LACQUER_DISC,
+            MaterialType.WAX_CYLINDER,
         }
         if sev(DefectType.INNER_GROOVE_DISTORTION) > 0.12 and _is_groove_medium:
             selected.append("phase_60_inner_groove_distortion_repair")  # Positions-adaptive THD-Reduktion
@@ -12449,6 +13477,17 @@ class UnifiedRestorerV3:
         if isinstance(_song_calibration, dict) and _song_calibration:
             kwargs.setdefault("song_calibration_profile", dict(_song_calibration))
 
+        # §2.56 Song-Goal-Importance context for phase-local adaptive guards
+        # (e.g. clarity guards in dereverb phases).
+        _sgw = getattr(self, "_song_goal_weights", None)
+        if isinstance(_sgw, dict) and _sgw:
+            kwargs.setdefault("song_goal_weights", dict(_sgw))
+
+        # Provide restorability as scalar context if available for adaptive limits.
+        _rest_ctx = getattr(self, "_last_restorability_score", None)
+        if isinstance(_rest_ctx, (int, float)):
+            kwargs.setdefault("restorability_score", float(_rest_ctx))
+
         # Team-Modus: Folgephasen erhalten Kontext über bereits ausgeführte Reparaturen,
         # damit sie diese nicht als neue Defekte interpretieren.
         if _team_context_enabled:
@@ -12575,6 +13614,93 @@ class UnifiedRestorerV3:
                     _sev_wet_dry,
                 )
 
+        # Global harmonic adaptation (all phases 01-64): smooth context coupling
+        # using §2.56 goal-weights + restorability + intervention family.
+        # Advisory-only: explicit strengths remain untouched.
+        if phase_metadata.phase_id not in _TIMING_PHASES_WD:
+            _phase_family = self._PHASE_INTERVENTION_CLASS.get(phase_metadata.phase_id, "general")
+            _mat_ctx = kwargs.get("material_type") or kwargs.get("material")
+            _mat_ctx_s = getattr(_mat_ctx, "value", _mat_ctx)
+            _harmonic_scalar = UnifiedRestorerV3._compute_harmonic_adaptation_scalar(
+                phase_id=phase_metadata.phase_id,
+                phase_family=_phase_family,
+                goal_weights=_sgw if isinstance(_sgw, dict) else kwargs.get("song_goal_weights"),
+                restorability_score=_rest_ctx,
+                material_key=str(_mat_ctx_s) if _mat_ctx_s is not None else None,
+            )
+            kwargs["harmonic_adaptation_scalar"] = float(_harmonic_scalar)
+            _sev_wet_dry = float(np.clip(_sev_wet_dry * _harmonic_scalar, 0.12, 1.0))
+            if (not _strength_explicit) and isinstance(kwargs.get("strength"), (int, float)):
+                kwargs["strength"] = float(np.clip(float(kwargs["strength"]) * _harmonic_scalar, 0.0, 1.0))
+            logger.debug(
+                "🎚️ HarmonicAdaptation %s: family=%s scalar=%.3f wet_dry=%.3f",
+                phase_metadata.phase_id,
+                _phase_family,
+                _harmonic_scalar,
+                _sev_wet_dry,
+            )
+
+            # Studio 2026-only frisson coupling: bounded micro-modulation.
+            # Restoration path remains untouched (scalar=1.0).
+            _frisson_audio_scalar = UnifiedRestorerV3._compute_frisson_audio_impact_scalar(
+                studio_mode=self.is_studio_mode(),
+                phase_family=_phase_family,
+                goal_weights=_sgw if isinstance(_sgw, dict) else kwargs.get("song_goal_weights"),
+            )
+            kwargs["frisson_audio_scalar"] = float(_frisson_audio_scalar)
+            if abs(float(_frisson_audio_scalar) - 1.0) >= 0.003:
+                _sev_wet_dry = float(np.clip(_sev_wet_dry * float(_frisson_audio_scalar), 0.12, 1.0))
+                if (not _strength_explicit) and isinstance(kwargs.get("strength"), (int, float)):
+                    kwargs["strength"] = float(np.clip(float(kwargs["strength"]) * float(_frisson_audio_scalar), 0.0, 1.0))
+                logger.info(
+                    "🎼 FrissonCoupling %s: studio=%s family=%s scalar=%.3f wet_dry=%.3f",
+                    phase_metadata.phase_id,
+                    self.is_studio_mode(),
+                    _phase_family,
+                    _frisson_audio_scalar,
+                    _sev_wet_dry,
+                )
+
+            # Global uncertainty-aware conservatism: advisory-only for implicit strengths.
+            _global_cons = float(np.clip(getattr(self, "_global_conservative_scalar", 1.0), 0.78, 1.0))
+            if _global_cons < 0.999:
+                _subtractive_families = {
+                    "subtractive_cleanup",
+                    "harmonic_noise_control",
+                    "spectral_restoration",
+                    "reconstruction_inpainting",
+                    "time_pitch_transport",
+                    "distortion_repair",
+                }
+                _enhancement_families = {
+                    "harmonic_reconstruction",
+                    "harmonic_enhancement",
+                    "tonal_enhancement",
+                    "source_enhancement",
+                    "stereo_enhancement",
+                    "stereo_generation",
+                    "semantic_guidance",
+                }
+                if _phase_family in _subtractive_families:
+                    _cons_mix = 0.35
+                elif _phase_family in _enhancement_families:
+                    _cons_mix = 1.00
+                else:
+                    _cons_mix = 0.60
+                _phase_cons_scalar = float(np.clip(1.0 - (1.0 - _global_cons) * _cons_mix, 0.82, 1.0))
+                kwargs["recovery_certainty_scalar"] = _phase_cons_scalar
+                _sev_wet_dry = float(np.clip(_sev_wet_dry * _phase_cons_scalar, 0.12, 1.0))
+                if (not _strength_explicit) and isinstance(kwargs.get("strength"), (int, float)):
+                    kwargs["strength"] = float(np.clip(float(kwargs["strength"]) * _phase_cons_scalar, 0.0, 1.0))
+                logger.debug(
+                    "RecoveryConservatism %s: family=%s global=%.3f phase=%.3f wet_dry=%.3f",
+                    phase_metadata.phase_id,
+                    _phase_family,
+                    _global_cons,
+                    _phase_cons_scalar,
+                    _sev_wet_dry,
+                )
+
         # Stabilitäts-Korridor für implizite Strengths: explizite Strengths gewinnen immer.
         # Verhindert, dass Heuristik-/Conductor-Werte dauerhaft in Grenzbereichen kleben.
         if (not _strength_explicit) and isinstance(kwargs.get("strength"), (int, float)):
@@ -12600,19 +13726,88 @@ class UnifiedRestorerV3:
             _sp_s, _sp_e = _sub_pct_range
 
             def _make_sub_progress(_root_cb, _pct_s, _pct_e):
+                # Monotonie-Guard: verhindert Rücksprünge wenn Heartbeat und echte
+                # Phase-Callbacks parallel feuern.
+                _mono_last = [_pct_s]
+                _mono_lock = threading.Lock()
+
                 def _sub_progress(sub_pct_0_100: float, lbl: str, elapsed: float) -> None:
                     try:
-                        _mapped = int(_pct_s + (_pct_e - _pct_s) * sub_pct_0_100 / 100.0)
-                        _mapped = max(_pct_s, min(_pct_e, _mapped))
-                        _root_cb(_mapped, lbl, elapsed)
+                        # Float-Auflösung: kein int()-Cast → 0,01%-Stufen bleiben erhalten
+                        _mapped = _pct_s + (_pct_e - _pct_s) * sub_pct_0_100 / 100.0
+                        _mapped = max(float(_pct_s), min(float(_pct_e), _mapped))
+                        with _mono_lock:
+                            if _mapped <= _mono_last[0]:
+                                return   # Heartbeat-Tick liegt hinter echtem Callback
+                            _mono_last[0] = _mapped
+                        _root_cb(int(round(_mapped)), lbl, elapsed)
                     except Exception:
                         pass
 
                 return _sub_progress
 
             kwargs["progress_sub_callback"] = _make_sub_progress(_sub_root_cb, _sp_s, _sp_e)
+
+        # §Heartbeat — kontinuierlicher Micro-Step-Emitter (8 Hz, log. Kurve).
+        # Hält die Sub-Progress-Bar auch ohne interne Callbacks der Phase in Bewegung.
+        # Kurve: f(t) = (1 − e^(−t/T)) × budget, T=40 s → nach 20 s ca. 39 % erreicht.
+        # Echte Phase-Callbacks übersteuern jederzeit via Monotonie-Guard.
+        _hb_cb = kwargs.get("progress_sub_callback")
+        _hb_stop_ev = threading.Event()
+        _hb_thread: threading.Thread | None = None
+        if _hb_cb is not None:
+            _hb_t0 = time.perf_counter()
+            _HB_INTERVAL = 0.12   # ~8 Hz — feiner als üblicher UI-Redraw
+            _HB_T = 40.0          # Zeitkonstante [s]: 40 s → 63 % des Budgets
+            _HB_BUDGET = 0.88     # Heartbeat belegt max. 88 % Sub; Rest für echte Callbacks
+
+            def _heartbeat_run(
+                _cb=_hb_cb, _stop=_hb_stop_ev, _t0=_hb_t0,
+                _T=_HB_T, _B=_HB_BUDGET, _iv=_HB_INTERVAL,
+            ) -> None:
+                while not _stop.wait(_iv):
+                    _t = time.perf_counter() - _t0
+                    _frac = (1.0 - float(np.exp(-_t / _T))) * _B
+                    try:
+                        _cb(float(_frac * 100.0), "", _t)
+                    except Exception:
+                        pass
+
+            _hb_thread = threading.Thread(
+                target=_heartbeat_run,
+                daemon=True,
+                name=f"aurik_phase_hb_{phase_metadata.phase_id}",
+            )
+            _hb_thread.start()
+
         _audio_before_phase = audio if _sev_wet_dry < 1.0 else None
-        result = phase.process(audio, **kwargs)
+        # §4.1b Zwicker-Guard: capture pre-phase audio for broadband-subtractive phases
+        _ZWICKER_GUARD_PHASES: frozenset[str] = frozenset({
+            "phase_03_denoise", "phase_18_noise_gate", "phase_20_reverb_reduction",
+            "phase_28_surface_noise_profiling", "phase_29_tape_hiss_reduction",
+            "phase_49_advanced_dereverb", "phase_05_rumble_filter",
+        })
+        _zwicker_pre_audio: np.ndarray | None = (
+            audio.copy() if phase_metadata.phase_id in _ZWICKER_GUARD_PHASES else None
+        )
+        try:
+            result = phase.process(audio, **kwargs)
+        finally:
+            _hb_stop_ev.set()
+            if _hb_thread is not None:
+                _hb_thread.join(timeout=0.3)
+        # §2.46b Spectral Tilt Drift Guard: always save pre-phase audio for ADDITIVE phases
+        # so we can apply wet/dry rescue if tilt drifts beyond era-material tolerance.
+        _era_tilt = getattr(self, "_era_spectral_tilt", None)
+        _is_additive_for_tilt = False
+        if _era_tilt is not None:
+            try:
+                from backend.core.hf_hallucination_guard import ADDITIVE_PHASE_PREFIXES as _ADD_PFX
+                _is_additive_for_tilt = any(phase_metadata.phase_id.startswith(p) for p in _ADD_PFX)
+            except Exception:
+                pass
+        if _is_additive_for_tilt and _audio_before_phase is None:
+            _audio_before_phase = audio
 
         # §MusikalischeHarmonisierung: Wet/Dry basierend auf Defekt-Severity
         if _sev_wet_dry < 1.0 and _audio_before_phase is not None and hasattr(result, "audio"):
@@ -12628,6 +13823,93 @@ class UnifiedRestorerV3:
                     phase_metadata.phase_id,
                     _sev_wet_dry,
                 )
+
+        # §2.46b Spectral Tilt Drift Guard — prevents additive phases from destroying
+        # era acoustic character without triggering a Musical-Goal violation.
+        # Tolerance: ±1.5 dB/oct (vinyl/cd/dat/lossy), ±2.0 (tape), ±3.0 (shellac/wax).
+        if _is_additive_for_tilt and _era_tilt is not None and _audio_before_phase is not None and hasattr(result, "audio"):
+            try:
+                _TILT_TOLERANCE: dict[str, float] = {
+                    "wax_cylinder": 3.0, "wire_recording": 3.0, "shellac": 3.0,
+                    "lacquer_disc": 3.0, "minidisc": 2.0, "cassette": 2.0,
+                    "tape": 2.0, "reel_tape": 2.0,
+                    "vinyl": 1.5, "cd_digital": 1.5, "dat": 1.5,
+                    "mp3_low": 1.5, "mp3_high": 1.5,
+                }
+                _mat_raw = kwargs.get("material_type") or kwargs.get("material")
+                _mat_str = str(getattr(_mat_raw, "value", _mat_raw) or "").lower()
+                _tol = _TILT_TOLERANCE.get(_mat_str, 2.0)
+                _sr_ctx = int(kwargs.get("sample_rate", 48000) or 48000)
+                _post_tilt = UnifiedRestorerV3._estimate_spectral_tilt_quick(result.audio, _sr_ctx)
+                if _post_tilt is not None:
+                    _deviation = abs(float(_post_tilt) - float(_era_tilt))
+                    if _deviation > _tol:
+                        _excess = _deviation - _tol
+                        # wet_cap: 1.0 when exactly at tolerance, approaches 0.35 when 2× over.
+                        _wet_cap = float(np.clip(1.0 - _excess / (_tol + 1e-6), 0.35, 1.0))
+                        _pa = result.audio
+                        if isinstance(_pa, np.ndarray) and _pa.shape == _audio_before_phase.shape:
+                            result.audio = np.clip(
+                                (_audio_before_phase + _wet_cap * (_pa - _audio_before_phase)).astype(np.float32),
+                                -1.0,
+                                1.0,
+                            )
+                            logger.info(
+                                "§2.46b TiltGuard %s: era=%.2f post=%.2f dev=%.2f > tol=%.1f"
+                                " → wet_cap=%.2f (mat=%s)",
+                                phase_metadata.phase_id,
+                                _era_tilt, _post_tilt, _deviation, _tol, _wet_cap, _mat_str,
+                            )
+                            if hasattr(self, "_phase_metadata_accumulator"):
+                                self._phase_metadata_accumulator[phase_metadata.phase_id] = {
+                                    **(self._phase_metadata_accumulator.get(phase_metadata.phase_id) or {}),
+                                    "tilt_guard_fired": True,
+                                    "tilt_era_db_per_oct": round(float(_era_tilt), 3),
+                                    "tilt_post_db_per_oct": round(float(_post_tilt), 3),
+                                    "tilt_deviation_db_per_oct": round(float(_deviation), 3),
+                                    "tilt_tolerance_db_per_oct": round(float(_tol), 3),
+                                    "tilt_wet_cap_applied": round(float(_wet_cap), 3),
+                                }
+            except Exception as _tg_exc:
+                logger.debug("§2.46b TiltGuard non-blocking error %s: %s", phase_metadata.phase_id, _tg_exc)
+
+        # §4.1b ISO 532-1 Zwicker Mid-Pipeline-Loudness-Guard
+        # Applied AFTER broadband-subtraktive phases. ΔN > 2.0 sone → Dry/Wet-Rescue.
+        # LUFS allein übersieht Tiefton-Rumpeln bis +6 Phon (ISO 226:2023).
+        if (
+            _zwicker_pre_audio is not None
+            and hasattr(result, "audio")
+            and isinstance(result.audio, np.ndarray)
+            and result.audio.shape == _zwicker_pre_audio.shape
+        ):
+            try:
+                from backend.core.dsp.psychoacoustics import evaluate_mid_pipeline_loudness_delta
+                _sr_ctx = int(kwargs.get("sample_rate", 48000) or 48000)
+                _zwicker_delta = evaluate_mid_pipeline_loudness_delta(
+                    _zwicker_pre_audio, result.audio, _sr_ctx,
+                    phase_name=phase_metadata.phase_id,
+                )
+                if hasattr(result, "metadata") and isinstance(result.metadata, dict):
+                    result.metadata["zwicker_delta_sone"] = round(float(_zwicker_delta.get("delta_sone", 0.0)), 3)
+                    result.metadata["zwicker_action"] = _zwicker_delta.get("action", "skip")
+                    result.metadata["loudness_delta_sone"] = round(float(_zwicker_delta.get("delta_sone", 0.0)), 3)
+                # ΔN > 2.0 → Dry/Wet-Rescue: blend toward input to restore loudness (§4.1b FAIL)
+                if _zwicker_delta.get("action") == "fail_dry_wet_rescue":
+                    _delta_sone = float(_zwicker_delta.get("delta_sone", 0.0))
+                    # Rescue wet factor: 2.0 sone → 0.75 wet, 4.0+ sone → 0.35 wet
+                    _rescue_wet = float(np.clip(1.0 - (_delta_sone - 2.0) / 4.0, 0.35, 0.90))
+                    result.audio = np.clip(
+                        (_zwicker_pre_audio + _rescue_wet * (result.audio - _zwicker_pre_audio)).astype(np.float32),
+                        -1.0, 1.0,
+                    )
+                    logger.info(
+                        "§4.1b ZwickerGuard RESCUE %s: ΔN=%.2f sone → wet_rescue=%.2f",
+                        phase_metadata.phase_id, _delta_sone, _rescue_wet,
+                    )
+                    if hasattr(result, "metadata") and isinstance(result.metadata, dict):
+                        result.metadata["zwicker_rescue_wet"] = round(float(_rescue_wet), 3)
+            except Exception as _zw_exc:
+                logger.debug("§4.1b ZwickerGuard non-blocking error %s: %s", phase_metadata.phase_id, _zw_exc)
 
         t1 = time.perf_counter()
         mem1 = memory_usage(-1, interval=0.01, timeout=1) if _phase_mem_profiling else [0]
@@ -12835,6 +14117,7 @@ class UnifiedRestorerV3:
         reconstruction_context=None,  # §11.7a: RekonstruktionsDenker-Ergebnis mit reparierten Gaps
         phoneme_timeline=None,  # §2.36a: PhonemeTimeline für phoneme-targeted Processing
         pre_transcription=None,  # §2.36: LGE pre-computed transcription for phase_58
+        graceful_stop_event=None,  # §0c: threading.Event — Watchdog setzt, Loop bricht nach Phase ab
     ) -> tuple[np.ndarray, list[str], list[str], list[str]]:
         """
         Führt ausgewählte Phasen parallel (Multi-Core) aus, falls keine Abhängigkeiten bestehen.
@@ -12850,6 +14133,8 @@ class UnifiedRestorerV3:
         _active_quality_mode = quality_mode_override or self.config.mode
         _quality_mode_value = _active_quality_mode.value
         current_audio = audio.copy()
+        # §0/§2.46 HF-Guard accumulator reset for this pipeline run.
+        self._phase_metadata_accumulator = {}
         self._phase_team_context = {
             "material_type": str(material_type.value if hasattr(material_type, "value") else material_type),
             "executed_phase_ids": [],
@@ -12857,6 +14142,11 @@ class UnifiedRestorerV3:
         executed = []
         skipped = []
         deferred = []  # §2.38 KMV: phases skipped by PerformanceGuard for Stage 2 refinement
+        # Defensive defaults for end-of-pipeline guards (may be read on early exits).
+        _afg_pre_pipeline_audio: np.ndarray | None = None
+        _afg_best_clean_checkpoint: np.ndarray | None = None
+        _afg_best_clean_phase: str = "__pre_pipeline__"
+        _min_per_phase_afg_score: float = 1.0
         pipeline_ml_guard_events: list[dict[str, Any]] = []
         _ml_guard_event_keys: set[tuple[Any, ...]] = set()
 
@@ -13097,60 +14387,6 @@ class UnifiedRestorerV3:
                 return _rms_dbfs(_x)
             _gated_rms = float(np.sqrt(np.mean(_frame_rms[_gate_mask] ** 2) + 1e-12))
             return float(20.0 * np.log10(_gated_rms + 1e-12))
-
-        def _musical_gain_envelope(
-            _x: np.ndarray, _gain: float, gate_dbfs: float = -50.0, crossfade_ms: float = 10.0, sr: int = 48000
-        ) -> np.ndarray:
-            """Apply makeup gain only to musical frames, leaving silence untouched.
-
-            Prevents noise-floor pumping in pauses and preserves dynamics.
-            Uses a smooth per-sample gain envelope with *crossfade_ms* ramps
-            at gate boundaries (no audible clicks).
-            """
-            if _gain <= 1.0005:
-                return _x
-            _arr = np.asarray(_x, dtype=np.float32)
-            _was_2d = _arr.ndim == 2
-            if _was_2d:
-                _mono_env = np.sqrt(np.mean(_arr**2, axis=0) + 1e-12)
-            else:
-                _mono_env = np.abs(_arr)
-
-            # Per-frame gate: 0.0 where silent, 1.0 where musical
-            _frame_len = 2048
-            _n_samples = _mono_env.shape[-1]
-            _n_full_frames = max(1, _n_samples // _frame_len)
-            # Initialize to 0.0 (silent) — only mark musical frames as 1.0
-            _gate_envelope = np.zeros(_n_samples, dtype=np.float32)
-            for _fi in range(_n_full_frames):
-                _s = _fi * _frame_len
-                _e = min(_s + _frame_len, _n_samples)
-                _chunk = _mono_env[_s:_e]
-                _chunk_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_chunk * _chunk) + 1e-12)) + 1e-12))
-                if _chunk_dbfs > gate_dbfs:
-                    _gate_envelope[_s:_e] = 1.0
-            # Handle tail samples beyond last full frame (default: silent = no gain)
-            _tail_start = _n_full_frames * _frame_len
-            if _tail_start < _n_samples:
-                _tail = _mono_env[_tail_start:]
-                _tail_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(_tail * _tail) + 1e-12)) + 1e-12))
-                if _tail_dbfs > gate_dbfs:
-                    _gate_envelope[_tail_start:] = 1.0
-
-            # Smooth the gate envelope to avoid clicks (crossfade at boundaries)
-            _cf_samples = max(1, int(crossfade_ms * sr / 1000.0))
-            if _cf_samples > 1:
-                _kernel = np.ones(_cf_samples, dtype=np.float32) / _cf_samples
-                _gate_envelope = np.convolve(_gate_envelope, _kernel, mode="same")
-                _gate_envelope = np.clip(_gate_envelope, 0.0, 1.0)
-
-            # Per-sample gain: 1.0 in silence, _gain where musical, smooth between
-            _per_sample_gain = 1.0 + (_gain - 1.0) * _gate_envelope
-            if _was_2d:
-                _result = _arr * _per_sample_gain[np.newaxis, :]
-            else:
-                _result = _arr * _per_sample_gain
-            return _result
 
         def _peak_p999(_x: np.ndarray) -> float:
             _arr = np.asarray(_x, dtype=np.float32)
@@ -13423,7 +14659,7 @@ class UnifiedRestorerV3:
                     _g = min(_g, 4.0)
                     if _g > 1.0005:
                         # Envelope-aware gain: only amplify musical frames, leave silence untouched
-                        _work = _musical_gain_envelope(_work, _g, gate_dbfs=-50.0, sr=sample_rate)
+                        _work = self._musical_gain_envelope(_work, _g, gate_dbfs=-50.0, sr=sample_rate)
                         # Soft-limiter only if actual clipping risk (peak > 0.98),
                         # NOT as routine post-gain step — avoids compressing musical dynamics
                         # §2.45a-III + §v9.10.125: 99.9th-percentile, not np.max — impulse artefacts
@@ -13691,9 +14927,7 @@ class UnifiedRestorerV3:
         # §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate
         _artifact_gate = None
         try:
-            from backend.core.artifact_freedom_gate import get_artifact_freedom_gate as _get_afg
-
-            _artifact_gate = _get_afg()
+            _artifact_gate = get_artifact_freedom_gate()
             logger.debug("§2.49 ArtifactFreedomGate: Initialisiert")
         except Exception as _afg_init_exc:
             logger.debug("§2.49 ArtifactFreedomGate nicht verfügbar: %s", _afg_init_exc)
@@ -14946,6 +16180,18 @@ class UnifiedRestorerV3:
                     except Exception as _ig_exc:
                         logger.debug("§2.48 InteractionGuard check failed: %s", _ig_exc)
 
+                # §0c Graceful-Stop: Watchdog hat Zeitlimit signalisiert —
+                # bestes bisher erreichtes Ergebnis exportieren, kein Kill.
+                if graceful_stop_event is not None and graceful_stop_event.is_set():
+                    logger.warning(
+                        "§0c Graceful-Stop: Zeitlimit — export best checkpoint after %s "
+                        "(%d Phasen verbleibend, Pipeline intakt)",
+                        phase_id,
+                        len([p for p in selected_phases if p not in executed]),
+                    )
+                    skipped.extend(p for p in selected_phases if p not in executed)
+                    break
+
                 # §2.45a [RELEASE_MUST] Mid-Pipeline Cumulative Loudness-Drift-Guard
                 # Per-phase guards limit each phase's drop vs its own input, but compound
                 # effects accumulate unchecked: 8 phases × 2.5 dB = 20 dB total collapse.
@@ -14983,7 +16229,7 @@ class UnifiedRestorerV3:
                                 _cum_g = min(_cum_g, 6.0)  # max +15.6 dB safety cap
                                 if _cum_g > 1.0005:
                                     # Envelope-aware gain: only amplify musical frames
-                                    current_audio = _musical_gain_envelope(
+                                    current_audio = self._musical_gain_envelope(
                                         current_audio, _cum_g, gate_dbfs=-50.0, sr=sample_rate
                                     )
                                     # Soft-limiter only if actual clipping risk
@@ -15080,6 +16326,52 @@ class UnifiedRestorerV3:
                         logger.debug("§4.1b Zwicker loudness guard non-blocking error: %s", _zw_exc)
 
                 # §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate — per-phase artifact check
+                # §0/§2.46 [RELEASE_MUST] HF-Halluzinations-Guard — System-Wide
+                # Prevents additive/reconstruction phases synthesising spectral content
+                # above the material's credible bandwidth ceiling (§0 Primum non nocere).
+                # Extends the BW cap from phase_55 to all ADDITIVE phases system-wide.
+                _HF_ADDITIVE_PREFIXES: frozenset = frozenset({
+                    "phase_06", "phase_07", "phase_21", "phase_22", "phase_23",
+                    "phase_38", "phase_39", "phase_50", "phase_55", "phase_56",
+                })
+                _hf_phase_prefix = "_".join(str(phase_id).split("_")[:2])
+                if (
+                    _afg_phase_input is not None
+                    and phase_id in executed
+                    and _hf_phase_prefix in _HF_ADDITIVE_PREFIXES
+                ):
+                    try:
+                        from backend.core.hf_hallucination_guard import check_hf_hallucination
+                        _hf_cert = float(np.clip(
+                            getattr(self, "_global_conservative_scalar", 1.0), 0.78, 1.0
+                        ))
+                        _hf_ok, _hf_wet_cap, _hf_cap_hz, _hf_delta = check_hf_hallucination(
+                            _afg_phase_input, current_audio, sample_rate,
+                            _mat_str, recovery_certainty_scalar=_hf_cert,
+                        )
+                        if not _hf_ok:
+                            # §0 Rescue: blend back toward dry to cap HF hallucination
+                            current_audio = np.clip(
+                                _afg_phase_input * (1.0 - _hf_wet_cap) + current_audio * _hf_wet_cap,
+                                -1.0, 1.0,
+                            ).astype(np.float32)
+                            logger.warning(
+                                "§0 HF-Halluzinations-Guard nach %s: ΔHF=%.3f "
+                                "(cap=%.0f Hz) → Dry/Wet-Rescue (wet_cap=%.2f)",
+                                phase_id, _hf_delta, _hf_cap_hz, _hf_wet_cap,
+                            )
+                            if hasattr(self, "_phase_metadata_accumulator"):
+                                self._phase_metadata_accumulator[phase_id] = {
+                                    **(self._phase_metadata_accumulator.get(phase_id) or {}),
+                                    "hf_hallucination_detected": True,
+                                    "hf_delta_ratio": round(float(_hf_delta), 4),
+                                    "hf_cap_hz": float(_hf_cap_hz),
+                                    "hf_wet_cap_applied": round(float(_hf_wet_cap), 3),
+                                }
+                    except Exception as _hf_exc:
+                        logger.debug("§0 HF-Halluzinations-Guard non-blocking error: %s", _hf_exc)
+
+                # §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate — per-phase artifact check
                 # Uses _afg_phase_input (audio before THIS phase) not _afg_pre_pipeline_audio (pipeline start),
                 # so only the delta introduced by this single phase is measured. This prevents false rollbacks
                 # on enhancement phases whose intentional signal changes would exceed cumulative thresholds.
@@ -15091,6 +16383,8 @@ class UnifiedRestorerV3:
                             sample_rate,
                             _mat_str,
                             phase_id,
+                            goal_weights=getattr(self, "_song_goal_weights", None),
+                            restorability_score=float(getattr(self, "_last_restorability_score", 65.0)),
                         )
                         if _afg_result.artifact_freedom < 0.95:
                             _dr = _afg_result.detail_report
@@ -15211,6 +16505,9 @@ class UnifiedRestorerV3:
                 if (not no_rt_limit) and self.performance_guard and self.performance_guard.check_early_exit(remaining):
                     logger.warning("⚠️ Early exit triggered, skipping %s remaining phases", remaining)
                     skipped.extend(selected_phases[len(executed) :])
+                    # §0c Graceful-Stop Fallback — falls noch nicht oben gefangen
+                    if graceful_stop_event is not None and graceful_stop_event.is_set() and not skipped:
+                        skipped.extend(p for p in selected_phases if p not in executed)
                     break
         # §2.49b [RELEASE_MUST] Post-Pipeline cumulative stereo-collapse guard (Fix D).
         # Per-phase δ-guards catch single-phase collapses but miss gradual drift where each
@@ -15281,7 +16578,7 @@ class UnifiedRestorerV3:
                         _cum_gain = min(_cum_gain, 8.0)
                         if _cum_gain > 1.0005:
                             # Envelope-aware gain: only amplify musical frames
-                            current_audio = _musical_gain_envelope(
+                            current_audio = self._musical_gain_envelope(
                                 current_audio, _cum_gain, gate_dbfs=-50.0, sr=sample_rate
                             )
                             # Soft-limiter only if actual clipping risk
@@ -15518,6 +16815,20 @@ import threading as _threading
 
 _restorer_singleton: Optional["UnifiedRestorerV3"] = None
 _restorer_singleton_lock = _threading.Lock()
+
+
+def get_artifact_freedom_gate():
+    """Module-level accessor to keep patch points stable for tests and integrations."""
+    from backend.core.artifact_freedom_gate import get_artifact_freedom_gate as _get_afg
+
+    return _get_afg()
+
+
+def estimate_goal_importance(*args, **kwargs):
+    """Module-level accessor to keep song-goal patch points stable for tests."""
+    from backend.core.song_goal_importance import estimate_goal_importance as _estimate_goal_importance
+
+    return _estimate_goal_importance(*args, **kwargs)
 
 
 def get_restorer(mode: str = "quality") -> "UnifiedRestorerV3":

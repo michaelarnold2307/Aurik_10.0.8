@@ -13,8 +13,25 @@ Each cascade must: never abort, log fallback in metadata, produce valid output.
 
 import numpy as np
 import pytest
+import importlib
+import sys
+from pathlib import Path
 
 SR = 48_000
+
+
+def _import_with_recovery(module_name: str):
+    """Import helper robust against transient sys.modules poisoning.
+
+    In large suites some tests may temporarily monkeypatch entries in sys.modules.
+    When such a value leaks as None/stale module, a direct import can raise
+    ImportError even though the module exists in the workspace.
+    """
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        sys.modules.pop(module_name, None)
+        return importlib.import_module(module_name)
 
 
 def _audio(dur: float = 2.0) -> np.ndarray:
@@ -46,7 +63,7 @@ class TestAudioSRFallback:
         try:
             import backend.core.phases.phase_23_spectral_repair as p23
 
-            src = open(p23.__file__).read()
+            src = Path(p23.__file__).read_text(encoding="utf-8", errors="replace")
             # Must contain fallback logic (SBR or harmonic synthesis)
             assert "fallback" in src.lower() or "sbr" in src.lower() or "harmonic" in src.lower(), (
                 "phase_23 must have ML fallback path"
@@ -59,7 +76,7 @@ class TestAudioSRFallback:
         try:
             import backend.core.phases.phase_06_frequency_restoration as p06
 
-            src = open(p06.__file__).read()
+            src = Path(p06.__file__).read_text(encoding="utf-8", errors="replace")
             assert "fallback" in src.lower() or "except" in src.lower(), "phase_06 must handle ML failure gracefully"
         except ImportError:
             pytest.skip("phase_06 not available")
@@ -76,9 +93,10 @@ class TestMDX23CFallback:
     def test_stem_separator_fallback_chain(self):
         """Stem separator must have NMF and HPSS fallback layers."""
         try:
-            from backend.core.stem_separator import get_stem_separator
+            mod = _import_with_recovery("dsp.stem_separator")
+            StemSeparator = getattr(mod, "StemSeparator")
 
-            sep = get_stem_separator()
+            sep = StemSeparator()
             # Must support fallback modes
             assert hasattr(sep, "separate") or hasattr(sep, "separate_stems")
         except ImportError:
@@ -87,9 +105,9 @@ class TestMDX23CFallback:
     def test_stem_separator_source_has_nmf_fallback(self):
         """Source code must reference NMF as fallback."""
         try:
-            import backend.core.stem_separator as mod
+            mod = _import_with_recovery("dsp.stem_separator")
 
-            src = open(mod.__file__).read()
+            src = Path(mod.__file__).read_text(encoding="utf-8", errors="replace")
             has_nmf = "nmf" in src.lower() or "NMF" in src
             has_hpss = "hpss" in src.lower() or "HPSS" in src
             assert has_nmf, "stem_separator must reference NMF as primary fallback"
@@ -109,9 +127,9 @@ class TestMPSENetFallback:
     def test_phase43_source_has_omlsa_fallback(self):
         """phase_43 must have OMLSA/IMCRA DSP fallback."""
         try:
-            import backend.core.phases.phase_43_speech_enhancement as p43
+            p43 = _import_with_recovery("backend.core.phases.phase_43_ml_deesser")
 
-            src = open(p43.__file__).read()
+            src = Path(p43.__file__).read_text(encoding="utf-8", errors="replace")
             has_omlsa = "omlsa" in src.lower() or "OMLSA" in src
             has_bypass = "bypass" in src.lower() or "skip" in src.lower()
             assert has_omlsa or has_bypass, "phase_43 must have OMLSA fallback or bypass path"
@@ -121,9 +139,10 @@ class TestMPSENetFallback:
     def test_mp_senet_plugin_has_process(self):
         """MP-SENet plugin must implement process interface."""
         try:
-            from plugins.mp_senet_plugin import MPSENetPlugin
+            mod = _import_with_recovery("plugins.mp_senet_plugin")
+            MpSenetPlugin = getattr(mod, "MpSenetPlugin")
 
-            plugin = MPSENetPlugin()
+            plugin = MpSenetPlugin()
             assert hasattr(plugin, "process") or hasattr(plugin, "enhance")
         except ImportError:
             pytest.skip("mp_senet_plugin not available")
@@ -148,7 +167,7 @@ class TestCREPEFallback:
         ]:
             try:
                 mod = __import__(mod_name, fromlist=[""])
-                src = open(mod.__file__).read()
+                src = Path(mod.__file__).read_text(encoding="utf-8", errors="replace")
                 if "pyin" in src.lower():
                     found_pyin = True
                     break
@@ -159,7 +178,7 @@ class TestCREPEFallback:
             try:
                 import backend.core.phases.phase_12_wow_flutter_fix as p12
 
-                src = open(p12.__file__).read()
+                src = Path(p12.__file__).read_text(encoding="utf-8", errors="replace")
                 found_pyin = "pyin" in src.lower() or "yin" in src.lower()
             except ImportError:
                 pass
@@ -213,7 +232,7 @@ class TestMERTFallback:
         try:
             import plugins.mert_plugin as mod
 
-            src = open(mod.__file__).read()
+            src = Path(mod.__file__).read_text(encoding="utf-8", errors="replace")
             has_dsp_fb = (
                 ("dsp" in src.lower() and "fallback" in src.lower())
                 or "f0" in src.lower()

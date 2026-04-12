@@ -611,13 +611,7 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "ml_watchdog": "short_clip_guard",
             }
 
-        try:
-            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager, touch_plugin
-
-            _plm = get_plugin_lifecycle_manager()
-            _plm.set_active("AudioSR", True)
-        except Exception:
-            _plm = None
+        _plm = None
 
         # §Phase-06 AudioSR Headroom Guard: Prüfe verfügbaren RAM VOR Modell-Load
         # Ohne Guard: Direct OOM bei langen Stereo-Dateien (z.B. 10 min × 96 kHz × 2 Kanäle)
@@ -673,8 +667,30 @@ class FrequencyRestorationPhase(PhaseInterface):
         except Exception as _exc:
             logger.debug("Operation failed (non-critical): %s", _exc)
 
+        try:
+            from backend.core.ml_memory_budget import is_system_thrashing as _is_thrashing
+
+            if _is_thrashing():
+                logger.warning("Phase 06: AudioSR wegen System-Thrashing übersprungen — DSP-only aktiv")
+                return dsp_restored, {
+                    "ml_hybrid_available": False,
+                    "quality_mode": quality_mode,
+                    "strategy_used": "dsp_only",
+                    "ml_reason": "audiosr_thrashing_guard",
+                }
+        except Exception as _exc:
+            logger.debug("Operation failed (non-critical): %s", _exc)
+
         import queue
         import threading
+
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager, touch_plugin
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("AudioSR", True)
+        except Exception:
+            _plm = None
 
         ml_result_queue = queue.Queue(maxsize=1)
         ml_error_queue = queue.Queue(maxsize=1)
@@ -683,66 +699,69 @@ class FrequencyRestorationPhase(PhaseInterface):
             try:
                 plugin = _audiosr_factory()
                 plugin_in = audio.T if audio.ndim == 2 else audio
+                plugin_in = np.nan_to_num(plugin_in, nan=0.0, posinf=0.0, neginf=0.0)
+                plugin_in = np.clip(plugin_in, -1.0, 1.0).astype(np.float32)
                 ml_out = plugin.process(plugin_in, sr=self.sample_rate, target_sr=self.sample_rate)
                 ml_result_queue.put(ml_out)
             except Exception as exc:
                 ml_error_queue.put(exc)
 
-        ml_thread = threading.Thread(target=ml_infer, daemon=True)
-        ml_thread.start()
+        try:
+            ml_thread = threading.Thread(target=ml_infer, daemon=True)
+            ml_thread.start()
 
-        # Timeout: 32× RT-Budget (§PerformanceGuard LIMIT_MAXIMUM = 32×).
-        # 3:45 Audio â 225 s × 32 = 7200 s — impractical; use a sane cap instead.
-        # AudioSR typical inference: 2× RT on CPU. Add generous headroom for slow machines.
-        # Absolute cap: 180 s (3 min). Falls back to DSP-only version instead of freezing.
-        timeout_s = min(180, max(30, int(audio_dur_s * 2.5)))
-        ml_thread.join(timeout=timeout_s)
+            # Timeout: 32× RT-Budget (§PerformanceGuard LIMIT_MAXIMUM = 32×).
+            # 3:45 Audio â 225 s × 32 = 7200 s — impractical; use a sane cap instead.
+            # AudioSR typical inference: 2× RT on CPU. Add generous headroom for slow machines.
+            # Absolute cap: 180 s (3 min). Falls back to DSP-only version instead of freezing.
+            timeout_s = min(180, max(30, int(audio_dur_s * 2.5)))
+            ml_thread.join(timeout=timeout_s)
 
-        if not ml_result_queue.empty():
-            ml_out = ml_result_queue.get()
-            ml_restored = ml_out.T if (audio.ndim == 2 and ml_out.ndim == 2) else ml_out
-            ml_restored = np.asarray(ml_restored, dtype=np.float32)
-            if ml_restored.shape != audio.shape:
-                logger.warning("AudioSR shape mismatch: expected %s, got %s", audio.shape, ml_restored.shape)
+            if not ml_result_queue.empty():
+                ml_out = ml_result_queue.get()
+                ml_restored = ml_out.T if (audio.ndim == 2 and ml_out.ndim == 2) else ml_out
+                ml_restored = np.asarray(ml_restored, dtype=np.float32)
+                if ml_restored.shape != audio.shape:
+                    logger.warning("AudioSR shape mismatch: expected %s, got %s", audio.shape, ml_restored.shape)
+                    return dsp_restored, {
+                        "ml_hybrid_available": True,
+                        "quality_mode": quality_mode,
+                        "strategy_used": "dsp_only",
+                        "ml_error": "shape_mismatch",
+                    }
+                # Blend only high-frequency delta (around rolloff and above) to keep timbre stable.
+                hp_hz = float(max(2000.0, min(params.get("rolloff_hz", 10000.0) * 0.85, self.sample_rate * 0.45)))
+                sos = signal.butter(4, hp_hz / (self.sample_rate / 2.0), btype="high", output="sos")
+                hf_base = signal.sosfiltfilt(sos, dsp_restored, axis=0)
+                hf_ml = signal.sosfiltfilt(sos, ml_restored, axis=0)
+                hybrid = dsp_restored + alpha * (hf_ml - hf_base)
+                hybrid = np.nan_to_num(hybrid, nan=0.0, posinf=0.0, neginf=0.0)
+                hybrid = np.clip(hybrid, -1.0, 1.0)
+                try:
+                    touch_plugin("AudioSR")
+                except Exception as _exc:
+                    logger.debug("Operation failed (non-critical): %s", _exc)
+                return hybrid, {
+                    "ml_hybrid_available": True,
+                    "quality_mode": quality_mode,
+                    "strategy_used": "ml_hybrid",
+                    "ml_model": "AudioSR",
+                    "ml_blend_alpha": alpha,
+                    "ml_hf_highpass_hz": hp_hz,
+                    "material_type": material_type,
+                    "ml_watchdog": f"success_{timeout_s}s",
+                }
+            if not ml_error_queue.empty():
+                exc = ml_error_queue.get()
+                logger.warning("Phase 06 ML-Hybrid fehlgeschlagen (%s) — DSP-only aktiv", exc)
                 return dsp_restored, {
                     "ml_hybrid_available": True,
                     "quality_mode": quality_mode,
                     "strategy_used": "dsp_only",
-                    "ml_error": "shape_mismatch",
+                    "ml_error": str(exc),
+                    "ml_watchdog": f"error_{timeout_s}s",
                 }
-            # Blend only high-frequency delta (around rolloff and above) to keep timbre stable.
-            hp_hz = float(max(2000.0, min(params.get("rolloff_hz", 10000.0) * 0.85, self.sample_rate * 0.45)))
-            sos = signal.butter(4, hp_hz / (self.sample_rate / 2.0), btype="high", output="sos")
-            hf_base = signal.sosfiltfilt(sos, dsp_restored, axis=0)
-            hf_ml = signal.sosfiltfilt(sos, ml_restored, axis=0)
-            hybrid = dsp_restored + alpha * (hf_ml - hf_base)
-            hybrid = np.nan_to_num(hybrid, nan=0.0, posinf=0.0, neginf=0.0)
-            hybrid = np.clip(hybrid, -1.0, 1.0)
-            try:
-                touch_plugin("AudioSR")
-            except Exception as _exc:
-                logger.debug("Operation failed (non-critical): %s", _exc)
-            return hybrid, {
-                "ml_hybrid_available": True,
-                "quality_mode": quality_mode,
-                "strategy_used": "ml_hybrid",
-                "ml_model": "AudioSR",
-                "ml_blend_alpha": alpha,
-                "ml_hf_highpass_hz": hp_hz,
-                "material_type": material_type,
-                "ml_watchdog": f"success_{timeout_s}s",
-            }
-        elif not ml_error_queue.empty():
-            exc = ml_error_queue.get()
-            logger.warning("Phase 06 ML-Hybrid fehlgeschlagen (%s) — DSP-only aktiv", exc)
-            return dsp_restored, {
-                "ml_hybrid_available": True,
-                "quality_mode": quality_mode,
-                "strategy_used": "dsp_only",
-                "ml_error": str(exc),
-                "ml_watchdog": f"error_{timeout_s}s",
-            }
-        else:
+
             logger.warning("Phase 06 ML-Hybrid TIMEOUT nach %ss — DSP-only aktiv", timeout_s)
             return dsp_restored, {
                 "ml_hybrid_available": True,
@@ -751,11 +770,12 @@ class FrequencyRestorationPhase(PhaseInterface):
                 "ml_error": "timeout",
                 "ml_watchdog": f"timeout_{timeout_s}s",
             }
-        if _plm is not None:
-            try:
-                _plm.set_active("AudioSR", False)
-            except Exception as _exc:
-                logger.debug("Operation failed (non-critical): %s", _exc)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("AudioSR", False)
+                except Exception as _exc:
+                    logger.debug("Operation failed (non-critical): %s", _exc)
 
     def _detect_rolloff_professional(self, audio: np.ndarray, params: dict[str, Any]) -> tuple[bool, float, float]:
         """

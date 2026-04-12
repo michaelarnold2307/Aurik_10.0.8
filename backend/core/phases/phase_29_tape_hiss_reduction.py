@@ -67,6 +67,23 @@ from scipy.signal import lfilter as _lfilter_p29  # vectorised IIR smoothing (Ca
 logger = logging.getLogger(__name__)
 
 
+def _rms_dbfs_gated(sig: np.ndarray) -> float:
+    """§2.45a-I: Frame-basierter RMS in dBFS, ignoriert Frames < −50 dBFS (Stille).
+
+    Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
+    """
+    _mono = np.mean(sig, axis=1).astype(np.float64) if sig.ndim == 2 else sig.astype(np.float64)
+    _frame = 480  # 10 ms @ 48 kHz
+    _active = [
+        _mono[i : i + _frame]
+        for i in range(0, len(_mono) - _frame, _frame)
+        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
+    ]
+    if not _active:
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean([np.mean(r ** 2) for r in _active])) + 1e-10))
+
+
 class TapeHissReductionPhase(PhaseInterface):
     """
     Enhanced tape hiss reduction with adaptive gates and ML-Hybrid Support.
@@ -237,6 +254,63 @@ class TapeHissReductionPhase(PhaseInterface):
                 execution_time_seconds=time.time() - start_time,
                 metadata={"material": material.name, "processing": "skipped"},
                 warnings=["Digital source - no tape hiss expected"],
+            )
+
+        # §2.47 [RELEASE_MUST] SNR > 35 dB Dry-Signal Bypass
+        # If the signal is essentially clean, tape hiss reduction is unnecessary
+        # and risks introducing OMLSA musical-noise artifacts (§0 Primum non nocere).
+        #
+        # Tape hiss is a HF phenomenon concentrated between ~2 kHz and Nyquist.
+        # We estimate a spectral SNR: ratio of signal-band energy (200–5 kHz) to
+        # hiss-band energy (8 kHz–Nyquist).  A ratio > 35 dB means the hiss is
+        # negligible and processing would add more artefacts than it removes.
+        _p29_snr_bypass = False
+        try:
+            _p29_seg = audio[:, 0] if audio.ndim == 2 else audio
+            _p29_seg = _p29_seg.astype(np.float64)
+            _p29_n = len(_p29_seg)
+            # Use at most the central 3 s
+            _p29_win = min(_p29_n, 3 * sample_rate)
+            _p29_start = max(0, (_p29_n - _p29_win) // 2)
+            _p29_chunk = _p29_seg[_p29_start : _p29_start + _p29_win]
+            if len(_p29_chunk) >= sample_rate // 2:  # at least 500 ms
+                # FFT magnitude spectrum
+                _p29_fft = np.abs(np.fft.rfft(_p29_chunk))
+                _p29_freqs = np.fft.rfftfreq(len(_p29_chunk), d=1.0 / sample_rate)
+                # Signal band: 200 Hz – 5 kHz (musical content)
+                _p29_sig_mask = (_p29_freqs >= 200.0) & (_p29_freqs <= 5000.0)
+                # Hiss band: 8 kHz – Nyquist (tape hiss focus range)
+                _p29_hiss_mask = _p29_freqs >= 8000.0
+                if _p29_sig_mask.any() and _p29_hiss_mask.any():
+                    _p29_sig_pwr = float(np.mean(_p29_fft[_p29_sig_mask] ** 2))
+                    _p29_hiss_pwr = float(np.mean(_p29_fft[_p29_hiss_mask] ** 2))
+                    if _p29_hiss_pwr > 1e-30 and _p29_sig_pwr > 1e-30:
+                        _p29_est_snr = 10.0 * np.log10(_p29_sig_pwr / _p29_hiss_pwr)
+                        if _p29_est_snr > 35.0:
+                            _p29_snr_bypass = True
+                            logger.info(
+                                "§2.47 Phase 29: spectral HF-SNR=%.1f dB > 35 dB → "
+                                "Dry-Signal bypass (hiss band negligible, OMLSA skipped)",
+                                _p29_est_snr,
+                            )
+        except Exception as _p29_snr_exc:
+            logger.debug("Phase 29 SNR bypass estimation failed (non-blocking): %s", _p29_snr_exc)
+
+        if _p29_snr_bypass:
+            _pass = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            _pass = np.clip(_pass, -1.0, 1.0)
+            return PhaseResult(
+                success=True,
+                audio=_pass,
+                execution_time_seconds=time.time() - start_time,
+                metadata={
+                    "material": material.name,
+                    "processing": "snr_bypass",
+                    "snr_bypass": True,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=["SNR > 35 dB: clean tape signal, hiss reduction bypassed"],
             )
 
         # Get material-specific parameters
@@ -439,9 +513,12 @@ class TapeHissReductionPhase(PhaseInterface):
         material_key = getattr(material, "name", str(material)).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
 
-        rms_in = float(np.sqrt(np.mean(np.asarray(original_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_out = float(np.sqrt(np.mean(np.asarray(processed_audio, dtype=np.float64) ** 2) + 1e-12))
-        rms_drop_db = 20.0 * np.log10(max(rms_out / rms_in, 1e-30)) if rms_in > 1e-8 else 0.0
+        # §2.45a-I Gated-RMS: ignoriert Stille-Frames < −50 dBFS
+        _rms_in_db = _rms_dbfs_gated(np.asarray(original_audio, dtype=np.float32))
+        _rms_out_db = _rms_dbfs_gated(np.asarray(processed_audio, dtype=np.float32))
+        rms_in = float(10.0 ** (_rms_in_db / 20.0))
+        rms_out = float(10.0 ** (_rms_out_db / 20.0))
+        rms_drop_db = (_rms_out_db - _rms_in_db) if _rms_in_db > -90.0 else 0.0
         makeup_gain_db = 0.0
 
         if rms_in > 1e-8 and rms_drop_db < -max_rms_drop_db:
@@ -886,6 +963,17 @@ class TapeHissReductionPhase(PhaseInterface):
         if plugin is None:
             return False
 
+        # §2.47 ml_memory_budget guard (400 MB for DeepFilterNet v3 II)
+        _dfn_release = None
+        try:
+            from backend.core.ml_memory_budget import try_allocate as _try_alloc_29, release as _rel_29
+            if not _try_alloc_29("DeepFilterNet_phase29", 0.40):
+                logger.debug("DeepFilterNet_phase29: ml_memory_budget insufficient — DSP-Fallback")
+                return False
+            _dfn_release = _rel_29
+        except ImportError:
+            pass  # budget tracking unavailable — allow inference
+
         try:
             # Create temporary files
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as input_temp:
@@ -955,6 +1043,8 @@ class TapeHissReductionPhase(PhaseInterface):
                     os.unlink(output_path)
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
+            if _dfn_release is not None:
+                _dfn_release("DeepFilterNet_phase29")
 
     def _apply_adaptive_gate(
         self, band_signal: np.ndarray, noise_floor_db: float, threshold_db: float, reduction_db: float, sample_rate: int

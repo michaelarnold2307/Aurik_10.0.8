@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def _evaluate_export_quality_gate(
     quality_gate: dict | None,
 ) -> tuple[bool | None, str | None, str | None, list[dict[str, str]]]:
-    """Evaluate quality gate without blocking export.
+    """Evaluate quality gate payload.
 
     Expected schema:
         {
@@ -46,6 +46,33 @@ def _evaluate_export_quality_gate(
     """
     if quality_gate is None:
         return None, None, None, []
+
+    _fqf = quality_gate.get("fallback_quality_floor") if isinstance(quality_gate.get("fallback_quality_floor"), dict) else {}
+    _fqf_triggered = bool(_fqf.get("triggered", False))
+    _fqf_status = str(_fqf.get("status", "")).strip().lower()
+
+    # Deterministic coupling: fallback_quality_floor is authoritative for degraded/recovered
+    # export states when triggered.
+    if _fqf_triggered and _fqf_status in {"recovered", "degraded", "failed", "fail"}:
+        _fqf_reason = str(_fqf.get("reason", "fallback_quality_floor_triggered") or "fallback_quality_floor_triggered")
+        _fqf_failed = _fqf_status in {"degraded", "failed", "fail"}
+        _severity = "failed" if _fqf_failed else "degraded"
+        _error_code = "FALLBACK_QUALITY_FLOOR_FAILED" if _fqf_failed else "FALLBACK_QUALITY_FLOOR_RECOVERED"
+        return (
+            False,
+            _fqf_reason,
+            (_fqf_status if _fqf_status in {"recovered", "degraded"} else "degraded"),
+            [
+                {
+                    "component": "FallbackQualityFloor",
+                    "error_code": _error_code,
+                    "severity": _severity,
+                    "exc_type": "",
+                    "exc_msg": _fqf_reason,
+                }
+            ],
+        )
+
     passed = bool(quality_gate.get("passed", False))
     if passed:
         return True, None, PipelineHealthState.OK.value, []
@@ -86,7 +113,7 @@ def _evaluate_export_quality_gate(
     required = quality_gate.get("required_gates") or []
     required_str = ", ".join(str(x) for x in required) if required else "nicht angegeben"
     logger.warning(
-        "Quality gate failed -> best-effort export continues. reason=%s required_gates=%s degradation=%s",
+        "Quality gate failed. Recovery metadata required before export. reason=%s required_gates=%s degradation=%s",
         fail_reason,
         required_str,
         degradation_status,
@@ -111,11 +138,13 @@ class ExportMetadata:
     sample_rate: int | None = None
     bit_depth: int | None = None
     channels: int | None = None
-    export_strategy: str = "best_effort"
+    export_strategy: str = "success"
     quality_gate_passed: bool | None = None
     quality_gate_fail_reason: str | None = None
     quality_gate_degradation_status: str | None = None
     quality_gate_fail_reasons: list[dict[str, str]] | None = None
+    # §2.46b / §2.49 Fidelity-Guard telemetry — populated from RestorationResult.metadata
+    fidelity_guards: dict | None = None
 
 
 SUPPORTED_FORMATS = {
@@ -129,6 +158,41 @@ SUPPORTED_FORMATS = {
     # Note: Opus requires libsndfile 1.0.29+ with Opus support
     # 'opus': {'subtype': 'OPUS', 'extension': '.opus', 'description': 'Opus'},
 }
+
+
+def _resolve_export_strategy(quality_gate: dict | None, gate_passed: bool | None) -> str:
+    """Resolve export strategy with mandatory recovery contract.
+
+    Rules:
+    - passed=True  -> "success"
+    - passed=False -> requires recovery_attempted=True, else RuntimeError
+                     best_possible_reached=True -> "recovered"
+                     otherwise                  -> "degraded"
+    - quality_gate=None -> "success" (legacy/no gate payload)
+    """
+    if quality_gate is not None:
+        _fqf = quality_gate.get("fallback_quality_floor") if isinstance(quality_gate.get("fallback_quality_floor"), dict) else {}
+        if bool(_fqf.get("triggered", False)):
+            _fqf_status = str(_fqf.get("status", "")).strip().lower()
+            if _fqf_status == "recovered":
+                return "recovered"
+            if _fqf_status in {"degraded", "failed", "fail"}:
+                return "degraded"
+
+    if gate_passed is True or quality_gate is None:
+        return "success"
+
+    if gate_passed is False:
+        recovery_attempted = bool(quality_gate.get("recovery_attempted", False))
+        if not recovery_attempted:
+            raise RuntimeError(
+                "Export blocked: quality_gate failed and no recovery_attempted flag was provided. "
+                "Run recovery cascade first and pass recovery metadata."
+            )
+        best_possible_reached = bool(quality_gate.get("best_possible_reached", False))
+        return "recovered" if best_possible_reached else "degraded"
+
+    return "success"
 
 
 def export_audio(
@@ -165,6 +229,7 @@ def export_audio(
     gate_passed, gate_fail_reason, gate_degradation_status, gate_fail_reasons = _evaluate_export_quality_gate(
         quality_gate
     )
+    export_strategy = _resolve_export_strategy(quality_gate, gate_passed)
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -187,6 +252,7 @@ def export_audio(
     metadata.quality_gate_fail_reason = gate_fail_reason
     metadata.quality_gate_degradation_status = gate_degradation_status
     metadata.quality_gate_fail_reasons = gate_fail_reasons
+    metadata.export_strategy = export_strategy
 
     try:
         # Write audio file

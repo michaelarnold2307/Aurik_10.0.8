@@ -291,8 +291,15 @@ class BigVGANv2Plugin:
                 # torch-Pfad
                 import torch
 
+                try:
+                    from backend.core.ml_device_manager import get_ml_device_manager as _get_mdm
+                    _pin_fn = _get_mdm().pin_tensor_rocm
+                except Exception:
+                    _pin_fn = lambda x: x  # noqa: E731
                 with torch.no_grad():
-                    mel_t = torch.from_numpy(mel[np.newaxis, :, :]).to(self._device)
+                    _mel_arr = mel[np.newaxis, :, :]
+                    _pinned = _pin_fn(_mel_arr)
+                    mel_t = (_pinned if isinstance(_pinned, torch.Tensor) else torch.from_numpy(_pinned)).to(self._device)
                     waveform = self._torch_gen(mel_t)
                     synthesized = waveform.squeeze().cpu().numpy()
 

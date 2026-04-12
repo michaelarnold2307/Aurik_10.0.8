@@ -379,8 +379,14 @@ class CREPEPitchDetector:
                 # as representative deviation when jump evidence dominates.
                 mean_dev = float(np.sign(np.sum(region_jump_dev)) * max_dev)
             else:
-                mean_dev = np.mean(region_cents_dev)
                 max_dev = np.max(np.abs(region_cents_dev))
+                mean_dev = np.mean(region_cents_dev)
+
+                # Guard against transition-frame dilution on step-like pitch errors:
+                # if the region has a clear dominant peak but the arithmetic mean is
+                # much smaller, use the signed peak as representative error magnitude.
+                if max_dev >= 2.0 * error_threshold_cents and np.abs(mean_dev) < 0.8 * max_dev:
+                    mean_dev = float(np.sign(np.sum(region_cents_dev)) * max_dev)
 
             errors.append(
                 {

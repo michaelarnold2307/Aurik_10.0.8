@@ -455,7 +455,7 @@ class TestAurikAIFramework:
 
     def test_framework_magic_button(self, framework, audio_with_clicks):
         """Test framework magic button."""
-        audio_out, report = framework.magic_button(audio_with_clicks)
+        audio_out, report = framework.studio2026_magic_button(audio_with_clicks)
 
         assert audio_out.shape == audio_with_clicks.shape
         assert isinstance(report, dict)
@@ -587,7 +587,7 @@ class TestPerformance:
         audio = np.random.randn(2 * sample_rate)
 
         start = time.time()
-        audio_out, report = framework.magic_button(audio)
+        audio_out, report = framework.studio2026_magic_button(audio)
         elapsed = time.time() - start
 
         # Should complete in < 15 seconds for 2s audio
@@ -629,7 +629,7 @@ class TestIntegration:
         audio += np.random.normal(0, 0.02, len(audio))  # Small noise
 
         # Process
-        audio_out, report = framework.magic_button(audio)
+        audio_out, report = framework.studio2026_magic_button(audio)
 
         assert audio_out.shape == audio.shape
         assert report["final"]["success"] is True

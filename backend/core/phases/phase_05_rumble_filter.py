@@ -275,6 +275,17 @@ class RumbleFilterPhase(PhaseInterface):
             audio, params["cutoff_hz"], rumble_energy_ratio, params["dynamic_adapt"]
         )
 
+        # Vocal-protection: keep low-end body for singing-heavy material.
+        # Rumble removal is still active, but avoid over-cutting musical fundamentals.
+        _vocal_conf_05 = float(kwargs.get("vocal_confidence", kwargs.get("panns_singing_confidence", 0.0)))
+        _vocal_detected_05 = bool(kwargs.get("vocal_detected", False)) or (_vocal_conf_05 >= 0.35)
+        _vocal_guard_05 = False
+        if _vocal_detected_05:
+            params["transient_preserve"] = float(max(params.get("transient_preserve", 0.7), 0.85))
+            _old_cutoff_05 = int(adapted_cutoff)
+            adapted_cutoff = int(min(adapted_cutoff, 24))
+            _vocal_guard_05 = adapted_cutoff != _old_cutoff_05
+
         # Step 3: DC-blocking stage (always first)
         dc_blocked = self._dc_blocker(audio)
 
@@ -374,6 +385,8 @@ class RumbleFilterPhase(PhaseInterface):
                 "execution_time_seconds": execution_time,
                 "rms_drop_db": round(float(min(0.0, _rms_drop_05)), 3),
                 "loudness_makeup_db": round(float(_makeup_05), 3),
+                "vocal_guard_active": _vocal_guard_05,
+                "vocal_confidence": float(_vocal_conf_05),
             },
         )
 

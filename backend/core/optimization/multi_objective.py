@@ -24,13 +24,20 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-try:
-    import matplotlib.pyplot as plt
+_plt = None
 
-    _MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    _MATPLOTLIB_AVAILABLE = False
-    logger.warning("matplotlib not available, visualization will be disabled")
+
+def _get_matplotlib_pyplot():
+    """Lazily import matplotlib only for visualization paths."""
+    global _plt
+    if _plt is None:
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            logger.warning("matplotlib not available, visualization will be disabled")
+            return None
+        _plt = plt
+    return _plt
 
 
 @dataclass
@@ -364,7 +371,8 @@ class NSGAII:
 
     def visualize_pareto_front(self, save_path: Path | None = None) -> None:
         """Visualize Pareto front (2D or 3D)."""
-        if not _MATPLOTLIB_AVAILABLE:
+        plt = _get_matplotlib_pyplot()
+        if plt is None:
             logger.warning("matplotlib not available, cannot visualize Pareto front")
             return
 

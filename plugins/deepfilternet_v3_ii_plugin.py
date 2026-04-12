@@ -113,7 +113,13 @@ class DeepFilterNetV3Plugin:
             opts = ort.SessionOptions()
             opts.inter_op_num_threads = 2
             opts.intra_op_num_threads = 2
-            prov = ["CPUExecutionProvider"]
+            # §AMD: Try ROCm fp16 providers first; CPU fallback (non-GPU-ops stay on CPU)
+            try:
+                from backend.core.ml_device_manager import get_ort_providers_fp16
+
+                prov = get_ort_providers_fp16("DeepFilterNetV3")
+            except Exception:
+                prov = ["CPUExecutionProvider"]
             self._enc = ort.InferenceSession(os.path.join(d, "enc.onnx"), sess_options=opts, providers=prov)
             self._dec = ort.InferenceSession(os.path.join(d, "dec.onnx"), sess_options=opts, providers=prov)
             self._erb_dec = ort.InferenceSession(os.path.join(d, "erb_dec.onnx"), sess_options=opts, providers=prov)

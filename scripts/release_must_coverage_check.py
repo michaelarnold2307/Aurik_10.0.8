@@ -23,6 +23,10 @@ REPORT_PATH = ROOT / "reports" / "release_must_coverage.json"
 # Hard traceability anchors for headings that are semantically broad and cannot
 # be matched reliably by keyword heuristics alone.
 FORCED_TRACEABILITY: dict[str, list[str]] = {
+    "### §0c [RELEASE_MUST] Universalitäts-Invariante — alle Importsongs": [
+        "tests/test_uat_acceptance_criteria.py",
+        "tests/normative/test_competitive_stratified_gate.py",
+    ],
     "### [RELEASE_MUST] No-Competing-Instances-Protokoll": [
         "tests/normative/test_magic_button_autopilot_ci_gate.py",
         "tests/unit/test_frontend_ux_spec_compliance.py",
@@ -85,9 +89,17 @@ FORCED_TRACEABILITY: dict[str, list[str]] = {
         "tests/test_phase_skipping.py",
         "tests/unit/test_unified_restorer_v3.py",
     ],
+    "### [RELEASE_MUST] §2.45a Mid-Pipeline-Loudness-Drift-Guard (v9.10.128, erweitert v9.11.5)": [
+        "tests/unit/test_loudness_cascade_guard.py",
+        "tests/unit/test_unified_restorer_v3.py",
+    ],
     "### [RELEASE_MUST] §2.46 Carrier-Chain-Inversion (v9.10.122)": [
         "tests/unit/test_denker/test_tontraegerkette_denker.py",
         "tests/unit/test_era_classifier.py",
+        "tests/integration/test_pipeline_integration.py",
+    ],
+    "### [RELEASE_MUST] §2.46a Deep-Transfer-Chain-Pflicht (v9.10.124)": [
+        "tests/unit/test_denker_intelligence_trio.py",
         "tests/integration/test_pipeline_integration.py",
     ],
     "### [RELEASE_MUST] §2.47 Adaptive-Intelligence-Prinzip (v9.10.123)": [
@@ -96,11 +108,40 @@ FORCED_TRACEABILITY: dict[str, list[str]] = {
         "tests/unit/test_era_classifier.py",
         "tests/test_defect_scanner_comprehensive.py",
     ],
+    "### [RELEASE_MUST] §2.47a Frontend-Backend-PreAnalysis-Handover (v9.10.127)": [
+        "tests/unit/test_pre_analysis_handover_no_double_detect.py",
+        "tests/unit/test_pre_analysis_path_normalization.py",
+    ],
     "### [RELEASE_MUST] §2.48 Kumulative-Phasen-Interaktions-Guard (v9.10.123)": [
+        "tests/unit/test_cumulative_interaction_guard.py",
+    ],
+    "### [RELEASE_MUST] §2.48 Kumulative-Phasen-Interaktions-Guard (v9.10.123, aktualisiert v9.11.2)": [
         "tests/unit/test_cumulative_interaction_guard.py",
     ],
     "### [RELEASE_MUST] §2.49 Artefakt-Freiheits-Gate (v9.10.123)": [
         "tests/unit/test_artifact_freedom_gate.py",
+    ],
+    "**§2.49b [RELEASE_MUST] Post-Pipeline Kumulativer Stereo-Collapse-Guard (v9.10.126)**": [
+        "tests/unit/test_post_pipeline_stereo_guard.py",
+        "tests/unit/test_unified_restorer_v3.py",
+    ],
+    "**[RELEASE_MUST] §2.51 Stereo-Kohärenz-Invariante für Phasen (v9.10.127)**": [
+        "tests/unit/test_phases_mid_late.py",
+        "tests/unit/test_dolby_nr_detector_and_phase04_headbump.py",
+    ],
+    "### [RELEASE_MUST] §2.53a Exzellenz-API-Kompatibilitätsvertrag (v9.11.1)": [
+        "tests/unit/test_goal_repair_workflow.py",
+        "tests/unit/test_denker/test_exzellenz_denker.py",
+    ],
+    "### [RELEASE_MUST] §2.53b Denker-Plan-Determinismus in UV3 (v9.11.2)": [
+        "tests/unit/test_precomputed_phase_plan_determinism.py",
+    ],
+    "### [RELEASE_MUST] §2.54 Adaptives Phasen-Optimum — Messen-Handeln-Validieren (v9.11.2)": [
+        "tests/unit/test_material_adaptive_phase_strength.py",
+        "tests/unit/test_cumulative_interaction_guard.py",
+    ],
+    "### [RELEASE_MUST] §2.55 PMGG-CIG-Synchronisations-Invariante (v9.11.3)": [
+        "tests/unit/test_pmgg_cig_sync.py",
     ],
     "### [RELEASE_MUST] §6.2a Material-Pflicht-Phasen (v9.10.73)": [
         "tests/normative/test_material_priority_phases_gate.py",

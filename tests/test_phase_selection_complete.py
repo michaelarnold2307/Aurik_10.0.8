@@ -62,7 +62,7 @@ def test_all_material_types():
             print(f"\n❌ FEHLER: {len(missing)} fehlende Phasen:")
             for pid in missing:
                 print(f"   - {pid}")
-            return False
+            pytest.fail(f"{len(missing)} fehlende Phasen: {missing}")
 
         print(f"\n{'Phase':<50} {'Priority':<10} {'Level'}")
         print("-" * 75)
@@ -74,7 +74,6 @@ def test_all_material_types():
     print("\n" + "=" * 80)
     print("✅ ALL TESTS PASSED - Phase Selection Complete")
     print("=" * 80)
-    return True
 
 
 @pytest.mark.timeout(300)
@@ -110,10 +109,9 @@ def test_severe_defects():
 
     if len(selected) < 10:
         print("\n⚠️ WARNING: Too few phases selected for severe defects!")
-        return False
+        pytest.fail(f"Too few phases selected: {len(selected)} < 10")
 
     print(f"\n✅ PASS: {len(selected)} phases selected for severe defects")
-    return True
 
 
 if __name__ == "__main__":

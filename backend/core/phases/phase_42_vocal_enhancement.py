@@ -366,6 +366,36 @@ class VocalEnhancement(PhaseInterface):
         # §2.8 Vocal-Chain: Pipeline-weite Gender-Info aus _restoration_context
         _vocal_gender = str(kwargs.get("vocal_gender", "unknown"))
 
+        # §2.36 Lyrics-Salienz-Timeline: per-phoneme adaptive EQ
+        # When a lyrics_saliency_timeline is provided (from LyricsGuidedEnhancement),
+        # phase_42 adapts the formant/presence Bell-EQ bandwidth per vocal segment:
+        #   - High-saliency phonemes (solo vocal, key lyrics) → narrow Q, gentle boost
+        #   - Low-saliency phonemes (background, chatter) → wider Q, stronger shaping
+        # This preserves articulation where it matters most (§0, Primum non nocere).
+        _lyrics_timeline = kwargs.get("lyrics_saliency_timeline")
+        _lyrics_adaptation_active = False
+        _lyrics_presence_scale = 1.0
+        _lyrics_formant_q_scale = 1.0
+        if _lyrics_timeline is not None and isinstance(_lyrics_timeline, dict):
+            try:
+                # Timeline: {(start_s, end_s): saliency_float, ...}
+                # Compute average saliency for the entire audio (simplified —
+                # per-segment adaptation happens in _enhance_channel).
+                _sal_values = [float(v) for v in _lyrics_timeline.values() if v is not None]
+                if _sal_values:
+                    _avg_sal = float(np.clip(np.mean(_sal_values), 0.0, 1.0))
+                    # High average saliency → less aggressive, preserve articulation
+                    _lyrics_presence_scale = 1.0 - 0.3 * _avg_sal   # 0.7–1.0
+                    _lyrics_formant_q_scale = 1.0 + 0.5 * _avg_sal  # 1.0–1.5 (narrower Q)
+                    config["presence_gain_db"] = float(config["presence_gain_db"] * _lyrics_presence_scale)
+                    _lyrics_adaptation_active = True
+                    logger.info(
+                        "Phase42 lyrics-saliency adaptation: avg_sal=%.2f presence_scale=%.2f q_scale=%.2f",
+                        _avg_sal, _lyrics_presence_scale, _lyrics_formant_q_scale,
+                    )
+            except Exception as _lsa_exc:
+                logger.debug("Phase42 lyrics-saliency non-blocking: %s", _lsa_exc)
+
         # Detect if audio contains vocals (simple heuristic)
         has_vocals = self._detect_vocals(audio, sample_rate)
 
@@ -576,6 +606,9 @@ class VocalEnhancement(PhaseInterface):
                 "vocal_gender": _vocal_gender,
                 "sibilance_saliency": float(_sibilance_saliency),
                 "vocal_harshness_saliency": float(_harshness_saliency),
+                "lyrics_saliency_active": _lyrics_adaptation_active,
+                "lyrics_presence_scale": float(_lyrics_presence_scale),
+                "lyrics_formant_q_scale": float(_lyrics_formant_q_scale),
                 "vocal_intimacy_pre": float(_intimacy_pre),
                 "vocal_intimacy_post": float(_intimacy_post),
                 "vocal_intimacy_delta": float(_intimacy_delta),
@@ -730,32 +763,51 @@ class VocalEnhancement(PhaseInterface):
         # Convert for mono-based models; keep original shape for result
         audio_mono = audio.mean(axis=1).astype(np.float32) if audio.ndim == 2 else audio.astype(np.float32)
 
-        # ── 1: BSRoFormer (MelBandRoformer, falls Modell verfügbar) ──────────
+        _duration_s = float(len(audio_mono) / max(1, sr))
+        _skip_roformer_reason: str | None = None
         try:
-            from plugins.bs_roformer_plugin import get_bs_roformer
+            import psutil as _psutil
 
-            roformer = get_bs_roformer()
-            sep = roformer.separate(audio_mono, sr, stems=["vocals"])
-            if sep is not None and "vocals" in sep.stems:
-                voc_mono = np.asarray(sep.stems["vocals"], dtype=np.float32)
-                n = min(len(audio_mono), len(voc_mono))
-                inst_mono = np.clip(audio_mono[:n] - voc_mono[:n], -1.0, 1.0)
-                if audio.ndim == 2:
-                    # §9.10.118: Wiener stereo masking preserves L/R phase
-                    vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], voc_mono[:n], sr)
-                else:
-                    vocals_out = voc_mono[:n]
-                    instr_out = inst_mono
-                confidence = float(getattr(sep, "confidence", 0.5))
-                logger.debug(
-                    "Phase42 Stem-Sep: bs_roformer confidence=%.2f model=%s (stereo=%s)",
-                    confidence,
-                    sep.model_used,
-                    audio.ndim == 2,
-                )
-                return vocals_out, instr_out, confidence, sep.model_used
-        except Exception as exc:
-            logger.debug("Phase42 bs_roformer fehlgeschlagen: %s", exc)
+            _avail_gb = float(_psutil.virtual_memory().available / (1024**3))
+            if _avail_gb < 8.0:
+                _skip_roformer_reason = f"low_ram_{_avail_gb:.1f}GB"
+        except Exception:
+            _avail_gb = None  # type: ignore[assignment]
+        if _skip_roformer_reason is None and _duration_s > 120.0:
+            _skip_roformer_reason = f"long_audio_{_duration_s:.1f}s"
+
+        # ── 1: BSRoFormer (MelBandRoformer, falls Modell verfügbar) ──────────
+        if _skip_roformer_reason is not None:
+            logger.info(
+                "Phase42 Stem-Sep: bs_roformer übersprungen (%s) — direkter Fallback auf MDX23C/NMF/HPSS",
+                _skip_roformer_reason,
+            )
+        else:
+            try:
+                from plugins.bs_roformer_plugin import get_bs_roformer
+
+                roformer = get_bs_roformer()
+                sep = roformer.separate(audio_mono, sr, stems=["vocals"])
+                if sep is not None and "vocals" in sep.stems:
+                    voc_mono = np.asarray(sep.stems["vocals"], dtype=np.float32)
+                    n = min(len(audio_mono), len(voc_mono))
+                    inst_mono = np.clip(audio_mono[:n] - voc_mono[:n], -1.0, 1.0)
+                    if audio.ndim == 2:
+                        # §9.10.118: Wiener stereo masking preserves L/R phase
+                        vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], voc_mono[:n], sr)
+                    else:
+                        vocals_out = voc_mono[:n]
+                        instr_out = inst_mono
+                    confidence = float(getattr(sep, "confidence", 0.5))
+                    logger.debug(
+                        "Phase42 Stem-Sep: bs_roformer confidence=%.2f model=%s (stereo=%s)",
+                        confidence,
+                        sep.model_used,
+                        audio.ndim == 2,
+                    )
+                    return vocals_out, instr_out, confidence, sep.model_used
+            except Exception as exc:
+                logger.debug("Phase42 bs_roformer fehlgeschlagen: %s", exc)
 
         # ── 2: MDX23C fallback (Kim_Vocal_2) ─────────────────────────────────
         try:

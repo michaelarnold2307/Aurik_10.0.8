@@ -295,6 +295,17 @@ class TransparentDynamicsV1(PhaseInterface):
 
         audio_out = np.nan_to_num(audio_out, nan=0.0, posinf=0.0, neginf=0.0)
         audio_out = np.clip(audio_out, -1.0, 1.0)
+
+        # §4.5 Psychoacoustic Masking Clamp — preserve masked dynamics regions
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            audio_out = apply_psychoacoustic_masking_clamp(
+                audio, audio_out, sample_rate,
+                strength=effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase54 masking clamp non-blocking: %s", _pm_exc)
+
         return PhaseResult(
             success=True,
             audio=audio_out,

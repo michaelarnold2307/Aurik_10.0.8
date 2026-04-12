@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,8 @@ class SGMSEPlusPlugin:
     Verarbeitet kombinierte Rausch- und Hallunterdrückung via score-basierter
     generativer Inferenz oder fällt auf WPE DSP zurück (§4.4 Spec).
     """
+
+    FORWARD_TIMEOUT_S: float = 12.0
 
     def __init__(self) -> None:
         """Initialize SGMSE+ plugin and attempt model load."""
@@ -309,7 +312,13 @@ class SGMSEPlusPlugin:
         except Exception:
             return float("inf")
 
-    def enhance(self, audio: np.ndarray, sr: int, sigma: float = 0.5) -> SgmseResult:
+    def enhance(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        sigma: float = 0.5,
+        max_runtime_s: float | None = None,
+    ) -> SgmseResult:
         """Kombinierte Rausch-/Hallunterdrückung via SGMSE+ oder WPE-Fallback.
 
         Algorithm (TorchScript-Pfad):
@@ -348,7 +357,7 @@ class SGMSEPlusPlugin:
 
         def process_channel(ch: np.ndarray) -> np.ndarray:
             if _use_ml:
-                return self._enhance_chunked(ch, sigma)
+                return self._enhance_chunked(ch, sigma, max_runtime_s=max_runtime_s)
             return self._wpe_fallback(ch, sr)
 
         if stereo:
@@ -378,7 +387,7 @@ class SGMSEPlusPlugin:
     # Chunked inference wrapper  (prevents OOM on long files)
     # ------------------------------------------------------------------
 
-    def _enhance_chunked(self, mono: np.ndarray, sigma: float) -> np.ndarray:
+    def _enhance_chunked(self, mono: np.ndarray, sigma: float, max_runtime_s: float | None = None) -> np.ndarray:
         """Process mono audio in adaptive chunks (10–30 s) with Hanning crossfade.
 
         Adapts chunk size to available RAM:
@@ -416,8 +425,52 @@ class SGMSEPlusPlugin:
 
         pos = 0
         chunk_idx = 0
+        _t0 = time.perf_counter()
+        _audio_s = max(1e-6, n_total / float(_SR))
+        # Runtime budget: keep ML path for quality, but cap pathological tails.
+        # For 225 s audio this allows ~9.4 min ML wall-time before controlled fallback.
+        # Hard-cap per channel to avoid pathological long tails on CPU TorchScript
+        # (critical for UAT real-audio paths with strict global pytest timeouts).
+        _base_budget_s = float(np.clip(1.10 * _audio_s, 35.0, 75.0))
+        if max_runtime_s is not None:
+            # Use the explicitly provided budget directly (no lower-bound clip) so that
+            # callers with strict timeouts (tests, UAT) get exact control.  Only cap the
+            # upper end to avoid infinite budgets (> 300 s is pathological).
+            _runtime_budget_s = min(_base_budget_s, float(min(max_runtime_s, 300.0)))
+        else:
+            _runtime_budget_s = _base_budget_s
         while pos < n_total:
             end = min(pos + chunk_len, n_total)
+
+            # ── Runtime guard: abort pathological slowdowns, keep partial ML result ──
+            _elapsed = time.perf_counter() - _t0
+            if chunk_idx > 0:
+                _avg_chunk_s = _elapsed / float(chunk_idx)
+                _remaining_chunks = max(0, int(np.ceil((n_total - pos) / max(1, step))))
+                _projected_total_s = _elapsed + _avg_chunk_s * _remaining_chunks
+                if _projected_total_s > _runtime_budget_s:
+                    logger.warning(
+                        "SGMSE+ runtime guard: projected %.1fs > budget %.1fs after %d chunks — rest via WPE-fallback",
+                        _projected_total_s,
+                        _runtime_budget_s,
+                        chunk_idx,
+                    )
+                    rest = self._wpe_fallback(mono[pos:], _SR)
+                    rest_len = min(len(rest), n_total - pos)
+                    out[pos : pos + rest_len] = rest[:rest_len]
+                    break
+
+            if _elapsed > _runtime_budget_s:
+                logger.warning(
+                    "SGMSE+ runtime guard: elapsed %.1fs > budget %.1fs at chunk %d — rest via WPE-fallback",
+                    _elapsed,
+                    _runtime_budget_s,
+                    chunk_idx + 1,
+                )
+                rest = self._wpe_fallback(mono[pos:], _SR)
+                rest_len = min(len(rest), n_total - pos)
+                out[pos : pos + rest_len] = rest[:rest_len]
+                break
 
             # ── Pre-chunk RAM guard ───────────────────────────────────
             # Proactively free pages before allocating the next chunk to
@@ -503,10 +556,12 @@ class SGMSEPlusPlugin:
                 logger.info("SGMSE+ RAM dropping (%.1f GB) — switching to 10 s chunks", _avail_now)
 
         logger.info(
-            "SGMSE+ chunked: %d chunks (adaptive) für %.1f s Audio, %.1f GB frei",
+            "SGMSE+ chunked: %d chunks (adaptive) für %.1f s Audio, %.1f GB frei (elapsed=%.1fs, budget=%.1fs)",
             chunk_idx,
             n_total / _SR,
             self._get_available_ram_gb(),
+            time.perf_counter() - _t0,
+            _runtime_budget_s,
         )
         return np.clip(np.nan_to_num(out, nan=0.0), -1.0, 1.0)
 
@@ -614,6 +669,11 @@ class SGMSEPlusPlugin:
             F_orig = x_t.shape[2]
             T_orig = x_t.shape[3]
             target_frames = max(32, int(self._num_frames))
+            # Guard oversized frame windows from checkpoint metadata to prevent
+            # single forward calls becoming unbounded on CPU.
+            if target_frames > 256:
+                logger.info("SGMSE+ frame cap: num_frames=%d -> 256", target_frames)
+                target_frames = 256
 
             # CPU safety: reduce overlap for short clips to avoid test-timeout stalls
             # in TorchScript inference while keeping overlap-add for longer material.
@@ -631,6 +691,11 @@ class SGMSEPlusPlugin:
 
             with torch.no_grad():
                 t_t = torch.tensor([float(sigma)], dtype=torch.float32).to(self._device)
+                try:
+                    from backend.core.ml_device_manager import get_ml_device_manager as _get_mdm
+                    _pin_fn = _get_mdm().pin_tensor_rocm
+                except Exception:
+                    _pin_fn = lambda x: x  # noqa: E731
                 for s in starts:
                     e = min(s + target_frames, T_orig)
                     seg = x_t[:, :, :, s:e]
@@ -638,18 +703,28 @@ class SGMSEPlusPlugin:
                     if seg_len < target_frames:
                         seg = np.pad(seg, ((0, 0), (0, 0), (0, 0), (0, target_frames - seg_len)), mode="constant")
 
-                    xt_t = torch.from_numpy(seg).to(self._device)
+                    _pinned = _pin_fn(seg)
+                    xt_t = (_pinned if isinstance(_pinned, torch.Tensor) else torch.from_numpy(_pinned)).to(self._device)
                     y_t = xt_t
                     if self._ts_model is not None:
-                        out_t = self._ts_model(xt_t, y_t, t_t)
+                        out_t = self._run_with_timeout(
+                            lambda: self._ts_model(xt_t, y_t, t_t),
+                            timeout_s=self.FORWARD_TIMEOUT_S,
+                        )
                     else:
                         if self._eager_backbone == "ncsnpp_v2":
-                            out_t = self._eager_model(xt_t, y_t, t_t)
+                            out_t = self._run_with_timeout(
+                                lambda: self._eager_model(xt_t, y_t, t_t),
+                                timeout_s=self.FORWARD_TIMEOUT_S,
+                            )
                         else:
                             x_complex = torch.complex(xt_t[:, 0], xt_t[:, 1])
                             y_complex = torch.complex(y_t[:, 0], y_t[:, 1])
                             dnn_input = torch.stack([x_complex, y_complex], dim=1)
-                            out_complex = -self._eager_model(dnn_input, t_t)
+                            out_complex = -self._run_with_timeout(
+                                lambda: self._eager_model(dnn_input, t_t),
+                                timeout_s=self.FORWARD_TIMEOUT_S,
+                            )
                             out_t = torch.stack([out_complex.real, out_complex.imag], dim=1)
 
                     out_seg = out_t.detach().cpu().numpy().astype(np.float32)
@@ -722,6 +797,26 @@ class SGMSEPlusPlugin:
                 return self._enhance_torchscript(mono, sigma)
             logger.warning("SGMSE+ TorchScript-Inferenzfehler: %s — WPE-Fallback.", exc)
             return self._wpe_fallback(mono, _SR)
+
+    def _run_with_timeout(self, fn: Any, timeout_s: float) -> Any:
+        """Run callable with hard wall-clock timeout in a daemon thread."""
+        box: dict[str, Any] = {}
+        err: dict[str, BaseException] = {}
+
+        def _worker() -> None:
+            try:
+                box["value"] = fn()
+            except BaseException as exc:  # noqa: BLE001
+                err["error"] = exc
+
+        thread = threading.Thread(target=_worker, name="sgmse-forward", daemon=True)
+        thread.start()
+        thread.join(max(0.001, float(timeout_s)))
+        if thread.is_alive():
+            raise TimeoutError(f"SGMSE+ forward timeout after {timeout_s:.2f}s")
+        if "error" in err:
+            raise err["error"]
+        return box.get("value")
 
     # ------------------------------------------------------------------
     # WPE DSP Fallback

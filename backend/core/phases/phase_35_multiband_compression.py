@@ -241,6 +241,17 @@ class MultibandCompressionPhase(PhaseInterface):
 
         compressed = np.nan_to_num(compressed, nan=0.0, posinf=0.0, neginf=0.0)
         compressed = np.clip(compressed, -1.0, 1.0)
+
+        # §4.5 Psychoacoustic Masking Clamp — protect masked dynamics regions
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            compressed = apply_psychoacoustic_masking_clamp(
+                audio, compressed, sample_rate,
+                strength=_effective_strength, mode="subtractive",
+            )
+        except Exception as _pm_exc:
+            logger.debug("Phase35 masking clamp non-blocking: %s", _pm_exc)
+
         return PhaseResult(
             success=True,
             audio=compressed,

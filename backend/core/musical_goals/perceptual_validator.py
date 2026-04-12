@@ -475,12 +475,22 @@ class PerceptualValidator:
         if sr != 16000:
             x = librosa.resample(x, orig_sr=sr, target_sr=16000)
 
+        # Short-signal guard: avoid librosa warnings when n_fft exceeds signal length.
+        if len(x) < 64:
+            x = np.pad(x, (0, 64 - len(x)))
+        _n_fft = int(min(1024, len(x)))
+        if _n_fft % 2 == 1:
+            _n_fft -= 1
+        _n_fft = max(64, _n_fft)
+        _win_length = int(min(400, _n_fft))
+        _hop_length = int(max(16, min(160, _win_length // 2)))
+
         mel = librosa.feature.melspectrogram(
             y=x,
             sr=16000,
-            n_fft=1024,
-            hop_length=160,
-            win_length=400,
+            n_fft=_n_fft,
+            hop_length=_hop_length,
+            win_length=_win_length,
             n_mels=128,
             fmin=20,
             fmax=8000,

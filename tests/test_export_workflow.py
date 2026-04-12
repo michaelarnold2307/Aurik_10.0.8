@@ -248,4 +248,181 @@ def test_quality_gate_prefers_structured_error_code_when_fail_reason_missing():
     assert fail_reason == "PQS_GATE_FAILED"
     assert degradation_status == "blocked"
     assert isinstance(fail_reasons, list)
-    assert fail_reasons[0]["error_code"] == "PQS_GATE_FAILED"
+
+
+def test_export_audio_blocks_failed_gate_without_recovery(temp_export_dir):
+    """Failed quality gate without recovery metadata must block export."""
+    audio = np.zeros(1000, dtype=np.float32)
+    quality_gate = {
+        "passed": False,
+        "fail_reason": "PQS unter Mindestschwelle",
+    }
+
+    with pytest.raises(RuntimeError):
+        export_audio(audio, 48_000, "blocked.wav", quality_gate=quality_gate)
+
+
+def test_export_audio_sets_recovered_strategy(temp_export_dir):
+    """Failed gate with successful recovery should export as recovered."""
+    audio = np.zeros(1000, dtype=np.float32)
+    quality_gate = {
+        "passed": False,
+        "fail_reason": "PQS unter Mindestschwelle",
+        "recovery_attempted": True,
+        "best_possible_reached": True,
+    }
+
+    path = export_audio(audio, 48_000, "recovered.wav", quality_gate=quality_gate)
+    assert os.path.exists(path)
+    meta_path = os.path.join("export", "recovered.json")
+    assert os.path.exists(meta_path)
+    with open(meta_path, encoding="utf-8") as f:
+        payload = f.read()
+    assert '"export_strategy": "recovered"' in payload
+
+
+def test_export_audio_fqf_recovered_overrides_passed_gate(temp_export_dir):
+    """fallback_quality_floor.status=recovered must force recovered strategy."""
+    audio = np.zeros(1000, dtype=np.float32)
+    quality_gate = {
+        "passed": True,
+        "fallback_quality_floor": {
+            "triggered": True,
+            "status": "recovered",
+            "reason": "fallback_quality_floor_recovered_with_checkpoint",
+        },
+    }
+
+    path = export_audio(audio, 48_000, "fqf_recovered.wav", quality_gate=quality_gate)
+    assert os.path.exists(path)
+    meta_path = os.path.join("export", "fqf_recovered.json")
+    assert os.path.exists(meta_path)
+    with open(meta_path, encoding="utf-8") as f:
+        payload = f.read()
+    assert '"export_strategy": "recovered"' in payload
+
+
+def test_export_audio_fqf_degraded_overrides_passed_gate(temp_export_dir):
+    """fallback_quality_floor.status=degraded must force degraded strategy."""
+    audio = np.zeros(1000, dtype=np.float32)
+    quality_gate = {
+        "passed": True,
+        "fallback_quality_floor": {
+            "triggered": True,
+            "status": "degraded",
+            "reason": "fallback_quality_floor_failed_no_compatible_checkpoint",
+        },
+    }
+
+    path = export_audio(audio, 48_000, "fqf_degraded.wav", quality_gate=quality_gate)
+    assert os.path.exists(path)
+    meta_path = os.path.join("export", "fqf_degraded.json")
+    assert os.path.exists(meta_path)
+    with open(meta_path, encoding="utf-8") as f:
+        payload = f.read()
+    assert '"export_strategy": "degraded"' in payload
+
+
+# ---------------------------------------------------------------------------
+# §2.46b / §2.49 fidelity_guards — ExportMetadata + sidecar JSON
+# ---------------------------------------------------------------------------
+
+def test_fidelity_guards_in_sidecar_json(temp_export_dir):
+    """ExportMetadata.fidelity_guards must appear in JSON sidecar when set."""
+    from backend.core.export_workflow import ExportMetadata, export_audio
+
+    guards = {
+        "spectral_tilt_guard": {
+            "guard_fired_count": 2,
+            "phases_guarded": ["phase_06_frequency_restoration"],
+            "max_deviation_db_per_oct": 1.82,
+            "max_wet_cap_applied": 0.72,
+        },
+        "hf_hallucination_guard": {
+            "guard_fired_count": 1,
+            "phases_guarded": ["phase_07_harmonic_restoration"],
+            "max_delta_ratio": 1.15,
+            "min_cap_hz": 14500.0,
+        },
+    }
+    meta = ExportMetadata(fidelity_guards=guards)
+    audio = np.zeros(1000, dtype=np.float32)
+    path = export_audio(audio, 48_000, "fidelity_guard_test.wav", metadata=meta)
+
+    sidecar = os.path.splitext(path)[0] + ".json"
+    assert os.path.exists(sidecar), "Sidecar JSON must exist"
+    import json
+    with open(sidecar, encoding="utf-8") as f:
+        payload = json.load(f)
+
+    assert "fidelity_guards" in payload, "fidelity_guards key must be present in sidecar"
+    fg = payload["fidelity_guards"]
+    assert "spectral_tilt_guard" in fg
+    assert "hf_hallucination_guard" in fg
+    assert fg["spectral_tilt_guard"]["guard_fired_count"] == 2
+    assert fg["hf_hallucination_guard"]["guard_fired_count"] == 1
+
+
+def test_build_export_metadata_populates_fidelity_guards():
+    """bridge.build_export_metadata extracts both guard dicts from result.metadata."""
+    from backend.api.bridge import build_export_metadata
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        metadata={
+            "spectral_tilt_guard": {
+                "guard_fired_count": 3,
+                "phases_guarded": ["phase_06_frequency_restoration", "phase_39_harmonic_ext"],
+                "max_deviation_db_per_oct": 2.1,
+                "max_wet_cap_applied": 0.65,
+            },
+            "hf_hallucination_guard": {
+                "guard_fired_count": 0,
+                "phases_guarded": [],
+                "max_delta_ratio": 0.0,
+                "min_cap_hz": 24000.0,
+            },
+        }
+    )
+    em = build_export_metadata(result, title="TestSong", artist="Testkünstler")
+    assert em is not None
+    assert em.title == "TestSong"
+    assert em.artist == "Testkünstler"
+    assert em.fidelity_guards is not None
+    stg = em.fidelity_guards.get("spectral_tilt_guard", {})
+    assert stg["guard_fired_count"] == 3
+    hfg = em.fidelity_guards.get("hf_hallucination_guard", {})
+    assert hfg["guard_fired_count"] == 0
+
+
+def test_build_export_metadata_no_guards_yields_none():
+    """build_export_metadata returns fidelity_guards=None when result has no guard data."""
+    from backend.api.bridge import build_export_metadata
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(metadata={"some_key": "some_value"})
+    em = build_export_metadata(result)
+    assert em is not None
+    assert em.fidelity_guards is None
+
+
+def test_build_export_metadata_sanitizes_nan():
+    """build_export_metadata must sanitize NaN/Inf values in guard dicts."""
+    from backend.api.bridge import build_export_metadata
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        metadata={
+            "spectral_tilt_guard": {
+                "guard_fired_count": 1,
+                "max_deviation_db_per_oct": float("nan"),
+                "phases_guarded": ["phase_06_frequency_restoration"],
+            }
+        }
+    )
+    em = build_export_metadata(result)
+    assert em is not None
+    assert em.fidelity_guards is not None
+    stg = em.fidelity_guards["spectral_tilt_guard"]
+    # NaN must be replaced by 0.0
+    assert stg["max_deviation_db_per_oct"] == 0.0

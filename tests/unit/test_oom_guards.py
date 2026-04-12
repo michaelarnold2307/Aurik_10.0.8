@@ -198,6 +198,7 @@ def test_budget_exhaustion_blocks_allocation(monkeypatch):
     """When budget is full, subsequent allocations fail."""
     _reset_budget_state()
     monkeypatch.setattr(budget, "ML_MAX_GB", 5.0)
+    monkeypatch.setattr(budget, "is_system_thrashing", lambda: False)
     monkeypatch.setattr(budget, "_preflight_system_memory", lambda required_mb=0: True)
 
     assert budget.try_allocate("ModelA", size_gb=3.0) is True
@@ -209,6 +210,7 @@ def test_release_frees_budget(monkeypatch):
     """After release, freed budget is available for new allocations."""
     _reset_budget_state()
     monkeypatch.setattr(budget, "ML_MAX_GB", 5.0)
+    monkeypatch.setattr(budget, "is_system_thrashing", lambda: False)
     monkeypatch.setattr(budget, "_preflight_system_memory", lambda required_mb=0: True)
 
     assert budget.try_allocate("ModelA", size_gb=3.0) is True
@@ -222,6 +224,7 @@ def test_idempotent_allocation(monkeypatch):
     """Same model name allocated twice returns True without double-counting."""
     _reset_budget_state()
     monkeypatch.setattr(budget, "ML_MAX_GB", 5.0)
+    monkeypatch.setattr(budget, "is_system_thrashing", lambda: False)
     monkeypatch.setattr(budget, "_preflight_system_memory", lambda required_mb=0: True)
 
     assert budget.try_allocate("SameModel", size_gb=2.0) is True
@@ -233,6 +236,7 @@ def test_get_status(monkeypatch):
     """get_status() returns correct current state."""
     _reset_budget_state()
     monkeypatch.setattr(budget, "ML_MAX_GB", 8.0)
+    monkeypatch.setattr(budget, "is_system_thrashing", lambda: False)
     monkeypatch.setattr(budget, "_preflight_system_memory", lambda required_mb=0: True)
 
     budget.try_allocate("TestModel", size_gb=1.5)

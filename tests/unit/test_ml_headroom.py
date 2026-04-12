@@ -93,10 +93,12 @@ class TestBudgetAllocation:
         from backend.core.ml_memory_budget import set_budget, try_allocate
 
         set_budget(4.0)
-        assert try_allocate("M1", 2.0) is True
-        assert try_allocate("M2", 1.5) is True
-        # Should fail — only 0.5 GB left
-        result = try_allocate("M3", 1.0)
+        # Test targets logical budget saturation, not host-specific RAM pressure.
+        with patch("backend.core.ml_memory_budget._preflight_system_memory", return_value=True):
+            assert try_allocate("M1", 2.0) is True
+            assert try_allocate("M2", 1.5) is True
+            # Should fail — only 0.5 GB left
+            result = try_allocate("M3", 1.0)
         assert result is False
 
     def test_release_then_allocate(self):

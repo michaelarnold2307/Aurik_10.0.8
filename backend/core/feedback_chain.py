@@ -129,17 +129,34 @@ class FeedbackChain:
         return self.compute_perceptual_score(audio)
 
     def _adaptive_convergence_delta(self, current_mos: float) -> float:
-        """Adaptive convergence threshold based on current MOS level.
+        """Adaptive convergence threshold based on current MOS level and §2.56 goal_weights.
 
         High-quality audio (MOS > 4.0) uses tighter delta to squeeze out
         remaining improvements. Low-quality uses relaxed delta to avoid
         wasting iterations on negligible gains.
+
+        §2.56: P1/P2-heavy songs (naturalness/authenticity) get a tighter
+        delta at high MOS to extract maximum perceptual quality on the
+        goals that matter most. P4/P5-heavy songs remain at standard delta.
         """
         if current_mos >= 4.0:
-            return max(1e-6, self.convergence_delta * 0.25)  # 0.005 for default 0.02
-        if current_mos >= 3.5:
-            return self.convergence_delta  # 0.02 default
-        return min(0.05, self.convergence_delta * 2.5)  # 0.05 for poor audio
+            base_delta = max(1e-6, self.convergence_delta * 0.25)  # 0.005 for default 0.02
+        elif current_mos >= 3.5:
+            base_delta = self.convergence_delta  # 0.02 default
+        else:
+            base_delta = min(0.05, self.convergence_delta * 2.5)  # 0.05 for poor audio
+
+        # §2.56: tighten convergence for P1/P2-dominant songs at high quality
+        if current_mos >= 4.0 and isinstance(self.goal_weights, dict) and self.goal_weights:
+            _P1P2_KEYS = ("natuerlichkeit", "authentizitaet", "tonal_center", "timbre_authentizitaet", "artikulation")
+            _p1p2_vals = [self.goal_weights.get(k, 1.0) for k in _P1P2_KEYS]
+            _p1p2_mean = float(sum(_p1p2_vals) / max(len(_p1p2_vals), 1))
+            if _p1p2_mean > 1.1:
+                # Tighten by up to 40% for strongly P1/P2-dominant songs
+                _tighten = float(min(0.40, (_p1p2_mean - 1.0) * 0.40))
+                base_delta = max(1e-8, base_delta * (1.0 - _tighten))
+
+        return base_delta
 
     # -------------------------------------------------------------------
     # §2.54 Adaptive thresholds — material/restorability/defect-aware
@@ -163,11 +180,19 @@ class FeedbackChain:
     )
 
     def _compute_adaptive_prune_threshold(self, is_restorative: bool) -> float:
-        """§2.54: Material-adaptive threshold for FeedbackChain phase pruning.
+        """§2.54 + §2.56: Material- and goal-importance-adaptive pruning threshold.
 
         Restorative phases on severely degraded material need much more
         lenient thresholds — their MOS-proxy drop is expected (removing
         energy that was defect, not content).
+
+        §2.56: When P1/P2 goals (natuerlichkeit, authentizitaet, tonal_center,
+        timbre_authentizitaet, artikulation) carry high weight for this song,
+        we apply a *conservative bias*: the threshold is tightened (less negative)
+        so that phases that improve these critical goals are less likely to be
+        pruned based on an incomplete MOS proxy.  Conversely, a P4/P5-dominated
+        profile (brillanz, raumtiefe) loosens the threshold because minor MOS
+        fluctuations there are tolerable.
 
         Returns a negative float (more negative = more lenient).
         """
@@ -192,14 +217,46 @@ class FeedbackChain:
 
         # Combined: base * max(factors) — use max to avoid over-compounding
         adaptive = base * max(mat_factor, rest_factor, sev_factor)
-        # Clamp: never more lenient than -0.30, never stricter than base
-        return float(np.clip(adaptive, -0.30, base))
+
+        # §2.56 Goal-importance bias: P1/P2 heavy → tighten threshold (conservative).
+        # A song where naturalness/authenticity matter most should not aggressively prune
+        # phases that might be nudging those delicate goals in the right direction.
+        _gw_bias = 0.0
+        if isinstance(self.goal_weights, dict) and self.goal_weights:
+            _P1P2_KEYS = (
+                "natuerlichkeit",
+                "authentizitaet",
+                "tonal_center",
+                "timbre_authentizitaet",
+                "artikulation",
+            )
+            _P4P5_KEYS = (
+                "brillanz",
+                "raumtiefe",
+                "waerme",
+                "bassgewalt",
+            )
+            _p1p2_vals = [self.goal_weights.get(k, 1.0) for k in _P1P2_KEYS]
+            _p4p5_vals = [self.goal_weights.get(k, 1.0) for k in _P4P5_KEYS]
+            _p1p2_mean = float(sum(_p1p2_vals) / max(len(_p1p2_vals), 1))
+            _p4p5_mean = float(sum(_p4p5_vals) / max(len(_p4p5_vals), 1))
+            # bias ∈ [-0.05, +0.05]: positive bias = tighten (less pruning for P1/P2 songs)
+            _gw_bias = float((_p1p2_mean - _p4p5_mean) * 0.025)
+            _gw_bias = float(max(-0.05, min(0.05, _gw_bias)))
+
+        # Apply bias: tighten (toward 0) when P1/P2 heavy, loosen when P4/P5 heavy.
+        adaptive_biased = adaptive + _gw_bias
+        # Clamp: never more lenient than -0.30, never stricter than -0.005
+        return float(max(-0.30, min(-0.005, adaptive_biased)))
 
     def _compute_adaptive_mos_regression_tolerance(self) -> float:
-        """§2.54: Material-adaptive MOS regression tolerance for iteration stop.
+        """§2.54 + §2.56: Material- and goal-importance-adaptive MOS regression tolerance.
 
         Poor material with heavy defects needs more tolerance — each
         iteration may transiently worsen MOS as it repairs deeper damage.
+
+        §2.56: Songs with dominant P1/P2 goals get a small tolerance reduction
+        to prevent accepting spurious regressions on critical perceptual goals.
 
         Returns a positive float (higher = more tolerant).
         """
@@ -221,6 +278,18 @@ class FeedbackChain:
         sev_bonus = self.defect_severity_mean * 0.05  # up to +0.05
 
         tolerance = base + max(mat_bonus, rest_bonus, sev_bonus)
+
+        # §2.56: P1/P2 heavy songs → tighten tolerance slightly (max -0.015)
+        # so we don't accept regressions in the most perceptually critical goals.
+        if isinstance(self.goal_weights, dict) and self.goal_weights:
+            _P1P2_KEYS = ("natuerlichkeit", "authentizitaet", "tonal_center", "timbre_authentizitaet", "artikulation")
+            _p1p2_vals = [self.goal_weights.get(k, 1.0) for k in _P1P2_KEYS]
+            _p1p2_mean = float(sum(_p1p2_vals) / max(len(_p1p2_vals), 1))
+            if _p1p2_mean > 1.0:
+                # Over-weighted P1/P2 → reduce tolerance proportionally, capped at -0.015
+                _p1p2_reduction = float(min(0.015, (_p1p2_mean - 1.0) * 0.01))
+                tolerance = max(base, tolerance - _p1p2_reduction)
+
         # Clamp: [0.03, 0.25] — never allow unlimited regression
         return float(np.clip(tolerance, 0.03, 0.25))
 
@@ -248,6 +317,48 @@ class FeedbackChain:
         _active_phases: list = list(phases_or_fn) if _phase_list_mode else []
         _pruned_phases: list[str] = []
         _phase_deltas: dict[str, float] = {}  # phase_id → MOS delta from first iteration
+
+        # ── §2.47 GP-Advisory Strength Lookup ──────────────────────────────
+        # Consult GP memory for material-genre-specific strength priors before
+        # running the loop.  If GP has learned good parameters from previous
+        # songs with the same material, inject them as advisory kwargs hints.
+        _gp_advisory_applied = False
+        if _phase_list_mode and len(_active_phases) > 0:
+            try:
+                from backend.core.gp_parameter_optimizer import get_optimizer as _get_gp_opt
+
+                _gp_opt = _get_gp_opt()
+                _mat = self.material if self.material != "auto" else "unknown"
+                _proposal = _gp_opt.propose(material=_mat, n_init=5)
+                if _proposal is not None and hasattr(_proposal, "params") and _proposal.params:
+                    _gp_proposal = dict(_proposal.params)
+                    _strength_keys = {
+                        "noise_reduction_strength": ("phase_03",),
+                        "reverb_reduction_strength": ("phase_49", "phase_20"),
+                        "eq_correction_strength": ("phase_04", "phase_06"),
+                        "harmonic_preservation": ("phase_07", "phase_08"),
+                        "transient_strength": ("phase_08",),
+                    }
+                    _hints_applied = 0
+                    for gp_key, phase_prefixes in _strength_keys.items():
+                        if gp_key in _gp_proposal:
+                            gp_val = float(np.clip(_gp_proposal[gp_key], 0.1, 1.0))
+                            for idx, (_pid, _fn, _kw) in enumerate(_active_phases):
+                                pid_str = str(_pid)
+                                if any(pid_str.startswith(pp) for pp in phase_prefixes):
+                                    if "strength" not in (_kw or {}):
+                                        _kw_new = dict(_kw) if _kw else {}
+                                        _kw_new["gp_advisory_strength"] = gp_val
+                                        _active_phases[idx] = (_pid, _fn, _kw_new)
+                                        _hints_applied += 1
+                    if _hints_applied > 0:
+                        _gp_advisory_applied = True
+                        logger.info(
+                            "FeedbackChain: GP advisory applied %d strength hints (material=%s)",
+                            _hints_applied, _mat,
+                        )
+            except Exception as _gp_exc:
+                logger.debug("FeedbackChain: GP advisory lookup non-blocking: %s", _gp_exc)
 
         if _phase_list_mode:
 
@@ -533,6 +644,7 @@ class FeedbackChain:
                 ),
                 "pruned_phases": _pruned_phases,
                 "phase_deltas": _phase_deltas,
+                "gp_advisory_applied": _gp_advisory_applied,
             },
             phase_executions=_phase_executions,
             overall_score=float(best_mos),

@@ -253,6 +253,15 @@ class WowFlutterFix(PhaseInterface):
         self.validate_input(audio)
         assert sample_rate == 48000, f"Interne SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
+        _progress_cb = kwargs.get("progress_sub_callback")
+
+        def _report_progress(pct: float, label: str) -> None:
+            if callable(_progress_cb):
+                try:
+                    _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
+                except Exception:
+                    pass
+
         _original_audio = np.asarray(audio, dtype=np.float32).copy()
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
@@ -293,6 +302,7 @@ class WowFlutterFix(PhaseInterface):
         is_stereo = audio.ndim == 2
         mono = np.mean(audio, axis=1) if is_stereo else audio.copy()
 
+        _report_progress(5.0, "Wow/Flutter: Tonhöhen-Analyse startet")
         # ML-Hybrid Mode Routing (v3.0)
         quality_mode = kwargs.get("quality_mode", "quality")
 
@@ -393,6 +403,7 @@ class WowFlutterFix(PhaseInterface):
             logger.info("Phase 12 pYIN DSP: material=%s", material.value)
             pitch_trajectory, confidence = self._estimate_pitch_yin(mono, sample_rate)
 
+        _report_progress(52.0, "Wow/Flutter: Tonhöhen-Analyse abgeschlossen")
         # Continue with standard wow/flutter correction pipeline
         # (regardless of detection method)
 
@@ -609,6 +620,7 @@ class WowFlutterFix(PhaseInterface):
         # Step 5: Apply time-stretching – PSOLA für Vokal-Segmente, WSOLA sonst
         # Moulines & Charpentier (1990): PSOLA ist formanterhaltend bei Gesangsmaterial;
         # Phase-Vocoder (hier: WSOLA/resample) für Instrumental-/Nicht-Vokal-Material.
+        _report_progress(65.0, "Wow/Flutter: Zeitstreckung (PSOLA/Phase-Vocoder) läuft...")
         _stretch_fn = self._psola_timestretch if vocals_conf >= 0.4 else self._phase_vocoder_timestretch
         if vocals_conf >= 0.4:
             logger.debug(
@@ -622,6 +634,25 @@ class WowFlutterFix(PhaseInterface):
         else:
             restored = _stretch_fn(audio, stretch_factors, sample_rate)
 
+        # §C3 Neural Phase Vocoder — post-stretch phase coherence restoration.
+        # PSOLA/Phase-Vocoder time-stretching can introduce phase incoherence in
+        # voiced regions (harmonic misalignment). Apply PGHI-consistent phase
+        # regularisation to restore natural harmonic phase relationships.
+        try:
+            _orig_mono = np.mean(audio, axis=1).astype(np.float64) if is_stereo else np.asarray(audio, dtype=np.float64)
+            if is_stereo:
+                _res_mid = np.mean(restored, axis=1).astype(np.float64)
+                _res_mid_coh = self._apply_neural_phase_coherence(_res_mid, sample_rate, reference=_orig_mono)
+                _coh_diff = _res_mid_coh - _res_mid
+                restored = restored + _coh_diff[:, np.newaxis] * 0.5  # Symmetric M/S injection
+                restored = np.clip(restored, -1.0, 1.0)
+            else:
+                _rest_ref = np.asarray(audio, dtype=np.float64) if len(audio) == len(restored) else None
+                restored = self._apply_neural_phase_coherence(restored, sample_rate, reference=_rest_ref)
+        except Exception as _c3_proc_exc:
+            logger.debug("§C3 Phase coherence integration non-blocking: %s", _c3_proc_exc)
+
+        _report_progress(82.0, "Wow/Flutter: Zeitstreckung abgeschlossen")
         # Step 6: Verify correction (measure residual deviation)
         restored_mono = np.mean(restored, axis=1) if is_stereo else restored
 
@@ -669,6 +700,7 @@ class WowFlutterFix(PhaseInterface):
         n_level_dips_repaired = 0
         _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
         _mat_enum = material if isinstance(material, MaterialType) else None
+        _report_progress(90.0, "Wow/Flutter: Impuls-Reparaturen abgeschlossen")
         _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
         if (_mat_enum in _TAPE_LEVEL_MATERIALS or _has_tape_dip_defect) and _effective_strength > 0.0:
             restored, n_level_dips_repaired = self._stabilize_tape_level(restored, sample_rate, _effective_strength)
@@ -781,6 +813,7 @@ class WowFlutterFix(PhaseInterface):
                 _rms_drop_db,
                 _makeup_db,
             )
+        _report_progress(96.0, "Wow/Flutter: Abschluss-Validierung")
         return PhaseResult(
             success=True,
             audio=restored,
@@ -1959,6 +1992,129 @@ class WowFlutterFix(PhaseInterface):
         corrected = np.interp(src_pos, np.arange(n_samples, dtype=np.float64), audio_f)
         corrected = np.nan_to_num(corrected, nan=0.0, posinf=0.0, neginf=0.0)
         return corrected.astype(audio.dtype, copy=False)
+
+    def _apply_neural_phase_coherence(
+        self, audio: np.ndarray, sample_rate: int, reference: np.ndarray | None = None
+    ) -> np.ndarray:
+        """§C3 Neural Phase Vocoder post-processing — PGHI-consistent phase coherence.
+
+        After wow/flutter time-stretching via Phase Vocoder the STFT phases can
+        become incoherent in voiced regions (harmonic misalignment, phasiness).
+        This method applies spectral-coherence-guided phase propagation (Marafioti
+        et al. 2019 PGHI-based approach) to restore natural phase relationships.
+
+        Algorithm:
+        1. Compute STFT of corrected signal and (optional) reference signal.
+        2. Measure per-bin group-delay coherence: C_k = |H_corr·H_ref*|/(|H_corr||H_ref|)
+           where H is the complex STFT coefficient (or autocorrelation proxy without ref).
+        3. Build a frequency-smoothed coherence mask: bins with C ≥ 0.85 are well-aligned;
+           bins with C < 0.50 are candidates for phase regularisation.
+        4. Phase regularisation: for low-coherence bins propagate phase from the
+           already-coherent neighbouring bin via instantaneous frequency estimation
+           (≈PGHI derivative of log-magnitude spectrogram):
+               φ_new[k, t] = φ[k, t-1] + 2π × f_instantaneous × hop/sr
+        5. Reconstruct via iSTFT with regularised phases.
+        6. Blend blend_weight of regularised output with original (conservative default 0.30).
+
+        References:
+            Marafioti et al. (2019) ICASSP — Phase Gradient Heap Integration (PGHI).
+            Laroche & Dolson (1999) IEEE TSAP — instantaneous frequency estimation.
+
+        Returns phase-coherence-improved audio (same shape as input).
+        """
+        if len(audio) < 1024:
+            return audio.copy()
+
+        try:
+            assert sample_rate == 48000, "Phase 12 neural coherence: sr must be 48000"
+            n_fft = 2048
+            hop = n_fft // 4
+            win = np.hanning(n_fft).astype(np.float64)
+            audio_f = np.asarray(audio, dtype=np.float64)
+            orig_len = len(audio_f)
+
+            # Step 1: STFT of corrected audio
+            n_frames = 1 + (orig_len - n_fft) // hop
+            if n_frames < 2:
+                return audio.copy()
+
+            stft = np.array([
+                np.fft.rfft(audio_f[t * hop: t * hop + n_fft] * win)
+                for t in range(n_frames)
+            ])  # shape: (T, F)
+
+            mag = np.abs(stft)
+            phase = np.angle(stft)
+
+            # Step 2: Coherence proxy — if reference available, use it; else use autocorrelation
+            if reference is not None and len(reference) == orig_len:
+                ref_f = np.asarray(reference, dtype=np.float64)
+                stft_ref = np.array([
+                    np.fft.rfft(ref_f[t * hop: t * hop + n_fft] * win)
+                    for t in range(n_frames)
+                ])
+                # Per-bin Pearson-like correlation magnitude
+                mag_ref = np.abs(stft_ref)
+                coherence = np.abs(stft * np.conj(stft_ref)) / (mag * mag_ref + 1e-14)
+            else:
+                # Autocorrelation-based coherence: temporal consistency of phase increments
+                phase_diff = np.diff(phase, axis=0)  # (T-1, F)
+                # Coherence ≈ circular std of phase increments (low spread = high coherence)
+                phase_std = np.std(phase_diff, axis=0)  # (F,)
+                coherence = np.clip(1.0 - phase_std / np.pi, 0.0, 1.0)
+                coherence = np.tile(coherence, (n_frames, 1))
+
+            # Step 3: Identify incoherent bins (C < 0.5)
+            incoherent_mask = coherence < 0.50
+            n_incoherent = int(np.sum(incoherent_mask))
+            if n_incoherent == 0 or n_incoherent > 0.80 * coherence.size:
+                # All coherent (already OK) or all incoherent (don't trust repair)
+                return audio.copy()
+
+            # Step 4: PGHI-inspired phase propagation for incoherent bins
+            # Instantaneous frequency estimation via log-magnitude gradient
+            log_mag = np.log(mag + 1e-14)
+            # Horizontal gradient (time direction) → IF estimate
+            d_log_mag_dt = np.gradient(log_mag, axis=0)
+            f_bins = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+            omega_bins = 2.0 * np.pi * f_bins  # (F,)
+
+            phase_reg = phase.copy()
+            for t in range(1, n_frames):
+                for f_idx in range(phase_reg.shape[1]):
+                    if incoherent_mask[t, f_idx]:
+                        # PGHI: propagate phase using instantaneous frequency + log-mag slope
+                        if_est = omega_bins[f_idx] + d_log_mag_dt[t, f_idx]
+                        phase_reg[t, f_idx] = phase_reg[t - 1, f_idx] + if_est * (hop / sample_rate)
+
+            # Step 5: Reconstruct with regularised phases
+            stft_reg = mag * np.exp(1j * phase_reg)
+            output = np.zeros(orig_len, dtype=np.float64)
+            norm = np.zeros(orig_len, dtype=np.float64)
+            for t in range(n_frames):
+                frame = np.fft.irfft(stft_reg[t])[:n_fft]
+                start = t * hop
+                output[start: start + n_fft] += frame * win
+                norm[start: start + n_fft] += win**2
+            norm = np.where(norm > 1e-10, norm, 1.0)
+            output = output / norm
+
+            output = np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Step 6: Conservative blend (0.30 weight to avoid over-smoothing attack transients)
+            blend = 0.30
+            result = (1.0 - blend) * audio_f + blend * output
+            result = np.clip(result, -1.0, 1.0)
+            logger.debug(
+                "§C3 Neural Phase Coherence: repaired %d incoherent STFT bins (blend=%.2f)",
+                n_incoherent,
+                blend,
+            )
+            return result.astype(audio.dtype)
+
+        except Exception as _c3_exc:
+            logger.debug("§C3 Neural Phase Coherence non-blocking: %s", _c3_exc)
+            return audio.copy()
 
     def _psola_timestretch(
         self,

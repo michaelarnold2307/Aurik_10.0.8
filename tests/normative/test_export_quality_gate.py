@@ -1,4 +1,4 @@
-"""Normative tests for non-blocking best-effort export behavior."""
+"""Normative tests for recovery-gated export behavior."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from backend.core.export_workflow import export_audio
 
 @pytest.mark.normative
 @pytest.mark.timeout(20)
-def test_export_continues_when_quality_gate_fails(tmp_path) -> None:
+def test_export_requires_recovery_metadata_when_quality_gate_fails(tmp_path) -> None:
     audio = np.zeros(48_000, dtype=np.float32)
     quality_gate = {
         "passed": False,
@@ -26,10 +26,34 @@ def test_export_continues_when_quality_gate_fails(tmp_path) -> None:
         "required_gates": ["musical_goals", "pqs", "oqs"],
     }
 
-    path = export_audio(audio, 48_000, "best_effort", quality_gate=quality_gate, output_dir=str(tmp_path))
+    with pytest.raises(RuntimeError):
+        export_audio(audio, 48_000, "best_effort", quality_gate=quality_gate, output_dir=str(tmp_path))
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
+def test_export_allowed_after_recovery_attempt_with_degraded_status(tmp_path) -> None:
+    audio = np.zeros(48_000, dtype=np.float32)
+    quality_gate = {
+        "passed": False,
+        "fail_reason": "PQS unter Mindestschwelle",
+        "fail_reasons": [
+            {
+                "component": "quality_gate",
+                "error_code": "PQS_GATE_FAILED",
+                "severity": "blocked",
+                "exc_msg": "PQS unter Mindestschwelle",
+            }
+        ],
+        "required_gates": ["musical_goals", "pqs", "oqs"],
+        "recovery_attempted": True,
+        "best_possible_reached": False,
+    }
+
+    path = export_audio(audio, 48_000, "degraded", quality_gate=quality_gate, output_dir=str(tmp_path))
     assert path.endswith(".wav")
 
-    meta_path = tmp_path / "best_effort.json"
+    meta_path = tmp_path / "degraded.json"
     assert meta_path.exists()
     payload = meta_path.read_text(encoding="utf-8")
     assert "quality_gate_passed" in payload
@@ -37,6 +61,7 @@ def test_export_continues_when_quality_gate_fails(tmp_path) -> None:
     assert "quality_gate_degradation_status" in payload
     assert "quality_gate_fail_reasons" in payload
     assert "PQS_GATE_FAILED" in payload
+    assert '"export_strategy": "degraded"' in payload
 
 
 @pytest.mark.normative

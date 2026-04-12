@@ -459,9 +459,17 @@ class AudioForensicsAnalyzer:
         # Compare segments (limit to prevent explosion)
         max_comparisons = min(len(segments), 20)
 
+        def _safe_segment_corr(seg_a: np.ndarray, seg_b: np.ndarray) -> float:
+            a0 = seg_a.astype(np.float64, copy=False) - float(np.mean(seg_a))
+            b0 = seg_b.astype(np.float64, copy=False) - float(np.mean(seg_b))
+            denom = float(np.linalg.norm(a0) * np.linalg.norm(b0))
+            if denom <= 1e-12:
+                return 0.0
+            return float(np.dot(a0, b0) / denom)
+
         for i in range(max_comparisons):
             for j in range(i + 2, max_comparisons):  # Skip adjacent segments
-                correlation = np.corrcoef(segments[i], segments[j])[0, 1]
+                correlation = _safe_segment_corr(segments[i], segments[j])
 
                 # High correlation = possible copy-paste
                 if correlation > 0.95:

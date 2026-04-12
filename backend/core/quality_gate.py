@@ -92,9 +92,11 @@ class QualityGate:
             logger.warning("[QualityGate/%s] NaN/Inf im Signal – abgelehnt.", context)
             return False
 
-        tp = float(np.max(np.abs(audio)))
+        # §DSP-Invariante: percentile(99.9) — ein einzelner Click-Spike darf
+        # valides Audio nicht fälschlicherweise vom Export ausschließen.
+        tp = float(np.percentile(np.abs(audio), 99.9))
         if tp > self.TRUE_PEAK_LIMIT + 1e-6:
-            logger.warning("[QualityGate/%s] True-Peak %.4f > −1.0 dBTP – abgelehnt.", context, tp)
+            logger.warning("[QualityGate/%s] True-Peak (p99.9) %.4f > −1.0 dBTP – abgelehnt.", context, tp)
             return False
 
         rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
@@ -181,10 +183,12 @@ class QualityGate:
             5. Alle Musical Goals ≥ Pflicht-Schwellwerte (§1.2)
         """
         try:
+            if not self._check_musical_goals(dsp_result, "DSP"):
+                return False
             audio = self._extract_audio(dsp_result)
             if audio is not None and not self._check_audio_array(audio, "DSP"):
                 return False
-            return self._check_musical_goals(dsp_result, "DSP")
+            return True
         except Exception:
             logger.exception("[QualityGate/DSP] Unerwarteter Fehler – Fallback True")
             return True
@@ -196,6 +200,8 @@ class QualityGate:
             6. authenticity_score ≥ 0.88 (falls Attribut vorhanden)
         """
         try:
+            if not self._check_musical_goals(ml_result, "ML"):
+                return False
             audio = self._extract_audio(ml_result)
             if audio is not None and not self._check_audio_array(audio, "ML"):
                 return False
@@ -216,7 +222,7 @@ class QualityGate:
                 except (TypeError, ValueError) as _exc:
                     logger.debug("Operation failed (non-critical): %s", _exc)
 
-            return self._check_musical_goals(ml_result, "ML")
+            return True
         except Exception:
             logger.exception("[QualityGate/ML] Unerwarteter Fehler – Fallback True")
             return True

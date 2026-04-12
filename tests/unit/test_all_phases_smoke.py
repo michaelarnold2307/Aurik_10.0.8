@@ -94,7 +94,7 @@ _PHASE_REGISTRY = [
     ("phase_38_presence_boost", "PresenceBoost", False, False),
     ("phase_39_air_band_enhancement", "AirBandEnhancement", False, False),
     ("phase_40_loudness_normalization", "LoudnessNormalizationPhase", False, False),
-    ("phase_41_output_format_optimization", "OutputFormatOptimization", False, True),  # Resampler ändert Länge
+    ("phase_41_output_format_optimization", "OutputFormatOptimization", False, False),
     ("phase_42_vocal_enhancement", "VocalEnhancement", False, False),
     ("phase_43_ml_deesser", "MLDeEsserPhase", False, False),
     ("phase_44_guitar_enhancement", "GuitarEnhancementPhase", False, False),

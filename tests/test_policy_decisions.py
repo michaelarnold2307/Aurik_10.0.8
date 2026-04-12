@@ -114,7 +114,8 @@ def test_denoise_selections():
 
         results[test["name"]] = match
 
-    return results
+    failed = [name for name, ok in results.items() if not ok]
+    assert not failed, f"Policy test(s) failed: {failed}"
 
 
 def test_repair_selections():
@@ -152,7 +153,8 @@ def test_repair_selections():
 
         results[test["name"]] = match
 
-    return results
+    failed = [name for name, ok in results.items() if not ok]
+    assert not failed, f"Policy test(s) failed: {failed}"
 
 
 def test_separation_selections():
@@ -189,7 +191,8 @@ def test_separation_selections():
 
         results[test["name"]] = match
 
-    return results
+    failed = [name for name, ok in results.items() if not ok]
+    assert not failed, f"Policy test(s) failed: {failed}"
 
 
 def main():
@@ -198,39 +201,25 @@ def main():
     logger.info("POLICY-ENGINE DECISION LOGIC TEST SUITE")
     logger.info("=" * 60)
 
-    all_results = {}
-
-    # Test denoise selections
-    all_results.update(test_denoise_selections())
-
-    # Test repair selections
-    all_results.update(test_repair_selections())
-
-    # Test separation selections
-    all_results.update(test_separation_selections())
-
-    # Summary
-    logger.info("\n" + "=" * 60)
-    logger.info("TEST RESULTS SUMMARY")
-    logger.info("=" * 60)
-
-    total_pass = sum(all_results.values())
-    total_tests = len(all_results)
-
-    for test_name, passed in all_results.items():
-        status = "✅ PASS" if passed else "❌ FAIL"
-        logger.info(f"{status}: {test_name}")
+    failed_count = 0
+    total = 3
+    for test_fn in (test_denoise_selections, test_repair_selections, test_separation_selections):
+        try:
+            test_fn()
+            logger.info("✅ PASS: %s", test_fn.__name__)
+        except AssertionError as e:
+            logger.warning("❌ FAIL: %s — %s", test_fn.__name__, e)
+            failed_count += 1
 
     logger.info("\n" + "=" * 60)
-    logger.info(f"TOTAL: {total_pass}/{total_tests} tests passed ({total_pass / total_tests * 100:.0f}%)")
+    logger.info(f"TOTAL: {total - failed_count}/{total} tests passed")
     logger.info("=" * 60)
 
-    if total_pass == total_tests:
+    if failed_count == 0:
         logger.info("\n🎉 ALL POLICY TESTS PASSED!")
-        logger.info("Policy-Engine is making correct decisions!")
         return 0
     else:
-        logger.warning("\n⚠️  Some policy tests failed.")
+        logger.warning("\n⚠️  %d test(s) failed.", failed_count)
         return 1
 
 
