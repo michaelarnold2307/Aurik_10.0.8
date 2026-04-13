@@ -318,7 +318,7 @@ HF-Energie-Ratio ersetzt durch p95/p50-Crest-Factor. Noise hebt p50-Median; musi
 **[RELEASE_MUST] §2.29b PMGG Stable-Metric-Invariante (v9.10.79)**:
 Metriken mit ML-zustandsabhängigem Gewicht **NIEMALS** in `_PRECISE_METRICS` für PMGG-Delta-Checks aufnehmen.
 
-- **Root-Cause `NatuerlichkeitMetric`**: 
+- **Root-Cause `NatuerlichkeitMetric`**:
 CREPE-Load-State ändert Gewichte (w_crepe 0.0 → 0.18) zwischen `scores_before` (CREPE nicht geladen) und `scores_after` (CREPE nun geladen) → Pseudo-Regression Δ ≈ 0.15–0.28 auf unverändertem Audio → false P1-Kaskade → Phase_03 best-effort @ 5.6 % Wet → Noise-Floor −55 dBFS statt −72 dBFS → Mikrodetails verdeckt → **Tiefen-Immersion zerstört**.
 - `NatuerlichkeitMetric` läuft **ausschließlich** im Export-Gate (`MusicalGoalsChecker`) — nie in PMGG-Delta-Checks. Schwellwert ≥ 0.90 bleibt dort unverändert normativ.
 - **§9.7.8 Audio-Cap**: `_apply_precise_metric_overrides` kappt auf **2.5 s** — ausreichend für stationäre Spektral-/Chroma-/Transient-Metriken; verhindert NMF/Onset-Runs auf Langaudio (> 2 s/Call auf 60 s-Material).
@@ -727,7 +727,7 @@ Studio 2026: Stem-Sep → Vocal-AI → Instrumente → [Reference Mastering] →
 | Mikro-Dynamik | Pearson LUFS-Profil (400 ms) ≥ 0.92 |
 | Emotionaler Dynamik-Bogen (≥ 30 s) | Arousal-Pearson ≥ 0.85, Valence-Pearson ≥ 0.80 |
 | Emotionaler-Bogen-Korrektur (post-MDEM) | `correct_emotional_arc()` — Makro-Gain-Korrektur bei Bogen-Degradation |
-| FeedbackChain-Rollback | MOS_neu − MOS_alt | > 0.05 → sofortiger Rollback |
+| FeedbackChain-Rollback | \|MOS_neu − MOS_alt\| > 0.05 → sofortiger Rollback |
 
 ## Psychoakustik & Gänsehaut-Prinzipien (§8.3 — bindend)
 

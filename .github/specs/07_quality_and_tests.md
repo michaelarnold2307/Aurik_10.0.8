@@ -129,9 +129,13 @@ item_seed = _sid_offset(scenario_id)  # RICHTIG
 | Chroma-Korrelation (Tonart) | Pearson ≥ 0.95 |
 | **Pass-Through (sauberes Material)** | PQS-MOS-Verlust ≤ 0.05, Goals stabil ± 0.02 |
 | **Rauschboden (Studio-2026)** | ≤ −72 dBFS, A-gew. ≤ −75 dB(A), 0 Musical-Noise-Events |
+| **Rauschtextur-Kohärenz (Restoration)** | `noise_texture_coherence ≥ 0.80` (§4.7) — Restrauschen muss Carrier-Profil entsprechen |
 | **Temporale Kohärenz** | MOS-Spanne über 10-s-Segmente ≤ 0.30, σ ≤ 0.15 |
 | **Stereo-Authentizität** | Mono-Ären M/S-Korrelation nach Restaur. ≥ 0.97 |
 | **HF-Kumulativ-Limit** | Presence + Air kumulativ ≤ +4 dB (Listening-Fatigue) |
+| **BW-Material-Ceiling (Restoration)** | Output-BW ≤ `_MATERIAL_BW_CEILING_HZ[material]` (§6.2c) |
+| **DR-Material-Ceiling (Restoration)** | Dynamic Range ≤ `_MATERIAL_DR_CEILING_DB[material]` (§6.2b) |
+| **Carrier-Recovery-Ratio vorhanden** | `metadata["carrier_chain_recovery_ratio"]` existiert (Pflichtfeld §0d) |
 | Mikro-Dynamik-Erhalt | Pearson LUFS-Profil (400 ms) ≥ 0.92, Crest-Faktor ≤ 1.5 dB |
 | Tests grün | Alle bestehenden Pytest-IDs (CI: `pytest --collect-only -q \| tail -1`) |
 
@@ -693,3 +697,212 @@ assert config.enable_phase_gate is True
 # Success gewertet werden.
 assert all("action" in e for e in (result.phase_gate_log or []))
 ```
+
+---
+
+## §5.9 [RELEASE_MUST] QualityGate Early-Exit-Optimierung (v9.11.14)
+
+`check_dsp()` und `check_ml()` in `backend/core/quality_gate.py` dürfen teure STFT/SNR-Analysen
+(`_check_audio_array`) **erst nach** einer positiven Musical-Goals-Prüfung ausführen.
+
+**Invariante**:
+
+```python
+def check_dsp(self, audio, sr, context):
+    result = self._check_musical_goals(context)
+    if result.failed:
+        return result  # sofort zurück — keine STFT-Arbeit
+    return result.merge(self._check_audio_array(audio, sr))
+```
+
+**Rationale**: Musical-Goals-Failures treten häufiger auf als SNR/STFT-Failures.
+Frühes Return spart STFT-Berechnungszeit (50–200 ms je Messung).
+
+**Testpflicht**: `tests/unit/test_quality_gate_early_exit.py` — verifiziert,
+dass `_check_audio_array` nach Musical-Goal-Failure nicht aufgerufen wird.
+
+## §5.10 [RELEASE_MUST] TFS-Guard Hilbert-After-Voiced-Gate (v9.11.14)
+
+`backend/core/tfs_preservation_guard.py` darf teure Analytic-Transforms (Hilbert-Phasenextraktion + `filtfilt` Band-Filterung) **erst nach** dem Voice-Energy-Gate ausführen.
+
+**Invariante**:
+
+```python
+for band_idx in range(n_bands):
+    # 1. Original-Band-Energie prüfen (günstig):
+    orig_band = bandpass_filter(original, band_frequencies[band_idx])
+    frame_energies = compute_frame_energy(orig_band)
+    voiced_frames = np.sum(frame_energies > voiced_threshold_db)
+    if voiced_frames < 3:
+        continue  # Band überspringen — erst dann kein filtfilt + Hilbert
+    # 2. Teure Hilbert-Extraktion (nur bei ausreichend Voiced-Frames):
+    restored_band = bandpass_filter(restored, band_frequencies[band_idx])
+    # ... filtfilt + Hilbert ...
+```
+
+**Allgemeines Muster**: Teure Analytic-Transforms IMMER nach dem günstigsten
+Admissibility-Gate platzieren.
+
+**Testpflicht**: `tests/unit/test_tfs_preservation_guard.py`.
+
+---
+
+## §8.4a Test-Implementierung — Patterns, Pitfalls & CI-Gates (konsolidiert aus Skills test-writing + quality-benchmark)
+
+### Test-Verzeichnisstruktur
+
+| Ordner | Inhalt | Marker | Timeout |
+| --- | --- | --- | --- |
+| `tests/unit/` | Schnelle Unit-Tests | — | ≤ 30 s |
+| `tests/musical_goals/` | 14-Goal-Schwellwert-Tests | — | ≤ 30 s |
+| `tests/integration/` | Modul-Übergreifende Tests | — | variabel |
+| `tests/normative/` | CI-Gate-Tests (RELEASE_MUST) | — | variabel |
+| `tests/regression/` | Regressions-Absicherung | — | variabel |
+| `tests/e2e/` | End-to-End mit echtem Audio | `e2e` | variabel |
+
+### Marker-System
+
+| Marker | Bedeutung | Standard-Suite? |
+| --- | --- | --- |
+| `ml` | ML-Modell wird geladen | NEIN (nur `--run-heavy-tests`) |
+| `slow` | Timeout > 30 s | NEIN (nur `--run-heavy-tests`) |
+| `e2e` | End-to-End mit I/O | NEIN (explizit) |
+| (kein Marker) | Standard Unit-Test | JA |
+
+`conftest.py` markiert automatisch `ml`/`slow` basierend auf Testinhalten.
+
+### Pflicht-Test-Taxonomie (≥ 35 pro Kernmodul)
+
+1. **Shape** — Mono, Stereo, verschiedene Längen
+2. **NaN/Inf** — Input und Output
+3. **Bounds** — Clip [-1, 1]
+4. **Edge-Cases** — leeres Audio, 1 Sample, sehr langes Audio
+5. **Mono UND Stereo** — beide Orientierungen `(2,N)` und `(N,2)` testen
+6. **Musical Goals** — kein Ziel nach Modul schlechter
+7. **GrooveMetric** — DTW ≤ 8 ms RMS
+8. **SOFT_SATURATION** — nicht als CLIPPING detektiert
+9. **Pass-Through** — SNR > 40 dB → PQS-MOS-Verlust ≤ 0.05
+10. **quality_estimate** — ≥ 0.55 im E2E
+11. **Sample-Rate** — `assert sr == 48000` löst `AssertionError` bei 44100
+
+### Test-Pattern (Vorlage)
+
+```python
+import numpy as np
+import pytest
+
+class TestPhaseXX:
+    @pytest.fixture
+    def mono_audio(self):
+        return np.random.randn(48000 * 3).astype(np.float32) * 0.5
+
+    @pytest.fixture
+    def stereo_audio(self):
+        return np.random.randn(2, 48000 * 3).astype(np.float32) * 0.5
+
+    def test_output_shape_mono(self, mono_audio):
+        result, meta = execute(mono_audio, 48000)
+        assert result.shape == mono_audio.shape
+
+    def test_no_nan_inf(self, mono_audio):
+        result, _ = execute(mono_audio, 48000)
+        assert np.isfinite(result).all()
+
+    def test_clipped_output(self, mono_audio):
+        result, _ = execute(mono_audio, 48000)
+        assert np.max(np.abs(result)) <= 1.0
+
+    def test_strength_zero_passthrough(self, mono_audio):
+        result, _ = execute(mono_audio, 48000, strength=0.0)
+        np.testing.assert_array_almost_equal(result, mono_audio, decimal=5)
+
+    def test_metadata_fields(self, mono_audio):
+        _, meta = execute(mono_audio, 48000)
+        assert "phase_id" in meta
+        assert "applied" in meta
+```
+
+### 6 bekannte Test-Pitfalls (aus realen Fehlern)
+
+**1. Budget-Tests: `is_system_thrashing` immer mocken**
+
+```python
+def test_budget_logic(monkeypatch):
+    import backend.core.ml_memory_budget as budget
+    monkeypatch.setattr(budget, "is_system_thrashing", lambda: False)
+```
+
+**2. `np.corrcoef` auf near-constant → RuntimeWarning**
+Stets guarded correlation: `dot(a,b) / (||a||·||b|| + ε)` — NaN-safe, kein Warning.
+
+**3. `resampy`/`librosa` `pkg_resources`-Warnings unter `-W error`**
+Upgrade auf `resampy >= 0.4.3`.
+
+**4. Teure Transforms nach günstigstem Gate**
+Hilbert, `filtfilt`, STFT immer NACH Frame-Energie/Voiced-Gate — nicht davor.
+
+**5. `scipy.signal.stft(boundary='reflect')` → ValueError**
+Scipy < 1.12: `boundary='even'` verwenden.
+
+**6. Stereo-Array-Orientierung**
+Fixtures mit `(2,N)` UND `(N,2)` testen — viele Bugs nur bei einer Orientierung.
+
+### CI-Gate-Tests (RELEASE_MUST)
+
+| Test-Datei | Prüft |
+| --- | --- |
+| `test_no_docker_in_production_paths.py` | Kein Docker/Cloud |
+| `test_competitive_ci_gate.py` | OQS vs iZotope RX 11 |
+| `test_performance_budget_ci_gate.py` | RT-Limits |
+| `test_combined_ml_memory_budget.py` | ML-Budget ≤ 12 GB |
+| `test_hybrid_release_mode.py` | Fallback-Kaskaden |
+| `test_full_pipeline_determinism.py` | Bitnahe Reproduzierbarkeit |
+| `test_competitive_stratified_gate.py` | Material × Defektklasse |
+| `test_stability_invariants.py` | 9 Stabilitäts-Punkte |
+| `test_lyrics_guided_enhancement_gate.py` | §2.36 aktiv + Modellpfade |
+| `test_external_mushra_artifact_contract.py` | Mini-MUSHRA Artefakt |
+
+### OQS — Berechnung & Stufen
+
+Modul: `core/mushra_evaluator.py` (algorithmische PEAQ-Approximation — **kein** ITU-R-MUSHRA).
+In externen Berichten: „OQS (algorithmisch)".
+
+| Stufe | Score | Pflicht |
+| --- | --- | --- |
+| Good (B) | ≥ 80 | **[RELEASE_MUST]** — Pflicht für jede neue Phase/Plugin |
+| Excellent (A) | ≥ 91 | Exzellenz-Label — kein harter Gate-Wert |
+
+**[TARGET_2026]** Studio-2026-Ziel: OQS ≥ **88** — Roadmap-Ziel, kein Release-Blocker.
+
+### AMRB-Details
+
+**Seeding-Invariante**: `_sid_offset(sid)` via **MD5** — KEIN `hash(sid)` (Python-zufällig).
+Nightly: `n_items ≥ 5`. Baseline: iZotope RX 11 (commercial) mit OQS 71.0.
+
+### §2.40 Stratifiziertes Konkurrenz-Gate
+
+Aurik muss **pro Material UND pro Defektklasse** bestehen:
+`tape/vinyl/shellac/digital/vocal × hiss/crackle/dropout/reverb/hum/codec`.
+Release failt bei regressiver Zelle auch wenn Gesamt-OQS besteht.
+
+### Material-MOS-Interpretation
+
+| Material | MOS-Minimum | Physikalische Begründung |
+| --- | --- | --- |
+| cd_digital / dat / mp3_high / aac | ≥ 4.5 | Geringes Defekt-Potential, hohe Erwartung |
+| Tape | ≥ 4.2 | Moderate Bandbreite, Hiss-Removal stabil |
+| Vinyl | ≥ 4.0 | RIAA-Inversion + Crackle-Grenzen |
+| Shellac | ≥ 3.8 | Physikalische Bandbreite ≤ 7 kHz |
+
+### §8.4 Externes Mini-MUSHRA-Protokoll
+
+Bei Änderungen an Kernphasen, PMGG, DefectScanner oder heavy ML-Fallbacks:
+
+- Mindestens 6 Szenarien (2 Vocal), mindestens 8 Hörer
+- Pflichtbericht als Artefakt (Scores, Konfidenzen, Delta)
+
+### Era-GP-Warmstart-Distributionen (§2.14)
+
+- ≤ 1940: `noise_reduction_strength ~ N(0.90, 0.05)`
+- ≤ 1960: `N(0.75, 0.08)`
+- ≥ 1970: `N(0.50, 0.10)`
