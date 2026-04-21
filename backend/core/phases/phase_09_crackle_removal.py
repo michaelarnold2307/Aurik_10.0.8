@@ -420,20 +420,36 @@ class CrackleRemovalPhase(PhaseInterface):
             _inp_shape[1] if (len(_inp_shape) > 1 and isinstance(_inp_shape[1], int) and _inp_shape[1] > 0) else None
         )
 
-        if _fixed_len is not None and len(audio_norm) != _fixed_len:
-            # Chunking-Loop: zero-pad letzten Chunk
-            _chunks_out: list[np.ndarray] = []
-            for _ci in range(0, len(audio_norm), _fixed_len):
-                _chunk = audio_norm[_ci : _ci + _fixed_len]
-                if len(_chunk) < _fixed_len:
-                    _chunk = np.pad(_chunk, (0, _fixed_len - len(_chunk)))
-                _cout = session.run(None, {input_name: _chunk[np.newaxis, :]})[0].squeeze(0)
-                _chunks_out.append(_cout[: min(_fixed_len, len(audio_norm) - _ci)])
-            restored_48k = (np.concatenate(_chunks_out) * max_val).astype(np.float32)
-        else:
-            audio_input = audio_norm[np.newaxis, :]  # [1, n_samples]
-            outputs = session.run(None, {input_name: audio_input})
-            restored_48k = (outputs[0].squeeze(0) * max_val).astype(np.float32)
+        # PLM Active-Guard: verhindert Emergency-Eviction während aktiver Inferenz (§VERBOTEN)
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("BanquetVinyl", True)
+        except Exception:
+            _plm = None
+
+        try:
+            if _fixed_len is not None and len(audio_norm) != _fixed_len:
+                # Chunking-Loop: zero-pad letzten Chunk
+                _chunks_out: list[np.ndarray] = []
+                for _ci in range(0, len(audio_norm), _fixed_len):
+                    _chunk = audio_norm[_ci : _ci + _fixed_len]
+                    if len(_chunk) < _fixed_len:
+                        _chunk = np.pad(_chunk, (0, _fixed_len - len(_chunk)))
+                    _cout = session.run(None, {input_name: _chunk[np.newaxis, :]})[0].squeeze(0)
+                    _chunks_out.append(_cout[: min(_fixed_len, len(audio_norm) - _ci)])
+                restored_48k = (np.concatenate(_chunks_out) * max_val).astype(np.float32)
+            else:
+                audio_input = audio_norm[np.newaxis, :]  # [1, n_samples]
+                outputs = session.run(None, {input_name: audio_input})
+                restored_48k = (outputs[0].squeeze(0) * max_val).astype(np.float32)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("BanquetVinyl", False)
+                except Exception:
+                    pass
 
         # --- Zurück auf Original-SR resampeln ---
         if need_resample:

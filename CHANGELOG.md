@@ -2,6 +2,18 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.30 — PLM set_active für BanquetVinyl, VERSA Default-Fix (Apr 2026)
+
+### Änderungen
+
+**`backend/core/phases/phase_09_crackle_removal.py`** — PLM Active-Guard fehlte für BANQUET ONNX-Inferenz:
+Emergency-Eviction während aktiver `session.run()` konnte OOM-Crash auslösen.
+`plm.set_active("BanquetVinyl", True)` vor Inferenz, `False` in `finally`-Block (§VERBOTEN).
+
+**`backend/core/feedback_chain.py`** — `use_versa_in_loop: bool = False` → `True`:
+VERSA-Default war `False`; laut §VERBOTEN muss VERSA immer aktiv sein (§2.44).
+UV3 setzte es bereits explizit, aber alle anderen Aufrufer wären ohne VERSA gelaufen.
+
 ## Version 9.11.29 — corrcoef NaN-Guard: 11 weitere DSP/Backend-Dateien (Apr 2026)
 
 ### Ziel

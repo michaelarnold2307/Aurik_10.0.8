@@ -48,7 +48,7 @@ class FeedbackChain:
         material: str = "auto",
         use_mert: bool = False,
         use_pqs_in_loop: bool = False,
-        use_versa_in_loop: bool = False,
+        use_versa_in_loop: bool = True,  # §VERBOTEN: VERSA muss immer aktiv sein (§2.44)
         max_retries: int | None = None,
         restorability_score: float = 50.0,
         defect_severity_mean: float = 0.3,
