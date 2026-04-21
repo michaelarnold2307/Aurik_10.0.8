@@ -2,6 +2,18 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.34 — PLM set_active Guards DiffWave/DacEncoder/DacDecoder/BEATs/AudioLDM2/BasicPitch/CQTdiff+/WhisperTiny/UTMOSv2 (Tiefenanalyse R7) (Apr 2026)
+
+- **`plugins/diffwave_plugin.py` `_diffuse()`**: `session.run()` ohne PLM-Guard → set_active("DiffWave") try/finally
+- **`plugins/dac_plugin.py` `encode()` + `decode()`**: 2× `session.run()` ohne PLM-Guard → set_active("DacEncoder"/"DacDecoder") je try/finally
+- **`plugins/beats_plugin.py` `_infer_onnx()`**: `session.run()` ohne PLM-Guard → set_active("BEATs") try/finally
+- **`plugins/audioldm2_plugin.py` `_run_onnx()`**: `session.run()` ohne PLM-Guard → set_active("AudioLDM2") try/finally
+- **`plugins/basicpitch_plugin.py` `_analyze_onnx()`**: 2× `session.run()` ohne PLM-Guard → set_active("BasicPitch") try/finally
+- **`plugins/cqtdiff_plugin.py` `_inpaint_diffusion()`**: `session.run()` ohne PLM-Guard → set_active("CQTdiff+") try/finally
+- **`plugins/lyrics_transcriber_plugin.py` `_transcribe()`**: `session.run()` ohne PLM-Guard → set_active("WhisperTiny") try/finally
+- **`plugins/utmos_plugin.py` `_pqs_onnx()`**: `session.run()` ohne PLM-Guard → set_active("UTMOSv2") try/finally
+- Alle 9 Plugins: Emergency-Eviction während aktiver ONNX-Inferenz → OOM-Crash-Risiko beseitigt (§4.6b)
+
 ## Version 9.11.33 — PLM set_active Guards RMVPE/FCPE/Vocos/BigVGAN/ResembleEnhance/DeepFormants (Tiefenanalyse R6) (Apr 2026)
 
 - **`plugins/rmvpe_plugin.py` `_analyze_onnx()`**: `session.run()` ohne PLM-Guard → set_active("RMVPE") try/finally

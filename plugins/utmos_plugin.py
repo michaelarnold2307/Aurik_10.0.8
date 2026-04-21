@@ -448,6 +448,14 @@ class UTMOSPlugin:
         sr: int,
     ) -> tuple[float, str, float, bool, dict[str, float]]:
         """UTMOS-Inferenz mit 16-kHz-Resampling und Musik-Bias-Korrektur."""
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("UTMOSv2", True)
+        except Exception:
+            pass
         try:
             # Resample auf 16 kHz (UTMOS-intern)
             audio_16k = self._resample_to_16k(audio, sr)
@@ -485,6 +493,12 @@ class UTMOSPlugin:
         except Exception as exc:
             logger.warning("UTMOS Inferenz-Fehler: %s — PQS-DSP-Fallback", exc)
             return self._estimate_pqs_dsp(audio, sr)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("UTMOSv2", False)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # UTMOSv2 PyTorch-Fold-Pfad (lokale Modelle)

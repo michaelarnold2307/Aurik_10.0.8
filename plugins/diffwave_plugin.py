@@ -104,44 +104,59 @@ class DiffwavePlugin:
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
     def _diffuse(self, mono: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
-        N = len(mono)
-        chunks = []
-        start = 0
-        while start < N:
-            end = min(start + _AUDIO_LEN, N)
-            chunk = np.zeros(_AUDIO_LEN, np.float32)
-            chunk[: end - start] = mono[start:end]
-            mel = _mel_spec(chunk, _SR)
-            mel_in = mel[None].astype(np.float32)  # [1,80,64]
-            noisy = np.random.randn(_AUDIO_LEN).astype(np.float32) * 0.1
-            audio_in = noisy[None]  # [1, 16384]
-            for step in range(_N_STEPS, 0, -1):
-                step_in = np.array([[step]], dtype=np.int64)
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("DiffWave", True)
+        except Exception:
+            pass
+        try:
+            N = len(mono)
+            chunks = []
+            start = 0
+            while start < N:
+                end = min(start + _AUDIO_LEN, N)
+                chunk = np.zeros(_AUDIO_LEN, np.float32)
+                chunk[: end - start] = mono[start:end]
+                mel = _mel_spec(chunk, _SR)
+                mel_in = mel[None].astype(np.float32)  # [1,80,64]
+                noisy = np.random.randn(_AUDIO_LEN).astype(np.float32) * 0.1
+                audio_in = noisy[None]  # [1, 16384]
+                for step in range(_N_STEPS, 0, -1):
+                    step_in = np.array([[step]], dtype=np.int64)
+                    try:
+                        out = np.asarray(
+                            self._session.run(
+                                None,
+                                {
+                                    "audio": audio_in,
+                                    "step": step_in,
+                                    "spectrogram": mel_in,
+                                },
+                            )[0],
+                            dtype=np.float32,
+                        )  # [1,1,16384]
+                        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+                        audio_in = out[:, 0:1, :] if out.ndim == 3 else out
+                    except Exception as exc:
+                        logger.debug("DiffWave step %d Fehler: %s", step, exc)
+                        break
+                denoised = (audio_in[0, 0] if audio_in.ndim == 3 else audio_in[0])[: end - start]
+                if mask is not None:
+                    m = mask[start:end]
+                    orig_chunk = mono[start:end]
+                    denoised = np.where(m[: len(denoised)], denoised, orig_chunk)
+                chunks.append(denoised)
+                start = end
+            return np.concatenate(chunks)[:N].astype(np.float32)
+        finally:
+            if _plm is not None:
                 try:
-                    out = np.asarray(
-                        self._session.run(
-                            None,
-                            {
-                                "audio": audio_in,
-                                "step": step_in,
-                                "spectrogram": mel_in,
-                            },
-                        )[0],
-                        dtype=np.float32,
-                    )  # [1,1,16384]
-                    out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
-                    audio_in = out[:, 0:1, :] if out.ndim == 3 else out
-                except Exception as exc:
-                    logger.debug("DiffWave step %d Fehler: %s", step, exc)
-                    break
-            denoised = (audio_in[0, 0] if audio_in.ndim == 3 else audio_in[0])[: end - start]
-            if mask is not None:
-                m = mask[start:end]
-                orig_chunk = mono[start:end]
-                denoised = np.where(m[: len(denoised)], denoised, orig_chunk)
-            chunks.append(denoised)
-            start = end
-        return np.concatenate(chunks)[:N].astype(np.float32)
+                    _plm.set_active("DiffWave", False)
+                except Exception:
+                    pass
 
 
 def _mel_spec(mono, sr, n_mels=80, n_fft=1024, hop=256, T=64):

@@ -372,6 +372,14 @@ class DacPlugin:
         # Pad to stride multiple
         audio, _ = _pad_to_stride(audio)
 
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("DacEncoder", True)
+        except Exception:
+            pass
         try:
             outputs = self._enc_session.run(
                 ["audio_codes"],
@@ -391,6 +399,12 @@ class DacPlugin:
                 n_frames=frames,
                 model_used="unavailable",
             )
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("DacEncoder", False)
+                except Exception:
+                    pass
 
     def decode(self, codes: np.ndarray) -> DacDecodeResult:
         """Decode discrete DAC codes back to audio.
@@ -415,6 +429,14 @@ class DacPlugin:
         if codes.ndim == 2:
             codes = codes[np.newaxis, :]  # [1, 9, T]
 
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("DacDecoder", True)
+        except Exception:
+            pass
         try:
             outputs = self._dec_session.run(
                 ["audio_values"],
@@ -439,6 +461,12 @@ class DacPlugin:
                 sr=_AURIK_SR,
                 model_used="unavailable",
             )
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("DacDecoder", False)
+                except Exception:
+                    pass
 
     def round_trip(self, audio: np.ndarray, sr: int) -> DacRoundTripResult:
         """Encode then decode (round-trip). Used for conditioning context and quality checks.

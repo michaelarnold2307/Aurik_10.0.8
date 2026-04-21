@@ -235,6 +235,14 @@ class LyricsTranscriber:
 
         # 3. ONNX-Encoder-Forward
         encoder_out: np.ndarray | None = None
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("WhisperTiny", True)
+        except Exception:
+            pass
         try:
             input_name = self._session.get_inputs()[0].name  # type: ignore[union-attr]
             outputs = self._session.run(None, {input_name: mel})  # type: ignore[union-attr]
@@ -243,6 +251,12 @@ class LyricsTranscriber:
                 encoder_out = np.nan_to_num(encoder_out, nan=0.0, posinf=0.0, neginf=0.0)
         except Exception as exc:
             logger.debug("Whisper-Encoder fehlgeschlagen: %s", exc)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("WhisperTiny", False)
+                except Exception:
+                    pass
 
         # 4. Segmentierung mit Encoder-Aktivierungen
         words = self._segment_with_encoder(audio_16k, encoder_out, duration_s)

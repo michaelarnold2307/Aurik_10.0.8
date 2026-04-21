@@ -150,45 +150,60 @@ class AudioLDM2Plugin:
 
     def _run_onnx(self, prompt: str, n_samples: int, guidance: float) -> np.ndarray:
         """Versuche ONNX-Inferenz mit bekannten Eingabe-Formaten."""
-        session = self._session
-        if session is None:
-            raise RuntimeError("ONNX-Session nicht initialisiert")
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
 
-        # Versuch 1: Modell erwartet kein Text-Embedding, nur Länge + Guidance
-        if len(self._input_names) == 0:
-            raise RuntimeError("Keine Modelleingaben definiert")
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("AudioLDM2", True)
+        except Exception:
+            pass
+        try:
+            session = self._session
+            if session is None:
+                raise RuntimeError("ONNX-Session nicht initialisiert")
 
-        # Generische Eingabe-Konstruktion: fille alle fehlenden Eingaben mit Nullen
-        feeds: dict[str, np.ndarray] = {}
-        for inp in session.get_inputs():
-            name = inp.name
-            shape = inp.shape
-            dtype = inp.type
+            # Versuch 1: Modell erwartet kein Text-Embedding, nur Länge + Guidance
+            if len(self._input_names) == 0:
+                raise RuntimeError("Keine Modelleingaben definiert")
 
-            # Ersetze None/dynamische Dimensionen
-            resolved = []
-            for dim in shape:
-                if isinstance(dim, int) and dim > 0:
-                    resolved.append(dim)
-                else:
-                    resolved.append(1)  # Batch-Dim = 1
+            # Generische Eingabe-Konstruktion: fille alle fehlenden Eingaben mit Nullen
+            feeds: dict[str, np.ndarray] = {}
+            for inp in session.get_inputs():
+                name = inp.name
+                shape = inp.shape
+                dtype = inp.type
 
-            np_dtype = np.float32
-            if "int" in str(dtype):
-                np_dtype = np.int64
+                # Ersetze None/dynamische Dimensionen
+                resolved = []
+                for dim in shape:
+                    if isinstance(dim, int) and dim > 0:
+                        resolved.append(dim)
+                    else:
+                        resolved.append(1)  # Batch-Dim = 1
 
-            feeds[name] = np.zeros(resolved, dtype=np_dtype)
+                np_dtype = np.float32
+                if "int" in str(dtype):
+                    np_dtype = np.int64
 
-        out = session.run(None, feeds)
-        if out and isinstance(out[0], np.ndarray):
-            result = out[0].flatten().astype(np.float32)
-            result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
-            # Auf n_samples skalieren
-            if len(result) < n_samples:
-                result = np.tile(result, math.ceil(n_samples / len(result)))
-            return np.clip(result[:n_samples], -1.0, 1.0)
+                feeds[name] = np.zeros(resolved, dtype=np_dtype)
 
-        raise RuntimeError("Unbekanntes Ausgabe-Format")
+            out = session.run(None, feeds)
+            if out and isinstance(out[0], np.ndarray):
+                result = out[0].flatten().astype(np.float32)
+                result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+                # Auf n_samples skalieren
+                if len(result) < n_samples:
+                    result = np.tile(result, math.ceil(n_samples / len(result)))
+                return np.clip(result[:n_samples], -1.0, 1.0)
+
+            raise RuntimeError("Unbekanntes Ausgabe-Format")
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("AudioLDM2", False)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     def generate(

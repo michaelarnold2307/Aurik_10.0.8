@@ -257,6 +257,14 @@ class CQTdiffPlusPlugin:
         context: np.ndarray | None,
     ) -> np.ndarray:
         """Diffusions-Inpainting via CQT-Score-Netzwerk (ONNX)."""
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("CQTdiff+", True)
+        except Exception:
+            pass
         try:
             session = self._session
             if session is None:
@@ -290,6 +298,12 @@ class CQTdiffPlusPlugin:
         except Exception as exc:
             logger.warning("CQTdiff Diffusions-Fehler: %s — DSP-Fallback", exc)
             return self._inpaint_dsp_fallback(audio, sr, gap_start, gap_end)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("CQTdiff+", False)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # DSP-Fallback (Consistent Wiener + lineares Crossfade)

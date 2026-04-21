@@ -158,108 +158,123 @@ class BasicPitchPlugin:
         - Finds a 2D/3D output tensor with pitch-like bins.
         - Converts bin index to MIDI range [21, 108].
         """
-        session = self._session
-        if session is None:
-            raise RuntimeError("BasicPitch ONNX-Session nicht initialisiert")
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
 
-        audio_m = _resample(audio, sr, _MODEL_SR)
-        inp = session.get_inputs()[0]
-        in_name = inp.name
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("BasicPitch", True)
+        except Exception:
+            pass
+        try:
+            session = self._session
+            if session is None:
+                raise RuntimeError("BasicPitch ONNX-Session nicht initialisiert")
 
-        # Detect whether model expects a fixed-length input (static shape).
-        # BasicPitch ONNX exports often require exactly N samples per call.
-        _fixed_chunk_len: int | None = None
-        if inp.shape and len(inp.shape) >= 2:
-            _dim = inp.shape[1]
-            if isinstance(_dim, int) and _dim > 0:
-                _fixed_chunk_len = _dim
+            audio_m = _resample(audio, sr, _MODEL_SR)
+            inp = session.get_inputs()[0]
+            in_name = inp.name
 
-        # Some BasicPitch ONNX exports expect rank-3 input [B, T, 1]
-        expected_rank = len(inp.shape) if inp.shape else 0
-        out_names = [o.name for o in session.get_outputs()]
+            # Detect whether model expects a fixed-length input (static shape).
+            # BasicPitch ONNX exports often require exactly N samples per call.
+            _fixed_chunk_len: int | None = None
+            if inp.shape and len(inp.shape) >= 2:
+                _dim = inp.shape[1]
+                if isinstance(_dim, int) and _dim > 0:
+                    _fixed_chunk_len = _dim
 
-        def _run_chunk(chunk: np.ndarray) -> tuple[np.ndarray, int]:
-            """Run ONNX on a single fixed-length chunk; return (probs [T,BINS], bins)."""
-            model_in = chunk[np.newaxis, :] if chunk.ndim == 1 else chunk.reshape(1, -1)
-            model_in = model_in.astype(np.float32)
-            if expected_rank == 3 and model_in.ndim == 2:
-                model_in = model_in[:, :, np.newaxis]
-            out_vals = session.run(out_names, {in_name: model_in})
-            pitch_tensor = _select_pitch_tensor(out_vals)
-            if pitch_tensor is None:
-                raise RuntimeError("No pitch-like output tensor found")
-            logits = _to_time_bins(pitch_tensor)
-            prob = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
-            prob = np.nan_to_num(prob, nan=0.0, posinf=0.0, neginf=0.0)
-            return prob, prob.shape[1] if prob.ndim == 2 else 0
+            # Some BasicPitch ONNX exports expect rank-3 input [B, T, 1]
+            expected_rank = len(inp.shape) if inp.shape else 0
+            out_names = [o.name for o in session.get_outputs()]
 
-        if _fixed_chunk_len is not None and len(audio_m) > _fixed_chunk_len:
-            # Chunk the full audio into fixed-length windows with 50% overlap;
-            # aggregate frame probabilities across all chunks.
-            hop_chunk = _fixed_chunk_len // 2
-            all_probs: list[tuple[float, np.ndarray]] = []  # (time_offset_s, probs[T,BINS])
-            pos = 0
-            while pos < len(audio_m):
-                end = pos + _fixed_chunk_len
-                chunk = audio_m[pos:end]
-                if len(chunk) < _fixed_chunk_len:
-                    chunk = np.pad(chunk, (0, _fixed_chunk_len - len(chunk)))
-                prob_chunk, _ = _run_chunk(chunk)
-                t_offset = float(pos) / _MODEL_SR
-                all_probs.append((t_offset, prob_chunk))
-                pos += hop_chunk
+            def _run_chunk(chunk: np.ndarray) -> tuple[np.ndarray, int]:
+                """Run ONNX on a single fixed-length chunk; return (probs [T,BINS], bins)."""
+                model_in = chunk[np.newaxis, :] if chunk.ndim == 1 else chunk.reshape(1, -1)
+                model_in = model_in.astype(np.float32)
+                if expected_rank == 3 and model_in.ndim == 2:
+                    model_in = model_in[:, :, np.newaxis]
+                out_vals = session.run(out_names, {in_name: model_in})
+                pitch_tensor = _select_pitch_tensor(out_vals)
+                if pitch_tensor is None:
+                    raise RuntimeError("No pitch-like output tensor found")
+                logits = _to_time_bins(pitch_tensor)
+                prob = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
+                prob = np.nan_to_num(prob, nan=0.0, posinf=0.0, neginf=0.0)
+                return prob, prob.shape[1] if prob.ndim == 2 else 0
 
-            if not all_probs:
-                raise RuntimeError("No chunks processed")
+            if _fixed_chunk_len is not None and len(audio_m) > _fixed_chunk_len:
+                # Chunk the full audio into fixed-length windows with 50% overlap;
+                # aggregate frame probabilities across all chunks.
+                hop_chunk = _fixed_chunk_len // 2
+                all_probs: list[tuple[float, np.ndarray]] = []  # (time_offset_s, probs[T,BINS])
+                pos = 0
+                while pos < len(audio_m):
+                    end = pos + _fixed_chunk_len
+                    chunk = audio_m[pos:end]
+                    if len(chunk) < _fixed_chunk_len:
+                        chunk = np.pad(chunk, (0, _fixed_chunk_len - len(chunk)))
+                    prob_chunk, _ = _run_chunk(chunk)
+                    t_offset = float(pos) / _MODEL_SR
+                    all_probs.append((t_offset, prob_chunk))
+                    pos += hop_chunk
 
-            # Stitch chunks: use simple concatenation picking non-overlapping halves.
-            first_offset, first_probs = all_probs[0]
-            bins = first_probs.shape[1] if first_probs.ndim == 2 else 0
-            # Build time-aligned frame list
-            all_frame_probs: list[np.ndarray] = []
-            all_frame_times: list[np.ndarray] = []
-            for t_off, prob_c in all_probs:
-                T_c = prob_c.shape[0]
-                ft = t_off + np.arange(T_c, dtype=np.float32) * (_HOP / _MODEL_SR)
-                all_frame_probs.append(prob_c)
-                all_frame_times.append(ft)
-            probs = np.concatenate(all_frame_probs, axis=0)
-            frame_times_s = np.concatenate(all_frame_times).astype(np.float32)
-        else:
-            model_in = audio_m[np.newaxis, :] if audio_m.ndim == 1 else np.asarray(audio_m).reshape(1, -1)
-            model_in = model_in.astype(np.float32)
-            if expected_rank == 3 and model_in.ndim == 2:
-                model_in = model_in[:, :, np.newaxis]
-            out_vals = session.run(out_names, {in_name: model_in})
-            pitch_tensor = _select_pitch_tensor(out_vals)
-            if pitch_tensor is None:
-                raise RuntimeError("No pitch-like output tensor found")
-            logits = _to_time_bins(pitch_tensor)
-            probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
-            probs = np.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
-            T = probs.shape[0]
-            frame_times_s = np.arange(T, dtype=np.float32) * (_HOP / _MODEL_SR)
+                if not all_probs:
+                    raise RuntimeError("No chunks processed")
 
-        T, bins = probs.shape
-        topk_idx = np.argpartition(probs, kth=max(0, bins - max_polyphony), axis=1)[:, -max_polyphony:]
-        topk_val = np.take_along_axis(probs, topk_idx, axis=1)
+                # Stitch chunks: use simple concatenation picking non-overlapping halves.
+                first_offset, first_probs = all_probs[0]
+                bins = first_probs.shape[1] if first_probs.ndim == 2 else 0
+                # Build time-aligned frame list
+                all_frame_probs: list[np.ndarray] = []
+                all_frame_times: list[np.ndarray] = []
+                for t_off, prob_c in all_probs:
+                    T_c = prob_c.shape[0]
+                    ft = t_off + np.arange(T_c, dtype=np.float32) * (_HOP / _MODEL_SR)
+                    all_frame_probs.append(prob_c)
+                    all_frame_times.append(ft)
+                probs = np.concatenate(all_frame_probs, axis=0)
+                frame_times_s = np.concatenate(all_frame_times).astype(np.float32)
+            else:
+                model_in = audio_m[np.newaxis, :] if audio_m.ndim == 1 else np.asarray(audio_m).reshape(1, -1)
+                model_in = model_in.astype(np.float32)
+                if expected_rank == 3 and model_in.ndim == 2:
+                    model_in = model_in[:, :, np.newaxis]
+                out_vals = session.run(out_names, {in_name: model_in})
+                pitch_tensor = _select_pitch_tensor(out_vals)
+                if pitch_tensor is None:
+                    raise RuntimeError("No pitch-like output tensor found")
+                logits = _to_time_bins(pitch_tensor)
+                probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
+                probs = np.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+                T = probs.shape[0]
+                frame_times_s = np.arange(T, dtype=np.float32) * (_HOP / _MODEL_SR)
 
-        # Sort descending by confidence per frame
-        ord_idx = np.argsort(-topk_val, axis=1)
-        topk_idx = np.take_along_axis(topk_idx, ord_idx, axis=1)
-        topk_val = np.take_along_axis(topk_val, ord_idx, axis=1)
+            T, bins = probs.shape
+            topk_idx = np.argpartition(probs, kth=max(0, bins - max_polyphony), axis=1)[:, -max_polyphony:]
+            topk_val = np.take_along_axis(probs, topk_idx, axis=1)
 
-        midi = _bins_to_midi(topk_idx, bins)
-        pitches_hz = _midi_to_hz(midi)
-        confidences = np.clip(topk_val, 0.0, 1.0).astype(np.float32)
+            # Sort descending by confidence per frame
+            ord_idx = np.argsort(-topk_val, axis=1)
+            topk_idx = np.take_along_axis(topk_idx, ord_idx, axis=1)
+            topk_val = np.take_along_axis(topk_val, ord_idx, axis=1)
 
-        return BasicPitchResult(
-            frame_times_s=frame_times_s,
-            pitches_hz=pitches_hz,
-            confidences=confidences,
-            model_used="basicpitch_onnx",
-            details={"n_frames": float(T), "n_bins": float(bins)},
-        )
+            midi = _bins_to_midi(topk_idx, bins)
+            pitches_hz = _midi_to_hz(midi)
+            confidences = np.clip(topk_val, 0.0, 1.0).astype(np.float32)
+
+            return BasicPitchResult(
+                frame_times_s=frame_times_s,
+                pitches_hz=pitches_hz,
+                confidences=confidences,
+                model_used="basicpitch_onnx",
+                details={"n_frames": float(T), "n_bins": float(bins)},
+            )
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("BasicPitch", False)
+                except Exception:
+                    pass
 
     def _analyze_dsp(self, audio: np.ndarray, sr: int, max_polyphony: int) -> BasicPitchResult:
         """STFT peak-based polyphonic fallback."""

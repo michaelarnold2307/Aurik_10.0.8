@@ -149,7 +149,7 @@ class BeatsPlugin:
             _inp = self._session.get_inputs()[0]
             _out = self._session.get_outputs()[0]
             _inp_rank = len(_inp.shape)
-            _out_last_dim = _inp.shape[-1] if _inp.shape else 0
+            _inp.shape[-1] if _inp.shape else 0
             _out_last_dim_out = _out.shape[-1] if _out.shape else 0
             if _inp_rank == 3 or int(_out_last_dim_out or 0) == 768:
                 logger.debug(
@@ -251,6 +251,14 @@ class BeatsPlugin:
     def _infer_onnx(self, audio: np.ndarray, sr: int, top_k: int) -> BeatsResult:
         """BEATs ONNX-Inferenz → 527 AudioSet-Scores."""
         assert self._session is not None
+        _plm = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+
+            _plm = get_plugin_lifecycle_manager()
+            _plm.set_active("BEATs", True)
+        except Exception:
+            pass
         try:
             inp = self._to_model_input(audio, sr)
             inp_name = self._session.get_inputs()[0].name
@@ -282,6 +290,12 @@ class BeatsPlugin:
                 return self._spectral_dsp_fallback(audio, sr, top_k)
             logger.warning("BEATs ONNX-Inferenzfehler: %s — PANNs-Fallback.", exc)
             return self._panns_fallback(audio, sr, top_k)
+        finally:
+            if _plm is not None:
+                try:
+                    _plm.set_active("BEATs", False)
+                except Exception:
+                    pass
 
     def _panns_fallback(self, audio: np.ndarray, sr: int, top_k: int) -> BeatsResult:
         """PANNs CNN14 als Fallback wenn BEATs nicht verfügbar."""
