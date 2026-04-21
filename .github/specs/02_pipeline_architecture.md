@@ -1355,6 +1355,8 @@ Die GP-Memory-Referenz-Vektoren werden **automatisch** aus dem Verarbeitungsverl
 
 **Beide Modi**: `HPI > 0` → Export | `HPI ≤ 0` → Rollback auf weniger aggressive Variante
 
+> **[RELEASE_MUST] VERSA-Primärpflicht**: In der HPI-Berechnung ist **VERSA** das primäre MOS-Modell (`use_versa_in_loop=True` — immer aktiv, produktionsstabil). MERT fungiert ausschließlich als Proxy-Fallback wenn VERSA fehlschlägt (`metadata["mert_proxy_used"] = True`). **VERBOTEN**: `use_versa_in_loop=False` oder MERT als primäre Qualitätsmetrik bei verfügbarem VERSA. Referenz: Spec 04 SOTA-Matrix, copilot-instructions.md VERBOTEN-Liste.
+
 ### §2.44a [RELEASE_MUST] carrier_chain_recovery_ratio — UV3-Pflichtfeld (v9.11.14)
 
 UV3 MUSS nach der letzten Carrier-Phase (§2.46 Stufe 4) folgende Metadata-Felder befüllen:

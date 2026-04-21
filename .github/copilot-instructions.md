@@ -8,7 +8,7 @@
 >
 > Aktuelle Testzahl: **~11598 `def test_`-Funktionen** (436 Testdateien; alle grün)
 >
-> **§2.36 `LyricsGuidedEnhancement`** ist ab Version **9.10.x Pflicht**.
+> **§2.36 `LyricsGuidedEnhancement` (Spec 03 §2.36)** ist ab Version **9.10.x Pflicht**.
 
 ## §0 Oberstes Prinzip — Klangwahrheit (vor allen technischen Regeln)
 
@@ -86,7 +86,7 @@ Detailwissen liegt in den **8 normativen Specs** unter `.github/specs/` — Sing
 
 ## Vollständige Spezifikation (normative Referenz)
 
-**8 Specs** in `.github/specs/`:
+**9 Specs** in `.github/specs/`:
 
 | Spec | Inhalt | Konsolidierte Praxis-Abschnitte |
 |---|---|---|
@@ -98,6 +98,7 @@ Detailwissen liegt in den **8 normativen Specs** unter `.github/specs/` — Sing
 | **06** Phasen 01–64 | Phase-Liste, CAUSE_TO_PHASES | §7.3a Phase-Implementierung, Caching & Checkliste |
 | **07** Tests/Qualität | PQS, AMRB, OQS, MUSHRA | §8.4a Test-Patterns, 6 Pitfalls & CI-Gates |
 | **08** Architektur/Distribution | Layers, Plugins, CLI, AppImage | §11.4c UI-State-Machines & Thread-Safety, §11.5a Mermaid-Visualisierung |
+| **09** Kalibrierungsmatrix | CANONICAL_THRESHOLDS (Restoration + Studio 2026), Material-/Ära-/Genre-Bias, SongGoalTargets-API | §09.2 Zwei-Ebenen-API (Pipeline vs. Convenience) — **normativ übergeordnet für alle Schwellwerte** |
 
 Änderungshistorie: `docs/CHANGELOG_HISTORY.md`
 
@@ -352,13 +353,15 @@ Frühe subtraktive Phasen dürfen den wahrgenommenen Musikpegel nicht kollabiere
 
 ## 14 Musical Goals (Kurzreferenz)
 
-| Prio | Ziele |
-|---|---|
-| **P1** | Natürlichkeit ≥ 0.90, Authentizität ≥ 0.88 |
-| **P2** | TonalCenter ≥ 0.95, Timbre ≥ 0.87, Artikulation ≥ 0.85 |
-| **P3** | Emotionalität ≥ 0.82, MikroDynamik ≥ 0.88, Groove ≥ 0.83 |
-| **P4** | Transparenz ≥ 0.82, Wärme ≥ 0.75, BassKraft ≥ 0.78, SepFidelity ≥ 0.78 |
-| **P5** | Brillanz ≥ 0.78, Raumtiefe ≥ 0.70 |
+| Prio | Restoration (Böden) | Studio 2026 (Böden) |
+|---|---|---|
+| **P1** | Natürlichkeit ≥ 0.90, Authentizität ≥ 0.88 | Natürlichkeit ≥ 0.92, Authentizität ≥ 0.90 |
+| **P2** | TonalCenter ≥ 0.95, Timbre ≥ 0.87, Artikulation ≥ 0.85 | TonalCenter ≥ 0.96, Timbre ≥ 0.89, Artikulation ≥ 0.87 |
+| **P3** | Emotionalität ≥ 0.82, MikroDynamik ≥ 0.88, Groove ≥ 0.83 | Emotionalität ≥ 0.84, MikroDynamik ≥ 0.90, Groove ≥ 0.85 |
+| **P4** | Transparenz ≥ 0.82, Wärme ≥ 0.75, BassKraft ≥ 0.78, SepFidelity ≥ 0.78 | Transparenz ≥ 0.85, Wärme ≥ 0.78, BassKraft ≥ 0.80, SepFidelity ≥ 0.80 |
+| **P5** | Brillanz ≥ 0.78, Raumtiefe ≥ 0.70 | Brillanz ≥ 0.82, Raumtiefe ≥ 0.74 |
+
+> Alle Werte = **kanonische Böden** (Spec 09 / `calibration_matrix.py`). Song-spezifische Ziele berechnet die adaptive Schicht §2.31 + §09.2 + §2.56 aus Material, Ära, Genre und Restorability.
 
 **Regressions-Regime** (differenziert — §2.29d, aktualisiert §2.54):
 - **P1/P2** (Natürlichkeit, Authentizität, Tonal, Timbre, Artikulation): **Pipeline-Ende-Pflicht** — am Ende der gesamten Kette müssen alle P1/P2-Goals ≥ Schwellwert liegen. Einzelphasen dürfen vorübergehend P1/P2-Proxy-Werte senken, wenn Carrier-Repair (§2.44 Referenz-Paradoxon) oder restorative Defektentfernung (§2.29c Baseline-Capping) der Grund ist. Der CumulativeInteractionGuard (§2.48) ist die materialadaptive **Notbremse** (§2.54), nicht die Routine-Steuerung.

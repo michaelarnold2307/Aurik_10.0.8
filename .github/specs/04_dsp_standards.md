@@ -157,7 +157,7 @@ def hz_to_mel(f_hz: float) -> float:
 | Neuronale Synthese | ML: **Vocos 48 kHz nativ** ONNX → 44,1 kHz → BigVGAN v2 → HiFi-GAN | PGHI-ISTFT | ~~Griffin-Lim~~ |
 | Generatives Inpainting | ML: **Flow Matching** | CQTdiff+ → DiffWave → NMF-β | ~~DDPM 1000 Schritte~~ |
 | Audio-Tagging | ML: **BEATs** (iter3) → PANNs CNN14 | DSP Spectral Fingerprint | — |
-| MOS (ohne Referenz) | ML: **VERSA** → SingMOS (Gesang, PANNs Vocals ≥ 0.3–0.7, Blend-Zone) | PQS-Gammatone-DSP | ~~PESQ/DNSMOS/CDPAM~~ |
+| MOS (ohne Referenz) | ML: **VERSA** (Huang et al. 2024) → SingMOS (Gesang, PANNs Vocals ≥ 0.3–0.7, Blend-Zone) | PQS-Gammatone-DSP | ~~PESQ/DNSMOS/CDPAM~~ |
 | MOS-Verifikation Gesang | ML: **UTMOS** (`utmos_plugin`, ≥18 MB PyTorch) → SingMOS | VERSA → PQS-Gammatone | ~~PESQ/NISQA~~ |
 | Music/Vocal Enhancement | ML: **MP-SENet 2023** ONNX | SGMSE+ ONNX → OMLSA DSP | ~~DCCRN/FullSubNet+~~ |
 | MOS (mit Referenz) | ML: **ViSQOL v3** (**`--audio` PFLICHT**) | PQS-DSP | ~~--speech Mode~~ |
@@ -1062,7 +1062,7 @@ Crossfade: Hanning 10 ms. Modul: `backend/core/adaptive_chunk_processor.py`
 | FCPE | ONNX | Aurik 9.10.x |
 | Vocos | 48 kHz nativ ONNX | Aurik 9.10.x |
 | BEATs | iter3 ONNX 90 MB | Aurik 9.10.x |
-| VERSA | PyTorch Checkpoint | Aurik 9.10.x |
+| VERSA | PyTorch Checkpoint (Huang et al. 2024) | Aurik 9.10.x |
 | SGMSE+ | TorchScript 251 MB | Aurik 9.10.x |
 | Flow Matching | ONNX/PT | Aurik 9.10.x |
 | Whisper-Tiny | ONNX 39 MB | Aurik 9.10.46b |

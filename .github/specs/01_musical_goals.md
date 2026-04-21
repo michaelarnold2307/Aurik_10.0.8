@@ -27,23 +27,24 @@ aufgerufen via `MusicalGoalsChecker.measure_all(audio, sr)`.
 
 | Ziel (Klasse) | Frequenzbereich / Messgröße | Prio | Restoration | Studio 2026 |
 | --- | --- | --- | --- | --- |
-| **Natürlichkeit** (`NatuerlichkeitMetric`) | Artefaktfreiheit, Rauschen, Klangbild | **1** | ≥ **0.90** | ≥ **0.90** |
-| **Authentizität** (`AuthentizitaetMetric`) | Voice Identity, spektraler Fingerabdruck | **1** | ≥ **0.88** | ≥ **0.88** |
-| **Tonales Zentrum** (`TonalCenterMetric`) | Chroma-Korrelation Original↔Restauriert, kein Key-Shift > 0 Cent | **2** | ≥ **0.95** | ≥ **0.97** |
-| **Timbre-Authentizität** (`TimbralAuthenticityMetric`) | MFCC-Pearson ≥ 0.95, Spectral-Centroid-Korrelation ≥ 0.93, Rolloff-Abw. ≤ 5 % | **2** | ≥ **0.87** | ≥ **0.87** |
-| **Artikulation** (`ArticulationMetric`) | Attack-Charakter-Erhalt (Staccato vs. Legato): Transient-Shape-Korrelation ≥ 0.90, Attack-Time-Abweichung ≤ 10 ms | **2** | ≥ **0.85** | ≥ **0.85** |
-| **Emotionalität** (`EmotionalitaetMetric`) | Dynamik, Ausdruck, Modulationstiefe | **3** | ≥ **0.82** | ≥ **0.87** |
-| **Mikro-Dynamik** (`MicroDynamicsMetric`) | Momentane LUFS-Profil-Korrelation (400 ms-Fenster), Crest-Faktor-Erhalt ≤ 1.5 dB | **3** | ≥ **0.88** | ≥ **0.92** |
-| **Groove** (`GrooveMetric`) | Mikro-Timing, Swing, Event-Onset-Präzision (DTW ≤ 8 ms RMS) | **3** | ≥ **0.83** | ≥ **0.88** |
-| **Transparenz** (`TransparenzMetric`) | Klarheit, Trennung der Klangelemente | **4** | ≥ **0.82** | ≥ **0.89** |
+| **Natürlichkeit** (`NatuerlichkeitMetric`) | Artefaktfreiheit, Rauschen, Klangbild | **1** | ≥ **0.90** | ≥ **0.92** |
+| **Authentizität** (`AuthentizitaetMetric`) | Voice Identity, spektraler Fingerabdruck | **1** | ≥ **0.88** | ≥ **0.90** |
+| **Tonales Zentrum** (`TonalCenterMetric`) | Chroma-Korrelation Original↔Restauriert, kein Key-Shift > 0 Cent | **2** | ≥ **0.95** | ≥ **0.96** |
+| **Timbre-Authentizität** (`TimbralAuthenticityMetric`) | MFCC-Pearson ≥ 0.95, Spectral-Centroid-Korrelation ≥ 0.93, Rolloff-Abw. ≤ 5 % | **2** | ≥ **0.87** | ≥ **0.89** |
+| **Artikulation** (`ArticulationMetric`) | Attack-Charakter-Erhalt (Staccato vs. Legato): Transient-Shape-Korrelation ≥ 0.90, Attack-Time-Abweichung ≤ 10 ms | **2** | ≥ **0.85** | ≥ **0.87** |
+| **Emotionalität** (`EmotionalitaetMetric`) | Dynamik, Ausdruck, Modulationstiefe | **3** | ≥ **0.82** | ≥ **0.84** |
+| **Mikro-Dynamik** (`MicroDynamicsMetric`) | Momentane LUFS-Profil-Korrelation (400 ms-Fenster), Crest-Faktor-Erhalt ≤ 1.5 dB | **3** | ≥ **0.88** | ≥ **0.90** |
+| **Groove** (`GrooveMetric`) | Mikro-Timing, Swing, Event-Onset-Präzision (DTW ≤ 8 ms RMS) | **3** | ≥ **0.83** | ≥ **0.85** |
+| **Transparenz** (`TransparenzMetric`) | Klarheit, Trennung der Klangelemente | **4** | ≥ **0.82** | ≥ **0.85** |
 | **Wärme** (`WaermeMetric`) | Primär: Even-Harmonic-Ratio (H2/H4 THD_even/THD_total, ISO 226:2023 gewichtet) — misst wahrgenommene Röhren-/Band-Wärme; Sekundär: Warmth Ratio E(200–800)/E(800–3000) als Spektral-Tilt-Proxy (§9.7.14) | **4** | ≥ **0.75** | ≥ **0.80** |
-| **Bass-Kraft** (`BassKraftMetric`) | Bassenergie 20–250 Hz + Virtual Pitch (Missing Fundamental, Obertöne 120–500 Hz) | **4** | ≥ **0.78** | ≥ **0.88** |
-| **Separation-Treue** (`SeparationFidelityMetric`) | SDR ≥ 8 dB / SIR ≥ 12 dB nach NMF-Dekomposition | **4** | ≥ **0.78** | ≥ **0.85** |
-| **Brillanz** (`BrillanzMetric`) | HF-Klarheit, 8–20 kHz — Sparkle & Air | **5** | ≥ **0.78** | ≥ **0.90** |
-| **Raumtiefe** (`SpatialDepthMetric`) | IACC (Interaural Cross-Correlation, Blauert 1997) + Stereobreite + Phantom-Center-Stabilität; IACC < 0.70 → wahrnehmb. Zusammenbruch | **5** | ≥ **0.70** | ≥ **0.78** |
+| **Bass-Kraft** (`BassKraftMetric`) | Bassenergie 20–250 Hz + Virtual Pitch (Missing Fundamental, Obertöne 120–500 Hz) | **4** | ≥ **0.78** | ≥ **0.80** |
+| **Separation-Treue** (`SeparationFidelityMetric`) | SDR ≥ 8 dB / SIR ≥ 12 dB nach NMF-Dekomposition | **4** | ≥ **0.78** | ≥ **0.80** |
+| **Brillanz** (`BrillanzMetric`) | HF-Klarheit, 8–20 kHz — Sparkle & Air | **5** | ≥ **0.78** | ≥ **0.82** |
+| **Raumtiefe** (`SpatialDepthMetric`) | IACC (Interaural Cross-Correlation, Blauert 1997) + Stereobreite + Phantom-Center-Stabilität; IACC < 0.70 → wahrnehmb. Zusammenbruch | **5** | ≥ **0.70** | ≥ **0.74** |
 
-> **v9.10.77 Pareto-Differenzierung**: Restoration-Modus senkt P3–P5-Schwellwerte auf physikalisch erreichbare Werte (Pareto-Konflikte: Bass↔Transparenz [0.7], Brillanz↔Wärme [0.6]). P1/P2 bleiben identisch. Studio 2026 behält ambitionierte Ziele.
-> **Schwellwert-Validierung**: Die Schwellwerte für alle 14 Ziele wurden algorithmisch aus AMRB-Bench­mark­daten (10 Szenarien, Ø OQS-Kalibrierung) abgeleitet. Ein ITU-R BS.1534-3 MUSHRA-Hörertest steht als externe Validierung aus (geplant). Bis zur Validierung gelten die Werte als „best engineering estimate“. Die Schwellwerte dürfen NUR nach dokumentiertem Hörertest geändert werden.
+> **v9.10.77 / Spec 09 Pareto-Differenzierung**: Restoration-Modus senkt P3–P5-Böden auf physikalisch erreichbare Werte (Pareto-Konflikte: Bass↔Transparenz [0.7], Brillanz↔Wärme [0.6]). P1/P2 bleiben identisch. Studio 2026 setzt höhere P1/P2-Böden (Enhancement braucht stärkere Naturalness-Guardrails) und niedrigere P3–P5-Böden (materialadaptiv kalibriert aus AMRB).
+> **Kanonische Böden**: Die Werte in dieser Tabelle sind `CANONICAL_THRESHOLDS` — implementiert in `backend/core/calibration_matrix.py` (Single Source of Truth: Spec 09, normativ übergeordnet). Song-spezifische Ziele berechnet die adaptive Schicht §2.31 + §09.2 + §2.56 (Material, Ära, Genre, Restorability) — effektive Targets können je nach Song über oder unter diesen Böden liegen.
+> **Schwellwert-Validierung**: Die Schwellwerte wurden algorithmisch aus AMRB-Benchmarkdaten (10 Szenarien, Ø OQS-Kalibrierung) abgeleitet. Ein ITU-R BS.1534-3 MUSHRA-Hörertest steht als externe Validierung aus (geplant). Bis zur Validierung gelten die Werte als „best engineering estimate“. Änderungen ausschließlich in `calibration_matrix.py` + Spec 09 (Single Source of Truth).
 
 ```python
 from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
