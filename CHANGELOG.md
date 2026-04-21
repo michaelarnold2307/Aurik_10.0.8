@@ -2,6 +2,17 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.45 — PLM-Active-Guard Whisper ONNX + AST ONNX (Apr 2026)
+
+### Bugfix (§4.6b PLM-Active-Guard)
+- **`backend/core/lyrics_guided_enhancement.py`**: `_transcribe_onnx()` — Whisper
+  `_ort_session.run()` ohne `set_active` Guard. Emergency-Eviction konnte Modell während
+  aktiver Inferenz entladen → Crash. Fix: `set_active("lyrics_transcriber_whisper", True/False)`
+  mit `try/finally` um Encoder-Inferenz.
+- **`backend/core/musical_goals/perceptual_validator.py`**: `_predict_psychoacoustic_score()` —
+  AST `onnx_session.run()` ohne `set_active` Guard obwohl `try_allocate` vorhanden.
+  Fix: `set_active("ASTPerceptualONNX", True/False)` mit `try/finally` um ONNX-Inferenz.
+
 ## Version 9.11.44 — PLM-Active-Guard LyricsEnhancement + np.corrcoef Guards (Apr 2026)
 
 ### Fixes (§4.6b / VERBOTEN)
