@@ -137,9 +137,9 @@ class BinauralEnhancer:
         # NaN/Inf-Guard
         binaural_audio = np.nan_to_num(binaural_audio, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Normalize
-        peak = np.max(np.abs(binaural_audio))
-        if peak > 0:
+        # Normalize — percentile guard prevents single impulse from driving gain (§VERBOTEN: np.max)
+        peak = float(np.percentile(np.abs(binaural_audio), 99.9))
+        if peak > 1e-10:
             binaural_audio = binaural_audio / peak
 
         # Final clipping

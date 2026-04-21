@@ -491,7 +491,8 @@ class DdspSynthesizer:
         audio = audio * global_amp
 
         # Normalisierung: Peak auf max 0.8 (Headroom für Rauschen)
-        peak = np.max(np.abs(audio))
+        # percentile guard prevents impulse artefact from blocking normalization (§VERBOTEN: np.max)
+        peak = float(np.percentile(np.abs(audio), 99.9))
         if peak > 1e-8:
             audio = audio * (0.8 / peak)
 
@@ -543,7 +544,8 @@ class DdspSynthesizer:
             band_gain = np.nan_to_num(band_gain, nan=0.0)
             output += band * np.clip(band_gain, 0.0, 1.0)
 
-        peak = np.max(np.abs(output))
+        # percentile guard prevents impulse artefact from driving gain (§VERBOTEN: np.max)
+        peak = float(np.percentile(np.abs(output), 99.9))
         if peak > 1e-8:
             output = output * (0.2 / peak)  # Rauschen leise halten
 

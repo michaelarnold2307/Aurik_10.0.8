@@ -2,6 +2,11 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.37 — np.max Peak-Guard: binaural_enhancer + ddsp_synth (2 Gain-Fixes) (Apr 2026)
+
+- **`dsp/binaural_enhancer.py` normalize-Block**: `peak = np.max(np.abs(binaural_audio)); audio /= peak` → `np.percentile(np.abs(...), 99.9)` — einzelner Impuls-Artefakt darf Normalisierung nicht blockieren (§VERBOTEN: Peak-Guard Gain)
+- **`dsp/ddsp_synth.py` Synthesizer-Normalisierung (2×)**: `peak = np.max(np.abs(audio)); audio *= 0.8/peak` und `output *= 0.2/peak` → `np.percentile(np.abs(...), 99.9)` — gleiche Invariante (§VERBOTEN: Peak-Guard Gain)
+
 ## Version 9.11.36 — O(n²)-Autokorrelation + do_carrier_analysis=False (Tiefenanalyse R9) (Apr 2026)
 
 - **`dsp/vocal_spectral_inpainting.py` `HarmonicSpectrumDetector._detect_f0()`**: `np.correlate(audio, audio, mode="full")` auf vollem Lied-Audio (bis 10 M+ Samples) → multi-minütiger Hänger möglich. Fix: Eingangs-Limit 200 ms + FFT-basierte Autokorrelation O(N log N) (§VERBOTEN: O(n²)-Autokorrelation)
