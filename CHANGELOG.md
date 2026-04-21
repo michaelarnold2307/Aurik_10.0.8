@@ -7211,3 +7211,13 @@ Zwei neue wissenschaftlich begründete kausale Kanten:
 - Release-Branch release/aurik-9.0 erstellt
 - CHANGELOG.md und Audit-Logs fortgeschrieben
 - Projekt bereit für Endabnahme und Usability-Tests
+
+## [9.11.47] – 2026-04-xx
+
+### Fixed
+
+- **`plugins/mert_plugin.py`** — `_analyze_hf()` und `_analyze_onnx()` führten
+  `model(**inputs)` bzw. `self._model.run()` ohne PLM-Active-Guard durch.
+  Emergency-Eviction konnte Modellgewichte während aktiver Inferenz entladen
+  → Crash / OOM. Fix: `set_active("MERT-330M-HF")` und `set_active("MERT-ONNX")`
+  mit fehlertoleranten `try/finally`-Blöcken umgesetzt (§4.6b).
