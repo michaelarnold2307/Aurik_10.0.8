@@ -206,7 +206,26 @@ class DeepFilterNetV3Plugin:
             g = math.gcd(sr, _SR)
             mono = resample_poly(mono, _SR // g, sr // g).astype(np.float32)
 
-        out = self._infer_onnx(mono) if self._enc is not None else self._omlsa_fallback(mono, _SR)
+        if self._enc is not None:
+            # §4.6b PLM-Active-Guard: prevent Emergency-Eviction during ONNX inference
+            _plm_dfn = None
+            try:
+                from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_dfn
+
+                _plm_dfn = _get_plm_dfn()
+                _plm_dfn.set_active("DeepFilterNetV3", True)
+            except Exception:
+                pass
+            try:
+                out = self._infer_onnx(mono)
+            finally:
+                if _plm_dfn is not None:
+                    try:
+                        _plm_dfn.set_active("DeepFilterNetV3", False)
+                    except Exception:
+                        pass
+        else:
+            out = self._omlsa_fallback(mono, _SR)
 
         # Rückresampling auf Original-SR
         if sr != _SR:

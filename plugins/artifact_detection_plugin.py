@@ -120,8 +120,24 @@ class ArtifactDetectionPlugin:
             waveform = waveform.mean(dim=0)  # Mono
         waveform = waveform.unsqueeze(0)  # Batch
         mel = torchaudio.transforms.MelSpectrogram(sample_rate=sr)(waveform)
-        with torch.no_grad():
-            output = self.model(mel)
+        # §4.6b PLM-Active-Guard: prevent Emergency-Eviction during TorchScript inference
+        _plm_ad = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_ad
+
+            _plm_ad = _get_plm_ad()
+            _plm_ad.set_active(self._BUDGET_NAME, True)
+        except Exception:
+            pass
+        try:
+            with torch.no_grad():
+                output = self.model(mel)
+        finally:
+            if _plm_ad is not None:
+                try:
+                    _plm_ad.set_active(self._BUDGET_NAME, False)
+                except Exception:
+                    pass
         raw = np.nan_to_num(output.numpy().tolist(), nan=0.0, posinf=0.0, neginf=0.0)
         return {
             "artifact_scores": list(raw) if not isinstance(raw, list) else raw,
