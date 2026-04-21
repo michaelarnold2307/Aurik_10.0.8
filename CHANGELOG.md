@@ -7231,3 +7231,14 @@ Zwei neue wissenschaftlich begründete kausale Kanten:
   Eviction konnte VersaSingMOS während Scoring entladen → Crash. Fix:
   `set_active("VersaSingMOS", True/False)` mit fehlertoleranten try/finally-Blöcken
   um den SingMOS-Inferenzloop (§4.6b).
+
+## [9.11.49] – 2026-04-20
+
+### Fixed
+
+- **`plugins/artifact_detection_plugin.py`** — `model(mel)` (TorchScript CPU-Inferenz)
+  ohne PLM-Active-Guard. Fix: `set_active("ArtifactDetection", True/False)` try/finally
+  um `torch.no_grad()` block (§4.6b).
+- **`plugins/deepfilternet_v3_ii_plugin.py`** — `_enhance_channel()` rief `_infer_onnx()`
+  (3× ONNX-Inferenz: Enc + ERB-Dec + Dec) ohne PLM-Active-Guard. Fix:
+  `set_active("DeepFilterNetV3", True/False)` try/finally um `_infer_onnx()`-Aufruf (§4.6b).
