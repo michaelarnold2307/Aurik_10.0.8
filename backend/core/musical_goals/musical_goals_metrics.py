@@ -33,12 +33,18 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-import librosa
-import librosa.core.constantq  # CQT/VQT-Pfad — von chroma_cqt ausgelöst
-import librosa.core.pitch  # estimate_tuning/piptrack — von constantq.vqt ausgelöst
-import librosa.feature  # lazy_loader-Deadlock verhindern: Submodul vorab laden
-import librosa.util  # librosa.util.frame muss vor Threading verfügbar sein
-import librosa.util.utils  # util.expand_to lebt hier — direkter Import bypass lazy_loader
+try:
+    import librosa
+    import librosa.core.constantq  # CQT/VQT-Pfad — von chroma_cqt ausgelöst
+    import librosa.core.pitch  # estimate_tuning/piptrack — von constantq.vqt ausgelöst
+    import librosa.feature  # lazy_loader-Deadlock verhindern: Submodul vorab laden
+    import librosa.util  # librosa.util.frame muss vor Threading verfügbar sein
+    import librosa.util.utils  # util.expand_to lebt hier — direkter Import bypass lazy_loader
+
+    _LIBROSA_AVAILABLE = True
+except ImportError:
+    librosa = None  # type: ignore[assignment]
+    _LIBROSA_AVAILABLE = False
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -125,7 +131,8 @@ def _warm_up_librosa() -> None:
     logger.debug("librosa warm-up: alle Submodule aufgelöst (Deadlock-Fix)")
 
 
-_warm_up_librosa()
+if _LIBROSA_AVAILABLE:
+    _warm_up_librosa()
 
 # ---------------------------------------------------------------------------
 # Lazy-Import-Hilfsfunktionen für ML-Plugins (Graceful Degradation §3.4)
