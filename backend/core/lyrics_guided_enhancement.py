@@ -946,8 +946,24 @@ class LyricsGuidedEnhancement:
         mono_16k = self._resample(mono, sr, self._ONNX_SR)
         features = self._compute_mel_features(mono_16k)  # (1, 80, 3000)
 
+        # §4.6b PLM-Active-Guard: prevent Emergency-Eviction during Whisper ONNX inference
+        _plm_whisper: object | None = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_w
+
+            _plm_whisper = _get_plm_w()
+            _plm_whisper.set_active("lyrics_transcriber_whisper", True)
+        except Exception:
+            pass
         # Encoder inference — output: (1, 1500, 384)
-        hidden = self._ort_session.run(None, {"input_features": features})[0]
+        try:
+            hidden = self._ort_session.run(None, {"input_features": features})[0]
+        finally:
+            if _plm_whisper is not None:
+                try:
+                    _plm_whisper.set_active("lyrics_transcriber_whisper", False)
+                except Exception:
+                    pass
         frame_energy = np.sqrt(np.mean(hidden[0] ** 2, axis=-1))  # (1500,)
 
         e_max = float(frame_energy.max()) or 1.0

@@ -404,6 +404,15 @@ class PerceptualValidator:
             (psychoacoustic_score, confidence)
         """
         if self.onnx_session is not None:
+            # §4.6b PLM-Active-Guard: prevent Emergency-Eviction during AST ONNX inference
+            _plm_ast: object | None = None
+            try:
+                from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_ast
+
+                _plm_ast = _get_plm_ast()
+                _plm_ast.set_active("ASTPerceptualONNX", True)
+            except Exception:
+                pass
             try:
                 _inp = self._prepare_ast_onnx_input(audio, sr)
                 _res = self.onnx_session.run([self._onnx_output_name], {self._onnx_input_name: _inp})[0]
@@ -411,6 +420,12 @@ class PerceptualValidator:
                 return self._map_onnx_output_to_goal(logits, goal_name)
             except Exception as e:
                 logger.debug("AST ONNX prediction failed: %s", e)
+            finally:
+                if _plm_ast is not None:
+                    try:
+                        _plm_ast.set_active("ASTPerceptualONNX", False)
+                    except Exception:
+                        pass
 
         if self.model is None:
             # Fallback: Heuristic-based scoring
