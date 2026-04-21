@@ -61,7 +61,7 @@ _PHASE_REQUIRED_MODELS: dict[str, frozenset[str]] = {
     "phase_24_dropout_repair": frozenset({"AudioSR"}),
     "phase_29_tape_hiss_reduction": frozenset({"DeepFilterNetV3"}),
     "phase_31_speed_pitch_correction": frozenset({"BasicPitch"}),
-    "phase_42_vocal_enhancement": frozenset({"MelBandRoformer", "MDX23C"}),
+    "phase_42_vocal_enhancement": frozenset({"MelBandRoformer", "MDX23C_vocals", "MDX23C_inst"}),
     "phase_43_ml_deesser": frozenset({"MP-SENet"}),
     "phase_49_advanced_dereverb": frozenset({"SGMSE+"}),
     "phase_55_diffusion_inpainting": frozenset(

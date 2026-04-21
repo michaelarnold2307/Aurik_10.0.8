@@ -893,20 +893,24 @@ class VocalEnhancement(PhaseInterface):
                 from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm42m
 
                 _plm42_mdx = _get_plm42m()
-                _plm42_mdx.set_active("MDX23C", True)
+                # MDX23C registers as "MDX23C_vocals" and "MDX23C_inst" in PLM (§4.6c sync)
+                _plm42_mdx.set_active("MDX23C_vocals", True)
+                _plm42_mdx.set_active("MDX23C_inst", True)
             except Exception:
                 _plm42_mdx = None
 
             mdx = get_mdx23c_plugin()
             if _plm42_mdx is not None:
                 try:
-                    _plm42_mdx.touch_plugin("MDX23C")
+                    _plm42_mdx.touch_plugin("MDX23C_vocals")
+                    _plm42_mdx.touch_plugin("MDX23C_inst")
                 except Exception:
                     pass
             voc_mono = mdx.process(audio_mono, sr, stem="vocals")
             if _plm42_mdx is not None:
                 try:
-                    _plm42_mdx.touch_plugin("MDX23C")
+                    _plm42_mdx.touch_plugin("MDX23C_vocals")
+                    _plm42_mdx.touch_plugin("MDX23C_inst")
                 except Exception:
                     pass
             inst_mono = mdx.process(audio_mono, sr, stem="inst")
@@ -923,7 +927,8 @@ class VocalEnhancement(PhaseInterface):
         finally:
             if _plm42_mdx is not None:
                 try:
-                    _plm42_mdx.set_active("MDX23C", False)
+                    _plm42_mdx.set_active("MDX23C_vocals", False)
+                    _plm42_mdx.set_active("MDX23C_inst", False)
                 except Exception:
                     pass
 

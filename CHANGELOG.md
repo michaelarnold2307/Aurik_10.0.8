@@ -2,6 +2,22 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.40 — MDX23C PLM-Name Mismatch phase_42 + _PHASE_REQUIRED_MODELS (Apr 2026)
+
+### Fixes
+- **`backend/core/plugin_lifecycle_manager.py`** — `_PHASE_REQUIRED_MODELS["phase_42_vocal_enhancement"]`:
+  Eintrag war `{"MelBandRoformer", "MDX23C"}`. `mdx23c_plugin.py` registriert sich aber mit dem
+  dynamischen Schlüssel `f"MDX23C_{stem_key}"` (also `"MDX23C_vocals"` / `"MDX23C_inst"`).
+  Fix: `{"MelBandRoformer", "MDX23C_vocals", "MDX23C_inst"}`.
+  Ohne Fix: `evict_for_phase("phase_42_vocal_enhancement")` hätte `MDX23C_vocals`/`MDX23C_inst`
+  entladen können, bevor phase_42 sie benötigt (§4.6c VERBOTEN).
+- **`backend/core/phases/phase_42_vocal_enhancement.py`** — `set_active("MDX23C", ...)` →
+  `set_active("MDX23C_vocals", ...)` + `set_active("MDX23C_inst", ...)` (beide Stem-Keys).
+  Ebenso `touch_plugin("MDX23C")` → `touch_plugin("MDX23C_vocals")` + `touch_plugin("MDX23C_inst")`.
+  Ohne Fix: `set_active("MDX23C", True)` war No-Op (kein PLM-Eintrag unter `"MDX23C"`) —
+  Emergency-Eviction hätte MDX23C während aktiver Inferenz entladen können (§4.6b VERBOTEN:
+  PLM-Active-Guard Pflicht vor Inferenz).
+
 ## Version 9.11.39 — PLM _PHASE_REQUIRED_MODELS phase_55 + Peak-Guard panns/gacela (Apr 2026)
 
 ### Fixes
