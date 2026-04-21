@@ -812,7 +812,7 @@ class VocalEnhancement(PhaseInterface):
         individually — preserving interaural phase differences (stereo imaging).
         """
         # Convert for mono-based models; keep original shape for result
-        audio_mono = audio.mean(axis=1).astype(np.float32) if audio.ndim == 2 else audio.astype(np.float32)
+        audio_mono = safe_to_mono(audio).astype(np.float32)
 
         _skip_roformer_reason: str | None = None
         try:
@@ -1149,7 +1149,7 @@ class VocalEnhancement(PhaseInterface):
                 return audio
 
             # Use mono for level analysis (always), then apply on each channel
-            x_mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+            x_mono = safe_to_mono(audio)
 
             # Measure per-formant energy as dBFS using narrow bandpass RMS
             def _formant_energy_dbfs(sig: np.ndarray, center_hz: int, q: float) -> float:

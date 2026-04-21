@@ -53,7 +53,7 @@ from typing import Any
 import numpy as np
 from scipy import signal
 
-from backend.core.audio_utils import to_channels_last
+from backend.core.audio_utils import safe_to_mono, to_channels_last
 from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
@@ -271,8 +271,8 @@ class SurfaceNoiseProfiling(PhaseInterface):
         try:
             from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
 
-            _mono_orig = audio if audio.ndim == 1 else audio.mean(axis=1)
-            _mono_proc = denoised_audio if denoised_audio.ndim == 1 else denoised_audio.mean(axis=1)
+            _mono_orig = safe_to_mono(audio)
+            _mono_proc = safe_to_mono(denoised_audio)
             _masked_mono = apply_psychoacoustic_masking_clamp(
                 _mono_orig,
                 _mono_proc,

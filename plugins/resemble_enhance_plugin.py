@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from backend.core.audio_utils import safe_to_mono
+
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _inst: ResembleEnhancePlugin | None = None
@@ -73,7 +75,8 @@ class ResembleEnhancePlugin:
     def enhance(self, audio: np.ndarray, sr: int) -> np.ndarray:
         assert sr == 48000, f"SR muss 48000 Hz sein, erhalten: {sr}"
         audio = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-        mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+        _was_channels_first = audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2
+        mono = safe_to_mono(audio)
         n = len(mono)
         # RAM-Check: Resemble braucht ~130 MB pro 30s-Chunk + ONNX-Overhead.
         # Bei < 4 GB verfügbar → DSP-Fallback statt OOM-Risiko.
@@ -92,7 +95,7 @@ class ResembleEnhancePlugin:
                 result = _resamp(out, _SR, sr)[:n]
                 result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
                 if audio.ndim == 2:
-                    result = np.stack([result, result], axis=1)
+                    result = np.stack([result, result], axis=0 if _was_channels_first else 1)
                 return np.clip(result, -1.0, 1.0).astype(np.float32)
         except ImportError:
             pass
@@ -102,7 +105,7 @@ class ResembleEnhancePlugin:
         result = _resamp(out, _SR, sr)[:n]
         result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         if audio.ndim == 2:
-            result = np.stack([result, result], axis=1)
+            result = np.stack([result, result], axis=0 if _was_channels_first else 1)
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
     def process(self, input_path: str, output_path: str, denoise_level: float = 0.5, enhance_level: float = 1.0):
