@@ -2,6 +2,11 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.38 — PLM-Name BANQUET→BanquetVinyl + FeedbackChain Test-Fixes (Apr 2026)
+
+- **`backend/core/phases/phase_09_crackle_removal.py`**: `try_allocate("BANQUET", ...)` / `ml_release("BANQUET")` / `register("BANQUET", ...)` → `"BanquetVinyl"` — kanonischer PLM-Name konsistent mit `set_active()` und `banquet_vinyl_plugin.py` (§4.6c `_PHASE_REQUIRED_MODELS`)
+- **`tests/unit/test_feedback_chain.py` test_36/37**: `FeedbackChain(..., use_versa_in_loop=False)` explizit setzen — seit §2.44 ist `use_versa_in_loop=True` der Default, Tests testen PQS-only-Pfad und müssen VERSA explizit deaktivieren
+
 ## Version 9.11.37 — np.max Peak-Guard: binaural_enhancer + ddsp_synth (2 Gain-Fixes) (Apr 2026)
 
 - **`dsp/binaural_enhancer.py` normalize-Block**: `peak = np.max(np.abs(binaural_audio)); audio /= peak` → `np.percentile(np.abs(...), 99.9)` — einzelner Impuls-Artefakt darf Normalisierung nicht blockieren (§VERBOTEN: Peak-Guard Gain)

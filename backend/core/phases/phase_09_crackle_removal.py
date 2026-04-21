@@ -123,7 +123,7 @@ def _get_banquet_onnx_session():
                     from backend.core.ml_memory_budget import try_allocate as _try_allocate
 
                     _BANQUET_SIZE_GB = 0.05  # banquet_vinyl_final.onnx ~ 50 MB
-                    if not _try_allocate("BANQUET", size_gb=_BANQUET_SIZE_GB):
+                    if not _try_allocate("BanquetVinyl", size_gb=_BANQUET_SIZE_GB):
                         logger.warning(
                             "ML-Budget erschöpft — BANQUET ONNX kann nicht geladen werden. "
                             "DSP-Fallback (SpektralDecrackler) wird aktiviert."
@@ -141,7 +141,7 @@ def _get_banquet_onnx_session():
                                 providers=["CPUExecutionProvider"],
                             )
                         except Exception as _load_exc:
-                            _ml_release("BANQUET")
+                            _ml_release("BanquetVinyl")
                             logger.warning("BANQUET ONNX-Session Ladefehler: %s — DSP-Fallback aktiv.", _load_exc)
                             _BANQUET_ONNX_SESSION = False
                             return None
@@ -151,7 +151,7 @@ def _get_banquet_onnx_session():
                             from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
 
                             get_plugin_lifecycle_manager().register(
-                                "BANQUET", size_gb=_BANQUET_SIZE_GB, unload_fn=lambda: None
+                                "BanquetVinyl", size_gb=_BANQUET_SIZE_GB, unload_fn=lambda: None
                             )
                         except Exception as _exc:
                             logger.debug("Operation failed (non-critical): %s", _exc)
@@ -160,7 +160,7 @@ def _get_banquet_onnx_session():
                             _model_path,
                         )
                     else:
-                        _ml_release("BANQUET")
+                        _ml_release("BanquetVinyl")
                         logger.warning(
                             "BANQUET ONNX-Modell nicht gefunden: %s — DSP-Fallback aktiv",
                             _model_path,
