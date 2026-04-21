@@ -462,6 +462,7 @@ Greift wenn `file_ext ∈ DIGITAL_FILE_EXTS` und Bayesian kein `best_analog` fin
 | Shellac | `crackle_density > 0.015 AND infrasonic_rms > 0.040` (schlägt Vinyl-Erkennung) | |
 
 **`_strong_physical_analog`-Gate** (normativ):
+
 ```python
 _feature_ok = (
     fp.rotation_strength >= _pa_rot_thresh
@@ -481,6 +482,7 @@ _strong_physical_analog = (
 #### Reel-Tape (Bandmaschinen-Erkennung — zwei Pfade, IEC 60386:1987)
 
 **Studio-Pfad** (normativ, Produktionsfall): Wenn `has_disc=True AND codec_contamination > 0.5` ist der Flutter-Bereich einer professionellen Bandmaschine (0.010–0.035 WRMS) weit unter alten Schwellwerten. Neues adaptives Gate:
+
 ```python
 if has_disc and _codec_contamination > 0.5:
     _thresh = max(0.010, 0.025 * (1.0 - 0.55 * _codec_contamination))  # ≈ 0.016 bei cc=0.667
@@ -488,6 +490,7 @@ if has_disc and _codec_contamination > 0.5:
     tape_conf = clip((wow - _thresh) / 0.10, 0.12, 0.50)
     if tape_conf >= 0.12: sources.append(("reel_tape", tape_conf))
 ```
+
 **Standard-Pfad**: `wow_flutter_index > 0.20 AND rotation_strength < 0.10` (kein Disc-Source, Rotation = Tape-Motor-Artefakt unwahrscheinlich).
 
 **Kalibrierung**: IEC 60386:1987 — Studio-Reel professionell 0.010–0.030 WRMS, Halbprofi 0.030–0.060 WRMS, Konsumerkassette 0.060–1.500 WRMS.
@@ -495,6 +498,7 @@ if has_disc and _codec_contamination > 0.5:
 #### Kassette vs. reel_tape — Disambiguation (§2.46b, normativ)
 
 Wenn beide erkannt: **wow/flutter-Schwelle trennt Studio von Consumer** (IEC 60386:1987, Pohlmann 2010):
+
 ```python
 if _has_cassette and _has_reel_tape:
     if fp.wow_flutter_index < 0.06:
@@ -502,6 +506,7 @@ if _has_cassette and _has_reel_tape:
     else:
         sources = [(m, c) for m, c in sources if m != "reel_tape"]  # → cassette
 ```
+
 - `wow < 0.06 WRMS` → Studio-Bandmaschine (`reel_tape`): Präzisions-Transport, gleichmäßig
 - `wow ≥ 0.06 WRMS` → Konsumerkassette (`cassette`): Capstan/Pinch-Roller-Flutter
 

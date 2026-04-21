@@ -5,14 +5,23 @@
 ## Version 9.11.50 — do_carrier_analysis=False Output-Dateien in UI (Apr 2026)
 
 ### Bugfix (§2.47a [RELEASE_MUST])
-- **`Aurik910/ui/modern_window.py`** `_load_restored_audio_for_quality()`: lädt Output-WAV
+
+- **`Aurik910/ui/modern_window.py`**
+
+`_load_restored_audio_for_quality()`:
+
+lädt Output-WAV
   für Qualitätsbewertung nach Restaurierung — `do_carrier_analysis` war `True` (Default).
   Aufruf auf Output-Dateien ohne Carrier-Fingerprint-Bedarf: `do_carrier_analysis=False`.
-- **`Aurik910/ui/modern_window.py`** `_do_export()`: lädt `item.output_file` für
+
+- **`Aurik910/ui/modern_window.py`** `_do_export()`:
+
+ lädt `item.output_file` für
   Format-Konvertierung — `do_carrier_analysis` war `True` (Default). Carrier-Analyse auf
   prozessierter Ausgabe unnötig: `do_carrier_analysis=False`.
 
 ### Scan-Ergebnis v9.11.50 — alle VERBOTEN-Kategorien bestätigt grün ✅
+
 - PLM-Active-Guard (alle Plugins) ✅ | LUFS/RMS/Peak-Norm ✅ | ONNX Fixed-Shape ✅
 - QualityMode Enum vs String ✅ | DR/BW-Ceiling ✅ | SongCal-Bounds ✅
 - Phase_09 LPC/AR Vollimpl. ✅ | Phase_50 STFT-POCS ✅ | MDX23C NMF-β→HPSS ✅
@@ -26,13 +35,17 @@
 ## Version 9.11.46 — do_carrier_analysis=False KMV UI-Thread (Apr 2026)
 
 ### Bugfix (§2.47a)
-- **`Aurik910/ui/modern_window.py`**: KMV-Stufe-2-Vorbereitung rief `_load_fn(input_path)`
+
+- **`Aurik910/ui/modern_window.py`**:
+
+ KMV-Stufe-2-Vorbereitung rief `_load_fn(input_path)`
   ohne `do_carrier_analysis=False` auf → synchroner Carrier-Analyse-Block im UI-Thread
   (225 s Audio = 10 M+ Samples, 6+ Minuten Hang). Fix: `do_carrier_analysis=False` gesetzt.
 
 ## Version 9.11.45 — PLM-Active-Guard Whisper ONNX + AST ONNX (Apr 2026)
 
 ### Bugfix (§4.6b PLM-Active-Guard)
+
 - **`backend/core/lyrics_guided_enhancement.py`**: `_transcribe_onnx()` — Whisper
   `_ort_session.run()` ohne `set_active` Guard. Emergency-Eviction konnte Modell während
   aktiver Inferenz entladen → Crash. Fix: `set_active("lyrics_transcriber_whisper", True/False)`
@@ -44,6 +57,7 @@
 ## Version 9.11.44 — PLM-Active-Guard LyricsEnhancement + np.corrcoef Guards (Apr 2026)
 
 ### Fixes (§4.6b / VERBOTEN)
+
 - **`backend/core/lyrics_guided_enhancement.py`**: §4.6b PLM-Active-Guard für wav2vec2 ONNX-Inferenz hinzugefügt — `set_active("lyrics_aligner_wav2vec2", True)` vor `session.run()`, `False` in `finally`. Verhindert Emergency-Eviction-Crash während aktiver Inferenz.
 - **`backend/core/forensics/analysis_and_modules.py`**: `np.corrcoef(left, right)` in der Stereo-Analyse mit `np.errstate(invalid="ignore")` + `isfinite`-Guard geschützt — kein RuntimeWarning bei stillem/DC-only Stereo-Audio mehr.
 - **`backend/core/musical_goals/ki_quality_model.py`**: `std < 1e-10` Guard + `np.errstate(invalid="ignore")` vor `np.corrcoef` in `_score_phase_coherence()` — korrekte Fallback-Werte (1.0/0.0) statt NaN-Propagation.
@@ -73,6 +87,7 @@ bevor die Phase sie benötigte — kostenintensiver Reload (performance) oder In
 ## Version 9.11.42 — PLM AudioSR Guards in phase_23 + hybrid_nvsr (Apr 2026)
 
 **Fixes:**
+
 - **§4.6b PLM Active-Guard `hybrid_nvsr._run_audiosr()`**: `set_active("AudioSR", True/False)` in `try/finally`; deckt alle 3 Aufrufstellen (`_apply_audiosr_only`, `_apply_adaptive`, `_apply_hybrid`) ab
 - **§4.6b PLM Active-Guard `phase_23._repair_with_audiosr()`**: `set_active("AudioSR", True/False)` um den gesamten Inferenzblock; `finally` garantiert Freigabe auch bei early-return
 - `audiosr_plugin.py` hat kein internes `set_active` — Emergency-Eviction war möglich
@@ -80,6 +95,7 @@ bevor die Phase sie benötigte — kostenintensiver Reload (performance) oder In
 ## Version 9.11.41 — PLM set_active Guards in 7 Phasen/Modulen (Apr 2026)
 
 ### Fixes (§4.6b VERBOTEN: ML-Inferenz ohne PLM-Active-Guard)
+
 Systematischer Scan aller Phasen mit ML-Inferenz hat 7 Stellen ohne `set_active()` Guard gefunden.
 Emergency-Eviction hätte diese Modelle während aktiver Inferenz entladen können → Crash / OOM.
 
@@ -99,10 +115,10 @@ Emergency-Eviction hätte diese Modelle während aktiver Inferenz entladen könn
 - **`backend/core/phases/phase_56_spectral_band_gap_repair.py`** — `_estimate_f0()`:
   PLM-Guards für FCPE (Tier-1) und RMVPE (Tier-2) als `try/finally` um jeweilige Analyse-Calls.
 
-
-
 ### Fixes
+
 - **`backend/core/plugin_lifecycle_manager.py`** — `_PHASE_REQUIRED_MODELS["phase_42_vocal_enhancement"]`:
+
   Eintrag war `{"MelBandRoformer", "MDX23C"}`. `mdx23c_plugin.py` registriert sich aber mit dem
   dynamischen Schlüssel `f"MDX23C_{stem_key}"` (also `"MDX23C_vocals"` / `"MDX23C_inst"`).
   Fix: `{"MelBandRoformer", "MDX23C_vocals", "MDX23C_inst"}`.
@@ -118,7 +134,9 @@ Emergency-Eviction hätte diese Modelle während aktiver Inferenz entladen könn
 ## Version 9.11.39 — PLM _PHASE_REQUIRED_MODELS phase_55 + Peak-Guard panns/gacela (Apr 2026)
 
 ### Fixes
+
 - **`backend/core/plugin_lifecycle_manager.py`** — `_PHASE_REQUIRED_MODELS["phase_55_diffusion_inpainting"]`:
+
   Eintrag war `{"CQTdiff+", "FlowMatching"}` (falsche PLM-Namen, fehlende Modelle).
   Fix: `{"CQTdiffPlus", "FlowMatching", "DiffWave", "ConsistencyInpaint", "DACInpaint"}`.
   `cqtdiff_plus_plugin.py` nutzt `_BUDGET_NAME = "CQTdiffPlus"` (nicht `"CQTdiff+"`);
@@ -244,22 +262,26 @@ Insbesondere §VERBOTEN-Muster für Stereo-Kanal-Slicing und Carrier-Chain-Pflic
 ### Änderungen
 
 **Stereo-Kanal-Slicing `audio[0]` → `audio[:, 0]`** — §VERBOTEN-Verletzung:
+
 - `backend/core/authenticity_metrics_extended.py` L673, L772: `audio[0]` →
   `audio[:, 0]` (bei Shape `samples×channels` gab `audio[0]` nur 2 Samples zurück;
   alle Authentizitäts-Metriken lieferten 0.0 für Stereo-Songs)
 - `backend/core/genre_classifier.py` L337: gleiches Muster korrigiert
 
 **UV3 `_MATERIAL_PRIORITY_PHASES` auf volle Kette erweitert** — §6.2a / §2.46a:
+
 - `backend/core/unified_restorer_v3.py`: §6.2a Pflichtphasen wurden bisher nur für
   `primary_material` aktiviert. Bei Kette `vinyl→cassette→mp3` blieben Kassetten-Pflichtphasen
   aus, wenn Kassette nicht Primary war. Jetzt: alle `chain_info["chain"]`-Stufen werden
   gegen `_MATERIAL_PRIORITY_PHASES` geprüft.
 
 **`np.corrcoef` NaN-Guard** — weitere Stellen in `defect_scanner.py`:
+
 - L5938 (Ghost-Transient-Detektor): inline guarded dot-product
 - L6100 (Modulation-Noise-Detektor): inline guarded Pearson-Korrelation
 
 **`ml_device_manager.py` GPU-Memory-Budget tier-adaptiv** — §VERBOTEN-Muster:
+
 - L988: `gpu_mem_limit` war hardcoded `vram_total × 0.80` — jetzt
   `vram_total × _TIER_VRAM_PARAMS[gpu_tier]["max_usage_ratio"]` (Tier1: 0.85, Tier2: 0.80, ...)
 - `_VRAM_MAX_USAGE_RATIO` als tote Konstante mit Kommentar dokumentiert (→ `_TIER_VRAM_PARAMS`)
@@ -274,25 +296,35 @@ GPU-Beschleunigung, DSP-Korrektheit und Mid-Pipeline-Loudness-Guard.
 ### Änderungen
 
 **PLM-Active-Guard (7 Plugins)** — `plugins/`:
+
 - `bs_roformer_plugin.py`, `mdx23c_plugin.py`, `demucs_v4_plugin.py`,
   `banquet_vinyl_plugin.py`, `panns_plugin.py`, `mp_senet_plugin.py`,
   `laion_clap_plugin.py`: `set_active(budget_name, True/False)` um `session.run()`/`model()`
   eingefügt (§4.6b — verhindert Emergency-Eviction während aktiver Inferenz)
 
 **`np.corrcoef` NaN-Guard** — `backend/core/`:
+
 - `defect_scanner.py` ~L3596: inline dot-product statt `np.corrcoef` (NaN-safe)
 - `mert_mushra_proxy.py` L1338, L1435: std-Guard (`> 1e-12`) wie L2461-Referenz
 - `quality_control.py` ~L57: inline guarded correlation
 
 **O(n²)-Autokorrelation → O(n·order)** — `dsp/`:
+
 - `vocal_presence_enhancer.py` L119: `np.correlate(audio, audio, mode="full")` →
   Frame-basierte Lag-Berechnung `[np.dot(s[:n-k], s[k:]) for k in range(max_lag+1)]`
 - `bass_enhancement.py` L182: gleiche Ersetzung
 
 **Pegel-Explosion bei stillen Phasen** — `backend/core/phases/phase_49_advanced_dereverb.py`:
-- Wiener-Filter Pegel-Erhalt (Zeile 747-750): ungegated `np.sqrt(np.mean(audio**2))` →
+
+- Wiener-Filter Pegel-Erhalt (Zeile 747-750):
+
+ungegated `np.sqrt(np.mean(audio**2))` →
   `self._rms_dbfs_gated()` mit Hard-Cap +12 dB (§2.45a-I/II/III)
-- Root Cause: Nach Reverb-Removal in Stille-Sektionen fiel ungated RMS drastisch →
+
+- Root Cause:
+
+Nach Reverb-Removal in Stille-Sektionen fiel ungated RMS drastisch →
+
   Correction-Gain `rms_in / rms_out` >> 1 → stille Passagen wurden massiv verstärkt
 
 ## Version 9.11.26 — Tonträgerketten-Display: Single Source of Truth (Apr 2026)
