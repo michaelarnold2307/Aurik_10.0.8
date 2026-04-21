@@ -425,7 +425,23 @@ class HybridNVSR:
         """
         if not self._has_sufficient_ml_headroom(audio, sample_rate, "phase_06_frequency_restoration"):
             raise RuntimeError("AudioSR guard triggered before inference")
-        return plugin.process(audio, sample_rate, target_sr=self.config.audiosr_target_sr)
+        # §4.6b PLM Active-Guard — prevents Emergency-Eviction during inference
+        _plm_nvsr = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_nvsr
+
+            _plm_nvsr = _get_plm_nvsr()
+            _plm_nvsr.set_active("AudioSR", True)
+        except Exception:
+            pass
+        try:
+            return plugin.process(audio, sample_rate, target_sr=self.config.audiosr_target_sr)
+        finally:
+            if _plm_nvsr is not None:
+                try:
+                    _plm_nvsr.set_active("AudioSR", False)
+                except Exception:
+                    pass
 
     def _blend_audio(
         self, audio_a: np.ndarray, audio_b: np.ndarray, sample_rate: int, crossover_freq: float, blend_ratio: float

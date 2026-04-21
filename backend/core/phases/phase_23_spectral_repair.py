@@ -1257,6 +1257,15 @@ class SpectralRepair(PhaseInterface):
         if audiosr is None:
             return audio
 
+        # §4.6b PLM Active-Guard — prevents Emergency-Eviction during AudioSR inference
+        _plm23_asr = None
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm23_asr
+
+            _plm23_asr = _get_plm23_asr()
+            _plm23_asr.set_active("AudioSR", True)
+        except Exception:
+            pass
         try:
             if not self._has_sufficient_ml_headroom(audio, sample_rate):
                 return audio
@@ -1312,6 +1321,12 @@ class SpectralRepair(PhaseInterface):
             logger.error("AudioSR processing failed: %s, falling back to DSP", e)
             # Fallback to DSP (will be handled by caller)
             return audio
+        finally:
+            if _plm23_asr is not None:
+                try:
+                    _plm23_asr.set_active("AudioSR", False)
+                except Exception:
+                    pass
 
     def _estimate_noise_floor_imcra(self, magnitude: np.ndarray) -> np.ndarray:
         """IMCRA-adaptiver Rauschboden pro Zeit-Frequenz-Bin (Cohen 2003).

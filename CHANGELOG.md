@@ -2,6 +2,13 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.42 — PLM AudioSR Guards in phase_23 + hybrid_nvsr (Apr 2026)
+
+**Fixes:**
+- **§4.6b PLM Active-Guard `hybrid_nvsr._run_audiosr()`**: `set_active("AudioSR", True/False)` in `try/finally`; deckt alle 3 Aufrufstellen (`_apply_audiosr_only`, `_apply_adaptive`, `_apply_hybrid`) ab
+- **§4.6b PLM Active-Guard `phase_23._repair_with_audiosr()`**: `set_active("AudioSR", True/False)` um den gesamten Inferenzblock; `finally` garantiert Freigabe auch bei early-return
+- `audiosr_plugin.py` hat kein internes `set_active` — Emergency-Eviction war möglich
+
 ## Version 9.11.41 — PLM set_active Guards in 7 Phasen/Modulen (Apr 2026)
 
 ### Fixes (§4.6b VERBOTEN: ML-Inferenz ohne PLM-Active-Guard)
