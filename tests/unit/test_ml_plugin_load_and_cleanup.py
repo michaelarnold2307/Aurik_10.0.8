@@ -1128,16 +1128,20 @@ class TestGlobalBudgetInvariants:
 
     def test_budget_exhaustion_blocks_allocation(self):
         """Wenn Budget erschöpft, blockiert try_allocate() neue Allokationen."""
+        from unittest.mock import patch
+
         from backend.core.ml_memory_budget import release, set_budget, try_allocate
 
-        _reset_budget()
-        set_budget(0.05)  # 50 MB mini-Budget für Test
-        _reset_budget()
-        try_allocate("Filler", size_gb=0.04)
-        # Nächste Allokation should fail (0.04 + 0.03 > 0.05)
-        blocked = try_allocate("Overflow", size_gb=0.03)
-        assert blocked is False, "Überschuss-Allokation wurde nicht blockiert"
-        release("Filler")
+        # §VERBOTEN: Budget-Tests ohne is_system_thrashing-Mock → flaky auf Hosts mit hoher Swap-Last
+        with patch("backend.core.ml_memory_budget.is_system_thrashing", return_value=False):
+            _reset_budget()
+            set_budget(0.05)  # 50 MB mini-Budget für Test
+            _reset_budget()
+            try_allocate("Filler", size_gb=0.04)
+            # Nächste Allokation should fail (0.04 + 0.03 > 0.05)
+            blocked = try_allocate("Overflow", size_gb=0.03)
+            assert blocked is False, "Überschuss-Allokation wurde nicht blockiert"
+            release("Filler")
         # Budget wiederherstellen
         _reset_budget()
         from backend.core.ml_memory_budget import _auto_detect_budget

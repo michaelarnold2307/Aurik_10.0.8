@@ -261,6 +261,16 @@ def test_precomputed_plan_disables_phase_skipping(sr, short_audio):
             patch.object(uv3, "_execute_pipeline", return_value=_ret),
             patch.object(uv3, "_collect_reporting_analytics", return_value={}),
             patch("backend.core.plugin_lifecycle_manager.cleanup_after_file", return_value=0),
+            patch("backend.core.excellence_optimizer.optimize_for_excellence", side_effect=_excellence_mock),
+            patch("backend.core.feedback_chain.FeedbackChain", return_value=_make_fc_class_mock(short_audio)),
+            patch(
+                "backend.core.musical_goals.musical_goals_metrics.MusicalGoalsChecker",
+                return_value=_make_mgc_class_mock(),
+            ),
+            patch(
+                "backend.core.holistic_perceptual_gate.get_holistic_gate",
+                return_value=_make_hpg_mock(),
+            ),
         ):
             try:
                 uv3.restore(short_audio, sr=sr, **_fast_restore_kwargs(plan=plan))
@@ -270,7 +280,12 @@ def test_precomputed_plan_disables_phase_skipping(sr, short_audio):
         tgt.removeHandler(handler)
         tgt.setLevel(orig_level)
 
-    messages = [r.getMessage() for r in records]
+    messages = []
+    for _r in records:
+        try:
+            messages.append(_r.getMessage())
+        except (TypeError, ValueError):
+            messages.append(str(_r.msg))
     skip_disabled_logged = any("Phase Skipping deaktiviert" in m and "precomputed_phase_plan" in m for m in messages)
     assert skip_disabled_logged, (
         "§2.53b: UV3 muss 'Phase Skipping deaktiviert: precomputed_phase_plan aktiv' loggen. "
@@ -356,6 +371,16 @@ def test_precomputed_plan_pid_plan_log_contains_phase_count(sr, short_audio):
             patch.object(uv3, "_execute_pipeline", return_value=_ret),
             patch.object(uv3, "_collect_reporting_analytics", return_value={}),
             patch("backend.core.plugin_lifecycle_manager.cleanup_after_file", return_value=0),
+            patch("backend.core.excellence_optimizer.optimize_for_excellence", side_effect=_excellence_mock),
+            patch("backend.core.feedback_chain.FeedbackChain", return_value=_make_fc_class_mock(short_audio)),
+            patch(
+                "backend.core.musical_goals.musical_goals_metrics.MusicalGoalsChecker",
+                return_value=_make_mgc_class_mock(),
+            ),
+            patch(
+                "backend.core.holistic_perceptual_gate.get_holistic_gate",
+                return_value=_make_hpg_mock(),
+            ),
         ):
             try:
                 uv3.restore(short_audio, sr=sr, **_fast_restore_kwargs(plan=plan))
@@ -365,7 +390,12 @@ def test_precomputed_plan_pid_plan_log_contains_phase_count(sr, short_audio):
         tgt.removeHandler(handler)
         tgt.setLevel(orig_level)
 
-    messages = [r.getMessage() for r in records]
+    messages = []
+    for _r in records:
+        try:
+            messages.append(_r.getMessage())
+        except (TypeError, ValueError):
+            messages.append(str(_r.msg))
     pid_log_found = any("PhaseInteractionDenker-Plan aktiv" in m and str(len(plan)) in m for m in messages)
     assert pid_log_found, (
         f"§2.53b: UV3 muss 'PhaseInteractionDenker-Plan aktiv: {len(plan)} Phasen' loggen. "

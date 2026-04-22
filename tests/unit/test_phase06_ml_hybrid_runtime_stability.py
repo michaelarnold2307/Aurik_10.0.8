@@ -44,6 +44,8 @@ def test_phase06_uses_ml_hybrid_when_audiosr_available(monkeypatch) -> None:
     # Mock psutil so the phase_06 headroom guard (requires 9.5 GB available) passes
     # on memory-constrained dev machines. Tests ML path logic, not RAM availability.
     monkeypatch.setattr(psutil, "virtual_memory", lambda: _FreeMemVM())
+    # §VERBOTEN: Budget-Tests ohne is_system_thrashing-Mock → flaky auf Hosts mit hoher Swap-Last
+    monkeypatch.setattr("backend.core.ml_memory_budget.is_system_thrashing", lambda: False)
     phase = FrequencyRestorationPhase(sample_rate=48_000)
     audio = _make_rolloff_audio()
 

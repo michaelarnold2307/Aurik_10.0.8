@@ -916,9 +916,11 @@ class TestMertPluginInit:
         # Minimalen fairseq-Checkpoint anlegen (kein pytorch_model.bin)
         dummy_state = {"feature_extractor.conv_layers.0.0.weight": torch.zeros(8, 1, 3)}
         torch.save({"model": dummy_state, "cfg": {}}, d / "MERT-v1-95M_fairseq.pt")
+        # §VERBOTEN: Budget-Tests ohne is_system_thrashing-Mock → flaky auf Hosts mit hoher Swap-Last
         with (
             unittest.mock.patch("mert_plugin._MERT_330M_DIR", empty_330m),
             unittest.mock.patch("mert_plugin._MERT_95M_DIR", d),
+            unittest.mock.patch("backend.core.ml_memory_budget.is_system_thrashing", return_value=False),
         ):
             plugin = MertPlugin(model_dir=str(d))
         assert plugin._model_type == "mert_fairseq"

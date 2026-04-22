@@ -401,37 +401,63 @@ class UnifiedRestorerV3:
     def _musical_gain_envelope(
         audio: np.ndarray, gain: float, gate_dbfs: float = -50.0, crossfade_ms: float = 10.0, sr: int = 48000
     ) -> np.ndarray:
-        """Apply gain only to musical frames, leaving silence untouched."""
+        """Apply gain only to musical frames, leaving silence untouched.
+
+        §2.45a-II + §v9.11.62: Adaptive noise-floor gate — wenn der P5-Rauschboden
+        des Signals mehr als 12 dB über gate_dbfs liegt (Vinyl/Shellac Surface Noise
+        ~-40 dBFS), wird der effektive Gate auf (P5 + 6 dB) angehoben, damit
+        Rauschboden-Stille am Song-Ende NICHT verstärkt wird (Pegelexplosion-Schutz).
+        Identisch mit backend.core.audio_utils.apply_musical_gain_envelope.
+        """
         if abs(float(gain) - 1.0) <= 0.0005:
             return audio
         arr = np.asarray(audio, dtype=np.float32)
         was_2d = arr.ndim == 2
+        # Build mono energy signal for gate detection
         if was_2d:
-            if arr.shape[0] == 2 and arr.shape[1] != 2:
-                mono_env = np.sqrt(np.mean(arr**2, axis=0) + 1e-12)
-            else:
-                mono_env = np.sqrt(np.mean(arr**2, axis=-1) + 1e-12)
+            ch_first = arr.shape[0] <= 2 and arr.shape[1] > arr.shape[0]
+            mono = np.mean(arr, axis=0) if ch_first else np.mean(arr, axis=1)
         else:
-            mono_env = np.abs(arr)
+            mono = arr
+        n = len(mono)
+        frame_len = 480  # 10 ms @ 48 kHz — feinere Auflösung als 2048-Sample-Frames
+        n_full = max(1, n // frame_len)
 
-        frame_len = 2048
-        n_samples = mono_env.shape[0]
-        n_full_frames = max(1, n_samples // frame_len)
-        gate_envelope = np.zeros(n_samples, dtype=np.float32)
-        for frame_index in range(n_full_frames):
-            start = frame_index * frame_len
-            end = min(start + frame_len, n_samples)
-            chunk = mono_env[start:end]
-            chunk_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(chunk * chunk) + 1e-12)) + 1e-12))
-            if chunk_dbfs > gate_dbfs:
-                gate_envelope[start:end] = 1.0
+        # --- Pass 1: collect per-frame RMS values für adaptive Gate-Berechnung ---
+        frame_rms_db: list = []
+        for fi in range(n_full):
+            s = fi * frame_len
+            e = min(s + frame_len, n)
+            chunk = mono[s:e].astype(np.float64)
+            frame_rms_db.append(float(20.0 * np.log10(float(np.sqrt(np.mean(chunk * chunk) + 1e-12)) + 1e-12)))
+        tail_rms_db = None
+        tail_s = n_full * frame_len
+        if tail_s < n:
+            tail = mono[tail_s:].astype(np.float64)
+            tail_rms_db = float(20.0 * np.log10(float(np.sqrt(np.mean(tail * tail) + 1e-12)) + 1e-12))
+            frame_rms_db.append(tail_rms_db)
 
-        tail_start = n_full_frames * frame_len
-        if tail_start < n_samples:
-            tail = mono_env[tail_start:]
-            tail_dbfs = float(20.0 * np.log10(float(np.sqrt(np.mean(tail * tail) + 1e-12)) + 1e-12))
-            if tail_dbfs > gate_dbfs:
-                gate_envelope[tail_start:] = 1.0
+        # --- Adaptive gate: Rauschboden-Schutz für analoge Quellen (§2.45a Pegelexplosion-Fix) ---
+        effective_gate = gate_dbfs
+        if len(frame_rms_db) >= 10:
+            p5_rms_db = float(np.percentile(frame_rms_db, 5))
+            if p5_rms_db > gate_dbfs + 12.0:
+                # Noise-Floor liegt weit über dem nominalen Gate (Vinyl/Shellac ~-40 dBFS).
+                # Effektives Gate 6 dB über Noise-Floor setzen — Stille am Song-Ende
+                # wird NICHT verstärkt; musikalische Frames (≥10 dB über Noise-Floor)
+                # erhalten trotzdem den vollen Makeup-Gain.
+                effective_gate = min(p5_rms_db + 6.0, gate_dbfs + 25.0)
+
+        # --- Pass 2: Gate-Envelope mit adaptivem Schwellwert aufbauen ---
+        gate_envelope = np.zeros(n, dtype=np.float32)
+        full_rms = frame_rms_db[:n_full] if tail_rms_db is not None else frame_rms_db
+        for fi, rms_db in enumerate(full_rms):
+            if rms_db > effective_gate:
+                s = fi * frame_len
+                e = min(s + frame_len, n)
+                gate_envelope[s:e] = 1.0
+        if tail_rms_db is not None and tail_rms_db > effective_gate:
+            gate_envelope[tail_s:] = 1.0
 
         crossfade_samples = max(1, int(crossfade_ms * sr / 1000.0))
         if crossfade_samples > 1:
@@ -439,12 +465,13 @@ class UnifiedRestorerV3:
             gate_envelope = np.convolve(gate_envelope, kernel, mode="same")
             gate_envelope = np.clip(gate_envelope, 0.0, 1.0)
 
-        per_sample_gain = 1.0 + (gain - 1.0) * gate_envelope
+        per_sample_gain = (1.0 + (gain - 1.0) * gate_envelope).astype(np.float32)
         if was_2d:
-            if arr.shape[0] == 2 and arr.shape[1] != 2:
-                return arr * per_sample_gain[np.newaxis, :]
-            return arr * per_sample_gain[:, np.newaxis]
-        return arr * per_sample_gain
+            ch_first = arr.shape[0] <= 2 and arr.shape[1] > arr.shape[0]
+            if ch_first:
+                return (arr * per_sample_gain[np.newaxis, :]).astype(np.float32)
+            return (arr * per_sample_gain[:, np.newaxis]).astype(np.float32)
+        return (arr * per_sample_gain).astype(np.float32)
 
     def _allow_experimental_feature(self, feature_name: str) -> bool:
         """Blocks experimental features in PRODUCT mode and records the decision."""
@@ -5165,7 +5192,11 @@ class UnifiedRestorerV3:
             )
         if _precomputed_phase_plan:
             _enable_phase_skipping = False
+            # §2.53b: immer loggen — auch wenn phase_skipper=None (dann war _enable_phase_skipping
+            # bereits False, aber der Test braucht den Log-Eintrag als Beweis)
             logger.info("Phase Skipping deaktiviert: precomputed_phase_plan aktiv (deterministischer PID-Executor)")
+        elif not self.phase_skipper and not _precomputed_phase_plan:
+            pass  # phase_skipper=None + kein precomputed_plan: kein Log nötig
 
         if _enable_phase_skipping:
             original_count = len(selected_phases)
@@ -15274,6 +15305,12 @@ class UnifiedRestorerV3:
             For stereo audio, channels are downmixed to mono first to avoid
             interleaved-sample artifacts in frame boundaries.
 
+            §2.45a Adaptive Gate (Pegelexplosion-Schutz, v9.11.62):
+            Wenn der P5-Rauschboden der Frames mehr als 12 dB über gate_dbfs liegt
+            (Vinyl/Shellac ~-40 dBFS), wird der effektive Gate auf (P5 + 6 dB) angehoben.
+            Damit werden Noise-Frames aus der Referenz-RMS-Messung AUSGESCHLOSSEN —
+            verhindert, dass das Entfernen von Rauschen als "Lautstärke-Drop" gewertet wird.
+
             Falls back to ungated RMS when < 5 % of frames pass the gate (e.g.
             very quiet recordings or near-silence — ungated is safer there).
             """
@@ -15293,7 +15330,15 @@ class UnifiedRestorerV3:
             _frames = _flat[: _n_frames * _frame_len].reshape(_n_frames, _frame_len)
             _frame_rms = np.sqrt(np.mean(_frames * _frames, axis=1) + 1e-12)
             _frame_dbfs = 20.0 * np.log10(_frame_rms + 1e-12)
-            _gate_mask = _frame_dbfs > gate_dbfs
+            # Adaptive gate: Vinyl/Shellac Noise-Floor (≈-40 dBFS) liegt über -50-dBFS-Gate →
+            # inflationiert die Referenz-RMS → scheinbarer "Drop" nach Denoise → Pegelexplosion.
+            # Wenn P5 > gate + 12 dB: Gate auf P5+6 anheben (Noise ausschließen).
+            _effective_gate = gate_dbfs
+            if len(_frame_dbfs) >= 10:
+                _p5_db = float(np.percentile(_frame_dbfs, 5))
+                if _p5_db > gate_dbfs + 12.0:
+                    _effective_gate = min(_p5_db + 6.0, gate_dbfs + 25.0)
+            _gate_mask = _frame_dbfs > _effective_gate
             if np.sum(_gate_mask) < max(1, int(0.05 * _n_frames)):
                 # < 5 % frames above gate → fall back to ungated (very quiet recording)
                 return _rms_dbfs(_x)

@@ -342,7 +342,8 @@ class TestMusicalGoalsChecker14:
         from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
 
         c = MusicalGoalsChecker(mode="studio_2026")
-        assert c.thresholds["micro_dynamics"] == 0.92
+        # §0a Tabelle: Studio 2026 MikroDynamik >= 0.90 (normativ korrekt)
+        assert c.thresholds["micro_dynamics"] == 0.90
 
 
 # ===========================================================================
