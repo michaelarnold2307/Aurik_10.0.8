@@ -11326,7 +11326,12 @@ class UnifiedRestorerV3:
             _ae_dr = max(0.0, _ae_peak - _ae_rms)
             if restored_audio.ndim == 2 and restored_audio.shape[0] == 2:
                 _ae_l, _ae_r = restored_audio[0], restored_audio[1]
-                _ae_coh = float(np.clip(np.corrcoef(_ae_l, _ae_r)[0, 1], 0.0, 1.0))
+                # NaN-safe correlation: near-constant/silent channels produce std≈0 → corrcoef = NaN
+                if np.std(_ae_l) > 1e-9 and np.std(_ae_r) > 1e-9:
+                    _ae_coh_raw = float(np.corrcoef(_ae_l, _ae_r)[0, 1])
+                    _ae_coh = float(np.clip(_ae_coh_raw if np.isfinite(_ae_coh_raw) else 1.0, 0.0, 1.0))
+                else:
+                    _ae_coh = 1.0  # mono/silent — channels are trivially coherent
                 _ae_ms = float(
                     np.sqrt(np.mean(((_ae_l + _ae_r) / 2) ** 2)) / (np.sqrt(np.mean(((_ae_l - _ae_r) / 2) ** 2)) + 1e-9)
                 )
@@ -17998,8 +18003,19 @@ class UnifiedRestorerV3:
                 and _pre_carrier_audio.shape[0] >= 2
                 and current_audio.shape[0] >= 2
             ):
-                _corr_before = float(np.corrcoef(_pre_carrier_audio[0], _pre_carrier_audio[1])[0, 1])
-                _corr_after = float(np.corrcoef(current_audio[0], current_audio[1])[0, 1])
+                # NaN-safe correlation (§verboten np.corrcoef auf near-constant Signalen):
+                # Bei Stille / DC-Offset → std ≈ 0 → corrcoef = NaN → NaN > _delta_limit = False
+                # → Guard ist lautlos deaktiviert für genau die pathologischen Inputs.
+                # Fix: guarded dot-product statt corrcoef.
+                def _safe_corr(_a: np.ndarray, _b: np.ndarray) -> float:
+                    _sa, _sb = float(np.std(_a)), float(np.std(_b))
+                    if _sa < 1e-9 or _sb < 1e-9:
+                        return 1.0  # mono/silent → trivially correlated (conservative)
+                    _ma, _mb = float(np.mean(_a)), float(np.mean(_b))
+                    _v = float(np.dot(_a - _ma, _b - _mb)) / (float(len(_a)) * _sa * _sb + 1e-12)
+                    return float(max(-1.0, min(1.0, _v)))
+                _corr_before = _safe_corr(_pre_carrier_audio[0], _pre_carrier_audio[1])
+                _corr_after = _safe_corr(current_audio[0], current_audio[1])
                 _input_is_narrow = abs(_corr_before) >= 0.92
                 _delta_limit = 0.04 if _input_is_narrow else 0.12
                 if (_corr_before - _corr_after) > _delta_limit:

@@ -156,12 +156,21 @@ class UVRMDXNetPlugin:
         if not sessions:
             return self._hpss_fallback(mono)
 
-        n = len(mono)
-        mag, cplx = self._stft_mag(mono)  # [3072, frames]
-        n_frames = mag.shape[1]
-        masks_sum = np.zeros_like(mag)
+        # §4.6b PLM-Active-Guard: verhindert Emergency-Eviction während Inferenz.
+        try:
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_uvr
+            _plm_uvr = _get_plm_uvr()
+            _plm_uvr.set_active("UVR_MDXNet", True)
+        except Exception as _exc:
+            logger.debug("UVR MDX-Net: PLM set_active failed: %s", _exc)
+            _plm_uvr = None
+        try:
+            n = len(mono)
+            mag, cplx = self._stft_mag(mono)  # [3072, frames]
+            n_frames = mag.shape[1]
+            masks_sum = np.zeros_like(mag)
 
-        for sess in sessions:
+            for sess in sessions:
             mask_out = np.zeros_like(mag)
             for s in range(0, n_frames, _CHUNK):
                 e = min(s + _CHUNK, n_frames)
@@ -181,19 +190,25 @@ class UVRMDXNetPlugin:
                     mask_out[:, s:e] = 0.5
             masks_sum += mask_out
 
-        mask = np.clip(masks_sum / float(len(sessions)), 0, 1)
-        inst_spec = mask * np.abs(cplx) * np.exp(1j * np.angle(cplx))
-        inst = self._istft(inst_spec, n)
-        # Zurück auf Eingangs-SR
-        if sr != _SR:
-            from math import gcd
+            mask = np.clip(masks_sum / float(len(sessions)), 0, 1)
+            inst_spec = mask * np.abs(cplx) * np.exp(1j * np.angle(cplx))
+            inst = self._istft(inst_spec, n)
+            # Zurück auf Eingangs-SR
+            if sr != _SR:
+                from math import gcd
 
-            g = gcd(_SR, sr)
-            inst = resample_poly(inst, sr // g, _SR // g).astype(np.float32)
-        mn, mx = len(inst), len(mono)
-        if mx > mn:
-            return np.pad(inst, (0, mx - mn)).astype(np.float32)
-        return inst[:mx].astype(np.float32)
+                g = gcd(_SR, sr)
+                inst = resample_poly(inst, sr // g, _SR // g).astype(np.float32)
+            mn, mx = len(inst), len(mono)
+            if mx > mn:
+                return np.pad(inst, (0, mx - mn)).astype(np.float32)
+            return inst[:mx].astype(np.float32)
+        finally:
+            try:
+                if _plm_uvr is not None:
+                    _plm_uvr.set_active("UVR_MDXNet", False)
+            except Exception as _exc:
+                logger.debug("UVR MDX-Net: PLM unset_active failed: %s", _exc)
 
     @staticmethod
     def _hpss_fallback(mono: np.ndarray) -> np.ndarray:

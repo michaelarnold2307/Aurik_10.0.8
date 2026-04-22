@@ -939,10 +939,18 @@ class UnifiedVocalAIEnhancer:
         original_f = characteristics.formants[:3]
         processed_f = processed_chars.formants[:3]
 
-        # Compute correlation
+        # Compute correlation — NaN-safe: formant arrays can be constant (all zeros
+        # when no formants detected) → np.corrcoef returns NaN → max(0, NaN) = 0
+        # (wrong; identical/constant formants = perfect preservation → should return 1.0)
         if len(original_f) == len(processed_f):
-            correlation = np.corrcoef(original_f, processed_f)[0, 1]
-            return max(0, correlation)
+            _of, _pf = np.asarray(original_f, dtype=np.float64), np.asarray(processed_f, dtype=np.float64)
+            _so, _sp = float(np.std(_of)), float(np.std(_pf))
+            if _so < 1e-9 or _sp < 1e-9:
+                correlation = 1.0 if np.allclose(_of, _pf) else 0.5
+            else:
+                _raw = float(np.dot(_of - np.mean(_of), _pf - np.mean(_pf)) / (len(_of) * _so * _sp + 1e-12))
+                correlation = float(max(-1.0, min(1.0, _raw)))
+            return max(0.0, correlation)
 
         # Compute relative difference
         min_len = min(len(original_f), len(processed_f))
