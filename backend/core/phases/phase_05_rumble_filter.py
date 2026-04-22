@@ -432,9 +432,16 @@ class RumbleFilterPhase(PhaseInterface):
                 # Instead: apply full gain, then use soft-limiter ONLY when peak > 0.98
                 # (§2.45a-III: no routine compression).
                 _actual_gain_05 = float(10.0 ** (_makeup_05 / 20.0))
-                filtered = self._musical_gain_envelope(
+                # §2.45a-II: canonical apply_musical_gain_envelope (audio_utils) with
+                # adaptive noise-floor gate — prevents Pegelexplosion in vinyl/shellac
+                # silent sections (surface noise ~-40 dBFS > fixed -50 dBFS gate).
+                from backend.core.audio_utils import apply_musical_gain_envelope as _amge_05
+
+                filtered = _amge_05(
                     np.asarray(filtered, dtype=np.float32),
                     _actual_gain_05,
+                    gate_dbfs=-50.0,
+                    crossfade_ms=10.0,
                     sr=sample_rate,
                 )
                 # §2.45a-III: soft-limiter only on real clipping risk

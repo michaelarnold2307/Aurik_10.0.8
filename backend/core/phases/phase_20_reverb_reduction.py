@@ -871,7 +871,12 @@ class ReverbReduction(PhaseInterface):
             makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 _gain = float(10.0 ** (makeup_gain_db / 20.0))
-                processed_audio = self._musical_gain_envelope(processed_audio, _gain, sr=48000)
+                # §2.45a-II: canonical apply_musical_gain_envelope (audio_utils) with
+                # adaptive noise-floor gate — prevents Pegelexplosion in vinyl/shellac
+                # silent sections (surface noise ~-40 dBFS > fixed -50 dBFS gate).
+                from backend.core.audio_utils import apply_musical_gain_envelope as _amge_20
+
+                processed_audio = _amge_20(processed_audio, _gain, gate_dbfs=-50.0, crossfade_ms=10.0, sr=48000)
                 processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
                 if current_peak > 0.98:
