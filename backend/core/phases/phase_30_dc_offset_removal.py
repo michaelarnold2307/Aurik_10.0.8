@@ -364,8 +364,12 @@ class DCOffsetRemoval(PhaseInterface):
         }.get(material, 0.8)
         max_lift_db = 0.6
 
-        orig_rms = float(np.sqrt(np.mean(orig**2) + 1e-12))
-        proc_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        # §2.45a-I: Gated RMS — nur Frames > -50 dBFS (kein Stille-inflationierter RMS)
+        from backend.core.audio_utils import apply_musical_gain_envelope as _amge_p30
+        from backend.core.audio_utils import compute_gated_rms_linear as _grl_p30
+
+        orig_rms = float(_grl_p30(orig, gate_dbfs=-50.0))
+        proc_rms = float(_grl_p30(proc, gate_dbfs=-50.0))
         if orig_rms < 1e-10 or proc_rms < 1e-12:
             return np.clip(proc.astype(np.float32), -1.0, 1.0), 0.0, 0.0
 
@@ -381,9 +385,12 @@ class DCOffsetRemoval(PhaseInterface):
             p999 = float(np.percentile(np.abs(proc), 99.9) + 1e-12)
             if gain > 1.0:
                 gain = min(gain, float(0.985 / p999))
-            proc = np.clip(proc * gain, -1.0, 1.0)
+            # §2.45a-II: Envelope-Aware Gain — Stille-Frames unverändert
+            proc = _amge_p30(proc.astype(np.float32), gain, gate_dbfs=-50.0, crossfade_ms=10.0, sr=48000).astype(
+                np.float64
+            )
 
-        out_rms = float(np.sqrt(np.mean(proc**2) + 1e-12))
+        out_rms = float(_grl_p30(proc, gate_dbfs=-50.0))
         out_delta_db = float(20.0 * np.log10(max(out_rms / orig_rms, 1e-30)))
         makeup_db = float(20.0 * np.log10(max(out_rms / proc_rms, 1e-30)))
         return np.clip(proc.astype(np.float32), -1.0, 1.0), out_delta_db, makeup_db

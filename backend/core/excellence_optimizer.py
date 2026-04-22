@@ -553,6 +553,24 @@ def _inject_micro_dynamics(
     # Auf Amplitude normieren (mittlerer Gain = 1.0)
     modulation /= np.mean(modulation)
 
+    # §2.45a-II: Frame-Gate — Stille-Frames (< -50 dBFS) erhalten modulation = 1.0
+    # Verhindert, dass Vinyl-Rauschen / Stille am Ende amplitudenmoduliert werden.
+    _frame_sz = 480  # 10 ms @ 48 kHz
+    _gate_lin2 = 10.0 ** (-50.0 / 10.0)
+    _mono_gate = mono if mono.ndim == 1 else mono[:n]
+    for _fs in range(0, n - _frame_sz + 1, _frame_sz):
+        _fe = _fs + _frame_sz
+        _frame_rms2 = float(np.mean(_mono_gate[_fs:_fe] ** 2))
+        if _frame_rms2 <= _gate_lin2:
+            modulation[_fs:_fe] = 1.0  # Stille-Frame: keine Modulation
+    # Crossfade-Grenzen (5 ms) glätten
+    _xf = min(240, _frame_sz // 2)
+    for _fs in range(_xf, n - _frame_sz - _xf, _frame_sz):
+        _fe = _fs + _frame_sz
+        if abs(modulation[_fs] - modulation[_fs - 1]) > 0.05:
+            _fade = np.linspace(modulation[_fs - 1], modulation[_fs], _xf)
+            modulation[_fs - _xf // 2 : _fs - _xf // 2 + _xf] = _fade
+
     if audio.ndim == 1:
         return (audio * modulation).astype(audio.dtype)
     else:

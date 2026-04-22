@@ -187,19 +187,28 @@ class AudioExporter:
             try:
                 import pyloudnorm as _pyln
 
+                from backend.core.audio_utils import apply_musical_gain_envelope as _amge
+
                 _meter = _pyln.Meter(sr)  # ITU-R BS.1770-4
                 _lufs_target = -14.0  # EBU R128 Streaming-Standard
                 _measured_lufs = float(_meter.integrated_loudness(audio_export))
                 if np.isfinite(_measured_lufs):
                     _gain_lu = _lufs_target - _measured_lufs
                     _gain_linear = 10.0 ** (_gain_lu / 20.0)
-                    audio_export = np.clip(audio_export * _gain_linear, -1.0, 1.0)
+                    if _gain_linear > 1.0005:
+                        # §2.45a-II: Envelope-Aware Gain — NUR musikalische Frames boosten,
+                        # Stille-Frames (< -50 dBFS) bleiben unverändert (kein Pegelexplosion im Tail).
+                        audio_export = _amge(audio_export, _gain_linear, gate_dbfs=-50.0, crossfade_ms=10.0, sr=sr)
+                    else:
+                        # Attenuation is safe to apply uniformly (reduces level, no explosion risk).
+                        audio_export = np.clip(audio_export * _gain_linear, -1.0, 1.0)
                 # Ensure normalize=True does not leave very low peaks after LUFS-only gain.
                 # §DSP-Invariante: np.percentile(99.9) schützt vor Impuls-Artefakten.
                 _post_lufs_peak = float(np.percentile(np.abs(audio_export), 99.9))
                 if 0.0 < _post_lufs_peak < 0.5:
-                    _floor_gain = min(0.989 / _post_lufs_peak, 0.5 / _post_lufs_peak)
-                    audio_export = np.clip(audio_export * _floor_gain, -1.0, 1.0)
+                    _floor_gain = min(0.989 / _post_lufs_peak, 2.0)  # cap: max 2× floor-boost
+                    # §2.45a-II: Floor-Boost ebenfalls nur auf musikalische Frames anwenden.
+                    audio_export = _amge(audio_export, _floor_gain, gate_dbfs=-50.0, crossfade_ms=10.0, sr=sr)
                 # TruePeak safety: ≤ -0.1 dBTP — percentile 99.9 guards against
                 # crackle/click impulses blocking normalization of the whole signal.
                 _tp_peak = float(np.percentile(np.abs(audio_export), 99.9))
