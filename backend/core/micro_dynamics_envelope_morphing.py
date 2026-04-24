@@ -319,6 +319,7 @@ class MicroDynamicsEnvelopeMorphing:
         L_rest = self.compute_lufs_profile(res_mono)
         n_frames = min(len(L_orig), len(L_rest))
         G = np.zeros(n_frames, dtype=np.float32)
+        _QUIET_LUFS = -36.0  # §2.30 quiet-zone threshold (vinyl fade-out / restored noise floor)
         for k in range(n_frames):
             lo, lr = L_orig[k], L_rest[k]
             if not (math.isfinite(lo) and math.isfinite(lr)) or lo < self.MIN_LEVEL_LUFS:
@@ -326,9 +327,19 @@ class MicroDynamicsEnvelopeMorphing:
             elif lr < self.MIN_LEVEL_LUFS:
                 # Restored near-silent: suppress positive boost (see morph() §2.30 guard)
                 G[k] = float(np.clip(lo - lr, -max_gain, 0.0))
+            elif lr < _QUIET_LUFS:
+                # §2.30 quiet-zone guard: restored signal in vinyl/tape fade-out noise floor range
+                # (-36 to -60 dBFS). Any positive boost here amplifies cleaned noise at
+                # beginning/end of track. No positive gain allowed in quiet zone.
+                G[k] = float(np.clip(lo - lr, -max_gain, 0.0))
             else:
                 G[k] = float(np.clip(lo - lr, -max_gain, max_gain))
         G_smooth = _savgol_smooth(G)
+        # §2.30 post-smoothing quiet-zone clamp: Savitzky-Golay can distribute positive gain
+        # from music segments back into quiet regions. Clamp to 0 wherever restored is quiet.
+        for k in range(n_frames):
+            if L_rest[k] < _QUIET_LUFS and G_smooth[k] > 0.0:
+                G_smooth[k] = 0.0
         hop = self.HOP_SIZE_SAMPLES
         n = len(res_mono)
         gain_envelope = np.ones(n, dtype=np.float32)
@@ -344,7 +355,16 @@ class MicroDynamicsEnvelopeMorphing:
         # §2.30 tail-gap fix: Samples jenseits des letzten Frame-Endes fortsetzen.
         _last_covered = min((n_frames - 1) * hop + self.FRAME_SIZE_SAMPLES, n)
         if _last_covered < n and _last_covered > 0:
-            gain_envelope[_last_covered:] = gain_envelope[_last_covered - 1]
+            _tail_audio = res_mono[_last_covered:]
+            _tail_rms = float(np.sqrt(np.mean(_tail_audio**2) + 1e-12))
+            _tail_rms_dbfs = 20.0 * math.log10(_tail_rms + 1e-12)
+            _tail_in_quiet_zone = _tail_rms_dbfs < _QUIET_LUFS
+            if _tail_in_quiet_zone:
+                # §2.30 tail quiet-zone guard: restored tail is vinyl/tape noise floor.
+                # Copy last gain but cap at 1.0 (no positive boost on tail).
+                gain_envelope[_last_covered:] = min(float(gain_envelope[_last_covered - 1]), 1.0)
+            else:
+                gain_envelope[_last_covered:] = gain_envelope[_last_covered - 1]
 
         out = res_mono.copy()
         n_s = min(n, len(gain_envelope))
