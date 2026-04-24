@@ -79,7 +79,9 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
 
 
-from backend.core.audio_utils import to_channels_last, apply_musical_gain_envelope as _amge_17
+from backend.core.audio_utils import apply_musical_gain_envelope as _amge_17
+from backend.core.audio_utils import compute_gated_rms_linear as _gated_rms_17
+from backend.core.audio_utils import to_channels_last
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -485,8 +487,10 @@ class MasteringPolishPhase(PhaseInterface):
         # Level compensation: keep saturation volume-neutral
         # §2.45a-II: cap ratio at +4 dB max and apply only to musical frames to
         # prevent fadeout sections from being disproportionately amplified.
-        rms_before = np.sqrt(np.mean(audio**2))
-        rms_after = np.sqrt(np.mean(enhanced**2))
+        # §2.45a-I: gated RMS — silence frames excluded so a long fadeout tail
+        # does not artificially suppress rms_before and produce spurious attenuation.
+        rms_before = _gated_rms_17(audio)
+        rms_after = _gated_rms_17(enhanced)
         if rms_after > 1e-10:
             _comp_ratio = float(rms_before / rms_after)
             _comp_ratio = float(np.clip(_comp_ratio, 0.5, 1.585))  # cap: max +4 dB (1.585×)

@@ -70,6 +70,7 @@ import time
 import numpy as np
 from scipy import signal
 
+from backend.core.audio_utils import compute_gated_rms_linear as _gated_rms_20
 from backend.core.audio_utils import to_channels_last
 from backend.core.defect_scanner import MaterialType
 
@@ -453,8 +454,11 @@ class ReverbReduction(PhaseInterface):
                 processing_time = time.time() - start_time
 
                 # Estimate RMS change from reverb reduction
-                rms_before = np.sqrt(np.mean(audio**2))
-                rms_after = np.sqrt(np.mean(ml_result.audio**2))
+                # §2.45a-I: gated RMS — silence frames (fadeout, intro) excluded
+                # so that long silent tails do not inflate the apparent RMS-drop
+                # and trigger the catastrophic-ML-fallback guard (Fix 11A) falsely.
+                rms_before = _gated_rms_20(audio)
+                rms_after = _gated_rms_20(ml_result.audio)
                 # Guard: np.log10(0) => RuntimeWarning; clamp ratio >= 1e-30
                 rms_change_db = 20 * np.log10(np.maximum(rms_after / (rms_before + 1e-10), 1e-30))
 
