@@ -13464,6 +13464,7 @@ class UnifiedRestorerV3:
                 "phase_06_frequency_restoration",
                 "phase_01_click_removal",
                 "phase_28_surface_noise_profiling",
+                "phase_05_rumble_filter",  # 78-RPM turntable motor rumble — §6.2a Pflicht
             ],
             "wax_cylinder": [  # §6.2a: mechanisch graviert, severe crackle+wow/flutter+dropout+BW≤5kHz
                 "phase_09_crackle_removal",
@@ -13474,6 +13475,7 @@ class UnifiedRestorerV3:
                 "phase_24_dropout_repair",
                 "phase_29_tape_hiss_reduction",
                 "phase_55_diffusion_inpainting",  # BW-Cap 5 kHz per _MATERIAL_BW_CAP_HZ
+                "phase_05_rumble_filter",  # Zylinderphonograph-Motorenrumpeln — §6.2a Pflicht
             ],
             "wire_recording": [
                 "phase_12_wow_flutter_fix",
@@ -13486,6 +13488,7 @@ class UnifiedRestorerV3:
                 "phase_09_crackle_removal",
                 "phase_03_denoise",
                 "phase_29_tape_hiss_reduction",
+                "phase_05_rumble_filter",  # Turntable-Rumpeln — §6.2a Pflicht
             ],
             "dat": [
                 "phase_24_dropout_repair",
