@@ -1677,6 +1677,44 @@ if rms_drop < -threshold:
 - `phase_02_hum_removal` (Notch) — Guard entfernt in v9.11.18
 - Jede zukünftige Phase die primär als Spektralband-Filter arbeitet
 
+**Zweite Fehlerquelle: UV3 `_active_quality_intervention` + Cumulative Guard (bestätigt 2026-04-25)**
+
+Nach dem Entfernen der per-Phase-Guards trat die Pegelexplosion erneut auf. Ursache:
+
+1. `_active_quality_intervention` berechnet `_prof = _phase_intervention_profile(phase_id)` —
+   ohne Eintrag in `_phase_overrides` gilt der General-Default `enable_loudness=True`.
+   HPF/Notch-Phasen sehen so immer noch einen scheinbaren Loudness-Kollaps → Makeup-Gain.
+2. Der Mid-Pipeline-Cumulative-Guard und der End-of-Pipeline-Guard verwendeten
+   `_afg_pre_pipeline_audio` (vor der Pipeline) als Referenz — HPF-Energieentfernung akkumulierte
+   als kumulativer RMS-Drop → Guard triggerte Makeup-Gain.
+
+**Vollständige Fix-Checkliste für neue HPF/Notch-Phasen:**
+
+```python
+# 1. Phase-Datei: keinen per-Phase-Makeup-Gain-Guard (§2.45a-VI)
+# 2. UV3 _phase_overrides: enable_loudness=False setzen
+_phase_overrides["phase_XX_name"] = {
+    "family": "phase_xx_hpf",
+    "enable_loudness": False,
+    "enable_stereo": False,
+    "enable_transient": False,
+}
+# 3. UV3 _HPF_NOTCH_CUM_RESET_PHASES: Phase eintragen
+_HPF_NOTCH_CUM_RESET_PHASES: frozenset = frozenset({
+    "phase_02_hum_removal",
+    "phase_05_rumble_filter",
+    "phase_XX_name",  # NEU
+})
+# Nach diesem Phase-Reset berechnet der Cumulative Guard den Drift
+# relativ zum Audio NACH der HPF — nicht relativ zum Audio davor.
+```
+
+Implementierung in `backend/core/unified_restorer_v3.py`:
+
+- `_phase_overrides`: `phase_02` + `phase_05` mit `enable_loudness=False` (commit 032a83f)
+- `_cum_rms_reference_audio` + `_HPF_NOTCH_CUM_RESET_PHASES` im Phase-Loop (commit 032a83f)
+- `_cum_guard_ref = _cum_rms_reference_audio` im End-of-Pipeline-Guard (commit 032a83f)
+
 ## §2.46 [RELEASE_MUST] Carrier-Chain-Inversion (v9.10.122)
 
 **Restoration-Modus**: Ziel = **gesamte Tonträgerkette invertieren**, nicht Einzel-Defekte reparieren.
