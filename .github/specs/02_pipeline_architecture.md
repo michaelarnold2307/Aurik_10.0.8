@@ -1619,6 +1619,56 @@ nur wenn die Noise-Floor-Evidenz eindeutig genug ist. Der Aufrufer MUSS explizit
 
 Schützt §0 (Primum non nocere), §2.45 (Minimal-Intervention) und P1/P2-Pipeline-Ende-Regeln (§2.54) gegen frühe Klangausdünnung, ohne die Defektkorrekturwirkung zu verlieren.
 
+### §2.45a-VI [RELEASE_MUST] Kein Makeup-Gain-Guard in subtraktiven Filtertypen (v9.11.17)
+
+**Fundamental-Invariante**: Hochpassfilter, Tiefpassfilter, Notchfilter und Bandpassfilter entfernen
+Energie **absichtlich**. Ein per-Phase-Makeup-Gain-Guard, der diesen Energieverlust kompensiert,
+kämpft gegen den Filter — das ist ein **logischer Widerspruch** der zu einer Bug-Endlosschleife führt.
+
+**Mechanismus der Endlosschleife (phase_05 — bestätigt 2026-04-25):**
+
+1. Rumble-Filter (HP 20–80 Hz) entfernt sub-Bass-Rumpelenergie (30+ dB unter Musik-Pegel)
+2. `_rms_in_db_ref` wird **vor** dem Filter gemessen → enthält Rumpelenergie
+3. `_rms_out_db` wird **nach** dem Filter gemessen → Rumpelenergie fehlt
+4. Scheinbarer RMS-Drop → Makeup-Gain-Guard feuert
+5. `apply_musical_gain_envelope` boosted Fadeout/Intro-Frames → Pegelexplosion
+6. Fix-Versuch: `gate_dbfs=-50.0 → -36.0` → Pegelexplosion bleibt (Referenzmessung war falsch)
+7. Nächster Fix-Versuch würde wieder fehlschlagen → Endlosschleife
+
+**Normative Regel:**
+
+| Phasentyp | Makeup-Gain-Guard erlaubt? | Begründung |
+|---|---|---|
+| HPF / LPF / Notch / Bandpass | ❌ **VERBOTEN** | Energieverlust ist Carrier-Inversion — beabsichtigt |
+| Denoise / De-Hiss / Surface-Noise | ✅ Erlaubt | Breitbandig-subtraktiv: Musikpegel-Erhalt wichtig |
+| Dereverb | ✅ Erlaubt | Breitbandig-subtraktiv: Musikpegel-Erhalt wichtig |
+| Noise-Gate | ✅ Erlaubt | Wirkt auf Dynamik, nicht auf Spektralband |
+
+**Wer überwacht den Gesamtpegel dann?**
+
+Der UV3-Cumulative-Guard (`§2.45a-IV`) misst den kumulativen Pegel-Drift über die gesamte Pipeline
+und greift ein wenn nötig. Er ist die richtige Stelle für Pipeline-weite Pegel-Kompensation —
+nicht einzelne HP-Filter-Phasen.
+
+```python
+# RICHTIG — kein Guard in HPF-Phase:
+filtered = apply_highpass_filter(audio, cutoff_hz)
+filtered = np.clip(np.nan_to_num(filtered), -1.0, 1.0)
+return create_phase_result(audio=filtered, ...)
+
+# FALSCH — Guard kämpft gegen den Filter:
+filtered = apply_highpass_filter(audio, cutoff_hz)
+rms_drop = rms(filtered) - rms(audio)  # enthält sub-Bass-Energie → scheinbarer Drop
+if rms_drop < -threshold:
+    filtered = apply_musical_gain_envelope(filtered, makeup_gain, ...)  # Pegelexplosion
+```
+
+**Betroffene Phasen (kein Makeup-Gain-Guard erlaubt):**
+
+- `phase_05_rumble_filter` (HPF)
+- `phase_02_hum_removal` (Notch)
+- Jede zukünftige Phase die primär als Spektralband-Filter arbeitet
+
 ## §2.46 [RELEASE_MUST] Carrier-Chain-Inversion (v9.10.122)
 
 **Restoration-Modus**: Ziel = **gesamte Tonträgerkette invertieren**, nicht Einzel-Defekte reparieren.
