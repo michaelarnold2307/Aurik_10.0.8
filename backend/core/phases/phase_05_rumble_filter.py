@@ -294,24 +294,6 @@ class RumbleFilterPhase(PhaseInterface):
                 return arr.T
             return arr
 
-        # §2.45a: RMS-Referenz NACH DC-Block (DC-Offset darf den Musik-Pegel nicht aufblähen).
-        # Raw audio kann DC-Offset von Vinyl-Nadel tragen; der HP-Filter arbeitet auf dc_blocked.
-        # Beide Seiten der Guard müssen vergleichbar sein -- sonst werden korrekte Rumble-
-        # Entfernungen (33+ dB Breitband-Abfall bei rausch-dominiertem Vinyl) als Schaden gewertet.
-        # Guard-Messung wird nach der Verarbeitung mit dem gleichen dc_blocked als Referenz getan.
-        _dc_alpha_05 = 0.9995  # 1 Hz ≈ Cutoff @ 48 kHz (zero-phase via filtfilt)
-        from scipy.signal import filtfilt as _filtfilt_05
-
-        _dc_b_05, _dc_a_05 = [1.0, -1.0], [1.0, -_dc_alpha_05]
-        if audio.ndim == 2:
-            _dc_ref_05 = np.column_stack(
-                [_filtfilt_05(_dc_b_05, _dc_a_05, audio[:, ch]) for ch in range(audio.shape[1])]
-            )
-        else:
-            _dc_ref_05 = _filtfilt_05(_dc_b_05, _dc_a_05, audio)
-        # §2.45a-I: Gated-RMS — nur Frames > −50 dBFS als Referenz (keine Stille-Verfälschung)
-        _rms_in_db_05_ref = self._rms_dbfs_gated(np.asarray(_dc_ref_05, dtype=np.float32))
-
         # Get material-specific parameters
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
 
@@ -416,55 +398,15 @@ class RumbleFilterPhase(PhaseInterface):
             filtered = (audio + _effective_strength * (filtered - audio)).astype(audio.dtype)
             filtered = np.clip(filtered, -1.0, 1.0)
 
-        # §2.45a Mid-Pipeline-Loudness-Drift-Guard (gated RMS + envelope-aware gain)
+        # §2.45a: Phase_05 ist ein Hochpassfilter — Energieverlust durch Rumble-Entfernung
+        # ist BEABSICHTIGT und darf NICHT per Makeup-Gain kompensiert werden.
+        # Grund: _rms_in_db_05_ref enthält Rumpelenergie (sub-30 Hz), _rms_out_db_05 nicht →
+        # scheinbarer RMS-Drop → Guard feuert → boosted Fadeout/Intro-Frames → Pegelexplosion.
+        # Das ist ein logischer Widerspruch: HP-Filter + Makeup-Gain kämpfen gegeneinander.
+        # Der UV3-Cumulative-Guard (§2.45a-IV) überwacht den Gesamtpegel auf Pipeline-Ebene.
         _rms_out_db_05 = self._rms_dbfs_gated(np.asarray(filtered, dtype=np.float32))
-        _rms_drop_05 = _rms_out_db_05 - _rms_in_db_05_ref if _rms_in_db_05_ref > -80.0 else 0.0
-        _max_drop_05 = 1.5  # Rumble-HP is early and subtractive: protect musical body
-        _makeup_05 = 0.0
-        if _rms_in_db_05_ref > -80.0 and _rms_drop_05 < -_max_drop_05:
-            _required_gain_db = -_max_drop_05 - _rms_drop_05
-            _makeup_05 = float(np.clip(_required_gain_db, 0.0, 6.0))
-            if _makeup_05 > 0.0:
-                # §2.45a-II: full makeup gain via envelope-aware gain (musical frames only).
-                # BUG FIX: DO NOT cap gain by peak99-headroom before applying —
-                # for hot signals (peak99 ≥ 0.95) the old cap → actual_gain ≤ 1.0 →
-                # guard never fires → level destroyed on every normalised vinyl/MP3 input.
-                # Instead: apply full gain, then use soft-limiter ONLY when peak > 0.98
-                # (§2.45a-III: no routine compression).
-                _actual_gain_05 = float(10.0 ** (_makeup_05 / 20.0))
-                # §2.45a-II / §2.30b: canonical apply_musical_gain_envelope with
-                # -36 dBFS gate (per-sample guard, §2.30b Invariante).
-                # -50 dBFS reichte NICHT — Vinyl/Shellac-Oberflächenrauschen liegt
-                # bei -35 bis -42 dBFS → passiert -50-dBFS-Gate → Pegelexplosion in
-                # Intro/Outro durch Makeup-Gain auf Rauschboden.
-                from backend.core.audio_utils import apply_musical_gain_envelope as _amge_05
-
-                filtered = _amge_05(
-                    np.asarray(filtered, dtype=np.float32),
-                    _actual_gain_05,
-                    gate_dbfs=-36.0,
-                    crossfade_ms=10.0,
-                    sr=sample_rate,
-                )
-                # §2.45a-III: soft-limiter only on real clipping risk
-                _peak99_05 = float(np.percentile(np.abs(filtered), 99.9))
-                if _peak99_05 > 0.98:
-                    _abs_05 = np.abs(filtered)
-                    _over_05 = _abs_05 > 0.92
-                    if np.any(_over_05):
-                        _sign_05 = np.sign(filtered)
-                        _soft_05 = 0.92 + 0.08 * np.tanh((_abs_05 - 0.92) / 0.08)
-                        filtered = np.where(_over_05, _sign_05 * _soft_05, filtered)
-                filtered = np.clip(filtered, -1.0, 1.0)
-                _rms_out_db_05 = self._rms_dbfs_gated(np.asarray(filtered, dtype=np.float32))
-                _rms_drop_05 = _rms_out_db_05 - _rms_in_db_05_ref
-                logger.info(
-                    "Phase 05 loudness-guard: cutoff=%d Hz, rms_drop=%.2f dB → makeup %.2f dB (gain ×%.3f)",
-                    adapted_cutoff,
-                    _rms_drop_05,
-                    _makeup_05,
-                    _actual_gain_05,
-                )
+        _rms_drop_05 = 0.0  # not comparable: input has rumble energy, output does not
+        _makeup_05 = 0.0  # No per-phase makeup gain for HPF — UV3 handles level at pipeline level
 
         return create_phase_result(
             audio=_restore_layout_05(filtered),
