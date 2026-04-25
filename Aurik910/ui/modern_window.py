@@ -1896,6 +1896,13 @@ class BatchProcessingThread(QThread):
                                 _last_scan_int = _scan_int
                                 self.scan_progress.emit(_scan_frac)
 
+                    except RuntimeError:
+                        # BatchProcessingThread C++ object deleted by Qt GC (normal on run
+                        # completion or window close) — exit emitter thread silently.
+                        logger.debug(
+                            "aurik-smooth-progress: emitter stopping — Qt object deleted at %.1f%%",
+                            _last_emit_val / 100.0,
+                        )
                     except Exception as _sp_exc:
                         # Unhandled exception in the smooth-progress emitter.
                         # Without this catch the thread dies silently and the
@@ -2341,8 +2348,17 @@ class BatchProcessingThread(QThread):
 
                             _last_phase_key[0] = _phase_key
                             _last_raw_phase_id[0] = _raw_pid
-                            if not _post_processing_started[0]:
-                                # Normale Phase: orangenen Balken auf 0 zurücksetzen.
+                            if pct < 20 and not _post_processing_started[0]:
+                                # Pre-Pipeline Analyse (pct 1–19): orangener Balken steigt
+                                # proportional mit dem Analyse-Fortschritt an (kein Reset).
+                                # Verhindert, dass der Balken bei jedem Analyse-Schritt auf 0
+                                # zurückspringt und dadurch eingefroren wirkt.
+                                _pre_pct = max(0.0, min(100.0, (pct - 1) / 18.0 * 100.0))
+                                with _sp_lock:
+                                    if _pre_pct > _sp2["target"]:
+                                        _sp2["target"] = _pre_pct
+                            elif not _post_processing_started[0]:
+                                # Normale Phase (pct 20–85): orangenen Balken auf 0 zurücksetzen.
                                 # The smooth emitter detects _sp2_phase_reset and adjusts _last_phase_pct.
                                 with _sp_lock:
                                     _sp2["current"] = 0.0
