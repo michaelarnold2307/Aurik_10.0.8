@@ -475,13 +475,14 @@ class HybridNVSR:
         # Design highpass filter for audio_b contribution
         sos_high = signal.butter(4, normalized_cutoff, btype="high", output="sos")
 
-        # Apply filters
+        # Apply filters — §2.51 Zero-phase crossover: sosfiltfilt prevents group-delay
+        # mismatch between LP/HP bands that causes comb-filter coloration at crossover freq.
         if audio_a.ndim > 1:
-            audio_a_low = np.array([signal.sosfilt(sos_low, audio_a[ch]) for ch in range(audio_a.shape[0])])
-            audio_b_high = np.array([signal.sosfilt(sos_high, audio_b[ch]) for ch in range(audio_b.shape[0])])
+            audio_a_low = np.array([signal.sosfiltfilt(sos_low, audio_a[ch]) for ch in range(audio_a.shape[0])])
+            audio_b_high = np.array([signal.sosfiltfilt(sos_high, audio_b[ch]) for ch in range(audio_b.shape[0])])
         else:
-            audio_a_low = signal.sosfilt(sos_low, audio_a)
-            audio_b_high = signal.sosfilt(sos_high, audio_b)
+            audio_a_low = signal.sosfiltfilt(sos_low, audio_a)
+            audio_b_high = signal.sosfiltfilt(sos_high, audio_b)
 
         # Blend: keep DSP low frequencies, add AudioSR high frequencies
         blended = audio_a_low + blend_ratio * audio_b_high

@@ -2,6 +2,57 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
+## Version 9.11.55 — §2.45a Cumulative-Guard Decoupling + §2.30b ADMM Wall-Time Fixes (Apr 2026)
+
+### Bugfix §2.45a-VI: `_cum_rms_reference_audio` vom ArtifactFreedomGate entkoppelt
+
+**Problem (Silent Failure)**: `_cum_rms_reference_audio` wurde nur initialisiert wenn
+`_afg_pre_pipeline_audio is not None`, was vom Laden des `ArtifactFreedomGate`-Singletons abhing.
+Bei Import-Fehler oder OOM-Initialisierungsfehler des AFG war `_artifact_gate = None` →
+`_afg_pre_pipeline_audio = None` → `_cum_rms_reference_audio = None` → der gesamte
+Mid-Pipeline-Cumulative-Guard war unsichtbar deaktiviert. Kein Log-Eintrag, keine Warnung.
+Folge: Keine Schutzschicht gegen kumulativen Loudness-Drift über 8+ subtraktive Phasen →
+mögliche 20 dB Pegelexplosion in Intro/Outro.
+
+**Fix** (`backend/core/unified_restorer_v3.py`):
+
+_cum_rms_reference_audio: np.ndarray = current_audio.copy()` — immer initialisiert,
+
+unabhängig von `_artifact_gate`- oder `_afg_pre_pipeline_audio`-Verfügbarkeit.
+
+Typ-Annotation von `np.ndarray | None` auf `np.ndarray` geändert.
+
+- Alle `is not None`-Checks im Guard-Body bleiben harmlos erhalten.
+
+### Bugfix §4.5a / Spec04: ADMM length-adaptive `max_iter` + Wall-Time-Budget
+
+**Problem (Produktion 2026-04-25 bestätigt)**: `_admm_declip()` lief immer mit festem
+`max_iter=200`. Für 225-s-Vinyl: 200 × 12 s/Iter = 2460 s → überschritt UV3-Non-Exempt-Budget
+(2700 s) → 18 Enhancement-Phasen übersprungen als Passthrough → `tonal_center=0.131` (KRITISCH).
+
+**Fix** (`backend/core/phases/phase_23_spectral_repair.py`):
+
+- Längenadaptives `max_iter`:
+
+`clamp(round(200 × min(1.0, 30.0 / duration_s)), 30, 200)`
+
+→ 225-s-Vinyl:
+30 Iter (~360 s); ≤30-s-Signale: 200 Iter (volle Qualität)
+- Wall-Time-Budget innerhalb ADMM-Loop: `min(180 s, 1.5 × duration_s)` als Sicherheitsnetz
+- Záviška 2021: Konvergenz typisch in 30–50 Iter.; Iter 60–200 = Sub-Promille-Verbesserung
+
+**Fix** (`backend/core/unified_restorer_v3.py`):
+
+- UV3 Duration-adaptive Phase-Budget: `min(_base, 300.0 + duration_s × 8.0)
+
+→ 225-s-Vinyl: `min(2700, 2100) = 2100 s` statt undifferenzierter 2700 s
+
+**Spec-Dokumentation** (`.github/specs/04_dsp_standards.md` + `copilot-instructions.md`):
+
+§4.5a ADMM-Parameters mit VERBOTEN-Eintrag für festes `max_iter=200
+
+---
+
 ## Version 9.11.52 — §09.2 Adaptive Goal Thresholds → PMGG Propagation (Apr 2026)
 
 ### Feature §09.2 / §2.29 / §2.47 (Adaptive Intelligence — Normative Gap geschlossen)

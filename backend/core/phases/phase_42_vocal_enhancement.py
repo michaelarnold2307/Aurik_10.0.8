@@ -190,6 +190,60 @@ class VocalEnhancement(PhaseInterface):
         },
     }
 
+    # §VoiceAge Age-Adaptive Enhancement Factors (v9.11.14)
+    # Keys correspond to VoiceAgeGroup.value strings.
+    # Older voices (MATURE/SENIOR) exhibit inherent breathiness and tremolo that should be
+    # preserved, not corrected against.  Younger voices tolerate more aggressive processing.
+    # breath_reduction_scale: Multiplier on config["breath_reduction_db"]
+    # compression_scale: Multiplier on the effective (ratio-1) portion of config["compression_ratio"]
+    # formant_scale: Multiplier on config["formant_gain_db"] (tremolo → less formant correction)
+    # chest_scale: Multiplier on config["chest_gain_db"] (senior voices lose low-mid chest resonance)
+    # breath_preservation: float passed to VocalAIEnhancer.enhance() (0=aggressive, 1=preserve all)
+    _AGE_ADAPTIVE_FACTORS: dict[str, dict[str, float]] = {
+        "child": {
+            "breath_reduction_scale": 1.00,
+            "compression_scale": 0.80,
+            "formant_scale": 1.20,
+            "chest_scale": 0.70,
+            "breath_preservation": 0.75,
+        },
+        "teenager": {
+            "breath_reduction_scale": 1.00,
+            "compression_scale": 0.90,
+            "formant_scale": 1.10,
+            "chest_scale": 0.85,
+            "breath_preservation": 0.70,
+        },
+        "young_adult": {
+            "breath_reduction_scale": 1.00,
+            "compression_scale": 1.00,
+            "formant_scale": 1.00,
+            "chest_scale": 1.00,
+            "breath_preservation": 0.70,
+        },
+        "adult": {
+            "breath_reduction_scale": 0.95,
+            "compression_scale": 1.00,
+            "formant_scale": 0.95,
+            "chest_scale": 1.05,
+            "breath_preservation": 0.72,
+        },
+        "mature": {
+            "breath_reduction_scale": 0.75,
+            "compression_scale": 0.85,
+            "formant_scale": 0.80,
+            "chest_scale": 1.10,
+            "breath_preservation": 0.82,
+        },
+        "senior": {
+            "breath_reduction_scale": 0.60,
+            "compression_scale": 0.75,
+            "formant_scale": 0.65,
+            "chest_scale": 1.15,
+            "breath_preservation": 0.90,
+        },
+    }
+
     # §8.3 Vocal-Intimitäts-Gate (material-adaptiv): maximal tolerierbarer
     # Abfall der Intimitäts-Metrik (fricative/plosive Präsenz) vor Rescue.
     _INTIMACY_MAX_DROP_BY_MATERIAL: dict[MaterialType, float] = {
@@ -374,6 +428,48 @@ class VocalEnhancement(PhaseInterface):
 
         # §2.8 Vocal-Chain: Pipeline-weite Gender-Info aus _restoration_context
         _vocal_gender = str(kwargs.get("vocal_gender", "unknown"))
+
+        # §VoiceAge Age-Adaptive Config Scaling (v9.11.14)
+        # Use GenderDetector to estimate age_group and scale config parameters accordingly.
+        # Senior/Mature voices: preserve inherent breathiness + tremolo (less correction).
+        # Child voices: softer compression, stronger formant enhancement.
+        # Non-blocking — falls back to unscaled config on any exception.
+        _detected_age_group_value: str | None = None
+        _age_breath_preservation: float = 0.70
+        if VOCAL_AI_AVAILABLE and _UnifiedVocalAI is not None:
+            try:
+                from backend.core.vocal_ai_enhancement import GenderDetector as _GenderDetectorCls
+
+                _age_audio = (
+                    audio
+                    if audio.ndim == 1
+                    else (audio[0] if (audio.shape[0] == 2 and audio.shape[1] > 2) else audio[:, 0])
+                )
+                _age_detector = _GenderDetectorCls(sample_rate=sample_rate)
+                _age_chars = _age_detector.detect(_age_audio.astype(np.float32))
+                if _age_chars.age_group is not None:
+                    _detected_age_group_value = str(_age_chars.age_group.value)
+                    _af = self._AGE_ADAPTIVE_FACTORS.get(_detected_age_group_value, {})
+                    _brs = float(_af.get("breath_reduction_scale", 1.0))
+                    _cs = float(_af.get("compression_scale", 1.0))
+                    _fs = float(_af.get("formant_scale", 1.0))
+                    _ches = float(_af.get("chest_scale", 1.0))
+                    _age_breath_preservation = float(_af.get("breath_preservation", 0.70))
+                    config["breath_reduction_db"] = float(config["breath_reduction_db"] * _brs)
+                    config["compression_ratio"] = float(1.0 + (config["compression_ratio"] - 1.0) * _cs)
+                    config["formant_gain_db"] = float(config["formant_gain_db"] * _fs)
+                    config["chest_gain_db"] = float(config["chest_gain_db"] * _ches)
+                    logger.info(
+                        "Phase42 age-adaptive: age_group=%s breath_red×%.2f comp×%.2f formant×%.2f chest×%.2f breath_pres=%.2f",
+                        _detected_age_group_value,
+                        _brs,
+                        _cs,
+                        _fs,
+                        _ches,
+                        _age_breath_preservation,
+                    )
+            except Exception as _age_err:
+                logger.debug("Phase42 age-detection non-blocking: %s", _age_err)
 
         # §2.36 Lyrics-Salienz-Timeline: per-phoneme adaptive EQ
         # When a lyrics_saliency_timeline is provided (from LyricsGuidedEnhancement),
@@ -594,7 +690,7 @@ class VocalEnhancement(PhaseInterface):
                 _vai = _UnifiedVocalAI(sample_rate=sample_rate)
                 _vai_result = _vai.enhance(
                     enhanced_audio,
-                    breath_preservation=0.7,
+                    breath_preservation=_age_breath_preservation,
                     sibilance_reduction=False,  # Already handled by Phase 19 + de-ess stage
                 )
                 # Safety: Only accept if formant preservation is high (identity protection)
@@ -1600,7 +1696,22 @@ class VocalEnhancement(PhaseInterface):
             _a2 = 1.0 - _alpha_f / _A
             _b = np.array([_b0, _b1, _b2]) / _a0
             _a = np.array([1.0, _a1 / _a0, _a2 / _a0])
-            enhanced = signal.lfilter(_b, _a, enhanced)
+            # §2.51 Zero-phase Bell-EQ: filtfilt prevents group-delay pre-smear on vocal
+            # plosives/onsets (lfilter VERBOTEN per VERBOTEN-list). For filtfilt the
+            # effective dB gain doubles (forward+backward pass), so design at gain/2.
+            # Short-signal fallback (< 9 samples) uses lfilter for numerical safety.
+            if len(enhanced) >= 9:
+                # Design at half gain so filtfilt's forward+backward pass yields intended gain
+                _A_half = 10.0 ** ((_gain_band / 2.0) / 40.0)
+                _b0h = 1.0 + _alpha_f * _A_half
+                _b2h = 1.0 - _alpha_f * _A_half
+                _a0h = 1.0 + _alpha_f / _A_half
+                _a2h = 1.0 - _alpha_f / _A_half
+                _bh = np.array([_b0h, _b1, _b2h]) / _a0h
+                _ah = np.array([1.0, _a1 / _a0h, _a2h / _a0h])
+                enhanced = signal.filtfilt(_bh, _ah, enhanced)
+            else:
+                enhanced = signal.lfilter(_b, _a, enhanced)
         enhanced = np.nan_to_num(enhanced, nan=0.0, posinf=0.0, neginf=0.0)
         enhanced = np.clip(enhanced, -1.0, 1.0)
         return enhanced.astype(audio.dtype)
@@ -1700,7 +1811,12 @@ class VocalEnhancement(PhaseInterface):
         b = np.array([b0, b1, b2]) / a0
         a = np.array([1, a1 / a0, a2 / a0])
 
-        enhanced = signal.lfilter(b, a, audio)
+        # Zero-phase filtering prevents phase shift on vocal transients (plosives, vowel onsets).
+        # filtfilt needs at least 3*max(len(a),len(b)) = 9 samples; fall back to lfilter for tiny buffers.
+        if len(audio) >= 9:
+            enhanced = signal.filtfilt(b, a, audio)
+        else:
+            enhanced = signal.lfilter(b, a, audio)
         return enhanced
 
     def _enhance_chest(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
@@ -1722,7 +1838,11 @@ class VocalEnhancement(PhaseInterface):
         b = np.array([b0, b1, b2]) / a0
         a = np.array([1, a1 / a0, a2 / a0])
 
-        enhanced = signal.lfilter(b, a, audio)
+        # Zero-phase Bell-EQ — prevents group delay on chest resonance fundamentals.
+        if len(audio) >= 9:
+            enhanced = signal.filtfilt(b, a, audio)
+        else:
+            enhanced = signal.lfilter(b, a, audio)
         return enhanced
 
     def _control_breath(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:

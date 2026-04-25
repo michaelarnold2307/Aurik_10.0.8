@@ -16741,9 +16741,11 @@ class UnifiedRestorerV3:
             # After such phases the cumulative reference is reset to current_audio so the guard
             # does not count their intentional sub-bass / hum energy removal as "loudness loss"
             # and does NOT apply makeup gain → prevents Pegelexplosion after Rumpel/Hum-Filter.
-            _cum_rms_reference_audio: np.ndarray | None = (
-                current_audio.copy() if _afg_pre_pipeline_audio is not None else None
-            )
+            # §2.45a-VI: Cumulative-Guard is ALWAYS active — decoupled from AFG availability.
+            # Previously conditioned on _afg_pre_pipeline_audio is not None, which silently
+            # disabled the entire Mid-Pipeline-Cumulative-Guard whenever artifact_gate failed
+            # to load (import error, OOM, etc.) — leaving Pegelexplosion-protection blind.
+            _cum_rms_reference_audio: np.ndarray = current_audio.copy()
             # Phases whose energy removal is intentional (HPF, Notch) — cumulative reference
             # is reset to current_audio AFTER the phase, before the guard runs.
             _HPF_NOTCH_CUM_RESET_PHASES: frozenset[str] = frozenset(
