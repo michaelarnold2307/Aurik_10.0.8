@@ -464,12 +464,18 @@ STFT_PHASES = frozenset(
         "phase_24_dropout_repair",
         "phase_29_tape_hiss_reduction",
         "phase_35_multiband_compression",
-        "phase_49_advanced_dereverb",
         "phase_50_spectral_repair",  # STFT bin-interpolation (SUBTRACTIVE, GDD valid)
         # phase_20_reverb_reduction: SGMSE+ primär  → ML_GENERATIVE → GDD invalide
         # → nicht mehr in STFT_PHASES (Richter 2022).
         # Verbleibt als Legacy-Eintrag auskommentiert für Audit-Zwecke:
         # "phase_20_reverb_reduction",
+        # phase_49_advanced_dereverb: WPE (Weighted Prediction Error) subtrahiert eine
+        # komplexe Hallschätzung aus jedem STFT-Frame → ändert sowohl Magnitude als auch
+        # Phase intentional (das IS die Hallentfernung, kein Fehler).  GDD-Messung würde
+        # immer ~35 ms anzeigen und Phase 49 stets rollbacken → keine Hallentfernung.
+        # Selbe Begründung wie phase_20 (SGMSE+): WPE-Ausgang nicht STFT-phasenkohärent
+        # im Sinne von §2.48.  Aus STFT_PHASES ausgenommen (v9.11.14, 2026-04-26).
+        # "phase_49_advanced_dereverb",
     }
 )
 
@@ -748,11 +754,21 @@ class CumulativeInteractionGuard:
 
             worst_drift = min(cumulative_drift.values()) if cumulative_drift else 0.0
             if worst_drift < _drift_tolerance:
+                _trigger_goal = min(cumulative_drift, key=cumulative_drift.get)
                 logger.warning(
                     "§2.48 P1/P2 cumulative drift after %s: %s (tol=%.3f) → rollback to %s",
                     phase_id,
                     {k: f"{v:+.3f}" for k, v in cumulative_drift.items() if v < _drift_tolerance},
                     _drift_tolerance,
+                    state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
+                )
+                # §MONITOR structured CIG_ROLLBACK line — parseable by goal_monitor.py
+                logger.info(
+                    "⚠️ CIG_ROLLBACK phase=%s trigger_goal=%s drift=%+.4f tolerance=%+.4f rollback_to=%s",
+                    phase_id,
+                    _trigger_goal,
+                    float(worst_drift),
+                    float(_drift_tolerance),
                     state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
                 )
                 state.rollback_log.append(
@@ -797,6 +813,12 @@ class CumulativeInteractionGuard:
                 "§2.48 Critical pair interaction after %s: %s → rollback",
                 phase_id,
                 pair_rollback,
+            )
+            # §MONITOR structured CIG_ROLLBACK line
+            logger.info(
+                "⚠️ CIG_ROLLBACK phase=%s trigger_goal=critical_pair drift=0.0000 tolerance=0.0000 rollback_to=%s",
+                phase_id,
+                state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
             )
             state.rollback_log.append(
                 InteractionRollback(
@@ -850,6 +872,14 @@ class CumulativeInteractionGuard:
                     _gdd_threshold,
                     len(state.stft_phases_executed),
                     phase_id,
+                )
+                # §MONITOR structured CIG_ROLLBACK line
+                logger.info(
+                    "⚠️ CIG_ROLLBACK phase=%s trigger_goal=gdd drift=%+.4f tolerance=%+.4f rollback_to=%s",
+                    phase_id,
+                    float(-_gdd_measured_ms),
+                    float(-_gdd_threshold),
+                    state.best_checkpoint.phase_id if state.best_checkpoint else "pre_pipeline",
                 )
                 state.rollback_log.append(
                     InteractionRollback(

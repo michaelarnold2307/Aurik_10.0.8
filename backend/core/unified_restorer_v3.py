@@ -8042,10 +8042,12 @@ class UnifiedRestorerV3:
                     )
             else:
                 logger.info(
-                    "§2.44 HPI(%s)=%.4f passed=%s (artifact=%.3f emotional=%.3f)",
+                    "🎯 HPI_COMP mode=%s hpi=%.4f passed=%s timbral=%.3f mert=%.3f artifact=%.3f emotional=%.3f",
                     "Studio" if self.is_studio_mode() else "Restoration",
                     float(_hpi_result.hpi),
-                    bool(_hpi_result.passed),
+                    "1" if bool(_hpi_result.passed) else "0",
+                    float(getattr(_hpi_result, "timbral_fidelity", 1.0)),
+                    float(getattr(_hpi_result, "mert_similarity", 1.0)),
                     float(_hpi_result.artifact_freedom),
                     float(_hpi_result.emotional_arc_preservation),
                 )
@@ -15167,6 +15169,26 @@ class UnifiedRestorerV3:
                         _s_stable,
                     )
 
+        # §MONITOR [RELEASE_MUST] PHASE_EXEC log — tatsächliche Stärke nach allen Caps (parseable)
+        try:
+            _exec_strength = kwargs.get("strength")
+            _exec_s_str = f"{float(_exec_strength):.3f}" if isinstance(_exec_strength, (int, float)) else "None"
+            _exec_vcap = getattr(self, "_vintage_phase_strength_caps", {}).get(phase_metadata.phase_id)
+            _exec_vcap_str = f"{float(_exec_vcap):.3f}" if _exec_vcap is not None else "None"
+            _exec_cond = getattr(self, "_conductor_strength_hints", {}).get(phase_metadata.phase_id)
+            _exec_cond_str = f"{float(_exec_cond):.3f}" if _exec_cond is not None else "None"
+            logger.info(
+                "📊 PHASE_EXEC phase=%s strength=%s explicit=%s vcap=%s conductor=%s songcal=%.3f",
+                phase_metadata.phase_id,
+                _exec_s_str,
+                "1" if _strength_explicit else "0",
+                _exec_vcap_str,
+                _exec_cond_str,
+                float(_sev_wet_dry),
+            )
+        except Exception as _pex_exc:
+            logger.debug("PHASE_EXEC log failed (non-blocking): %s", _pex_exc)
+
         # Call phase.process() method (not phase() itself!)
         # §Heartbeat: Inject scoped sub-progress callback so slow phases (e.g. phase_49
         # WPE dereverb) can emit intermediate progress — keeps the UI bar moving.
@@ -18737,6 +18759,15 @@ class UnifiedRestorerV3:
                     }
                 )
         self._ml_fallbacks_used = _ml_fallbacks_used
+        # §MONITOR [RELEASE_MUST] Structured ML_FALLBACK log — parseable by goal_monitor.py
+        for _fb_ev in _ml_fallbacks_used:
+            logger.info(
+                "🔌 ML_FALLBACK phase=%s model=%s reason=%s fallback=%s",
+                str(_fb_ev.get("phase", "")),
+                str(_fb_ev.get("model", "")),
+                str(_fb_ev.get("reason", "oom")),
+                str(_fb_ev.get("fallback", "dsp")),
+            )
 
         # §2.48 Store interaction guard metadata for RestorationResult
         if _interaction_guard is not None and _interaction_guard_state is not None:

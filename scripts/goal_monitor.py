@@ -92,6 +92,44 @@ class PhaseRegression:
 
 
 @dataclass
+class CigRollback:
+    phase_id: str = ""
+    trigger_goal: str = ""
+    drift: float = 0.0
+    tolerance: float = 0.0
+    rollback_to: str = ""
+
+
+@dataclass
+class MlFallback:
+    phase: str = ""
+    model: str = ""
+    reason: str = ""
+    fallback: str = ""
+
+
+@dataclass
+class PhaseExec:
+    phase_id: str = ""
+    strength: str = "None"
+    explicit: bool = False
+    vcap: str = "None"
+    conductor: str = "None"
+    songcal: float = 1.0
+
+
+@dataclass
+class HpiComponents:
+    mode: str = ""
+    hpi: float = 0.0
+    passed: bool = False
+    timbral: float = 1.0
+    mert: float = 1.0
+    artifact: float = 1.0
+    emotional: float = 1.0
+
+
+@dataclass
 class RunReport:
     timestamp: str
     material: str
@@ -105,6 +143,11 @@ class RunReport:
     )
     # biggest single-phase regression per goal
     worst_regression: dict[str, PhaseRegression] = field(default_factory=dict)
+    # new diagnostic data
+    cig_rollbacks: list[CigRollback] = field(default_factory=list)
+    ml_fallbacks: list[MlFallback] = field(default_factory=list)
+    phase_execs: list[PhaseExec] = field(default_factory=list)
+    hpi: HpiComponents | None = None
 
     def violated_goals(self) -> list[str]:
         return [g for g, e in self.goals.items() if not e.passed and e.applicable]
@@ -138,6 +181,34 @@ _RE_PMGG = re.compile(
 # Pipeline start marker (used to group phases by run)
 _RE_PIPELINE_START = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*Step 3/4: Executing Restoration Pipeline")
 
+# ML_FALLBACK line (UV3 §MONITOR):
+# 🔌 ML_FALLBACK phase=phase_06 model=AudioSR reason=OOM fallback=dsp_1
+_RE_ML_FALLBACK = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*"
+    r"🔌 ML_FALLBACK phase=(\S+) model=(\S+) reason=(\S+) fallback=(\S+)"
+)
+
+# CIG_ROLLBACK line (cumulative_interaction_guard.py §MONITOR):
+# ⚠️ CIG_ROLLBACK phase=phase_23 trigger_goal=tonal_center drift=-0.0821 tolerance=-0.0500 rollback_to=...
+_RE_CIG_ROLLBACK = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*"
+    r"⚠️ CIG_ROLLBACK phase=(\S+) trigger_goal=(\S+) drift=([+-][\d.]+) tolerance=([+-][\d.]+) rollback_to=(\S+)"
+)
+
+# PHASE_EXEC line (UV3 §MONITOR):
+# 📊 PHASE_EXEC phase=phase_06 strength=0.300 explicit=0 vcap=0.300 conductor=None songcal=0.650
+_RE_PHASE_EXEC = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*"
+    r"📊 PHASE_EXEC phase=(\S+) strength=(\S+) explicit=([01]) vcap=(\S+) conductor=(\S+) songcal=([\d.]+)"
+)
+
+# HPI_COMP line (UV3 extended):
+# 🎯 HPI_COMP mode=Restoration hpi=0.3421 passed=0 timbral=0.512 mert=0.891 artifact=0.987 emotional=0.743
+_RE_HPI_COMP = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*"
+    r"🎯 HPI_COMP mode=(\S+) hpi=([\d.]+) passed=([01]) timbral=([\d.]+) mert=([\d.]+) artifact=([\d.]+) emotional=([\d.]+)"
+)
+
 
 def _parse_ts(ts_str: str) -> datetime:
     return datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S,%f")
@@ -148,19 +219,95 @@ def parse_log(log_path: Path, since: datetime | None = None) -> list[RunReport]:
     runs: list[RunReport] = []
     # Working state for the current in-progress run
     current_pmgg: dict[str, list[tuple[str, float, float, float, str]]] = defaultdict(list)
+    current_cig: list[CigRollback] = []
+    current_ml: list[MlFallback] = []
+    current_execs: list[PhaseExec] = []
+    current_hpi: HpiComponents | None = None
 
     with log_path.open("r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.rstrip()
 
-            # Detect pipeline start → reset per-run PMGG buffer
+            # Detect pipeline start → reset per-run buffers
             m_start = _RE_PIPELINE_START.search(line)
             if m_start:
                 ts = _parse_ts(m_start.group(1))
                 if since and ts < since:
                     current_pmgg = defaultdict(list)
+                    current_cig = []
+                    current_ml = []
+                    current_execs = []
+                    current_hpi = None
                     continue
                 current_pmgg = defaultdict(list)
+                current_cig = []
+                current_ml = []
+                current_execs = []
+                current_hpi = None
+                continue
+
+            # ML_FALLBACK
+            m_ml = _RE_ML_FALLBACK.search(line)
+            if m_ml:
+                ts = _parse_ts(m_ml.group(1))
+                if not since or ts >= since:
+                    current_ml.append(
+                        MlFallback(
+                            phase=m_ml.group(2),
+                            model=m_ml.group(3),
+                            reason=m_ml.group(4),
+                            fallback=m_ml.group(5),
+                        )
+                    )
+                continue
+
+            # CIG_ROLLBACK
+            m_cig = _RE_CIG_ROLLBACK.search(line)
+            if m_cig:
+                ts = _parse_ts(m_cig.group(1))
+                if not since or ts >= since:
+                    current_cig.append(
+                        CigRollback(
+                            phase_id=m_cig.group(2),
+                            trigger_goal=m_cig.group(3),
+                            drift=float(m_cig.group(4)),
+                            tolerance=float(m_cig.group(5)),
+                            rollback_to=m_cig.group(6),
+                        )
+                    )
+                continue
+
+            # PHASE_EXEC
+            m_pe = _RE_PHASE_EXEC.search(line)
+            if m_pe:
+                ts = _parse_ts(m_pe.group(1))
+                if not since or ts >= since:
+                    current_execs.append(
+                        PhaseExec(
+                            phase_id=m_pe.group(2),
+                            strength=m_pe.group(3),
+                            explicit=m_pe.group(4) == "1",
+                            vcap=m_pe.group(5),
+                            conductor=m_pe.group(6),
+                            songcal=float(m_pe.group(7)),
+                        )
+                    )
+                continue
+
+            # HPI_COMP
+            m_hpi = _RE_HPI_COMP.search(line)
+            if m_hpi:
+                ts = _parse_ts(m_hpi.group(1))
+                if not since or ts >= since:
+                    current_hpi = HpiComponents(
+                        mode=m_hpi.group(2),
+                        hpi=float(m_hpi.group(3)),
+                        passed=m_hpi.group(4) == "1",
+                        timbral=float(m_hpi.group(5)),
+                        mert=float(m_hpi.group(6)),
+                        artifact=float(m_hpi.group(7)),
+                        emotional=float(m_hpi.group(8)),
+                    )
                 continue
 
             # PMGG per-phase entry → accumulate into current run buffer
@@ -222,11 +369,19 @@ def parse_log(log_path: Path, since: datetime | None = None) -> list[RunReport]:
                     goals=goals,
                     phase_trajectories=dict(current_pmgg),
                     worst_regression=worst,
+                    cig_rollbacks=list(current_cig),
+                    ml_fallbacks=list(current_ml),
+                    phase_execs=list(current_execs),
+                    hpi=current_hpi,
                 )
                 runs.append(report)
                 # Keep PMGG buffer alive (FeedbackChain may produce another SCORECARD)
                 # but reset for clean separation of pipeline runs
                 current_pmgg = defaultdict(list)
+                current_cig = []
+                current_ml = []
+                current_execs = []
+                current_hpi = None
                 continue
 
     return runs
@@ -344,6 +499,57 @@ def print_run(report: RunReport, show_trajectories: bool = False, filter_goal: s
         print(f"\n  {BLD('TOP REGRESSION PHASES (cumulative Δ across goals):')}")
         for phase_id, cum_delta in top_phases:
             print(f"    {phase_id:<42s}  cumΔ={RED(f'{cum_delta:+.4f}')}")
+
+    # HPI component breakdown
+    if report.hpi is not None:
+        h = report.hpi
+        hpi_col = GRN(f"{h.hpi:.4f}") if h.passed else RED(f"{h.hpi:.4f}")
+        print(f"\n  {BLD('HPI COMPONENTS:')}  hpi={hpi_col}  passed={GRN('✓') if h.passed else RED('✗')}")
+        components = [
+            ("timbral_fidelity", h.timbral),
+            ("mert_similarity", h.mert),
+            ("artifact_freedom", h.artifact),
+            ("emotional_arc", h.emotional),
+        ]
+        for label, val in components:
+            col = GRN(f"{val:.3f}") if val >= 0.80 else (YLW(f"{val:.3f}") if val >= 0.60 else RED(f"{val:.3f}"))
+            bottleneck = "  ← BOTTLENECK" if val < 0.60 else ""
+            print(f"    {label:<25s}  {col}{RED(bottleneck) if bottleneck else ''}")
+
+    # CIG rollback summary
+    if report.cig_rollbacks:
+        print(f"\n  {BLD('CIG ROLLBACKS')} ({len(report.cig_rollbacks)} total):")
+        for rb in report.cig_rollbacks:
+            drift_col = RED(f"{rb.drift:+.4f}")
+            print(
+                f"    {rb.phase_id:<35s}  trigger={YLW(rb.trigger_goal):<20s}  "
+                f"drift={drift_col}  tol={rb.tolerance:+.4f}  → {DIM(rb.rollback_to)}"
+            )
+
+    # ML fallback summary
+    if report.ml_fallbacks:
+        print(f"\n  {BLD('ML FALLBACKS')} ({len(report.ml_fallbacks)} total):")
+        for fb in report.ml_fallbacks:
+            print(f"    {fb.phase:<35s}  model={YLW(fb.model):<20s}  reason={RED(fb.reason):<8s}  → {fb.fallback}")
+
+    # Phase strength bottleneck table (phases with very low strength)
+    if report.phase_execs:
+        capped = [
+            (pe, float(pe.strength))
+            for pe in report.phase_execs
+            if pe.strength not in ("None", "") and float(pe.strength) < 0.35
+        ]
+        if capped:
+            capped.sort(key=lambda x: x[1])
+            print(f"\n  {BLD('STRENGTH BOTTLENECKS')} (phases with strength < 0.35):")
+            for pe, s in capped[:10]:
+                vcap_str = f"vcap={pe.vcap}" if pe.vcap != "None" else ""
+                cond_str = f"cond={pe.conductor}" if pe.conductor != "None" else ""
+                flags = "  ".join(x for x in [vcap_str, cond_str] if x)
+                print(
+                    f"    {pe.phase_id:<40s}  str={RED(f'{s:.3f}')}  explicit={'Y' if pe.explicit else 'N'}  "
+                    f"songcal={pe.songcal:.3f}  {DIM(flags)}"
+                )
 
     print()
 
