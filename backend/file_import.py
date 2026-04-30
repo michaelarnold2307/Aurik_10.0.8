@@ -290,14 +290,9 @@ def load_audio_file(
                 return result
 
         # ── Post-processing ──────────────────────────────────────────────────
-        if target_sr and sr != target_sr:
-            import librosa
-
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-            sr = target_sr
-        if mono and audio.ndim > 1:
-            audio = audio.mean(axis=-1)
         # Spec §2.47: nur Mono und Stereo unterstützt. > 2 Kanäle → gewichteter Downmix.
+        # WICHTIG: Downmix VOR Resampling — so wird resampy/soxr nur auf 1-2 Kanäle angewendet
+        # (statt 3+ Kanäle), was den soxr-np.apply_along_axis-Hänger bei 3-Kanal-MP3 verhindert.
         # PANNs-Plugin noch nicht im Import-Pfad verfügbar → einfacher Energie-Downmix.
         # Der Downmix ergibt Stereo (L=avg(L+odd), R=avg(R+even)) für 4-Kanal-Material
         # und Mono für alle anderen Kanalzahlen (> 2).
@@ -328,6 +323,17 @@ def load_audio_file(
                 n_ch,
                 1 if audio.ndim == 1 else audio.shape[-1],
             )
+        if mono and audio.ndim > 1:
+            audio = audio.mean(axis=-1)
+        # Resampling NACH Downmix (1-2 Kanäle) — verhindert soxr-Hänger bei 3-Kanal-MP3.
+        if target_sr and sr != target_sr:
+            import resampy
+
+            if audio.ndim == 1:
+                audio = resampy.resample(audio, sr, target_sr)
+            else:
+                audio = resampy.resample(audio.T, sr, target_sr, axis=-1).T
+            sr = target_sr
         audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
         audio = np.clip(audio, -1.0, 1.0)
         result["audio"] = audio
