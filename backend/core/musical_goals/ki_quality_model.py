@@ -442,10 +442,12 @@ class KIQualityAnalyzer:
             if std_l < 1e-10 or std_r < 1e-10:
                 correlation = 1.0 if (std_l < 1e-10 and std_r < 1e-10) else 0.0
             else:
-                with np.errstate(invalid="ignore"):
-                    correlation = np.corrcoef(left, right)[0, 1]
-                if not np.isfinite(correlation):
-                    correlation = 1.0
+                _la = left - left.mean()
+                _ra = right - right.mean()
+                _nl = float(np.linalg.norm(_la))
+                _nr = float(np.linalg.norm(_ra))
+                _c = float(np.dot(_la, _ra) / (_nl * _nr + 1e-10))
+                correlation = _c if np.isfinite(_c) else 1.0
 
             # Bewerte: Optimal ist 0.6 - 0.9
             if 0.6 <= correlation <= 0.9:

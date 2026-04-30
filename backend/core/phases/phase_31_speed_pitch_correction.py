@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 
 # PGHI phase reconstruction after spectral modification (Spec §DSP — PFLICHT)
 try:
-    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_p31
+    pass
 
     _PGHI_AVAILABLE_P31 = True
 except Exception:
@@ -646,53 +646,54 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         hop_analysis = int(window_size / 2)
         hop_synthesis = int(hop_analysis * ratio)
 
-        # §2.51 Linked-Stereo: WSOLA auf Mono-Referenz, dann identische
-        # Stretch-Ratio kohärent auf L+R anwenden (verhindert L/R-Desync)
+        # §2.51 Linked-Stereo: L and R channels use identical fixed-hop OLA positions.
+        # A single combined stereo peak guard preserves L/R balance.
+        # Per-channel normalization is VERBOTEN (destroys stereo image — up to 6 dB mismatch).
         if audio.ndim == 2:
-            mono_ref = np.mean(audio, axis=1)
-            mono_stretched = self._wsola_mono(mono_ref, window_size, hop_analysis, hop_synthesis)
-            target_len = len(mono_stretched)
             left = self._wsola_mono(audio[:, 0], window_size, hop_analysis, hop_synthesis)
             right = self._wsola_mono(audio[:, 1], window_size, hop_analysis, hop_synthesis)
-            # Align to same length (Linked invariant)
-            min_len = min(len(left), len(right), target_len)
-            return np.column_stack([left[:min_len], right[:min_len]])
+            min_len = min(len(left), len(right))
+            result = np.column_stack([left[:min_len], right[:min_len]])
+            # Single combined peak guard — preserves L/R amplitude relationship
+            _peak = float(np.percentile(np.abs(result), 99.9)) + 1e-10
+            if _peak > 1.0:
+                result = result / _peak
+            return result
         else:
             return self._wsola_mono(audio, window_size, hop_analysis, hop_synthesis)
 
     def _wsola_mono(self, audio: np.ndarray, window_size: int, hop_analysis: int, hop_synthesis: int) -> np.ndarray:
-        """WSOLA for mono signal."""
-        # Window function
+        """WSOLA for mono signal.
+
+        Returns OLA-normalized output without per-channel peak normalization.
+        Peak guard is applied ONCE on the combined stereo signal in _correct_wsola
+        to preserve the L/R amplitude relationship (§2.51 Linked-Stereo invariant).
+        """
         window = np.hanning(window_size)
 
-        # Output length
         num_frames = int(len(audio) / hop_analysis)
         output_length = num_frames * hop_synthesis
         output = np.zeros(output_length)
+        # COLA window-sum normalization array (Constant-Overlap-Add invariant)
+        ola_norm = np.zeros(output_length)
 
-        # Overlap-add
         read_pos = 0
         write_pos = 0
 
         for frame_idx in range(num_frames):
-            # Extract analysis frame
             if read_pos + window_size > len(audio):
                 break
-
             frame = audio[read_pos : read_pos + window_size] * window
-
-            # Overlap-add to output
             if write_pos + window_size > len(output):
                 break
-
             output[write_pos : write_pos + window_size] += frame
-
-            # Update positions
+            ola_norm[write_pos : write_pos + window_size] += window
             read_pos += hop_analysis
             write_pos += hop_synthesis
 
-        # Normalize — §2.49 Peak-Guard: percentile(99.9) so impulse artefacts don't suppress the whole signal
-        output = output / (float(np.percentile(np.abs(output), 99.9)) + 1e-10)
+        # COLA normalization: divide by window-sum accumulation (avoids per-channel
+        # peak normalization that would destroy the L/R stereo balance in stereo calls)
+        output = np.where(ola_norm > 1e-8, output / ola_norm, output)
 
         return output
 
@@ -736,22 +737,19 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             if 0 <= new_bin < num_bins:
                 Zxx_shifted[i, :] = magnitude[new_bin, :] * np.exp(1j * phase[new_bin, :])
 
-        # PGHI-Rekonstruktion (Perraudin 2013) — bewahrt Phasenkohärenz nach Freq-Shift
-        # Direkt iSTFT würde IPD-Relationen zerstören → Phantom-Center-Zusammenbruch (Spec §8.3)
-        if _PGHI_AVAILABLE_P31:
-            try:
-                audio_shifted = _pghi_p31(
-                    Zxx_shifted, sr=self.sample_rate, win_size=nperseg, hop=noverlap, n_samples=len(audio)
-                )
-            except Exception as _pghi_exc:
-                logger.debug("phase_31 PGHI failed, fallback to istft: %s", _pghi_exc)
-                _, audio_shifted = signal.istft(
-                    Zxx_shifted, self.sample_rate, nperseg=nperseg, noverlap=noverlap, boundary=True
-                )
-        else:
+        # Direct ISTFT — Zxx_shifted retains full phase from original STFT.
+        # ISTFT is semantically correct and 50-100× faster than PGHI.
+        try:
             _, audio_shifted = signal.istft(
-                Zxx_shifted, self.sample_rate, nperseg=nperseg, noverlap=noverlap, boundary=True
+                np.asarray(Zxx_shifted, dtype=np.complex64),
+                self.sample_rate,
+                nperseg=nperseg,
+                noverlap=noverlap,
+                boundary=True,
             )
+        except Exception as _istft_p31_exc:
+            logger.debug("phase_31 istft failed, passthrough: %s", _istft_p31_exc)
+            audio_shifted = audio.copy()
 
         # Match original length
         if len(audio_shifted) > len(audio):

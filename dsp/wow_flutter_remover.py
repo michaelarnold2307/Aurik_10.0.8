@@ -49,6 +49,7 @@ wowflutter_contract = DSPContract(
 import numpy as np
 import numpy.typing as npt
 from scipy.signal import butter, lfilter
+from scipy.signal import correlate as _sc_correlate
 
 try:
     from plugins.fcpe_plugin import get_fcpe_plugin as _get_fcpe_plugin  # SOTA F0-Tracker
@@ -122,7 +123,7 @@ class WowFlutterRemover:
         f0 = []
         for i in range(0, len(audio) - frame_size, hop):
             frame = audio[i : i + frame_size]
-            ac = np.correlate(frame, frame, mode="full")[frame_size - 1 :]
+            ac = _sc_correlate(frame, frame, mode="full", method="fft")[frame_size - 1 :]
             peak = np.argmax(ac[1:]) + 1
             f0.append(self.sr / peak if peak > 0 else 0)
         return np.array(f0)

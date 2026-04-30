@@ -350,34 +350,38 @@ class LimitingPhase(PhaseInterface):
         # Linkwitz-Riley Filter (Butterworth 2nd Order, zweimal angewendet = 4th Order)
         bands = []
 
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal).
+        # Kausal gefilterte Linkwitz-Riley-Bänder haben frequenzabhängige Gruppenlatenz;
+        # nach per-Band-Limiting und np.sum() entsteht L/R-Zeitversatz + Filtereinschalttransiente.
+
         # Band 1: Bass (< 150 Hz)
         sos_bass = signal.butter(2, self.CROSSOVER_FREQS[0], "lowpass", fs=sample_rate, output="sos")
-        bass = signal.sosfilt(sos_bass, audio, axis=0)
-        bass = signal.sosfilt(sos_bass, bass, axis=0)  # 4th Order
+        bass = signal.sosfiltfilt(sos_bass, audio, axis=0)
+        bass = signal.sosfiltfilt(sos_bass, bass, axis=0)  # 4th Order LR
         bands.append(bass)
 
         # Band 2: Low-Mid (150-800 Hz)
         sos_lowmid_low = signal.butter(2, self.CROSSOVER_FREQS[0], "highpass", fs=sample_rate, output="sos")
         sos_lowmid_high = signal.butter(2, self.CROSSOVER_FREQS[1], "lowpass", fs=sample_rate, output="sos")
-        low_mid = signal.sosfilt(sos_lowmid_low, audio, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_low, low_mid, axis=0)  # 4th Order HP
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)  # 4th Order LP
+        low_mid = signal.sosfiltfilt(sos_lowmid_low, audio, axis=0)
+        low_mid = signal.sosfiltfilt(sos_lowmid_low, low_mid, axis=0)  # 4th Order HP
+        low_mid = signal.sosfiltfilt(sos_lowmid_high, low_mid, axis=0)
+        low_mid = signal.sosfiltfilt(sos_lowmid_high, low_mid, axis=0)  # 4th Order LP
         bands.append(low_mid)
 
         # Band 3: Mid-High (800-5000 Hz)
         sos_midhigh_low = signal.butter(2, self.CROSSOVER_FREQS[1], "highpass", fs=sample_rate, output="sos")
         sos_midhigh_high = signal.butter(2, self.CROSSOVER_FREQS[2], "lowpass", fs=sample_rate, output="sos")
-        mid_high = signal.sosfilt(sos_midhigh_low, audio, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_low, mid_high, axis=0)  # 4th Order HP
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)  # 4th Order LP
+        mid_high = signal.sosfiltfilt(sos_midhigh_low, audio, axis=0)
+        mid_high = signal.sosfiltfilt(sos_midhigh_low, mid_high, axis=0)  # 4th Order HP
+        mid_high = signal.sosfiltfilt(sos_midhigh_high, mid_high, axis=0)
+        mid_high = signal.sosfiltfilt(sos_midhigh_high, mid_high, axis=0)  # 4th Order LP
         bands.append(mid_high)
 
         # Band 4: High (> 5000 Hz)
         sos_high = signal.butter(2, self.CROSSOVER_FREQS[2], "highpass", fs=sample_rate, output="sos")
-        high = signal.sosfilt(sos_high, audio, axis=0)
-        high = signal.sosfilt(sos_high, high, axis=0)  # 4th Order
+        high = signal.sosfiltfilt(sos_high, audio, axis=0)
+        high = signal.sosfiltfilt(sos_high, high, axis=0)  # 4th Order LR
         bands.append(high)
 
         return bands

@@ -1304,7 +1304,8 @@ class Studio2026Processor:
 
         # Subtle high-frequency enhancement (air band)
         sos = signal.butter(2, 8000, "high", fs=self.sr, output="sos")
-        hf = signal.sosfilt(sos, audio, axis=0)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — hf wird mit audio gemischt (0.9*audio + 0.1*hf).
+        hf = signal.sosfiltfilt(sos, audio, axis=0)
 
         # Mix in 10% of enhanced highs
         mastered = 0.9 * audio + 0.1 * hf

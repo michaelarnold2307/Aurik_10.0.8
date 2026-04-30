@@ -1607,7 +1607,11 @@ def _safe_pearson(a: np.ndarray, b: np.ndarray) -> float:
         bv = b[:n].ravel()
         if float(np.std(av)) < 1e-12 or float(np.std(bv)) < 1e-12:
             return 1.0 if np.allclose(av, bv, atol=1e-12, rtol=1e-6) else 0.0
-        r = float(np.corrcoef(av, bv)[0, 1])
+        _a = av - av.mean()
+        _b = bv - bv.mean()
+        _na = float(np.linalg.norm(_a))
+        _nb = float(np.linalg.norm(_b))
+        r = float(np.dot(_a, _b) / (_na * _nb + 1e-10))
         return r if math.isfinite(r) else 0.0
     except Exception:
         return 0.0
@@ -1860,8 +1864,22 @@ def _measure_quick(
     #   reale Werte 0.70–0.90. Mit 4.0 ist der Proxy sensitiv für Änderungen und erkennt
     #   Warmth-Regressions durch Denoise/Dereverb-Phasen (Δ-Erkennung statt Sattigung).
     try:
-        _e_low_mid = float(np.mean(fft_mag[(freqs >= 200) & (freqs < 800)] ** 2)) + 1e-9
-        _e_upper_mid = float(np.mean(fft_mag[(freqs >= 800) & (freqs < 3000)] ** 2)) + 1e-9
+        # §9.7.14 ISO-226 perceptual weighting — MUST match WaermeMetric._measure_absolute()
+        # (§2.54 Calibration invariant: PMGG proxy and end-pipeline metric must use the
+        # same measurement basis to avoid before=1.000/after=1.000/delta=0.000 saturation).
+        # Unweighted E(200-800)/E(800-3000) at vinyl ~12–15 → clip 1.0 always (VERBOTEN).
+        # With ISO-226 weighting: 800–3000 Hz band is strongly upweighted (ear more
+        # sensitive there) → ratio drops to 0.6–1.2 for typical Schlager → proxy 0.15–0.30
+        # → sensitive to changes, no saturation.  Lazy import to avoid circular deps.
+        try:
+            from backend.core.musical_goals.musical_goals_metrics import _iso226_weights as _w226
+
+            _w = _w226(freqs)
+        except Exception:
+            _w = np.ones_like(freqs, dtype=np.float32)
+        _wm = fft_mag * _w  # perceptually weighted magnitude
+        _e_low_mid = float(np.mean(_wm[(freqs >= 200) & (freqs < 800)] ** 2)) + 1e-9
+        _e_upper_mid = float(np.mean(_wm[(freqs >= 800) & (freqs < 3000)] ** 2)) + 1e-9
         scores["waerme"] = float(np.clip(_e_low_mid / _e_upper_mid / 4.0, 0.0, 1.0))
     except Exception:
         scores["waerme"] = 0.5
@@ -2491,7 +2509,11 @@ def _content_integrity_penalty(
             if _std_env_ref < 1e-7 or _std_env_out < 1e-7:
                 _corr = 1.0 if abs(_std_env_ref - _std_env_out) < 1e-7 else 0.0
             else:
-                _corr = float(np.corrcoef(_ref_env, _out_env)[0, 1])
+                _ae = _ref_env - _ref_env.mean()
+                _be = _out_env - _out_env.mean()
+                _nae = float(np.linalg.norm(_ae))
+                _nbe = float(np.linalg.norm(_be))
+                _corr = float(np.dot(_ae, _be) / (_nae * _nbe + 1e-10))
                 if not np.isfinite(_corr):
                     _corr = 0.0
         else:
@@ -2501,7 +2523,11 @@ def _content_integrity_penalty(
             if _std_ref < 1e-7 or _std_out < 1e-7:
                 _corr = 1.0 if abs(_std_ref - _std_out) < 1e-7 else 0.0
             else:
-                _corr = float(np.corrcoef(_ref_mono, _out_mono)[0, 1])
+                _am = _ref_mono - _ref_mono.mean()
+                _bm = _out_mono - _out_mono.mean()
+                _nam = float(np.linalg.norm(_am))
+                _nbm = float(np.linalg.norm(_bm))
+                _corr = float(np.dot(_am, _bm) / (_nam * _nbm + 1e-10))
                 if not np.isfinite(_corr):
                     _corr = 0.0
 

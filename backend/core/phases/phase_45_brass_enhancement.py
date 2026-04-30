@@ -190,9 +190,11 @@ class BrassEnhancementPhase(PhaseInterface):
         try:
             from scipy.signal import hilbert as _hilbert
 
+            # §2.51 Anti-Zeitversatz: sosfiltfilt — BP-gefiltertes Signal liefert Phase/Amplitude
+            # für H2-Synthese; h2 wird auf x/mid aufaddiert; sosfilt erzeugt Zeitversatz.
             sos_bp = sig.butter(2, [300.0, 4000.0], btype="band", fs=sample_rate, output="sos")
             if x.ndim == 1:
-                x_bp = sig.sosfilt(sos_bp, x)
+                x_bp = sig.sosfiltfilt(sos_bp, x)
                 _analytic = np.asarray(_hilbert(x_bp))
                 amplitude = np.sqrt(_analytic.real**2 + _analytic.imag**2)
                 phase = np.unwrap(np.arctan2(_analytic.imag, _analytic.real))
@@ -201,7 +203,7 @@ class BrassEnhancementPhase(PhaseInterface):
                 # §2.51 M/S-Domain: H2-Synthese nur auf Mid (wie phase_07)
                 mid = (x[:, 0] + x[:, 1]) / np.sqrt(2.0)
                 side = (x[:, 0] - x[:, 1]) / np.sqrt(2.0)
-                x_bp = sig.sosfilt(sos_bp, mid)
+                x_bp = sig.sosfiltfilt(sos_bp, mid)
                 _a = np.asarray(_hilbert(x_bp))
                 h2 = np.sqrt(_a.real**2 + _a.imag**2) * np.cos(2.0 * np.unwrap(np.arctan2(_a.imag, _a.real)))
                 mid = mid + gain_h2 * h2
@@ -214,11 +216,12 @@ class BrassEnhancementPhase(PhaseInterface):
             x = x + gain_h2 * h2
         except Exception:
             # Fallback: classic rectifier if hilbert fails (e.g. very short signal)
+            # §2.51 Anti-Zeitversatz: sosfiltfilt — h2_fb wird auf x aufaddiert.
             sos_hp = sig.butter(2, 500.0, btype="high", fs=sample_rate, output="sos")
             if x.ndim == 1:
-                h2_fb = sig.sosfilt(sos_hp, np.abs(x))
+                h2_fb = sig.sosfiltfilt(sos_hp, np.abs(x))
             else:
-                h2_fb = np.column_stack([sig.sosfilt(sos_hp, np.abs(x[:, ch])) for ch in range(x.shape[1])])
+                h2_fb = np.column_stack([sig.sosfiltfilt(sos_hp, np.abs(x[:, ch])) for ch in range(x.shape[1])])
             x = x + gain_h2 * h2_fb
 
         # 2. Presence-EQ (2.5 kHz, +presence_db dB, Q=2)

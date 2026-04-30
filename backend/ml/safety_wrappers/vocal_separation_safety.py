@@ -187,7 +187,11 @@ class VocalSeparationSafetyWrapper:
             _std0 = float(np.std(audio[0]))
             _std1 = float(np.std(audio[1]))
             if _std0 > 1e-8 and _std1 > 1e-8:
-                correlation = float(np.corrcoef(audio[0], audio[1])[0, 1])
+                _a0 = audio[0] - audio[0].mean()
+                _a1 = audio[1] - audio[1].mean()
+                _n0 = float(np.linalg.norm(_a0))
+                _n1 = float(np.linalg.norm(_a1))
+                correlation = float(np.dot(_a0, _a1) / (_n0 * _n1 + 1e-10))
             else:
                 correlation = 1.0 if (_std0 < 1e-8 and _std1 < 1e-8) else 0.0
             correlation = 0.0 if not np.isfinite(correlation) else correlation
@@ -295,7 +299,11 @@ class VocalSeparationSafetyWrapper:
             elif _s0 < 1e-8 or _s1 < 1e-8:
                 corr = 0.0
             else:
-                corr = float(np.corrcoef(audio[0], audio[1])[0, 1])
+                _a0 = audio[0] - audio[0].mean()
+                _a1 = audio[1] - audio[1].mean()
+                _n0 = float(np.linalg.norm(_a0))
+                _n1 = float(np.linalg.norm(_a1))
+                corr = float(np.dot(_a0, _a1) / (_n0 * _n1 + 1e-10))
                 if not np.isfinite(corr):
                     corr = 0.0
             return float(1.0 - abs(corr))

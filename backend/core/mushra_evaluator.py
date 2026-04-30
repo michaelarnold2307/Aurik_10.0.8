@@ -454,9 +454,11 @@ class MushraEvaluator:
             _std_test = float(np.std(P_test))
             if _std_ref < 1e-12 or _std_test < 1e-12:
                 return 1.0 if np.allclose(P_ref, P_test, atol=1e-10) else 0.5
-            corr = float(np.corrcoef(P_ref, P_test)[0, 1])
-            if not np.isfinite(corr):
-                return 0.5
+            corr_raw = float(
+                np.dot(P_ref - P_ref.mean(), P_test - P_test.mean())
+                / (float(np.linalg.norm(P_ref - P_ref.mean())) * float(np.linalg.norm(P_test - P_test.mean())) + 1e-10)
+            )
+            corr = corr_raw if np.isfinite(corr_raw) else 0.5
             return float(np.clip(corr, 0.0, 1.0))
         except Exception:
             return 0.5

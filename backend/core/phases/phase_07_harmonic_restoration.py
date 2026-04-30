@@ -848,7 +848,7 @@ class HarmonicRestorationPhase(PhaseInterface):
             Additive partial signal, same length as *mono*, dtype float64.
         """
         n = len(mono)
-        additive = np.zeros(n, dtype=np.float64)
+        additive = np.zeros(n, dtype=np.float32)
         if not f0_info:
             return additive
 
@@ -865,7 +865,7 @@ class HarmonicRestorationPhase(PhaseInterface):
         # Hann window amplitude correction: window sum ~= N/2 -> norm = 2/N
         norm = 2.0 / len(segment)
 
-        t = np.arange(n, dtype=np.float64) / sr
+        t = np.arange(n, dtype=np.float32) / np.float32(sr)
         for f0, _sal, missing in f0_info:
             fund_bin = max(0, min(int(round(f0 / freq_res)), len(magnitude) - 1))
             fund_amp = float(magnitude[fund_bin]) * norm
@@ -881,10 +881,12 @@ class HarmonicRestorationPhase(PhaseInterface):
                     continue
                 synth_amp = gap * 0.50  # 50% fill-in — conservative
                 h_phase = float(phase_spectrum[h_bin])
-                additive += synth_amp * np.cos(2.0 * np.pi * hf * t + h_phase)
+                additive += np.float32(synth_amp) * np.cos(
+                    np.float32(2.0 * np.pi * hf) * t + np.float32(h_phase)
+                ).astype(np.float32)
 
-        additive *= params.get("strength", 0.5)
-        return additive
+        additive *= np.float32(params.get("strength", 0.5))
+        return additive.astype(mono.dtype, copy=False)
 
     def _apply_saturation_professional(self, audio: np.ndarray, params: dict[str, Any]) -> np.ndarray:
         """

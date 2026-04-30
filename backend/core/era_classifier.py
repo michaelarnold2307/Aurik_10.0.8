@@ -525,7 +525,11 @@ def _detect_stereo_properties(audio: np.ndarray, sr: int) -> tuple[bool, float]:
         rf = right[start : start + frame_len]
         if np.std(lf) < 1e-8 or np.std(rf) < 1e-8:
             continue
-        c = np.corrcoef(lf, rf)[0, 1]
+        _lf = lf - lf.mean()
+        _rf = rf - rf.mean()
+        _nl = float(np.linalg.norm(_lf))
+        _nr = float(np.linalg.norm(_rf))
+        c = float(np.dot(_lf, _rf) / (_nl * _nr + 1e-10))
         if np.isfinite(c):
             correlations.append(float(abs(c)))
 

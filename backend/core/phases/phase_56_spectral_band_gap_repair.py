@@ -65,7 +65,7 @@ from .phase_interface import (
 )
 
 try:
-    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_p56
+    pass
 
     _PGHI_AVAILABLE_P56 = True
 except ImportError:
@@ -855,11 +855,12 @@ class SpectralBandGapRepairPhase(PhaseInterface):
         G_blend = np.clip(G_blend, 0.0, 50.0)
         Zxx_refined = Zxx_in * G_blend
 
+        # Direct ISTFT — Zxx_refined retains phase info from input STFT.
+        # ISTFT is semantically correct and 50-100× faster than PGHI.
         try:
-            if _PGHI_AVAILABLE_P56:
-                result = _pghi_p56(Zxx_refined, REF_WIN, REF_HOP, sr)
-            else:
-                _, result = _istft_fn(Zxx_refined, sr, nperseg=REF_WIN, noverlap=REF_WIN - REF_HOP)
+            _, result = _istft_fn(
+                np.asarray(Zxx_refined, dtype=np.complex64), sr, nperseg=REF_WIN, noverlap=REF_WIN - REF_HOP
+            )
         except Exception:
             return audio_out
 

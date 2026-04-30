@@ -411,33 +411,34 @@ class MonoToStereoPhaseV2(PhaseInterface):
 
         # Band 0: Low-pass 250 Hz (Bass)
         sos_0 = signal.butter(4, self.BAND_SPLITS[0], btype="lowpass", fs=sample_rate, output="sos")
-        band_0 = signal.sosfilt(sos_0, mono)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — Bänder werden zu Stereo rekombiniert.
+        band_0 = signal.sosfiltfilt(sos_0, mono)
         bands.append(band_0)
 
         # Band 1: Band-pass 250-1000 Hz (Low-Mid)
         sos_1 = signal.butter(
             4, [self.BAND_SPLITS[0], self.BAND_SPLITS[1]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_1 = signal.sosfilt(sos_1, mono)
+        band_1 = signal.sosfiltfilt(sos_1, mono)
         bands.append(band_1)
 
         # Band 2: Band-pass 1000-4000 Hz (Mid)
         sos_2 = signal.butter(
             4, [self.BAND_SPLITS[1], self.BAND_SPLITS[2]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_2 = signal.sosfilt(sos_2, mono)
+        band_2 = signal.sosfiltfilt(sos_2, mono)
         bands.append(band_2)
 
         # Band 3: Band-pass 4000-12000 Hz (High)
         sos_3 = signal.butter(
             4, [self.BAND_SPLITS[2], self.BAND_SPLITS[3]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_3 = signal.sosfilt(sos_3, mono)
+        band_3 = signal.sosfiltfilt(sos_3, mono)
         bands.append(band_3)
 
         # Band 4: High-pass 12000 Hz (Ultra-High)
         sos_4 = signal.butter(4, self.BAND_SPLITS[3], btype="highpass", fs=sample_rate, output="sos")
-        band_4 = signal.sosfilt(sos_4, mono)
+        band_4 = signal.sosfiltfilt(sos_4, mono)
         bands.append(band_4)
 
         return bands
@@ -499,7 +500,9 @@ class MonoToStereoPhaseV2(PhaseInterface):
             b = [a, 1.0]
             a_coeff = [1.0, a]
 
-            output = signal.lfilter(b, a_coeff, output)
+            # Zero-phase all-pass: prevents timing smear in mono-to-stereo decorrelation
+            _n_out32 = len(output)
+            output = signal.filtfilt(b, a_coeff, output) if _n_out32 >= 9 else signal.lfilter(b, a_coeff, output)
 
         return output
 
@@ -580,7 +583,8 @@ class MonoToStereoPhaseV2(PhaseInterface):
             # Apply to both channels
             enhanced = audio.copy()
             for ch in range(2):
-                hf_signal = signal.sosfilt(sos_hf, enhanced[:, ch])
+                # §2.51 Anti-Zeitversatz: sosfiltfilt — hf_signal wird zu enhanced addiert.
+                hf_signal = signal.sosfiltfilt(sos_hf, enhanced[:, ch])
                 enhanced[:, ch] = enhanced[:, ch] + hf_signal * (boost_linear - 1.0)
 
             # Safety clip (no peak normalization)

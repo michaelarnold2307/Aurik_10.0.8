@@ -642,7 +642,11 @@ class QualityGates:
         _sm = float(np.std(mel_before_norm))
         _sa = float(np.std(mel_after_norm))
         if _sm > 1e-10 and _sa > 1e-10:
-            correlation = float(np.corrcoef(mel_before_norm, mel_after_norm)[0, 1])
+            _ma = mel_before_norm - mel_before_norm.mean()
+            _mb = mel_after_norm - mel_after_norm.mean()
+            _nm = float(np.linalg.norm(_ma))
+            _na = float(np.linalg.norm(_mb))
+            correlation = float(np.dot(_ma, _mb) / (_nm * _na + 1e-10))
             if not np.isfinite(correlation):
                 correlation = 0.0
         else:

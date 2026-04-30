@@ -32,18 +32,19 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
     """
     if sig.ndim == 2:
-        _mono = sig.mean(axis=0).astype(np.float64) if sig.shape[0] <= 2 else sig.mean(axis=1).astype(np.float64)
+        _mono = sig.mean(axis=0 if sig.shape[0] <= 2 else 1).astype(np.float32)
     else:
-        _mono = sig.astype(np.float64)
+        _mono = np.asarray(sig, dtype=np.float32).ravel()
     _frame = 480  # 10 ms @ 48 kHz
-    _active = [
-        _mono[i : i + _frame]
-        for i in range(0, len(_mono) - _frame, _frame)
-        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
-    ]
-    if not _active:
+    _n_frames = len(_mono) // _frame
+    if _n_frames == 0:
         return -96.0
-    return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
+    _frames = _mono[: _n_frames * _frame].reshape(_n_frames, _frame)
+    _frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(_frames**2, axis=1)) + 1e-10)
+    _mask = _frame_rms_db > -50.0
+    if not np.any(_mask):
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean(_frames[_mask] ** 2)) + 1e-10))
 
 
 _MIN_IGD_SCORE: float = 0.10
@@ -82,15 +83,19 @@ def apply(
         _gain_igd = np.clip(_gain_igd, 0.0, 10.0)
         return np.clip(np.stack([audio[0] * _gain_igd, audio[1] * _gain_igd], axis=0), -1.0, 1.0).astype(np.float32)
 
-    x = audio.astype(np.float64)
+    x = np.asarray(audio, dtype=np.float32)
     n = len(x)
     sr = sample_rate
     n_segments = max(1, int(n_segments))
     seg_len = max(1, n // n_segments)
 
-    out = np.copy(x)
+    out = x.copy()
     n_fft = 4096
     hop = n_fft // 4
+
+    # Pre-compute IGD frequency mask (same for all segments and frames)
+    freqs_rfft = np.fft.rfftfreq(n_fft, 1.0 / sr).astype(np.float32)
+    igd_mask = (freqs_rfft >= 2000) & (freqs_rfft <= 8000)
 
     for seg_idx in range(n_segments):
         start = seg_idx * seg_len
@@ -103,37 +108,29 @@ def apply(
         position_factor = (seg_idx + 1) / n_segments
         local_strength = strength * position_factor
 
-        # STFT
-        window = sps.windows.hann(n_fft, sym=False)
-        n_frames = max(1, (len(segment) - n_fft) // hop + 1)
-        seg_out = np.zeros(len(segment), dtype=np.float64)
-        win_sum = np.zeros(len(segment), dtype=np.float64)
+        # Vectorized STFT per segment — replaces inner Python frame-loop
+        _, _, seg_stft = sps.stft(segment, fs=sr, window="hann", nperseg=n_fft, noverlap=n_fft - hop, boundary="even")
+        seg_stft = seg_stft.astype(np.complex64)
 
-        for i in range(n_frames):
-            fs = i * hop
-            fe = fs + n_fft
-            if fe > len(segment):
-                break
-            frame = segment[fs:fe] * window
-            spec = np.fft.rfft(frame)
-            mag = np.abs(spec)
-            phase = np.angle(spec)
-            freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
+        seg_mag = np.abs(seg_stft).astype(np.float32)
+        seg_phase = np.angle(seg_stft).astype(np.float32)
 
-            # Suppress harmonics H3+ (2–8 kHz range where IGD is worst)
-            igd_mask = (freqs >= 2000) & (freqs <= 8000)
-            gain = np.ones_like(mag)
-            gain[igd_mask] = np.maximum(0.3, 1.0 - local_strength * 0.5)
+        # Suppress harmonics H3+ (2–8 kHz range where IGD is worst) — vectorized over all frames
+        gain = np.ones_like(seg_mag)
+        gain[igd_mask, :] = np.maximum(0.3, 1.0 - local_strength * 0.5)
 
-            # Reconstruct
-            spec_clean = (mag * gain) * np.exp(1j * phase)
-            frame_out = np.fft.irfft(spec_clean, n=n_fft) * window
-            seg_out[fs:fe] += frame_out
-            win_sum[fs:fe] += window**2
+        seg_stft_clean = (seg_mag * gain * np.exp(1j * seg_phase)).astype(np.complex64)
 
-        win_sum = np.maximum(win_sum, 1e-8)
-        seg_out /= win_sum
-        out[start:end] = seg_out
+        # Vectorized ISTFT per segment
+        _, seg_out_full = sps.istft(
+            seg_stft_clean, fs=sr, window="hann", nperseg=n_fft, noverlap=n_fft - hop, boundary=True
+        )
+        seg_out = np.asarray(seg_out_full, dtype=np.float32)
+        seg_len_actual = end - start
+        if len(seg_out) >= seg_len_actual:
+            out[start:end] = seg_out[:seg_len_actual]
+        else:
+            out[start : start + len(seg_out)] = seg_out
 
     # Crossfade segments (10 ms Hanning)
     result = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)

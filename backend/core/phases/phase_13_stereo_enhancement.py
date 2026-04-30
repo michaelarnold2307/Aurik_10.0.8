@@ -342,26 +342,29 @@ class StereoEnhancementPhaseV2(PhaseInterface):
 
         # Band 0: Low-pass 200 Hz (Bass)
         sos_lp = signal.butter(4, self.BAND_SPLITS[0], btype="lowpass", fs=sample_rate, output="sos")
-        band_0 = signal.sosfilt(sos_lp, audio, axis=filter_axis)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal).
+        # sosfilt erzeugt frequenzabhängige Gruppenlatenz; nach per-Band-Enhancement und
+        # Rekombination entsteht ein L/R-Zeitversatz + Pegelexplosion aus Filtereinschalttransiente.
+        band_0 = signal.sosfiltfilt(sos_lp, audio, axis=filter_axis)
         bands.append(band_0)
 
         # Band 1: Band-pass 200-1000 Hz (Low-Mid)
         sos_bp1 = signal.butter(
             4, [self.BAND_SPLITS[0], self.BAND_SPLITS[1]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_1 = signal.sosfilt(sos_bp1, audio, axis=filter_axis)
+        band_1 = signal.sosfiltfilt(sos_bp1, audio, axis=filter_axis)
         bands.append(band_1)
 
         # Band 2: Band-pass 1000-5000 Hz (Mid)
         sos_bp2 = signal.butter(
             4, [self.BAND_SPLITS[1], self.BAND_SPLITS[2]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_2 = signal.sosfilt(sos_bp2, audio, axis=filter_axis)
+        band_2 = signal.sosfiltfilt(sos_bp2, audio, axis=filter_axis)
         bands.append(band_2)
 
         # Band 3: High-pass 5000 Hz (High)
         sos_hp = signal.butter(4, self.BAND_SPLITS[2], btype="highpass", fs=sample_rate, output="sos")
-        band_3 = signal.sosfilt(sos_hp, audio, axis=filter_axis)
+        band_3 = signal.sosfiltfilt(sos_hp, audio, axis=filter_axis)
         bands.append(band_3)
 
         return bands
@@ -497,7 +500,12 @@ class StereoEnhancementPhaseV2(PhaseInterface):
             b = np.array([a, 1.0])
             a_coeff = np.array([1.0, a])
 
-            decorrelated = signal.lfilter(b, a_coeff, decorrelated)
+            # Zero-phase all-pass: prevents cumulative group delay across cascade
+            # (each causal all-pass adds ~0.2ms; 8 cascade = ~1.5ms timing smear on Side channel).
+            _n_dec = len(decorrelated)
+            decorrelated = (
+                signal.filtfilt(b, a_coeff, decorrelated) if _n_dec >= 9 else signal.lfilter(b, a_coeff, decorrelated)
+            )
 
         return decorrelated
 
@@ -542,12 +550,13 @@ class StereoEnhancementPhaseV2(PhaseInterface):
         left, right = stereo_channel_view(audio)
 
         # Pearson correlation coefficient
-        # Guard: np.corrcoef zweier Null-Vektoren erzeugt RuntimeWarning(invalid in divide)
-        with np.errstate(invalid="ignore"):
-            correlation = np.corrcoef(left, right)[0, 1]
-
-        # Handle NaN (can occur with silent signals)
-        if np.isnan(correlation):
+        # Guarded Pearson — avoids NaN and O(n) matrix alloc of np.corrcoef
+        _l = left - left.mean()
+        _r = right - right.mean()
+        _nl = float(np.linalg.norm(_l))
+        _nr = float(np.linalg.norm(_r))
+        correlation = float(np.dot(_l, _r) / (_nl * _nr + 1e-10))
+        if not np.isfinite(correlation):
             correlation = 1.0
 
         return correlation

@@ -64,7 +64,12 @@ except ImportError:
         # Compute correlation
         if np.std(before) == 0 or np.std(after) == 0:
             return 0.0
-        return float(np.corrcoef(before, after)[0, 1])
+        _a = before - before.mean()
+        _b = after - after.mean()
+        _na = float(np.linalg.norm(_a))
+        _nb = float(np.linalg.norm(_b))
+        r = float(np.dot(_a, _b) / (_na * _nb + 1e-10))
+        return r if np.isfinite(r) else 0.0
 
 
 def validate_audio_basic(audio: np.ndarray, sr: int) -> dict[str, Any]:

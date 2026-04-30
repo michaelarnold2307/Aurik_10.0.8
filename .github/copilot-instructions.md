@@ -4,7 +4,7 @@
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
 > Rekonstruktions-Denkersystem.* Stand: April 2026 — Version **9.11.14**
 >
-> **instructions_version: 7.7** — §0a DR/BW/Rauschtextur-Ceiling + §0d Carrier-Recovery-Referenzmodell + §1.2a/§4.7/§6.2b normiert 13.04.2026; §09.2 PMGG-Blend-Invariante + §2.54 Headroom-Scalar + MDEM Quiet-Zone normiert 23.04.2026; Wall-Time-Mismatch-Pegelexplosion + waerme-Proxy-Sättigung + MUSHRA-CCR-Referenz-Kontamination normiert 24.04.2026; §2.30b Per-Sample-Guard correct_arc() −36 dBFS + Musical-Goals-Kalibrierungsfehler (tonal_center KEY_SHIFT_PENALTY_DEFAULT / authentizitaet formant_threshold / phase_18 PMGG-CIG-Sync / adaptive_thresholds Material-Ceiling) normiert 25.04.2026; TonalCenter Bypass-Guard 0.70→0.60 (Denoising-Seiteneffekt) + GrooveMetric bidirektionaler DTW-Onset-Ratio-Guard normiert 26.04.2026
+> **instructions_version: 7.9** — §0a DR/BW/Rauschtextur-Ceiling + §0d Carrier-Recovery-Referenzmodell + §1.2a/§4.7/§6.2b normiert 13.04.2026; §09.2 PMGG-Blend-Invariante + §2.54 Headroom-Scalar + MDEM Quiet-Zone normiert 23.04.2026; Wall-Time-Mismatch-Pegelexplosion + waerme-Proxy-Sättigung + MUSHRA-CCR-Referenz-Kontamination normiert 24.04.2026; §2.30b Per-Sample-Guard correct_arc() −36 dBFS + Musical-Goals-Kalibrierungsfehler (tonal_center KEY_SHIFT_PENALTY_DEFAULT / authentizitaet formant_threshold / phase_18 PMGG-CIG-Sync / adaptive_thresholds Material-Ceiling) normiert 25.04.2026; TonalCenter Bypass-Guard 0.70→0.60 (Denoising-Seiteneffekt) + GrooveMetric bidirektionaler DTW-Onset-Ratio-Guard normiert 26.04.2026; §2.30c WaveformPlausibilityGuard + §2.45a Music-Gated-LUFS-Delta Song-Boundary-Pegelexplosion normiert 28.04.2026; §Frisson Gänsehaut-Schutz-Pipeline (MDEM Zwei-Stufen-Invariante Pre+Post-SG) + §C10 Active Listener Calibration Bayesian EMA normiert 28.04.2026
 >
 > Aktuelle Testzahl: **~11598 `def test_`-Funktionen** (436 Testdateien; alle grün)
 >
@@ -34,6 +34,7 @@
 | **Dynamic Range** | **Material-Ceiling** — DR darf physikalisches Medium-Maximum nicht überschreiten (Spec 05 §6.2b DR_CEILING): Vinyl ≤ 70 dB, Shellac ≤ 45 dB, Tape ≤ 68 dB, CD ≤ 96 dB. Expansion über Ceiling = Artefakt. | DR-Erweiterung bis moderne Studio-Standards erlaubt, aber ≤ src_ceiling × 1.5 |
 | **Bandbreite** | **Material-Ceiling** — Output-BW darf physikalisches Maximum des Quellmediums nicht überschreiten (Spec 05 §6.2c BW_CEILING): Shellac ≤ 8 kHz, Vinyl ≤ 16 kHz, WaxCyl ≤ 5 kHz. Additiv-Phasen müssen BW-Hard-Cap respektieren. | Volle BW-Erweiterung bis 22 kHz, erfordert aber MUSHRA ≥ 3.5 für Extension-Band |
 | **Rauschtextur** | **Kohärent zum Trägerprofil** — spektrale Form des Restrauschens muss dem Trägermedium entsprechen (Spec 04 §4.7). Vinyl: rosa; Tape: Brown+HF-Hiss; CD: Weiß/Flat. Kohärenz-Score ≥ 0.80 Pflicht. | Minimaler Rauschboden; Textur-Kohärenz nicht erzwungen |
+| **TFS (Temporal Fine Structure)** | **Strikt erhalten** — Hilbert-Phasen-Extraktion via `tfs_preservation_guard.py`; ERB-Band-Energie-Gate (nur Voiced-Frames > 3 aktiv); ΔPhase-Grenzwert material-adaptiv. Vintage-Ära-Charakter = Original-TFS. | **Flexibel** — TFS-Modifikation in Enhancement-Phasen erlaubt, wenn MUSHRA ≥ 3.5 im betreffenden ERB-Band; kein TFS-Rollback-Trigger in Studio 2026 |
 
 > §0 ist **normativ übergeordnet**: Wenn eine technische Regel (PMGG-Threshold, Metrik-Schwellwert, Phase-Pflicht) dem Klangergebnis schadet, ist das ein Bug in der Regel — nicht im Klang.
 
@@ -248,6 +249,14 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | `AuthentizitaetMetric._formant_threshold = max(500, ref*0.5)` | Bei mittlerem Spektral-Centroid 1200 Hz: Formant-Threshold = 600 Hz. BW-Extension (phase_06/07) hebt Centroid um +600–800 Hz → neuer Centroid 1800 Hz. Formant-Stability = max(0, 1 − |1800−1200|/600) = max(0, 0.0) = 0.0 → `authentizitaet = 0.0` nach jeder BW-Extension → PMGG-Rollback aller Carrier-Inversion-Phasen → falsche Restaurierung | `_formant_threshold = max(1200.0, mean_ref_centroid * 1.5)` — erlaubt ±150 % Centroid-Drift als korrekte Träger-Inversion; Phase-Centroid-Shift durch BW-Extension ist kein Authentizitätsverlust, sondern intentionale Carrier-Chain-Inversion (§2.46) |
 | `phase_18_noise_gate` ohne PMGG/CIG-Exclusion für `artikulation` | Noise Gate schneidet Note-Attacks (Attack-Transienten) — das senkt den `artikulation`-Proxy-Score um 0.29 (katastrophal). Ohne Exclusion: PMGG löst Rollback aus, `consecutive_rollbacks` steigt, Phase-Skip → Rauschen verbleibt | `{"artikulation", "groove"}` in BEIDEN Tabellen eintragen: `PMGG.PHASE_GOAL_EXCLUSIONS["phase_18_noise_gate"]` UND `CIG._PHASE_SPECIFIC_DRIFT_EXCLUSIONS["phase_18_noise_gate"]` — bidirektionale Sync-Pflicht (§2.55). Note-Attack-Unterdrückung durch Noise-Gate ist kein Artikulations-Verlust, sondern Betriebsdesign |
 | `adaptive_thresholds` ohne Material-Ceiling in Export-Gate | PMGG-blended Thresholds können 0.90 für Vinyl-Natürlichkeit ergeben (canonical=0.90, SGT=0.88, blend=0.89). UV3 schreibt diese in `metadata["adaptive_goal_thresholds"]`. Export Gate liest adaptive_thresholds zuerst → lehnt physikalisch korrektes Vinyl-Restaurierungsergebnis (score=0.655) bei threshold=0.90 ab → statt Material-Floor 0.72 | `_ADAPTIVE_THR_MATERIAL_CEILING` Dict in UV3 nach PhysicalCeiling-Block: `min(adaptive_thr, ceiling_per_material_per_goal)`. Ceiling-Werte: Vinyl natuerlichkeit≤0.82, authentizitaet≤0.79, tonal_center≤0.84, Shellac≤0.68/0.65/0.70, Tape≤0.78, mp3_low≤0.76. Invariante: adaptive_thresholds darf nie das physikalische Material-Ceiling überschreiten |
+| Noise-Texture-Guard 0.60–0.80 ohne Wet-Reduktion | `check_per_phase()` gibt `wet_mult = 1.0` für Kohärenz ∈ [0.60,0.80) zurück — nur Warning, kein Eingriff → Vinyl klingt „digital-flach" trotz Guard | `wet_mult = 0.85` für Kohärenz ∈ [0.60,0.80) in `NoiseTextureCoherenceGuard.check_per_phase()` — milde Wet-Dämpfung erzwingt mehr Carrier-Profil-Retention (Spec 04 §4.7 v9.11.15) |
+| Phase-03 kein Instrumental-Oberton-Schutz | Kein `g_floor`-Boost bei rein instrumentalem Material (`panns_singing < 0.10`) — OMLSA/IMCRA supprimiert Streicher/Bläser-Obertöne als Rauschen (speech-trained model, keine Musik-Oberton-Prior) | `if not _is_vocal_material and _panns_singing < 0.10: params = dict(params); params["g_floor"] = clip(g_floor + 0.05, 0.10, 0.45)` nach `_is_vocal_material`-Berechnung — shallow copy Pflicht (Spec 04 §4.5b-Instrumental) |
+| Phase-42 Fallback `breath_preservation=0.70` auf Vintage-Material | Wenn GenderDetector keine Altersgruppe erkennt (Caruso-Vibrato, ungewöhnliche Historikstimme), bleibt aggressive `breath_preservation=0.70` → Stimmidentitätsverlust bei historischen Aufnahmen | Bei `_detected_age_group_value is None AND material in {"shellac","vinyl","reel_tape","tape","cassette","wax_cylinder","lacquer_disc","wire_recording","acoustic_78"}`: `_age_breath_preservation = max(_age_breath_preservation, 0.78)` (§4.10-VintageVoice, v9.11.15) |
+| End-of-Pipeline-Loudness-Rescue mit integriertem LUFS-Delta (ohne Music-Gating) | `if abs(lufs_orig - lufs_rest) > 4.0: gain = 10^(delta/20)` mit integrierten LUFS-Werten — Original enthält Vinyl/Shellac-Oberflächenrauschen (~−35 dBFS) in Intro/Outro/Fadeout; Restored ist entrauscht → ruhige Passagen bei −55 dBFS; scheinbarer LUFS-Delta bis 14 LU → 12 dB uniformer Gain auf das gesamte Signal inklusive Song-Anfang und -Ende → **Pegelexplosion im Intro/Outro/Fadeout** (bestätigt UV3 End-of-Pipeline-Guard 2026-04-25). Kein negativer Seiteneffekt wenn ein Song legitim laut beginnt/endet: in diesen Frames gilt `orig_rms_frame > adaptive_gate` → korrekt als Musik klassifiziert, Rescue greift nicht. | Music-gated LUFS-Delta (§2.45a-II Pflicht): (1) `_adaptive_gate = clip(P5(original) + 6.0, -48.0, -18.0)` dBFS; (2) Nur Frames wo `orig_rms_frame > 10^(gate/20)` bilden die Messbasis; (3) `needed_db = clip(music_rms_delta, 0.0, 6.0)` — Denoising-Verluste > 6 dB physikalisch unplausibel; (4) `apply_musical_gain_envelope(gate_dbfs=_adaptive_gate, ...)` — kein uniformer Gain. Invariante: Rescue darf NIE auf Frames wirken wo `orig_frame_rms < adaptive_gate_linear` |
+| §2.30c WaveformPlausibilityGuard (WPG) fehlt in UV3 oder kann positiven Gain auslösen | (1) Kein WPG-Aufruf nach MDEM/correct_arc in UV3 — vorangehende Guards (§2.30b, §2.45a) können bei SG-Grenzeffekten oder neuen Phasenzusätzen in Einzelsongs scheitern → Pegelexplosions-Artefakt unkontrolliert im Export. (2) `gain_db_interp = np.interp(...)` enthält positive Übergangs-Werte (Musik→Stille-Kante durch Interpolation) → Guard verstärkt anstatt zu dämpfen → neue Pegelexplosion durch den Guard selbst. Kein negativer Seiteneffekt: WPG prüft `restored_rms > original_rms + threshold_db` — legitim laute Song-Anfänge/-Enden haben `restored_rms ≈ original_rms` (kein Carrier-Gain-Artefakt) und werden nicht berührt. | UV3 MUSS nach correct_arc aufrufen: `apply_waveform_plausibility_guard(original_audio_for_goals, restored_audio, sr, mode, material_type, restorability_score)` (`backend/core/emotional_arc_preservation.py`, §2.30c). **Vier WPG-Invarianten**: (1) `gain_db_interp = np.minimum(gain_db_interp, 0.0)` — NIE Boost, kein positiver Ramp-Wert nach `np.interp`; (2) Material-adaptive Threshold: shellac/wax_cylinder = +4 dB, vinyl/reel_tape/cassette = +5 dB, cd_digital = +7 dB; (3) Emotionalität-Proxy-Check: arc-Pearson-Drift > 0.05 → 50 %-Korrektur, bei erneutem Fail → skip; (4) Non-blocking: Exception → `logger.warning` + `return restored, meta` unverändert. Quiet-Zone-Notfallpfad: ≥ 80 % der Explosionen in Frames mit `orig_rms ≤ −24 dBFS` → Korrektur ohne Proxy-Check (Fadeout-Artefakt eindeutig) |
+| MDEM ohne `frisson_zones`-Übergabe | `_mdem.morph(audio, original, sr, mode)` ohne `frisson_zones=_frisson_zones` — MDEM dämpft erkannte Gänsehaut-Momente (Blood & Zatorre 2001) auf `−frame_max` LU statt geschützten `−1.0 LU`; emotionale Klimax-Passagen werden in Intro/Outro und dynamischen Höhepunkten geglättet → Frisson-Potential verloren. Kein negativer Seiteneffekt: Frisson-Guard schützt ausschließlich erkannte Hochpotenzial-Fenster; restliche Frames bleiben unverändert. | `get_frisson_detector().detect(original_audio_for_goals, sr)` → `_frisson_zones` MUSS VOR dem MDEM-Aufruf berechnet werden; `frisson_zones=_frisson_zones` an `morph()` übergeben. Non-blocking: Exception → `_frisson_zones=[]` (MDEM läuft ohne Schutz, kein Abbruch). Implementierung: `backend/core/frisson_candidate_detector.py` → `get_frisson_detector()`. UV3-Pflicht-Kommentar: `# §Frisson: Gänsehaut-Schutz` beim MDEM-Aufruf |
+| MDEM Post-SG-Smoothing ohne Frisson-Floor-Re-Application | Savitzky-Golay-Smoothing (window=7, ~17,5 s Reichweite bei HOP_S=2,5 s) verteilt negativen Gain aus benachbarten Ruhe-Segmenten zurück in die per Pre-SG-Guard geschützten frisson-Frames → Klimax-Dämpfung bis −4 LU trotz `−1.0 LU`-Guard. Betrifft alle Songs mit Ruhe-Segment innerhalb von ±8 Frames eines Frisson-Fensters (≈ 87 % aller Songs mit Intro/Outro). | **Zwei-Stufen-Invariante (Pre-SG + Post-SG)**: (1) Pre-SG: `_gain_frames[_fk] = max(_gain_frames[_fk], -1.0)` für alle `_fk in _frisson_frame_set`; (2) SG-Smoothing; (3) Post-SG — **MUSS erneut angewendet werden**: `for _fk in _frisson_frame_set: _gain_frames[_fk] = max(_gain_frames[_fk], -1.0)`. Beide Stufen sind Pflicht — Pre-SG allein reicht nicht. Implementierung: `backend/core/micro_dynamics_envelope_morphing.py` |
+| §C10 `SongGoalFeedbackStore` ohne Bayesian-EMA-Blend in `estimate_goal_importance()` | Listener-Feedback wird gespeichert (`record_feedback(UserFeedbackEntry)`) aber die EMA-Nudges werden nicht in `estimate_goal_importance()` eingeblendet → System lernt nicht aus Hörer-Reaktionen; Musical-Goals-Gewichte bleiben statisch trotz persistenter Präferenz-Daten in `sessions/goal_feedback.json`; Personalisierungs-Loop bleibt tot. | `_nudges = get_feedback_store().get_nudges()` → `_blend = SongGoalFeedbackStore.FEEDBACK_BLEND_WEIGHT` (0.15); `if abs(_nudge - 1.0) > 0.01: weights[goal] = weights[goal] * (1.0 - _blend) + weights[goal] * _nudge * _blend` — 15 %-Blend, non-overriding; §2.56 Hard-Bounds und P1/P2-Floor greifen danach; Exception → `logger.debug` + skip. Singleton `get_feedback_store()` in `backend/core/song_goal_importance.py` |
 
 ### Sprachkonvention
 - **UI-Texte, Fehlermeldungen**: Deutsch (Ursache + Lösungsvorschlag)
@@ -262,9 +271,36 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 - Teuere Analytic-Transforms (Hilbert, `filtfilt`, STFT) **IMMER nach** dem günstigsten Admissibility-Gate platzieren. Muster: Frame-Energie-Check → Voiced-Gate → dann `filtfilt` + Hilbert (vgl. TFS-Guard).
 - ML-Budget-Tests und Phase-Tests, die `np.corrcoef` auf near-constant Signalen aufrufen, brauchen guarded correlation (`dot(a,b)/(||a||·||b||+ε)`) — kein Warning, NaN-safe.
 
-| Noise-Texture-Guard 0.60–0.80 ohne Wet-Reduktion | `check_per_phase()` gibt `wet_mult = 1.0` für Kohärenz ∈ [0.60,0.80) zurück — nur Warning, kein Eingriff → Vinyl klingt „digital-flach" trotz Guard | `wet_mult = 0.85` für Kohärenz ∈ [0.60,0.80) in `NoiseTextureCoherenceGuard.check_per_phase()` — milde Wet-Dämpfung erzwingt mehr Carrier-Profil-Retention (Spec 04 §4.7 v9.11.15) |
-| Phase-03 kein Instrumental-Oberton-Schutz | Kein `g_floor`-Boost bei rein instrumentalem Material (`panns_singing < 0.10`) — OMLSA/IMCRA supprimiert Streicher/Bläser-Obert\u00f6ne als Rauschen (speech-trained model, keine Musik-Oberton-Prior) | `if not _is_vocal_material and _panns_singing < 0.10: params = dict(params); params["g_floor"] = clip(g_floor + 0.05, 0.10, 0.45)` nach `_is_vocal_material`-Berechnung — shallow copy Pflicht (Spec 04 §4.5b-Instrumental) |
-| Phase-42 Fallback `breath_preservation=0.70` auf Vintage-Material | Wenn GenderDetector keine Altersgruppe erkennt (Caruso-Vibrato, ungewöhnliche Historikstimme), bleibt aggressive `breath_preservation=0.70` → Stimmidentitätsverlust bei historischen Aufnahmen | Bei `_detected_age_group_value is None AND material in {"shellac","vinyl","reel_tape","tape","cassette","wax_cylinder","lacquer_disc","wire_recording","acoustic_78"}`: `_age_breath_preservation = max(_age_breath_preservation, 0.78)` (§4.10-VintageVoice, v9.11.15) |
+### §0e Bestätigte Regression-Fixes (Regressionsschutz — bleiben als Warnungen aktiv)
+
+> Folgende Anti-Patterns wurden in v9.11.x behoben. Die VERBOTEN-Einträge in der obigen Tabelle
+> bleiben normativ aktiv — sie schützen vor erneutem Einführen desselben Fehlers.
+
+| Fix (Kurzname) | Behoben in | Repo-Memory |
+|---|---|---|
+| `stft boundary='reflect'` → `'even'` | v9.11.2 | 2026-04-09 |
+| `a[0]` Stereo-Slicing → `a[:, 0]` (Axis-Orientation-Bug) | v9.11.3 | 2026-04-13 |
+| MDEM Quiet-Zone feste Amplitude → `_tail_rms_dbfs < -36.0` | v9.11.5 | 2026-04-25 |
+| `apply_musical_gain_envelope gate_dbfs=-50.0` → `-36.0` | v9.11.5 | 2026-04-27 |
+| Makeup-Gain-Guard in HPF/Notch-Phasen → entfernt (4-stufige Checkliste) | v9.11.5 | 2026-04-28 |
+| Gain-Morphing ohne Post-Smoothing-Quiet-Zone-Clamp → 3-Stufen-Invariante (§2.30b) | v9.11.6 | 2026-04-24 |
+| PMGG fixer 60/40-Blend → delta-adaptiver Blend (§09.2) | v9.11.7 | 2026-04-23 |
+| Headroom-Scalar relativ → absolut (`headroom / 0.25`) | v9.11.7 | 2026-04-23 |
+| Wall-Time-Referenz-Mismatch `perf_counter` → `time.monotonic()` | v9.11.8 | 2026-04-21 |
+| PMGG `waerme`-Proxy-Sättigung `/ 1.5` → `/ 4.0` | v9.11.9 | 2026-04-28 |
+| MUSHRA-Referenz CCR-Kontamination → degraded `audio` als Anker | v9.11.10 | 2026-04-24 |
+| `TonalCenterMetric._KEY_SHIFT_PENALTY_DEFAULT = 0.0` → `0.20` + Bypass-Guard 0.60 | v9.11.11 | 2026-04-25 |
+| `GrooveMetric` DTW einseitiger Onset-Ratio-Guard → bidirektional | v9.11.11 | 2026-04-26 |
+| `AuthentizitaetMetric._formant_threshold = max(500, ref*0.5)` → `max(1200, ref*1.5)` | v9.11.11 | 2026-04-25 |
+| `adaptive_thresholds` ohne Material-Ceiling → `_ADAPTIVE_THR_MATERIAL_CEILING` Dict | v9.11.12 | 2026-04-25 |
+| ADMM-Declipping `max_iter=200` fest → längenadaptiv (Záviška 2021) | v9.11.14 | 2026-04-25 |
+| `load_audio_file()` mit synchroner Carrier-Analyse → `do_carrier_analysis=False` | v9.11.14 | 2026-04-06 |
+| Lautheitsmessung ohne ISO 532-1 → `ZwickerGuard` in UV3 `_profiled_phase_call` (§4.1b) | v9.11.14 | — |
+| MDEM Längen-Misalignment nach `phase_12`/`phase_31` → Pre-MDEM-Align-Block | v9.11.15 | 2026-04-28 |
+| End-of-Pipeline integrated LUFS-Delta → music-gated (P5+6 dBFS, cap 6 dB, §2.45a-II) | v9.11.14 | 2026-04-25 |
+| §2.30c WaveformPlausibilityGuard → finale Pegelexplosions-Fangschicht nach correct_arc/MDEM | v9.11.16 | 2026-04-28 |
+| MDEM ohne `frisson_zones` → Gänsehaut-Momente gedämpft; Zwei-Stufen-Invariante (Pre+Post-SG) | v9.12.0 | 2026-04-28 |
+| §C10 `SongGoalFeedbackStore` EMA-Blend undokumentiert → Listener-Kalibrierungsloop tot | v9.12.0 | 2026-04-28 |
 
 ## Anti-Parallelwelten-Workflow (vor jeder Implementierung)
 
@@ -370,6 +406,7 @@ Frühe subtraktive Phasen dürfen den wahrgenommenen Musikpegel nicht kollabiere
 - Guard-Reaktion: **nicht** Phase wirkungslos machen; stattdessen begrenzte Dry/Wet-Rescue oder sichere Makeup-Gain-Kompensation
 - Peak-Guard Pflicht: Gain-Limits mit `np.percentile(np.abs(audio), 99.9)` (kein `np.max()`)
 - Telemetriepflicht: pro Phase `rms_drop_db` und `loudness_makeup_db` in Phase-Metadata; Pipeline-Metadaten führen Top-Drops
+- **Finale Fangschicht** (§2.30c): `apply_waveform_plausibility_guard(original, restored, sr, mode, material_type, restorability_score)` MUSS in UV3 nach MDEM/correct_arc aufgerufen werden — erkennt Fenster wo `restored_rms > original_rms + material_threshold` und korrigiert via Envelope-Attenuation (NIEMALS Boost); Musical-Goals-Proxy (arc-Pearson, DR) schützt vor Überkorrektur legitimer Song-Dynamik; Non-blocking — Exception → Log + return unchanged
 
 **Normativer Zweck**: Defektentfernung bleibt wirksam, ohne musikalische Substanz oder Natürlichkeit bereits in der Phase-Kette hörbar zu verlieren (§0, §2.45, P1/P2-Hartregeln).
 
@@ -427,6 +464,41 @@ Alle 64 Phasen müssen harmonisch auf denselben Song-Kontext reagieren, ohne Ein
 **Implementierung**: `backend/core/song_goal_importance.py` — Feature-Extraktion in UV3 `restore()`, durchgereicht als `goal_weights`.
 
 **Invarianten**: Einmalige Berechnung pro Song; alle Audio-Features optional (None → Skip); Fehler → Uniform-Fallback (1.0); Pipeline-Blockade verboten.
+
+### [RELEASE_MUST] §C10 Active Listener Calibration — Bayesian EMA Feedback (v9.12.0)
+
+Aurik lernt aus Hörerfeedback und kalibriert die 14 Goal-Gewichte über Nutzungsdauer: `SongGoalFeedbackStore` (Singleton `get_feedback_store()` in `backend/core/song_goal_importance.py`) speichert Thumbs-up/down-Reaktionen und passt per Bayesian EMA an.
+
+**Architektur:**
+- `record_feedback(UserFeedbackEntry)` → EMA-Update: `nudge *= (1 ± _EMA_LR × gradient_sign)` pro Goal, persistiert in `sessions/goal_feedback.json`
+- `get_nudges()` → `dict[str, float]` (> 1.0 = positiv verstärkt, < 1.0 = negativ)
+- Blend in `estimate_goal_importance()` Step 7b: `weights[goal] = weights[goal] × (1−0.15) + weights[goal] × nudge × 0.15`
+- Nur Nudges mit `|nudge − 1.0| > 0.01` werden eingeblendet (Rausch-Filter)
+- **P1/P2-Floor und Hard-Bounds** `[0.30, 2.00]` greifen nach dem Blend (§2.56 Step 8)
+
+**UI-Pflicht**: Thumbs-up/down im Ergebnis-Banner → `bridge.record_goal_feedback(winning_goals, failing_goals)`. Fehler beim Schreiben der JSON → `logger.warning` + non-blocking.
+
+**Invariante**: §C10-Nudges sind advisory (0.15-Blend). Sie dürfen keine PMGG/CIG/HPI-Schwellwerte direkt verschieben und keine Export-Gates überschreiben.
+
+### [RELEASE_MUST] §Frisson Gänsehaut-Schutz-Pipeline — FrissonCandidateDetector → MDEM (v9.12.0)
+
+Gänsehaut-Momente (Blood & Zatorre 2001, Huron ITPRA, Harrison & Loui 2014) sind die stärksten emotionalen Höhepunkte des Songs. MDEM darf diese Frames NICHT auf `−frame_max` dämpfen.
+
+**Normative Pipeline (Pflichtfolge in UV3 vor MDEM-Aufruf):**
+1. `_frisson_zones = get_frisson_detector().detect(original_audio_for_goals, sample_rate)` — auf **original** (degradiertem) Audio
+2. Non-blocking: Exception → `_frisson_zones = []`
+3. `_mdem_instance.morph(..., frisson_zones=_frisson_zones)` — Übergabe Pflicht
+
+**MDEM Zwei-Stufen-Invariante:**
+- **Pre-SG**: Frisson-Floor `−1.0 LU` auf alle erkannten Frames setzen
+- **Post-SG** (nach Savitzky-Golay): Frisson-Floor **erneut** anwenden — SG verteilt Dämpfung zurück, Pre-SG-Schutz allein reicht nicht
+- Effekt: Klimax-Passagen verlieren maximal 1 LU an Lautstärke statt bis zu `−frame_max` (typisch −4 bis −8 LU)
+
+**WPG Frisson-Schutz (indirekt)**: `WaveformPlausibilityGuard` misst Arc-Pearson als Musical-Goals-Proxy. Frisson-Momente sind Teil des emotionalen Bogens — Attenuation die Arc-Pearson > 0.05 verschlechtert, wird auf 50 % reduziert oder übersprungen. Kein explizites frisson_zones-Argument in WPG erforderlich.
+
+**Frisson-Index vs. Frisson-Schutz (Unterscheidung normativ)**: `frisson_index` in `joy_runtime_index.components` (§2.53) ist **Telemetrie** (advisory, kein Audio-Impact in Restoration). Die `frisson_zones → MDEM`-Pipeline ist **Audio-Impact** in **beiden** Modi (Restoration + Studio 2026) — Schutz emotionaler Klimax-Momente ist kein Enhancement, sondern Primum non nocere (§0).
+
+> Implementierung: `backend/core/frisson_candidate_detector.py` — `FrissonCandidateDetector`, `get_frisson_detector()`; `backend/core/micro_dynamics_envelope_morphing.py` — `morph()` `frisson_zones` Parameter; UV3 §Frisson-Block vor MDEM-Aufruf
 
 ### [RELEASE_MUST] §2.46 Carrier-Chain-Inversion (v9.10.122)
 
@@ -973,5 +1045,5 @@ ein stark verrauschter Vinyl-Song akzeptiert mehr Chroma-Drift nach Denoise als 
 1920–1940: Rolloff ≤ 7 kHz nicht erweitern, H2/H4 bewahren.
 
 *Diese Richtlinien gelten für alle KI-Agenten (GitHub Copilot, Claude, GPT) die an Aurik 9 arbeiten.*
-*Vollständige normative Spezifikation: `.github/specs/01–08`.*
-*Stand: April 2026 — Aurik 9.11.14 — instructions_version 7.4*
+*Vollständige normative Spezifikation: `.github/specs/01–09`.*
+*Stand: April 2026 — Aurik 9.11.14 — instructions_version 7.7*

@@ -1218,7 +1218,7 @@ if __name__ == "__main__":
     white = np.random.randn(len(t))
     sos_pink = signal.butter(2, 0.5, output="sos")
     pink = signal.sosfilt(sos_pink, white)
-    pink = pink / np.max(np.abs(pink)) * 0.3
+    pink = pink / np.percentile(np.abs(pink), 99.9) * 0.3
 
     # Make stereo
     audio = np.column_stack([pink, pink * 0.95])

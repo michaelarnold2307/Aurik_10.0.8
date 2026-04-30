@@ -296,25 +296,26 @@ class TransientShaper(PhaseInterface):
         """Split audio into 4 frequency bands."""
         bands = []
 
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal, Pegelexplosion).
         # Band 1: Bass (0 - 150 Hz)
         sos_low = signal.butter(4, self.CROSSOVER_FREQS[0], btype="low", fs=sample_rate, output="sos")
-        bands.append(signal.sosfilt(sos_low, audio))
+        bands.append(signal.sosfiltfilt(sos_low, audio))
 
         # Band 2: Low-Mid (150 - 800 Hz)
         sos_mid1 = signal.butter(
             4, [self.CROSSOVER_FREQS[0], self.CROSSOVER_FREQS[1]], btype="band", fs=sample_rate, output="sos"
         )
-        bands.append(signal.sosfilt(sos_mid1, audio))
+        bands.append(signal.sosfiltfilt(sos_mid1, audio))
 
         # Band 3: Mid-High (800 - 5000 Hz)
         sos_mid2 = signal.butter(
             4, [self.CROSSOVER_FREQS[1], self.CROSSOVER_FREQS[2]], btype="band", fs=sample_rate, output="sos"
         )
-        bands.append(signal.sosfilt(sos_mid2, audio))
+        bands.append(signal.sosfiltfilt(sos_mid2, audio))
 
         # Band 4: High (5000+ Hz)
         sos_high = signal.butter(4, self.CROSSOVER_FREQS[2], btype="high", fs=sample_rate, output="sos")
-        bands.append(signal.sosfilt(sos_high, audio))
+        bands.append(signal.sosfiltfilt(sos_high, audio))
 
         return bands
 
@@ -421,14 +422,17 @@ class TransientShaper(PhaseInterface):
         attack_coeff = 1.0 - np.exp(-1.0 / att_ds)
         release_coeff = 1.0 - np.exp(-1.0 / rel_ds)
 
-        # Sequential loop on downsampled dBFS data (~675 K iterations)
-        envelope_db = np.empty_like(abs_ds_db)
-        envelope_db[0] = abs_ds_db[0]
-        for i in range(1, len(abs_ds_db)):
-            if abs_ds_db[i] > envelope_db[i - 1]:
-                envelope_db[i] = attack_coeff * abs_ds_db[i] + (1.0 - attack_coeff) * envelope_db[i - 1]
-            else:
-                envelope_db[i] = release_coeff * abs_ds_db[i] + (1.0 - release_coeff) * envelope_db[i - 1]
+        # Vectorized asymmetric envelope follower (replaces slow Python for-loop).
+        # Strategy: Attack pass = causal IIR with attack_coeff; Release pass = causal IIR
+        # with release_coeff.  Take element-wise max of both so that fast rises use
+        # attack_coeff while slow decays use release_coeff — asymmetric behavior preserved.
+        b_att = np.array([attack_coeff])
+        a_att = np.array([1.0, -(1.0 - attack_coeff)])
+        b_rel = np.array([release_coeff])
+        a_rel = np.array([1.0, -(1.0 - release_coeff)])
+        att_pass = signal.lfilter(b_att, a_att, abs_ds_db)
+        rel_pass = signal.lfilter(b_rel, a_rel, abs_ds_db)
+        envelope_db = np.maximum(att_pass, rel_pass)
 
         # Convert back to linear domain for downstream compatibility
         envelope_ds = 10.0 ** (envelope_db / 20.0)

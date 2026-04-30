@@ -416,7 +416,8 @@ class ConsonantEnhancement:
 
         try:
             sos = sig.butter(4, [f_lo_norm, f_hi_norm], btype="band", output="sos")
-            fric_band = sig.sosfilt(sos, channel)
+            # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — fric_band wird zum channel addiert.
+            fric_band = sig.sosfiltfilt(sos, channel)
         except Exception as exc:
             logger.debug("ConsonantEnhancement Butterworth fehlgeschlagen: %s", exc)
             return channel.astype(np.float32)

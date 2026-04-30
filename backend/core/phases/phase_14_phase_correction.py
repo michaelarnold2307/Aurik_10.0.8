@@ -455,10 +455,13 @@ class PhaseCorrection(PhaseInterface):
             aligned_r = right_seg
 
         if len(aligned_l) > 0 and len(aligned_r) > 0:
-            # Guard: np.corrcoef stiller Signale => RuntimeWarning(invalid in divide)
-            with np.errstate(invalid="ignore"):
-                corr_coef = float(np.corrcoef(aligned_l, aligned_r)[0, 1])
-            if np.isnan(corr_coef):
+            # Guarded Pearson — avoids NaN and O(n) matrix alloc of np.corrcoef
+            _al = aligned_l - aligned_l.mean()
+            _ar = aligned_r - aligned_r.mean()
+            _nal = float(np.linalg.norm(_al))
+            _nar = float(np.linalg.norm(_ar))
+            corr_coef = float(np.dot(_al, _ar) / (_nal * _nar + 1e-10))
+            if not np.isfinite(corr_coef):
                 corr_coef = 1.0  # Silence = perfectly correlated (no phase error)
         else:
             corr_coef = 0.0

@@ -171,7 +171,7 @@ class FormantTracker:
         Compute LPC coefficients using autocorrelation method.
         """
         # Autocorrelation
-        r = np.correlate(frame, frame, mode="full")
+        r = signal.correlate(frame, frame, mode="full", method="fft")
         r = r[len(r) // 2 :]
         r = r[: order + 1]
 

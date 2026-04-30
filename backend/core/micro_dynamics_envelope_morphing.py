@@ -147,6 +147,34 @@ class MicroDynamicsEnvelopeMorphing:
         res = np.nan_to_num(np.asarray(restored, dtype=np.float32))
         orig = np.nan_to_num(np.asarray(original, dtype=np.float32))
 
+        # §Bug-Fix: interne Längen-Absicherung — schlägt fehl wenn UV3-Alignment nicht greift
+        # (z.B. bei TDP-OLA-Crossfade, STFT-Rounding, phase_09 AR-Interpolation).
+        # Gilt für (channels, samples) = (2, N) UND (N, 2) Format.
+        _res_len = res.shape[1] if (res.ndim == 2 and res.shape[0] <= 8) else (res.shape[0] if res.ndim >= 1 else 0)
+        _orig_len = (
+            orig.shape[1] if (orig.ndim == 2 and orig.shape[0] <= 8) else (orig.shape[0] if orig.ndim >= 1 else 0)
+        )
+        if _res_len != _orig_len and _res_len > 0 and _orig_len > 0:
+            _min_len = min(_res_len, _orig_len)
+            if res.ndim == 2 and res.shape[0] <= 8:
+                res = res[:, :_min_len]
+            elif res.ndim == 2:
+                res = res[:_min_len]
+            else:
+                res = res[:_min_len]
+            if orig.ndim == 2 and orig.shape[0] <= 8:
+                orig = orig[:, :_min_len]
+            elif orig.ndim == 2:
+                orig = orig[:_min_len]
+            else:
+                orig = orig[:_min_len]
+            logger.debug(
+                "MDEM internal length alignment: res=%d orig=%d → min=%d samples",
+                _res_len,
+                _orig_len,
+                _min_len,
+            )
+
         is_stereo = res.ndim == 2
         if is_stereo:
             res_mono = res.mean(axis=0)

@@ -270,19 +270,22 @@ class StereoBalancePhaseV2(PhaseInterface):
 
         # Band 0: Low-pass 200 Hz (Bass)
         sos_lp = signal.butter(4, self.BAND_SPLITS[0], btype="lowpass", fs=sample_rate, output="sos")
-        band_0 = signal.sosfilt(sos_lp, audio, axis=0)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal).
+        # sosfilt erzeugt frequenzabhängige Gruppenlatenz; nach per-Band-Korrektur und
+        # Rekombination entsteht ein L/R-Zeitversatz + Filtereinschalttransiente (Pegelexplosion).
+        band_0 = signal.sosfiltfilt(sos_lp, audio, axis=0)
         bands.append(band_0)
 
         # Band 1: Band-pass 200-5000 Hz (Mid)
         sos_bp = signal.butter(
             4, [self.BAND_SPLITS[0], self.BAND_SPLITS[1]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_1 = signal.sosfilt(sos_bp, audio, axis=0)
+        band_1 = signal.sosfiltfilt(sos_bp, audio, axis=0)
         bands.append(band_1)
 
         # Band 2: High-pass 5000 Hz (High)
         sos_hp = signal.butter(4, self.BAND_SPLITS[1], btype="highpass", fs=sample_rate, output="sos")
-        band_2 = signal.sosfilt(sos_hp, audio, axis=0)
+        band_2 = signal.sosfiltfilt(sos_hp, audio, axis=0)
         bands.append(band_2)
 
         return bands

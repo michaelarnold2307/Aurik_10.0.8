@@ -183,6 +183,20 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _pearson(a: np.ndarray, b: np.ndarray) -> float:
+    """Guarded Pearson correlation — NaN-safe, no (2,N) matrix alloc (§VERBOTEN: np.corrcoef).
+
+    Callers must pre-check std > threshold before calling.
+    Returns value in [-1, 1]; nan → 0.0.
+    """
+    _a = a - a.mean()
+    _b = b - b.mean()
+    _na = float(np.linalg.norm(_a))
+    _nb = float(np.linalg.norm(_b))
+    r = float(np.dot(_a, _b) / (_na * _nb + 1e-10))
+    return r if np.isfinite(r) else 0.0
+
+
 def _safe_fft_size(length: int, target: int = 2048, minimum: int = 64) -> int:
     """Return power-of-two FFT size capped by signal length."""
     if length <= minimum:
@@ -458,7 +472,7 @@ class MertMushraProxy:
             if n < 2048:
                 return 0.5  # Unknown
             center = max(0, len(ref) // 2 - n // 2)
-            seg = ref[center : center + n].astype(np.float64)
+            seg = np.asarray(ref[center : center + n], dtype=np.float32)
             ps = np.abs(np.fft.rfft(seg)) ** 2
             freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
             # Vocal formant region: 300-3400 Hz (ITU-T G.711)
@@ -940,15 +954,15 @@ class MertMushraProxy:
             # --- 3. Phase discontinuity detection ---
             # Compute STFT of residual with phase
             n_phase = min(len(residual), sr * 2)  # cap to 2 s
-            res_chunk = residual[:n_phase].astype(np.float64)
+            res_chunk = np.asarray(residual[:n_phase], dtype=np.float32)
             if len(res_chunk) < n_fft:
                 res_chunk = np.pad(res_chunk, (0, n_fft - len(res_chunk)))
             n_frames_p = 1 + (len(res_chunk) - n_fft) // hop
             if n_frames_p < 3:
                 phase_jump_score = 0.0
             else:
-                window = np.hanning(n_fft).astype(np.float64)
-                phases = np.zeros((n_fft // 2 + 1, n_frames_p), dtype=np.float64)
+                window = np.hanning(n_fft).astype(np.float32)
+                phases = np.zeros((n_fft // 2 + 1, n_frames_p), dtype=np.float32)
                 for i in range(n_frames_p):
                     start = i * hop
                     frame = res_chunk[start : start + n_fft] * window
@@ -1337,7 +1351,7 @@ class MertMushraProxy:
             min_len = min(len(chroma_ref), len(chroma_test))
             _cr = chroma_ref[:min_len]
             _ct = chroma_test[:min_len]
-            corr = float(np.corrcoef(_cr, _ct)[0, 1]) if np.std(_cr) > 1e-12 and np.std(_ct) > 1e-12 else 1.0
+            corr = _pearson(_cr, _ct) if np.std(_cr) > 1e-12 and np.std(_ct) > 1e-12 else 1.0
             return float(np.clip(corr, 0.0, 1.0))
         except Exception:
             return 0.5
@@ -1420,10 +1434,10 @@ class MertMushraProxy:
             if min_len < 256:
                 return 0.5
 
-            ref_left = ref_2d[0, :min_len].astype(np.float64)
-            ref_right = ref_2d[1, :min_len].astype(np.float64)
-            test_left = test_2d[0, :min_len].astype(np.float64)
-            test_right = test_2d[1, :min_len].astype(np.float64)
+            ref_left = np.asarray(ref_2d[0, :min_len], dtype=np.float32)
+            ref_right = np.asarray(ref_2d[1, :min_len], dtype=np.float32)
+            test_left = np.asarray(test_2d[0, :min_len], dtype=np.float32)
+            test_right = np.asarray(test_2d[1, :min_len], dtype=np.float32)
 
             metric = SpatialDepthMetric()
 
@@ -1434,7 +1448,7 @@ class MertMushraProxy:
 
             # Stereo width (L-R correlation drift)
             def _stereo_width(left: np.ndarray, right: np.ndarray) -> float:
-                corr = float(np.corrcoef(left, right)[0, 1]) if np.std(left) > 1e-12 and np.std(right) > 1e-12 else 1.0
+                corr = _pearson(left, right) if np.std(left) > 1e-12 and np.std(right) > 1e-12 else 1.0
                 return float(np.clip(1.0 - abs(corr), 0.0, 1.0))
 
             width_ref = _stereo_width(ref_left, ref_right)
@@ -1609,8 +1623,8 @@ class MertMushraProxy:
             # Use center segment (max 3 s) for efficiency
             max_samples = min(n, int(3.0 * sr))
             center = max(0, n // 2 - max_samples // 2)
-            ref_seg = ref[center : center + max_samples].astype(np.float64)
-            test_seg = test[center : center + max_samples].astype(np.float64)
+            ref_seg = np.asarray(ref[center : center + max_samples], dtype=np.float32)
+            test_seg = np.asarray(test[center : center + max_samples], dtype=np.float32)
 
             def _extract_formants(audio: np.ndarray) -> list[float]:
                 """Extract median F1-F4 via LPC root-finding on voiced frames."""
@@ -1709,7 +1723,7 @@ class MertMushraProxy:
                 n = min(len(audio), int(1.0 * sr))  # max 1 s
                 if n < 256:
                     return 0.0
-                seg = audio[:n].astype(np.float64)
+                seg = np.asarray(audio[:n], dtype=np.float32)
                 # Zero-padded FFT for linear autocorrelation
                 X = np.fft.rfft(seg, n=2 * n)
                 autocorr = np.fft.irfft(np.abs(X) ** 2)[:n]
@@ -1895,7 +1909,7 @@ class MertMushraProxy:
             if ref_std < 1e-6 or test_std < 1e-6:
                 # Constant pitch — rely on RMSE only (identical → 1.0)
                 return float(np.clip(rmse_score, 0.0, 1.0))
-            r = float(np.corrcoef(ref_voiced, test_voiced)[0, 1])
+            r = _pearson(ref_voiced, test_voiced)
             if not np.isfinite(r):
                 return float(np.clip(rmse_score, 0.0, 1.0))
 
@@ -1947,8 +1961,8 @@ class MertMushraProxy:
             # Use center segment (max 2 s)
             max_samples = min(n, int(2.0 * sr))
             center = max(0, n // 2 - max_samples // 2)
-            ref_seg = ref[center : center + max_samples].astype(np.float64)
-            test_seg = test[center : center + max_samples].astype(np.float64)
+            ref_seg = np.asarray(ref[center : center + max_samples], dtype=np.float32)
+            test_seg = np.asarray(test[center : center + max_samples], dtype=np.float32)
 
             def _cpps(audio: np.ndarray) -> float:
                 """Cepstral Peak Prominence Smoothed.
@@ -2167,8 +2181,8 @@ class MertMushraProxy:
                 if np.std(rm) < 1e-12 or np.std(tm) < 1e-12:
                     corr_score = 1.0 if np.allclose(rm, tm, atol=1e-10) else 0.5
                 else:
-                    corr = np.corrcoef(rm, tm)[0, 1]
-                    corr_score = max(0.0, float(corr)) if np.isfinite(corr) else 0.5
+                    corr = _pearson(rm, tm)
+                    corr_score = max(0.0, corr)
 
                 # Magnitude ratio (penalize if modulation depth changed)
                 ref_total = float(np.sum(rm))
@@ -2222,8 +2236,8 @@ class MertMushraProxy:
             # Use center 3 s for analysis
             n_use = min(len(ref), int(3.0 * sr))
             center = max(0, len(ref) // 2 - n_use // 2)
-            ref_seg = ref[center : center + n_use].astype(np.float64)
-            test_seg = test[center : center + n_use].astype(np.float64)
+            ref_seg = np.asarray(ref[center : center + n_use], dtype=np.float32)
+            test_seg = np.asarray(test[center : center + n_use], dtype=np.float32)
 
             if len(ref_seg) < 2048:
                 return 0.5
@@ -2302,8 +2316,8 @@ class MertMushraProxy:
             elif np.std(ref_db) < 1e-6 or np.std(test_db) < 1e-6:
                 shape_corr = 0.5
             else:
-                corr = np.corrcoef(ref_db, test_db)[0, 1]
-                shape_corr = max(0.0, float(corr)) if np.isfinite(corr) else 0.5
+                corr = _pearson(ref_db, test_db)
+                shape_corr = max(0.0, corr)
 
             # RMS deviation of harmonic profile (penalize amplitude changes)
             rms_dev = float(np.sqrt(np.mean((ref_db - test_db) ** 2)))
@@ -2397,8 +2411,8 @@ class MertMushraProxy:
             elif np.std(rf) < 1e-12 or np.std(tf) < 1e-12:
                 corr_score = 0.3  # One is static, other isn't → bad
             else:
-                corr = np.corrcoef(rf, tf)[0, 1]
-                corr_score = max(0.0, float(corr)) if np.isfinite(corr) else 0.5
+                corr = _pearson(rf, tf)
+                corr_score = max(0.0, corr)
 
             # Magnitude preservation: total flux should be similar
             ref_total = float(np.sum(rf))
@@ -2460,8 +2474,8 @@ class MertMushraProxy:
                 ts = test[start:end]
 
                 # Quick per-segment quality: correlation + energy ratio
-                corr = float(np.corrcoef(rs, ts)[0, 1]) if np.std(rs) > 1e-12 and np.std(ts) > 1e-12 else 1.0
-                corr = max(0.0, corr) if np.isfinite(corr) else 0.5
+                corr = _pearson(rs, ts) if np.std(rs) > 1e-12 and np.std(ts) > 1e-12 else 1.0
+                corr = max(0.0, corr)
 
                 # Energy preservation
                 ref_e = float(np.sum(rs**2)) + 1e-20
@@ -2515,8 +2529,8 @@ class MertMushraProxy:
             if n_use < 512:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center : center + n_use].astype(np.float64)
-            t = test[center : center + n_use].astype(np.float64)
+            r = np.asarray(ref[center : center + n_use], dtype=np.float32)
+            t = np.asarray(test[center : center + n_use], dtype=np.float32)
 
             # STFT parameters
             frame_len = min(2048, n_use)
@@ -2713,8 +2727,8 @@ class MertMushraProxy:
             if n_use < 2048:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center : center + n_use].astype(np.float64)
-            t = test[center : center + n_use].astype(np.float64)
+            r = np.asarray(ref[center : center + n_use], dtype=np.float32)
+            t = np.asarray(test[center : center + n_use], dtype=np.float32)
 
             frame_len = 2048
             hop = frame_len // 4  # 75% overlap for smooth envelope
@@ -2819,7 +2833,7 @@ class MertMushraProxy:
 
             # 1. Profile shape correlation
             if np.std(r_rough) > 1e-10 and np.std(t_rough) > 1e-10:
-                corr = float(np.corrcoef(r_rough, t_rough)[0, 1])
+                corr = _pearson(r_rough, t_rough)
                 corr = max(0.0, corr)
             else:
                 corr = 1.0 if np.allclose(r_rough, t_rough, atol=1e-8) else 0.5
@@ -2867,8 +2881,8 @@ class MertMushraProxy:
             if n_use < 512:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center : center + n_use].astype(np.float64)
-            t = test[center : center + n_use].astype(np.float64)
+            r = np.asarray(ref[center : center + n_use], dtype=np.float32)
+            t = np.asarray(test[center : center + n_use], dtype=np.float32)
 
             frame_len = min(2048, n_use)
             if frame_len < 256:
@@ -3032,8 +3046,8 @@ class MertMushraProxy:
             if n_use < 4096:
                 return 0.5
             center = max(0, len(ref) // 2 - n_use // 2)
-            r = ref[center : center + n_use].astype(np.float64)
-            t = test[center : center + n_use].astype(np.float64)
+            r = np.asarray(ref[center : center + n_use], dtype=np.float32)
+            t = np.asarray(test[center : center + n_use], dtype=np.float32)
 
             frame_len = 2048
             hop = frame_len // 4  # 75% overlap for smooth envelope
@@ -3135,7 +3149,7 @@ class MertMushraProxy:
 
             # 1. Profile shape correlation
             if np.std(r_fluct) > 1e-10 and np.std(t_fluct) > 1e-10:
-                corr = float(np.corrcoef(r_fluct, t_fluct)[0, 1])
+                corr = _pearson(r_fluct, t_fluct)
                 corr = max(0.0, corr)
             else:
                 corr = 1.0 if np.allclose(r_fluct, t_fluct, atol=1e-8) else 0.5
@@ -3331,9 +3345,9 @@ def _stft_magnitude(audio: np.ndarray, n_fft: int, hop_length: int) -> np.ndarra
     n_frames = 1 + (len(audio) - n_fft) // hop_length
     if n_frames < 1:
         return np.zeros((n_fft // 2 + 1, 0), dtype=np.float64)
-    window = np.hanning(n_fft).astype(np.float64)
+    window = np.hanning(n_fft).astype(np.float32)
     n_bins = n_fft // 2 + 1
-    result = np.zeros((n_bins, n_frames), dtype=np.float64)
+    result = np.zeros((n_bins, n_frames), dtype=np.float32)
     for i in range(n_frames):
         start = i * hop_length
         frame = audio[start : start + n_fft] * window

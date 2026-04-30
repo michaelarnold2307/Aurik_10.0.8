@@ -1562,7 +1562,7 @@ Makeup-Gain-Gate von `apply_musical_gain_envelope` (§2.45a-II) sind **zwei vers
 mit unterschiedlichen Rollen:
 
 | Schwellwert | Rolle | Wo | Richtwert |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Mess-Gate** | Welche Frames fließen in die RMS-Referenz | `_rms_dbfs_gated()` | −50 dBFS |
 | **Gain-Gate** | Welche Frames erhalten Makeup-Gain | `apply_musical_gain_envelope(gate_dbfs=...)` | **−36 dBFS** |
 
@@ -1646,7 +1646,7 @@ kämpft gegen den Filter — das ist ein **logischer Widerspruch** der zu einer 
 **Normative Regel:**
 
 | Phasentyp | Makeup-Gain-Guard erlaubt? | Begründung |
-|---|---|---|
+| --- | --- | --- |
 | HPF / LPF / Notch / Bandpass | ❌ **VERBOTEN** | Energieverlust ist Carrier-Inversion — beabsichtigt |
 | Denoise / De-Hiss / Surface-Noise | ✅ Erlaubt | Breitbandig-subtraktiv: Musikpegel-Erhalt wichtig |
 | Dereverb | ✅ Erlaubt | Breitbandig-subtraktiv: Musikpegel-Erhalt wichtig |

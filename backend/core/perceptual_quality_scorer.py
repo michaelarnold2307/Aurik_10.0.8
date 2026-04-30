@@ -165,7 +165,9 @@ class PerceptualQualityScorer:
         if _ref_std < 1e-12 or _deg_std < 1e-12:
             coh = 1.0 if np.allclose(ref_fft, deg_fft, atol=1e-12, rtol=1e-6) else 0.0
         else:
-            coh = float(np.corrcoef(ref_fft, deg_fft)[0, 1])
+            _ra = ref_fft - ref_fft.mean()
+            _da = deg_fft - deg_fft.mean()
+            coh = float(np.dot(_ra, _da) / (float(np.linalg.norm(_ra)) * float(np.linalg.norm(_da)) + 1e-10))
         coh = np.clip(coh, 0, 1)
 
         # MOS-Mapping (§2.6 Spec-Formel: W_NSIM=0.40, W_MCD=0.30, W_LUFS=0.15, W_COH=0.15)

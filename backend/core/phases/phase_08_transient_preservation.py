@@ -389,7 +389,11 @@ class TransientPreservationPhase(PhaseInterface):
                 sa, sb = float(np.std(a)), float(np.std(b))
                 if sa < 1e-12 or sb < 1e-12:
                     return 1.0
-                r = float(np.corrcoef(a, b)[0, 1])
+                _a = a - a.mean()
+                _b = b - b.mean()
+                _na = float(np.linalg.norm(_a))
+                _nb = float(np.linalg.norm(_b))
+                r = float(np.dot(_a, _b) / (_na * _nb + 1e-10))
                 return float(np.clip(r if np.isfinite(r) else 1.0, -1.0, 1.0))
 
             for scale_name in ("micro", "meso", "macro", "form"):

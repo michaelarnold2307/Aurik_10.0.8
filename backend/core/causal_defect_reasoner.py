@@ -1422,7 +1422,11 @@ def extract_spectral_features(audio: np.ndarray, sample_rate: int) -> SpectralFe
         _sl = ch_l[: min(len(ch_l), len(ch_r))]
         _sr = ch_r[: min(len(ch_l), len(ch_r))]
         if np.std(_sl) > 1e-9 and np.std(_sr) > 1e-9:
-            corr = float(np.corrcoef(_sl, _sr)[0, 1])
+            _sla = _sl - _sl.mean()
+            _sra = _sr - _sr.mean()
+            _nl = float(np.linalg.norm(_sla))
+            _nr = float(np.linalg.norm(_sra))
+            corr = float(np.dot(_sla, _sra) / (_nl * _nr + 1e-10))
         else:
             corr = 1.0 if (np.std(_sl) < 1e-9 and np.std(_sr) < 1e-9) else 0.0
         stereo_corr = float(np.clip(corr, -1.0, 1.0))

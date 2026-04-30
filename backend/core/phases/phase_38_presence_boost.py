@@ -363,7 +363,10 @@ class PresenceBoost(PhaseInterface):
         b = np.array([b0, b1, b2], dtype=np.float64) / a0
         a = np.array([1.0, a1 / a0, a2 / a0], dtype=np.float64)
 
-        # Apply filter
-        filtered = signal.lfilter(b, a, audio)
+        # Zero-phase filtering prevents phase shift on vocal transients.
+        if len(audio) >= 9:
+            filtered = signal.filtfilt(b, a, audio)
+        else:
+            filtered = signal.lfilter(b, a, audio)
 
         return filtered

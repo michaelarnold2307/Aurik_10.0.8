@@ -169,7 +169,11 @@ def _measure_transient_integrity(original: np.ndarray, restored: np.ndarray, sr:
     std_o = np.std(env_orig)
     std_r = np.std(env_rest)
     if std_o > 1e-8 and std_r > 1e-8:
-        cc = np.corrcoef(env_orig, env_rest)[0, 1]
+        _eo = env_orig - env_orig.mean()
+        _er = env_rest - env_rest.mean()
+        _no = float(np.linalg.norm(_eo))
+        _nr = float(np.linalg.norm(_er))
+        cc = float(np.dot(_eo, _er) / (_no * _nr + 1e-10))
         corr = max(0.0, float(cc)) if np.isfinite(cc) else 0.5
     elif std_o < 1e-8 and std_r < 1e-8:
         corr = 1.0  # Both constant — trivially matched
@@ -254,7 +258,11 @@ def _measure_micro_dynamics(original: np.ndarray, restored: np.ndarray, sr: int)
         # One has dynamics, the other doesn't — poor preservation
         corr = 0.2
     else:
-        cc = np.corrcoef(profile_orig, profile_rest)[0, 1]
+        _po = profile_orig - profile_orig.mean()
+        _pr = profile_rest - profile_rest.mean()
+        _no = float(np.linalg.norm(_po))
+        _nr = float(np.linalg.norm(_pr))
+        cc = float(np.dot(_po, _pr) / (_no * _nr + 1e-10))
         corr = max(0.0, float(cc)) if np.isfinite(cc) else 0.5
 
     # Also check coefficient of variation preservation (dynamic range)
@@ -455,7 +463,11 @@ def _measure_authenticity(original: np.ndarray, restored: np.ndarray, sr: int) -
         std_o = np.std(mfcc_orig)
         std_r = np.std(mfcc_rest)
         if std_o > 1e-8 and std_r > 1e-8:
-            cc = np.corrcoef(mfcc_orig, mfcc_rest)[0, 1]
+            _mo = mfcc_orig - mfcc_orig.mean()
+            _mr = mfcc_rest - mfcc_rest.mean()
+            _no = float(np.linalg.norm(_mo))
+            _nr = float(np.linalg.norm(_mr))
+            cc = float(np.dot(_mo, _mr) / (_no * _nr + 1e-10))
             mfcc_corr = max(0.0, float(cc)) if np.isfinite(cc) else 0.5
         elif std_o < 1e-8 and std_r < 1e-8:
             mfcc_corr = 1.0  # Both constant

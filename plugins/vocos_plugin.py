@@ -561,7 +561,11 @@ class VocosPlugin:
                 return 4.5  # Beide Stille → identisch
             if std_a < 1e-8 or std_b < 1e-8:
                 return 1.5
-            corr = np.corrcoef(a, b)[0, 1]
+            _av = a - a.mean()
+            _bv = b - b.mean()
+            _nv = float(np.linalg.norm(_av))
+            _nbv = float(np.linalg.norm(_bv))
+            corr = float(np.dot(_av, _bv) / (_nv * _nbv + 1e-10))
             sim = float(np.clip(np.nan_to_num(corr), -1.0, 1.0))
             z = 8.0 * (sim - 0.5)
             sig = 1.0 / (1.0 + math.exp(-z))

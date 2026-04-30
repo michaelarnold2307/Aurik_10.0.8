@@ -336,33 +336,28 @@ class MasteringPolishPhase(PhaseInterface):
         bands = []
 
         # Band 1: Bass (< 150 Hz)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase LR) statt sosfilt×2 (kausal, Pegelexplosion).
         sos_bass = signal.butter(2, self.CROSSOVER_FREQS[0], "lowpass", fs=sample_rate, output="sos")
-        bass = signal.sosfilt(sos_bass, audio, axis=0)
-        bass = signal.sosfilt(sos_bass, bass, axis=0)
+        bass = signal.sosfiltfilt(sos_bass, audio, axis=0)
         bands.append(bass)
 
         # Band 2: Low-Mid (150-800 Hz)
         sos_lowmid_low = signal.butter(2, self.CROSSOVER_FREQS[0], "highpass", fs=sample_rate, output="sos")
         sos_lowmid_high = signal.butter(2, self.CROSSOVER_FREQS[1], "lowpass", fs=sample_rate, output="sos")
-        low_mid = signal.sosfilt(sos_lowmid_low, audio, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_low, low_mid, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)
+        low_mid = signal.sosfiltfilt(sos_lowmid_low, audio, axis=0)
+        low_mid = signal.sosfiltfilt(sos_lowmid_high, low_mid, axis=0)
         bands.append(low_mid)
 
         # Band 3: Mid-High (800-5000 Hz)
         sos_midhigh_low = signal.butter(2, self.CROSSOVER_FREQS[1], "highpass", fs=sample_rate, output="sos")
         sos_midhigh_high = signal.butter(2, self.CROSSOVER_FREQS[2], "lowpass", fs=sample_rate, output="sos")
-        mid_high = signal.sosfilt(sos_midhigh_low, audio, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_low, mid_high, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)
+        mid_high = signal.sosfiltfilt(sos_midhigh_low, audio, axis=0)
+        mid_high = signal.sosfiltfilt(sos_midhigh_high, mid_high, axis=0)
         bands.append(mid_high)
 
         # Band 4: High (> 5000 Hz)
         sos_high = signal.butter(2, self.CROSSOVER_FREQS[2], "highpass", fs=sample_rate, output="sos")
-        high = signal.sosfilt(sos_high, audio, axis=0)
-        high = signal.sosfilt(sos_high, high, axis=0)
+        high = signal.sosfiltfilt(sos_high, audio, axis=0)
         bands.append(high)
 
         return bands
@@ -390,13 +385,24 @@ class MasteringPolishPhase(PhaseInterface):
                 # Für positive Gain: Boost, für negative: Cut
                 if gain_db > 0:
                     # Boost: Originalsignal + gefiltertes Signal * Gain
-                    filtered = signal.lfilter(b, a, eq_audio, axis=0)
+                    # Zero-phase filtfilt: boost applied at exact transient position
+                    _n_eq17 = eq_audio.shape[0] if eq_audio.ndim > 1 else len(eq_audio)
+                    filtered = (
+                        signal.filtfilt(b, a, eq_audio, axis=0)
+                        if _n_eq17 >= 9
+                        else signal.lfilter(b, a, eq_audio, axis=0)
+                    )
                     gain_factor = 10 ** (gain_db / 40)  # /40 weil wir additiv sind
                     eq_audio = eq_audio + filtered * gain_factor
                 else:
                     # Cut: Notch-Filter Annäherung
                     # Invertiere Signal bei Center-Freq und addiere mit Attenuation
-                    filtered = signal.lfilter(b, a, eq_audio, axis=0)
+                    _n_eq17c = eq_audio.shape[0] if eq_audio.ndim > 1 else len(eq_audio)
+                    filtered = (
+                        signal.filtfilt(b, a, eq_audio, axis=0)
+                        if _n_eq17c >= 9
+                        else signal.lfilter(b, a, eq_audio, axis=0)
+                    )
                     gain_factor = 10 ** (abs(gain_db) / 40)
                     eq_audio = eq_audio - filtered * gain_factor
 

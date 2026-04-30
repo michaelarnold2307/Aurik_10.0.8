@@ -695,6 +695,11 @@ class RumbleFilterPhase(PhaseInterface):
         Apply IIR high-pass with transient bypass.
 
         During transients, filter is bypassed to preserve attacks.
+        Dens-Coverage-Guard: if transient_mask covers > 55 % of audio, bypass is
+        disabled entirely — at that density the hard on/off switching creates
+        rhythmic LF bursts (Pegelexplosion) and phase discontinuities (Zeitversatz)
+        at every boundary (e.g. vinyl with crackle + wow: 13.2 onsets/s × ±100 ms
+        = ~100 % coverage → rumble never removed, transition artefacts everywhere).
         """
         # Design Butterworth high-pass
         nyquist = self.sample_rate / 2.0
@@ -709,6 +714,27 @@ class RumbleFilterPhase(PhaseInterface):
         # Zu kurzes padlen → falsche Filterinitialisierung → Randüberschwinger im Intro/Outro,
         # die 3–10× die Rumpelenergie überschreiten können → Pegelexplosion.
         _padlen = min(int(3.0 * self.sample_rate / max(float(cutoff_hz), 1.0)), (audio.shape[0] - 1) // 2)
+
+        # §Coverage-Guard: Bypass-Anteil bestimmen (über Mono-Maske)
+        _n_samples = audio.shape[0] if audio.ndim == 1 else audio.shape[0]
+        _coverage = float(np.sum(transient_mask) / max(_n_samples, 1))
+
+        if _coverage > 0.55:
+            # Zu hohe Transient-Dichte → Bypass komplett deaktivieren.
+            # Das HPF läuft ohne Sample-genaue Schalter — kein Knacken, kein
+            # LF-Bursting. Zero-phase (sosfiltfilt) bleibt erhalten.
+            logger.debug(
+                "phase_05 Transient-Bypass deaktiviert: coverage=%.1f%% > 55%% "
+                "(hohe Transientdichte/Knistern → hard-switch würde Zeitversatz/Pegelexplosion erzeugen)",
+                _coverage * 100,
+            )
+            if audio.ndim == 2:
+                filtered = np.zeros_like(audio)
+                for ch in range(2):
+                    filtered[:, ch] = signal.sosfiltfilt(sos, audio[:, ch], padlen=_padlen)
+            else:
+                filtered = signal.sosfiltfilt(sos, audio, padlen=_padlen)
+            return filtered
 
         # Apply filter
         if audio.ndim == 2:

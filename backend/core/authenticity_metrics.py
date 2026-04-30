@@ -590,7 +590,11 @@ class RoomToneDetector:
             _sl = float(np.std(left))
             _sr = float(np.std(right))
             if _sl > 1e-8 and _sr > 1e-8:
-                correlation = float(np.corrcoef(left, right)[0, 1])
+                _la = left - left.mean()
+                _ra = right - right.mean()
+                _nl = float(np.linalg.norm(_la))
+                _nr = float(np.linalg.norm(_ra))
+                correlation = float(np.dot(_la, _ra) / (_nl * _nr + 1e-10))
                 if not np.isfinite(correlation):
                     correlation = 1.0
             else:

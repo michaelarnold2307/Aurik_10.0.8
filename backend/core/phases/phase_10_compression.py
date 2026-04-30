@@ -373,15 +373,18 @@ class CompressionPhase(PhaseInterface):
         bands = []
         current = audio.copy()
 
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal).
+        # Kausale Filterung erzeugt frequenzabhängige Gruppenlatenz pro Band;
+        # nach _combine_bands (sum) entsteht L/R-Zeitversatz + Filtereinschalttransiente.
         for freq in self.CROSSOVER_FREQS:
             # Lowpass for current band
             sos_low = signal.butter(2, freq, "low", fs=sr, output="sos")
-            low = signal.sosfilt(sos_low, current, axis=0)
+            low = signal.sosfiltfilt(sos_low, current, axis=0)
             bands.append(low)
 
             # Highpass for next iteration
             sos_high = signal.butter(2, freq, "high", fs=sr, output="sos")
-            current = signal.sosfilt(sos_high, current, axis=0)
+            current = signal.sosfiltfilt(sos_high, current, axis=0)
 
         # Last band (highest)
         bands.append(current)

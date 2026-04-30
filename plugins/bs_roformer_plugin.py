@@ -407,16 +407,23 @@ class BSRoFormerPlugin:
             bin_pts = self._mbr_mel_band_boundaries()
             input_name = session.get_inputs()[0].name
 
-            # OOM-Guard: chunk audio into ~60 s segments with 1 s crossfade
-            # to prevent multi-GB STFT/mel/ONNX allocations on long files.
-            _CHUNK_S = 60
+            # OOM-Guard: chunk audio into ~15 s segments with 1 s crossfade.
+            # v9.11.14: reduced from 60 s to 15 s to prevent 69 GB OOM on MelBandRoformer.
+            # Transformer attention is O(T²): 60s→T=6000 frames→36M weights→OOM on most CPUs.
+            # 15s→T=1500 frames→2.25M weights (16× smaller) → fits in ~4-5 GB RAM.
+            # Adaptive OOM-retry: if a segment still OOMs, halve chunk size and retry once.
+            _CHUNK_S = 15
             _OVERLAP_S = 1
             _chunk_samples = _CHUNK_S * _SR
             _overlap_samples = _OVERLAP_S * _SR
             _step = _chunk_samples - _overlap_samples
 
             def _process_segment(seg: np.ndarray) -> np.ndarray | None:
-                """STFT → mel-split → ONNX → ISTFT for one audio segment."""
+                """STFT → mel-split → ONNX → ISTFT for one audio segment.
+
+                If ONNX run raises MemoryError (OOM), the segment is split in
+                half and processed recursively (max 1 level = 7.5 s sub-chunks).
+                """
                 _, _, Z_s = _stft(seg, fs=_SR, window=win, nperseg=_N, noverlap=_N - _H, return_onesided=True)
                 F_s, T_s = Z_s.shape
                 X_s = np.zeros((1, T_s, _B, _FD), dtype=np.float32)
@@ -429,8 +436,21 @@ class BSRoFormerPlugin:
                     fill = min(ri.shape[1], _FD)
                     X_s[0, :, b, :fill] = ri[:, :fill].astype(np.float32)
                 del Z_s
-                out_raw = session.run(None, {input_name: X_s})
-                del X_s
+                try:
+                    out_raw = session.run(None, {input_name: X_s})
+                    del X_s  # Explicit memory release after successful inference
+                except (MemoryError, Exception) as _oom:
+                    # X_s released when function returns (every except-path returns)
+                    _half = len(seg) // 2
+                    if _half < _SR:  # < 1 s — give up
+                        logger.warning("MelBandRoformer OOM auf Sub-1s-Chunk: %s → Fallback", _oom)
+                        return None
+                    logger.info("MelBandRoformer OOM auf %ds Chunk → halbiere auf 2×%ds", len(seg) // _SR, _half // _SR)
+                    first = _process_segment(seg[:_half])
+                    second = _process_segment(seg[_half:])
+                    if first is None or second is None:
+                        return None
+                    return np.concatenate([first, second])
                 if not out_raw:
                     return None
                 out_s = np.asarray(out_raw[0])

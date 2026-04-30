@@ -378,28 +378,29 @@ class StereoWidthLimiterPhaseV2(PhaseInterface):
         """
         bands = []
 
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal, Pegelexplosion).
         # Band 0: Low-pass 200 Hz
         sos_0 = signal.butter(4, self.BAND_SPLITS[0], btype="lowpass", fs=sample_rate, output="sos")
-        band_0 = signal.sosfilt(sos_0, signal_in)
+        band_0 = signal.sosfiltfilt(sos_0, signal_in)
         bands.append(band_0)
 
         # Band 1: Band-pass 200-1000 Hz
         sos_1 = signal.butter(
             4, [self.BAND_SPLITS[0], self.BAND_SPLITS[1]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_1 = signal.sosfilt(sos_1, signal_in)
+        band_1 = signal.sosfiltfilt(sos_1, signal_in)
         bands.append(band_1)
 
         # Band 2: Band-pass 1000-8000 Hz
         sos_2 = signal.butter(
             4, [self.BAND_SPLITS[1], self.BAND_SPLITS[2]], btype="bandpass", fs=sample_rate, output="sos"
         )
-        band_2 = signal.sosfilt(sos_2, signal_in)
+        band_2 = signal.sosfiltfilt(sos_2, signal_in)
         bands.append(band_2)
 
         # Band 3: High-pass 8000 Hz
         sos_3 = signal.butter(4, self.BAND_SPLITS[2], btype="highpass", fs=sample_rate, output="sos")
-        band_3 = signal.sosfilt(sos_3, signal_in)
+        band_3 = signal.sosfiltfilt(sos_3, signal_in)
         bands.append(band_3)
 
         return bands

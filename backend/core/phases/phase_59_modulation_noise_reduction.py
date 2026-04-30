@@ -33,18 +33,20 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
     """
     if sig.ndim == 2:
-        _mono = sig.mean(axis=0).astype(np.float64) if sig.shape[0] <= 2 else sig.mean(axis=1).astype(np.float64)
+        _mono = sig.mean(axis=0 if sig.shape[0] <= 2 else 1).astype(np.float32)
     else:
-        _mono = sig.astype(np.float64)
+        _mono = np.asarray(sig, dtype=np.float32).ravel()
     _frame = 480  # 10 ms @ 48 kHz
-    _active = [
-        _mono[i : i + _frame]
-        for i in range(0, len(_mono) - _frame, _frame)
-        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
-    ]
-    if not _active:
+    _n_frames = len(_mono) // _frame
+    if _n_frames == 0:
         return -96.0
-    return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
+    # Vectorized: reshape → (n_frames, 480), per-frame RMS in one pass — no Python loop
+    _frames = _mono[: _n_frames * _frame].reshape(_n_frames, _frame)
+    _frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(_frames**2, axis=1)) + 1e-10)
+    _mask = _frame_rms_db > -50.0
+    if not np.any(_mask):
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean(_frames[_mask] ** 2)) + 1e-10))
 
 
 _MIN_MODULATION_NOISE_SCORE: float = 0.10
@@ -98,27 +100,19 @@ def apply(
         _gain_mn = np.clip(_gain_mn, 0.0, 10.0)
         return np.clip(np.stack([audio[0] * _gain_mn, audio[1] * _gain_mn], axis=0), -1.0, 1.0).astype(np.float32)
 
-    x = audio.astype(np.float64)
+    x = np.asarray(audio, dtype=np.float32)
     n = len(x)
 
     # STFT parameters
     n_fft = 2048
     hop = n_fft // 4
-    window = sps.windows.hann(n_fft, sym=False)
 
-    # Compute STFT
-    n_frames = max(1, (n - n_fft) // hop + 1)
-    stft = np.zeros((n_fft // 2 + 1, n_frames), dtype=np.complex128)
-    for i in range(n_frames):
-        start = i * hop
-        end = start + n_fft
-        if end > n:
-            break
-        frame = x[start:end] * window
-        stft[:, i] = np.fft.rfft(frame)
+    # Vectorized STFT via scipy — replaces Python frame-loop (~21 000 iterations for 225 s)
+    _, _, stft = sps.stft(x, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=n_fft - hop, boundary="even")
+    stft = stft.astype(np.complex64)
 
-    mag = np.abs(stft)
-    phase = np.angle(stft)
+    mag = np.abs(stft).astype(np.float32)
+    phase = np.angle(stft).astype(np.float32)
 
     # Signal envelope (per-frame RMS)
     frame_rms = np.sqrt(np.mean(mag**2, axis=0) + 1e-12)
@@ -126,7 +120,6 @@ def apply(
     # Estimate noise model: noise_level(f) = alpha * signal_level
     # Use low-energy frames to calibrate the noise/signal ratio
     noise_floor = np.percentile(mag, 10, axis=1, keepdims=True)
-    np.median(mag, axis=1, keepdims=True) + 1e-12
 
     # Signal-dependent noise estimate per frame
     alpha = float(np.clip(strength * 0.8, 0.1, 0.9))
@@ -134,26 +127,17 @@ def apply(
 
     # Spectral gating: reduce noise proportional to signal level
     gain = np.maximum(g_floor, 1.0 - alpha * noise_estimate / (mag + 1e-12))
-    gain = np.clip(gain, g_floor, 1.0)
+    gain = np.clip(gain, g_floor, 1.0).astype(np.float32)
 
     # Apply gain and reconstruct
-    mag_clean = mag * gain
-    stft_clean = mag_clean * np.exp(1j * phase)
+    stft_clean = (mag * gain * np.exp(1j * phase)).astype(np.complex64)
 
-    # Inverse STFT (overlap-add)
-    out = np.zeros(n, dtype=np.float64)
-    win_sum = np.zeros(n, dtype=np.float64)
-    for i in range(min(n_frames, stft_clean.shape[1])):
-        start = i * hop
-        end = start + n_fft
-        if end > n:
-            break
-        frame = np.fft.irfft(stft_clean[:, i], n=n_fft) * window
-        out[start:end] += frame
-        win_sum[start:end] += window**2
-
-    win_sum = np.maximum(win_sum, 1e-8)
-    out /= win_sum
+    # Vectorized ISTFT via scipy — replaces Python OLA-loop (~21 000 iterations for 225 s)
+    _, out_full = sps.istft(
+        stft_clean, fs=sample_rate, window="hann", nperseg=n_fft, noverlap=n_fft - hop, boundary=True
+    )
+    out_full = np.asarray(out_full, dtype=np.float32)
+    out = out_full[:n] if len(out_full) >= n else np.pad(out_full, (0, n - len(out_full)))
 
     # Wet/dry blend
     result = x * (1.0 - strength) + out * strength

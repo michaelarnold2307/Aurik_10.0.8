@@ -414,7 +414,24 @@ class ArtifactFreedomGate:
             PhaseOperationType.ML_GENERATIVE,
         )
         if _per_phase_mode and _phase_type in _crackle_check_types:
-            all_artifacts.extend(self._detect_crackle_impulse(orig_mono, rest_mono, sr, thresholds))
+            # §0d Phase-type-adaptive crackle thresholds: CORRECTIVE phases
+            # (click-pop-removal, dropout-repair) remove impulses by design — the delta
+            # signal IS the removed impulse content, which trivially exceeds kurtosis=10.
+            # The Dropout-Zone-Guard and Click-Removal-Guard handle the main false-positive
+            # cases in _detect_crackle_impulse. For boundary interpolation residuals that
+            # pass those guards, raise thresholds so only genuinely extreme re-introduced
+            # spikes (kurtosis > 15 = Godsill & Rayner 1998: real crackle regime) are flagged.
+            if _phase_type == PhaseOperationType.CORRECTIVE:
+                _crackle_thresholds = dict(thresholds)  # shallow copy — do not mutate shared dict
+                _crackle_thresholds["crackle_impulse_kurtosis"] = (
+                    thresholds.get("crackle_impulse_kurtosis", 10.0) * 1.5
+                )  # 15.0
+                _crackle_thresholds["crackle_peak_rms_db"] = (
+                    thresholds.get("crackle_peak_rms_db", 18.0) + 6.0
+                )  # 24.0 dB
+            else:
+                _crackle_thresholds = thresholds
+            all_artifacts.extend(self._detect_crackle_impulse(orig_mono, rest_mono, sr, _crackle_thresholds))
 
         # Apply salience weighting
         for art in all_artifacts:
@@ -497,6 +514,20 @@ class ArtifactFreedomGate:
         # more benign residual micro-artifacts after restorative phases. A single global
         # denominator over-penalizes shellac/wax/tape vs digital material.
         _max_tolerance = float(_MAX_TOLERANCE_BY_MATERIAL.get(mat_key, _MAX_TOLERANCE))
+
+        # §0d/§2.54 Carrier-Recovery-Baseline-Capping (analog to §2.29c for PMGG):
+        # Restorative phases (denoise, dropout-repair, click-removal, dereverb) work on
+        # defect-contaminated audio. The noise/defect floor itself is impulsive and
+        # phase-shifted → artifact detectors fire on carrier-noise content that is
+        # EXPECTED to change, not on newly introduced artefacts.
+        # Scale max_tolerance proportionally to degradation: heavily degraded (rest≈0)
+        # gets ×1.8, near-pristine (rest≈100) gets ×1.0. Applies only to restorative
+        # phases so enhancement phases retain their full guard sensitivity.
+        if _is_restorative and restorability_score is not None:
+            _rest_clamped = float(np.clip(restorability_score, 0.0, 100.0))
+            _restorative_tol_factor = 1.0 + max(0.0, (80.0 - _rest_clamped) / 80.0) * 0.8
+            _max_tolerance *= _restorative_tol_factor
+
         artifact_freedom = float(np.clip(1.0 - (weighted_sum / _max_tolerance), 0.0, 1.0))
         artifact_freedom = artifact_freedom + noise_penalty  # penalty is negative or 0
         artifact_freedom = artifact_freedom + _rs_penalty  # §2.49c roughness/sharpness penalty
@@ -1261,11 +1292,30 @@ class ArtifactFreedomGate:
             if peak_rms_db <= peak_rms_threshold:
                 continue
 
+            # Dropout/silence-zone guard: if original frame is near-silent, the
+            # restored frame contains interpolated gap-fill content (dropout repair)
+            # or click-suppressed silence.  In either case the delta is the correct
+            # repair output, not a new impulse artifact.  Applies to CORRECTIVE phases
+            # (dropout_repair, click_pop_removal) as well as general restorative phases.
+            rms_orig_win = float(np.sqrt(np.mean(orig_win**2) + 1e-12))
+            rms_orig_dbfs_w = 20.0 * np.log10(rms_orig_win + 1e-12)
+            if rms_orig_dbfs_w < -25.0:
+                continue  # dropout gap or near-silence: interpolated content is not an artifact
+
             # Directional guard: peak in restored must be larger than in orig
             # (phase added a spike, not just removed something)
             peak_rest = float(np.max(np.abs(rest_win)))
             peak_orig = float(np.max(np.abs(orig_win)))
-            if peak_rest <= peak_orig * 1.15:  # 15 % tolerance
+
+            # Click-removal guard: if orig had a significantly larger peak than restored,
+            # the phase REMOVED an impulse (the click/pop).  The delta is the removed click —
+            # by definition impulsive and high-kurtosis.  This is correct restoration, not
+            # an introduced artifact.  Threshold 1.30 allows for interpolation boundary effects
+            # without letting genuine click re-introduction through.
+            if peak_orig > peak_rest * 1.30:
+                continue  # phase removed a large impulse (click-repair): delta is correct
+
+            if peak_rest <= peak_orig * 1.15:  # 15 % tolerance — new spike must be meaningfully larger
                 continue
 
             rms_rest = float(np.sqrt(np.mean(rest_win**2) + 1e-12))

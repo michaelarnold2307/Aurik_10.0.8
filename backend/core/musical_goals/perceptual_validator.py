@@ -621,7 +621,11 @@ class PerceptualValidator:
                     # §VERBOTEN: np.corrcoef ohne std-Guard → RuntimeWarning bei near-constant STFT-Frames.
                     if np.std(_a) < 1e-12 or np.std(_b) < 1e-12:
                         continue  # silent frame → skip
-                    c = float(np.corrcoef(_a, _b)[0, 1])
+                    _aa = _a - _a.mean()
+                    _ba = _b - _b.mean()
+                    _na = float(np.linalg.norm(_aa))
+                    _nb = float(np.linalg.norm(_ba))
+                    c = float(np.dot(_aa, _ba) / (_na * _nb + 1e-10))
                     if np.isfinite(c):
                         frame_corrs.append(c)
                 score = float(np.mean(frame_corrs)) if frame_corrs else 0.7

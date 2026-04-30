@@ -19,7 +19,7 @@ class OutputGuardDecision:
 
 def rms(audio: np.ndarray) -> float:
     """Return RMS for mono/stereo audio."""
-    x = np.nan_to_num(audio.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    x = np.nan_to_num(audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     return float(np.sqrt(np.mean(x**2) + 1e-12))
 
 
@@ -29,10 +29,10 @@ def side_rms(audio: np.ndarray) -> float:
         return 0.0
     # (N, 2) samples-first
     if audio.shape[1] == 2 and audio.shape[0] > 2:
-        side = 0.5 * (audio[:, 0].astype(np.float64) - audio[:, 1].astype(np.float64))
+        side = 0.5 * (audio[:, 0].astype(np.float32) - audio[:, 1].astype(np.float32))
     # (2, N) channels-first
     elif audio.shape[0] == 2 and audio.shape[1] > 2:
-        side = 0.5 * (audio[0].astype(np.float64) - audio[1].astype(np.float64))
+        side = 0.5 * (audio[0].astype(np.float32) - audio[1].astype(np.float32))
     else:
         return 0.0
     return float(np.sqrt(np.mean(side**2) + 1e-12))

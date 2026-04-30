@@ -154,6 +154,9 @@ try:
         normalize_pipeline_health_state as _bridge_normalize_pipeline_health_state,  # type: ignore[assignment]
     )
     from backend.api.bridge import (
+        record_goal_feedback as _bridge_record_goal_feedback,
+    )
+    from backend.api.bridge import (
         resolve_pipeline_fail_reason as _bridge_resolve_pipeline_fail_reason,
     )
     from backend.api.bridge import (
@@ -274,6 +277,9 @@ except ImportError:
 
     def _bridge_get_experience_insights(result: object) -> dict:  # type: ignore[misc]
         return {}
+
+    def _bridge_record_goal_feedback(*_a, **_kw) -> None:  # type: ignore[misc]
+        pass  # §C10: non-blocking no-op when bridge unavailable
 
     def _bridge_get_lyrics_guided_enhancement() -> object | None:  # type: ignore[misc]
         return None
@@ -12120,7 +12126,35 @@ class ModernMainWindow(QMainWindow):
         self._btn_retry_failed.clicked.connect(self._retry_failed_items)
         _rb_layout.addWidget(self._btn_retry_failed)
 
+        # ── §C10 Listener-Feedback: Daumen-hoch / Daumen-runter ──────────────
+        _rb_layout.addStretch(1)
+
+        self._btn_thumbs_up = QPushButton("👍")
+        self._btn_thumbs_up.setFixedSize(self._sp(30), self._sp(26))
+        self._btn_thumbs_up.setStyleSheet(
+            "QPushButton { background: rgba(50,150,80,0.45); border: none; border-radius: 6px;"
+            " color: #C8FFCC; font-size: 11pt; }"
+            " QPushButton:hover { background: rgba(60,190,100,0.80); }"
+            " QPushButton:disabled { background: rgba(40,60,40,0.25); color: #555; }"
+        )
+        self._btn_thumbs_up.setToolTip("Klang gut — Feedback speichern (§C10)")
+        self._btn_thumbs_up.clicked.connect(lambda: self._on_goal_feedback(True))
+        _rb_layout.addWidget(self._btn_thumbs_up)
+
+        self._btn_thumbs_down = QPushButton("👎")
+        self._btn_thumbs_down.setFixedSize(self._sp(30), self._sp(26))
+        self._btn_thumbs_down.setStyleSheet(
+            "QPushButton { background: rgba(150,60,40,0.45); border: none; border-radius: 6px;"
+            " color: #FFCCCC; font-size: 11pt; }"
+            " QPushButton:hover { background: rgba(200,80,55,0.80); }"
+            " QPushButton:disabled { background: rgba(60,40,40,0.25); color: #555; }"
+        )
+        self._btn_thumbs_down.setToolTip("Klang unbefriedigend — Feedback speichern (§C10)")
+        self._btn_thumbs_down.clicked.connect(lambda: self._on_goal_feedback(False))
+        _rb_layout.addWidget(self._btn_thumbs_down)
+
         self._last_result_output: str = ""
+        self._last_feedback_ctx: dict = {}  # §C10: context for record_goal_feedback
         vbox.addWidget(self._result_banner)
 
         return wrapper
@@ -15588,6 +15622,26 @@ class ModernMainWindow(QMainWindow):
                         f"Erlebnis-Index: Freude {_joy * 100:.0f}% · Ermüdung {_fat * 100:.0f}% · "
                         f"Gaensehaut {_frisson * 100:.0f}%"
                     )
+                # §C10: Feedback-Kontext für Daumen-hoch/runter bereitstellen
+                self._last_feedback_ctx = {
+                    "genre": str((_xp or {}).get("genre_label", "") or ""),
+                    "material": str((_xp or {}).get("material_key", "") or ""),
+                    "era": str((_xp or {}).get("era_label", "") or ""),
+                    "cluster_key": str((_xp or {}).get("cluster_key", "") or ""),
+                }
+                # Musical Goals für winning/failing Bestimmung speichern
+                _mg_raw = getattr(restoration_result, "musical_goals", None)
+                if not (isinstance(_mg_raw, dict) and _mg_raw):
+                    _mm = (getattr(restoration_result, "metadata", {}) or {}).get("musical_goals") or {}
+                    _mg_raw = _mm.get("scores") or {}
+                self._last_feedback_ctx["musical_goals"] = dict(_mg_raw) if isinstance(_mg_raw, dict) else {}
+                _at_raw = getattr(restoration_result, "adaptive_thresholds", None)
+                self._last_feedback_ctx["adaptive_thresholds"] = dict(_at_raw) if isinstance(_at_raw, dict) else {}
+                # Daumen-Buttons zurücksetzen (neues Ergebnis → wieder aktivierbar)
+                if hasattr(self, "_btn_thumbs_up"):
+                    self._btn_thumbs_up.setEnabled(True)
+                if hasattr(self, "_btn_thumbs_down"):
+                    self._btn_thumbs_down.setEnabled(True)
             except Exception as _xp_exc:
                 logger.debug("Experience-Insights-Update fehlgeschlagen: %s", _xp_exc)
 
@@ -16023,6 +16077,82 @@ class ModernMainWindow(QMainWindow):
         self._start_processing()
 
     # ── §2.38 KMV Stufe-2 ─────────────────────────────────────────────────────
+
+    def _on_goal_feedback(self, thumbs_up: bool) -> None:
+        """§C10 Listener-Feedback (Daumen-hoch/runter) → Bayesian EMA Kalibrierung.
+
+        Bestimmt winning/failing Goals aus dem letzten Ergebnis-Kontext und
+        ruft bridge.record_goal_feedback() nicht-blockierend auf.
+        Buttons werden nach dem ersten Klick deaktiviert (kein Doppel-Voting).
+        """
+        try:
+            # Buttons sofort deaktivieren (Doppel-Voting verhindern)
+            if hasattr(self, "_btn_thumbs_up"):
+                self._btn_thumbs_up.setEnabled(False)
+            if hasattr(self, "_btn_thumbs_down"):
+                self._btn_thumbs_down.setEnabled(False)
+
+            _ctx = getattr(self, "_last_feedback_ctx", {}) or {}
+            _scores: dict = _ctx.get("musical_goals", {}) or {}
+            _thresholds: dict = _ctx.get("adaptive_thresholds", {}) or {}
+
+            # Winning/Failing aus Scores vs. Schwellwerten ableiten
+            # Standard-Böden (P1/P2: 0.88/0.90, Rest: 0.78–0.85)
+            _DEFAULT_FLOORS = {
+                "natuerlichkeit": 0.90,
+                "authentizitaet": 0.88,
+                "tonal_center": 0.95,
+                "timbre_authentizitaet": 0.87,
+                "artikulation": 0.85,
+                "emotionalitaet": 0.82,
+                "mikrodynamik": 0.88,
+                "groove": 0.83,
+                "transparenz": 0.82,
+                "waerme": 0.75,
+                "basskraft": 0.78,
+                "separation_fidelity": 0.78,
+                "brillanz": 0.78,
+                "raumtiefe": 0.70,
+            }
+            _winning: list[str] = []
+            _failing: list[str] = []
+            for _goal, _score in _scores.items():
+                _thr = float(_thresholds.get(_goal) or _DEFAULT_FLOORS.get(_goal, 0.80))
+                if float(_score) >= _thr:
+                    _winning.append(_goal)
+                else:
+                    _failing.append(_goal)
+
+            _genre = str(_ctx.get("genre", "") or "")
+            _material = str(_ctx.get("material", "") or "")
+            _era = str(_ctx.get("era", "") or "")
+            # Cluster-Key als Genre-Fallback
+            if not _genre:
+                _genre = str(_ctx.get("cluster_key", "") or "")
+
+            _bridge_record_goal_feedback(
+                winning_goals=_winning,
+                failing_goals=_failing,
+                rating_thumbs_up=thumbs_up,
+                genre=_genre,
+                material=_material,
+                era=_era,
+            )
+            _label = "👍 Gespeichert" if thumbs_up else "👎 Gespeichert"
+            if thumbs_up and hasattr(self, "_btn_thumbs_up"):
+                self._btn_thumbs_up.setText(_label)
+            elif not thumbs_up and hasattr(self, "_btn_thumbs_down"):
+                self._btn_thumbs_down.setText(_label)
+            logger.info(
+                "§C10 Listener-Feedback: thumbs_up=%s, genre=%r, material=%r, winning=%d, failing=%d",
+                thumbs_up,
+                _genre,
+                _material,
+                len(_winning),
+                len(_failing),
+            )
+        except Exception as _fb_exc:
+            logger.warning("§C10 _on_goal_feedback fehlgeschlagen: %s", _fb_exc)
 
     def _maybe_start_kmv_refinement(self, item, restoration_result) -> None:
         """Start MLRefinementThread when Stufe-1 left deferred phases (§2.38)."""

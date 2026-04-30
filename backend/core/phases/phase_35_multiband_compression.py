@@ -39,8 +39,8 @@ Wissenschaftliche Referenzen:
         genre = aurik_ml.genre_classifier.predict(audio)
         character = aurik_ml.character_model.predict(audio)
         # Adaptive Parameter (Release/Attack)
-        release_ms_adaptive = self.release_ms * (1.0 + np.abs(audio) / (np.max(np.abs(audio)) + 1e-10))
-        attack_ms_adaptive = self.attack_ms * (1.0 + np.abs(audio) / (np.max(np.abs(audio)) + 1e-10))
+        release_ms_adaptive = self.release_ms * (1.0 + np.abs(audio) / (np.percentile(np.abs(audio), 99.9) + 1e-10))
+        attack_ms_adaptive = self.attack_ms * (1.0 + np.abs(audio) / (np.percentile(np.abs(audio), 99.9) + 1e-10))
         # Deep-Learning Sidechain Detection
         sidechain = aurik_ml.sidechain_detector.detect(audio)
         # Hybrid-Parameteroptimierung
@@ -323,33 +323,28 @@ class MultibandCompressionPhase(PhaseInterface):
         bands = []
 
         # Band 1: Bass (< 150 Hz)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase LR 8th Order) statt sosfilt×2 (kausal, Pegelexplosion).
         sos_bass = signal.butter(4, self.CROSSOVER_FREQS[0], "lowpass", fs=sample_rate, output="sos")
-        bass = signal.sosfilt(sos_bass, audio, axis=0)
-        bass = signal.sosfilt(sos_bass, bass, axis=0)  # 8th Order
+        bass = signal.sosfiltfilt(sos_bass, audio, axis=0)  # Zero-Phase LR 8th Order
         bands.append(bass)
 
         # Band 2: Low-Mid (150-800 Hz)
         sos_lowmid_low = signal.butter(4, self.CROSSOVER_FREQS[0], "highpass", fs=sample_rate, output="sos")
         sos_lowmid_high = signal.butter(4, self.CROSSOVER_FREQS[1], "lowpass", fs=sample_rate, output="sos")
-        low_mid = signal.sosfilt(sos_lowmid_low, audio, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_low, low_mid, axis=0)  # 8th Order HP
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)
-        low_mid = signal.sosfilt(sos_lowmid_high, low_mid, axis=0)  # 8th Order LP
+        low_mid = signal.sosfiltfilt(sos_lowmid_low, audio, axis=0)  # Zero-Phase HP
+        low_mid = signal.sosfiltfilt(sos_lowmid_high, low_mid, axis=0)  # Zero-Phase LP
         bands.append(low_mid)
 
         # Band 3: Mid-High (800-5000 Hz)
         sos_midhigh_low = signal.butter(4, self.CROSSOVER_FREQS[1], "highpass", fs=sample_rate, output="sos")
         sos_midhigh_high = signal.butter(4, self.CROSSOVER_FREQS[2], "lowpass", fs=sample_rate, output="sos")
-        mid_high = signal.sosfilt(sos_midhigh_low, audio, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_low, mid_high, axis=0)  # 8th Order HP
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)
-        mid_high = signal.sosfilt(sos_midhigh_high, mid_high, axis=0)  # 8th Order LP
+        mid_high = signal.sosfiltfilt(sos_midhigh_low, audio, axis=0)  # Zero-Phase HP
+        mid_high = signal.sosfiltfilt(sos_midhigh_high, mid_high, axis=0)  # Zero-Phase LP
         bands.append(mid_high)
 
         # Band 4: High (> 5000 Hz)
         sos_high = signal.butter(4, self.CROSSOVER_FREQS[2], "highpass", fs=sample_rate, output="sos")
-        high = signal.sosfilt(sos_high, audio, axis=0)
-        high = signal.sosfilt(sos_high, high, axis=0)  # 8th Order
+        high = signal.sosfiltfilt(sos_high, audio, axis=0)  # Zero-Phase LR 8th Order
         bands.append(high)
 
         return bands

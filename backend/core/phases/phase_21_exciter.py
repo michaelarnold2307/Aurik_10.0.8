@@ -410,7 +410,8 @@ class Exciter(PhaseInterface):
     def _extract_band(self, audio: np.ndarray, sample_rate: int, freq_range: tuple[float, float]) -> np.ndarray:
         """Extract frequency band using bandpass filter."""
         sos = signal.butter(4, freq_range, btype="band", fs=sample_rate, output="sos")
-        return signal.sosfilt(sos, audio)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — band wird mit original gemischt.
+        return signal.sosfiltfilt(sos, audio)
 
     def _generate_harmonics(
         self, audio: np.ndarray, intensity: float, harmonic_type: str, saturation_type: str
@@ -443,8 +444,9 @@ class Exciter(PhaseInterface):
         # 'mixed': use as-is
 
         # High-pass to remove original fundamental
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — harmonics werden addiert.
         sos_hp = signal.butter(2, 1000, btype="high", fs=48000, output="sos")
-        harmonics_only = signal.sosfilt(sos_hp, saturated)
+        harmonics_only = signal.sosfiltfilt(sos_hp, saturated)
 
         return harmonics_only * 0.7  # Scale down
 

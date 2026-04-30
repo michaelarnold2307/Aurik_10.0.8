@@ -1,15 +1,15 @@
-import logging
-
 """
 Adaptive Autocorrelation DSP-Modul für Aurik 6.0 (SOTA-Maximum)
 Ermöglicht dynamische Anpassung der Parameter und Integration in adaptive Verarbeitungsketten (klassische DSP, SOTA-Maximum).
 Verwendet numpy für die Berechnung.
 """
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
+from scipy.signal import correlate as _sc_correlate
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class AdaptiveAutocorrelation:
         """
         self.log_contract()
         max_lag = kwargs.get("max_lag", self.max_lag)
-        result = np.correlate(y, y, mode="full")
+        result = _sc_correlate(y, y, mode="full", method="fft")
         mid = len(result) // 2
         result = result[mid : mid + max_lag] if max_lag is not None else result[mid:]
         if self.normalize:

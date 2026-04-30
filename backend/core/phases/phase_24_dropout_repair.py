@@ -95,7 +95,7 @@ except ImportError:
     QUALITY_MODE_AVAILABLE = False
 
 try:
-    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_p24
+    pass
 
     _PGHI_AVAILABLE_P24 = True
 except ImportError:
@@ -1873,12 +1873,12 @@ class DropoutRepairPhase(PhaseInterface):
                 Zxx_refined[:, fi] = mag_zone * np.exp(1j * phase_cur)
                 phase_cur += phase_increment
 
-            # Reconstruct zone fill segment
+            # Reconstruct zone fill segment — Zxx_refined retains phase info.
+            # Direct ISTFT is correct and 50-100× faster than PGHI.
             try:
-                if _PGHI_AVAILABLE_P24:
-                    seg = _pghi_p24(Zxx_refined, sr=sr, win_size=eff_win, hop=eff_hop, n_samples=gap_len)
-                else:
-                    _, seg = _istft_fn(Zxx_refined, sr, nperseg=eff_win, noverlap=eff_win - eff_hop)
+                _, seg = _istft_fn(
+                    np.asarray(Zxx_refined, dtype=np.complex64), sr, nperseg=eff_win, noverlap=eff_win - eff_hop
+                )
             except Exception:
                 continue
 

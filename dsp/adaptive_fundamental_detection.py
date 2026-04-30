@@ -92,7 +92,9 @@ class AdaptiveFundamentalDetection:
 
     def _detect_classic(self, x: np.ndarray) -> float:
         """Klassische Grundtonerkennung per Autokorrelation."""
-        corr = np.correlate(x, x, mode="full")
+        from backend.core.core_utils import fft_autocorr
+
+        corr = fft_autocorr(x)
         corr = corr[len(corr) // 2 :]
         peak = np.argmax(corr[1:]) + 1
         freq = self.sr / peak if peak > 0 else 0.0

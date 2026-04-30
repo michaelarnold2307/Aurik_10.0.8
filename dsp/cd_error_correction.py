@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
+from scipy.signal import correlate as _sc_correlate
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class CDErrorCorrection:
                 try:
                     from scipy.linalg import solve_toeplitz
 
-                    r = np.correlate(ctx, ctx, mode="full")[len(ctx) - 1 : len(ctx) + p]
+                    r = _sc_correlate(ctx, ctx, mode="full", method="fft")[len(ctx) - 1 : len(ctx) + p]
                     rhs = r[1 : p + 1]
                     row = r[:p]
                     # Guard: degenerate autocorrelation triggers LAPACK DLASCL parameter error

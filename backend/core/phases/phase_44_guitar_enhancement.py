@@ -215,11 +215,13 @@ class GuitarEnhancementPhase(PhaseInterface):
 
         # 3. Genre-adaptiver Harmonic Exciter (band-limited to body resonance region)
         # Limit exciter to 200-5000 Hz to avoid mud (< 200 Hz) and hash (> 5 kHz)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — body_band wird als Harmonic Exciter
+        # auf ch_audio aufaddiert; sosfilt erzeugt Zeitversatz → Kammfilter-Artefakt.
         sos_body = sig.butter(4, [200.0, 5000.0], btype="band", fs=sample_rate, output="sos")
         g = exciter_gain
 
         def _excite_channel(ch_audio: np.ndarray) -> np.ndarray:
-            body_band = sig.sosfilt(sos_body, ch_audio)
+            body_band = sig.sosfiltfilt(sos_body, ch_audio)
             if genre == "Rock":
                 # Soft-clip for odd harmonics (pick attack grit)
                 excited = np.tanh(body_band * 2.5) * 0.12 * g

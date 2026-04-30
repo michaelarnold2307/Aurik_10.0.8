@@ -1,5 +1,3 @@
-import logging
-
 """
 sota_denoiser.py - SOTA-konformer Denoiser für Aurik 6.0
 Dieses Modul implementiert SOTA-orientiertes adaptives Denoising (DeepFilterNet2, DCCRN-ONNX, spektrale Maskierung als Fallback).
@@ -7,6 +5,7 @@ Es ist mit DSPContract, Auditierbarkeit und Rollback-Fähigkeit gemäß Dokument
 """
 
 import importlib
+import logging
 import os
 import tempfile
 from dataclasses import asdict, dataclass
@@ -270,7 +269,7 @@ class SotaDenoiser:
                 self._audit_log("success", "DeepFilterNet2-Inferenz erfolgreich")
                 return np.asarray(model.denoise(audio, sr))
             # Fallback: Spektrale Maskierung
-            f, _t, Zxx = scipy.signal.stft(audio, fs=sr, nperseg=1024, noverlap=512)
+            f, _t, Zxx = scipy.signal.stft(audio, fs=sr, nperseg=1024, noverlap=512, boundary="even")
             mag = np.abs(Zxx)
             phase = np.angle(Zxx)
             noise_mag = np.minimum.accumulate(mag, axis=1)

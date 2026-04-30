@@ -228,6 +228,8 @@ def _estimate_interchannel_delay_ms(stereo_sc: np.ndarray, sr: int) -> float:
     Windows where both channels are near-silent or the inter-channel correlation is too
     weak to be meaningful are excluded from the median.
     """
+    from scipy.signal import correlate as _sps_correlate  # lazy — avoids module-level import for a single function
+
     if stereo_sc.ndim != 2 or stereo_sc.shape[1] != 2:
         return 0.0
     if sr <= 0:
@@ -261,7 +263,7 @@ def _estimate_interchannel_delay_ms(stereo_sc: np.ndarray, sr: int) -> float:
         if l_std < 1e-10 or r_std < 1e-10:
             continue
 
-        corr = np.correlate(l_seg / (l_std * len(l_seg)), r_seg / r_std, mode="full")
+        corr = _sps_correlate(l_seg / (l_std * len(l_seg)), r_seg / r_std, method="fft")
         center = int(l_seg.size - 1)
         lo = max(0, center - max_lag)
         hi = min(corr.size, center + max_lag + 1)
@@ -648,16 +650,30 @@ class UnifiedRestorerV3:
 
     @staticmethod
     def _musical_gain_envelope(
-        audio: np.ndarray, gain: float, gate_dbfs: float = -36.0, crossfade_ms: float = 10.0, sr: int = 48000
+        audio: np.ndarray,
+        gain: float,
+        gate_dbfs: float = -36.0,
+        crossfade_ms: float = 10.0,
+        sr: int = 48000,
+        reference_for_gate: np.ndarray | None = None,
     ) -> np.ndarray:
         """Delegates to backend.core.audio_utils.apply_musical_gain_envelope — single canonical impl.
 
         §2.45a-II §2.30b: envelope-aware gain, adaptive noise-floor gate, per-sample quiet-zone
         hard clamp (Stufe 5).  No duplicate logic — changes to audio_utils automatically apply here.
+
+        reference_for_gate: pre-phase audio for P5 gate estimation (v9.12.1).
         """
         from backend.core.audio_utils import apply_musical_gain_envelope as _amge
 
-        return _amge(audio, gain, gate_dbfs=gate_dbfs, crossfade_ms=crossfade_ms, sr=sr)
+        return _amge(
+            audio,
+            gain,
+            gate_dbfs=gate_dbfs,
+            crossfade_ms=crossfade_ms,
+            sr=sr,
+            reference_for_gate=reference_for_gate,
+        )
 
     @staticmethod
     def _update_positive_makeup_authority(phase_id: str, current_allowed: bool) -> tuple[bool, str | None]:
@@ -2030,41 +2046,28 @@ class UnifiedRestorerV3:
         emotional_arc_score: float,
         audio: np.ndarray | None = None,
         sr: int = 48000,
-        is_studio_2026: bool = False,
     ) -> dict[str, Any]:
         """Compute explicit runtime joy/fatigue index (0..1) from available proxies.
 
-        Mode-differentiated (§2.53 Mode-Policy):
-          Restoration  — advisory-only; frisson driven by authentizitaet/timbre/arc
-                         (hearing the original performance after decades of degradation).
-          Studio 2026  — konservative bounded Mikro-Kopplung allowed; frisson driven
-                         by groove/bass_kraft/raumtiefe (modern studio intensity).
-
-        Literature basis: Blood & Zatorre 2001, Grewe 2007, Harrison & Loui 2014,
-        Huron 2006 (ITPRA), Sloboda 1991.
+        Includes a literature-backed frisson propensity score (Blood & Zatorre
+        2001, Grewe 2007, Harrison & Loui 2014) based on:
+          - Spectral flux (harmonic surprise / expectation violation)
+          - Onset density (rhythmic tension / release)
+          - Dynamic range contrast (crescendo/decrescendo patterns)
+          - Goal-based proxies (emotional arc, spatial immersion, articulation)
         """
         _scores = musical_goal_scores or {}
         _nat = float(np.clip(float(_scores.get("natuerlichkeit", 0.90)), 0.0, 1.0))
         _warm = float(np.clip(float(_scores.get("waerme", 0.75)), 0.0, 1.0))
-        # micro_dynamics: try canonical key first, then German alias (both exist in PMGG)
-        _micro = float(np.clip(float(_scores.get("micro_dynamics", _scores.get("mikrodynamik", 0.88))), 0.0, 1.0))
+        _micro = float(np.clip(float(_scores.get("micro_dynamics", 0.88)), 0.0, 1.0))
         _emo = float(np.clip(float(_scores.get("emotionalitaet", emotional_arc_score)), 0.0, 1.0))
         _bri = float(np.clip(float(_scores.get("brillanz", 0.78)), 0.0, 1.0))
         _art = float(np.clip(float(_scores.get("artikulation", 0.85)), 0.0, 1.0))
-        # raumtiefe: canonical key ("spatial_depth" is a legacy alias, not in 14-Goal dict)
-        _spa = float(np.clip(float(_scores.get("raumtiefe", _scores.get("spatial_depth", 0.70))), 0.0, 1.0))
+        _spa = float(np.clip(float(_scores.get("spatial_depth", 0.70)), 0.0, 1.0))
         _tonal = float(np.clip(float(_scores.get("tonal_center", 0.95)), 0.0, 1.0))
         _trans = float(np.clip(float(_scores.get("transparenz", 0.82)), 0.0, 1.0))
         _artifact = float(np.clip(float(artifact_freedom), 0.0, 1.0))
         _arc = float(np.clip(float(emotional_arc_score), 0.0, 1.0))
-        # groove: rhythmische Spannung/Entspannung = primärer Frisson-Trigger (Grewe 2007)
-        _groove = float(np.clip(float(_scores.get("groove", 0.83)), 0.0, 1.0))
-        # bass_kraft: Sub-Bass-Onset = physiologischer Frisson-Trigger (Blood & Zatorre 2001)
-        _bass = float(np.clip(float(_scores.get("bass_kraft", _scores.get("basskraft", 0.78))), 0.0, 1.0))
-        # authentizitaet / timbre: Erkennbarkeit des Originals verstärkt Frisson-Response
-        _auth = float(np.clip(float(_scores.get("authentizitaet", 0.88)), 0.0, 1.0))
-        _timbre = float(np.clip(float(_scores.get("timbre_authentizitaet", 0.87)), 0.0, 1.0))
-        _sepfid = float(np.clip(float(_scores.get("separation_fidelity", _scores.get("sep_fidelity", 0.78))), 0.0, 1.0))
 
         _risk_lookup = {"very_low": 0.08, "low": 0.16, "medium": 0.35, "high": 0.65, "critical": 0.85}
         _fatigue_risk = 0.25
@@ -2154,163 +2157,72 @@ class UnifiedRestorerV3:
             except Exception as _fr_exc:
                 logger.debug("Frisson audio analysis non-blocking: %s", _fr_exc)
 
-        # ── Modus-spezifische Frisson + Joy Gewichtung (§2.53 Mode-Policy) ─────────────────────
-        #
-        # RESTORATION: Frisson entsteht durch Wiedererkennung des Originals nach Jahrzehnten
-        #   Degradation. Primäre Trigger: authentizitaet (Performanz erkennbar), timbre_authentizitaet
-        #   (Instrument/Stimme wiederhergestellt), emotional_arc (Drama bewahrt).
-        #   Advisory-only: kein direkter Audio-Impact.
-        #
-        # STUDIO 2026: Frisson entsteht durch moderne Produktionsintensität — kraftvoller Sub-Bass
-        #   (Blood & Zatorre 2001), räumliche Immersion, rhythmische Energie. Konservative bounded
-        #   Mikro-Kopplung auf Strength/Wet-Dry erlaubt.
-        #
-        if not is_studio_2026:
-            # ── Restoration: audio-blend 50/50 (restauriertes Audio gleich zuverlässig wie Proxy) ──
-            _frisson_audio_blend = (0.50, 0.50)
-            _frisson_fatigue_weight = 0.12
-            if _frisson_audio_valid:
-                _frisson_audio = 0.35 * _spectral_flux_norm + 0.30 * _dynamic_contrast_norm + 0.35 * _onset_density_norm
-                _frisson_proxy = (
-                    0.22 * _auth  # Authentizität des Originals = primärer Restoration-Frisson
-                    + 0.20 * _arc  # Emotionaler Bogen: Drama der Originalperformance bewahrt
-                    + 0.14 * _micro  # Mikrodynamik: Tension/Release wiederhergestellt (Grewe 2007)
-                    + 0.12 * _timbre  # Timbre-Authentizität: Instrument/Stimme erkennbar
-                    + 0.10 * _groove  # Rhythmische Authentizität: Groove des Originals erhalten
-                    + 0.10 * _emo  # Emotionale Arousal-Spitze (Blood & Zatorre 2001)
-                    + 0.07 * _art  # Artikulation: Silben/Noten klar → Timing-Überraschungen
-                    + 0.05 * _nat  # Natürlichkeit: schafft Vertrauen → Frisson-Öffnung
-                )
-                _frisson_index = float(
-                    np.clip(
-                        0.50 * _frisson_audio + 0.50 * _frisson_proxy - _frisson_fatigue_weight * _fatigue_index,
-                        0.0,
-                        1.0,
-                    )
-                )
-            else:
-                # Pure proxy fallback (Restoration)
-                _frisson_index = float(
-                    np.clip(
-                        0.20 * _arc  # Emotionaler Bogen (ITPRA, Huron 2006)
-                        + 0.18 * _auth  # Authentizität → emotionale Bindung ans Original
-                        + 0.14 * _micro  # Mikrodynamik (Tension/Release)
-                        + 0.12 * _groove  # Rhythmische Spannung
-                        + 0.10 * _emo  # Emotionale Arousal-Spitze
-                        + 0.08 * _timbre  # Timbre-Authentizität
-                        + 0.08 * _art  # Artikulation (Timing-Überraschungen)
-                        + 0.05 * _trans  # Transparenz → Gänsehaut-Cues hörbar
-                        + 0.05 * _tonal  # Tonartstabilität → Expectation-Violation wirkt
-                        - 0.16 * _fatigue_index,
-                        0.0,
-                        1.0,
-                    )
-                )
-
-            # Joy-Index Restoration: Natürlichkeit + Authentizität dominieren
-            _joy_index = float(
+        # Combine audio-based and proxy-based frisson estimation
+        if _frisson_audio_valid:
+            # Weighted blend: 55% audio-derived, 45% proxy-derived
+            _frisson_audio = 0.35 * _spectral_flux_norm + 0.30 * _dynamic_contrast_norm + 0.35 * _onset_density_norm
+            _frisson_proxy = 0.30 * _arc + 0.25 * _micro + 0.20 * _emo + 0.15 * _spa + 0.10 * _art
+            _frisson_index = float(
                 np.clip(
-                    0.22 * _nat  # Natürlichkeit = Kern-Ziel Restoration, primäre Joy-Quelle
-                    + 0.18 * _auth  # Authentizität: Original erkennbar → tiefe Befriedigung
-                    + 0.15 * _emo  # Emotionale Qualität
-                    + 0.12 * _micro  # Mikrodynamik = Lebendigkeit
-                    + 0.10 * _warm  # Wärme = angenehme Klangtextur (Ära-Charakter)
-                    + 0.12 * _artifact  # Artefaktfreiheit: Primum non nocere schützt Joy
-                    + 0.11 * _frisson_index  # Gänsehaut-Potential
-                    - 0.20 * _fatigue_index,
+                    0.55 * _frisson_audio + 0.45 * _frisson_proxy - 0.12 * _fatigue_index,
                     0.0,
                     1.0,
                 )
             )
-
         else:
-            # ── Studio 2026: audio-blend 60/40 (enhanced audio zuverlässiger für Analyse) ──
-            _frisson_audio_blend = (0.60, 0.40)
-            _frisson_fatigue_weight = 0.10  # Fatigue-Impact geringer: Studio-Energie kommt durch
-            if _frisson_audio_valid:
-                _frisson_audio = 0.35 * _spectral_flux_norm + 0.30 * _dynamic_contrast_norm + 0.35 * _onset_density_norm
-                _frisson_proxy = (
-                    0.20 * _groove  # Rhythmische Energie = Kernfrisson moderner Produktion (Grewe 2007)
-                    + 0.16 * _bass  # Sub-Bass-Onset = physiologischer Frisson-Trigger (Blood & Zatorre 2001)
-                    + 0.15 * _arc  # Erwartungsbogen (ITPRA, Huron 2006)
-                    + 0.14 * _spa  # Räumliche Immersion: Studio-Stereo → Frisson-Verstärker
-                    + 0.12 * _micro  # Mikrodynamik = Lebendigkeit des Klangs
-                    + 0.10 * _bri  # Brillanz: klare Höhen triggern physiologischen Schauer
-                    + 0.08 * _emo  # Emotionalität
-                    + 0.05 * _sepfid  # Separation fidelity: klare Stems = Details hörbar
-                )
-                _frisson_index = float(
-                    np.clip(
-                        0.60 * _frisson_audio + 0.40 * _frisson_proxy - _frisson_fatigue_weight * _fatigue_index,
-                        0.0,
-                        1.0,
-                    )
-                )
-            else:
-                # Pure proxy fallback (Studio 2026)
-                _frisson_index = float(
-                    np.clip(
-                        0.18 * _groove  # Rhythmische Energie
-                        + 0.15 * _bass  # Sub-Bass-Onset
-                        + 0.14 * _arc  # Erwartungsbogen
-                        + 0.12 * _spa  # Räumliche Immersion
-                        + 0.12 * _micro  # Mikrodynamik
-                        + 0.10 * _bri  # Brillanz
-                        + 0.09 * _emo  # Emotionalität
-                        + 0.10 * _sepfid  # Separation fidelity
-                        - 0.12 * _fatigue_index,
-                        0.0,
-                        1.0,
-                    )
-                )
-
-            # Joy-Index Studio 2026: Emotionalität + Lebendigkeit + Groove dominieren
-            _joy_index = float(
+            # Fallback: pure proxy (same as before but with §2.53 literature weights)
+            _frisson_index = float(
                 np.clip(
-                    0.20 * _emo  # Emotionale Intensität = primäres Studio-Klangziel
-                    + 0.16 * _micro  # Mikrodynamik: Puls und Lebendigkeit moderner Produktion
-                    + 0.14 * _groove  # Groove: rhythmische Joy (Grewe 2007)
-                    + 0.10 * _bri  # Brillanz: Studio-Signature-Sound
-                    + 0.09 * _warm  # Wärme: Balance verhindert Härte
-                    + 0.10 * _artifact  # Artefaktfreiheit: kein Over-Processing
-                    + 0.12 * _frisson_index  # Gänsehaut-Potential (höher als Restoration)
-                    + 0.09 * _spa  # Raumtiefe: Immersion
-                    - 0.18 * _fatigue_index,  # Fatigue-Penalität leicht reduziert (Energie-Modus)
+                    0.26 * _arc
+                    + 0.18 * _micro
+                    + 0.14 * _emo
+                    + 0.14 * _art
+                    + 0.10 * _spa
+                    + 0.08 * _trans
+                    + 0.10 * _tonal
+                    + 0.10 * _artifact
+                    - 0.16 * _fatigue_index,
                     0.0,
                     1.0,
                 )
             )
+
+        _joy_index = float(
+            np.clip(
+                0.23 * _nat
+                + 0.20 * _emo
+                + 0.17 * _micro
+                + 0.12 * _warm
+                + 0.16 * _artifact
+                + 0.12 * _arc
+                + 0.08 * _frisson_index
+                - 0.20 * _fatigue_index,
+                0.0,
+                1.0,
+            )
+        )
 
         return {
             "joy_index": _joy_index,
             "fatigue_index": _fatigue_index,
             "frisson_index": _frisson_index,
             "components": {
-                # Alle 14 Musical Goals (kanonische Keys) für vollständige Telemetrie
                 "natuerlichkeit": _nat,
-                "authentizitaet": _auth,
-                "tonal_center": _tonal,
-                "timbre_authentizitaet": _timbre,
-                "artikulation": _art,
                 "emotionalitaet": _emo,
                 "micro_dynamics": _micro,
-                "groove": _groove,
-                "transparenz": _trans,
                 "waerme": _warm,
-                "bass_kraft": _bass,
-                "separation_fidelity": _sepfid,
-                "brillanz": _bri,
-                "raumtiefe": _spa,
-                # Frisson-spezifische Komponenten
                 "artifact_freedom": _artifact,
                 "emotional_arc": _arc,
+                "brightness": _bri,
+                "artikulation": _art,
+                "spatial_depth": _spa,
+                "tonal_center": _tonal,
+                "transparenz": _trans,
                 "frisson_propensity": _frisson_index,
                 "frisson_spectral_flux": _spectral_flux_norm,
                 "frisson_onset_density": _onset_density_norm,
                 "frisson_dynamic_contrast": _dynamic_contrast_norm,
                 "frisson_audio_analysis_valid": _frisson_audio_valid,
-                # Modus-Diagnostik
-                "frisson_mode": "studio_2026" if is_studio_2026 else "restoration",
             },
         }
 
@@ -4565,7 +4477,6 @@ class UnifiedRestorerV3:
         # VERBOTEN bei Tape: globale Mittelwert-Subtraktion (np.mean) — erfasst keinen Drift.
         try:
             from scipy.signal import filtfilt as _filtfilt
-            from scipy.signal import lfilter as _lfilter
 
             _is_reel_tape = _classified_material is not None and (
                 _classified_material == MaterialType.REEL_TAPE
@@ -6978,13 +6889,14 @@ class UnifiedRestorerV3:
             # Guaranteed DSP-Fallback: Presence enhancement + NaN-Guard (§Checkliste §3.x)
             try:
                 from scipy.signal import butter as _butter
+                from scipy.signal import lfilter as _ex_lfilter
 
                 _ex_rms = float(np.sqrt(np.mean(restored_audio.astype(np.float64) ** 2) + 1e-12))
                 if _ex_rms > 1e-4:  # Nicht auf Stille anwenden
                     # Subtile Präsenz-Auffrischung (3–8 kHz, +0.5 dB) als Minimal-Harmonic-Boost
                     _nyq = sample_rate / 2.0
                     _ex_b, _ex_a = _butter(2, [min(3000.0 / _nyq, 0.95), min(8000.0 / _nyq, 0.99)], btype="band")
-                    _ex_presence = _lfilter(_ex_b, _ex_a, restored_audio)
+                    _ex_presence = _ex_lfilter(_ex_b, _ex_a, restored_audio)
                     # Gain-Faktor: 0.05 ≈ +0.4 dB Präsenz-Anhebung
                     restored_audio = np.clip(restored_audio + 0.05 * _ex_presence, -1.0, 1.0)
                 restored_audio = np.nan_to_num(restored_audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -7275,48 +7187,20 @@ class UnifiedRestorerV3:
             # aber shellac 0.68 ist durch 0.82 unerreichbar → fälschlich FAIL).
             _ADAPTIVE_THR_MATERIAL_CEILING: dict[str, dict[str, float]] = {
                 "shellac": {
-                    # P1/P2 — physikalische Einschränkungen des Trägers (§0 BW ≤ 8 kHz, DR ≤ 45 dB)
                     "natuerlichkeit": 0.68,
                     "authentizitaet": 0.65,
                     "tonal_center": 0.70,
                     "timbre_authentizitaet": 0.65,
                     "artikulation": 0.61,
-                    # P3 — Wow/Flutter, Crackle, surface noise floor limitieren P3-Ziele physikalisch.
-                    # Ohne diese Ceilings: SGT kann groove bei 0.83 belassen (kein Bias) → kanonisch
-                    # unerreichbar für restauriertes Shellac (Ziel-Kalibrierungsfehler §0a Ebene 2).
-                    "groove": 0.70,
-                    "micro_dynamics": 0.68,
-                    "mikrodynamik": 0.68,  # Alias für micro_dynamics
-                    "emotionalitaet": 0.72,
-                    # P4 — LF-Rolloff ≤ 100 Hz, Mono-Quelle (typisch), begrenzte Spektral-Transparenz
-                    "bass_kraft": 0.58,
-                    "basskraft": 0.58,  # Alias für bass_kraft
-                    "separation_fidelity": 0.55,  # Shellac: inherent mono/narrow-stereo — keine Stem-Sep
-                    "transparenz": 0.62,  # SNR ≤ 45 dB Träger-Limit → Transparenz physikalisch begrenzt
-                    "raumtiefe": 0.60,  # Mono-Quelle: kein echtes Stereo-Feld
-                    # §0 BW-Ceiling: Shellac ≤ 8 kHz → brillanz/spatial_depth physikalisch limitiert
-                    "brillanz": 0.52,
-                    "spatial_depth": 0.60,
+                    "waerme": 0.62,
                 },
                 "wax_cylinder": {
-                    # Noch stärker limitiert als Shellac (BW ≤ 5 kHz, DR ≤ 35 dB, mono)
                     "natuerlichkeit": 0.66,
                     "authentizitaet": 0.63,
                     "tonal_center": 0.68,
                     "timbre_authentizitaet": 0.63,
                     "artikulation": 0.59,
-                    "groove": 0.62,
-                    "micro_dynamics": 0.60,
-                    "mikrodynamik": 0.60,
-                    "emotionalitaet": 0.65,
-                    "bass_kraft": 0.48,
-                    "basskraft": 0.48,
-                    "separation_fidelity": 0.45,
-                    "transparenz": 0.55,
-                    "raumtiefe": 0.50,
-                    # §0 BW-Ceiling: Wachswalze ≤ 5 kHz → extremes HF-Limit
-                    "brillanz": 0.44,
-                    "spatial_depth": 0.55,
+                    "waerme": 0.60,
                 },
                 "wire_recording": {
                     "natuerlichkeit": 0.66,
@@ -7324,53 +7208,7 @@ class UnifiedRestorerV3:
                     "tonal_center": 0.68,
                     "timbre_authentizitaet": 0.63,
                     "artikulation": 0.59,
-                    "groove": 0.64,
-                    "micro_dynamics": 0.62,
-                    "mikrodynamik": 0.62,
-                    "emotionalitaet": 0.66,
-                    "bass_kraft": 0.52,
-                    "basskraft": 0.52,
-                    "separation_fidelity": 0.48,
-                    "transparenz": 0.57,
-                    "raumtiefe": 0.52,
-                    # §0 BW-Ceiling: Drahtaufnahme ≤ 6 kHz
-                    "brillanz": 0.46,
-                    "spatial_depth": 0.55,
-                },
-                "lacquer_disc": {
-                    # §0d Acetat-Lackfolien 1930–1950: zwischen vinyl und shellac
-                    "natuerlichkeit": 0.72,
-                    "authentizitaet": 0.70,
-                    "tonal_center": 0.74,
-                    "timbre_authentizitaet": 0.70,
-                    "artikulation": 0.66,
-                    "groove": 0.72,
-                    "micro_dynamics": 0.70,
-                    "mikrodynamik": 0.70,
-                    "emotionalitaet": 0.74,
-                    "bass_kraft": 0.64,
-                    "basskraft": 0.64,
-                    "separation_fidelity": 0.60,
-                    "transparenz": 0.66,
-                    "raumtiefe": 0.64,
-                    # §0 BW-Ceiling: Lackfolie ≤ 12 kHz (besser als Shellac, schlechter als Vinyl)
-                    "brillanz": 0.60,
-                    "spatial_depth": 0.64,
-                },
-                "cassette": {
-                    # Kassette: Wow/Flutter 0.06–0.10 WRMS, BW bis 14 kHz (Typ I), DR ≤ 60 dB
-                    # P3: groove/micro_dynamics durch Wow+Flutter und Rauschboden limitiert
-                    "natuerlichkeit": 0.76,
-                    "authentizitaet": 0.73,
-                    "tonal_center": 0.78,
-                    "timbre_authentizitaet": 0.73,
-                    "artikulation": 0.70,
-                    "groove": 0.74,
-                    "micro_dynamics": 0.72,
-                    "mikrodynamik": 0.72,
-                    "separation_fidelity": 0.68,
-                    "bass_kraft": 0.72,
-                    "basskraft": 0.72,
+                    "waerme": 0.60,
                 },
                 "vinyl": {
                     "natuerlichkeit": 0.82,
@@ -7378,6 +7216,7 @@ class UnifiedRestorerV3:
                     "tonal_center": 0.84,
                     "timbre_authentizitaet": 0.79,
                     "artikulation": 0.76,
+                    "waerme": 0.74,
                 },
                 "reel_tape": {
                     "natuerlichkeit": 0.82,
@@ -7385,6 +7224,7 @@ class UnifiedRestorerV3:
                     "tonal_center": 0.84,
                     "timbre_authentizitaet": 0.79,
                     "artikulation": 0.76,
+                    "waerme": 0.74,
                 },
                 "tape": {
                     "natuerlichkeit": 0.78,
@@ -7392,6 +7232,15 @@ class UnifiedRestorerV3:
                     "tonal_center": 0.80,
                     "timbre_authentizitaet": 0.75,
                     "artikulation": 0.72,
+                    "waerme": 0.72,
+                },
+                "cassette": {
+                    "natuerlichkeit": 0.76,
+                    "authentizitaet": 0.73,
+                    "tonal_center": 0.78,
+                    "timbre_authentizitaet": 0.73,
+                    "artikulation": 0.70,
+                    "waerme": 0.70,
                 },
                 "mp3_low": {
                     "natuerlichkeit": 0.76,
@@ -7399,6 +7248,7 @@ class UnifiedRestorerV3:
                     "tonal_center": 0.78,
                     "timbre_authentizitaet": 0.74,
                     "artikulation": 0.70,
+                    "waerme": 0.70,
                 },
             }
             try:
@@ -7592,18 +7442,11 @@ class UnifiedRestorerV3:
                         except Exception as _blend_iter_exc:
                             logger.debug("End-Gate P1/P2 blend alpha=%.2f failed: %s", _alpha, _blend_iter_exc)
 
-                    # §2.54 Material-adaptive Akzeptanz-Schwelle für P1/P2-Blend:
-                    # ultra_analog (Shellac, Wachswalze, Lackfolie, Draht) erlaubt 2 Regressionen,
-                    # da Verbesserung in P1/P2 dort zwingend P3-P5 (Groove, Emotionalität) beeinflusst.
-                    _ultra_analog_mats = frozenset({"shellac", "wax_cylinder", "lacquer_disc", "wire_recording"})
-                    _mat_str_blend = str(getattr(material_type, "value", material_type) or "unknown").lower()
-                    _blend_max_regressions = 2 if _mat_str_blend in _ultra_analog_mats else 1
-
                     if (
                         _best_blend_audio is not None
                         and _best_blend_scores is not None
                         and _best_resolved_count > 0
-                        and _best_regression_count <= _blend_max_regressions
+                        and _best_regression_count <= 1
                     ):
                         logger.info(
                             "🔄 End-Gate: P1/P2 Recovery Blend (alpha=%.2f) — %d/%d wiederhergestellt",
@@ -8055,6 +7898,21 @@ class UnifiedRestorerV3:
         except Exception as _fcd_exc:
             logger.debug("FrissonCandidateDetector nicht verfügbar (non-blocking): %s", _fcd_exc)
 
+        # §Bug2-Fix: phase_12 wow/flutter and phase_31 speed/pitch can change audio length
+        # by ~108 samples (2.25 ms @ 48 kHz).  A length mismatch causes MDEM, correct_arc
+        # and WPG to fail with broadcast errors or produce silent output.  Align once here
+        # before the entire post-pipeline processing block.
+        if restored_audio.shape[-1] != original_audio_for_goals.shape[-1]:
+            _ppipe_min = min(restored_audio.shape[-1], original_audio_for_goals.shape[-1])
+            logger.debug(
+                "Post-pipeline length alignment: restored=%d, original=%d → min=%d samples",
+                restored_audio.shape[-1],
+                original_audio_for_goals.shape[-1],
+                _ppipe_min,
+            )
+            restored_audio = restored_audio[..., :_ppipe_min]
+            original_audio_for_goals = original_audio_for_goals[..., :_ppipe_min]
+
         try:
             from backend.core.micro_dynamics_envelope_morphing import get_mdem
 
@@ -8479,7 +8337,6 @@ class UnifiedRestorerV3:
                     genre=_hpi_genre,
                     material=_hpi_material,
                     era_bin=_hpi_era,
-                    carrier_chain_recovery_ratio=getattr(self, "_carrier_chain_recovery_ratio", 0.0),
                 )
             if not _hpi_result.passed:
                 _fail_reasons.append(
@@ -8769,7 +8626,6 @@ class UnifiedRestorerV3:
             _emotional_arc_for_hpi,
             audio=restored_audio,
             sr=48000,
-            is_studio_2026=self.is_studio_mode(),  # §2.53: modus-spezifische Frisson/Joy-Gewichte
         )
         if not isinstance(_joy_runtime_index, dict):
             _joy_runtime_index = {}
@@ -12421,7 +12277,11 @@ class UnifiedRestorerV3:
                 _ae_l, _ae_r = restored_audio[0], restored_audio[1]
                 # NaN-safe correlation: near-constant/silent channels produce std≈0 → corrcoef = NaN
                 if np.std(_ae_l) > 1e-9 and np.std(_ae_r) > 1e-9:
-                    _ae_coh_raw = float(np.corrcoef(_ae_l, _ae_r)[0, 1])
+                    _ae_la = _ae_l - _ae_l.mean()
+                    _ae_ra = _ae_r - _ae_r.mean()
+                    _ae_coh_raw = float(
+                        np.dot(_ae_la, _ae_ra) / (float(np.linalg.norm(_ae_la)) * float(np.linalg.norm(_ae_ra)) + 1e-10)
+                    )
                     _ae_coh = float(np.clip(_ae_coh_raw if np.isfinite(_ae_coh_raw) else 1.0, 0.0, 1.0))
                 else:
                     _ae_coh = 1.0  # mono/silent — channels are trivially coherent
@@ -16520,14 +16380,19 @@ class UnifiedRestorerV3:
             _frames = _flat[: _n_frames * _frame_len].reshape(_n_frames, _frame_len)
             _frame_rms = np.sqrt(np.mean(_frames * _frames, axis=1) + 1e-12)
             _frame_dbfs = 20.0 * np.log10(_frame_rms + 1e-12)
-            # Adaptive gate: Vinyl/Shellac Noise-Floor (≈-40 dBFS) liegt über -50-dBFS-Gate →
+            # Adaptive gate: Vinyl/Shellac Noise-Floor (≈-35 to -45 dBFS) liegt über -50-dBFS-Gate →
             # inflationiert die Referenz-RMS → scheinbarer "Drop" nach Denoise → Pegelexplosion.
-            # Wenn P5 > gate + 12 dB: Gate auf P5+6 anheben (Noise ausschließen).
+            # §2.45a v9.12.1: effective_gate = max(gate, P5+10) statt alter P5+6-Formel.
+            # Alte Bedingung (P5 > gate+12 = -38) schlug für Vinyl (P5≈-42) fehl — Noise-Frames
+            # blieben in der Messung → false level-drop → Makeup-Gain auf Rauschen → Explosion.
+            # Neue Formel: P5+10 gibt 10 dB Headroom über dem Rauschboden → Vinyl-Noise (-35 dBFS)
+            # wird zuverlässig ausgeschlossen, Musik-Frames (-20 bis -25 dBFS) bleiben drin.
             _effective_gate = gate_dbfs
             if len(_frame_dbfs) >= 10:
                 _p5_db = float(np.percentile(_frame_dbfs, 5))
-                if _p5_db > gate_dbfs + 12.0:
-                    _effective_gate = min(_p5_db + 6.0, gate_dbfs + 25.0)
+                _adaptive_gate = _p5_db + 10.0
+                if _adaptive_gate > gate_dbfs:  # True whenever P5 > gate-10 (all real audio)
+                    _effective_gate = min(_adaptive_gate, gate_dbfs + 25.0)
             _gate_mask = _frame_dbfs > _effective_gate
             if np.sum(_gate_mask) < max(1, int(0.05 * _n_frames)):
                 # < 5 % frames above gate → fall back to ungated (very quiet recording)
@@ -16834,8 +16699,14 @@ class UnifiedRestorerV3:
                     # Safety cap: max +12 dB gain per phase (prevents runaway amplification)
                     _g = min(_g, 4.0)
                     if _g > 1.0005:
-                        # Envelope-aware gain: only amplify musical frames, leave silence untouched
-                        _work = self._musical_gain_envelope(_work, _g, gate_dbfs=-36.0, sr=sample_rate)
+                        # Envelope-aware gain: only amplify musical frames, leave silence untouched.
+                        # reference_for_gate=_ref_arr: use pre-phase noise-floor for P5 gate (v9.12.1).
+                        # After partial denoising, the processed audio's P5 drops (fully-denoised
+                        # frames drag it to -55 dBFS) → without reference, gate at -36 includes
+                        # residual vinyl noise at -35 dBFS → Pegelexplosion.
+                        _work = self._musical_gain_envelope(
+                            _work, _g, gate_dbfs=-36.0, sr=sample_rate, reference_for_gate=_ref_arr
+                        )
                         # Soft-limiter only if actual clipping risk (peak > 0.98),
                         # NOT as routine post-gain step — avoids compressing musical dynamics
                         # §2.45a-III + §v9.10.125: 99.9th-percentile, not np.max — impulse artefacts
@@ -17541,25 +17412,17 @@ class UnifiedRestorerV3:
                                 _defect_sev_mean_248 = float(np.mean(_sev_vals))
                     except Exception:
                         pass
-                    # §2.54: Count carrier-repair phases in the selected plan.
-                    # Must stay in sync with CIG._CARRIER_REPAIR_PHASE_PREFIXES (§2.55).
-                    # Missing entries lower n_carrier_phases → lower max_consecutive_rollbacks
-                    # → premature pipeline stop on multi-generation degraded material.
+                    # §2.54: Count carrier-repair phases in the selected plan
                     _carrier_prefixes_248 = (
-                        "phase_01",  # click removal
-                        "phase_02",  # hum removal
-                        "phase_03",  # broadband denoise
-                        "phase_09",  # crackle removal
-                        "phase_12",  # wow/flutter
-                        "phase_18",  # noise gate
-                        "phase_20",  # reverb reduction
-                        "phase_24",  # dropout repair
-                        "phase_25",  # azimuth correction
-                        "phase_27",  # click/pop removal
-                        "phase_28",  # surface noise profiling
-                        "phase_29",  # tape hiss reduction
-                        "phase_49",  # advanced dereverb
-                        "phase_55",  # diffusion inpainting
+                        "phase_01",
+                        "phase_03",
+                        "phase_09",
+                        "phase_12",
+                        "phase_24",
+                        "phase_27",
+                        "phase_28",
+                        "phase_29",
+                        "phase_55",
                     )
                     _n_carrier_248 = sum(
                         1 for p in selected_phases if any(p.startswith(cp) for cp in _carrier_prefixes_248)
@@ -17663,9 +17526,11 @@ class UnifiedRestorerV3:
             # §Spec04b Duration-Scaling: budget = min(base, overhead + duration × factor).
             # Prevents long songs from consuming all budget in one phase (e.g. ADMM 41 min
             # on a 225s song exhausting the entire 2700s vinyl budget).
-            # 300s fixed overhead + 8s/s audio → 225s song gets min(2700, 2100) = 2100s budget.
-            _PIPELINE_BUDGET_OVERHEAD_S = 300.0
-            _PIPELINE_BUDGET_PER_SEC = 8.0
+            # 450s fixed overhead + 10s/s audio → 225s song gets min(2700, 2700) = 2700s budget.
+            # v9.11.14: increased from 300+8×dur (=2100s) to 450+10×dur (=2700s) after
+            # observed wall-time exhaustion on vinyl 225s (phase_42 fallback chain ~25 min).
+            _PIPELINE_BUDGET_OVERHEAD_S = 450.0
+            _PIPELINE_BUDGET_PER_SEC = 10.0
             _pipeline_wall_budget = min(
                 _pipeline_wall_budget_base,
                 _PIPELINE_BUDGET_OVERHEAD_S + _audio_duration_s * _PIPELINE_BUDGET_PER_SEC,
@@ -18107,7 +17972,7 @@ class UnifiedRestorerV3:
                                 )
                                 if _hr_family in _ADDITIVE_HR_FAMILIES:
                                     # P4/P5-Goals — am stärksten von Enhancement-Phasen beeinflusst
-                                    _HR_GOALS = ("brillanz", "waerme", "raumtiefe", "bass_kraft", "separation_fidelity")
+                                    _HR_GOALS = ("brillanz", "waerme", "raumtiefe", "bass_kraft", "sep_fidelity")
                                     # Headroom-Fenster: innerhalb der letzten 0.25 zur Decke wird gedämpft.
                                     # Jenseits von 0.25 Headroom → volle Stärke (Phase kann frei arbeiten).
                                     # Wissen: psychoakustisches Sättigungsgesetz — Grenznutzen sinkt nahe
@@ -18697,6 +18562,7 @@ class UnifiedRestorerV3:
                         except Exception as _mtqc_exc:
                             logger.debug("TQC mid-pipeline nicht verfügbar: %s", _mtqc_exc)
                 # §2.48 [RELEASE_MUST] Kumulative-Phasen-Interaktions-Guard — after each phase
+                _cig_phase_rolled_back: bool = False  # §2.45a-VII: gate cumulative makeup guard
                 if (
                     _interaction_guard is not None
                     and _interaction_guard_state is not None
@@ -18715,6 +18581,30 @@ class UnifiedRestorerV3:
                             current_audio = np.clip(_ig_audio, -1.0, 1.0)
                             logger.warning("§2.48 Rollback applied after %s", phase_id)
                             self._register_phase_goal_conflict_event(phase_id, "interaction_guard_rollback")
+                            # §2.45a-VII CIG-Rollback: Phase war effektiv nicht wirksam —
+                            # Cumulative Guard darf keinen Makeup-Gain anwenden und
+                            # darf _allow_positive_makeup_gain nicht ändern (Pegelexplosion-Guard).
+                            _cig_phase_rolled_back = True
+                            # §Wall-Time-Budget Refund (CIG-Rollback): analog to AFG-Rollback.
+                            # A rolled-back phase had zero net effect — charging its runtime
+                            # against the wall budget prevents all later Enhancement phases from
+                            # running (observed: phase_03 on vinyl burns 2000 s, then 20+ phases
+                            # are skipped because wall budget is exhausted). Root cause: CIG had
+                            # no refund path while AFG always refunded. Now symmetric.
+                            if _last_phase_non_exempt_s > 0.0 and phase_id not in _WALL_BUDGET_EXEMPT_PHASES:
+                                _pipeline_non_exempt_elapsed_s = max(
+                                    0.0,
+                                    _pipeline_non_exempt_elapsed_s - _last_phase_non_exempt_s,
+                                )
+                                logger.info(
+                                    "§Wall-Time-Budget Refund (CIG-Rollback %s): %.0f s zurückgebucht "
+                                    "(non-exempt now %.0f s / budget %.0f s)",
+                                    phase_id,
+                                    _last_phase_non_exempt_s,
+                                    _pipeline_non_exempt_elapsed_s,
+                                    _pipeline_wall_budget,
+                                )
+                                _last_phase_non_exempt_s = 0.0
                         if _interaction_guard_state.should_stop:
                             logger.warning("§2.48 Pipeline stop — exporting best checkpoint")
                             self._register_phase_goal_conflict_event(phase_id, "interaction_guard_pipeline_stop")
@@ -18744,7 +18634,7 @@ class UnifiedRestorerV3:
                 # §2.45a-VI: After HPF/Notch phases (phase_02, phase_05) the cumulative reference
                 # is reset to current_audio so the guard does not compensate intentional
                 # energy removal (sub-bass / hum) with makeup gain → prevents Pegelexplosion.
-                if _cum_rms_reference_audio is not None and phase_id in executed:
+                if _cum_rms_reference_audio is not None and phase_id in executed and not _cig_phase_rolled_back:
                     _next_allow_makeup, _authority_reason = self._update_positive_makeup_authority(
                         phase_id,
                         _allow_positive_makeup_gain,
@@ -18761,7 +18651,7 @@ class UnifiedRestorerV3:
                     if phase_id in _HPF_NOTCH_CUM_RESET_PHASES:
                         _cum_rms_reference_audio = current_audio.copy()
                         logger.debug("§2.45a-VI cum-guard reference reset after HPF/Notch phase %s", phase_id)
-                if _cum_rms_reference_audio is not None and phase_id in executed:
+                if _cum_rms_reference_audio is not None and phase_id in executed and not _cig_phase_rolled_back:
                     try:
                         _cum_rms_pipeline_start = _rms_dbfs_gated(_cum_rms_reference_audio)
                         _cum_rms_current = _rms_dbfs_gated(current_audio)
@@ -18800,9 +18690,15 @@ class UnifiedRestorerV3:
                                             _makeup_authority_reason,
                                         )
                                     else:
-                                        # Envelope-aware gain: only amplify musical frames
+                                        # Envelope-aware gain: only amplify musical frames.
+                                        # reference_for_gate=_cum_rms_reference_audio: use pipeline-start
+                                        # noise floor for P5 gate — prevents vinyl-noise amplification.
                                         current_audio = self._musical_gain_envelope(
-                                            current_audio, _cum_g, gate_dbfs=-36.0, sr=sample_rate
+                                            current_audio,
+                                            _cum_g,
+                                            gate_dbfs=-36.0,
+                                            sr=sample_rate,
+                                            reference_for_gate=_cum_rms_reference_audio,
                                         )
                                         # Soft-limiter only if actual clipping risk
                                         # §v9.10.125: 99.9th-percentile — impulse artefact must not block normalisation
@@ -19260,9 +19156,14 @@ class UnifiedRestorerV3:
                                     _makeup_authority_reason,
                                 )
                             else:
-                                # Envelope-aware gain: only amplify musical frames
+                                # Envelope-aware gain: only amplify musical frames.
+                                # reference_for_gate=_cum_guard_ref: pipeline-start noise floor (v9.12.1).
                                 current_audio = self._musical_gain_envelope(
-                                    current_audio, _cum_gain, gate_dbfs=-36.0, sr=sample_rate
+                                    current_audio,
+                                    _cum_gain,
+                                    gate_dbfs=-36.0,
+                                    sr=sample_rate,
+                                    reference_for_gate=_cum_guard_ref,
                                 )
                                 # Soft-limiter only if actual clipping risk
                                 # §v9.10.125: 99.9th-percentile — impulse artefact must not block normalisation

@@ -97,7 +97,6 @@ class HolisticPerceptualGate:
         genre: str = "DEFAULT",
         material: str = "digital",
         era_bin: str = "post-1990",
-        carrier_chain_recovery_ratio: float = 0.0,
     ) -> HPIResult:
         """Evaluate HPI for Restoration mode.
 
@@ -116,42 +115,7 @@ class HolisticPerceptualGate:
           Input-Ähnlichkeit dient nur als Content-Integrity-Anteil (klein).
         """
         self._mert_proxy_used = False  # reset per evaluation
-
-        # §0d Ebene 3 [RELEASE_MUST] Carrier-Recovery-Referenz-Anker (v9.11.14):
-        # Bei massiver Carrier-Inversion (Shellac-Mehrfachkopien, Wachswalze) entfernt
-        # sich das restaurierte Signal intentional vom degradierten Input. MERT-Similarity
-        # gegen den degradierten Input bestraft korrekte Restaurierung als "Regression".
-        # Fix: CCR > 0.35 → MERT-Similarity durch direktionale Qualitätsmessung ersetzen;
-        # CCR > 0.15 → gemischtes Signal (50% direktional, 50% MERT).
-        # Scientific basis: §0d Dreischichtiges Referenzmodell, Ebene 3 (HPI Export-Gate).
-        _ccr = float(np.clip(carrier_chain_recovery_ratio, 0.0, 1.0))
-        _ccr_massive = _ccr > 0.35  # Shellac Gen-4+, Wachswalze, Mehrfach-Dubbing
-        _ccr_significant = _ccr > 0.15  # Alle starken Carrier-Inversionen
-
-        if _ccr_massive:
-            # Vollständiger MERT-Anker-Shift: Input-MERT unbrauchbar (§0d Ebene 3).
-            # Direktionale Qualitätsmessung als Ersatz (misst Verbesserung in Richtung
-            # "sauber + musikalisch", unabhängig vom degradierten Input).
-            mert_sim = self._compute_directional_restoration_quality(original, restored, sr)
-            logger.info(
-                "§0d Ebene3: CCR=%.3f > 0.35 → MERT-Anchor auf direktionale Qualität verschoben "
-                "(Shellac/Wax/Multi-Gen massive Carrier-Inversion)",
-                _ccr,
-            )
-        elif _ccr_significant:
-            # Partieller Anker-Shift: 50/50 Blend aus MERT und direktionaler Qualität.
-            _mert_raw = self._compute_mert_similarity(original, restored, sr)
-            _mert_dir = self._compute_directional_restoration_quality(original, restored, sr)
-            mert_sim = 0.5 * _mert_raw + 0.5 * _mert_dir
-            logger.info(
-                "§0d Ebene3: CCR=%.3f > 0.15 → MERT-Anchor partiell verschoben (mert_raw=%.3f dir=%.3f blend=%.3f)",
-                _ccr,
-                _mert_raw,
-                _mert_dir,
-                mert_sim,
-            )
-        else:
-            mert_sim = self._compute_mert_similarity(original, restored, sr)
+        mert_sim = self._compute_mert_similarity(original, restored, sr)
 
         # §2.44 FIX v9.11.2: Referenz-Vektor bevorzugen für ALLE Restorability-Bereiche.
         # Kein Ref-Vektor → direktionale Qualitätsmessung statt Input-Ähnlichkeit.
@@ -166,12 +130,8 @@ class HolisticPerceptualGate:
         # timbral_input als Content-Integrity-Anteil (für Logging und niedrige Restorability)
         timbral_input = self._compute_timbral_fidelity(original, restored, sr)
 
-        # §2.44 Restorability-dependent weights — Referenz/Direktional dominiert stets.
-        # §0d: Massive CCR → Input-Ähnlichkeit ist physikalisch bedeutungslos (Input = defekt);
-        # erzwinge full ref_weight=1.0 unabhängig von restorability_score.
-        if _ccr_massive:
-            input_weight, ref_weight = 0.0, 1.0
-        elif restorability_score > 70.0:
+        # §2.44 Restorability-dependent weights — Referenz/Direktional dominiert stets
+        if restorability_score > 70.0:
             # Hohe Restorability: Signal bewegt sich weg vom Defekt, hin zur Referenz.
             # Input-Ähnlichkeit ist hier KEIN Qualitätsmaß (Referenz-Paradox).
             input_weight, ref_weight = 0.0, 1.0
@@ -201,8 +161,7 @@ class HolisticPerceptualGate:
 
         logger.info(
             "§2.44 HPI(Restoration)=%.4f passed=%s "
-            "(mert=%.3f timbral=%.3f[in=%.3f ref=%.3f w=%.1f/%.1f] artifact=%.3f emotional=%.3f "
-            "restorability=%.1f ccr=%.3f%s)",
+            "(mert=%.3f timbral=%.3f[in=%.3f ref=%.3f w=%.1f/%.1f] artifact=%.3f emotional=%.3f restorability=%.1f)",
             hpi,
             passed,
             mert_sim,
@@ -214,8 +173,6 @@ class HolisticPerceptualGate:
             artifact_freedom,
             emotional_arc_score,
             restorability_score,
-            _ccr,
-            " §0d-anchored" if _ccr_massive else (" §0d-partial" if _ccr_significant else ""),
         )
 
         # §1.4a FailReason for failed gate
@@ -285,9 +242,6 @@ class HolisticPerceptualGate:
                 "noresqa_ensemble": round(noresqa_ensemble, 4),
                 # §2.44-lit: PEAQ/MUSHRA additive metric for comparative diagnostics
                 "peaq_additive_hpi": round(_peaq_hpi_val, 4),
-                # §0d Ebene 3: CCR-Anchor-Status
-                "carrier_chain_recovery_ratio": round(_ccr, 4),
-                "ccr_anchor_mode": "massive" if _ccr_massive else ("partial" if _ccr_significant else "none"),
             },
         )
 

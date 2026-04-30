@@ -34,7 +34,7 @@ except ImportError:
 _RAM_EVICT_THRESHOLD_PCT: float = 75.0  # RAM% ab der Eviction beginnt (gesenkt: früher reagieren)
 _RAM_TARGET_PCT: float = 65.0  # RAM% auf die wir evicten wollen
 _MIN_FREE_MB_HARD: float = 3000.0  # immer mind. 3 GB frei halten
-_PIPELINE_EMERGENCY_PCT: float = 78.0  # RAM% ab der auch WÄHREND Pipeline evicted wird (gesenkt von 82%)
+_PIPELINE_EMERGENCY_PCT: float = 70.0  # RAM% ab der auch WÄHREND Pipeline evicted wird (gesenkt von 78%)
 _SWAP_EVICT_THRESHOLD_PCT: float = 80.0  # Swap% ab der Eviction erzwungen wird (unabhängig von RAM-%).
 # Rationale: Crash 2026-04-14 — swap=99 %, avail=18.79 GB → OOM-Killer wegen
 # Apollo-TorchScript-Allokation. RAM-only-Guards erkannten die Gefahr nicht.

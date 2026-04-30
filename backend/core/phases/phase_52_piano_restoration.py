@@ -794,7 +794,7 @@ if __name__ == "__main__":
             )
 
     # Normalize
-    piano_signal = piano_signal / np.max(np.abs(piano_signal)) * 0.7
+    piano_signal = piano_signal / np.percentile(np.abs(piano_signal), 99.9) * 0.7
 
     # Test on different materials
     materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.CD_DIGITAL]

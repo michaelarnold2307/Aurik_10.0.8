@@ -1,7 +1,3 @@
-import logging
-
-logger = logging.getLogger(__name__)
-
 """
 AURIK Spectral Repair/Inpainting Module
 
@@ -21,6 +17,10 @@ Author: AURIK Development Team
 Version: 1.0
 Date: 2026-02-10
 """
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
 from typing import Any
@@ -122,7 +122,11 @@ class SpectralRepair:
         """Process mono audio."""
         # STFT
         f, _t, Zxx = scipy.signal.stft(
-            audio, fs=sr, nperseg=self.config.fft_size, noverlap=self.config.fft_size - self.config.hop_size
+            audio,
+            fs=sr,
+            nperseg=self.config.fft_size,
+            noverlap=self.config.fft_size - self.config.hop_size,
+            boundary="even",
         )
 
         # Detect and repair spectral holes

@@ -44,18 +44,19 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
     """
     if sig.ndim == 2:
-        _mono = sig.mean(axis=0).astype(np.float64) if sig.shape[0] <= 2 else sig.mean(axis=1).astype(np.float64)
+        _mono = sig.mean(axis=0 if sig.shape[0] <= 2 else 1).astype(np.float32)
     else:
-        _mono = sig.astype(np.float64)
+        _mono = np.asarray(sig, dtype=np.float32).ravel()
     _frame = 480  # 10 ms @ 48 kHz
-    _active = [
-        _mono[i : i + _frame]
-        for i in range(0, len(_mono) - _frame, _frame)
-        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
-    ]
-    if not _active:
+    _n_frames = len(_mono) // _frame
+    if _n_frames == 0:
         return -96.0
-    return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
+    _frames = _mono[: _n_frames * _frame].reshape(_n_frames, _frame)
+    _frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(_frames**2, axis=1)) + 1e-10)
+    _mask = _frame_rms_db > -50.0
+    if not np.any(_mask):
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean(_frames[_mask] ** 2)) + 1e-10))
 
 
 _MIN_CROSSTALK_SCORE: float = 0.10
@@ -136,17 +137,17 @@ def apply(
 
     # Normalise to [channels, samples] = (2, N)
     if audio.shape[0] == 2 and audio.shape[1] != 2:
-        left = audio[0].astype(np.float64)
-        right = audio[1].astype(np.float64)
+        left = audio[0].astype(np.float32)
+        right = audio[1].astype(np.float32)
         channels_first = True
     else:
         # samples-first (N, 2)
-        left = audio[:, 0].astype(np.float64)
-        right = audio[:, 1].astype(np.float64)
+        left = audio[:, 0].astype(np.float32)
+        right = audio[:, 1].astype(np.float32)
         channels_first = False
 
     n = len(left)
-    window = sps.windows.hann(_PROC_NFFT, sym=False)
+    window = sps.windows.hann(_PROC_NFFT, sym=False).astype(np.float32)
 
     # ── Step 1: estimate α(f) from full signal ─────────────────────────────
     alpha_f = _estimate_alpha_f(left, right, _ESTIM_NFFT, _ESTIM_NFFT // 4, alpha_max)
@@ -157,33 +158,35 @@ def apply(
     # Precompute per-bin denominator 1/(1 - α²)
     det_inv = 1.0 / np.maximum(1.0 - alpha_applied**2, 1e-6)
 
-    # ── Step 2: apply per-frame analytical inverse ─────────────────────────
+    # ── Step 2: apply per-frame analytical inverse — vectorised ────────────
     n_frames = max(1, (n - _PROC_NFFT) // _PROC_HOP + 1)
-    left_out = np.zeros(n, dtype=np.float64)
-    right_out = np.zeros(n, dtype=np.float64)
-    win_sum = np.zeros(n, dtype=np.float64)
+    # Trim so every frame fits inside the signal
+    while n_frames > 0 and (n_frames - 1) * _PROC_HOP + _PROC_NFFT > n:
+        n_frames -= 1
 
-    for i in range(n_frames):
-        s = i * _PROC_HOP
-        e = s + _PROC_NFFT
-        if e > n:
-            break
+    left_out = np.zeros(n, dtype=np.float32)
+    right_out = np.zeros(n, dtype=np.float32)
+    win_sum = np.zeros(n, dtype=np.float32)
 
-        fl = np.fft.rfft(left[s:e] * window)
-        fr = np.fft.rfft(right[s:e] * window)
-
-        # Analytical inverse of the crosstalk mixing matrix
-        #   L_clean = (L_played − α · R_played) / det
-        #   R_clean = (R_played − α · L_played) / det
+    if n_frames > 0:
+        l_f32 = np.asarray(left, dtype=np.float32)
+        r_f32 = np.asarray(right, dtype=np.float32)
+        # Batch STFT via stride_tricks
+        _fl_sw = np.lib.stride_tricks.sliding_window_view(l_f32, _PROC_NFFT)[::_PROC_HOP][:n_frames]
+        _fr_sw = np.lib.stride_tricks.sliding_window_view(r_f32, _PROC_NFFT)[::_PROC_HOP][:n_frames]
+        fl = np.fft.rfft(_fl_sw * window, axis=1)  # (T, F)
+        fr = np.fft.rfft(_fr_sw * window, axis=1)
+        # Analytical inverse — broadcast alpha_applied / det_inv over T
         fl_clean = (fl - alpha_applied * fr) * det_inv
         fr_clean = (fr - alpha_applied * fl) * det_inv
-
-        frame_l = np.fft.irfft(fl_clean, n=_PROC_NFFT) * window
-        frame_r = np.fft.irfft(fr_clean, n=_PROC_NFFT) * window
-
-        left_out[s:e] += frame_l
-        right_out[s:e] += frame_r
-        win_sum[s:e] += window**2
+        frames_l = (np.fft.irfft(fl_clean, n=_PROC_NFFT, axis=1) * window).astype(np.float32)
+        frames_r = (np.fft.irfft(fr_clean, n=_PROC_NFFT, axis=1) * window).astype(np.float32)
+        win_sq = window**2
+        for i in range(n_frames):
+            s = i * _PROC_HOP
+            left_out[s : s + _PROC_NFFT] += frames_l[i]
+            right_out[s : s + _PROC_NFFT] += frames_r[i]
+            win_sum[s : s + _PROC_NFFT] += win_sq
 
     win_sum = np.maximum(win_sum, 1e-8)
     left_out /= win_sum

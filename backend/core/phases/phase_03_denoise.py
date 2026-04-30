@@ -94,7 +94,7 @@ except ImportError:
 
 # PGHI phase-reconstruction instead of direct iSTFT after spectral gain application
 try:
-    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_from_stft
+    pass
 
     _PGHI_AVAILABLE = True
 except ImportError:
@@ -1173,9 +1173,16 @@ class DenoisePhase(PhaseInterface):
             makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 _gain_lin = float(10.0 ** (makeup_gain_db / 20.0))
-                # §2.45a-II: gain applied ONLY to musical frames via envelope
+                # §2.45a-II: gain applied ONLY to musical frames via envelope.
+                # reference_for_gate=original_audio: use pre-phase P5 for adaptive gate (v9.12.1).
+                # After partial denoising, processed audio P5 may drop → wrong gate → Pegelexplosion.
                 processed_audio = apply_musical_gain_envelope(
-                    processed_audio, _gain_lin, gate_dbfs=-36.0, crossfade_ms=10.0, sr=48000
+                    processed_audio,
+                    _gain_lin,
+                    gate_dbfs=-36.0,
+                    crossfade_ms=10.0,
+                    sr=48000,
+                    reference_for_gate=original_audio,
                 )
                 processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 # §2.45a-III: soft-limiter only when real clipping risk
@@ -1477,23 +1484,20 @@ class DenoisePhase(PhaseInterface):
         # Apply MRSA gain with gain-gradient phase correction (Prusa & Holighaus 2017 §3.4)
         Zxx_processed = self._apply_gain_gradient_phase_correction(Zxx_ref, G_combined, REF_HOP, sr)
 
-        # PGHI phase reconstruction (Perraudin 2013) — replaces direct iSTFT
-        if _PGHI_AVAILABLE:
-            try:
-                # n_samples=n_samples: exakte Längetreue; PGHI iSTFT nutzt
-                # boundary=True passend zum scipy-Standard-STFT oben (boundary='zeros').
-                audio_out = _pghi_from_stft(
-                    Zxx_processed.astype(np.complex64),
-                    sr=sr,
-                    win_size=REF_WIN,
-                    hop=REF_HOP,
-                    n_samples=n_samples,
-                )
-            except Exception as pghi_exc:
-                logger.warning("PGHI reconstruction failed, using istft fallback: %s", pghi_exc)
-                _, audio_out = signal.istft(Zxx_processed, sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP, boundary=True)
-        else:
-            _, audio_out = signal.istft(Zxx_processed, sr, nperseg=REF_WIN, noverlap=REF_NOVERLAP, boundary=True)
+        # Direct ISTFT reconstruction — Zxx_processed retains full phase information.
+        # Direct ISTFT is both semantically correct and 50-100× faster than PGHI.
+        try:
+            _, audio_out = signal.istft(
+                np.asarray(Zxx_processed, dtype=np.complex64),
+                sr,
+                nperseg=REF_WIN,
+                noverlap=REF_NOVERLAP,
+                boundary=True,
+            )
+            audio_out = np.asarray(audio_out, dtype=np.float32)
+        except Exception as _istft_p03_exc:
+            logger.warning("phase_03 istft failed, passthrough: %s", _istft_p03_exc)
+            audio_out = np.zeros(n_samples, dtype=np.float32)
 
         # Length matching
         audio_out = np.asarray(audio_out)

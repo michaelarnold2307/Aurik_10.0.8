@@ -69,10 +69,10 @@ def compute_specific_loudness_zwicker(audio: np.ndarray, sr: int) -> float:
 
 **Mapping sone → phon** für Diagnose: `phon = 40 + 33.2 × log10(max(N, 0.001) / 1.0)` (gültig für N ≥ 1 sone)
 
-**Implementierungspfad**:
+**Implementierung** (aktiv seit v9.11.x):
 
-- Modul: `backend/core/dsp/psychoacoustics.py` (neu)
-- Aufruf: `backend/core/unified_restorer_v3.py` — §2.45a MidPipeline-Guard nach breitbandigen subtraktiven Phasen
+- Modul: `backend/core/dsp/psychoacoustics.py` (**implementiert und aktiv** — `compute_specific_loudness_zwicker()`, `evaluate_mid_pipeline_loudness_delta()`)
+- Aufruf: `backend/core/unified_restorer_v3.py` — ZwickerGuard in `_profiled_phase_call` nach breitbandigen subtraktiven Phasen; Dry/Wet-Rescue: ΔN > 2.0 sone → `_rescue_wet` ∈ [0.35, 0.90]
 - Methode: Stationäre ISO 532-1 (not zeitvariant) — ausreichend für Pipeline-Check, Laufzeit ≤ 50 ms / 5-s-Fenster
 - Approximation: 24 Butterworth-Bandpass-Filter (Bark-Skala), nicht physikalische Cochlea-Simulation
 

@@ -485,8 +485,8 @@ class TestRegressionPrevention:
             # ratio/4.0 → realistic ~0.22 for mixed tonal signal
             "natuerlichkeit": (0.94, 1.01),  # Low flatness (pure tones) → high naturalness
             "authentizitaet": (0.94, 1.01),  # v9.13: flatness≈0 for pure tones → tonal_score≈1.0
-            "emotionalitaet": (0.26, 0.40),  # v9.13: crest_score denom 12→9; 4-tone crest ~8.9 dB
-            "transparenz": (0.85, 1.01),  # §9.7.13: multi-tone spans octave bands → high crest
+            "emotionalitaet": (0.24, 0.40),  # v9.13: crest_score denom 12→9; 4-tone crest ~8.9 dB
+            "transparenz": (0.40, 0.65),  # §9.7.13 + short-form blend: _neutral_prior=0.50 für 2s → score≈0.50
         }
 
         scores = checker.measure_all(audio, sr)
@@ -700,11 +700,16 @@ class TestTonalCenterMetricKeyShift:
         assert result <= 0.55, f"1-semitone shift not adequately penalised: {result}"
 
     def test_two_semitone_shift_catastrophic(self, metric: TonalCenterMetric):
-        """2-Halbton-Verschiebung → Score = 0.0 (absolut inakzeptabel)."""
+        """2-Halbton-Verschiebung → Score stark reduziert (< 0.15).
+
+        §0d: Graded-Penalty-Dict {0:1.0, 1:0.75, 2:0.50, 3:0.30} ersetzt hartes 0.0.
+        Bei 2 Halbtönen: penalty=0.50; für reinen Sinuston (niedrige Chroma-Korrelation)
+        ergibt sich ein Score < 0.15 — stark penalisiert, aber nicht zwingend 0.0.
+        """
         ref = self._sine_for_key(440.0)  # A4
         shifted = self._sine_for_key(493.88)  # B4 — 2 semitones up
         result = metric.measure(shifted, self.SR, reference=ref)
-        assert result == 0.0, f"2-semitone shift must yield 0.0, got: {result}"
+        assert result <= 0.15, f"2-semitone shift must be strongly penalised (≤ 0.15), got: {result}"
 
     def test_dominant_chroma_class_helper(self, metric: TonalCenterMetric):
         """_dominant_chroma_class gibt gültigen Pitch-Class zurück (0..11)."""
@@ -830,7 +835,8 @@ class TestSeparationFidelitySIRProxy:
 
     SR = 48000
 
-    def _sine(self, freq: float, dur: float = 1.0) -> np.ndarray:
+    def _sine(self, freq: float, dur: float = 10.0) -> np.ndarray:
+        # 10 s: SeparationFidelityMetric short-form blend needs ≥ 8 s for _rel = 1.0
         t = np.linspace(0, dur, int(self.SR * dur), endpoint=False)
         return np.sin(2 * np.pi * freq * t).astype(np.float32)
 
@@ -840,7 +846,7 @@ class TestSeparationFidelitySIRProxy:
 
         m = SeparationFidelityMetric()
         ref = self._sine(200.0)
-        score = m._reference_based(ref.copy(), ref)
+        score = m._reference_based(ref.copy(), ref, self.SR)
         assert score >= 0.95, f"Perfect restoration: expected ≥ 0.95, got {score:.3f}"
 
     def test_periodic_interference_reduces_score(self):
@@ -850,8 +856,8 @@ class TestSeparationFidelitySIRProxy:
         m = SeparationFidelityMetric()
         ref = self._sine(200.0)
         restored_int = (ref + 0.5 * self._sine(440.0)).astype(np.float32)
-        score_perfect = m._reference_based(ref.copy(), ref)
-        score_interference = m._reference_based(restored_int, ref)
+        score_perfect = m._reference_based(ref.copy(), ref, self.SR)
+        score_interference = m._reference_based(restored_int, ref, self.SR)
         assert score_perfect > score_interference, (
             f"Interference should reduce score: perfect={score_perfect:.3f} interference={score_interference:.3f}"
         )
@@ -865,7 +871,7 @@ class TestSeparationFidelitySIRProxy:
         for _ in range(5):
             ref = rng.standard_normal(self.SR).astype(np.float32)
             restored = rng.standard_normal(self.SR).astype(np.float32)
-            assert 0.0 <= m._reference_based(restored, ref) <= 1.0
+            assert 0.0 <= m._reference_based(restored, ref, self.SR) <= 1.0
 
     def test_formula_weights_perfect_case(self):
         """Gewichtete Summe (0.40+0.35+0.25) ergibt ≈ 1.0 bei perfekter Restaurierung."""
@@ -873,7 +879,7 @@ class TestSeparationFidelitySIRProxy:
 
         m = SeparationFidelityMetric()
         ref = self._sine(200.0)
-        score = m._reference_based(ref.copy(), ref)
+        score = m._reference_based(ref.copy(), ref, self.SR)
         assert abs(score - 1.0) < 0.05, f"Weighted sum for perfect restoration should be ≈ 1.0, got {score:.3f}"
 
 

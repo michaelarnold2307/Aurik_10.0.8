@@ -201,22 +201,6 @@ class CrackleRemovalPhase(PhaseInterface):
             "interpolation": "spectral",  # High quality
             "background_model": True,  # Model tape saturation
         },
-        "reel_tape": {
-            "transient_threshold": 0.12,
-            "min_density": 18,
-            "texture_preserve": 0.88,
-            "spectral_floor": -60,
-            "interpolation": "spectral",
-            "background_model": True,
-        },
-        "cassette": {
-            "transient_threshold": 0.10,
-            "min_density": 15,
-            "texture_preserve": 0.85,
-            "spectral_floor": -58,
-            "interpolation": "spectral",
-            "background_model": True,
-        },
         "vinyl": {
             "transient_threshold": 0.08,  # Moderate
             "min_density": 15,
@@ -232,33 +216,6 @@ class CrackleRemovalPhase(PhaseInterface):
             "spectral_floor": -50,
             "interpolation": "hybrid",  # Balance quality/speed
             "background_model": True,  # Model mechanical noise
-        },
-        "lacquer_disc": {
-            # Acetat-Lackfolien (1930–1950): heavier surface noise than vinyl, close to shellac
-            "transient_threshold": 0.04,
-            "min_density": 10,
-            "texture_preserve": 0.72,
-            "spectral_floor": -50,
-            "interpolation": "hybrid",
-            "background_model": True,
-        },
-        "wax_cylinder": {
-            # Pre-1920: extremely heavy crackling, broadband noise floor — most aggressive profile
-            "transient_threshold": 0.02,
-            "min_density": 8,
-            "texture_preserve": 0.65,
-            "spectral_floor": -45,
-            "interpolation": "hybrid",
-            "background_model": True,
-        },
-        "wire_recording": {
-            # 1940s wire: severe crackle + wow/flutter artefacts
-            "transient_threshold": 0.03,
-            "min_density": 10,
-            "texture_preserve": 0.68,
-            "spectral_floor": -48,
-            "interpolation": "hybrid",
-            "background_model": True,
         },
         "cd_digital": {
             "transient_threshold": 0.25,  # Conservative
@@ -290,9 +247,6 @@ class CrackleRemovalPhase(PhaseInterface):
     _MAX_RMS_DROP_DB: dict[str, float] = {
         "vinyl": 2.5,
         "shellac": 3.0,  # heavier broadband crackle
-        "lacquer_disc": 3.0,  # similar to shellac — heavy surface crackle
-        "wax_cylinder": 3.5,  # most severe: extreme broadband impulsive noise
-        "wire_recording": 3.0,
         "tape": 1.5,
         "reel_tape": 1.5,
         "cassette": 1.5,
@@ -870,7 +824,14 @@ class CrackleRemovalPhase(PhaseInterface):
             _makeup_09 = float(np.clip(_req_gain_db, 0.0, 6.0))
             if _makeup_09 > 0.0:
                 _gain_09 = float(10.0 ** (_makeup_09 / 20.0))
-                restored = _amge_09(restored, _gain_09, gate_dbfs=-36.0, crossfade_ms=10.0, sr=48000)
+                restored = _amge_09(
+                    restored,
+                    _gain_09,
+                    gate_dbfs=-36.0,
+                    crossfade_ms=10.0,
+                    sr=48000,
+                    reference_for_gate=audio,  # pre-phase audio → correct noise-floor P5 (v9.12.1)
+                )
                 restored = np.clip(restored, -1.0, 1.0).astype(np.float32)
                 # §2.45a-III: soft-limiter only when real clipping risk
                 _peak_09 = float(np.percentile(np.abs(restored), 99.9))
@@ -1099,7 +1060,7 @@ class CrackleRemovalPhase(PhaseInterface):
 
     def _compute_spectral_centroid(self, audio: np.ndarray) -> float:
         """Compute spectral centroid (center of mass of spectrum)."""
-        audio_1d = np.asarray(audio, dtype=np.float64).reshape(-1)
+        audio_1d = np.asarray(audio, dtype=np.float32).reshape(-1)
         freqs = np.fft.rfftfreq(len(audio_1d), 1 / self.sample_rate)
         spectrum = np.abs(np.fft.rfft(audio_1d))
 
@@ -1119,7 +1080,7 @@ class CrackleRemovalPhase(PhaseInterface):
         Musical content has strong harmonic structure.
         Crackle is broadband (low harmonic ratio).
         """
-        audio_1d = np.asarray(audio, dtype=np.float64).reshape(-1)
+        audio_1d = np.asarray(audio, dtype=np.float32).reshape(-1)
         spectrum = np.abs(np.fft.rfft(audio_1d))
         freqs = np.fft.rfftfreq(len(audio_1d), 1 / self.sample_rate)
 

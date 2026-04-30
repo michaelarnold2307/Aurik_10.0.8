@@ -646,7 +646,13 @@ class CQTdiffPlusPlugin:
             _s2 = float(np.std(c2.ravel()))
             if _s1 < 1e-8 or _s2 < 1e-8:
                 return 0.9  # near-constant chroma (silence) → neutral
-            corr = float(np.corrcoef(c1.ravel(), c2.ravel())[0, 1])
+            _c1r = c1.ravel()
+            _c2r = c2.ravel()
+            _c1a = _c1r - _c1r.mean()
+            _c2a = _c2r - _c2r.mean()
+            _nc1 = float(np.linalg.norm(_c1a))
+            _nc2 = float(np.linalg.norm(_c2a))
+            corr = float(np.dot(_c1a, _c2a) / (_nc1 * _nc2 + 1e-10))
             return float(np.clip(np.nan_to_num(corr), -1.0, 1.0))
         except Exception:
             return 0.9  # Optimistischer Standardwert bei librosa-Fehler

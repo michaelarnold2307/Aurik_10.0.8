@@ -499,15 +499,16 @@ class TapeSaturation(PhaseInterface):
         nyquist = sample_rate / 2.0
 
         # Design crossover filters (Linkwitz-Riley 4th order)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal, Pegelexplosion).
         # Bass: < 300 Hz
         sos_bass_lp = signal.butter(4, self.BAND_SPLIT_LOW / nyquist, btype="lowpass", output="sos")
-        bass = signal.sosfilt(sos_bass_lp, audio)
+        bass = signal.sosfiltfilt(sos_bass_lp, audio)
 
         # High: > 4000 Hz
         sos_high_hp = signal.butter(4, self.BAND_SPLIT_HIGH / nyquist, btype="highpass", output="sos")
-        high = signal.sosfilt(sos_high_hp, audio)
+        high = signal.sosfiltfilt(sos_high_hp, audio)
 
-        # Mid: 300-4000 Hz (residual)
+        # Mid: 300-4000 Hz (residual — korrekt nur bei zero-phase LR)
         mid = audio - bass - high
 
         # Per-band saturation (pass drive_vec so each band is level-adaptive)

@@ -249,7 +249,11 @@ class MDXNetSeparator:
             _s1 = float(np.std(audio[1]))
             if _s0 < 1e-8 or _s1 < 1e-8:
                 return 0.0  # near-constant → corr undefined, treat as mono
-            corr = np.corrcoef(audio[0], audio[1])[0, 1]
+            _a = audio[0] - audio[0].mean()
+            _b = audio[1] - audio[1].mean()
+            _na = float(np.linalg.norm(_a))
+            _nb = float(np.linalg.norm(_b))
+            corr = float(np.dot(_a, _b) / (_na * _nb + 1e-10))
             if not np.isfinite(corr):
                 return 0.0
             return 1.0 - abs(corr)  # 0=mono, 1=wide

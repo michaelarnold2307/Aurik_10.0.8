@@ -272,7 +272,8 @@ class BassEnhancement(PhaseInterface):
             cached = self._sos_cache[sample_rate]
 
         # Extract bass region
-        bass = signal.sosfilt(cached["bass_band"], audio)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — harmonics werden zu original addiert.
+        bass = signal.sosfiltfilt(cached["bass_band"], audio)
 
         # Generate harmonics
         harmonics = self._generate_harmonics(bass, config)

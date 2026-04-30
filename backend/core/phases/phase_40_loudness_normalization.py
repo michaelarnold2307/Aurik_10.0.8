@@ -385,7 +385,9 @@ class LoudnessNormalizationPhase(PhaseInterface):
         b = np.array([b0, b1, b2]) / a0
         a = np.array([1, a1 / a0, a2 / a0])
 
-        audio_shelf = signal.lfilter(b, a, audio, axis=0)
+        # Zero-phase shelf: prevents group delay on bass fundamentals (§2.51a)
+        _n_shelf = audio.shape[0] if audio.ndim > 1 else len(audio)
+        audio_shelf = signal.filtfilt(b, a, audio, axis=0) if _n_shelf >= 9 else signal.lfilter(b, a, audio, axis=0)
 
         # Stage 2: High-pass filter (38 Hz, 2nd order Butterworth)
         sos_hp = signal.butter(2, 38, "highpass", fs=sample_rate, output="sos")

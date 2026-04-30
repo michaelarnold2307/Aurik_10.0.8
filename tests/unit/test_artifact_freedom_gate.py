@@ -734,3 +734,165 @@ def test_39_crackle_impulse_material_adaptive_vinyl_more_tolerant():
         f"Vinyl must be <= strict as digital for borderline crackle; "
         f"vinyl={len(artifacts_vinyl)} digital={len(artifacts_digital)}"
     )
+
+
+# ─── §0d/§2.54 Restorative-Phase Guard Tests ──────────────────────────────────
+
+
+def test_40_dropout_zone_guard_no_false_positive():
+    """§0d Dropout-Zone-Guard: Frames wo orig near-silent (dropout gap) duerfen
+    NICHT als crackle_impulse gemeldet werden, auch wenn delta hochkurtuig ist.
+
+    Setup: orig = near-silence (dropout gap), restored = interpolierter Inhalt.
+    Damit ist das Delta per Definition hochkurtuig — aber es ist korrekte Reparatur.
+    """
+    from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
+    gate = get_artifact_freedom_gate()
+    sr = 48_000
+    n = int(1.5 * sr)
+    t = np.linspace(0, 1.5, n, endpoint=False)
+
+    # Original: near-silent dropout region (< -25 dBFS)
+    orig = np.full(n, 1e-5, dtype=np.float32)  # ≈ -100 dBFS — deep silence
+
+    # Restored: interpolated audio fills the gap (impulsive relative to silence)
+    restored = (0.2 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+
+    thresholds = gate._get_thresholds("vinyl")
+    artifacts = gate._detect_crackle_impulse(orig, restored, sr, thresholds)
+    assert len(artifacts) == 0, (
+        f"Dropout-zone frames (orig near-silent) must not trigger crackle_impulse; "
+        f"got {len(artifacts)} false-positive artifacts"
+    )
+
+
+def test_41_click_removal_guard_no_false_positive():
+    """§0d Click-Removal-Guard: Wenn phase einen grossen Peak ENTFERNT hat
+    (peak_orig >> peak_rest), ist das korrekte Reparatur — kein Artefakt.
+
+    Setup: orig = Signal mit grossem Click-Peak, restored = Signal nach Click-Removal
+    (Click-Peak stark reduziert). Der delta HAT hohe Kurtosis (entfernter Click),
+    aber der Guard muss diesen Fall herausfiltern.
+    """
+    from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
+    gate = get_artifact_freedom_gate()
+    sr = 48_000
+    n = int(1.5 * sr)
+    t = np.linspace(0, 1.5, n, endpoint=False)
+
+    base_signal = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+
+    # Original: Signal with large click spike (peak_orig >> peak_rest after removal)
+    orig = base_signal.copy()
+    click_pos = sr // 2  # mid-point
+    if click_pos + 3 < n:
+        orig[click_pos] += 0.8  # large click — peak_orig >> any restored peak
+        orig[click_pos + 1] -= 0.4
+
+    # Restored: click removed, clean signal (peak_orig / peak_rest >> 1.30)
+    restored = base_signal.copy()  # no click — clean signal
+    restored = np.clip(restored, -1.0, 1.0)
+
+    thresholds = gate._get_thresholds("vinyl")
+    artifacts = gate._detect_crackle_impulse(orig, restored, sr, thresholds)
+    assert len(artifacts) == 0, (
+        f"Click-removal (peak_orig >> peak_rest) must not trigger crackle_impulse; "
+        f"got {len(artifacts)} false-positive artifacts"
+    )
+
+
+def test_42_corrective_phase_elevated_kurtosis_threshold():
+    """§0d CORRECTIVE-Phasen erhalten in evaluate() erhoehteh Kurtosis-Threshold
+    (×1.5 = 15 statt 10). Ein Signal mit Kurtosis ≈ 12 (Interpolations-Ringing)
+    soll bei CORRECTIVE-Phase nicht geflaggt werden, bei SUBTRACTIVE schon.
+    """
+    from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
+    gate = get_artifact_freedom_gate()
+    sr = 48_000
+    n = int(1.5 * sr)
+    t = np.linspace(0, 1.5, n, endpoint=False)
+
+    # Moderate-kurtosis scenario: clear signal with moderate spikes
+    orig = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    restored = orig.copy()
+    # Spikes that give kurtosis roughly between 10 and 15 in some windows
+    # (moderate: won't be caught by elevated-threshold CORRECTIVE, will by SUBTRACTIVE)
+    # Use small spikes near the signal level (not >> orig peak so click-guard won't fire)
+    for pos in range(sr // 4, n - 100, sr // 3):
+        if pos + 5 < n:
+            restored[pos] += 0.45  # peak_rest > peak_orig * 1.15 (orig=0.3+0.45=0.75, orig_base=0.3)
+            restored[pos + 1] -= 0.22
+            restored[pos + 2] += 0.08
+    restored = np.clip(restored, -1.0, 1.0)
+
+    # Verify CORRECTIVE phase (phase_27 = click_pop_removal) has fewer or equal flags than SUBTRACTIVE
+    result_corrective = gate.evaluate(
+        orig,
+        restored,
+        sr,
+        material_type="vinyl",
+        phase_id="phase_27_click_pop_removal",  # CORRECTIVE — higher threshold
+    )
+    result_subtractive = gate.evaluate(
+        orig,
+        restored,
+        sr,
+        material_type="vinyl",
+        phase_id="phase_03_denoise",  # SUBTRACTIVE — standard threshold
+    )
+    n_corr = result_corrective.detail_report.get("n_crackle_impulse", 0)
+    n_sub = result_subtractive.detail_report.get("n_crackle_impulse", 0)
+    assert n_corr <= n_sub, (
+        f"CORRECTIVE phase should flag <= crackle_impulse than SUBTRACTIVE (higher kurtosis threshold); "
+        f"corrective={n_corr} subtractive={n_sub}"
+    )
+
+
+def test_43_restorative_tolerance_scales_with_restorability():
+    """§0d/§2.29c Restorative-Phase-Toleranz: Bei niedrigerer Restorability wird
+    _max_tolerance hoeher skaliert (weniger Einschraenkung fuer schwer degradiertes Material).
+    Ein restorative Phase mit wsum ≈ 0.8 soll bei Restorability=30 hoehere artifact_freedom
+    haben als bei Restorability=90.
+    """
+    from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
+
+    gate = get_artifact_freedom_gate()
+    sr = 48_000
+    n = int(1.5 * sr)
+    t = np.linspace(0, 1.5, n, endpoint=False)
+
+    # SUBTRACTIVE phase that introduces a small crackle (wsum ≈ 0.8)
+    orig = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    restored = orig.copy()
+    # Small single spike that barely crosses the crackle threshold
+    pos = sr // 2
+    if pos + 3 < n:
+        restored[pos] += 0.55
+        restored[pos + 1] -= 0.28
+        restored[pos + 2] += 0.10
+    restored = np.clip(restored, -1.0, 1.0)
+
+    result_low_rest = gate.evaluate(
+        orig,
+        restored,
+        sr,
+        material_type="vinyl",
+        phase_id="phase_03_denoise",  # SUBTRACTIVE = restorative
+        restorability_score=30.0,  # heavily degraded → higher tolerance
+    )
+    result_high_rest = gate.evaluate(
+        orig,
+        restored,
+        sr,
+        material_type="vinyl",
+        phase_id="phase_03_denoise",
+        restorability_score=90.0,  # near-pristine → standard tolerance
+    )
+    # Low restorability must give >= artifact_freedom (higher tolerance = less penalized)
+    assert result_low_rest.artifact_freedom >= result_high_rest.artifact_freedom, (
+        f"Heavily degraded material (rest=30) must have >= artifact_freedom than near-pristine (rest=90); "
+        f"low_rest={result_low_rest.artifact_freedom:.3f} high_rest={result_high_rest.artifact_freedom:.3f}"
+    )

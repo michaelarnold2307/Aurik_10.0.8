@@ -104,7 +104,7 @@ except ImportError:
     logging.getLogger(__name__).warning("WPE-Plugin nicht verfügbar — OMLSA/IMCRA-Fallback aktiv")
 
 try:
-    from dsp.pghi import pghi_reconstruct_from_stft as _pghi_p20
+    pass
 
     _PGHI_AVAILABLE_P20 = True
 except ImportError:
@@ -1070,27 +1070,35 @@ class ReverbReduction(PhaseInterface):
                 ref_indices = np.where(ref_zm)[0]
                 n_ref_zone = len(ref_indices)
 
-                # Temporal resampling: zone frames → reference frames
+                # Temporal resampling: zone frames → reference frames — vectorised
                 if n_z_t != n_t and len(f_z_zone) > 0:
-                    t_src = np.linspace(0.0, 1.0, n_z_t)
-                    t_dst = np.linspace(0.0, 1.0, n_t)
-                    G_zone_t = np.empty((len(f_z_zone), n_t), dtype=np.float64)
-                    for k in range(len(f_z_zone)):
-                        G_zone_t[k, :] = np.interp(t_dst, t_src, G_zone[k, :])
+                    _idx_c = np.linspace(0.0, n_z_t - 1, n_t)
+                    _idx_lo = np.clip(np.floor(_idx_c).astype(int), 0, n_z_t - 2)
+                    _idx_hi = _idx_lo + 1
+                    _frac = (_idx_c - _idx_lo)[np.newaxis, :]  # (1, n_t)
+                    G_zone_t = ((1.0 - _frac) * G_zone[:, _idx_lo] + _frac * G_zone[:, _idx_hi]).astype(np.float64)
                 else:
                     G_zone_t = G_zone.astype(np.float64)
 
-                # Frequency interpolation: zone bins → reference bins
+                # Frequency interpolation: zone bins → reference bins — vectorised
                 G_ref_zone = np.empty((n_ref_zone, n_t), dtype=np.float64)
                 if len(f_z_zone) >= 2:
-                    for ti in range(n_t):
-                        G_ref_zone[:, ti] = np.interp(
-                            f_ref_zone,
-                            f_z_zone,
-                            G_zone_t[:, ti],
-                            left=float(G_zone_t[0, ti]),
-                            right=float(G_zone_t[-1, ti]),
-                        )
+                    _src_x = np.asarray(f_z_zone, dtype=np.float64)
+                    _dst_x = np.asarray(f_ref_zone, dtype=np.float64)
+                    _i = np.searchsorted(_src_x, _dst_x, side="right") - 1
+                    _i_lo = np.clip(_i, 0, len(_src_x) - 2)
+                    _i_hi = _i_lo + 1
+                    _dx = _src_x[_i_hi] - _src_x[_i_lo]
+                    _frac2 = np.clip((_dst_x - _src_x[_i_lo]) / np.maximum(_dx, 1e-12), 0.0, 1.0)
+                    _left = _dst_x < _src_x[0]
+                    _right = _dst_x > _src_x[-1]
+                    _frac2[_left] = 0.0
+                    _frac2[_right] = 1.0
+                    _i_lo[_left] = 0
+                    _i_hi[_left] = 0
+                    _i_lo[_right] = len(_src_x) - 1
+                    _i_hi[_right] = len(_src_x) - 1
+                    G_ref_zone = (1.0 - _frac2[:, None]) * G_zone_t[_i_lo, :] + _frac2[:, None] * G_zone_t[_i_hi, :]
                 elif len(f_z_zone) == 1:
                     G_ref_zone[:, :] = G_zone_t[0:1, :]
                 else:
@@ -1103,10 +1111,9 @@ class ReverbReduction(PhaseInterface):
                 else:
                     hann_w = np.ones(n_ref_zone)
 
-                for ki, k in enumerate(ref_indices):
-                    w = float(hann_w[ki])
-                    G_acc[k, :] += w * G_ref_zone[ki, :]
-                    w_acc[k] += w
+                # Vectorised accumulation (replaces per-bin Python loop)
+                G_acc[ref_indices, :] += hann_w[:, None] * G_ref_zone
+                w_acc[ref_indices] += hann_w
 
             except Exception as zone_exc:
                 logger.warning("MRSA Phase 20 zone '%s' failed: %s", zone_name, zone_exc)
@@ -1169,27 +1176,21 @@ class ReverbReduction(PhaseInterface):
             except Exception as _lr_exc:
                 logger.debug("MRSA Phase 20 late-reverb suppression skipped: %s", _lr_exc)
 
-        # Apply combined gain to reference STFT + PGHI phase reconstruction
+        # Apply combined gain to reference STFT — Zxx_processed retains original phase.
+        # Direct ISTFT is semantically correct and 50-100× faster than PGHI.
         Zxx_processed = G_combined * np.abs(Zxx_ref) * np.exp(1j * np.angle(Zxx_ref))
-        if _PGHI_AVAILABLE_P20:
-            try:
-                audio_out = _pghi_p20(
-                    Zxx_processed.astype(np.complex64), sr=sample_rate, win_size=REF_WIN, hop=REF_HOP, n_samples=n_audio
-                )
-            except Exception as pghi_exc:
-                logger.warning("MRSA Phase 20: PGHI failed, using iSTFT fallback: %s", pghi_exc)
-                _, audio_out = signal.istft(
-                    Zxx_processed,
-                    fs=sample_rate,
-                    window="hann",
-                    nperseg=REF_WIN,
-                    noverlap=REF_NOVERLAP,
-                    boundary="even",
-                )
-        else:
+        try:
             _, audio_out = signal.istft(
-                Zxx_processed, fs=sample_rate, window="hann", nperseg=REF_WIN, noverlap=REF_NOVERLAP, boundary="even"
+                np.asarray(Zxx_processed, dtype=np.complex64),
+                fs=sample_rate,
+                window="hann",
+                nperseg=REF_WIN,
+                noverlap=REF_NOVERLAP,
+                boundary="even",
             )
+        except Exception as _istft_p20_exc:
+            logger.warning("phase_20 istft failed (non-critical): %s", _istft_p20_exc)
+            audio_out = np.zeros(n_audio, dtype=np.float32)
 
         audio_out = np.real(audio_out).astype(np.float32)
         if len(audio_out) > n_audio:

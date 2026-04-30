@@ -39,18 +39,19 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
     """
     if sig.ndim == 2:
-        _mono = sig.mean(axis=0).astype(np.float64) if sig.shape[0] <= 2 else sig.mean(axis=1).astype(np.float64)
+        _mono = sig.mean(axis=0 if sig.shape[0] <= 2 else 1).astype(np.float32)
     else:
-        _mono = sig.astype(np.float64)
+        _mono = np.asarray(sig, dtype=np.float32).ravel()
     _frame = 480  # 10 ms @ 48 kHz
-    _active = [
-        _mono[i : i + _frame]
-        for i in range(0, len(_mono) - _frame, _frame)
-        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
-    ]
-    if not _active:
+    _n_frames = len(_mono) // _frame
+    if _n_frames == 0:
         return -96.0
-    return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
+    _frames = _mono[: _n_frames * _frame].reshape(_n_frames, _frame)
+    _frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(_frames**2, axis=1)) + 1e-10)
+    _mask = _frame_rms_db > -50.0
+    if not np.any(_mask):
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean(_frames[_mask] ** 2)) + 1e-10))
 
 
 _MIN_IMD_SCORE: float = 0.10
@@ -97,7 +98,7 @@ def _build_imd_notch_mask(
     peak_indices = [int(i) for i in np.where(peak_mask)[0]]
     if len(peak_indices) < 2:
         proc_freqs = np.fft.rfftfreq(_PROC_NFFT, 1.0 / sample_rate)
-        return np.ones(len(proc_freqs), dtype=np.float64)
+        return np.ones(len(proc_freqs), dtype=np.float32)
 
     # Cluster nearby peaks → fundamental frequencies
     clusters: list[int] = []
@@ -152,13 +153,13 @@ def _build_imd_notch_mask(
 
     if not imd_targets:
         proc_freqs = np.fft.rfftfreq(_PROC_NFFT, 1.0 / sample_rate)
-        return np.ones(len(proc_freqs), dtype=np.float64)
+        return np.ones(len(proc_freqs), dtype=np.float32)
 
     # Build notch mask at PROC_NFFT resolution
     proc_freqs = np.fft.rfftfreq(_PROC_NFFT, 1.0 / sample_rate)
     proc_freq_res = float(proc_freqs[1] - proc_freqs[0]) if len(proc_freqs) > 1 else 1.0
     notch_width_bins = max(1, int(notch_width_hz / proc_freq_res))
-    gain_mask = np.ones(len(proc_freqs), dtype=np.float64)
+    gain_mask = np.ones(len(proc_freqs), dtype=np.float32)
 
     for analysis_idx in imd_targets:
         # Map from analysis (BISPECTRUM_NFFT) to proc (PROC_NFFT) resolution
@@ -179,25 +180,32 @@ def _apply_stft_mask(
     gain_mask: np.ndarray,
     sample_rate: int,
 ) -> np.ndarray:
-    """Apply a frequency-domain gain mask using STFT overlap-add."""
+    """Apply a frequency-domain gain mask using STFT overlap-add — vectorised."""
     n = len(x)
     n_fft = _PROC_NFFT
     hop = n_fft // 4
-    window = sps.windows.hann(n_fft, sym=False)
+    window = sps.windows.hann(n_fft, sym=False).astype(np.float32)
     n_frames = max(1, (n - n_fft) // hop + 1)
-    out = np.zeros(n, dtype=np.float64)
-    win_sum = np.zeros(n, dtype=np.float64)
+    # Trim n_frames so every frame fits inside x
+    while n_frames > 0 and (n_frames - 1) * hop + n_fft > n:
+        n_frames -= 1
+    if n_frames == 0:
+        return x.astype(np.float32)
 
+    # Batch STFT: stride_tricks framing + vectorised rfft
+    x_f32 = np.asarray(x, dtype=np.float32)
+    _sw = np.lib.stride_tricks.sliding_window_view(x_f32, n_fft)[::hop][:n_frames]  # (T, n_fft)
+    _spectra = np.fft.rfft(_sw * window, axis=1)  # (T, F)
+    _spectra *= gain_mask  # broadcast over T
+    _frames_out = np.fft.irfft(_spectra, n=n_fft, axis=1) * window  # (T, n_fft)
+
+    out = np.zeros(n, dtype=np.float32)
+    win_sum = np.zeros(n, dtype=np.float32)
+    win_sq = window**2
     for i in range(n_frames):
         s = i * hop
-        e = s + n_fft
-        if e > n:
-            break
-        spec = np.fft.rfft(x[s:e] * window)
-        spec *= gain_mask
-        frame_out = np.fft.irfft(spec, n=n_fft) * window
-        out[s:e] += frame_out
-        win_sum[s:e] += window**2
+        out[s : s + n_fft] += _frames_out[i]
+        win_sum[s : s + n_fft] += win_sq
 
     win_sum = np.maximum(win_sum, 1e-8)
     out /= win_sum
@@ -227,12 +235,12 @@ def apply(
         # §2.51 M/S domain: derive notch mask from Mid; apply to Mid and Side at
         # reduced strength. This keeps L/R coherent (no independent per-channel mask).
         if audio.shape[0] == 2 and audio.shape[1] != 2:
-            left = audio[0].astype(np.float64)
-            right = audio[1].astype(np.float64)
+            left = audio[0].astype(np.float32)
+            right = audio[1].astype(np.float32)
             channels_first = True
         else:
-            left = audio[:, 0].astype(np.float64)
-            right = audio[:, 1].astype(np.float64)
+            left = audio[:, 0].astype(np.float32)
+            right = audio[:, 1].astype(np.float32)
             channels_first = False
 
         mid = (left + right) * 0.5
@@ -258,7 +266,7 @@ def apply(
             return np.stack([left_out, right_out], axis=1).astype(np.float32)
 
     # Mono path
-    x = audio.astype(np.float64)
+    x = audio.astype(np.float32)
     gain_mask = _build_imd_notch_mask(x, sample_rate, strength, notch_width_hz)
     out = _apply_stft_mask(x, gain_mask, sample_rate)
     result = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)

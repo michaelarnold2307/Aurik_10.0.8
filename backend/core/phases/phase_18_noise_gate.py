@@ -613,25 +613,26 @@ class NoiseGate(PhaseInterface):
         """Split audio into frequency bands using Linkwitz-Riley filters."""
         bands = []
 
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt (kausal, Pegelexplosion).
         # Band 1: Low (< 150 Hz)
         sos_low = signal.butter(4, self.CROSSOVER_FREQS[0], btype="low", fs=sample_rate, output="sos")
-        bands.append(signal.sosfilt(sos_low, audio))
+        bands.append(signal.sosfiltfilt(sos_low, audio))
 
         # Band 2: Low-mid (150-800 Hz)
         sos_mid1 = signal.butter(
             4, [self.CROSSOVER_FREQS[0], self.CROSSOVER_FREQS[1]], btype="band", fs=sample_rate, output="sos"
         )
-        bands.append(signal.sosfilt(sos_mid1, audio))
+        bands.append(signal.sosfiltfilt(sos_mid1, audio))
 
         # Band 3: High-mid (800-5000 Hz)
         sos_mid2 = signal.butter(
             4, [self.CROSSOVER_FREQS[1], self.CROSSOVER_FREQS[2]], btype="band", fs=sample_rate, output="sos"
         )
-        bands.append(signal.sosfilt(sos_mid2, audio))
+        bands.append(signal.sosfiltfilt(sos_mid2, audio))
 
         # Band 4: High (> 5000 Hz)
         sos_high = signal.butter(4, self.CROSSOVER_FREQS[2], btype="high", fs=sample_rate, output="sos")
-        bands.append(signal.sosfilt(sos_high, audio))
+        bands.append(signal.sosfiltfilt(sos_high, audio))
 
         return bands
 
@@ -664,8 +665,8 @@ class NoiseGate(PhaseInterface):
         # attacks), triggering §2.49 rollbacks on every transient-rich segment.
         # lfilter is causal by definition: y[n] depends only on x[n..n-M+1]. §2.49
         window_samples = int(0.020 * sample_rate)  # 20ms RMS window
-        _rms_b = np.ones(window_samples, dtype=np.float64) / window_samples
-        rms_power = signal.lfilter(_rms_b, [1.0], audio.astype(np.float64) ** 2).astype(np.float32)
+        _rms_b = np.ones(window_samples, dtype=np.float32) / window_samples
+        rms_power = signal.lfilter(_rms_b, [1.0], audio.astype(np.float32) ** 2)
         rms_power = np.maximum(rms_power, 0.0)
         rms = np.sqrt(rms_power)
         rms_db = 20 * np.log10(rms + 1e-10)

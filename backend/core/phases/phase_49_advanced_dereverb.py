@@ -480,8 +480,8 @@ class AdvancedDereverbPhase(PhaseInterface):
             early_blend_triggered = True
             _early_win = int(sample_rate * 0.050)
             _alpha = 0.35
-            _proc64 = processed.copy().astype(np.float64)
-            _orig64 = audio.copy().astype(np.float64)
+            _proc64 = processed.copy().astype(np.float32)
+            _orig64 = audio.copy().astype(np.float32)
             if _proc64.ndim == 2:
                 for _ch in range(_proc64.shape[1]):
                     _e = min(_early_win, _proc64.shape[0])

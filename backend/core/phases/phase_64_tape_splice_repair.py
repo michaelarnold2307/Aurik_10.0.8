@@ -29,18 +29,19 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
     Stereo → Mono-Downmix vor Framing. Gibt -96.0 zurück wenn kein aktiver Frame.
     """
     if sig.ndim == 2:
-        _mono = sig.mean(axis=0).astype(np.float64) if sig.shape[0] <= 2 else sig.mean(axis=1).astype(np.float64)
+        _mono = sig.mean(axis=0 if sig.shape[0] <= 2 else 1).astype(np.float32)
     else:
-        _mono = sig.astype(np.float64)
+        _mono = np.asarray(sig, dtype=np.float32).ravel()
     _frame = 480  # 10 ms @ 48 kHz
-    _active = [
-        _mono[i : i + _frame]
-        for i in range(0, len(_mono) - _frame, _frame)
-        if 20.0 * np.log10(np.sqrt(np.mean(_mono[i : i + _frame] ** 2)) + 1e-10) > -50.0
-    ]
-    if not _active:
+    _n_frames = len(_mono) // _frame
+    if _n_frames == 0:
         return -96.0
-    return float(20.0 * np.log10(np.sqrt(np.mean(np.concatenate(_active) ** 2)) + 1e-10))
+    _frames = _mono[: _n_frames * _frame].reshape(_n_frames, _frame)
+    _frame_rms_db = 20.0 * np.log10(np.sqrt(np.mean(_frames**2, axis=1)) + 1e-10)
+    _mask = _frame_rms_db > -50.0
+    if not np.any(_mask):
+        return -96.0
+    return float(20.0 * np.log10(np.sqrt(np.mean(_frames[_mask] ** 2)) + 1e-10))
 
 
 logger = logging.getLogger(__name__)
@@ -167,21 +168,21 @@ def apply(
         # §2.51 Linked: detect splice boundaries on mono mix (L+R)/2 so that
         # both channels are repaired at exactly the same sample positions.
         mono_mix = (audio[0] + audio[1]) * 0.5
-        mono64 = mono_mix.astype(np.float64)
+        mono64 = mono_mix.astype(np.float32)
         splice_points = _detect_splice_points(mono64, sample_rate, crossfade_samples)
         if not splice_points:
             return np.clip(audio, -1.0, 1.0).astype(np.float32)
         left_out = _apply_splice_repair(
-            audio[0].astype(np.float64).copy(), audio[0].astype(np.float64), splice_points, crossfade_samples, strength
+            audio[0].astype(np.float32), audio[0].astype(np.float32), splice_points, crossfade_samples, strength
         )
         right_out = _apply_splice_repair(
-            audio[1].astype(np.float64).copy(), audio[1].astype(np.float64), splice_points, crossfade_samples, strength
+            audio[1].astype(np.float32), audio[1].astype(np.float32), splice_points, crossfade_samples, strength
         )
         left_out = np.nan_to_num(left_out, nan=0.0, posinf=0.0, neginf=0.0)
         right_out = np.nan_to_num(right_out, nan=0.0, posinf=0.0, neginf=0.0)
         return np.clip(np.stack([left_out, right_out], axis=0), -1.0, 1.0).astype(np.float32)
 
-    x = audio.astype(np.float64)
+    x = audio.astype(np.float32)
     splice_points = _detect_splice_points(x, sample_rate, crossfade_samples)
     if not splice_points:
         return np.clip(audio, -1.0, 1.0).astype(np.float32)

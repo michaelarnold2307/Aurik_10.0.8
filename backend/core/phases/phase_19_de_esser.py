@@ -1059,7 +1059,8 @@ class DeEsserPhase(PhaseInterface):
                 sos_processing = signal.butter(
                     4, [processing_low / nyquist, processing_high / nyquist], btype="band", output="sos"
                 )
-                processing_band = signal.sosfilt(sos_processing, audio)
+                # §2.51 Anti-Zeitversatz: sosfiltfilt — processing_band wird von audio subtrahiert.
+                processing_band = signal.sosfiltfilt(sos_processing, audio)
 
             except Exception as e:
                 logger.warning("Band %s filter design failed: %s", band_name, e)

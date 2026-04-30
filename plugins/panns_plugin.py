@@ -186,7 +186,7 @@ class PANNsPlugin:
     # Audio-Aufbereitung
     # ------------------------------------------------------------------
 
-    def _to_model_input(self, audio: np.ndarray, sr: int) -> np.ndarray:
+    def _to_model_input(self, audio: np.ndarray, sr: int, position_ratio: float = 0.5) -> np.ndarray:
         """Konvertiert Audio-Array auf [1, 320000] float32 @ 32 kHz.
 
         Algorithmus:
@@ -194,12 +194,13 @@ class PANNsPlugin:
             2. NaN/Inf bereinigen
             3. Resample auf 32 000 Hz (scipy.signal.resample_poly, Fallback: linspace-interp)
             4. Amplituden-Normalisierung auf Spitze ≈ 0.9
-            5. Mittlere 10 s extrahieren (repräsentativer als Anfang)
+            5. 10-s-Fenster bei `position_ratio` extrahieren (0.0=Anfang, 0.5=Mitte, 1.0=Ende)
             6. Pad/Truncate auf genau 320 000 Samples
 
         Args:
-            audio: Mono oder Stereo, beliebige Sample-Rate, float32/64.
-            sr:    Quell-Sample-Rate in Hz.
+            audio:          Mono oder Stereo, beliebige Sample-Rate, float32/64.
+            sr:             Quell-Sample-Rate in Hz.
+            position_ratio: Fensterposition [0.0, 1.0]; Standard 0.5 (Mitte).
 
         Returns:
             ndarray [1, 320000] float32, NaN/Inf-frei.
@@ -235,15 +236,38 @@ class PANNsPlugin:
         if peak > 1e-7:
             audio = (audio / peak * 0.9).astype(np.float32)
 
-        # Pad oder mittlere 10 s extrahieren
+        # Pad oder Fenster-Extraktion bei gewünschter Position
         n = len(audio)
         if n < self._MODEL_SAMPLES:
             audio = np.pad(audio, (0, self._MODEL_SAMPLES - n))
         elif n > self._MODEL_SAMPLES:
-            start = max(0, (n - self._MODEL_SAMPLES) // 2)
+            start = max(0, int((n - self._MODEL_SAMPLES) * float(np.clip(position_ratio, 0.0, 1.0))))
             audio = audio[start : start + self._MODEL_SAMPLES]
 
         return audio[np.newaxis, :].astype(np.float32)  # [1, 320000]
+
+    def _to_model_input_from_resampled(self, audio_mono_rs: np.ndarray, position_ratio: float) -> np.ndarray:
+        """Extrahiert Fenster aus bereits resampeltem Mono-Array (spart Resample-Overhead bei Multi-Window).
+
+        Args:
+            audio_mono_rs:  Mono-Array @ _MODEL_SR, float32, bereits NaN/Inf-bereinigt.
+            position_ratio: Fensterposition [0.0, 1.0].
+
+        Returns:
+            ndarray [1, 320000] float32, amplitude-normiert.
+        """
+        # Amplituden-Normalisierung
+        peak = float(np.percentile(np.abs(audio_mono_rs), 99.9))
+        chunk = (audio_mono_rs / peak * 0.9).astype(np.float32) if peak > 1e-7 else audio_mono_rs.astype(np.float32)
+
+        n = len(chunk)
+        if n < self._MODEL_SAMPLES:
+            chunk = np.pad(chunk, (0, self._MODEL_SAMPLES - n))
+        elif n > self._MODEL_SAMPLES:
+            start = max(0, int((n - self._MODEL_SAMPLES) * float(np.clip(position_ratio, 0.0, 1.0))))
+            chunk = chunk[start : start + self._MODEL_SAMPLES]
+
+        return chunk[np.newaxis, :].astype(np.float32)
 
     # ------------------------------------------------------------------
     # Haupt-Inferenz-Methode
@@ -285,12 +309,64 @@ class PANNsPlugin:
             logger.debug("PANNs: PLM set_active failed: %s", _exc)
 
         try:
-            model_input = self._to_model_input(audio, sr)
+            # §PANNs-Multi-Window: Resampled Mono einmal aufbereiten, dann
+            # bis zu 3 Fenster analysieren (25 %, 50 %, 75 %) und element-weises Maximum
+            # bilden — verhindert, dass instrumentale Bridges/Intros den Vokal-Score
+            # auf 0.00 ziehen (vocal=False für Schlager/Pop mit Vokalsolo).
+            _mono_rs: np.ndarray | None = None
+            try:
+                _audio_mono = (
+                    audio.mean(axis=0).astype(np.float32)
+                    if (audio.ndim == 2 and audio.shape[0] <= 2)
+                    else audio.mean(axis=1).astype(np.float32)
+                    if audio.ndim == 2
+                    else np.asarray(audio, dtype=np.float32)
+                )
+                _audio_mono = np.nan_to_num(_audio_mono, nan=0.0, posinf=0.0, neginf=0.0)
+                if sr != self._MODEL_SR:
+                    from scipy.signal import resample_poly as _rsp
+
+                    _g = math.gcd(self._MODEL_SR, sr)
+                    _mono_rs = _rsp(_audio_mono, self._MODEL_SR // _g, sr // _g).astype(np.float32)
+                else:
+                    _mono_rs = _audio_mono
+            except Exception as _rs_exc:
+                logger.debug("PANNs: Resample für Multi-Window fehlgeschlagen: %s", _rs_exc)
+
+            # Primär-Inferenz: Mitte (position_ratio=0.5)
+            model_input = self._to_model_input(audio, sr, position_ratio=0.5)
             ort_out = self._session.run(
                 None,
                 {self._session.get_inputs()[0].name: model_input},
             )
-            scores: np.ndarray = ort_out[0][0]  # [527] float32
+            scores: np.ndarray = ort_out[0][0].copy()  # [527] float32
+
+            # Multi-Window-Fallback: nur wenn Singing-Score < 0.35 UND Song > 20 s bei Model-SR
+            _singing_indices = _TAG_INDEX_MAP.get("Singing voice", [27])
+            _singing_score_mid = max(
+                (float(scores[i]) for i in _singing_indices if 0 <= i < len(scores)),
+                default=0.0,
+            )
+            _is_long_song = _mono_rs is not None and len(_mono_rs) > 2 * self._MODEL_SAMPLES
+            if _singing_score_mid < 0.35 and _is_long_song:
+                for _pos in (0.25, 0.75):
+                    try:
+                        assert _mono_rs is not None
+                        _inp = self._to_model_input_from_resampled(_mono_rs, _pos)
+                        _out = self._session.run(None, {self._session.get_inputs()[0].name: _inp})
+                        scores = np.maximum(scores, _out[0][0])
+                    except Exception as _mw_exc:
+                        logger.debug("PANNs Multi-Window pos=%.2f fehlgeschlagen: %s", _pos, _mw_exc)
+                _singing_score_final = max(
+                    (float(scores[i]) for i in _singing_indices if 0 <= i < len(scores)),
+                    default=0.0,
+                )
+                if _singing_score_final > _singing_score_mid:
+                    logger.info(
+                        "PANNs Multi-Window: Singing %.2f→%.2f (Mitte-10s hatte Bridge/Instrumental)",
+                        _singing_score_mid,
+                        _singing_score_final,
+                    )
 
             result: dict[str, float] = {}
             for tag, indices in _TAG_INDEX_MAP.items():

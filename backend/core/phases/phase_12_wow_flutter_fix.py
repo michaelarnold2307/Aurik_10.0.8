@@ -722,22 +722,58 @@ class WowFlutterFix(PhaseInterface):
                 vocals_conf,
             )
         if is_stereo:
-            restored_left = _stretch_fn(audio[:, 0], stretch_factors, sample_rate)
-            restored_right = _stretch_fn(audio[:, 1], stretch_factors, sample_rate)
-            # §2.51 L/R-Zeitversatz-Guard: WSOLA/PSOLA kann pro Kanal minimal
-            # unterschiedliche Sample-Zahlen liefern (Pitch-Period-Rounding).
-            # Auf kürzere Länge trimmen — kein L/R-Versatz im Export.
-            if len(restored_left) != len(restored_right):
-                _p12_n = min(len(restored_left), len(restored_right))
+            # §2.51 M/S-Domain Stereo Processing — verhindert L/R Zeitversatz.
+            #
+            # ROOT CAUSE des Zeitversatzes (und der daraus folgenden Pegelexplosion):
+            # _psola_timestretch() schätzt Pitch-Perioden (pYIN) UNABHÄNGIG pro Kanal.
+            # L und R haben leicht unterschiedlichen Inhalt → verschiedene period_samps →
+            # OLA-Grain-Grenzen weichen pro Frame ab → kumulativer Zeitversatz über den Song
+            # → L/R Korrelation sinkt von +0.9 auf ca. -0.10 (anti-phasig).
+            #
+            # Folge-Kaskade (Pegelexplosion Intro/Outro):
+            # 1. Anti-Phasen-L/R → Mono-Downmix (L+R)/2 zeigt deutlich weniger Pegel
+            # 2. MDEM / correct_arc / AQI messen "Pegelabfall" via Mono-Downmix
+            # 3. Makeup-Gain wird auf alle Frames ausgelöst, inkl. Intro-Vinyl-Rauschen
+            #    und Outro-Fadeout → Pegelexplosion in Nicht-Musik-Bereichen
+            #
+            # FIX: M/S-Domain:
+            #   Mid = (L+R)/2 → PSOLA oder Phase-Vocoder (vokal-gerecht)
+            #   Side = (L-R)/2 → immer Phase-Vocoder (deterministisch, kein pYIN pro Kanal)
+            #   L_out = Mid_out + Side_out, R_out = Mid_out - Side_out
+            # Beide Kanäle erhalten exakt dasselbe Timing-Framework → keine Anti-Phase.
+            _mid_ch = (audio[:, 0].astype(np.float32) + audio[:, 1].astype(np.float32)) * 0.5
+            _side_ch = (audio[:, 0].astype(np.float32) - audio[:, 1].astype(np.float32)) * 0.5
+            # Mid trägt den Vokal — nutzt den gewählten Stretch (PSOLA oder Phase-Vocoder)
+            _mid_stretched = _stretch_fn(_mid_ch, stretch_factors, sample_rate)
+            # Side: immer deterministischer Phase-Vocoder (kein pYIN → kein Kanalversatz)
+            _side_stretched = self._phase_vocoder_timestretch(_side_ch, stretch_factors, sample_rate)
+            # §2.51 Amplitudenkorrektur: PSOLA ist NICHT amplitudenerhaltend.
+            # OLA-Windowing dämpft das Mid-Signal typisch um 5–8 dB → MDEM/correct_arc
+            # messen diesen Drop im Mono-Downmix und triggern Makeup-Gain auf ALLE Frames
+            # inkl. Intro-Rauschen/Outro-Fade → Pegelexplosion.
+            # Fix: Mid-RMS nach PSOLA auf Eingabe-RMS normalisieren (max ±6 dB).
+            _mid_rms_in = float(np.sqrt(np.mean(_mid_ch**2) + 1e-12))
+            _n_ms = min(len(_mid_stretched), len(_side_stretched))
+            _mid_rms_out = float(np.sqrt(np.mean(_mid_stretched[:_n_ms] ** 2) + 1e-12))
+            if _mid_rms_in > 1e-9 and _mid_rms_out > 1e-9:
+                _mid_norm_gain = float(np.clip(_mid_rms_in / _mid_rms_out, 0.5, 2.0))  # ±6 dB
+                _mid_stretched = np.clip(_mid_stretched * _mid_norm_gain, -1.0, 1.0)
                 logger.debug(
-                    "phase_12: L/R-Längenangleichung: L=%d R=%d → %d",
-                    len(restored_left),
-                    len(restored_right),
+                    "phase_12: M/S Mid-RMS-Normalisierung: in=%.1f dBFS out=%.1f dBFS gain=%.1f dB",
+                    20.0 * np.log10(_mid_rms_in + 1e-12),
+                    20.0 * np.log10(_mid_rms_out + 1e-12),
+                    20.0 * np.log10(_mid_norm_gain + 1e-12),
+                )
+            restored_left = (_mid_stretched[:_n_ms] + _side_stretched[:_n_ms]).astype(audio.dtype)
+            restored_right = (_mid_stretched[:_n_ms] - _side_stretched[:_n_ms]).astype(audio.dtype)
+            _p12_n = min(len(restored_left), len(restored_right), audio.shape[0])
+            if _p12_n < audio.shape[0]:
+                logger.debug(
+                    "phase_12: M/S-Längenangleichung: orig=%d → %d",
+                    audio.shape[0],
                     _p12_n,
                 )
-                restored_left = restored_left[:_p12_n]
-                restored_right = restored_right[:_p12_n]
-            restored = np.column_stack([restored_left, restored_right])
+            restored = np.column_stack([restored_left[:_p12_n], restored_right[:_p12_n]])
         else:
             restored = _stretch_fn(audio, stretch_factors, sample_rate)
 
@@ -1642,10 +1678,16 @@ class WowFlutterFix(PhaseInterface):
         if n_frames < 10:
             return audio, 0
 
-        rms_env = np.array(
-            [np.sqrt(np.mean(mono[i * env_hop : i * env_hop + env_win] ** 2) + 1e-15) for i in range(n_frames)],
-            dtype=np.float64,
-        )
+        # rms_env — vectorised via stride_tricks (replaces Python list comprehension)
+        _n_needed = (n_frames - 1) * env_hop + env_win
+        if _n_needed <= len(mono):
+            _rms_frames = np.lib.stride_tricks.sliding_window_view(mono[:_n_needed], env_win)[::env_hop][:n_frames]
+            rms_env = np.sqrt(np.mean(_rms_frames**2, axis=1) + 1e-15)
+        else:
+            rms_env = np.array(
+                [np.sqrt(np.mean(mono[i * env_hop : i * env_hop + env_win] ** 2) + 1e-15) for i in range(n_frames)],
+                dtype=np.float64,
+            )
         rms_db = 20.0 * np.log10(rms_env + 1e-15)
 
         from scipy.ndimage import percentile_filter
@@ -1774,19 +1816,20 @@ class WowFlutterFix(PhaseInterface):
             if n_sf > onset_n + recovery_n:
                 fade_env[-recovery_n:] = np.linspace(1.0, 0.0, recovery_n)
 
-            # ── Combine broadband + HF-tilt into spectral_gain mask ──────
+            # ── Combine broadband + HF-tilt into spectral_gain mask — vectorised ──
             tilt_lin = 10.0 ** (hf_tilt_db / 20.0)  # [n_freqs] — per-bin extra boost
             max_lin = 10.0 ** (max_gain_db / 20.0)
 
-            for k, sf in enumerate(stft_idx):
-                bb_db = float(bb_gain_db_stft[k])
-                if bb_db < 0.3:
-                    continue  # trivially small — skip
-                bb_lin = 10.0 ** (bb_db / 20.0)  # scalar
-                combined = bb_lin * tilt_lin  # [n_freqs]
-                # Asymmetric fade: smoothly ramp gain at onset/recovery edges
-                combined = 1.0 + (combined - 1.0) * float(fade_env[k])
-                spectral_gain[:, sf] = np.clip(combined, 1.0, max_lin)
+            _active_mask = bb_gain_db_stft >= 0.3
+            if np.any(_active_mask):
+                _active_idx = stft_idx[_active_mask]
+                _bb_lin = 10.0 ** (bb_gain_db_stft[_active_mask] / 20.0)  # (m,)
+                _fe = fade_env[_active_mask]  # (m,)
+                # combined[frame, freq] = 1 + (bb_lin[frame] * tilt_lin[freq] - 1) * fade_env[frame]
+                _comb = _bb_lin[:, None] * tilt_lin[None, :]  # (m, n_freqs)
+                _comb = 1.0 + (_comb - 1.0) * _fe[:, None]  # (m, n_freqs)
+                _comb = np.clip(_comb, 1.0, max_lin)  # (m, n_freqs)
+                spectral_gain[:, _active_idx] = _comb.T  # (n_freqs, m)
 
             n_repaired += 1
 
@@ -2101,26 +2144,15 @@ class WowFlutterFix(PhaseInterface):
 
         target_pitch = np.median(confident_pitches)
 
-        # Calculate stretch factors for each frame
-        stretch_factors = np.ones_like(pitch_trajectory)
-
-        for i, (pitch, conf) in enumerate(zip(pitch_trajectory, confidence)):
-            if pitch > 0 and conf > 0.3:  # Use estimates with reasonable confidence
-                # Stretch factor = current_pitch / target_pitch
-                raw_stretch = pitch / target_pitch
-
-                # Apply strength (blending between no correction and full correction)
-                stretch_factors[i] = 1.0 + strength * (raw_stretch - 1.0)
-
-                # Clamp to reasonable range (avoid extreme stretching)
-                stretch_factors[i] = np.clip(
-                    stretch_factors[i],
-                    1.0 - max_stretch_delta,
-                    1.0 + max_stretch_delta,
-                )
-            else:
-                # Low confidence, no correction
-                stretch_factors[i] = 1.0
+        # Calculate stretch factors for each frame — vectorised (replaces Python for-loop)
+        _valid_mask = (pitch_trajectory > 0) & (confidence > 0.3)
+        _raw_stretch = np.where(_valid_mask, pitch_trajectory / max(float(target_pitch), 1e-8), 1.0)
+        _unclamped = 1.0 + strength * (_raw_stretch - 1.0)
+        stretch_factors = np.where(
+            _valid_mask,
+            np.clip(_unclamped, 1.0 - max_stretch_delta, 1.0 + max_stretch_delta),
+            1.0,
+        ).astype(pitch_trajectory.dtype)
 
         # Stretch-Faktoren glätten mit Savitzky-Golay (polynomialer Least-Squares-Smoother)
         # Ersetzt signal.medfilt: Savitzky-Golay erhält Peaks und liefert glatteren Verlauf
@@ -2162,18 +2194,18 @@ class WowFlutterFix(PhaseInterface):
         if len(audio) < 8 or len(stretch_factors) == 0:
             return audio.copy()
 
-        audio_f = np.nan_to_num(np.asarray(audio, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+        audio_f = np.nan_to_num(np.asarray(audio, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         n_samples = len(audio_f)
 
         # Interpolate frame-wise stretch factors to sample resolution.
-        sf = np.asarray(stretch_factors, dtype=np.float64)
+        sf = np.asarray(stretch_factors, dtype=np.float32)
         sf = np.clip(sf, 0.90, 1.10)
         if len(sf) == 1:
-            sf_samples = np.full(n_samples, sf[0], dtype=np.float64)
+            sf_samples = np.full(n_samples, sf[0], dtype=np.float32)
         else:
-            src_idx = np.linspace(0, n_samples - 1, len(sf), dtype=np.float64)
-            dst_idx = np.arange(n_samples, dtype=np.float64)
-            sf_samples = np.interp(dst_idx, src_idx, sf)
+            src_idx = np.linspace(0, n_samples - 1, len(sf), dtype=np.float32)
+            dst_idx = np.arange(n_samples, dtype=np.float32)
+            sf_samples = np.interp(dst_idx, src_idx, sf).astype(np.float32)
 
         # Smooth micro-jitter in factor curve (preserve wow contour, suppress zipper noise).
         try:
@@ -2200,7 +2232,7 @@ class WowFlutterFix(PhaseInterface):
         src_pos *= (n_samples - 1) / max_pos
         src_pos = np.clip(src_pos, 0.0, n_samples - 1)
 
-        corrected = np.interp(src_pos, np.arange(n_samples, dtype=np.float64), audio_f)
+        corrected = np.interp(src_pos, np.arange(n_samples, dtype=np.float32), audio_f)
         corrected = np.nan_to_num(corrected, nan=0.0, posinf=0.0, neginf=0.0)
         return corrected.astype(audio.dtype, copy=False)
 
@@ -2240,26 +2272,27 @@ class WowFlutterFix(PhaseInterface):
             assert sample_rate == 48000, "Phase 12 neural coherence: sr must be 48000"
             n_fft = 2048
             hop = n_fft // 4
-            win = np.hanning(n_fft).astype(np.float64)
-            audio_f = np.asarray(audio, dtype=np.float64)
+            win = np.hanning(n_fft).astype(np.float32)
+            audio_f = np.asarray(audio, dtype=np.float32)
             orig_len = len(audio_f)
 
-            # Step 1: STFT of corrected audio
+            # Step 1: STFT of corrected audio — vectorised via stride_tricks + batched rfft
             n_frames = 1 + (orig_len - n_fft) // hop
             if n_frames < 2:
                 return audio.copy()
 
-            stft = np.array(
-                [np.fft.rfft(audio_f[t * hop : t * hop + n_fft] * win) for t in range(n_frames)]
-            )  # shape: (T, F)
+            # Framing: zero-copy view, shape (n_frames, n_fft)
+            _frames = np.lib.stride_tricks.sliding_window_view(audio_f, n_fft)[::hop][:n_frames]
+            stft = np.fft.rfft(_frames * win, axis=1)  # (T, F) — 1 batched call
 
             mag = np.abs(stft)
             phase = np.angle(stft)
 
             # Step 2: Coherence proxy — if reference available, use it; else use autocorrelation
             if reference is not None and len(reference) == orig_len:
-                ref_f = np.asarray(reference, dtype=np.float64)
-                stft_ref = np.array([np.fft.rfft(ref_f[t * hop : t * hop + n_fft] * win) for t in range(n_frames)])
+                ref_f = np.asarray(reference, dtype=np.float32)
+                _frames_ref = np.lib.stride_tricks.sliding_window_view(ref_f, n_fft)[::hop][:n_frames]
+                stft_ref = np.fft.rfft(_frames_ref * win, axis=1)
                 # Per-bin Pearson-like correlation magnitude
                 mag_ref = np.abs(stft_ref)
                 coherence = np.abs(stft * np.conj(stft_ref)) / (mag * mag_ref + 1e-14)
@@ -2278,31 +2311,34 @@ class WowFlutterFix(PhaseInterface):
                 # All coherent (already OK) or all incoherent (don't trust repair)
                 return audio.copy()
 
-            # Step 4: PGHI-inspired phase propagation for incoherent bins
+            # Step 4: PGHI-inspired phase propagation — vectorised inner loop
             # Instantaneous frequency estimation via log-magnitude gradient
-            log_mag = np.log(mag + 1e-14)
+            log_mag = np.log(mag.astype(np.float64) + 1e-14)
             # Horizontal gradient (time direction) → IF estimate
             d_log_mag_dt = np.gradient(log_mag, axis=0)
             f_bins = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
             omega_bins = 2.0 * np.pi * f_bins  # (F,)
 
-            phase_reg = phase.copy()
+            phase_reg = phase.astype(np.float64)
+            _hop_sr = hop / sample_rate
             for t in range(1, n_frames):
-                for f_idx in range(phase_reg.shape[1]):
-                    if incoherent_mask[t, f_idx]:
-                        # PGHI: propagate phase using instantaneous frequency + log-mag slope
-                        if_est = omega_bins[f_idx] + d_log_mag_dt[t, f_idx]
-                        phase_reg[t, f_idx] = phase_reg[t - 1, f_idx] + if_est * (hop / sample_rate)
+                _mask_t = incoherent_mask[t]
+                if np.any(_mask_t):
+                    _if_est = omega_bins + d_log_mag_dt[t]  # (F,) — vectorised
+                    _propagated = phase_reg[t - 1] + _if_est * _hop_sr  # (F,)
+                    phase_reg[t] = np.where(_mask_t, _propagated, phase_reg[t])
 
-            # Step 5: Reconstruct with regularised phases
-            stft_reg = mag * np.exp(1j * phase_reg)
+            # Step 5: Reconstruct with regularised phases — vectorised irfft + OLA
+            stft_reg = mag.astype(np.float64) * np.exp(1j * phase_reg)
+            # Batch irfft: (T, n_fft) — much faster than individual calls
+            frames_out = np.fft.irfft(stft_reg, axis=1)[:, :n_fft] * win.astype(np.float64)
+            win_sq = (win**2).astype(np.float64)
             output = np.zeros(orig_len, dtype=np.float64)
             norm = np.zeros(orig_len, dtype=np.float64)
             for t in range(n_frames):
-                frame = np.fft.irfft(stft_reg[t])[:n_fft]
-                start = t * hop
-                output[start : start + n_fft] += frame * win
-                norm[start : start + n_fft] += win**2
+                s = t * hop
+                output[s : s + n_fft] += frames_out[t]
+                norm[s : s + n_fft] += win_sq
             norm = np.where(norm > 1e-10, norm, 1.0)
             output = output / norm
 
@@ -2347,7 +2383,7 @@ class WowFlutterFix(PhaseInterface):
             return audio.copy()
 
         dtype = audio.dtype
-        audio_f = audio.astype(np.float64)
+        audio_f = audio.astype(np.float32)
 
         # Grundfrequenz-Schätzung für Pitch-Marken (pYIN — Mauch & Dixon 2014)
         pitch_hz, confidence = self._estimate_pitch_yin(audio_f, sample_rate)
@@ -2368,13 +2404,13 @@ class WowFlutterFix(PhaseInterface):
             x_src = np.linspace(0, n_frames - 1, max(len(stretch_factors), 2))
             sf_per_frame = np.interp(np.arange(n_frames), x_src, stretch_factors)
         else:
-            sf_per_frame = stretch_factors.astype(np.float64)
+            sf_per_frame = stretch_factors.astype(np.float32)
         sf_per_frame = np.clip(sf_per_frame, 0.9, 1.1)
 
         # OLA-Ausgangspuffer (großzügig dimensioniert, am Ende getrimmt)
         n_input = len(audio_f)
         max_period = int(np.max(period_samps))
-        out_buf = np.zeros(n_input + max_period * 4, dtype=np.float64)
+        out_buf = np.zeros(n_input + max_period * 4, dtype=np.float32)
         weight_buf = np.zeros_like(out_buf)
 
         out_write = 0

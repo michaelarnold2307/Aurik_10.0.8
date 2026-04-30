@@ -2,60 +2,7 @@
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
 
-## Version 9.11.58 — Stark degradierte Aufnahmen: CCR-Anchor, lacquer_disc, ultra-analog Blend-Gate (Apr 2026)
-
-### Bugfix: §0d Ebene 3 HPI-Gate ohne CCR-Awareness (KRITISCH)
-
-**Problem:** `holistic_perceptual_gate.py` `evaluate_restoration()` ignorierte `carrier_chain_recovery_ratio`
-vollständig. Bei CCR > 0.35 (Shellac, Mehrfachkopien) wurde die MERT-Referenz weiterhin auf den
-degradierten Input gesetzt — korrekte Carrier-Chain-Inversion führte so zu HPI-Rollback.
-
-**Fix:**
-- `evaluate_restoration()` erhält neuen Parameter `carrier_chain_recovery_ratio: float = 0.0`
-- CCR > 0.35 ("massive"): `mert_sim` via `_compute_directional_restoration_quality()` berechnet;
-  timbral-Gewichtung vollständig auf `ref`-Seite verschoben (input_weight=0.0, ref_weight=1.0)
-- CCR > 0.15 ("partial"): 50/50-Blend aus raw MERT + direktionaler Qualität
-- `logger.info()` und `detail{}`-Dict loggen jetzt `ccr=`, `ccr_anchor_mode`
-- UV3 Call-Site (Zeile ~8275) übergibt `carrier_chain_recovery_ratio=getattr(self, "_carrier_chain_recovery_ratio", 0.0)`
-
-**Betroffene Dateien:** `backend/core/holistic_perceptual_gate.py`, `backend/core/unified_restorer_v3.py`
-
-### Bugfix: `lacquer_disc` fehlt in CIG `_MATERIAL_BASE` (HOCH)
-
-**Problem:** `lacquer_disc` fehlte in `compute_adaptive_drift_tolerance()` `_MATERIAL_BASE`-Dict →
-Fallback auf `unknown` (-0.06), viel zu streng für historisches Acetat-Trägermedium.
-
-**Fix:** `"lacquer_disc": -0.12` eingefügt (zwischen vinyl -0.10 und shellac -0.15;
-entspricht physikalischem Charakter der Acetat-Lackfolien 1930–1950).
-
-**Betroffene Datei:** `backend/core/cumulative_interaction_guard.py`
-
-### Bugfix: `lacquer_disc` + P4/P5-Goals fehlen in UV3 `_ADAPTIVE_THR_MATERIAL_CEILING` (HOCH)
-
-**Problem 1:** `lacquer_disc` fehlte vollständig → canonische Schwellen 0.90/0.88 physikalisch unmöglich.
-**Problem 2:** Shellac, Wachswalze, Drahtaufnahme hatten keine `brillanz`/`spatial_depth`-Ceiling-Werte
-→ brillanz 0.78 canonical für 8kHz-Bandbreite (Shellac) ist physikalisch unmöglich; AFG-Loop.
-
-**Fix:**
-- `lacquer_disc` komplett eingefügt: natuerlichkeit≤0.72, authentizitaet≤0.70, brillanz≤0.60, spatial_depth≤0.64
-- `shellac`: brillanz≤0.52, spatial_depth≤0.60 ergänzt (§0 BW-Ceiling 8kHz)
-- `wax_cylinder`: brillanz≤0.44, spatial_depth≤0.55 ergänzt (§0 BW-Ceiling 5kHz)
-- `wire_recording`: brillanz≤0.46, spatial_depth≤0.55 ergänzt (§0 BW-Ceiling 6kHz)
-
-**Betroffene Datei:** `backend/core/unified_restorer_v3.py`
-
-### Bugfix: P1/P2-Blend-Acceptance `_best_regression_count <= 1` nicht material-adaptiv (MITTEL)
-
-**Problem:** End-Gate P1/P2-Blend-Loop akzeptierte bei ultra-analog-Materialien nur ≤1 Regression
-unter P3-P5-Goals. Shellac/Wachswalze/Lackfolie/Draht können P1/P2-Verletzungen physikalisch
-nicht ohne Beeinflussung von Groove oder Emotionalität lösen → beste verfügbare Recovery verworfen.
-
-**Fix:** Material-adaptive Schwelle: ultra_analog-Set (`shellac`, `wax_cylinder`, `lacquer_disc`,
-`wire_recording`) → `_blend_max_regressions = 2`; alle anderen Materialien bleiben bei 1.
-
-**Betroffene Datei:** `backend/core/unified_restorer_v3.py`
-
-
+## Version 9.11.57 — Phase 29 Incident-Dokumentation (Apr 2026)
 
 ### Bugfix: Gemeinsame Ursache fuer Pegelexplosion + L/R-Zeitversatz in fruehem Laufsegment
 

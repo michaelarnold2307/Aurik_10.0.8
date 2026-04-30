@@ -364,6 +364,8 @@ class TestFeedbackChainCeiling:
 class TestFeedbackChainPerceptualLoopScoring:
     def test_36_pqs_loop_marks_pqs_as_score_source(self):
         fc = FeedbackChain(max_iterations=1, use_pqs_in_loop=True, use_versa_in_loop=False)
+        # §2.44: use_versa_in_loop wird ignoriert (immer True) — _versa_score_fn direkt deaktivieren
+        fc._versa_score_fn = None
         fc._pqs_score_fn = lambda audio, sr: SimpleNamespace(mos=4.2)
 
         result = fc.run(_sine(), _identity_fn)
@@ -374,6 +376,8 @@ class TestFeedbackChainPerceptualLoopScoring:
 
     def test_37_pqs_failure_marks_heuristic_fallback(self):
         fc = FeedbackChain(max_iterations=1, use_pqs_in_loop=True, use_versa_in_loop=False)
+        # §2.44: use_versa_in_loop wird ignoriert (immer True) — _versa_score_fn direkt deaktivieren
+        fc._versa_score_fn = None
 
         def _raise_pqs(audio: np.ndarray, sr: int) -> object:
             raise RuntimeError("pqs unavailable")

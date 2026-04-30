@@ -614,7 +614,8 @@ class PhysicalMediumChainModel:
         nyq = sr / 2
         cutoff = 0.95 * nyq
         sos = sp_signal.butter(2, cutoff / nyq, btype="low", output="sos")
-        filtered = sp_signal.sosfilt(sos, audio, axis=0).astype(audio.dtype)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — filtered wird mit audio geblendet.
+        filtered = sp_signal.sosfiltfilt(sos, audio, axis=0).astype(audio.dtype)
         # Blend: 80% original + 20% filtered (konservativ)
         return 0.85 * audio + 0.15 * filtered
 

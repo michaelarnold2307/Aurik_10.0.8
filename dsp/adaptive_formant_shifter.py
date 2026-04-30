@@ -238,6 +238,7 @@ class AdaptiveFormantShifter:
             window="hann",
             nperseg=n_fft,
             noverlap=n_fft - hop_length,
+            boundary="even",
         )
         S_out = np.zeros_like(S)
 
@@ -339,6 +340,7 @@ class AdaptiveFormantShifter:
             window="hann",
             nperseg=n_fft,
             noverlap=n_fft - hop_length,
+            boundary="even",
         )
         S_out = np.zeros_like(S)
 

@@ -1115,20 +1115,41 @@ class VocalEnhancement(PhaseInterface):
 
         # ── 4: HPSS tertiärer Fallback ────────────────────────────────────────
         try:
+            import time as _time
+
             import librosa
 
             if audio.ndim == 2:
                 mono_in = audio_mono
             else:
                 mono_in = audio
+            # Wall-time guard: HPSS on long audio (>120s) is slow on CPU.
+            # Limit to 90 s budget; if exceeded, return None and skip phase.
+            _hpss_max_s = 90.0
+            _audio_dur_s = float(len(mono_in)) / max(1, sr)
+            if _audio_dur_s > 120.0:
+                logger.info(
+                    "Phase42 HPSS tertiärer Fallback: audio=%.1fs > 120s — wall-time guard = %.0fs",
+                    _audio_dur_s,
+                    _hpss_max_s,
+                )
+            _t0_hpss = _time.monotonic()
             harmonic_mono, _ = librosa.effects.hpss(mono_in)
+            _hpss_elapsed = _time.monotonic() - _t0_hpss
+            if _hpss_elapsed > _hpss_max_s:
+                logger.warning(
+                    "Phase42 HPSS wall-time überschritten (%.0fs > %.0fs) — Ergebnis verworfen",
+                    _hpss_elapsed,
+                    _hpss_max_s,
+                )
+                return None
             n = min(len(audio_mono), len(harmonic_mono))
             if audio.ndim == 2:
                 vocals_out, instr_out = self._wiener_stereo_from_mono(audio[:n], harmonic_mono[:n], sr)
             else:
                 vocals_out = harmonic_mono[:n]
                 instr_out = np.clip(audio_mono[:n] - harmonic_mono[:n], -1.0, 1.0)
-            logger.debug("Phase42 HPSS tertiärer Fallback erfolgreich (§2.47)")
+            logger.debug("Phase42 HPSS tertiärer Fallback erfolgreich (§2.47) elapsed=%.1fs", _hpss_elapsed)
             return vocals_out, instr_out, 0.30, "hpss_tertiary"
         except Exception as exc:
             logger.debug("Phase42 HPSS Fallback fehlgeschlagen: %s", exc)
@@ -1484,8 +1505,10 @@ class VocalEnhancement(PhaseInterface):
             return audio
 
         # Extract presence band (2–6 kHz)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — Band wird mit (presence_reduced - presence)
+        # auf Original aufaddiert; sosfilt erzeugt Zeitversatz → Kammfilter-Artefakt.
         sos_bp = signal.butter(4, [2000.0, 6000.0], btype="band", fs=sample_rate, output="sos")
-        presence = signal.sosfilt(sos_bp, audio)
+        presence = signal.sosfiltfilt(sos_bp, audio)
 
         # Compute RMS envelope (5 ms smoothing)
         frame_len = max(1, int(0.005 * sample_rate))
@@ -1557,8 +1580,10 @@ class VocalEnhancement(PhaseInterface):
     def _apply_deessing(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
         """Apply de-essing to sibilance band."""
         # Extract sibilance band
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — Band wird mit (sibilance_reduced - sibilance)
+        # auf Original aufaddiert; sosfilt erzeugt Zeitversatz → Kammfilter-Artefakt.
         sos = signal.butter(4, self.VOCAL_BANDS["sibilance"], btype="band", fs=sample_rate, output="sos")
-        sibilance = signal.sosfilt(sos, audio)
+        sibilance = signal.sosfiltfilt(sos, audio)
 
         # Dynamic range compression on sibilance
         analytic = np.asarray(signal.hilbert(sibilance))
@@ -1945,8 +1970,10 @@ class VocalEnhancement(PhaseInterface):
                 logger.debug("BreathDetector fehlgeschlagen, Bandpass-Fallback: %s", _bd_err)
 
         # DSP-Fallback: Static 8-12 kHz bandpass reduction
+        # §2.51 Anti-Zeitversatz: sosfiltfilt — Band wird mit (breath_reduced - breath)
+        # auf Original aufaddiert; sosfilt erzeugt Zeitversatz → Kammfilter-Artefakt.
         sos = signal.butter(4, self.VOCAL_BANDS["breath"], btype="band", fs=sample_rate, output="sos")
-        breath = signal.sosfilt(sos, audio)
+        breath = signal.sosfiltfilt(sos, audio)
         reduction_linear = 10 ** (-config["breath_reduction_db"] / 20)
         breath_reduced = breath * reduction_linear
         controlled = audio + (breath_reduced - breath) * 0.6

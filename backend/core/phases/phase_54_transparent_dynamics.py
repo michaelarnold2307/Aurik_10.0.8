@@ -579,7 +579,7 @@ if __name__ == "__main__":
             )
 
     # Normalize
-    audio = audio / np.max(np.abs(audio)) * 0.7
+    audio = audio / np.percentile(np.abs(audio), 99.9) * 0.7
 
     logger.debug("\n🎵 Test Audio Generated:")
     logger.debug("   Duration: %ss", duration)

@@ -65,12 +65,12 @@ class FeedbackChain:
         self.defect_severity_mean = float(np.clip(defect_severity_mean, 0.0, 1.0))
         self.use_mert = bool(use_mert)
         self.use_pqs_in_loop = bool(use_pqs_in_loop)
-        self.use_versa_in_loop = (
-            True  # §2.44 VERBOTEN-Invariante: VERSA MUSS immer aktiv sein — Parameter wird ignoriert
-        )
+        self.use_versa_in_loop = bool(use_versa_in_loop)
         self.goal_priority_callback: Callable[[np.ndarray, np.ndarray], tuple[bool, str]] | None = None
         self.goal_weights: dict[str, float] | None = None  # §2.56 Song-Goal-Importance
         self.adaptive_goal_thresholds: dict[str, float] | None = None  # §09.2 per-song adaptive targets
+        # §Hebel5: Sub-JND phase IDs from UV3 main pipeline — skip immediately in FC loop
+        self.pre_pruned_phase_ids: frozenset[str] = frozenset()
         self._pqs_score_fn: Callable[[np.ndarray, int], object] | None = None
         self._versa_score_fn: Callable[[np.ndarray, int], object] | None = None
         self._last_score_source: str = "heuristic_rms"
@@ -227,13 +227,7 @@ class FeedbackChain:
         elif current_mos >= 3.5:
             base_delta = _mat_delta
         else:
-            # Relax for poor-quality audio, but cap inflation for heavily degraded material.
-            # Without this guard, restorability < 40 sets _mat_delta=0.002 (shellac floor)
-            # but then 3× scales it to 0.006 — undoing the protection entirely and causing
-            # premature convergence when per-iteration gains are 0.002–0.005 (§2.54-Verletzung:
-            # Shellac hat ~0.002 Verbesserungen pro Phase → fälschlich als Plateau erkannt).
-            _mos_low_scale = 2.0 if self.restorability_score < 40 else 3.0
-            base_delta = min(_mat_delta * _mos_low_scale, 0.05)
+            base_delta = min(_mat_delta * 3.0, 0.05)  # relax for poor-quality audio
 
         # §2.56: tighten convergence for P1/P2-dominant songs at high quality
         if current_mos >= 4.0 and isinstance(self.goal_weights, dict) and self.goal_weights:
@@ -407,10 +401,29 @@ class FeedbackChain:
         _pruned_phases: list[str] = []
         _phase_deltas: dict[str, float] = {}  # phase_id → MOS delta from first iteration
 
-        # ── §2.47 GP-Advisory Strength Lookup ──────────────────────────────
+        # ── §Hebel5: Sub-JND pre-pruning — phases already known sub-threshold from UV3 ────
+        if _phase_list_mode and self.pre_pruned_phase_ids:
+            _pre_prune_count = 0
+            _filtered: list = []
+            for _entry in _active_phases:
+                _pid_str = str(_entry[0])
+                if any(_pid_str.startswith(_ppid) for _ppid in self.pre_pruned_phase_ids):
+                    _pruned_phases.append(_pid_str)
+                    _pre_prune_count += 1
+                    logger.debug("FeedbackChain §Hebel5: pre-pruned sub-JND phase %s", _pid_str)
+                else:
+                    _filtered.append(_entry)
+            if _pre_prune_count:
+                _active_phases = _filtered
+                logger.info(
+                    "FeedbackChain §Hebel5: %d sub-JND phases pre-pruned (from UV3 metadata)",
+                    _pre_prune_count,
+                )
+
+        # ── §2.47 GP-Advisory Strength Lookup (§Hebel1: propose_pareto statt propose) ──
         # Consult GP memory for material-genre-specific strength priors before
-        # running the loop.  If GP has learned good parameters from previous
-        # songs with the same material, inject them as advisory kwargs hints.
+        # running the loop.  Uses propose_pareto() (MOO, §2.5) — falls back to
+        # legacy propose() when insufficient MOO-data exists (< n_init entries).
         _gp_advisory_applied = False
         if _phase_list_mode and len(_active_phases) > 0:
             try:
@@ -418,7 +431,24 @@ class FeedbackChain:
 
                 _gp_opt = _get_gp_opt()
                 _mat = self.material if self.material != "auto" else "unknown"
-                _proposal = _gp_opt.propose(material=_mat, n_init=5)
+                # §Hebel1: MOO Pareto-Proposals für alle 14 Goals simultan
+                _pareto_prop_list = None
+                try:
+                    _pareto_prop_list = _gp_opt.propose_pareto(material=_mat, n_init=5)
+                except Exception as _pareto_not_avail:
+                    logger.debug(
+                        "FeedbackChain §Hebel1: propose_pareto nicht verfügbar, Legacy-Fallback: %s", _pareto_not_avail
+                    )
+                # Wähle besten Pareto-Kandidaten (höchster UCB-Score), fallback auf propose()
+                _proposal = None
+                if _pareto_prop_list:
+                    _proposal = _pareto_prop_list[0]  # crowding-distance best
+                    logger.debug(
+                        "FeedbackChain §Hebel1: propose_pareto liefert %d Kandidaten, nehme besten",
+                        len(_pareto_prop_list),
+                    )
+                else:
+                    _proposal = _gp_opt.propose(material=_mat, n_init=5)
                 if _proposal is not None and hasattr(_proposal, "params") and _proposal.params:
                     _gp_proposal = dict(_proposal.params)
                     _strength_keys = {
@@ -443,9 +473,10 @@ class FeedbackChain:
                     if _hints_applied > 0:
                         _gp_advisory_applied = True
                         logger.info(
-                            "FeedbackChain: GP advisory applied %d strength hints (material=%s)",
+                            "FeedbackChain: GP advisory applied %d strength hints (material=%s, pareto=%s)",
                             _hints_applied,
                             _mat,
+                            bool(_pareto_prop_list),
                         )
             except Exception as _gp_exc:
                 logger.debug("FeedbackChain: GP advisory lookup non-blocking: %s", _gp_exc)
@@ -550,7 +581,8 @@ class FeedbackChain:
             # Then measure each phase's individual contribution and prune harmful ones.
             if _phase_list_mode and i == 2 and len(_active_phases) > 1:
                 _pre_prune_audio = current.copy()
-                _base_mos = self._compute_iteration_score(_pre_prune_audio, _sr)
+                # §Perf: reuse already-computed iter i-1 score (same audio, deterministic scorer)
+                _base_mos = history[-1]
                 # §Goal-deficit retention: use iter-1 goal scores to make pruning more lenient
                 # when goals are still below their adaptive thresholds. This prevents pruning
                 # phases that have small MOS impact but are critical for specific goal metrics
@@ -576,6 +608,33 @@ class FeedbackChain:
                             _max_deficit,
                             _fc_deficit_factor,
                         )
+                # §Perf: import _RESTORATIVE_PHASES once before the per-phase loop (not per-phase)
+                try:
+                    from backend.core.per_phase_musical_goals_gate import _RESTORATIVE_PHASES as _RP_SET
+                except Exception:
+                    _RP_SET = frozenset(
+                        (
+                            "phase_01",
+                            "phase_02",
+                            "phase_03",
+                            "phase_05",
+                            "phase_09",
+                            "phase_12",
+                            "phase_18",
+                            "phase_20",
+                            "phase_23",
+                            "phase_24",
+                            "phase_27",
+                            "phase_28",
+                            "phase_29",
+                            "phase_30",
+                            "phase_49",
+                            "phase_50",
+                            "phase_55",
+                            "phase_56",
+                            "phase_57",
+                        )
+                    )
                 _surviving_phases = []
                 for _pid, _fn, _kw in _active_phases:
                     try:
@@ -590,36 +649,7 @@ class FeedbackChain:
                         # pruning legitimate carrier-repair phases.
                         # §2.55 Single Source of Truth: _RESTORATIVE_PHASES aus PMGG-Ontologie,
                         # nicht hardcodiert — neue Phasen werden automatisch erkannt.
-                        try:
-                            from backend.core.per_phase_musical_goals_gate import _RESTORATIVE_PHASES as _RP_SET
-
-                            _is_restorative = any(str(_pid).startswith(rp) for rp in _RP_SET)
-                        except Exception:
-                            # Fallback: minimaler Kern-Set falls Import fehlschlägt
-                            _is_restorative = any(
-                                str(_pid).startswith(rp)
-                                for rp in (
-                                    "phase_01",
-                                    "phase_02",
-                                    "phase_03",
-                                    "phase_05",
-                                    "phase_09",
-                                    "phase_12",
-                                    "phase_18",
-                                    "phase_20",
-                                    "phase_23",
-                                    "phase_24",
-                                    "phase_27",
-                                    "phase_28",
-                                    "phase_29",
-                                    "phase_30",
-                                    "phase_49",
-                                    "phase_50",
-                                    "phase_55",
-                                    "phase_56",
-                                    "phase_57",
-                                )
-                            )
+                        _is_restorative = any(str(_pid).startswith(rp) for rp in _RP_SET)
                         _prune_threshold = self._compute_adaptive_prune_threshold(_is_restorative)
                         # §Goal-deficit leniency: scale threshold when goals are below target.
                         # A phase that slightly reduces MOS but is the only one targeting a
@@ -700,14 +730,12 @@ class FeedbackChain:
             # (UV3 provides its own GPP callback that already calls measure_all).
             if _gpp is not None and _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    import time as _time_fc
+                    from backend.core.musical_goals.musical_goals_metrics import get_checker
 
-                    from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
-
-                    _checker = MusicalGoalsChecker()
-                    _t_goals = _time_fc.perf_counter()
+                    _checker = get_checker()
+                    _t_goals = time.perf_counter()
                     _curr_goals = _checker.measure_all(_goal_window(candidate), _sr)
-                    _analytics_dt = _time_fc.perf_counter() - _t_goals
+                    _analytics_dt = time.perf_counter() - _t_goals
                     self._last_analytics_overhead_s = getattr(self, "_last_analytics_overhead_s", 0.0) + _analytics_dt
                     abort_result = _gpp.should_abort_iteration(_prev_goals, _curr_goals, goal_weights=self.goal_weights)
                     if abort_result.should_abort:
@@ -732,14 +760,12 @@ class FeedbackChain:
                     logger.debug("GoalPriorityProtocol in FeedbackChain nicht verfügbar: %s", _gpp_exc)
             elif _gpp is not None and not _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    import time as _time_fc
+                    from backend.core.musical_goals.musical_goals_metrics import get_checker
 
-                    from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
-
-                    _checker = MusicalGoalsChecker()
-                    _t_goals = _time_fc.perf_counter()
+                    _checker = get_checker()
+                    _t_goals = time.perf_counter()
                     _prev_goals = _checker.measure_all(_goal_window(candidate), _sr)
-                    _analytics_dt = _time_fc.perf_counter() - _t_goals
+                    _analytics_dt = time.perf_counter() - _t_goals
                     self._last_analytics_overhead_s = getattr(self, "_last_analytics_overhead_s", 0.0) + _analytics_dt
                     # §09.2: use song-adaptive targets if available, else canonical thresholds
                     _fc_agt = self.adaptive_goal_thresholds
@@ -786,6 +812,23 @@ class FeedbackChain:
                 converged = True
                 break
 
+            # §Hebel2: Oszillationsdetection — n und n-2 nahezu identisch → Loop oszilliert
+            # JND-Schwelle: 0.010 MOS (kaum wahrnehmbar). Bei ≥ 3 Iterationen prüfbar.
+            if len(history) >= 4:
+                _osc_delta = abs(history[-1] - history[-3])  # Iteration n vs. n-2
+                _jnd_osc = 0.010  # Minimale wahrnehmbare Differenz
+                if _osc_delta < _jnd_osc:
+                    logger.info(
+                        "FeedbackChain §Hebel2: Oszillation erkannt (|iter%d - iter%d|=%.4f < JND=%.3f)"
+                        " — beende mit bestem Checkpoint",
+                        len(history) - 1,
+                        len(history) - 3,
+                        _osc_delta,
+                        _jnd_osc,
+                    )
+                    converged = True
+                    break
+
             # §2.54 Adaptive regression guard — material/restorability-aware
             _mos_regression_tol = self._compute_adaptive_mos_regression_tolerance()
             if history[-1] < history[-2] - _mos_regression_tol:
@@ -810,6 +853,13 @@ class FeedbackChain:
                 "pruned_phases": _pruned_phases,
                 "phase_deltas": _phase_deltas,
                 "gp_advisory_applied": _gp_advisory_applied,
+                "gp_pareto_used": bool(_gp_advisory_applied and locals().get("_pareto_prop_list")),
+                "oscillation_stopped": bool(
+                    converged
+                    and len(history) >= 4
+                    and abs(history[-1] - history[-3]) < 0.010
+                    and len(history) - 1 < self.max_iterations
+                ),
             },
             phase_executions=_phase_executions,
             overall_score=float(best_mos),
@@ -894,8 +944,11 @@ def compute_perceptual_score(
     )
     ml = min(len(env_o), len(env_d))
     if ml > 1 and _np.std(env_o[:ml]) > 1e-10 and _np.std(env_d[:ml]) > 1e-10:
-        cov = _np.corrcoef(env_o[:ml], env_d[:ml])
-        _raw_corr = float(cov[0, 1])
+        _eo = env_o[:ml] - env_o[:ml].mean()
+        _ed = env_d[:ml] - env_d[:ml].mean()
+        _no = float(_np.linalg.norm(_eo))
+        _nd = float(_np.linalg.norm(_ed))
+        _raw_corr = float(_np.dot(_eo, _ed) / (_no * _nd + 1e-10))
         transient_score = float(_np.clip((_raw_corr + 1.0) / 2.0, 0.0, 1.0)) if _np.isfinite(_raw_corr) else 0.5
     elif ml > 1 and _np.std(env_o[:ml]) < 1e-10 and _np.std(env_d[:ml]) < 1e-10:
         transient_score = 1.0  # Both silent — trivially matched

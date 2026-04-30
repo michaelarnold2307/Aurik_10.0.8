@@ -231,3 +231,10 @@ repos:
         language: system
         pass_filenames: false
         files: ^(backend|core|dsp|plugins|denker|Aurik910)/.*\.py$
+
+      - id: aurik-verboten-linter
+        name: "🔍 Aurik AST VERBOTEN-Linter (V01–V10)"
+        entry: .venv_aurik/bin/python scripts/aurik_verboten_linter.py backend/ plugins/
+        language: system
+        pass_filenames: false
+        files: ^(backend|plugins)/.*\.py$

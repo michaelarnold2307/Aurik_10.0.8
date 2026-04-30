@@ -523,7 +523,11 @@ class GapReconstructor:
             _pre_ctx = pre[-min(20, len(pre)) :]
             _pat_ctx = patch[: min(20, len(patch))]
             if float(np.std(_pre_ctx)) > 1e-8 and float(np.std(_pat_ctx)) > 1e-8:
-                corr = float(np.corrcoef(_pre_ctx, _pat_ctx)[0, 1])
+                _pca = _pre_ctx - _pre_ctx.mean()
+                _ppa = _pat_ctx - _pat_ctx.mean()
+                _np_ = float(np.linalg.norm(_pca))
+                _npa = float(np.linalg.norm(_ppa))
+                corr = float(np.dot(_pca, _ppa) / (_np_ * _npa + 1e-10))
             else:
                 corr = 1.0  # near-constant context (silence) → match trivially
         else:

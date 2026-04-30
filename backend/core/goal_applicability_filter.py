@@ -152,7 +152,11 @@ class GoalApplicabilityFilter:
                     _std0 = float(np.std(arr[0]))
                     _std1 = float(np.std(arr[1]))
                     if _std0 > 1e-8 and _std1 > 1e-8:
-                        corr = float(np.corrcoef(arr[0], arr[1])[0, 1])
+                        _a0 = arr[0] - arr[0].mean()
+                        _a1 = arr[1] - arr[1].mean()
+                        _n0 = float(np.linalg.norm(_a0))
+                        _n1 = float(np.linalg.norm(_a1))
+                        corr = float(np.dot(_a0, _a1) / (_n0 * _n1 + 1e-10))
                     else:
                         corr = 1.0 if (_std0 < 1e-8 and _std1 < 1e-8) else 0.0
                     # Schwellwert 0.995 (vorher 0.97 — zu strict: typische

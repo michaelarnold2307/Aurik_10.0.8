@@ -196,9 +196,14 @@ _PHASE_SPECIFIC_DRIFT_EXCLUSIONS: dict[str, frozenset[str]] = {
     ),
     # Noise gate (Silero VAD) removes low-energy carrier noise between phrases —
     # silence insertion shifts chroma/energy fingerprint vs. noisy-floor reference.
-    # §2.55-Sync: artikulation (P2) + groove (P3) added to match PMGG PHASE_GOAL_EXCLUSIONS —
-    # VAD-Gate is intentional attack-truncation; artikulation/groove drift is expected.
-    "phase_18": frozenset({"authentizitaet", "timbre_authentizitaet", "artikulation", "groove"}),
+    # §2.55-Sync: full match with PMGG PHASE_GOAL_EXCLUSIONS (v9.11.14 — added micro_dynamics +
+    # emotionalitaet): VAD-Gate insertion changes inter-beat RMS contrast (micro_dynamics P3)
+    # and Arousal proxy ZCR+RMS (emotionalitaet P3); both are intentional gate side-effects,
+    # not regressions. Without this exclusion CIG accumulates P3 drift from phase_18 and may
+    # trigger a false rollback at a later restorative phase — RELEASE_MUST-Verletzung §2.55.
+    "phase_18": frozenset(
+        {"authentizitaet", "timbre_authentizitaet", "artikulation", "groove", "micro_dynamics", "emotionalitaet"}
+    ),
     # Groove-echo cancellation removes pre-echo artefact (vinyl inner-groove distortion) —
     # spectral fingerprint diverges from pre-echo-distorted reference checkpoint:
     "phase_61": frozenset({"authentizitaet", "timbre_authentizitaet"}),
@@ -462,7 +467,6 @@ def compute_adaptive_drift_tolerance(
         "tape": -0.08,
         "reel_tape": -0.09,
         "vinyl": -0.10,
-        "lacquer_disc": -0.12,  # §0d historical analog (Acetat-Lackfolien 1930–1950): zwischen vinyl und shellac
         "shellac": -0.15,
         "wax_cylinder": -0.18,
         "wire_recording": -0.15,
@@ -778,7 +782,7 @@ class CumulativeInteractionGuard:
         _drift_tolerance = state.adaptive_drift_tolerance
         _max_rollbacks = state.adaptive_max_rollbacks
         if state.pre_pipeline_goals:
-            cumulative_drift: dict[str, float] = {}
+            cumulative_drift = {}
             _phase_exclusions = _resolve_phase_specific_drift_exclusions(phase_id)
             # §2.56: Per-goal weights amplify drift for important goals
             _gw = getattr(state, "goal_weights", None)
@@ -809,7 +813,7 @@ class CumulativeInteractionGuard:
 
             worst_drift = min(cumulative_drift.values()) if cumulative_drift else 0.0
             if worst_drift < _drift_tolerance:
-                _trigger_goal = min(cumulative_drift, key=lambda k: cumulative_drift[k])
+                _trigger_goal = min(cumulative_drift, key=lambda _k: cumulative_drift[_k])
                 logger.warning(
                     "§2.48 P1/P2 cumulative drift after %s: %s (tol=%.3f) → rollback to %s",
                     phase_id,
@@ -1145,7 +1149,8 @@ class CumulativeInteractionGuard:
 
         Adaptive factors:
           - Restorability < 70 → +50 % per 10 points below 70 (capped at ×2.5)
-          - Analog material (vinyl, shellac, tape, reel_tape) → ×1.4 additional
+          - Analog material (vinyl, shellac, tape, reel_tape) + spectral-subtraction phase → ×3.0
+          - Analog material, other STFT phases → ×1.4 additional
         """
         base = (
             MAX_GROUP_DELAY_DEVIATION_MS_SPECTRAL
@@ -1158,10 +1163,23 @@ class CumulativeInteractionGuard:
             rest_factor = 1.0 + min(1.5, (70.0 - restorability) / 20.0)  # 1.0–2.5
         else:
             rest_factor = 1.0
-        # Analog-material factor: noise-dominated bins produce false GDD spikes
+        # Analog-material factor: noise-dominated bins produce false GDD spikes.
+        # Spectral-subtraction phases (denoise, surface-NR) on analog material intentionally
+        # remove noise-phase content → the GDD measurement reflects removed noise, not real
+        # phase-coherence damage. Observed: phase_03 on vinyl produces ~38 ms GDD with
+        # mat_factor=1.4 → threshold only 18.5 ms → false rollback, 2000 s time lost.
+        # Fix §2.54: spectral-subtraction on analog gets an elevated mat_factor (3.0) so
+        # the threshold (≈40 ms) covers the typical NR-induced GDD range.
         _ANALOG_MATERIALS = {"vinyl", "shellac", "tape", "reel_tape", "wire_recording", "wax_cylinder"}
         material = str(getattr(state, "material_type", "unknown"))
-        mat_factor = 1.4 if material in _ANALOG_MATERIALS else 1.0
+        _is_analog = material in _ANALOG_MATERIALS
+        _is_spectral_sub = phase_id in _SPECTRAL_SUBTRACTION_PHASES
+        if _is_analog and _is_spectral_sub:
+            mat_factor = 3.0  # NR on analog: large expected phase change in noise bins
+        elif _is_analog:
+            mat_factor = 1.4
+        else:
+            mat_factor = 1.0
         return base * rest_factor * mat_factor
 
     def _measure_group_delay_ms(

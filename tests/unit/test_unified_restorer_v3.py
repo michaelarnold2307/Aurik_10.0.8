@@ -1822,3 +1822,112 @@ class TestSingleGainAuthorityEndToEnd:
         assert not np.any(np.isnan(out)), "Output contains NaN after HPF+broadband chain"
         assert not np.any(np.isinf(out)), "Output contains Inf after HPF+broadband chain"
         assert np.all(np.abs(out) <= 1.0 + 1e-6), "Output exceeds ±1.0 clip range"
+
+
+class TestCIGRollbackNoMakeupGain:
+    """§2.45a-VII CIG-Rollback: when CumulativeInteractionGuard rolls back a phase,
+    the cumulative loudness guard MUST NOT apply positive makeup gain.
+
+    Bug scenario (Pegelexplosion root cause):
+        1. phase_05 (HPF) locks _allow_positive_makeup_gain = False
+        2. phase_03 (denoise) executes → CIG detects STFT group delay deviation → rollback
+        3. current_audio reverts to pre-phase_03 state
+        4. BUT: _update_positive_makeup_authority("phase_03") would UNLOCK makeup if called
+        5. Cumulative guard runs, sees drop, applies makeup to pre-phase_03 audio
+        6. Vinyl surface noise (~-35 dBFS) passes -36 dBFS gate → Pegelexplosion!
+
+    Fix (§2.45a-VII): _cig_phase_rolled_back=True gates both the authority update
+    and the cumulative guard for the rolled-back phase.
+    """
+
+    def _build_restorer(self) -> UnifiedRestorerV3:
+        cfg = RestorationConfig(
+            enable_phase_gate=False,
+            enable_phase_skipping=False,
+            enable_performance_guard=False,
+        )
+        return UnifiedRestorerV3(cfg)
+
+    def test_100_no_makeup_after_cig_rollback_of_broadband_phase(self):
+        """CIG-rolled-back denoise phase must not trigger makeup gain on fadeout audio.
+
+        Setup:
+            - Audio: loud music section + quiet fadeout (Vinyl surface noise level ~-35 dBFS)
+            - Phases: phase_05 (HPF, locks authority) → phase_03 (denoise, CIG-rolled-back)
+            - CIG mock: always rolls back phase_03
+            - Expected: output RMS in the fadeout region ≈ input (no makeup boost applied)
+
+        Without the fix: _allow_positive_makeup_gain unlocked by phase_03 authority update
+        → cumulative guard boosts fadeout → Pegelexplosion.
+        With the fix: _cig_phase_rolled_back=True gates both blocks → no boost.
+        """
+        restorer = self._build_restorer()
+        rng = np.random.default_rng(123)
+
+        # Build audio: 2 s loud music (0.3 amp) + 1 s quiet fadeout (0.005 amp = ~-46 dBFS)
+        music_samples = int(SR * 2)
+        fadeout_samples = int(SR * 1)
+        music = (rng.standard_normal(music_samples) * 0.30).astype(np.float32)
+        fadeout = (rng.standard_normal(fadeout_samples) * 0.005).astype(np.float32)
+        audio_in = np.clip(np.concatenate([music, fadeout]), -1.0, 1.0)
+
+        _PhaseStub = TestSingleGainAuthorityEndToEnd._PhaseStub
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+
+        def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
+            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr]
+            # phase_05: HPF removes sub-bass energy (−6 dB)
+            # phase_03: would denoise (−3 dB) but CIG rolls it back — return slightly attenuated
+            # so the rollback has something to revert.
+            factor = 0.5 if "phase_05" in pid else 0.7
+            return types.SimpleNamespace(
+                success=True,
+                audio=np.clip(np.asarray(_audio, dtype=np.float32) * factor, -1.0, 1.0),
+                execution_time_seconds=0.001,
+                warnings=[],
+            )
+
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+
+        # Inject a mock interaction guard that always rolls back phase_03
+        class _RollbackGuard:
+            """Mock CIG: rolls back phase_03, passes everything else."""
+
+            class _State:
+                should_stop = False
+                stft_phases_executed: list = []
+
+            def start(self, *a, **kw):
+                return self._State()
+
+            def check_after_phase(self, state, phase_id, audio, scores, sr):
+                if "phase_03" in phase_id:
+                    # Return pre-phase audio (simulated rollback target) and True
+                    return audio, True  # rolled back — caller must revert current_audio
+                return audio, False
+
+        with patch("backend.core.cumulative_interaction_guard.get_interaction_guard", return_value=_RollbackGuard()):
+            out, executed, _sk, _def = restorer._execute_pipeline(
+                audio=audio_in,
+                sample_rate=SR,
+                material_type=MaterialType.VINYL,
+                defect_result=types.SimpleNamespace(scores={}),
+                selected_phases=["phase_05_rumble_filter", "phase_03_denoise"],
+            )
+
+        # The fadeout region of the output must NOT be louder than the input fadeout
+        fadeout_out = out[-fadeout_samples:]
+        fadeout_in = audio_in[-fadeout_samples:]
+        rms_out = float(np.sqrt(np.mean(np.asarray(fadeout_out, dtype=np.float64) ** 2)))
+        rms_in = float(np.sqrt(np.mean(np.asarray(fadeout_in, dtype=np.float64) ** 2)))
+
+        # With fix: no makeup → fadeout rms_out ≈ rms_in * 0.5 (HPF factor) or lower
+        # Without fix: makeup unlocked by phase_03 authority → rms_out >> rms_in → Pegelexplosion
+        ratio_db = 20.0 * np.log10((rms_out + 1e-12) / (rms_in + 1e-12))
+        assert ratio_db <= 3.0, (
+            f"§2.45a-VII Pegelexplosion in fadeout after CIG-rollback of phase_03: "
+            f"output is {ratio_db:.1f} dB louder than input fadeout. "
+            f"rms_in={rms_in:.6f}, rms_out={rms_out:.6f}. "
+            "CIG-Rollback must block both _allow_positive_makeup_gain unlock "
+            "and cumulative guard makeup application."
+        )

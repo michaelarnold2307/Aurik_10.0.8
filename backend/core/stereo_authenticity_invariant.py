@@ -96,7 +96,9 @@ def _compute_ms_correlation(audio: np.ndarray) -> float:
     std_r = np.std(right)
     if std_l < 1e-10 or std_r < 1e-10:
         return 1.0
-    corr = float(np.corrcoef(left, right)[0, 1])
+    _la = left - left.mean()
+    _ra = right - right.mean()
+    corr = float(np.dot(_la, _ra) / (float(np.linalg.norm(_la)) * float(np.linalg.norm(_ra)) + 1e-10))
     return float(np.clip(corr, -1.0, 1.0))
 
 

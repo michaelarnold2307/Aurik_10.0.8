@@ -473,6 +473,10 @@ class AirBandEnhancement(PhaseInterface):
                 a = np.array([1, a1 / a0, a2 / a0])
                 self._shelf_coeffs[cache_key] = (b, a)
             b, a = self._shelf_coeffs[cache_key]
+        # §2.51 Anti-Zeitversatz: filtfilt (Zero-Phase) statt lfilter — Shelf-EQ darf keine
+        # Gruppenlatenz erzeugen (hörbar als Zeitversatz auf HF-Transienten/Vokaleinsätzen).
+        if len(audio) >= 9:
+            return signal.filtfilt(b, a, audio)
         return signal.lfilter(b, a, audio)
 
     def _apply_exciter(self, audio: np.ndarray, sample_rate: int, mix: float, drive: float) -> np.ndarray:
@@ -483,7 +487,8 @@ class AirBandEnhancement(PhaseInterface):
                     4, self.AIR_BAND_HZ, btype="band", fs=sample_rate, output="sos"
                 )
             sos = self._sos_air_cache[sample_rate]
-        hf = signal.sosfilt(sos, audio)
+        # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) statt sosfilt — hf + audio werden gemischt.
+        hf = signal.sosfiltfilt(sos, audio)
         excited_hf = np.tanh(hf * drive * 2) / (drive + 0.5)
         return audio + excited_hf * mix
 

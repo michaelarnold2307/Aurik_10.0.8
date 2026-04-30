@@ -1113,27 +1113,39 @@ class TapeHissReductionPhase(PhaseInterface):
                 ref_indices = np.where(ref_zm)[0]
                 n_ref_zone = len(ref_indices)
 
-                # Temporal resampling
+                # Temporal resampling — vectorised (replaces per-bin Python loop)
                 if n_z_t != n_t and len(f_z_zone) > 0:
-                    t_src = np.linspace(0.0, 1.0, n_z_t)
-                    t_dst = np.linspace(0.0, 1.0, n_t)
-                    G_zone_t = np.empty((len(f_z_zone), n_t), dtype=np.float64)
-                    for k in range(len(f_z_zone)):
-                        G_zone_t[k, :] = np.interp(t_dst, t_src, G_zone[k, :])
+                    # Both src and dst are regularly spaced → integer-index lerp
+                    _idx_c = np.linspace(0.0, n_z_t - 1, n_t)
+                    _idx_lo = np.clip(np.floor(_idx_c).astype(int), 0, n_z_t - 2)
+                    _idx_hi = _idx_lo + 1
+                    _frac = (_idx_c - _idx_lo)[np.newaxis, :]  # (1, n_t)
+                    G_zone_t = ((1.0 - _frac) * G_zone[:, _idx_lo] + _frac * G_zone[:, _idx_hi]).astype(np.float64)
                 else:
                     G_zone_t = G_zone.astype(np.float64)
 
-                # Frequency interpolation
+                # Frequency interpolation — vectorised (replaces n_t Python loop iterations)
                 G_ref_zone = np.empty((n_ref_zone, n_t), dtype=np.float64)
                 if len(f_z_zone) >= 2:
-                    for ti in range(n_t):
-                        G_ref_zone[:, ti] = np.interp(
-                            f_ref_zone,
-                            f_z_zone,
-                            G_zone_t[:, ti],
-                            left=float(G_zone_t[0, ti]),
-                            right=float(G_zone_t[-1, ti]),
-                        )
+                    # Precompute interpolation weights (fixed for all time frames)
+                    _src_x = np.asarray(f_z_zone, dtype=np.float64)
+                    _dst_x = np.asarray(f_ref_zone, dtype=np.float64)
+                    _i = np.searchsorted(_src_x, _dst_x, side="right") - 1
+                    _i_lo = np.clip(_i, 0, len(_src_x) - 2)
+                    _i_hi = _i_lo + 1
+                    _dx = _src_x[_i_hi] - _src_x[_i_lo]
+                    _frac2 = np.clip((_dst_x - _src_x[_i_lo]) / np.maximum(_dx, 1e-12), 0.0, 1.0)
+                    # Handle left / right extrapolation
+                    _left = _dst_x < _src_x[0]
+                    _right = _dst_x > _src_x[-1]
+                    _frac2[_left] = 0.0
+                    _frac2[_right] = 1.0
+                    _i_lo[_left] = 0
+                    _i_hi[_left] = 0
+                    _i_lo[_right] = len(_src_x) - 1
+                    _i_hi[_right] = len(_src_x) - 1
+                    # Matrix lerp: (n_ref, n_t)
+                    G_ref_zone = (1.0 - _frac2[:, None]) * G_zone_t[_i_lo, :] + _frac2[:, None] * G_zone_t[_i_hi, :]
                 elif len(f_z_zone) == 1:
                     G_ref_zone[:, :] = G_zone_t[0:1, :]
                 else:
@@ -1146,10 +1158,9 @@ class TapeHissReductionPhase(PhaseInterface):
                 else:
                     hann_w = np.ones(n_ref_zone)
 
-                for ki, k in enumerate(ref_indices):
-                    w = float(hann_w[ki])
-                    G_acc[k, :] += w * G_ref_zone[ki, :]
-                    w_acc[k] += w
+                # Vectorised accumulation (replaces per-bin Python loop)
+                G_acc[ref_indices, :] += hann_w[:, None] * G_ref_zone
+                w_acc[ref_indices] += hann_w
 
             except Exception as zone_exc:
                 logger.warning("MRSA Phase 29 zone '%s' failed: %s", zone_name, zone_exc)
@@ -1335,14 +1346,16 @@ class TapeHissReductionPhase(PhaseInterface):
 
                     # Apply filters
                     is_stereo = audio.ndim == 2
+                    # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — LP+HP werden
+                    # rekombiniert; sosfilt würde Zeitversatz + Filtereinschalttransiente erzeugen.
                     if is_stereo:
                         for ch in range(2):
-                            lf_original = signal.sosfilt(sos_lp, audio[:, ch])
-                            hf_refined = signal.sosfilt(sos_hp, refined[:, ch])
+                            lf_original = signal.sosfiltfilt(sos_lp, audio[:, ch])
+                            hf_refined = signal.sosfiltfilt(sos_hp, refined[:, ch])
                             audio[:, ch] = lf_original + hf_refined
                     else:
-                        lf_original = signal.sosfilt(sos_lp, audio)
-                        hf_refined = signal.sosfilt(sos_hp, refined)
+                        lf_original = signal.sosfiltfilt(sos_lp, audio)
+                        hf_refined = signal.sosfiltfilt(sos_hp, refined)
                         audio[:] = lf_original + hf_refined
 
                     logger.info("✅ ML HF refinement successful (>2kHz band)")

@@ -94,7 +94,13 @@ def audio_sample_count(audio: np.ndarray) -> int:
 
 
 def compute_gated_rms_linear(sig: np.ndarray, gate_dbfs: float = -50.0) -> float:
-    """Compute frame-gated RMS in linear scale (stereo-safe via mono energy)."""
+    """Compute frame-gated RMS in linear scale (stereo-safe via mono energy).
+
+    §2.45a v9.12.1: Adaptive gate (same as _rms_dbfs_gated in UV3).
+    effective_gate = max(gate_dbfs, P5+10) — excludes vinyl/shellac surface-noise
+    frames (-35 to -45 dBFS) so that noise removal is not misread as a music-level drop.
+    Old fixed gate (-50 dBFS) included all noise frames → false drop → Pegelexplosion.
+    """
     x = np.asarray(sig, dtype=np.float64)
     if x.size == 0:
         return 0.0
@@ -108,13 +114,24 @@ def compute_gated_rms_linear(sig: np.ndarray, gate_dbfs: float = -50.0) -> float
     if n < frame:
         return float(np.sqrt(np.mean(x * x)) + 1e-12)
 
-    gate_lin2 = 10.0 ** (gate_dbfs / 10.0)
-    vals: list[float] = []
+    # Collect all frame energies first (for adaptive gate computation)
+    all_frame_power: list[float] = []
     for i in range(0, n - frame + 1, frame):
         f = x[i : i + frame]
-        p = float(np.mean(f * f))
-        if p > gate_lin2:
-            vals.append(p)
+        all_frame_power.append(float(np.mean(f * f)))
+
+    # §2.45a Adaptive gate: P5+10 dB above noise floor
+    effective_gate_dbfs = gate_dbfs
+    if len(all_frame_power) >= 10:
+        _p5_power = float(np.percentile(all_frame_power, 5))
+        if _p5_power > 0.0:
+            _p5_db = 10.0 * float(np.log10(_p5_power + 1e-12))
+            _adaptive = _p5_db + 10.0
+            if _adaptive > gate_dbfs:  # True whenever P5 > gate-10 (all real audio)
+                effective_gate_dbfs = min(_adaptive, gate_dbfs + 25.0)
+
+    gate_lin2 = 10.0 ** (effective_gate_dbfs / 10.0)
+    vals: list[float] = [p for p in all_frame_power if p > gate_lin2]
     if not vals:
         return float(np.sqrt(np.mean(x * x)) + 1e-12)
     return float(np.sqrt(float(np.mean(vals))) + 1e-12)
@@ -132,6 +149,7 @@ def apply_musical_gain_envelope(
     gate_dbfs: float = -36.0,
     crossfade_ms: float = 10.0,
     sr: int = 48000,
+    reference_for_gate: np.ndarray | None = None,
 ) -> np.ndarray:
     """§2.45a-II: Apply makeup gain ONLY to musical frames, leaving silence at gain=1.0.
 
@@ -139,20 +157,27 @@ def apply_musical_gain_envelope(
     A short crossfade (box-blur on the gate envelope) prevents hard clicks at
     music/silence boundaries.
 
-    Adaptive gate (§2.45a noise-floor-aware):
-        If the audio's 5th-percentile frame RMS is more than 12 dB above the
-        nominal gate_dbfs, the recording has an elevated noise floor (vinyl/shellac
-        surface noise typically at -35 to -45 dBFS).  In that case the effective
-        gate is raised to (P5 + 6 dB), capped at (gate_dbfs + 25 dB), so that
-        surface-noise frames below the threshold are NOT amplified while musical
-        frames (typically ≥ 10 dB above the noise floor) still receive the full gain.
+    Adaptive gate (§2.45a noise-floor-aware, v9.12.1):
+        effective_gate = max(gate_dbfs, P5+10) where P5 is the 5th-percentile frame RMS.
+
+        When ``reference_for_gate`` is provided (e.g. the pre-phase audio), P5 is
+        computed from that signal instead of from ``audio``.  This is critical for
+        partially-denoised audio: after phase_28/phase_09 remove surface noise, some
+        frames drop to -55 dBFS (fully denoised) dragging P5 down to -50 dBFS.
+        With P5=-50: P5+10=-40, condition -40>-36.0 is False → gate stays at -36 →
+        residual noise at -35 dBFS gets amplified → Pegelexplosion.
+        Using the pre-phase reference (P5≈-42 for vinyl): P5+10=-32>-36 → gate=-32 →
+        residual noise at -35 excluded → no amplification.
 
     Args:
-        audio:         Input audio (1D or 2D samples-first or channels-first float32).
-        gain:          Linear gain factor (>= 1.0; values <= 1.0005 are skipped).
-        gate_dbfs:     Nominal frame energy threshold below which a frame is silence.
-        crossfade_ms:  Width of the smoothing window at music/silence transitions.
-        sr:            Sample rate used to convert crossfade_ms to samples.
+        audio:              Input audio (1D or 2D float32).
+        gain:               Linear gain factor (>= 1.0; values <= 1.0005 are skipped).
+        gate_dbfs:          Nominal frame energy threshold below which a frame is silence.
+        crossfade_ms:       Width of the smoothing window at music/silence transitions.
+        sr:                 Sample rate used to convert crossfade_ms to samples.
+        reference_for_gate: Optional pre-phase audio for adaptive-gate P5 estimation.
+                            When set, the gate is computed from this signal's noise floor
+                            (not from the post-processing audio's altered P5).
 
     Returns:
         Audio with gain applied only on musical frames, same shape and dtype.
@@ -161,7 +186,7 @@ def apply_musical_gain_envelope(
         return audio
     arr = np.asarray(audio, dtype=np.float32)
     was_2d = arr.ndim == 2
-    # Build mono energy signal for gate detection
+    # Build mono energy signal for gate detection (from audio being amplified)
     if was_2d:
         ch_first = arr.shape[0] <= 2 and arr.shape[1] > arr.shape[0]
         mono = np.mean(arr, axis=0) if ch_first else np.mean(arr, axis=1)
@@ -171,7 +196,7 @@ def apply_musical_gain_envelope(
     frame_len = 480  # 10 ms @ 48 kHz
     n_full = max(1, n // frame_len)
 
-    # --- Pass 1: collect per-frame RMS values ---
+    # --- Pass 1: collect per-frame RMS values (for gate-envelope construction) ---
     frame_rms_db: list[float] = []
     for fi in range(n_full):
         s = fi * frame_len
@@ -185,27 +210,44 @@ def apply_musical_gain_envelope(
         tail_rms_db = float(20.0 * np.log10(float(np.sqrt(np.mean(tail * tail) + 1e-12)) + 1e-12))
         frame_rms_db.append(tail_rms_db)
 
-    # --- Adaptive gate: raise threshold for recordings with elevated noise floor ---
-    # (Vinyl/shellac surface noise at -40 to -46 dBFS would pass a fixed -50 dBFS gate
-    #  and receive makeup gain, causing Pegelexplosion in "silent" sections.)
-    #
-    # BUG HISTORY (v9.11.70 → v9.11.75): the original condition `p5 > gate_dbfs + 12.0`
-    # (= -38 dBFS) never triggered for vinyl (~-44 dBFS) because -44 < -38. The gate
-    # stayed at -50 dBFS and fadeout hiss frames at -44 dBFS were amplified. Fix: raise
-    # gate whenever p5+6 would exceed the nominal gate, i.e. the noise floor is above it.
+    # --- Adaptive gate: raise threshold to exclude surface-noise frames ---
+    # §2.45a v9.12.1: effective_gate = max(gate_dbfs, P5+10).
+    # P5 is computed from ``reference_for_gate`` (pre-phase audio) when provided:
+    # After partial denoising, the processed audio's P5 drops to -50+ dBFS (fully-
+    # denoised frames drag it down), so the gate logic based on the processed audio
+    # fails to exclude residual vinyl-noise frames at -35 dBFS → Pegelexplosion.
+    # Using the PRE-phase reference preserves the correct noise-floor estimate.
+    _gate_source_rms_db: list[float]
+    if reference_for_gate is not None:
+        try:
+            _ref_arr = np.asarray(reference_for_gate, dtype=np.float32)
+            if _ref_arr.ndim == 2:
+                _ref_ch = _ref_arr.shape[0] <= 2 and _ref_arr.shape[1] > _ref_arr.shape[0]
+                _ref_mono = np.mean(_ref_arr, axis=0) if _ref_ch else np.mean(_ref_arr, axis=1)
+            else:
+                _ref_mono = _ref_arr
+            _ref_n = len(_ref_mono)
+            _ref_n_full = max(1, _ref_n // frame_len)
+            _gate_source_rms_db = []
+            for _fi in range(_ref_n_full):
+                _s, _e = _fi * frame_len, min((_fi + 1) * frame_len, _ref_n)
+                _c = _ref_mono[_s:_e].astype(np.float64)
+                _gate_source_rms_db.append(float(20.0 * np.log10(float(np.sqrt(np.mean(_c * _c) + 1e-12)) + 1e-12)))
+            if _ref_n > _ref_n_full * frame_len:
+                _tail_c = _ref_mono[_ref_n_full * frame_len :].astype(np.float64)
+                _gate_source_rms_db.append(
+                    float(20.0 * np.log10(float(np.sqrt(np.mean(_tail_c * _tail_c) + 1e-12)) + 1e-12))
+                )
+        except Exception:
+            _gate_source_rms_db = frame_rms_db
+    else:
+        _gate_source_rms_db = frame_rms_db
+
     effective_gate = gate_dbfs
-    if len(frame_rms_db) >= 10:
-        p5_rms_db = float(np.percentile(frame_rms_db, 5))
-        # Always compute the noise-floor-adaptive gate (p5 + 10 dB above noise floor).
-        # Only raise effective_gate — never lower it below the nominal.
-        # Margin changed from +6 to +10 dB (2026-04-25):
-        # With +6 and p5=-42 dBFS: _adaptive=-36, condition -36>-36 is False → no trigger!
-        # Vinyl noise at -35 dBFS would still get amplified. +10 ensures -32 > -36 triggers.
+    if len(_gate_source_rms_db) >= 10:
+        p5_rms_db = float(np.percentile(_gate_source_rms_db, 5))
         _adaptive = p5_rms_db + 10.0
         if _adaptive > gate_dbfs:
-            # Noise floor is above nominal gate → set effective gate 10 dB above
-            # noise floor so hiss/silence frames are NOT amplified while musical
-            # frames (≥ 10 dB above noise floor) still receive the full gain.
             effective_gate = min(_adaptive, gate_dbfs + 25.0)
 
     # --- Pass 2: build gate envelope using adaptive threshold ---
@@ -230,10 +272,15 @@ def apply_musical_gain_envelope(
     # §2.30b Stufe 5 — Per-sample quiet-zone hard clamp (AFTER smoothing)
     # Box-blur/crossfade smoothing bleeds positive gain into frames bordering
     # quiet zones (fadeout, intro hiss).  Any 10 ms frame whose pre-smoothing
-    # RMS was ≤ -36 dBFS MUST NOT receive a per-sample gain > 1.0, regardless
-    # of what the smoothed gate_env says.  This prevents Pegelexplosion at the
-    # source — no rescue logic needed downstream.
-    _QUIET_ZONE_DB = -36.0
+    # RMS was ≤ effective_gate MUST NOT receive a per-sample gain > 1.0,
+    # regardless of what the smoothed gate_env says.
+    # v9.12.1: Use effective_gate (adaptive) instead of hardcoded -36 dBFS.
+    # For real vinyl: effective_gate ≈ -28 dBFS → vinyl surface noise (-35 dBFS)
+    # is correctly clamped.  With -36 dBFS, noise at -35 dBFS was NOT clamped
+    # (−35 > −36) → Pegelexplosion after boundary crossfade.
+    # Floor at gate_dbfs (−36) so we never clamp more aggressively than -36 on
+    # non-vinyl material where effective_gate might be lower than gate_dbfs.
+    _QUIET_ZONE_DB = max(gate_dbfs, effective_gate)
     for _fi, _rdb in enumerate(full_rms):
         if _rdb <= _QUIET_ZONE_DB:
             _fs = _fi * frame_len

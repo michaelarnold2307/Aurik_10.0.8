@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
+from scipy.signal import correlate as _sc_correlate
 
 _logger = logging.getLogger(__name__)
 
@@ -294,7 +295,7 @@ class SpectralInpainter:
         # Generiere synthetisches Signal via Pattern Repetition + spectral Noise Modulation
         try:
             # Strategie 1: Pattern Repetition (falls periodisches Signal)
-            correlation = np.correlate(pre_context, pre_context, mode="full")
+            correlation = _sc_correlate(pre_context, pre_context, mode="full", method="fft")
             correlation = correlation[len(correlation) // 2 :]  # Nur positive Lags
 
             # Finde dominante Periode

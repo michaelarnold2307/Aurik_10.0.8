@@ -41,7 +41,9 @@ class VoiceMatchChecker:
             return True
         if std_o < 1e-12 or std_p < 1e-12:
             return False
-        corr = float(np.corrcoef(orig, proc)[0, 1])
+        _oa = orig - orig.mean()
+        _pa = proc - proc.mean()
+        corr = float(np.dot(_oa, _pa) / (float(np.linalg.norm(_oa)) * float(np.linalg.norm(_pa)) + 1e-10))
         return corr >= self.threshold
 
 
@@ -141,7 +143,9 @@ class PitchContourChecker:
             return True
         if std_o < 1e-12 or std_p < 1e-12:
             return False
-        corr = float(np.corrcoef(orig, proc)[0, 1])
+        _oa = orig - orig.mean()
+        _pa = proc - proc.mean()
+        corr = float(np.dot(_oa, _pa) / (float(np.linalg.norm(_oa)) * float(np.linalg.norm(_pa)) + 1e-10))
         return corr >= self.threshold
 
 

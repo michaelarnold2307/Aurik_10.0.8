@@ -137,6 +137,7 @@ __all__ = [
     "normalize_pipeline_health_state",
     "resolve_pipeline_fail_reason",
     "get_experience_insights",
+    "record_goal_feedback",
     # Hintergrund-Vorwärmung
     "warmup_models_background",
     # §2.38 KMV / §2.39 OOM-Recovery / §2.37 RAM-Budget
@@ -942,6 +943,40 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         "carrier_chain_recovery_ratio": _safe_float(_meta.get("carrier_chain_recovery_ratio", 0.0), 0.0),
         "carrier_reference_shifted": bool(_meta.get("reference_shifted", False)),
     }
+
+
+def record_goal_feedback(
+    winning_goals: list[str],
+    failing_goals: list[str],
+    rating_thumbs_up: bool = True,
+    genre: str = "",
+    material: str = "",
+    era: str = "",
+) -> None:
+    """§C10 Record listener thumbs-up/down feedback for Bayesian EMA calibration.
+
+    Stores a UserFeedbackEntry and updates per-goal EMA nudges in
+    sessions/goal_feedback.json (non-blocking — errors are logged, not raised).
+    """
+    try:
+        from backend.core.song_goal_importance import (  # type: ignore[import]
+            UserFeedbackEntry,
+            get_feedback_store,
+        )
+
+        entry = UserFeedbackEntry(
+            genre=str(genre or ""),
+            material=str(material or ""),
+            era=str(era or ""),
+            rating_thumbs_up=bool(rating_thumbs_up),
+            winning_goals=list(winning_goals or []),
+            failing_goals=list(failing_goals or []),
+        )
+        get_feedback_store().record_feedback(entry)
+    except Exception as _fb_exc:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning("§C10 record_goal_feedback failed: %s", _fb_exc)
 
 
 def get_stem_remix_balancer_fn():
