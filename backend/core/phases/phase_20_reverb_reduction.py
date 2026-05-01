@@ -879,8 +879,18 @@ class ReverbReduction(PhaseInterface):
                 # adaptive noise-floor gate — prevents Pegelexplosion in vinyl/shellac
                 # silent sections (surface noise ~-40 dBFS > fixed -50 dBFS gate).
                 from backend.core.audio_utils import apply_musical_gain_envelope as _amge_20
+                from backend.core.audio_utils import compute_signal_relative_gate_dbfs as _sig_gate_20
 
-                processed_audio = _amge_20(processed_audio, _gain, gate_dbfs=-36.0, crossfade_ms=10.0, sr=48000)
+                # §2.45a-II: signal-relative gate — CEDAR/iZotope RX approach (v9.12.2)
+                _gate_dbfs_20 = _sig_gate_20(original_audio, material_key=material_key)
+                processed_audio = _amge_20(
+                    processed_audio,
+                    _gain,
+                    gate_dbfs=_gate_dbfs_20,
+                    crossfade_ms=10.0,
+                    sr=48000,
+                    reference_for_gate=original_audio,
+                )
                 processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 current_peak = float(np.percentile(np.abs(processed_audio), 99.9))
                 if current_peak > 0.98:

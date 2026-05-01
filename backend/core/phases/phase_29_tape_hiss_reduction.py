@@ -35,7 +35,12 @@ import time
 import numpy as np
 from scipy import signal
 
-from backend.core.audio_utils import apply_musical_gain_envelope, restore_layout, to_channels_last
+from backend.core.audio_utils import (
+    apply_musical_gain_envelope,
+    compute_signal_relative_gate_dbfs,
+    restore_layout,
+    to_channels_last,
+)
 from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
@@ -724,12 +729,15 @@ class TapeHissReductionPhase(PhaseInterface):
                 if _peak_99 > 1e-8:
                     # Peak-Guard: Gain nur soweit wie Clipping-frei möglich
                     _safe_gain = min(_gain_lin, 0.999 / _peak_99)
+                    # §2.45a-II: signal-relative gate — CEDAR/iZotope RX approach (v9.12.2)
+                    _gate_dbfs_29 = compute_signal_relative_gate_dbfs(_orig_arr, material_key=material_key)
                     processed_audio = apply_musical_gain_envelope(
                         _proc_arr,
                         _safe_gain,
-                        gate_dbfs=-36.0,
+                        gate_dbfs=_gate_dbfs_29,
                         crossfade_ms=10.0,
                         sr=48000,
+                        reference_for_gate=_orig_arr,
                     )
                     _peak_after = float(np.percentile(np.abs(np.asarray(processed_audio, dtype=np.float32)), 99.9))
                     if _peak_after > 0.999 and _peak_after > 1e-8:

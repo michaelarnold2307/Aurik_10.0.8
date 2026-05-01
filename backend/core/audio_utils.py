@@ -143,6 +143,95 @@ def compute_gated_rms_dbfs(sig: np.ndarray, gate_dbfs: float = -50.0) -> float:
     return float(20.0 * np.log10(rms + 1e-12))
 
 
+# §2.45a: Per-material noise floor gate used as hard minimum in compute_signal_relative_gate_dbfs.
+# Values = typical noise floor + 6 dB margin (AES/iZotope RX practice).
+# Vinyl ≈ -33 dBFS noise → gate -27 dBFS; shellac ≈ -20 dBFS → gate -14 dBFS.
+_MATERIAL_GATE_DBFS: dict[str, float] = {
+    "shellac": -14.0,
+    "wax_cylinder": -10.0,
+    "lacquer_disc": -20.0,
+    "wire_recording": -20.0,
+    "acoustic_78": -14.0,
+    "vinyl": -27.0,
+    "reel_tape": -32.0,
+    "cassette": -38.0,
+    "tape": -32.0,
+    "mp3_low": -44.0,
+    "mp3_medium": -46.0,
+    "cd_digital": -48.0,
+    "streaming": -48.0,
+    "dat": -48.0,
+    "minidisc": -44.0,
+    "unknown": -36.0,
+}
+
+
+def compute_signal_relative_gate_dbfs(
+    reference_audio: np.ndarray,
+    margin_db: float = 9.0,
+    percentile: float = 15.0,
+    fallback_gate_dbfs: float = -36.0,
+    frame_len: int = 480,
+    material_key: str | None = None,
+) -> float:
+    """§2.45a Material-adaptive gate: signal-relative threshold (CEDAR/iZotope RX approach).
+
+    Professional tools (CEDAR, iZotope RX 11, Waves Z-Noise) measure the noise floor of
+    the actual source signal and set the gate = noise_floor + margin (6–10 dB).
+    This avoids the failure mode of fixed absolute thresholds (e.g. -36.0 dBFS) when
+    the source noise floor is higher than the threshold (vinyl: -33 dBFS > -36 dBFS).
+
+    Uses the P15 percentile of frame RMS values (not P5) to get a robust noise floor
+    estimate that stays in the actual noise region even for loud pop/rock content where
+    P5 can fall into the music region.
+
+    The computed gate can only be equal to or HIGHER than the material floor from
+    _MATERIAL_GATE_DBFS — the material floor acts as a hard minimum (same design as
+    CEDAR minimum-statistics: measured floor + margin, bounded by known carrier floor).
+
+    Args:
+        reference_audio: Pre-phase source audio (the signal whose noise floor to estimate).
+        margin_db:        dB margin above noise floor (default 9 dB, AES/iZotope practice).
+        percentile:       Percentile of frame RMS to use as noise floor (default 15).
+        fallback_gate_dbfs: Used when reference is too short to estimate (< 10 frames).
+        frame_len:        Frame length in samples (default 480 = 10 ms @ 48 kHz).
+        material_key:     Optional material type (e.g. "vinyl", "shellac"). If provided,
+                          _MATERIAL_GATE_DBFS[material_key] acts as the minimum gate.
+
+    Returns:
+        Gate threshold in dBFS. Frames above this threshold receive makeup gain.
+    """
+    _mat_floor = _MATERIAL_GATE_DBFS.get(str(material_key or "unknown").lower(), fallback_gate_dbfs)
+    _floor = max(_mat_floor, fallback_gate_dbfs)
+    try:
+        arr = np.asarray(reference_audio, dtype=np.float32)
+        if arr.ndim == 2:
+            ch_first = arr.shape[0] <= 2 and arr.shape[1] > arr.shape[0]
+            mono = np.mean(arr, axis=0) if ch_first else np.mean(arr, axis=1)
+        else:
+            mono = arr
+        n = len(mono)
+        n_full = max(1, n // frame_len)
+        if n_full < 10:
+            return _floor
+        rms_db_vals: list[float] = []
+        for fi in range(n_full):
+            s, e = fi * frame_len, min((fi + 1) * frame_len, n)
+            chunk = mono[s:e].astype(np.float64)
+            rms_db_vals.append(float(20.0 * np.log10(float(np.sqrt(np.mean(chunk * chunk) + 1e-12)) + 1e-12)))
+        tail_s = n_full * frame_len
+        if tail_s < n:
+            tail = mono[tail_s:].astype(np.float64)
+            rms_db_vals.append(float(20.0 * np.log10(float(np.sqrt(np.mean(tail * tail) + 1e-12)) + 1e-12)))
+        if len(rms_db_vals) < 10:
+            return _floor
+        noise_floor_db = float(np.percentile(rms_db_vals, percentile))
+        gate = float(np.clip(noise_floor_db + margin_db, -60.0, -10.0))
+        return max(_floor, gate)  # material floor as minimum; signal can only raise it
+    except Exception:
+        return _floor
+
+
 def apply_musical_gain_envelope(
     audio: np.ndarray,
     gain: float,

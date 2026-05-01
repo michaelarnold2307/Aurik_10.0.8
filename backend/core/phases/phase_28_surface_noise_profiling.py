@@ -149,6 +149,27 @@ class SurfaceNoiseProfiling(PhaseInterface):
         "unknown": 1.5,
     }
 
+    # §2.45a Material-adaptive gate: noise_floor + 6 dB margin (AES/iZotope RX practice).
+    # Vinyl noise ≈ −33 dBFS → gate −27 dBFS; fixed −36 dBFS lets noise frames through → Pegelexplosion.
+    _MAKEUP_GATE_DBFS = {
+        "shellac": -14.0,
+        "wax_cylinder": -10.0,
+        "lacquer_disc": -20.0,
+        "wire_recording": -20.0,
+        "acoustic_78": -14.0,
+        "vinyl": -27.0,
+        "reel_tape": -32.0,
+        "cassette": -38.0,
+        "tape": -32.0,
+        "mp3_low": -44.0,
+        "mp3_medium": -46.0,
+        "cd_digital": -48.0,
+        "streaming": -48.0,
+        "dat": -48.0,
+        "minidisc": -44.0,
+        "unknown": -36.0,
+    }
+
     def __init__(self):
         super().__init__()
         self.name = "Surface Noise Profiling v2 Professional"
@@ -363,10 +384,17 @@ class SurfaceNoiseProfiling(PhaseInterface):
         processed_audio: np.ndarray,
         material: MaterialType,
     ) -> tuple[np.ndarray, dict[str, float]]:
-        from backend.core.audio_utils import apply_musical_gain_envelope, compute_gated_rms_dbfs
+        from backend.core.audio_utils import (
+            apply_musical_gain_envelope,
+            compute_gated_rms_dbfs,
+            compute_signal_relative_gate_dbfs,
+        )
 
         material_key = getattr(material, "name", str(material)).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
+        # §2.45a signal-relative gate: max(material_floor, P15(reference)+9 dB)
+        # CEDAR/iZotope RX approach — gate derived from actual source noise floor (v9.12.2).
+        _gate_dbfs = compute_signal_relative_gate_dbfs(original_audio, material_key=material_key)
 
         # §2.45a-I Gated-RMS: only musical frames > −50 dBFS
         _rms_in_db = compute_gated_rms_dbfs(np.asarray(original_audio, dtype=np.float32))
@@ -389,7 +417,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
                 processed_audio = apply_musical_gain_envelope(
                     processed_audio,
                     _gain_lin,
-                    gate_dbfs=-36.0,
+                    gate_dbfs=_gate_dbfs,
                     crossfade_ms=10.0,
                     sr=48000,
                     reference_for_gate=original_audio,

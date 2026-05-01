@@ -81,6 +81,7 @@ import scipy.signal as signal
 
 from backend.core.audio_utils import apply_musical_gain_envelope as _amge_09
 from backend.core.audio_utils import compute_gated_rms_dbfs as _gated_rms_dbfs_09
+from backend.core.audio_utils import compute_signal_relative_gate_dbfs as _sig_gate_09
 from backend.core.audio_utils import to_channels_last
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
@@ -824,13 +825,15 @@ class CrackleRemovalPhase(PhaseInterface):
             _makeup_09 = float(np.clip(_req_gain_db, 0.0, 6.0))
             if _makeup_09 > 0.0:
                 _gain_09 = float(10.0 ** (_makeup_09 / 20.0))
+                # §2.45a-II: signal-relative gate — CEDAR/iZotope RX approach (v9.12.2)
+                _gate_dbfs_09 = _sig_gate_09(audio, material_key=material_type)
                 restored = _amge_09(
                     restored,
                     _gain_09,
-                    gate_dbfs=-36.0,
+                    gate_dbfs=_gate_dbfs_09,
                     crossfade_ms=10.0,
                     sr=48000,
-                    reference_for_gate=audio,  # pre-phase audio → correct noise-floor P5 (v9.12.1)
+                    reference_for_gate=audio,
                 )
                 restored = np.clip(restored, -1.0, 1.0).astype(np.float32)
                 # §2.45a-III: soft-limiter only when real clipping risk

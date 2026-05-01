@@ -493,7 +493,7 @@ class NoiseGate(PhaseInterface):
         processed_audio: np.ndarray,
         material: MaterialType,
     ) -> tuple[np.ndarray, dict[str, float]]:
-        from backend.core.audio_utils import apply_musical_gain_envelope
+        from backend.core.audio_utils import apply_musical_gain_envelope, compute_signal_relative_gate_dbfs
 
         material_key = getattr(material, "name", str(material)).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
@@ -511,9 +511,15 @@ class NoiseGate(PhaseInterface):
             makeup_gain_db = float(np.clip(required_gain_db, 0.0, 6.0))
             if makeup_gain_db > 0.0:
                 _gain_lin = float(10.0 ** (makeup_gain_db / 20.0))
-                # §2.45a-II: gain applied ONLY to musical frames via envelope
+                # §2.45a-II: signal-relative gate — CEDAR/iZotope RX approach (v9.12.2)
+                _gate_dbfs_18 = compute_signal_relative_gate_dbfs(original_audio, material_key=material_key)
                 processed_audio = apply_musical_gain_envelope(
-                    processed_audio, _gain_lin, gate_dbfs=-36.0, crossfade_ms=10.0, sr=48000
+                    processed_audio,
+                    _gain_lin,
+                    gate_dbfs=_gate_dbfs_18,
+                    crossfade_ms=10.0,
+                    sr=48000,
+                    reference_for_gate=original_audio,
                 )
                 processed_audio = np.clip(processed_audio, -1.0, 1.0).astype(np.float32)
                 # §2.45a-III: soft-limiter only when peak99 > 0.98
