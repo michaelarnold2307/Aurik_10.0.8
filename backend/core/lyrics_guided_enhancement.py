@@ -213,6 +213,7 @@ class ContentAwareProcessor:
         elif phoneme_type == "vowel_stressed":
             # LPC Burg Ord. 30–40 → F1–F4 → symmetric shelving ±2 semitones
             try:
+                from scipy.signal import filtfilt as _lge_filtfilt
                 from scipy.signal import lfilter
 
                 order = min(36, n // 4)  # Ord 30–40 preferred; cap for short segments
@@ -238,7 +239,10 @@ class ContentAwareProcessor:
                         continue
                     _butter_ba = _sig.butter(2, [fl / nyq, min(0.999, fh / nyq)], btype="band", output="ba")
                     b, a_filt = _butter_ba[0], _butter_ba[1]  # type: ignore[index]
-                    seg_band = lfilter(b, a_filt, seg_out)
+                    # §2.51: filtfilt (zero-phase) statt lfilter — Gruppenversatz IIR-BP
+                    # erzeugte Comb-Filter wenn Band zum Original addiert wird
+                    _lge_n = len(seg_out)
+                    seg_band = _lge_filtfilt(b, a_filt, seg_out) if _lge_n >= 15 else lfilter(b, a_filt, seg_out)
                     seg_out = seg_out + strength * 0.30 * seg_band  # additive formant lift
             except Exception:
                 seg_out = seg.copy()

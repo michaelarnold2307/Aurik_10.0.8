@@ -6892,14 +6892,17 @@ class UnifiedRestorerV3:
             # Guaranteed DSP-Fallback: Presence enhancement + NaN-Guard (§Checkliste §3.x)
             try:
                 from scipy.signal import butter as _butter
-                from scipy.signal import lfilter as _ex_lfilter
+                from scipy.signal import filtfilt as _ex_filtfilt
 
                 _ex_rms = float(np.sqrt(np.mean(restored_audio.astype(np.float64) ** 2) + 1e-12))
                 if _ex_rms > 1e-4:  # Nicht auf Stille anwenden
                     # Subtile Präsenz-Auffrischung (3–8 kHz, +0.5 dB) als Minimal-Harmonic-Boost
                     _nyq = sample_rate / 2.0
                     _ex_b, _ex_a = _butter(2, [min(3000.0 / _nyq, 0.95), min(8000.0 / _nyq, 0.99)], btype="band")
-                    _ex_presence = _ex_lfilter(_ex_b, _ex_a, restored_audio)
+                    # §2.51: filtfilt (zero-phase) statt lfilter — kausaler IIR-BP erzeugte
+                    # Gruppenversatz und Comb-Filter beim Addieren auf restored_audio
+                    _ex_n = restored_audio.shape[-1]
+                    _ex_presence = _ex_filtfilt(_ex_b, _ex_a, restored_audio) if _ex_n >= 15 else restored_audio * 0.0
                     # Gain-Faktor: 0.05 ≈ +0.4 dB Präsenz-Anhebung
                     restored_audio = np.clip(restored_audio + 0.05 * _ex_presence, -1.0, 1.0)
                 restored_audio = np.nan_to_num(restored_audio, nan=0.0, posinf=0.0, neginf=0.0)

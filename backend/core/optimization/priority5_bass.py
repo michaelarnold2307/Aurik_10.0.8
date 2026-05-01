@@ -9,7 +9,7 @@ character of the source material.
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import firwin, lfilter
+from scipy.signal import butter, sosfiltfilt
 
 
 class ResonancePreserver:
@@ -103,13 +103,13 @@ class PhaseCoherentBassProcessor:
         if len(x) == 0:
             return x.copy()
 
-        # Low-pass FIR to extract sub-bass (< 250 Hz)
+        # Low-pass to extract sub-bass (< 250 Hz) — zero-phase (§2.51: sosfiltfilt statt
+        # causalem lfilter, FIR lfilter(taps=127) erzeugte 63-Sample Gruppenversatz → Comb-Filter)
         nyq = sr / 2.0
         cutoff = min(250.0 / nyq, 0.99)
-        numtaps = 127
         try:
-            taps = firwin(numtaps, cutoff, window="hamming")
-            bass = lfilter(taps, [1.0], x.astype(np.float64))
+            _sos_bass = butter(4, cutoff, btype="low", output="sos")
+            bass = sosfiltfilt(_sos_bass, x.astype(np.float64)) if len(x) >= 15 else x.astype(np.float64)
         except Exception:
             bass = x.astype(np.float64)
 
