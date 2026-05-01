@@ -137,10 +137,12 @@ class HybridVocalEnhancer:
 
     def _apply_presence_eq(self, audio, sr, gain_db) -> np.ndarray:
         # Simpler parametrischer EQ (2-4 kHz)
-        from scipy.signal import butter, sosfilt
+        # §2.51 zero-phase: sosfiltfilt statt sosfilt — band wird zu audio addiert
+        from scipy.signal import butter, sosfilt, sosfiltfilt
 
         sos = butter(2, [2000 / (sr / 2), 4000 / (sr / 2)], btype="band", output="sos")
-        band = sosfilt(sos, audio)
+        _n = audio.shape[-1] if hasattr(audio, "shape") else len(audio)
+        band = sosfiltfilt(sos, audio) if _n >= 15 else sosfilt(sos, audio)
         return audio + band * (10 ** (gain_db / 20) - 1)
 
     def _apply_formant_ml(self, audio, sr) -> np.ndarray:
@@ -153,7 +155,7 @@ class HybridVocalEnhancer:
         shift = float(getattr(self.config, "formant_shift", 0.0))
         if abs(shift) < 0.01:
             return audio, {"formant_shift": shift, "applied": False}
-        from scipy.signal import butter, find_peaks, sosfilt
+        from scipy.signal import butter, find_peaks, sosfilt, sosfiltfilt
 
         n = min(len(audio), 4096)
         frame = audio[:n].astype(np.float64)
@@ -174,7 +176,10 @@ class HybridVocalEnhancer:
             if lo >= hi or lo <= 0 or hi >= 1:
                 continue
             sos = butter(2, [lo, hi], btype="band", output="sos")
-            band = sosfilt(sos, audio.astype(np.float64))
+            # §2.51 zero-phase: sosfiltfilt statt sosfilt — band wird zu result addiert
+            _sig64 = audio.astype(np.float64)
+            _n64 = _sig64.shape[-1] if hasattr(_sig64, "shape") else len(_sig64)
+            band = sosfiltfilt(sos, _sig64) if _n64 >= 15 else sosfilt(sos, _sig64)
             result = result + band * gain_lin
         result = np.clip(result, -1.0, 1.0).astype(audio.dtype)
         return result, {"formant_shift": shift, "applied": True, "peaks": len(peaks)}
@@ -228,7 +233,10 @@ class HybridVocalEnhancer:
 
     def _apply_deesser_dsp(self, audio, sr, strength) -> np.ndarray:
         # Simpler adaptiver De-Esser (Bandstop 5-9 kHz)
-        from scipy.signal import butter, sosfilt
+        # §2.51 zero-phase: sosfiltfilt statt sosfilt — gefiltertes Signal wird mit dry gemischt
+        from scipy.signal import butter, sosfilt, sosfiltfilt
 
         sos = butter(2, [5000 / (sr / 2), 9000 / (sr / 2)], btype="bandstop", output="sos")
-        return sosfilt(sos, audio) * (1 - strength) + audio * strength
+        _n = audio.shape[-1] if hasattr(audio, "shape") else len(audio)
+        _filtered = sosfiltfilt(sos, audio) if _n >= 15 else sosfilt(sos, audio)
+        return _filtered * (1 - strength) + audio * strength

@@ -146,13 +146,15 @@ def simple_eq(
     treble_gain_db: float = 2.0,
 ) -> np.ndarray:
     """Einfacher EQ: Bass absenken, Höhen anheben (Butterworth-Shelf-Filter)."""
-    from scipy.signal import butter, sosfilt
+    # §2.51 zero-phase: sosfiltfilt statt sosfilt — Filterbänder werden zu audio addiert
+    from scipy.signal import butter, sosfilt, sosfiltfilt
 
+    _n = audio.shape[-1] if hasattr(audio, "shape") else len(audio)
     sos_low = butter(2, 200 / (sr / 2), btype="low", output="sos")
-    bass = sosfilt(sos_low, audio)
+    bass = sosfiltfilt(sos_low, audio) if _n >= 15 else sosfilt(sos_low, audio)
     audio = audio + (10 ** (bass_gain_db / 20) - 1) * bass
     sos_high = butter(2, 4000 / (sr / 2), btype="high", output="sos")
-    treble = sosfilt(sos_high, audio)
+    treble = sosfiltfilt(sos_high, audio) if _n >= 15 else sosfilt(sos_high, audio)
     audio = audio + (10 ** (treble_gain_db / 20) - 1) * treble
     return audio
 
