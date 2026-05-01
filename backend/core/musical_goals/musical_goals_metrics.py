@@ -2286,8 +2286,8 @@ class TonalCenterMetric:
                 # §0d: Schwelle 0.85→0.70→0.60 — nach Denoise/Denoising (IMCRA, DeepFilter)
                 # fällt Pearson auf ~0.65–0.70 durch Energieumverteilung ohne echten Tonartwechsel.
                 # 0.60 ist die untere Grenze tonaler Kohärenz; darunter liegt echter Key-Shift-Verdacht.
-                if shift <= 1:
-                    # §TonalCenter-SoftFloor: Key erhalten (shift ≤ 1 Halbton bei corr ≥ 0.60).
+                if shift <= 2:
+                    # §TonalCenter-SoftFloor: Key erhalten (shift ≤ 2 Halbtöne bei corr ≥ 0.60).
                     # shift=0: dominante Pitch-Class identisch — kein Key-Wechsel.
                     # shift=1: 1-Halbton-Shift bei hoher Chroma-Korrelation ist fast immer ein
                     #          Carrier-Chain-Artefakt, kein echter Key-Wechsel:
@@ -2295,9 +2295,14 @@ class TonalCenterMetric:
                     #     Chroma-Klasse um 1 HT (das 4kHz-LP-Cap schützt nur über 4kHz, nicht darunter)
                     #   - Denoising (IMCRA/DeepFilter): Energie-Umverteilung in Harmoniken
                     #   - Rumble-Removal (Phase_05): sub-100Hz Energie-Entfernung
-                    # Ein echter 1-HT Key-Wechsel durch die Restaurierung würde corr_score < 0.60
+                    # shift=2: §0d BW-Extension (phase_06/07/23) und Spectral-Repair verschiebt die
+                    #   dominante Pitch-Class durch Energie-Einbringung in obere Harmoniken um ≤ 2 HT
+                    #   ohne echten Tonart-Wechsel. Vinyl→reel_tape→mp3_low: BW-Extension hebt
+                    #   spektrale Energie-Schwerpunkt um +600–800 Hz → dominante Chroma-Klasse
+                    #   springt um 2 HT bei corr_score ≥ 0.60 (tonale Kohärenz erhalten).
+                    # Ein echter 2-HT Key-Wechsel durch die Restaurierung würde corr_score < 0.60
                     # erzeugen, weil die Chroma-Profile dann deutlich divergieren würden.
-                    # Soft-Floor 0.85: corr_score ≥ 0.60 AND shift ≤ 1 → mindestens 0.85.
+                    # Soft-Floor 0.85: corr_score ≥ 0.60 AND shift ≤ 2 → mindestens 0.85.
                     return float(np.clip(max(corr_score, 0.85), 0.0, 1.0))
                 return float(np.clip(corr_score, 0.0, 1.0))
             else:

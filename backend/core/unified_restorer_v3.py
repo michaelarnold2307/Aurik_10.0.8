@@ -5534,6 +5534,24 @@ class UnifiedRestorerV3:
             except Exception as _stcg_pre_exc:
                 logger.debug("§2.60 STCG pre-pipeline fehlgeschlagen (non-blocking): %s", _stcg_pre_exc)
 
+        # §LAG_PROBE_1: nach STCG pre-pipeline
+        try:
+            if audio.ndim == 2:
+                import numpy as _lp_np
+
+                _lp_L = audio[:, 0] if audio.shape[1] == 2 else audio[0]
+                _lp_R = audio[:, 1] if audio.shape[1] == 2 else audio[1]
+                _lp_n = min(int(sample_rate * 5), len(_lp_L))
+                _lp_cc = _lp_np.correlate(
+                    _lp_L[:_lp_n].astype(_lp_np.float64), _lp_R[:_lp_n].astype(_lp_np.float64), mode="full"
+                )
+                _lp_lag = int(_lp_np.argmax(_lp_np.abs(_lp_cc))) - (_lp_n - 1)
+                logger.info(
+                    "LAG_PROBE 1/after_stcg_pre: lag=%d samples (%.1f ms)", _lp_lag, _lp_lag / sample_rate * 1000
+                )
+        except Exception as _lp1_exc:
+            logger.debug("LAG_PROBE_1 fehlgeschlagen: %s", _lp1_exc)
+
         try:
             _recovery_certainty_profile = UnifiedRestorerV3._compute_recovery_certainty_profile(
                 restorability_score=float(_pmgg_restorability_score),
@@ -5982,6 +6000,27 @@ class UnifiedRestorerV3:
                 set_pipeline_active(False)
             except Exception as _spa_exc:
                 logger.debug("set_pipeline_active(False) fehlgeschlagen: %s", _spa_exc)
+
+        # §LAG_PROBE_2: direkt nach _execute_pipeline (vor STCG post)
+        try:
+            if restored_audio.ndim == 2:
+                import numpy as _lp_np2
+
+                _lp2_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
+                _lp2_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
+                _lp2_n = min(int(sample_rate * 5), len(_lp2_L))
+                _lp2_cc = _lp_np2.correlate(
+                    _lp2_L[:_lp2_n].astype(_lp_np2.float64), _lp2_R[:_lp2_n].astype(_lp_np2.float64), mode="full"
+                )
+                _lp2_lag = int(_lp_np2.argmax(_lp_np2.abs(_lp2_cc))) - (_lp2_n - 1)
+                logger.info(
+                    "LAG_PROBE 2/after_execute_pipeline: lag=%d samples (%.1f ms)",
+                    _lp2_lag,
+                    _lp2_lag / sample_rate * 1000,
+                )
+        except Exception as _lp2_exc:
+            logger.debug("LAG_PROBE_2 fehlgeschlagen: %s", _lp2_exc)
+
         # §7 PDV: Collect session summary after pipeline (Ursache 7 telemetry).
         _pdv_session_summary: dict = {}
         try:
@@ -6022,6 +6061,24 @@ class UnifiedRestorerV3:
                 )
             except Exception as _stcg_post_exc:
                 logger.debug("§2.60 STCG post-pipeline fehlgeschlagen (non-blocking): %s", _stcg_post_exc)
+
+        # §LAG_PROBE_3: nach STCG post-pipeline
+        try:
+            if restored_audio.ndim == 2:
+                import numpy as _lp_np3
+
+                _lp3_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
+                _lp3_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
+                _lp3_n = min(int(sample_rate * 5), len(_lp3_L))
+                _lp3_cc = _lp_np3.correlate(
+                    _lp3_L[:_lp3_n].astype(_lp_np3.float64), _lp3_R[:_lp3_n].astype(_lp_np3.float64), mode="full"
+                )
+                _lp3_lag = int(_lp_np3.argmax(_lp_np3.abs(_lp3_cc))) - (_lp3_n - 1)
+                logger.info(
+                    "LAG_PROBE 3/after_stcg_post: lag=%d samples (%.1f ms)", _lp3_lag, _lp3_lag / sample_rate * 1000
+                )
+        except Exception as _lp3_exc:
+            logger.debug("LAG_PROBE_3 fehlgeschlagen: %s", _lp3_exc)
 
         # §0c Graceful-Stop-Tag: wenn Watchdog die Pipeline beendet hat, Metadaten befüllen.
         # Die FeedbackChain und HPI laufen danach nicht (zu aufwändig), stattdessen direkter
@@ -6356,6 +6413,28 @@ class UnifiedRestorerV3:
                     _fc_analytics,
                     len(_fc_phases_list),
                 )
+
+                # §LAG_PROBE_4: nach FeedbackChain
+                try:
+                    if restored_audio.ndim == 2:
+                        import numpy as _lp_np4
+
+                        _lp4_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
+                        _lp4_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
+                        _lp4_n = min(int(sample_rate * 5), len(_lp4_L))
+                        _lp4_cc = _lp_np4.correlate(
+                            _lp4_L[:_lp4_n].astype(_lp_np4.float64),
+                            _lp4_R[:_lp4_n].astype(_lp_np4.float64),
+                            mode="full",
+                        )
+                        _lp4_lag = int(_lp_np4.argmax(_lp_np4.abs(_lp4_cc))) - (_lp4_n - 1)
+                        logger.info(
+                            "LAG_PROBE 4/after_feedbackchain: lag=%d samples (%.1f ms)",
+                            _lp4_lag,
+                            _lp4_lag / sample_rate * 1000,
+                        )
+                except Exception as _lp4_exc:
+                    logger.debug("LAG_PROBE_4 fehlgeschlagen: %s", _lp4_exc)
             else:
                 logger.debug("FeedbackChain: keine Post-Pipeline-Phasen verfügbar")
         except Exception as _fc_exc:
@@ -6365,6 +6444,24 @@ class UnifiedRestorerV3:
                 logger.debug("FeedbackChain nicht verfügbar: %s", _fc_exc)
 
         _cb(89, "FeedbackChain abgeschlossen…")
+
+        # §2.60 STCG post-feedbackchain: FeedbackChain kann Stereo-Phasen enthalten
+        # (phase_12_wow_flutter_fix, phase_35_multiband_compression, phase_34) die L/R-Lag
+        # erzeugen (phase_12 läuft oft erst in FeedbackChain, nicht in der Haupt-Pipeline).
+        # STCG post-pipeline (Z.~6037, vor FeedbackChain) fängt diesen Lag NICHT mehr ab.
+        # Zweiter STCG-Aufruf hier stellt sicher, dass Goals-Messung (Z.~7443) auf
+        # lag-korrigiertem Audio läuft und das Export-File keinen L/R-Zeitversatz enthält.
+        if restored_audio.ndim == 2:
+            try:
+                from backend.core.stereo_temporal_coherence_guard import (
+                    get_stereo_temporal_coherence_guard as _get_stcg_fc,
+                )
+
+                restored_audio = _get_stcg_fc().correct_interchannel_delay(
+                    restored_audio, sample_rate, phase_id="post_feedbackchain"
+                )
+            except Exception as _stcg_fc_exc:
+                logger.debug("STCG post_feedbackchain non-blocking: %s", _stcg_fc_exc)
 
         # §1.4 Auto Stem Separation for Studio 2026 (Spec §9.5: Stem-Sep → StemRemixBalancer)
         # Separates the fully-processed audio into vocals/instruments so StemRemixBalancer can
@@ -19537,6 +19634,26 @@ class UnifiedRestorerV3:
                     )
         except Exception as _st_corr_exc:
             logger.debug("§2.51 Stereo-correlation guard failed (non-blocking): %s", _st_corr_exc)
+
+        # §LAG_PROBE 2a: am Ende von _execute_pipeline (vor return)
+        try:
+            if current_audio.ndim == 2:
+                import numpy as _lp_np2a
+
+                _lp2a_L = current_audio[:, 0] if current_audio.shape[1] == 2 else current_audio[0]
+                _lp2a_R = current_audio[:, 1] if current_audio.shape[1] == 2 else current_audio[1]
+                _lp2a_n = min(int(sample_rate * 5), len(_lp2a_L))
+                _lp2a_cc = _lp_np2a.correlate(
+                    _lp2a_L[:_lp2a_n].astype(_lp_np2a.float64), _lp2a_R[:_lp2a_n].astype(_lp_np2a.float64), mode="full"
+                )
+                _lp2a_lag = int(_lp_np2a.argmax(_lp_np2a.abs(_lp2a_cc))) - (_lp2a_n - 1)
+                logger.info(
+                    "LAG_PROBE 2a/end_execute_pipeline: lag=%d samples (%.1f ms)",
+                    _lp2a_lag,
+                    _lp2a_lag / sample_rate * 1000,
+                )
+        except Exception as _lp2a_exc:
+            logger.debug("LAG_PROBE_2a fehlgeschlagen: %s", _lp2a_exc)
 
         return current_audio, executed, skipped, deferred
 

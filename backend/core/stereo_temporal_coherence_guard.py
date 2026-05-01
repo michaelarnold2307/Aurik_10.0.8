@@ -46,9 +46,10 @@ logger = logging.getLogger(__name__)
 # Analysis window: 10 s from the mid-song (480 000 samples @ 48 kHz)
 _ANALYSIS_WINDOW_S: float = 10.0
 
-# Maximum inter-channel delay to search for: ±50 ms (2 400 samples @ 48 kHz)
-# Covers tape-head azimuth errors, ML-plugin output latency, analogue playback chains.
-_MAX_DELAY_SAMPLES: int = 2_400
+# Maximum inter-channel delay to search for: ±200 ms (9 600 samples @ 48 kHz)
+# Covers tape-head azimuth errors, ML-plugin output latency, analogue playback chains,
+# and pipeline-introduced phase-vocoder/PSOLA latency (observed: 8 777 samples = 182.9 ms).
+_MAX_DELAY_SAMPLES: int = 9_600
 
 # Correction threshold: delays ≤ this are left untouched (§0 Minimal-Intervention).
 _CORRECTION_THRESHOLD_SAMPLES: float = 0.5
