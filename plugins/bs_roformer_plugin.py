@@ -545,6 +545,15 @@ class BSRoFormerPlugin:
             audio_ref = audio_1d.astype(np.float32)
             instruments_48 = np.clip(audio_ref - vocals_48, -1.0, 1.0).astype(np.float32)
 
+            # Full reconstruction for SDRi — always use all stems (vocals + instruments)
+            # so that sum(stems) ≈ mix and the metric is meaningful.
+            # Filtering to requested_stems would make recon = vocals_only → SDRi ≈ 0 or negative.
+            _all_stems_sdri: dict[str, np.ndarray] = {
+                "vocals": vocals_48,
+                "instruments": instruments_48,
+            }
+            sdri = self._estimate_sdri(audio_ref, _all_stems_sdri)
+
             stems_out: dict[str, np.ndarray] = {}
             if "vocals" in requested_stems:
                 stems_out["vocals"] = vocals_48
@@ -559,7 +568,6 @@ class BSRoFormerPlugin:
             if "other" in requested_stems:
                 stems_out["other"] = np.clip(instruments_48 * 0.05, -1.0, 1.0).astype(np.float32)
 
-            sdri = self._estimate_sdri(audio_ref, stems_out)
             logger.info(
                 "🎵 MelBandRoformer ONNX: SDRi=%.1f dB | Stems=%s | Vocals-RMS=%.4f",
                 sdri,
@@ -644,7 +652,10 @@ class BSRoFormerPlugin:
                 "other": np.clip(i_mono * 0.05, -1.0, 1.0),
             }
             stems_out = {k: v for k, v in stem_map.items() if k in requested_stems}
-            sdri = self._estimate_sdri(audio if audio.ndim == 1 else audio.mean(axis=0), stems_out)
+            # SDRi gegen vollständige Rekonstruktion (vocals + inst), nicht gefilterte Stems
+            _sdri_mix_ref = audio if audio.ndim == 1 else audio.mean(axis=0)
+            _sdri_all = {"vocals": np.clip(v_mono, -1.0, 1.0), "instruments": np.clip(i_mono, -1.0, 1.0)}
+            sdri = self._estimate_sdri(_sdri_mix_ref, _sdri_all)
             model_tag = ("kim_vocal_2" if vocal_model._ok else "") + ("+kim_inst" if inst_model._ok else "")
             logger.info(
                 "🎵 BS-RoFormer → MDX23C-Fallback (%s): SDRi=%.1f dB | Stems=%s",
@@ -711,7 +722,9 @@ class BSRoFormerPlugin:
             "other": other_est,
         }
         stems_out = {k: v for k, v in stem_map.items() if k in requested_stems}
-        sdri = self._estimate_sdri(audio_1d, stems_out)
+        # SDRi gegen vollständige HPSS-Rekonstruktion (harmonic + percussive)
+        _hpss_sdri_all = {"harmonic": np.clip(harmonic, -1.0, 1.0), "percussive": np.clip(percussive, -1.0, 1.0)}
+        sdri = self._estimate_sdri(audio_1d, _hpss_sdri_all)
         logger.info("🎵 BS-RoFormer HPSS-DSP-Fallback aktiv | SDRi=%.1f dB", sdri)
         return StemSeparationResult(
             stems=stems_out,
@@ -740,7 +753,12 @@ class BSRoFormerPlugin:
 
     @staticmethod
     def _estimate_sdri(mix: np.ndarray, stems: dict[str, np.ndarray]) -> float:
-        """Schätzt SDR-Improvement aus Stems-zu-Mischung-Energie-Verhältnis."""
+        """Schätzt SDR-Improvement aus Stems-zu-Mischung-Energie-Verhältnis.
+
+        SDRi wird stets gegen die vollständige Rekonstruktion (alle übergebenen Stems)
+        gemessen. Caller muss sicherstellen, dass stems ALLE Stems enthält
+        (vocals + instruments), nicht nur angeforderte Teilmenge.
+        """
         if not stems:
             return 0.0
         recon = sum(stems.values())  # type: ignore[arg-type]
@@ -749,9 +767,10 @@ class BSRoFormerPlugin:
         if n == 0:
             return 0.0
         mix_e = float(np.mean(mix[:n] ** 2))
-        err_e = float(np.mean((mix[:n] - recon[:n]) ** 2))
-        if mix_e < 1e-12 or err_e < 1e-18:
+        if mix_e < 1e-12:
             return 0.0
+        err_e = float(np.mean((mix[:n] - recon[:n]) ** 2))
+        # err_e ≈ 0 bedeutet perfekte Rekonstruktion → SDRi = 40 dB (Cap)
         sdri = 10.0 * math.log10(mix_e / (err_e + 1e-12))
         return float(np.clip(sdri, -20.0, 40.0))
 

@@ -126,14 +126,29 @@ class ContinuousDeepAnalyzer:
 
         # 2. Pre-Analyse durchführen
         try:
-            from backend.core.pre_analysis_runner import run_pre_analysis
+            from backend.core.pre_analysis import run_pre_analysis
 
-            pre_result = run_pre_analysis(audio, sr_imported, file_ext=Path(audio_path).suffix)
+            pre_result = run_pre_analysis(
+                audio,
+                sr_imported,
+                file_path=str(Path(audio_path).resolve()),
+                store_in_bridge_cache=False,
+            )
+            _medium_label = getattr(pre_result.medium, "primary_material", None) or getattr(
+                pre_result.medium, "chain_label", None
+            )
+            _era_label = getattr(pre_result.era, "decade", None) or getattr(pre_result.era, "year_estimate", None)
+            _rest_score = getattr(pre_result.restorability, "restorability_score", None)
+            _defect_count = len(getattr(pre_result.defects, "scores", {}) or {}) if pre_result.defects else 0
             self.logger.info("✓ Pre-Analyse komplett:")
-            self.logger.info(f"  - Material: {pre_result.material_type}")
-            self.logger.info(f"  - Era: {pre_result.era_decade}er")
-            self.logger.info(f"  - Restorability: {pre_result.restorability_score:.1f}%")
-            self.logger.info(f"  - Defekte gefunden: {len(pre_result.defects) if pre_result.defects else 0}")
+            self.logger.info(f"  - Material: {_medium_label if _medium_label is not None else 'unknown'}")
+            self.logger.info(f"  - Era: {_era_label if _era_label is not None else 'unknown'}")
+            self.logger.info(
+                f"  - Restorability: {_rest_score:.1f}%"
+                if isinstance(_rest_score, (int, float))
+                else "  - Restorability: unknown"
+            )
+            self.logger.info(f"  - Defekte gefunden: {_defect_count}")
         except Exception as e:
             self.logger.warning(f"Pre-Analyse fehlgeschlagen (nicht kritisch): {e}")
             pre_result = None
@@ -144,37 +159,6 @@ class ContinuousDeepAnalyzer:
 
             restorer = UnifiedRestorerV3(quality_mode="maximum", monitor_phases=True)
 
-            # Hook für Phase-Completion-Monitoring
-            _original_call = restorer._phase_gate_call if hasattr(restorer, "_phase_gate_call") else None
-
-            def _monitored_phase_call(phase_id: str, **kwargs: Any) -> dict[str, Any]:
-                """Wrapper für Phase-Aufrufe mit Monitoring."""
-                result = None
-                try:
-                    # Phase ausführen (Original-Funktion)
-                    if _original_call:
-                        result = _original_call(phase_id, **kwargs)
-                    else:
-                        # Fallback: direkt über Pipeline
-                        result = {"phase_id": phase_id, "status": "executed"}
-
-                    # Checkpoint nach Phase
-                    checkpoint = self._create_checkpoint(
-                        phase_id=phase_id,
-                        restorer=restorer,
-                        pre_result=pre_result,
-                    )
-                    self.checkpoints.append(checkpoint)
-
-                    # Dashboard-Update
-                    self._print_checkpoint_summary(checkpoint)
-
-                except Exception as e:
-                    self.logger.error(f"✗ Phase {phase_id} fehlgeschlagen: {e}", exc_info=True)
-                    self.anomalies_detected.append(f"Phase {phase_id} exception: {e}")
-
-                return result or {}
-
             # Restaurierung durchführen
             is_studio_2026 = mode == "studio_2026"
             restoration_result = restorer.restore(
@@ -182,7 +166,10 @@ class ContinuousDeepAnalyzer:
                 sample_rate=sr_imported,
                 is_studio_2026=is_studio_2026,
                 pre_analysis_result=pre_result,
+                enable_debug_trace=True,
             )
+
+            self._collect_checkpoints_from_restore_result(restoration_result, pre_result)
 
             self.logger.info(f"✓ Restaurierung komplett (Dauer: {time.monotonic() - _start_t:.1f}s)")
             self.logger.info(f"  - HPI: {restoration_result.metadata.get('hpi_score', 'N/A')}")
@@ -211,6 +198,104 @@ class ContinuousDeepAnalyzer:
         self.logger.info(f"✓ Ergebnisse gespeichert: {result_file}")
 
         return result_dict
+
+    def _collect_checkpoints_from_restore_result(self, restoration_result: Any, pre_result: Any) -> None:
+        """Build checkpoints from UV3 debug-trace entries after restoration."""
+        metadata = getattr(restoration_result, "metadata", {}) or {}
+        entries = metadata.get("pmgg_log_entries") or []
+        if not isinstance(entries, list):
+            return
+
+        final_hpi = self._metric_to_float(metadata.get("hpi_score"), ("hpi", "hpi_score", "score", "value"))
+        final_afg = self._metric_to_float(
+            metadata.get("artifact_freedom")
+            if metadata.get("artifact_freedom") is not None
+            else metadata.get("artifact_freedom_score"),
+            ("artifact_freedom", "artifact_freedom_score", "score", "value"),
+        )
+        final_ccr = self._metric_to_float(
+            metadata.get("carrier_chain_recovery_ratio"),
+            ("carrier_chain_recovery_ratio", "score", "value"),
+        )
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            phase_id = str(entry.get("phase_id") or "unknown_phase")
+            scores_before = entry.get("scores_before") if isinstance(entry.get("scores_before"), dict) else {}
+            scores_after = entry.get("scores_after") if isinstance(entry.get("scores_after"), dict) else {}
+            anomalies = self._check_anomalies_from_scores(
+                phase_id,
+                scores_before,
+                scores_after,
+                final_hpi,
+                final_afg,
+                pre_result,
+                str(entry.get("action") or ""),
+            )
+            cp = PhaseCheckpoint(
+                phase_id=phase_id,
+                wall_time_s=float(entry.get("timestamp") or time.time()),
+                musical_goals={k: float(v) for k, v in scores_after.items() if isinstance(v, (int, float))},
+                hpi_score=final_hpi,
+                artifact_freedom=final_afg,
+                carrier_recovery_ratio=final_ccr,
+                noise_floor_db=None,
+                defects_remaining=None,
+                anomalies=anomalies,
+            )
+            self.checkpoints.append(cp)
+
+    def _check_anomalies_from_scores(
+        self,
+        phase_id: str,
+        scores_before: dict[str, Any],
+        scores_after: dict[str, Any],
+        hpi: Any,
+        afg: Any,
+        pre_result: Any,
+        action: str,
+    ) -> list[str]:
+        """Detect anomalies from PMGG debug-trace score snapshots."""
+        anomalies: list[str] = []
+        hpi_value = self._metric_to_float(hpi, ("hpi", "hpi_score", "score", "value"))
+        afg_value = self._metric_to_float(afg, ("artifact_freedom", "artifact_freedom_score", "score", "value"))
+        for goal, after in scores_after.items():
+            before = scores_before.get(goal)
+            if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+                delta = float(after) - float(before)
+                if delta < -0.10:
+                    anomalies.append(f"{goal}: {float(before):.2f} → {float(after):.2f} (Δ={delta:.2f})")
+
+        if str(action).startswith("best_effort"):
+            anomalies.append(f"PMGG best_effort: {action}")
+
+        if hpi_value is not None and hpi_value < 0.1:
+            anomalies.append(f"HPI kritisch niedrig: {hpi_value:.3f}")
+
+        if afg_value is not None and afg_value < 0.85:
+            anomalies.append(f"Artefakt-Freiheit kritisch: {afg_value:.3f}")
+
+        if pre_result and hasattr(pre_result, "noise_floor_estimate"):
+            if pre_result.noise_floor_estimate > -50.0:
+                anomalies.append(f"Rauschboden hoch: {pre_result.noise_floor_estimate:.1f} dBFS")
+
+        return anomalies
+
+    @staticmethod
+    def _metric_to_float(metric: Any, preferred_keys: tuple[str, ...] = ("score", "value")) -> float | None:
+        """Coerce scalar-like metric values (including dict payloads) to float."""
+        if isinstance(metric, (int, float)):
+            return float(metric)
+        if isinstance(metric, dict):
+            for key in preferred_keys:
+                value = metric.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+            for value in metric.values():
+                if isinstance(value, (int, float)):
+                    return float(value)
+        return None
 
     def _create_checkpoint(self, phase_id: str, restorer: Any, pre_result: Any) -> PhaseCheckpoint:
         """Erstellt einen Checkpoint nach einer Phase."""
