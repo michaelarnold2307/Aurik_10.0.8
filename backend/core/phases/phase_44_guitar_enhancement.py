@@ -73,12 +73,14 @@ def _peaking_eq(x: np.ndarray, sr: int, freq: float, gain_db: float, q: float) -
     a2 = 1.0 - alpha / A
     b = np.array([b0 / a0, b1 / a0, b2 / a0])
     a = np.array([1.0, a1 / a0, a2 / a0])
+    # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
+    # padlen = 3*max(len(a),len(b))-1 = 8 — safe for 48 kHz audio (always >> 8 samples).
     if x.ndim == 1:
-        return sig.lfilter(b, a, x)
+        return sig.filtfilt(b, a, x)
     # Handle both (2,N) channels-first and (N,2) channels-last
     if x.shape[0] == 2 and x.shape[1] > 2:
-        return np.vstack([sig.lfilter(b, a, x[ch, :]) for ch in range(x.shape[0])])
-    return np.column_stack([sig.lfilter(b, a, x[:, ch]) for ch in range(x.shape[1])])
+        return np.vstack([sig.filtfilt(b, a, x[ch, :]) for ch in range(x.shape[0])])
+    return np.column_stack([sig.filtfilt(b, a, x[:, ch]) for ch in range(x.shape[1])])
 
 
 class GuitarEnhancementPhase(PhaseInterface):

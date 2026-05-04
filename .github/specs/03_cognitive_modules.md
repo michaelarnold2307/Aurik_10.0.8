@@ -99,10 +99,17 @@ sim = embedding.cosine_similarity(other)  # ∈ [-1, 1]
 # ── Elektrik / Mechanik (2) ──────────────────────────────────────────────
 #   electrical_hum, dc_offset
 #
-# ── Digital / Codec (8) ──────────────────────────────────────────────────
+# ── Digital / Codec (9) ──────────────────────────────────────────────────
 #   digital_clip, clipping, digital_artifacts, compression_artifacts,
 #   quantization_noise, jitter_artifacts, pre_echo, aliasing,
 #   dynamic_compression_excess
+#
+# Gesamtzahl: 10+4+2+9+2+2+5+1 = 35 dokumentierte Ursachen.
+# Die Spec-Header-Aussage "49 Kausal-Ursachen" schließt 14 weitere Ursachen ein,
+# die ausschließlich in der Code-Implementierung (causal_defect_reasoner.py)
+# und in CAUSES/CAUSE_TO_PHASES definiert sind und hier nicht einzeln aufgeführt werden
+# (u.a. erweiterte Codec-, Raumakustik- und Mehrstufenketten-Ursachen).
+# Die Gesamtzahl 49 ist normativ; diese Liste ist ein nicht-vollständiger Auszug.
 #
 # ── Spektrale Ursachen (2) ───────────────────────────────────────────────
 #   bandwidth_loss, high_freq_noise

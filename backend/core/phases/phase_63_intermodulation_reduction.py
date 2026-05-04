@@ -434,6 +434,33 @@ class IntermodulationReductionPhase(PhaseInterface):
 
             _log63.getLogger(__name__).debug("Phase63 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — IMD-Notch-Filtering darf
+        # Atemgeräusche (Inter-Phrasen-Energie) und Vibrato-Segmente nicht tilgen.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a63 = audio
+            if _npa_a63.ndim == 2 and _npa_a63.shape[0] == 2 and _npa_a63.shape[1] > _npa_a63.shape[0]:
+                _npa_a63 = _npa_a63.T
+            _npa_r63 = get_natural_performance_detector().detect(_npa_a63, sample_rate)
+            _npa_n63 = (
+                result_audio.shape[1]
+                if (result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2)
+                else result_audio.shape[0]
+            )
+            _npa_m63 = _npa_r63.get_protected_mask(_npa_n63, sample_rate)
+            if np.any(_npa_m63):
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _npa_m63] = audio[:, _npa_m63]
+                    elif result_audio.shape == audio.shape:
+                        result_audio[_npa_m63, :] = audio[_npa_m63, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_npa_m63] = audio[_npa_m63]
+        except Exception as _npa63_exc:
+            import logging as _log63n
+            _log63n.getLogger(__name__).debug("§2.46f phase_63 NPA-Guard (non-blocking): %s", _npa63_exc)
+
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0
         return PhaseResult(

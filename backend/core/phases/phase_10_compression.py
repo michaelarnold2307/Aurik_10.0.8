@@ -563,7 +563,7 @@ if __name__ == "__main__":
 
         # Calculate input dynamic range
         rms_in = np.sqrt(np.mean(audio**2))
-        peak_in = np.max(np.abs(audio))
+        peak_in = float(np.percentile(np.abs(audio), 99.9))  # V08: percentile not np.max
         dr_in = 20 * np.log10(peak_in / (rms_in + 1e-10))
 
         # Process
@@ -575,7 +575,7 @@ if __name__ == "__main__":
 
         # Calculate output dynamic range
         rms_out = np.sqrt(np.mean(processed**2))
-        peak_out = np.max(np.abs(processed))
+        peak_out = float(np.percentile(np.abs(processed), 99.9))  # V08: percentile not np.max
         dr_out = 20 * np.log10(peak_out / (rms_out + 1e-10))
 
         logger.debug("  Multi-band parallel compression:")

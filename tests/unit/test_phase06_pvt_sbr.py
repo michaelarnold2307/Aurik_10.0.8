@@ -346,8 +346,8 @@ class TestProcessIntegration:
         """Restored stereo must have more HF energy than rolled-off input."""
         mono = _make_broadband_rolloff_audio(dur=1.0)
         stereo = np.column_stack([mono, mono * 0.98])
-        # quality_mode="fast" → DSP-only path (no ML timeout in unit tests)
-        r = phase.process(stereo, material_type="shellac", sample_rate=SR, quality_mode="fast")
+        # quality_mode="restoration" → DSP-only path (not in ML list, no ML timeout in unit tests)
+        r = phase.process(stereo, material_type="shellac", sample_rate=SR, quality_mode="restoration")
         assert r.modifications.get("frequency_restored", False), "Rolloff should be detected for broadband stereo input"
         rolloff_hz = 4500.0
         sos = ss.butter(4, rolloff_hz / (SR / 2), btype="high", output="sos")

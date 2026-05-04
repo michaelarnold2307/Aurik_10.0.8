@@ -136,3 +136,27 @@ def test_no_direct_magic_button_enable_in_preanalysis_emit_paths() -> None:
     assert _finalize_anchor >= 0 and _signal_anchor > _finalize_anchor
     _finalize_block = src[_finalize_anchor:_signal_anchor]
     assert "_set_magic_buttons_enabled(True)" in _finalize_block
+
+
+@pytest.mark.normative
+def test_preventive_metadata_visibility_contract_in_quality_banner() -> None:
+    src = _read_gui_source()
+
+    # Frontend must keep phase-local prevention telemetry visible in post-run UI.
+    assert '"preventive_actions": []' in src
+    assert 'phase31_damage_shield_applied' in src
+    assert 'phase31_stereo_delay_corrected' in src
+    assert 'loudness_makeup_db' in src
+    assert 'def _build_quality_banner_sections(' in src
+    assert 'preventive_actions: list[str]' in src
+    assert '🛡️  Präventionsschutz:' in src
+
+
+@pytest.mark.normative
+def test_preventive_actions_callsite_contract_in_quality_pipeline() -> None:
+    src = _read_gui_source()
+
+    # Separate contract: extraction + callsite forwarding must stay intact.
+    assert 'preventive_actions: list[str] = _ctx["preventive_actions"]' in src
+    assert 'self.prognose_widget.set_preventive_actions(preventive_actions)' in src
+    assert 'preventive_actions=preventive_actions' in src

@@ -637,11 +637,13 @@ class PianoRestorationV1(PhaseInterface):
         high_freq = self.PIANO_RANGES["pedal_noise"][1] / nyquist
 
         sos = signal.butter(4, [low_freq, high_freq], btype="band", output="sos")
-        pedal_band = signal.sosfilt(sos, audio)
+        # sosfiltfilt (zero-phase) required: pedal_band is subtracted from audio in recombination;
+        # causal sosfilt would introduce group delay → timing skew → Pegelexplosion (§2.51, V11)
+        pedal_band = signal.sosfiltfilt(sos, audio)
 
         # Envelope detection
         envelope = np.abs(pedal_band)
-        envelope = signal.sosfilt(signal.butter(2, 20 / nyquist, output="sos"), envelope)  # 20 Hz lowpass
+        envelope = signal.sosfilt(signal.butter(2, 20 / nyquist, output="sos"), envelope)  # 20 Hz lowpass — analysis only
 
         # Convert threshold to linear
         threshold_linear = 10 ** (threshold_db / 20) * np.max(envelope)

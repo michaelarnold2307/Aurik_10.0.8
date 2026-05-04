@@ -210,6 +210,30 @@ class TestPhaseAwareWetDryBlend:
         blended = self._blend(dry, wet, 0.15)
         assert len(blended) == len(dry)
 
+    def test_16b_stereo_channels_first_shape_preserved(self):
+        """Stereo channels-first input must keep (2, N) layout after blend."""
+        n = 48000
+        rng = np.random.default_rng(161)
+        dry_cf = rng.normal(0, 0.2, (2, n)).astype(np.float32)
+        wet_cf = rng.normal(0, 0.2, (2, n)).astype(np.float32)
+
+        blended = self._blend(dry_cf, wet_cf, 0.20)
+        assert blended.shape == dry_cf.shape
+        assert blended.dtype == np.float32
+        assert np.isfinite(blended).all()
+
+    def test_16c_stereo_mixed_layout_normalized_to_dry_layout(self):
+        """Mixed stereo layouts (dry N×2, wet 2×N) must return dry layout."""
+        n = 48000
+        rng = np.random.default_rng(162)
+        dry_sf = rng.normal(0, 0.2, (n, 2)).astype(np.float32)
+        wet_cf = rng.normal(0, 0.2, (2, n)).astype(np.float32)
+
+        blended = self._blend(dry_sf, wet_cf, 0.20)
+        assert blended.shape == dry_sf.shape
+        assert blended.dtype == np.float32
+        assert np.isfinite(blended).all()
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Fix 3: Diminishing-Returns Strength Moderation

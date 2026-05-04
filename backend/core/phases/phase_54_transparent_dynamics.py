@@ -342,6 +342,32 @@ class TransparentDynamicsV1(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase54 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — Dynamik-Kompression darf
+        # Atemgeräusche zwischen Phrasen nicht gaten und Vibrato nicht glätten.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a54 = audio
+            if _npa_a54.ndim == 2 and _npa_a54.shape[0] == 2 and _npa_a54.shape[1] > _npa_a54.shape[0]:
+                _npa_a54 = _npa_a54.T
+            _npa_r54 = get_natural_performance_detector().detect(_npa_a54, sample_rate)
+            _npa_n54 = (
+                audio_out.shape[1]
+                if (audio_out.ndim == 2 and audio_out.shape[0] == 2 and audio_out.shape[1] > 2)
+                else audio_out.shape[0]
+            )
+            _npa_m54 = _npa_r54.get_protected_mask(_npa_n54, sample_rate)
+            if np.any(_npa_m54):
+                if audio_out.ndim == 2 and audio.ndim == 2:
+                    if audio_out.shape[0] == 2 and audio_out.shape[1] > 2:
+                        audio_out[:, _npa_m54] = audio[:, _npa_m54]
+                    elif audio_out.shape == audio.shape:
+                        audio_out[_npa_m54, :] = audio[_npa_m54, :]
+                elif audio_out.ndim == 1 and audio.ndim == 1:
+                    audio_out[_npa_m54] = audio[_npa_m54]
+        except Exception as _npa54_exc:
+            logger.debug("§2.46f phase_54 NPA-Guard (non-blocking): %s", _npa54_exc)
+
         return PhaseResult(
             success=True,
             audio=audio_out,

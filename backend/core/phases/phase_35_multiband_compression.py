@@ -287,6 +287,33 @@ class MultibandCompressionPhase(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase35 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — MB-Kompressor kann Atemgeräusche
+        # in einem Frequenzband gaten wenn die Schwelle zu aggressiv ist.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a35 = compressed
+            if _npa_a35.ndim == 2 and _npa_a35.shape[0] == 2 and _npa_a35.shape[1] > _npa_a35.shape[0]:
+                _npa_a35 = _npa_a35.T
+            _npa_r35 = get_natural_performance_detector().detect(_npa_a35, sample_rate)
+            _npa_n35 = (
+                compressed.shape[1]
+                if (compressed.ndim == 2 and compressed.shape[0] == 2 and compressed.shape[1] > 2)
+                else compressed.shape[0]
+            )
+            _npa_m35 = _npa_r35.get_protected_mask(_npa_n35, sample_rate)
+            if np.any(_npa_m35):
+                _orig_35 = audio
+                if compressed.ndim == 2 and _orig_35.ndim == 2:
+                    if compressed.shape[0] == 2 and compressed.shape[1] > 2:
+                        compressed[:, _npa_m35] = _orig_35[:, _npa_m35]
+                    elif compressed.shape == _orig_35.shape:
+                        compressed[_npa_m35, :] = _orig_35[_npa_m35, :]
+                elif compressed.ndim == 1 and _orig_35.ndim == 1:
+                    compressed[_npa_m35] = _orig_35[_npa_m35]
+        except Exception as _npa35_exc:
+            logger.debug("§2.46f phase_35 NPA-Guard (non-blocking): %s", _npa35_exc)
+
         return PhaseResult(
             success=True,
             audio=compressed,

@@ -5,11 +5,11 @@
 
 ---
 
-## §6.1 Unterstützte Materialien (17 Typen)
+## §6.1 Unterstützte Materialien (15 Typen)
 
 ```python
 # Aurik 9: ausschließlich MONO und STEREO — kein Mehrkanalformat.
-# > 2 Kanäle → PANNs-gewichteter Stereo-Downmix (automatisch).
+# > 2 Kanäle → PANNs-gewichteter Stereo-Downmix (automatisch, kein eigenständiger Materialtyp).
 SUPPORTED_MATERIALS = [
     "tape",          # Kassette: Dropout, Hiss, Wow/Flutter
     "reel_tape",     # Profi-Spulenband: Hiss, Print-Through, Dropout
@@ -98,9 +98,16 @@ _MATERIAL_DR_CEILING_DB = {
     "lacquer_disc":   50,   # Acetat-Direktschnitt
     "wire_recording": 40,   # Stahlband, mechanische Begrenzung
     "vinyl":          70,   # LP, Best-Case-Pressung
-    "tape":           68,   # Kompaktkassette (Typ I/II)
-    "reel_tape":      72,   # Profi-Spulenband 15 ips
-    "cassette":       60,   # Kompaktkassette (Typ I, schlechter Transport)
+    "tape":           62,   # Kompaktkassette (Typ I ~55 dB, Typ II ~65 dB → konservativer Mittelwert)
+                            # HINWEIS: MediumDetector normiert intern "cassette" → "tape"
+                            # (SUPPORTED_MATERIALS-Key). Kassetten überschreiten 65 dB nur bei
+                            # Typ-IV-Metal-Band unter Best-Case-Bedingungen; 62 dB verhindert
+                            # übermäßige Dynamik-Expansion, die auf echten Kassetten als
+                            # Rauschartefakt hörbar wäre.
+    "reel_tape":      72,   # Profi-Spulenband 15 ips (physikalisch korrekt für 30 ips: ~80 dB)
+    # Interner MediumDetector-Key (vor Normalisierung cassette→tape); wird von phase_26 nicht
+    # direkt verwendet, aber hier geführt für _estimate_tape_speed() und interne Ceiling-Checks.
+    "cassette":       60,   # Kompaktkassette (Typ I, schlechter Transport) — MediumDetector-intern
     "dat":            92,   # Digital Audio Tape (16-bit linear)
     "minidisc":       88,   # ATRAC-Kompression
     "cd_digital":     96,   # 16-bit PCM

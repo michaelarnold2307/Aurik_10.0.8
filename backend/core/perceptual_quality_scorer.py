@@ -101,6 +101,16 @@ class PerceptualQualityScorer:
 
             logging.getLogger(__name__).debug("score_audio: SR=%d (erwartet 48000) — weiterverarbeitung trotzdem", sr)
 
+        # Channels-first (2, N) → Mono-Mix (N,) für konsistente Längenberechnung.
+        # len() auf (2, N) liefert 2 (Kanäle), nicht Samples → würde Stub auslösen.
+        def _to_mono(x: np.ndarray) -> np.ndarray:
+            if x.ndim == 2:
+                return np.mean(x, axis=0) if x.shape[0] <= x.shape[1] else np.mean(x, axis=1)
+            return x
+
+        reference = _to_mono(reference)
+        degraded = _to_mono(degraded)
+
         # Auf gleiche Länge bringen
         min_len = min(len(reference), len(degraded))
         if min_len < 8:
@@ -207,6 +217,10 @@ class PerceptualQualityScorer:
             logging.getLogger(__name__).debug(
                 "score_audio_absolute: SR=%d (erwartet 48000) — weiterverarbeitung trotzdem", sr
             )
+
+        # Channels-first (2, N) → Mono-Mix für korrekte Berechnung
+        if audio.ndim == 2:
+            audio = np.mean(audio, axis=0) if audio.shape[0] <= audio.shape[1] else np.mean(audio, axis=1)
 
         # Energie-basierte Schätzung
         energy = np.mean(audio**2)

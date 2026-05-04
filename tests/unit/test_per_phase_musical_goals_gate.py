@@ -251,6 +251,67 @@ class TestPMGGAudioQuality:
         for v in scores.values():
             assert -0.1 <= v <= 1.1  # leichte numerische Toleranz
 
+    def test_18b_run_phase_normalizes_samples_first_stereo_layout(self):
+        """_run_phase must transpose channels-first phase output to samples-first input layout."""
+        from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
+        n = SR
+        t = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float32)
+        audio_sf = np.stack(
+            [
+                0.4 * np.sin(2 * np.pi * 220 * t),
+                0.4 * np.sin(2 * np.pi * 330 * t),
+            ],
+            axis=1,
+        ).astype(np.float32)  # (N, 2)
+
+        class _MockProcessPhaseCF:
+            def process(self, audio, **kwargs):
+                # Deliberately return channels-first although input is samples-first.
+                return np.asarray(audio, dtype=np.float32).T
+
+            def get_metadata(self):
+                import types
+
+                m = types.SimpleNamespace()
+                m.phase_id = "phase_03_denoise"
+                return m
+
+        out = PerPhaseMusicalGoalsGate._run_phase(_MockProcessPhaseCF(), audio_sf, 0.5)
+        assert out.shape == audio_sf.shape
+        assert np.isfinite(out).all()
+
+    def test_18c_run_phase_upmixes_mono_output_for_stereo_input(self):
+        """_run_phase must avoid broadcast failures when phase emits mono from stereo input."""
+        from backend.core.per_phase_musical_goals_gate import PerPhaseMusicalGoalsGate
+
+        n = SR
+        t = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float32)
+        audio_cf = np.stack(
+            [
+                0.35 * np.sin(2 * np.pi * 260 * t),
+                0.33 * np.sin(2 * np.pi * 390 * t),
+            ],
+            axis=0,
+        ).astype(np.float32)  # (2, N)
+
+        class _MockProcessPhaseMono:
+            def process(self, audio, **kwargs):
+                # Simulate a phase that collapses to mono.
+                x = np.asarray(audio, dtype=np.float32)
+                return np.mean(x, axis=0)
+
+            def get_metadata(self):
+                import types
+
+                m = types.SimpleNamespace()
+                m.phase_id = "phase_29_tape_hiss_reduction"
+                return m
+
+        out = PerPhaseMusicalGoalsGate._run_phase(_MockProcessPhaseMono(), audio_cf, 0.5)
+        assert out.shape == audio_cf.shape
+        assert np.isfinite(out).all()
+
 
 # ---------------------------------------------------------------------------
 # Tests: Regressions-Behandlung
@@ -1845,6 +1906,109 @@ class TestKrumhanslSchmucklerTonalCenter:
             "timbre_authentizitaet MUST be in static phase_03 set (v9.10.96): "
             "MFCC correlation against noisy reference is unreliable after NR"
         )
+
+    def test_99b_timbre_authentizitaet_silence_is_neutral(self):
+        """Near-silence must not produce an artificially perfect timbre score.
+
+        With too few energetic frames, centroid-CV is undefined as a timbre cue.
+        PMGG must return a neutral fallback (0.5), not 1.0.
+        """
+        import numpy as np
+
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        sr = 48000
+        silent = np.zeros(sr * 2, dtype=np.float32)
+        score = _measure_quick(silent, sr)["timbre_authentizitaet"]
+
+        assert np.isfinite(score), f"timbre_authentizitaet NaN/Inf on silence: {score}"
+        assert abs(score - 0.5) <= 1e-6, (
+            f"timbre_authentizitaet must be neutral on silence, got {score:.4f}"
+        )
+
+    def test_99c_natuerlichkeit_authentizitaet_silence_are_neutral(self):
+        """Near-silence must not map to extreme P1 values for natuerlichkeit/authentizitaet."""
+        import numpy as np
+
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        sr = 48000
+        silent = np.zeros(sr * 2, dtype=np.float32)
+        scores = _measure_quick(silent, sr)
+
+        n_score = scores["natuerlichkeit"]
+        a_score = scores["authentizitaet"]
+
+        assert np.isfinite(n_score), f"natuerlichkeit NaN/Inf on silence: {n_score}"
+        assert np.isfinite(a_score), f"authentizitaet NaN/Inf on silence: {a_score}"
+        assert abs(n_score - 0.5) <= 1e-6, f"natuerlichkeit must be neutral on silence, got {n_score:.4f}"
+        assert abs(a_score - 0.5) <= 1e-6, f"authentizitaet must be neutral on silence, got {a_score:.4f}"
+
+    def test_99d_emotionalitaet_micro_dynamics_silence_are_neutral(self):
+        """Near-silence must not map to extreme P3 values for emotion and micro dynamics."""
+        import numpy as np
+
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        sr = 48000
+        silent = np.zeros(sr * 2, dtype=np.float32)
+        scores = _measure_quick(silent, sr)
+
+        e_score = scores["emotionalitaet"]
+        m_score = scores["micro_dynamics"]
+
+        assert np.isfinite(e_score), f"emotionalitaet NaN/Inf on silence: {e_score}"
+        assert np.isfinite(m_score), f"micro_dynamics NaN/Inf on silence: {m_score}"
+        assert abs(e_score - 0.5) <= 1e-6, f"emotionalitaet must be neutral on silence, got {e_score:.4f}"
+        assert abs(m_score - 0.5) <= 1e-6, f"micro_dynamics must be neutral on silence, got {m_score:.4f}"
+
+    def test_99e_separation_artikulation_silence_are_neutral(self):
+        """Near-silence must not map to extreme P2/P4 values for separation/artikulation."""
+        import numpy as np
+
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        sr = 48000
+        silent = np.zeros(sr * 2, dtype=np.float32)
+        scores = _measure_quick(silent, sr)
+
+        s_score = scores["separation_fidelity"]
+        a_score = scores["artikulation"]
+
+        assert np.isfinite(s_score), f"separation_fidelity NaN/Inf on silence: {s_score}"
+        assert np.isfinite(a_score), f"artikulation NaN/Inf on silence: {a_score}"
+        assert abs(s_score - 0.5) <= 1e-6, f"separation_fidelity must be neutral on silence, got {s_score:.4f}"
+        assert abs(a_score - 0.5) <= 1e-6, f"artikulation must be neutral on silence, got {a_score:.4f}"
+
+    def test_99f_brillanz_bass_kraft_transparenz_spatial_depth_silence_neutral(self):
+        """Near-silence must not map to 0.0 or 1.0 for crest-based and energy-ratio goals.
+
+        brillanz: HF crest of near-zero FFT → negative → clip 0.0 (was wrong, needs 0.5)
+        bass_kraft: bass_energy≈0 / 1e-12 = 0.0 (was wrong, needs 0.5)
+        transparenz: multi-band crest → negative → clip 0.0 (was wrong, needs 0.5)
+        spatial_depth (stereo): side_e=1e-12/(2×1e-12)=0.5 → ×2=1.0 (was wrong, needs 0.5)
+        """
+        import numpy as np
+
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        sr = 48000
+        # mono silence
+        silent_mono = np.zeros(sr * 2, dtype=np.float32)
+        scores_mono = _measure_quick(silent_mono, sr)
+
+        for goal in ("brillanz", "bass_kraft", "transparenz", "spatial_depth"):
+            val = scores_mono[goal]
+            assert np.isfinite(val), f"{goal} NaN/Inf on mono silence"
+            assert abs(val - 0.5) <= 1e-6, f"{goal} must be neutral on mono silence, got {val:.4f}"
+
+        # stereo silence — spatial_depth had the 1.0 bug
+        silent_stereo = np.zeros((sr * 2, 2), dtype=np.float32)
+        scores_stereo = _measure_quick(silent_stereo, sr)
+
+        sd = scores_stereo["spatial_depth"]
+        assert np.isfinite(sd), f"spatial_depth NaN/Inf on stereo silence"
+        assert abs(sd - 0.5) <= 1e-6, f"spatial_depth must be neutral on stereo silence, got {sd:.4f}"
 
     def test_100_phase16_tonal_center_excluded(self):
         """phase_16 (final/mastering EQ) must exclude tonal_center

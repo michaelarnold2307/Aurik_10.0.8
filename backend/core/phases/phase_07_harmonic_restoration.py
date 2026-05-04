@@ -613,6 +613,69 @@ class HarmonicRestorationPhase(PhaseInterface):
             restored = audio + _effective_strength * (restored - audio)
             restored = np.clip(restored, -1.0, 1.0)
 
+        # §0a / §6.2c / §2.46e BW-Ceiling Hard-Cap: Harmonische Rekonstruktion darf
+        # das physikalische Trägerlimit nicht überschreiten (§2.46e Hallucination-Guard).
+        # Shellac ≤ 8 kHz, Vinyl ≤ 16 kHz, WaxCyl ≤ 5 kHz.
+        _BW_CEILING_07: dict[str, float] = {
+            "shellac": 8000.0,
+            "wax_cylinder": 5000.0,
+            "vinyl": 16000.0,
+            "reel_tape": 18000.0,
+            "cassette": 15000.0,
+        }
+        _mat_key_07 = str(material_type).lower().replace(" ", "_").replace("-", "_")
+        _bw_cap_07 = _BW_CEILING_07.get(_mat_key_07, None)
+        if _bw_cap_07 is not None:
+            try:
+                from scipy.signal import butter as _butter07, sosfiltfilt as _sosfiltfilt07
+
+                _nyq07 = sample_rate / 2.0
+                _bw_ratio07 = float(np.clip(_bw_cap_07 / _nyq07, 0.01, 0.99))
+                _sos_lp07 = _butter07(6, _bw_ratio07, btype="low", output="sos")
+                if restored.ndim == 2:
+                    if restored.shape[1] > restored.shape[0]:
+                        _nc07 = restored.shape[0]
+                        restored = np.stack(
+                            [_sosfiltfilt07(_sos_lp07, restored[c]) for c in range(_nc07)], axis=0
+                        ).astype(np.float32)
+                    else:
+                        _nc07 = restored.shape[1]
+                        restored = np.stack(
+                            [_sosfiltfilt07(_sos_lp07, restored[:, c]) for c in range(_nc07)], axis=1
+                        ).astype(np.float32)
+                else:
+                    restored = _sosfiltfilt07(_sos_lp07, restored).astype(np.float32)
+                restored = np.clip(restored, -1.0, 1.0)
+                logger.debug("§6.2c phase_07 BW-Ceiling Hard-Cap: %s ≤ %.0f Hz", _mat_key_07, _bw_cap_07)
+            except Exception as _bw07_exc:
+                logger.debug("§6.2c phase_07 BW-Ceiling (non-blocking): %s", _bw07_exc)
+
+        # §2.46e Hallucination-Guard: Harmonik-Rekonstruktion kann HF-Halluzinationen erzeugen
+        try:
+            from backend.core.hallucination_guard import apply_hallucination_guard
+
+            _mono_07 = restored.mean(axis=0) if (
+                restored.ndim == 2 and restored.shape[0] == 2 and restored.shape[1] > 2
+            ) else (restored.mean(axis=1) if restored.ndim == 2 else restored)
+            _audio_mono_07 = audio.mean(axis=0) if (
+                audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2
+            ) else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            _bw_ceiling_07 = {"shellac": 8000.0, "wax_cylinder": 5000.0, "vinyl": 16000.0, "reel_tape": 18000.0, "cassette": 15000.0}.get(
+                str(material_type).lower().replace(" ", "_"), None
+            )
+            _, _hg_meta_07 = apply_hallucination_guard(
+                _audio_mono_07.astype(np.float32),
+                _mono_07.astype(np.float32),
+                sr=sample_rate,
+                material_bw_ceiling_hz=_bw_ceiling_07,
+                mode="restoration",  # phase_07 ist immer restorative
+            )
+            if _hg_meta_07.get("hallucination_decision") == "rollback":
+                logger.warning("§2.46e phase_07 Hallucination-Guard rollback: %s", _hg_meta_07.get("hallucination_severity"))
+                restored = audio.copy()
+        except Exception as _hg07_exc:
+            logger.debug("§2.46e phase_07 Hallucination-Guard (non-blocking): %s", _hg07_exc)
+
         return create_phase_result(
             audio=restored,
             modifications={

@@ -21,13 +21,13 @@
 3. **Perceptuelle Verbesserung** — Der Export muss für einen Hörer näher am Original-Klang liegen als der degradierte Input. Technische Korrektheit ohne Klanggewinn ist wertlos.
 ### §0h [RELEASE_MUST] Music-Death-Shield — absolute Schutzregel (v9.12.0)
 
-**Kein Eingriff darf Musik zerstören. Dies gilt absolut, ohne Ausnahme, für alle Materialtypen, alle Ären, alle Genres.**
+**Kein Eingriff darf Musik zerstören. Dies gilt absolut für alle Materialtypen, alle Ären, alle Genres.**
 
 **Drei absolute Verbote** — jedes einzelne ist ein sofortiger Export-Stopp + vollständiger Rollback:
 
 1. **Kein hörbares Artefakt** im Export: Musical Noise, Phasenlöschung, Ringing, Modulationsrauschen, Stimmverfärbung, Pitch-Glitch — jede dieser Klassen löst `artifact_freedom < 0.95` aus → VETO (§2.49).
 2. **Keine Musikzerstörung** durch Over-Processing: Wenn das Ausgangssignal schlechter klingt als der degradierte Input (HPI ≤ 0), MUSS der ursprüngliche Input exportiert werden — mit Status `degraded`, nie ein über-prozessiertes Artefakt.
-3. **Keine Verfremdung** durch halluziniertes Material: Harmonics, Texturen oder räumliche Eigenschaften, die im Original nicht existierten, dürfen nicht hinzugefügt werden (§2.46e Hallucination-Guard). Ausnahme: Studio 2026, wenn MUSHRA ≥ 3.5 nachgewiesen.
+3. **Keine Verfremdung** durch halluziniertes Material: Harmonics, Texturen oder räumliche Eigenschaften, die im Original nicht existierten, dürfen nicht hinzugefügt werden (§2.46e Hallucination-Guard). Ausgenommen von Verbotspunkt 3 ist ausschließlich Modus Studio 2026, wenn OQS-äquivalent ≥ 3.5 nachgewiesen — Verbotspunkte 1 und 2 bleiben absolut.
 
 **Invariante**: `artifact_freedom` ist **der einzige Veto-Faktor** in §2.44 HPI — er kann allein den Export blockieren. Alle anderen Faktoren reduzieren den Score, blockieren aber nicht. Dies ist nicht verhandelbar.
 
@@ -36,12 +36,12 @@
 **Restoration-Ziel**: Der Hörer soll **keinen Eingriff wahrnehmen** — er hört das Original wie am Tag der Aufnahme im Studio, nicht eine „restaurierte" Version. Eingriffe, die wahrnehmbar sind, gelten als Restaurierungsfehler, auch wenn sie technisch korrekt sind.
 
 **Mess-Kriterien für Perceptual Transparency**:
-- `MUSHRA-äquivalent ≥ 4.0` (im Vergleich zum besten verfügbaren Referenzpunkt)
+- `OQS ≥ 80` (algorithmisch, §8.1.1 — 0–100-Skala, kein ITU-R BS.1534-3-Hörertest; Referenzpunkt: best_carrier_checkpoint oder degradierter Input)
 - Kein Hörer kann Restaurierungsartefakte identifizieren: Musical Noise ≤ Trägerprofil, TFS erhalten (§0a)
 - `timbral_fidelity ≥ 0.93` zum best_carrier_checkpoint (nicht zum degradierten Input)
 - Frisson-Zonen vollständig erhalten (§2.56/§Frisson): kein Klimax gedämpft, keine Gänsehaut-Passage geglättet
 
-**Invariante**: Aurik zeigt dem Hörer **nie** ein Ergebnis, das technisch besser aussieht aber schlechter klingt. Der MUSHRA-Score ist bindend. Wenn er < 4.0, wird Strength reduziert oder auf Checkpoint zurückgerollt.
+**Invariante**: Aurik zeigt dem Hörer **nie** ein Ergebnis, das technisch besser aussieht aber schlechter klingt. Der OQS ist bindend (Materialgrenze gem. §8.1.1b). Wenn er unter dem Material-Minimum liegt, wird Strength reduziert oder auf Checkpoint zurückgerollt.
 
 ### §0g [RELEASE_MUST] Autonomes Entscheidungs-Doktrin (v9.12.0)
 
@@ -79,7 +79,7 @@
 | **Authentizität** | Zum Original — akustisch nicht unterscheidbar vom Studio-Master | Zum Künstler — musikalische Intention bewahren, Klangqualität modernisieren |
 | **Rauschboden** | **Material-adaptiv** — Rauschboden-*Niveau* UND -*Textur* des originalen Aufnahmemediums anstreben, nicht aggressiver (Studio-Ambience bewahren). Spektrale Form des Restrauschens muss dem Trägerprofil entsprechen (kein weißes Rauschen nach Vinyl-Denoising) | **≤ −72 dBFS** — moderner Studio-Standard |
 | **Qualitätsmaß** | Nähe zum Original (timbral fidelity) | Verbesserung gegenüber Input (PQS improvement) |
-| **Dynamic Range** | **Material-Ceiling** — DR darf physikalisches Medium-Maximum nicht überschreiten (Spec 05 §6.2b DR_CEILING): Vinyl ≤ 70 dB, Shellac ≤ 45 dB, Tape ≤ 68 dB, CD ≤ 96 dB. Expansion über Ceiling = Artefakt. | DR-Erweiterung bis moderne Studio-Standards erlaubt, aber ≤ src_ceiling × 1.5 |
+| **Dynamic Range** | **Material-Ceiling** — DR darf physikalisches Medium-Maximum nicht überschreiten (Spec 05 §6.2b DR_CEILING): Vinyl ≤ 70 dB, Shellac ≤ 45 dB, Kassette (tape) ≤ 62 dB, Reel-Tape ≤ 72 dB, CD ≤ 96 dB. Expansion über Ceiling = Artefakt. | DR-Erweiterung bis moderne Studio-Standards erlaubt, aber ≤ src_ceiling × 1.5 |
 | **Bandbreite** | **Material-Ceiling** — Output-BW darf physikalisches Maximum des Quellmediums nicht überschreiten (Spec 05 §6.2c BW_CEILING): Shellac ≤ 8 kHz, Vinyl ≤ 16 kHz, WaxCyl ≤ 5 kHz. Additiv-Phasen müssen BW-Hard-Cap respektieren. | Volle BW-Erweiterung bis 22 kHz, erfordert aber MUSHRA ≥ 3.5 für Extension-Band |
 | **Rauschtextur** | **Kohärent zum Trägerprofil** — spektrale Form des Restrauschens muss dem Trägermedium entsprechen (Spec 04 §4.7). Vinyl: rosa; Tape: Brown+HF-Hiss; CD: Weiß/Flat. Kohärenz-Score ≥ 0.80 Pflicht. | Minimaler Rauschboden; Textur-Kohärenz nicht erzwungen |
 | **TFS (Temporal Fine Structure)** | **Strikt erhalten** — Hilbert-Phasen-Extraktion via `tfs_preservation_guard.py`; ERB-Band-Energie-Gate (nur Voiced-Frames > 3 aktiv); ΔPhase-Grenzwert material-adaptiv. Vintage-Ära-Charakter = Original-TFS. | **Flexibel** — TFS-Modifikation in Enhancement-Phasen erlaubt, wenn MUSHRA ≥ 3.5 im betreffenden ERB-Band; kein TFS-Rollback-Trigger in Studio 2026 |
@@ -217,7 +217,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 
 ### VERBOTEN — Häufigste Anti-Patterns (Top-10)
 
-> Vollständige Tabelle (~100 Einträge, Linter-Referenz V01–V11): [`.github/VERBOTEN.md`](.github/VERBOTEN.md)
+> Vollständige Tabelle (~100 Einträge, Linter-Referenz V01–V11): [`VERBOTEN.md`](VERBOTEN.md)
 
 | Verboten | Richtig | Linter |
 |---|---|---|
@@ -232,6 +232,7 @@ logger.info("phase=%s score=%.2f", phase, score)  # kein print()
 | `griffinlim()` als Endschritt | PGHI / Vocos | V05 |
 | `CAUSE_TO_PHASES` ohne `CAUSES`-Gegenstück | Bidirektionale Sync: `CAUSES` + `CAUSE_TO_PHASES` (§2.59) | — |
 | Neue Phase ohne CAUSE_TO_PHASES-Eintrag | `CAUSES` + `CAUSE_TO_PHASES` bidirektional ergänzen — sonst findet `CausalDefectReasoner` die Phase nie | — |
+| Unabhängige ML-Reparatur für L/R + kanalweises Resampling zur Längenkorrektur | M/S- oder Linked-Stereo-Verarbeitung; deterministischer Strip/Crop/Pad ohne Time-Warp | — |
 
 
 
@@ -459,7 +460,8 @@ Kollisions-Hierarchie: (1) §0 + RELEASE_MUST-Invarianten; (2) neuere versionsma
 
 ### [RELEASE_MUST] §6.2a Material-Pflicht-Phasen
 
-`_MATERIAL_PRIORITY_PHASES` (UV3): vinyl→phase_09/12/05; tape/reel_tape→phase_29/24/03; shellac→phase_03/06/01; cassette→phase_29/12/06/24/03; mp3_low→phase_23/03/50 — aktiviert **unabhängig** vom DefectScanner-Severity-Score (DefectScanner statistisch; einzelne schwere Defekte können unter Schwelle liegen). Alle 15 Materialtypen in UV3 definiert.
+`_MATERIAL_PRIORITY_PHASES` (UV3): vinyl→phase_09/12/05; tape→phase_29/24/06/03; reel_tape→phase_29/24/03/55; shellac→phase_03/06/01; mp3_low→phase_23/03/50 — aktiviert **unabhängig** vom DefectScanner-Severity-Score (DefectScanner statistisch; einzelne schwere Defekte können unter Schwelle liegen). Alle 15 Materialtypen in UV3 definiert.
+> **Hinweis**: `cassette` ist kein `SUPPORTED_MATERIALS`-Key; MediumDetector normiert ihn intern auf `tape`. In `_MATERIAL_PRIORITY_PHASES` wird ausschließlich `"tape"` verwendet.
 
 ### [RELEASE_MUST] §2.29c PMGG Restorative-Baseline-Capping
 
@@ -545,6 +547,19 @@ if abs(len(output) - len(input)) > 64:
 - Implementierung: `backend/core/dsp/psychoacoustics.py`
 
 > Kreuzreferenz: Spec 04 §4.1 (Psychoacoustic Masking), §4.5 NR-Routing
+
+### [RELEASE_MUST] §2.63 Intro/Outro-Edge-Safety + Stereo-Lag-Invariante (v9.12.0)
+
+**Pegelexplosionen am Song-Beginn und Song-Ende müssen in der Entstehung verhindert werden, nicht erst nachträglich kaschiert.**
+
+**Bindende Invarianten**:
+- Für ML-/STFT-/Chunk-Phasen mit Boundary-Risiko (`phase_03`, `phase_23`, verwandte additive/subtraktive Edge-Phasen) MUSS ein präventiver Boundary-Mechanismus aktiv sein: Kontext-Padding (reflect/symmetric) vor der Verarbeitung, danach deterministisches Strippen auf Originallänge.
+- Post-hoc-Crossfades/Edge-Taper sind nur defense-in-depth und dürfen nie der primäre Sicherheitsmechanismus sein.
+- Stereo-Lag-Invariante: Wenn Kanäle separat verarbeitet werden, müssen beide Kanäle identische Kontextlänge, identischen Strip-Offset und identische Zielsamplezahl verwenden.
+- **VERBOTEN**: Per-Channel-Resampling als primäre Längenkorrektur nach Boundary-Verarbeitung (kann L/R zeitlich auseinanderziehen).
+- Export-Grenze bleibt bindend: Interchannel-Delay > 1 ms ist Hard-Fail (§2.51a); Ziel ist no-regression relativ zum Input.
+
+**Produktionsziel**: Keine neuen Intro/Outro-Peaks durch Restaurierung und keine neu eingeführte L/R-Zeitverschiebung.
 
 ## Vintage Aesthetics
 

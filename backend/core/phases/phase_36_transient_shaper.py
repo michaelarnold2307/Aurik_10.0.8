@@ -230,8 +230,8 @@ class TransientShaper(PhaseInterface):
             metadata={
                 "material": material.name,
                 "transient_boost_db": float(transient_boost_db),
-                "peak_before": float(np.max(np.abs(audio))),
-                "peak_after": float(np.max(np.abs(shaped_audio))),
+                "peak_before": float(np.percentile(np.abs(audio), 99.9)),  # V08: percentile not np.max
+                "peak_after": float(np.percentile(np.abs(shaped_audio), 99.9)),  # V08: percentile not np.max
                 "rt_factor": float(rt_factor),
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,

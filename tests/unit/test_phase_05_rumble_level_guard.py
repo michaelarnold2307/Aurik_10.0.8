@@ -101,6 +101,15 @@ def _gated_rms_db(audio: np.ndarray, gate_dbfs: float = -50.0) -> float:
     return float(20.0 * np.log10(gated_rms + 1e-12))
 
 
+def _zone_peak_db(audio: np.ndarray, start: int, end: int) -> float:
+    """99.9%-Peak in dBFS for mono/stereo segments."""
+    seg = np.asarray(audio[start:end], dtype=np.float32)
+    if seg.ndim == 2:
+        seg = seg.ravel()
+    peak = float(np.percentile(np.abs(seg), 99.9))
+    return float(20.0 * np.log10(peak + 1e-12))
+
+
 class TestPhase05LoudnessGuard:
     """Phase 05 Rumble Filter darf den musikalischen Pegel nicht zerstören."""
 
@@ -221,4 +230,29 @@ class TestPhase05LoudnessGuard:
         assert tail_ratio < 0.15, (
             f"Quiet fade-out tail flagged as transient too often: {tail_ratio:.2%}. "
             "Phase 05 would alternate HPF bypass/filter and pump the outro."
+        )
+
+    def test_intro_outro_peak_no_explosion_after_rumble_filter(self):
+        """Regression: Intro/Outro dürfen durch Phase 05 nicht als Peak explodieren."""
+        audio = _make_fadeout_rumble_signal(duration_s=4.0)
+        n_intro = int(0.45 * SR)
+        n_outro_start = len(audio) - int(0.45 * SR)
+
+        in_intro_peak = _zone_peak_db(audio, 0, n_intro)
+        in_outro_peak = _zone_peak_db(audio, n_outro_start, len(audio))
+
+        result = self.phase.process(audio.copy(), material_type="vinyl")
+        assert result.success
+
+        out_intro_peak = _zone_peak_db(result.audio, 0, n_intro)
+        out_outro_peak = _zone_peak_db(result.audio, n_outro_start, len(result.audio))
+
+        intro_boost = out_intro_peak - in_intro_peak
+        outro_boost = out_outro_peak - in_outro_peak
+
+        assert intro_boost <= 3.0, (
+            f"Intro peak explosion after phase_05: +{intro_boost:.2f} dB (limit +3.0 dB)"
+        )
+        assert outro_boost <= 3.0, (
+            f"Outro peak explosion after phase_05: +{outro_boost:.2f} dB (limit +3.0 dB)"
         )

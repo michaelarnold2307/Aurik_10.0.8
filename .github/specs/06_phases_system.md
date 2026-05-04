@@ -47,6 +47,14 @@ phase_36_transient_shaper.py        Transient-Shaper
 phase_37_bass_enhancement.py        Bass-Fundament-Anhebung
 phase_38_presence_boost.py          Präsenz-Boost (Ära-bewusst: 2–6 kHz, SourceFidelity Mic-Center §2.42)
 phase_39_air_band_enhancement.py    Air-Band-Enhancement (Ära-bewusst, BW-Cap §2.42, > 12 kHz)
+                                    **[BUG-FIX v9.12.0] RESTORATION-EINSCHRÄNKUNG**: Phase_39 ist im
+                                    Restoration-Modus für **alle analogen Materialien VERBOTEN**:
+                                    vinyl, shellac, wax_cylinder, wire_recording, tape, reel_tape,
+                                    cassette, lacquer_disc. Grund: Air-Band-Erweiterung über das
+                                    physikalische BW-Ceiling (§0a §6.2c) des Originals erzeugt
+                                    Halluzinationen (+18 dB Air-Band-Energie bei Vinyl > 16 kHz).
+                                    Erlaubt: Studio 2026 (beide Modi), digitale Quellen (cd_digital,
+                                    mp3_low, mp3_high, dat, md) in Restoration wenn BW-Ceiling passt.
 phase_40_loudness_normalization.py  LUFS-Normierung (ITU-R BS.1770-5, −14 LUFS)
 phase_41_output_format_optimization.py  Ausgabe-Format-Optimierung
 phase_42_vocal_enhancement.py       Gesangs-Enhancement
@@ -141,6 +149,12 @@ Phasen, die auf Stereo-Audio operieren, dürfen L und R **nicht unabhängig** mi
 | `phase_23_spectral_repair` | **M/S-Domain**: Spektralreparatur auf Mid; Side minimal/nicht bearbeiten | Separate Lückenfüllung für L und R |
 | `phase_24_dropout_repair` | **Linked Stereo**: Dropout-Grenze erkannt wenn BEIDE Kanäle unterfallen; Füllung kohärent | Unabhängige L/R-Dropout-Erkennung |
 | `phase_35_multiband_compression` | **Linked Stereo**: Gain auf `√(L²+R²)/√2`; gleicher Gain für L und R | Separate GR-Berechnung pro Kanal |
+
+**Zusatzpflicht für `phase_23_spectral_repair` (ML-Pfad, RELEASE_MUST):**
+
+- AudioSR/Apollo-Inference auf Stereo MUSS Mid-zentriert erfolgen (M/S-Domain), Side bleibt unverändert oder nur minimal skaliert.
+- **VERBOTEN**: Unabhängige ML-Inferenz auf L und R mit separater Nachkorrektur der Längen.
+- **VERBOTEN**: Kanalweises Resampling als primäre Längenkorrektur nach ML-Inferenz.
 
 **Code-Pattern für M/S-Domain** (Referenz-Implementierung):
 

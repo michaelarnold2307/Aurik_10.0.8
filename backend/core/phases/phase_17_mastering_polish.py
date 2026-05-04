@@ -234,8 +234,8 @@ class MasteringPolishPhase(PhaseInterface):
                 },
                 metrics={
                     "rms_change_db": 0.0,
-                    "peak_before_db": float(20 * np.log10(np.max(np.abs(audio)) + 1e-10)),
-                    "peak_after_db": float(20 * np.log10(np.max(np.abs(audio)) + 1e-10)),
+                    "peak_before_db": float(20 * np.log10(float(np.percentile(np.abs(audio), 99.9)) + 1e-10)),  # V08
+                    "peak_after_db": float(20 * np.log10(float(np.percentile(np.abs(audio), 99.9)) + 1e-10)),  # V08
                 },
                 modifications={
                     "algorithm": "skipped_zero_strength",

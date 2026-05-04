@@ -644,7 +644,11 @@ class RumbleFilterPhase(PhaseInterface):
 
         # Spectrogram
         _f, _t, Zxx = signal.stft(
-            mono, fs=self.sample_rate, nperseg=n_fft, noverlap=n_fft - hop_length, boundary="even"
+            mono,
+            fs=self.sample_rate,
+            nperseg=n_fft,
+            noverlap=n_fft - hop_length,
+            boundary="even",
         )
         magnitude = np.abs(Zxx)
 
@@ -685,6 +689,13 @@ class RumbleFilterPhase(PhaseInterface):
             _tail_db = float(20.0 * np.log10(np.sqrt(np.mean(_tail * _tail) + 1e-12) + 1e-12))
             if _tail_db < _quiet_gate_db:
                 onset_samples[_tail_start:] = False
+
+        # Edge guard: avoid transient-bypass toggling at very beginning/end.
+        # These zones are prone to boundary artefacts and can create intro/outro bursts.
+        _edge_guard_samples = int(max(0.08 * self.sample_rate, hop_length))
+        if _edge_guard_samples > 0 and len(onset_samples) > 2 * _edge_guard_samples:
+            onset_samples[:_edge_guard_samples] = False
+            onset_samples[-_edge_guard_samples:] = False
 
         return onset_samples
 
@@ -736,17 +747,27 @@ class RumbleFilterPhase(PhaseInterface):
                 filtered = signal.sosfiltfilt(sos, audio, padlen=_padlen)
             return filtered
 
+        # Build a soft bypass envelope instead of hard sample switches.
+        # Hard np.where transitions can create boundary discontinuities at intro/outro,
+        # perceived as short LF bursts ("Pegelexplosion").
+        _soft_mask = np.asarray(transient_mask, dtype=np.float32)
+        _xfade_samples = int(max(24, round(0.004 * self.sample_rate)))  # 4 ms crossfade
+        if _xfade_samples > 1 and _soft_mask.size > 1:
+            _kernel = np.ones(_xfade_samples, dtype=np.float32) / float(_xfade_samples)
+            _soft_mask = np.convolve(_soft_mask, _kernel, mode="same")
+            _soft_mask = np.clip(_soft_mask, 0.0, 1.0)
+
         # Apply filter
         if audio.ndim == 2:
             filtered = np.zeros_like(audio)
             for ch in range(2):
                 filtered_channel = signal.sosfiltfilt(sos, audio[:, ch], padlen=_padlen)
 
-                # Blend: transient regions = original, non-transient = filtered
-                filtered[:, ch] = np.where(transient_mask, audio[:, ch], filtered_channel)
+                # Blend: transient regions prefer original, non-transient prefer filtered.
+                filtered[:, ch] = _soft_mask * audio[:, ch] + (1.0 - _soft_mask) * filtered_channel
         else:
             filtered_audio = signal.sosfiltfilt(sos, audio, padlen=_padlen)
-            filtered = np.where(transient_mask, audio, filtered_audio)
+            filtered = _soft_mask * audio + (1.0 - _soft_mask) * filtered_audio
 
         return filtered
 

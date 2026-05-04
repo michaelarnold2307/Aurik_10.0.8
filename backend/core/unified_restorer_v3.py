@@ -1120,19 +1120,19 @@ class UnifiedRestorerV3:
         _panns_instrument_boost = 1.0
         if isinstance(panns_tags, dict) and panns_tags:
             _vocal_prob = max(
-                panns_tags.get("Singing voice", 0.0),
-                panns_tags.get("Speech", 0.0),
-                panns_tags.get("Vocals", 0.0),
-                panns_tags.get("Male singing", 0.0),
-                panns_tags.get("Female singing", 0.0),
+                float(panns_tags.get("Singing voice", 0.0) or 0),
+                float(panns_tags.get("Speech", 0.0) or 0),
+                float(panns_tags.get("Vocals", 0.0) or 0),
+                float(panns_tags.get("Male singing", 0.0) or 0),
+                float(panns_tags.get("Female singing", 0.0) or 0),
             )
             _inst_prob = max(
-                panns_tags.get("Guitar", 0.0),
-                panns_tags.get("Electric guitar", 0.0),
-                panns_tags.get("Brass instrument", 0.0),
-                panns_tags.get("Drum", 0.0),
-                panns_tags.get("Piano", 0.0),
-                panns_tags.get("Keyboard (musical)", 0.0),
+                float(panns_tags.get("Guitar", 0.0) or 0),
+                float(panns_tags.get("Electric guitar", 0.0) or 0),
+                float(panns_tags.get("Brass instrument", 0.0) or 0),
+                float(panns_tags.get("Drum", 0.0) or 0),
+                float(panns_tags.get("Piano", 0.0) or 0),
+                float(panns_tags.get("Keyboard (musical)", 0.0) or 0),
             )
             if _vocal_prob < 0.10:  # clearly instrumental
                 _panns_vocal_boost = 0.80
@@ -2726,8 +2726,8 @@ class UnifiedRestorerV3:
             _deficit = 0.74 - float(_sep)
             _adj("instrument", 1.0 + min(0.10, _deficit * 0.5))
 
-        # Spatial depth (raumtiefe): low → stereo / spatial enhancement needed
-        _raum = current_scores.get("raumtiefe")
+        # Spatial depth: low → stereo / spatial enhancement needed
+        _raum = current_scores.get("spatial_depth") or current_scores.get("raumtiefe")
         if _raum is not None and float(_raum) < 0.65:
             _deficit = 0.65 - float(_raum)
             _adj("instrument", 1.0 + min(0.08, _deficit * 0.4))
@@ -4479,6 +4479,19 @@ class UnifiedRestorerV3:
         except Exception as _qa_pre_exc:
             logger.debug("QualityAnalyzer (Vorher) nicht verfügbar: %s", _qa_pre_exc)
 
+            # §LAG_PROBE_0A: VOR DC-Offset-Removal (Eingang zu restore(), nach Resampling)
+            # GCC-PHAT via file_import helper — O(n log n), kein O(n²) np.correlate
+            try:
+                if audio.ndim == 2:
+                    from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                    _lp0a_lag = _gcc_lag(audio, sample_rate)
+                    logger.info(
+                        "LAG_PROBE 0A/before_dc_removal: lag=%d samples (%.1f ms)",
+                        _lp0a_lag, _lp0a_lag / sample_rate * 1000,
+                    )
+            except Exception as _lp0a_exc:
+                logger.debug("LAG_PROBE_0A fehlgeschlagen: %s", _lp0a_exc)
+
         # §DCOffsetPreRemoval — IIR-Hochpass (Spec §2.2): PFLICHT vor jeder FFT/HPSS-Analyse.
         # Entfernt DC-Versatz und sehr niedrige Frequenzen, die HPSS/FFT-Artefakte erzeugen.
         # [RELEASE_MUST] Lücke-H-Fix v9.10.100: reel_tape benötigt aggressiveren,
@@ -4535,6 +4548,19 @@ class UnifiedRestorerV3:
         except Exception as _dc_exc:
             logger.debug("DCOffsetPreRemoval Fehler (scipy nicht verfügbar): %s", _dc_exc)
 
+        # §LAG_PROBE_0B: NACH DC-Offset-Removal, VOR TDP
+        # GCC-PHAT via file_import helper — O(n log n)
+        try:
+            if audio.ndim == 2:
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                _lp0b_lag = _gcc_lag(audio, sample_rate)
+                logger.info(
+                    "LAG_PROBE 0B/after_dc_removal_before_tdp: lag=%d samples (%.1f ms)",
+                    _lp0b_lag, _lp0b_lag / sample_rate * 1000,
+                )
+        except Exception as _lp0b_exc:
+            logger.debug("LAG_PROBE_0B fehlgeschlagen: %s", _lp0b_exc)
+
         # §2.27 TransientDecoupledProcessing — Percussive/Harmonic-Trennung (allererster DSP-Schritt)
         _tdp_proc = None
         _tdp_percussive: np.ndarray | None = None
@@ -4546,6 +4572,25 @@ class UnifiedRestorerV3:
             _tdp_audio_percussive, _tdp_audio_harmonic = _tdp_proc.separate(audio, sample_rate)
             _tdp_percussive = _tdp_audio_percussive.copy()  # Original-Transienten sichern
             audio = _tdp_audio_harmonic  # Pipeline ab jetzt auf harm. Anteil
+            # §LAG_PROBE_0C: NACH TDP-Separation (harm. Anteil)
+            # HPSS-Harmonic hat starke Tonal-Struktur am Anfang — GCC-PHAT erste 5s erzeugt
+            # False-Positives. Mittleres 5s-Fenster (wie STCG) vermeidet diese Ambiguität.
+            if audio.ndim == 2:
+                try:
+                    from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                    _lp0c_n = audio.shape[1]
+                    _lp0c_w = int(sample_rate * 5.0)
+                    _lp0c_s = max(0, _lp0c_n // 2 - _lp0c_w // 2)
+                    _lp0c_e = min(_lp0c_n, _lp0c_s + _lp0c_w)
+                    _lp0c_win = audio[:, _lp0c_s:_lp0c_e]
+                    _lp0c_lag = _gcc_lag(_lp0c_win, sample_rate)
+                    logger.info(
+                        "LAG_PROBE 0C/after_tdp_separation: lag=%d samples (%.1f ms)",
+                        _lp0c_lag,
+                        _lp0c_lag / sample_rate * 1000,
+                    )
+                except Exception as _lp0c_exc:
+                    logger.debug("LAG_PROBE_0C fehlgeschlagen: %s", _lp0c_exc)
             _tdp_harmonic_ready = True
             logger.info(
                 "§2.27 TDP: Percussive/Harmonic getrennt (perc_rms=%.4f harm_rms=%.4f)",
@@ -4554,6 +4599,10 @@ class UnifiedRestorerV3:
             )
         except Exception as _tdp_sep_exc:
             logger.debug("TransientDecoupledProcessor nicht verfügbar: %s", _tdp_sep_exc)
+
+        # Isolates analysis/planning calls from live pipeline audio and prevents
+        # accidental in-place L/R modifications before STCG pre-pipeline.
+        _analysis_audio = np.array(audio, copy=True)
 
         # §2.25 ReferenceAnchorSynthesizer — Synthesierter Referenz-Anker für Mastering-Ziel
         _reference_anchor = None
@@ -4740,7 +4789,7 @@ class UnifiedRestorerV3:
             from backend.core.perceptual_salience import get_perceptual_salience_estimator
 
             _pse = get_perceptual_salience_estimator()
-            defect_result = _pse.annotate_defect_scores(audio, sample_rate, defect_result)
+            defect_result = _pse.annotate_defect_scores(_analysis_audio, sample_rate, defect_result)
             logger.info("§9.1c PerceptualSalience: defect severities salience-adjusted")
         except Exception as _pse_exc:
             logger.debug("PerceptualSalienceEstimator nicht verfügbar: %s", _pse_exc)
@@ -4750,7 +4799,7 @@ class UnifiedRestorerV3:
         try:
             from backend.core.perceptual_attention_model import compute_saliency_map
 
-            _saliency_map = compute_saliency_map(audio, sample_rate)
+            _saliency_map = compute_saliency_map(_analysis_audio, sample_rate)
             logger.info(
                 "👁️ PerceptualAttentionModel: saliency_map shape=%s max=%.3f",
                 _saliency_map.shape,
@@ -4775,7 +4824,7 @@ class UnifiedRestorerV3:
             _causal_plan = reason_about_defects(
                 defect_scores=_defect_scores_map,
                 material=material_type.value,
-                audio=audio,
+                audio=_analysis_audio,
                 sample_rate=sample_rate,
             )
             logger.info(
@@ -4816,7 +4865,7 @@ class UnifiedRestorerV3:
             if _has_dropout:
                 from backend.core.musical_structure_analyzer import analyze_musical_structure
 
-                _musical_structure = analyze_musical_structure(audio, sample_rate)
+                _musical_structure = analyze_musical_structure(_analysis_audio, sample_rate)
                 _n_chorus = sum(1 for s in _musical_structure.segments if s.segment_type == "chorus")
                 _n_verse = sum(1 for s in _musical_structure.segments if s.segment_type == "verse")
                 logger.info(
@@ -4890,7 +4939,7 @@ class UnifiedRestorerV3:
                 pass
 
             _goal_applicability = evaluate_goal_applicability(
-                audio=audio,
+                audio=_analysis_audio,
                 sr=sample_rate,
                 material=material_type.value if material_type else "unknown",
                 era_decade=_era_result.decade if _era_result is not None else None,
@@ -4922,14 +4971,14 @@ class UnifiedRestorerV3:
 
         # §8.2 Pass-Through-Invariante: Sauberes Material schonend behandeln
         # (SNR > 40 dB + max_defect_severity < 0.15 → Schonmodus)
-        _rms_signal = float(np.sqrt(np.mean(audio**2)) + 1e-9)
-        _noise_percentile = float(np.percentile(np.abs(audio), 5) + 1e-9)
+        _rms_signal = float(np.sqrt(np.mean(_analysis_audio**2)) + 1e-9)
+        _noise_percentile = float(np.percentile(np.abs(_analysis_audio), 5) + 1e-9)
         _input_snr_db = 20.0 * np.log10(_rms_signal / _noise_percentile)
         _top_defects = defect_result.get_top_defects(10)
         _max_defect_severity = max((s.severity for s in _top_defects), default=0.0)
         _localized_critical, _localized_metrics = self._has_localized_critical_defects(_top_defects)
         _clean_digital_mode, _clean_digital_metrics = self._is_benign_digital_source(
-            audio,
+            _analysis_audio,
             sample_rate,
             defect_result.material_type,
         )
@@ -5046,11 +5095,11 @@ class UnifiedRestorerV3:
             if isinstance(_panns_conf, dict) and _panns_conf:
                 self._restoration_context["panns_tags"] = _panns_conf
                 _panns_vocal_max = max(
-                    _panns_conf.get("Singing voice", 0.0),
-                    _panns_conf.get("Vocals", 0.0),
-                    _panns_conf.get("Speech", 0.0),
-                    _panns_conf.get("Male singing", 0.0),
-                    _panns_conf.get("Female singing", 0.0),
+                    float(_panns_conf.get("Singing voice", 0.0) or 0),
+                    float(_panns_conf.get("Vocals", 0.0) or 0),
+                    float(_panns_conf.get("Speech", 0.0) or 0),
+                    float(_panns_conf.get("Male singing", 0.0) or 0),
+                    float(_panns_conf.get("Female singing", 0.0) or 0),
                 )
                 self._restoration_context["panns_vocals_confidence"] = _panns_vocal_max
         # [RELEASE_MUST] Lücke-G-Fix v9.10.100: assert global_scalar ∈ [0.50, 1.50]
@@ -5133,7 +5182,7 @@ class UnifiedRestorerV3:
             _sgi_masked_ratio: float | None = None
             _sgi_centroid_bark: float | None = None
             try:
-                _pa_mono = audio.mean(axis=0) if audio.ndim == 2 else audio
+                _pa_mono = _analysis_audio.mean(axis=0) if _analysis_audio.ndim == 2 else _analysis_audio
                 # Roughness, Sharpness, Spectral Flatness via PsychoAcousticMetrics
                 from backend.core.psychoacoustic_metrics import PsychoAcousticMetrics
 
@@ -5172,7 +5221,7 @@ class UnifiedRestorerV3:
             _sgi_crest_db: float | None = None
             _sgi_trans_dens: float | None = None
             try:
-                _pa_mono_vht = audio.mean(axis=0) if audio.ndim == 2 else audio
+                _pa_mono_vht = _analysis_audio.mean(axis=0) if _analysis_audio.ndim == 2 else _analysis_audio
 
                 # --- HNR: True pitch-period HNR via multi-frame AC ---
                 # ComprehensiveMetrics._compute_hnr starts lag search at 1
@@ -5261,7 +5310,7 @@ class UnifiedRestorerV3:
                 _mat_str_250 = (
                     str(getattr(material_type, "value", material_type)).lower() if material_type else "digital"
                 )
-                _src_baseline = _afg_250.measure_source_baseline(audio, sample_rate, _mat_str_250)
+                _src_baseline = _afg_250.measure_source_baseline(_analysis_audio, sample_rate, _mat_str_250)
             except Exception as _sb250_exc:
                 logger.debug("§2.50 Source-Baseline-Messung fehlgeschlagen: %s", _sb250_exc)
 
@@ -5408,7 +5457,7 @@ class UnifiedRestorerV3:
                 from backend.core.physical_ceiling_estimator import PhysicalCeilingEstimator as _EarlyPCE
 
                 _pce_mat_key = _sgt_mat_str if "_sgt_mat_str" in dir() else ""
-                _pce_audio = audio if audio.ndim <= 2 else audio[:2]  # max stereo
+                _pce_audio = _analysis_audio if _analysis_audio.ndim <= 2 else _analysis_audio[:2]  # max stereo
                 _pce_result = _EarlyPCE().estimate(_pce_audio, sample_rate, {}, _pce_mat_key)
                 _pce_ceiling = _pce_result.ceiling  # dict[str, float]
                 # min(SGT, ceiling) per goal — ceiling-cap only when ceiling < SGT
@@ -5483,7 +5532,7 @@ class UnifiedRestorerV3:
                 causal_plan=_causal_plan,
                 chain_info=self._active_chain_info,
                 defekt_hint=self._active_defekt_hint,
-                audio=audio,
+                audio=_analysis_audio,
                 sr=sample_rate,
                 goal_weights=getattr(self, "_song_goal_weights", None),
             )
@@ -5547,18 +5596,11 @@ class UnifiedRestorerV3:
             except Exception as _stcg_pre_exc:
                 logger.debug("§2.60 STCG pre-pipeline fehlgeschlagen (non-blocking): %s", _stcg_pre_exc)
 
-        # §LAG_PROBE_1: nach STCG pre-pipeline
+        # §LAG_PROBE_1: nach STCG pre-pipeline — GCC-PHAT O(n log n)
         try:
             if audio.ndim == 2:
-                import numpy as _lp_np
-
-                _lp_L = audio[:, 0] if audio.shape[1] == 2 else audio[0]
-                _lp_R = audio[:, 1] if audio.shape[1] == 2 else audio[1]
-                _lp_n = min(int(sample_rate * 5), len(_lp_L))
-                _lp_cc = _lp_np.correlate(
-                    _lp_L[:_lp_n].astype(_lp_np.float64), _lp_R[:_lp_n].astype(_lp_np.float64), mode="full"
-                )
-                _lp_lag = int(_lp_np.argmax(_lp_np.abs(_lp_cc))) - (_lp_n - 1)
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                _lp_lag = _gcc_lag(audio, sample_rate)
                 logger.info(
                     "LAG_PROBE 1/after_stcg_pre: lag=%d samples (%.1f ms)", _lp_lag, _lp_lag / sample_rate * 1000
                 )
@@ -6014,18 +6056,11 @@ class UnifiedRestorerV3:
             except Exception as _spa_exc:
                 logger.debug("set_pipeline_active(False) fehlgeschlagen: %s", _spa_exc)
 
-        # §LAG_PROBE_2: direkt nach _execute_pipeline (vor STCG post)
+        # §LAG_PROBE_2: direkt nach _execute_pipeline (vor STCG post) — GCC-PHAT O(n log n)
         try:
             if restored_audio.ndim == 2:
-                import numpy as _lp_np2
-
-                _lp2_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
-                _lp2_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
-                _lp2_n = min(int(sample_rate * 5), len(_lp2_L))
-                _lp2_cc = _lp_np2.correlate(
-                    _lp2_L[:_lp2_n].astype(_lp_np2.float64), _lp2_R[:_lp2_n].astype(_lp_np2.float64), mode="full"
-                )
-                _lp2_lag = int(_lp_np2.argmax(_lp_np2.abs(_lp2_cc))) - (_lp2_n - 1)
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                _lp2_lag = _gcc_lag(restored_audio, sample_rate)
                 logger.info(
                     "LAG_PROBE 2/after_execute_pipeline: lag=%d samples (%.1f ms)",
                     _lp2_lag,
@@ -6075,18 +6110,11 @@ class UnifiedRestorerV3:
             except Exception as _stcg_post_exc:
                 logger.debug("§2.60 STCG post-pipeline fehlgeschlagen (non-blocking): %s", _stcg_post_exc)
 
-        # §LAG_PROBE_3: nach STCG post-pipeline
+        # §LAG_PROBE_3: nach STCG post-pipeline — GCC-PHAT O(n log n)
         try:
             if restored_audio.ndim == 2:
-                import numpy as _lp_np3
-
-                _lp3_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
-                _lp3_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
-                _lp3_n = min(int(sample_rate * 5), len(_lp3_L))
-                _lp3_cc = _lp_np3.correlate(
-                    _lp3_L[:_lp3_n].astype(_lp_np3.float64), _lp3_R[:_lp3_n].astype(_lp_np3.float64), mode="full"
-                )
-                _lp3_lag = int(_lp_np3.argmax(_lp_np3.abs(_lp3_cc))) - (_lp3_n - 1)
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                _lp3_lag = _gcc_lag(restored_audio, sample_rate)
                 logger.info(
                     "LAG_PROBE 3/after_stcg_post: lag=%d samples (%.1f ms)", _lp3_lag, _lp3_lag / sample_rate * 1000
                 )
@@ -6427,20 +6455,11 @@ class UnifiedRestorerV3:
                     len(_fc_phases_list),
                 )
 
-                # §LAG_PROBE_4: nach FeedbackChain
+                # §LAG_PROBE_4: nach FeedbackChain — GCC-PHAT O(n log n)
                 try:
                     if restored_audio.ndim == 2:
-                        import numpy as _lp_np4
-
-                        _lp4_L = restored_audio[:, 0] if restored_audio.shape[1] == 2 else restored_audio[0]
-                        _lp4_R = restored_audio[:, 1] if restored_audio.shape[1] == 2 else restored_audio[1]
-                        _lp4_n = min(int(sample_rate * 5), len(_lp4_L))
-                        _lp4_cc = _lp_np4.correlate(
-                            _lp4_L[:_lp4_n].astype(_lp_np4.float64),
-                            _lp4_R[:_lp4_n].astype(_lp_np4.float64),
-                            mode="full",
-                        )
-                        _lp4_lag = int(_lp_np4.argmax(_lp_np4.abs(_lp4_cc))) - (_lp4_n - 1)
+                        from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                        _lp4_lag = _gcc_lag(restored_audio, sample_rate)
                         logger.info(
                             "LAG_PROBE 4/after_feedbackchain: lag=%d samples (%.1f ms)",
                             _lp4_lag,
@@ -6667,13 +6686,25 @@ class UnifiedRestorerV3:
                     _iad_result.total_contaminated_fraction,
                     ", ".join(_iad_result.artifact_types) if _iad_result.artifact_types else "unbekannt",
                 )
+                # §2.49 BUG-FIX v9.12.0 (Gap-Fix): artifact_freedom penalty gilt für JEDES
+                # has_artifacts=True — unabhängig vom Rescue-Threshold.
+                # §0h: ml_hallucination / musical_noise bei fraction=0.025 → VETO (< 0.95).
+                # Formel: af_penalty = max(0.0, 1.0 - fraction * 10)
+                # fraction=0.010 → af=0.90 → VETO; fraction=0.025 → af=0.75; fraction=0.05+ → af≤0.50
+                _frac_iad = float(_iad_result.total_contaminated_fraction)
+                self._iad_artifact_fraction_penalty = float(max(0.0, 1.0 - _frac_iad * 10.0))
+                logger.warning(
+                    "§2.49 IAD: artifact_freedom_penalty=%.3f (fraction=%.3f × 10) — VETO if < 0.95",
+                    self._iad_artifact_fraction_penalty,
+                    _frac_iad,
+                )
+
                 # §2.23 IAD-Rescue (analog §2.45a Dry/Wet-Rescue):
                 # Bei ≥5% Kontamination: Dry/Wet-Blend zurück auf Original.
                 # Bewahrt Restaurierung (≥65% wet), reduziert ML-Artefakte.
                 _IAD_RESCUE_THRESHOLD = 0.05
-                if _iad_result.total_contaminated_fraction >= _IAD_RESCUE_THRESHOLD:
-                    _frac = float(_iad_result.total_contaminated_fraction)
-                    _iad_wet = float(max(0.65, 0.85 - _frac * 1.5))
+                if _frac_iad >= _IAD_RESCUE_THRESHOLD:
+                    _iad_wet = float(max(0.65, 0.85 - _frac_iad * 1.5))
                     _iad_blend = (_iad_wet * restored_audio + (1.0 - _iad_wet) * original_audio_for_goals).astype(
                         np.float32
                     )
@@ -6681,7 +6712,7 @@ class UnifiedRestorerV3:
                     logger.info(
                         "IAD-Rescue: wet=%.2f (fraction=%.3f ≥ %.2f) — Dry/Wet-Blend",
                         _iad_wet,
-                        _frac,
+                        _frac_iad,
                         _IAD_RESCUE_THRESHOLD,
                     )
             else:
@@ -7394,6 +7425,75 @@ class UnifiedRestorerV3:
                     "brillanz": 0.45,  # MP3 codec destroys HF crest; crest <2.5 even post-Apollo
                     "transparenz": 0.60,  # Codec masking residuals floor transparenz
                     "separation_fidelity": 0.62,  # Stem-sep on lossy source physically limited
+                },
+                # §0a §2.44 [RELEASE_MUST] Defensive fallback ceilings for materials not in the
+                # primary adaptive chain above. Without these, if adaptive_goals_system, SGT-blend
+                # and PhysicalCeiling all fail (exceptions), _effective_goal_thresholds stays at
+                # canonical CD-level → false FAIL + unnecessary Recovery cascade for valid output.
+                "lacquer_disc": {
+                    # Acetat-Lackfolie (1930–1950): BW ≤ 8 kHz like shellac, SNR ~20–25 dB.
+                    # Slightly better than shellac but still physically far below canonical.
+                    "natuerlichkeit": 0.69,
+                    "authentizitaet": 0.66,
+                    "tonal_center": 0.71,
+                    "timbre_authentizitaet": 0.66,
+                    "artikulation": 0.62,
+                    "waerme": 0.63,
+                    "brillanz": 0.50,  # BW ≤ 8 kHz; marginally better than shellac
+                    "transparenz": 0.56,
+                    "separation_fidelity": 0.60,
+                },
+                "mp3_high": {
+                    # MP3 ≥ 128 kbps: moderate codec artefacts, BW ~16–17 kHz.
+                    # HF crest reduced but not destroyed; separability limited by codec masking.
+                    "natuerlichkeit": 0.82,
+                    "authentizitaet": 0.80,
+                    "tonal_center": 0.84,
+                    "timbre_authentizitaet": 0.80,
+                    "artikulation": 0.76,
+                    "waerme": 0.74,
+                    "brillanz": 0.65,  # BW ~16–17 kHz; moderate HF crest degradation
+                    "transparenz": 0.70,
+                    "separation_fidelity": 0.70,
+                },
+                "aac": {
+                    # AAC/M4A: modern codec, generally better quality than MP3 at same bitrate.
+                    # HF preservation better than mp3_high; pre-echo artefacts minor.
+                    "natuerlichkeit": 0.84,
+                    "authentizitaet": 0.82,
+                    "tonal_center": 0.86,
+                    "timbre_authentizitaet": 0.82,
+                    "artikulation": 0.78,
+                    "waerme": 0.76,
+                    "brillanz": 0.72,
+                    "transparenz": 0.74,
+                    "separation_fidelity": 0.74,
+                },
+                "minidisc": {
+                    # MiniDisc (ATRAC-1): lossy codec, BW ~17 kHz, characteristic pre-echo.
+                    # HF quality similar to mp3_high; ATRAC pumping may reduce separation.
+                    "natuerlichkeit": 0.80,
+                    "authentizitaet": 0.78,
+                    "tonal_center": 0.82,
+                    "timbre_authentizitaet": 0.78,
+                    "artikulation": 0.74,
+                    "waerme": 0.72,
+                    "brillanz": 0.64,
+                    "transparenz": 0.68,
+                    "separation_fidelity": 0.68,
+                },
+                "dat": {
+                    # Digital Audio Tape: near-CD quality; jitter and minor dropout are main issues.
+                    # Almost canonical, only minimal HF/separation ceiling needed.
+                    "natuerlichkeit": 0.88,
+                    "authentizitaet": 0.86,
+                    "tonal_center": 0.92,
+                    "timbre_authentizitaet": 0.86,
+                    "artikulation": 0.84,
+                    "waerme": 0.80,
+                    "brillanz": 0.82,
+                    "transparenz": 0.82,
+                    "separation_fidelity": 0.82,
                 },
             }
             try:
@@ -8531,11 +8631,16 @@ class UnifiedRestorerV3:
                         "artifact_freedom": _hpi_result.artifact_freedom,
                     }
                 )
-                # §2.44 [RELEASE_MUST] HPI ≤ 0 → Rollback auf weniger aggressive Variante.
-                # Rollback-Kaskade:
+                # §2.60 [RELEASE_MUST] HPI ≤ 0 → Rollback-Kaskade (5 Stufen):
                 #   1. _hpi_best_rollback_audio — letzter artefaktfreier Pipeline-Stand (§2.49)
-                #   2. original_audio_for_goals — Eingabe vor Pipeline (Primum non nocere)
+                #   2. _best_carrier_checkpoint — nach Carrier-Phasen, vor Enhancement (§2.60 Stufe 3)
+                #   3. original_audio_for_goals — Eingabe vor Pipeline (Primum non nocere, Stufe 5)
                 _rollback_target = getattr(self, "_hpi_best_rollback_audio", None)
+                if _rollback_target is None:
+                    # Stufe 3: Carrier-Checkpoint
+                    _rollback_target = getattr(self, "_best_carrier_checkpoint", None)
+                    if _rollback_target is not None:
+                        logger.info("§2.60 Rollback-Kaskade Stufe 3: _best_carrier_checkpoint")
                 if _rollback_target is None:
                     try:
                         _rollback_target = original_audio_for_goals
@@ -8610,6 +8715,11 @@ class UnifiedRestorerV3:
                 }
             )
             _afg_rollback_target = getattr(self, "_hpi_best_rollback_audio", None)
+            if _afg_rollback_target is None:
+                # §2.60 Stufe 3: Carrier-Checkpoint
+                _afg_rollback_target = getattr(self, "_best_carrier_checkpoint", None)
+                if _afg_rollback_target is not None:
+                    logger.info("§2.60 AFG-Rollback Stufe 3: _best_carrier_checkpoint")
             if _afg_rollback_target is None:
                 try:
                     _afg_rollback_target = original_audio_for_goals
@@ -13788,6 +13898,25 @@ class UnifiedRestorerV3:
             _vocal_strength_scale = 1.0
         if isinstance(getattr(self, "_restoration_context", None), dict):
             self._restoration_context["vocal_strength_scale"] = _vocal_strength_scale
+            # §2.9 PANNs-Propagation: panns_tags + panns_vocals_confidence in
+            # _restoration_context schreiben, damit _profiled_phase_call sie in ALLE
+            # Phase-kwargs injiziert (phase_03, phase_42, etc.). DefectScanner speichert
+            # keine PANNs-Tags → restore()-Pfad liefert _panns_conf=None → hier setzen.
+            # Setzt nur wenn noch nicht vorhanden (DefectScanner-Metadata hat Vorrang).
+            if panns_tags and "panns_vocals_confidence" not in self._restoration_context:
+                _pvc = max(
+                    float(panns_tags.get("Singing voice", 0.0) or 0),
+                    float(panns_tags.get("Vocals", 0.0) or 0),
+                    float(panns_tags.get("Speech", 0.0) or 0),
+                    float(panns_tags.get("Male singing", 0.0) or 0),
+                    float(panns_tags.get("Female singing", 0.0) or 0),
+                )
+                self._restoration_context["panns_tags"] = panns_tags
+                self._restoration_context["panns_vocals_confidence"] = _pvc
+                logger.debug(
+                    "§2.9 PANNs-Propagation (_select_phases→context): vocal_conf=%.3f",
+                    _pvc,
+                )
         guitar_detected = panns("Guitar", 0.50) or panns("Electric guitar", 0.50)
         brass_detected = panns("Brass instrument", 0.50) or panns("Trumpet", 0.50) or panns("Saxophone", 0.50)
         drums_detected = panns("Drum", 0.50) or panns("Percussion", 0.50)
@@ -16688,6 +16817,265 @@ class UnifiedRestorerV3:
             except Exception:
                 return 1.0
 
+        def _quiet_zone_explosion_stats(
+            _ref: np.ndarray,
+            _cand: np.ndarray,
+            _quiet_dbfs: float = -34.0,
+            _thr_db: float = 2.0,
+            _win_s: float = 1.0,
+            _hop_s: float = 0.25,
+        ) -> dict[str, float]:
+            """Return quiet-zone explosion stats on window RMS deltas.
+
+            A quiet-zone explosion is a frame where:
+            - reference RMS is in quiet zone (<= _quiet_dbfs)
+            - candidate is louder than reference by > _thr_db
+
+            This catches local intro/outro/fade spikes that global gated RMS can miss.
+            """
+            try:
+                _r = np.asarray(_ref, dtype=np.float32)
+                _c = np.asarray(_cand, dtype=np.float32)
+                if _r.ndim == 2:
+                    _r = np.mean(_r, axis=0)
+                if _c.ndim == 2:
+                    _c = np.mean(_c, axis=0)
+                _n = int(min(len(_r), len(_c)))
+                if _n <= 2048:
+                    return {
+                        "count": 0.0,
+                        "quiet_frames": 0.0,
+                        "max_delta_db": 0.0,
+                        "delta_p95_db": 0.0,
+                        "delta_mean_db": 0.0,
+                    }
+                _r = _r[:_n]
+                _c = _c[:_n]
+                _win = max(2048, int(_win_s * float(sample_rate)))
+                _hop = max(512, int(_hop_s * float(sample_rate)))
+                _n_frames = max(1, (_n - _win) // _hop + 1)
+                _r_db = np.empty(_n_frames, dtype=np.float64)
+                _c_db = np.empty(_n_frames, dtype=np.float64)
+                for _k in range(_n_frames):
+                    _s = _k * _hop
+                    _e = min(_s + _win, _n)
+                    _r_rms = float(np.sqrt(np.mean(_r[_s:_e] ** 2) + 1e-12))
+                    _c_rms = float(np.sqrt(np.mean(_c[_s:_e] ** 2) + 1e-12))
+                    _r_db[_k] = 20.0 * np.log10(_r_rms + 1e-12)
+                    _c_db[_k] = 20.0 * np.log10(_c_rms + 1e-12)
+                _delta = _c_db - _r_db
+                _quiet = _r_db <= float(_quiet_dbfs)
+                _expl = _quiet & (_delta > float(_thr_db))
+                _max_delta = float(np.max(_delta[_expl])) if np.any(_expl) else 0.0
+                _quiet_delta = _delta[_quiet]
+                _p95 = float(np.percentile(_quiet_delta, 95.0)) if _quiet_delta.size > 0 else 0.0
+                _mean = float(np.mean(_quiet_delta)) if _quiet_delta.size > 0 else 0.0
+                return {
+                    "count": float(np.sum(_expl)),
+                    "quiet_frames": float(np.sum(_quiet)),
+                    "max_delta_db": _max_delta,
+                    "delta_p95_db": _p95,
+                    "delta_mean_db": _mean,
+                }
+            except Exception:
+                return {
+                    "count": 0.0,
+                    "quiet_frames": 0.0,
+                    "max_delta_db": 0.0,
+                    "delta_p95_db": 0.0,
+                    "delta_mean_db": 0.0,
+                }
+
+        def _apply_quiet_zone_explosion_guard(
+            _ref: np.ndarray,
+            _cand: np.ndarray,
+            _quiet_dbfs: float = -34.0,
+            _thr_db: float = 2.0,
+            _win_s: float = 1.0,
+            _hop_s: float = 0.25,
+            _attack_s: float = 0.010,
+            _release_s: float = 0.030,
+        ) -> tuple[np.ndarray, dict[str, float]]:
+            """Attenuate local quiet-zone explosions (never boost, attenuation only)."""
+            _meta = {
+                "applied": 0.0,
+                "before_count": 0.0,
+                "after_count": 0.0,
+                "max_attenuation_db": 0.0,
+                "before_max_delta_db": 0.0,
+                "before_delta_p95_db": 0.0,
+                "before_delta_mean_db": 0.0,
+                "after_delta_p95_db": 0.0,
+                "after_delta_mean_db": 0.0,
+            }
+            try:
+                _r = np.asarray(_ref, dtype=np.float32)
+                _x = np.asarray(_cand, dtype=np.float32)
+                _n = int(min(_r.shape[-1], _x.shape[-1]))
+                if _n <= 2048:
+                    return _x, _meta
+                _r = _r[..., :_n]
+                _x = _x[..., :_n]
+                _r_m = np.mean(_r, axis=0) if _r.ndim == 2 else _r
+                _x_m = np.mean(_x, axis=0) if _x.ndim == 2 else _x
+
+                _win = max(2048, int(_win_s * float(sample_rate)))
+                _hop = max(512, int(_hop_s * float(sample_rate)))
+                _n_frames = max(1, (_n - _win) // _hop + 1)
+                _r_db = np.empty(_n_frames, dtype=np.float64)
+                _x_db = np.empty(_n_frames, dtype=np.float64)
+                for _k in range(_n_frames):
+                    _s = _k * _hop
+                    _e = min(_s + _win, _n)
+                    _r_rms = float(np.sqrt(np.mean(_r_m[_s:_e] ** 2) + 1e-12))
+                    _x_rms = float(np.sqrt(np.mean(_x_m[_s:_e] ** 2) + 1e-12))
+                    _r_db[_k] = 20.0 * np.log10(_r_rms + 1e-12)
+                    _x_db[_k] = 20.0 * np.log10(_x_rms + 1e-12)
+                _delta = _x_db - _r_db
+                _quiet = _r_db <= float(_quiet_dbfs)
+                _expl = _quiet & (_delta > float(_thr_db))
+                _meta["before_count"] = float(np.sum(_expl))
+                _meta["before_max_delta_db"] = float(np.max(_delta[_expl])) if np.any(_expl) else 0.0
+                _quiet_delta_pre = _delta[_quiet]
+                _meta["before_delta_p95_db"] = (
+                    float(np.percentile(_quiet_delta_pre, 95.0)) if _quiet_delta_pre.size > 0 else 0.0
+                )
+                _meta["before_delta_mean_db"] = float(np.mean(_quiet_delta_pre)) if _quiet_delta_pre.size > 0 else 0.0
+                if not np.any(_expl):
+                    return _x, _meta
+
+                _gain_db_frames = np.zeros(_n_frames, dtype=np.float64)
+                for _k in range(_n_frames):
+                    if _expl[_k]:
+                        # Quiet-zone invariant: correct to reference level, attenuation only.
+                        _gain_db_frames[_k] = float(np.clip(_r_db[_k] - _x_db[_k], -60.0, 0.0))
+
+                _centres = np.array([_k * _hop + _win // 2 for _k in range(_n_frames)], dtype=np.float64)
+                _sample_idx = np.arange(_n, dtype=np.float64)
+                _gain_db = np.interp(_sample_idx, _centres, _gain_db_frames).astype(np.float32)
+                _gain_db = np.minimum(_gain_db, 0.0)
+
+                # Smooth attenuation envelope to prevent zipper-noise/crackle on frame edges.
+                # Attack: attenuation increases quickly. Release: attenuation relaxes slower.
+                _atk = max(1, int(float(_attack_s) * float(sample_rate)))
+                _rel = max(1, int(float(_release_s) * float(sample_rate)))
+                _alpha_atk = float(np.exp(-1.0 / float(_atk)))
+                _alpha_rel = float(np.exp(-1.0 / float(_rel)))
+                _smoothed = _gain_db.copy()
+                for _i in range(1, _smoothed.shape[0]):
+                    _target = float(_smoothed[_i])
+                    _prev = float(_smoothed[_i - 1])
+                    _alpha = _alpha_atk if _target < _prev else _alpha_rel
+                    _smoothed[_i] = np.float32(_alpha * _prev + (1.0 - _alpha) * _target)
+                _gain_db = np.minimum(_smoothed, 0.0)
+
+                _gain_lin = np.power(10.0, _gain_db / 20.0, dtype=np.float32)
+
+                if _x.ndim == 2:
+                    _y = _x * _gain_lin[None, :]
+                else:
+                    _y = _x * _gain_lin
+                _y = np.clip(np.nan_to_num(_y, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+
+                _post = _quiet_zone_explosion_stats(_r, _y, _quiet_dbfs=_quiet_dbfs, _thr_db=_thr_db)
+                _meta["after_count"] = float(_post.get("count", 0.0))
+                _meta["after_delta_p95_db"] = float(_post.get("delta_p95_db", 0.0))
+                _meta["after_delta_mean_db"] = float(_post.get("delta_mean_db", 0.0))
+                _meta["max_attenuation_db"] = float(np.min(_gain_db)) if np.any(_gain_db < 0.0) else 0.0
+                _meta["applied"] = 1.0 if _meta["after_count"] < _meta["before_count"] else 0.0
+                return (_y if _meta["applied"] > 0.5 else _x), _meta
+            except Exception:
+                return np.asarray(_cand, dtype=np.float32), _meta
+
+        def _derive_phase_guard_contract(phase_id: str, _ref: np.ndarray, _prof: dict[str, Any]) -> dict[str, float]:
+            """Adaptive guard contract for universal behavior across import-song quality spectrum.
+
+            Contract values are derived from:
+            - material family (analog/digital noise-floor priors)
+            - restorability (clean sources need stricter local-boost tolerance)
+            - reference signal distribution (song-specific quiet-zone level)
+            - intervention family (subtractive vs additive behavior)
+            """
+            _mat_key = str(getattr(material_type, "value", material_type)).lower()
+            _family = str(_prof.get("family", "general"))
+            _rest_score = float(np.clip(restorability_score, 0.0, 100.0))
+
+            # Material priors for quiet-zone level (dBFS).
+            _material_quiet_floor = {
+                "shellac": -37.0,
+                "wax_cylinder": -38.0,
+                "wire_recording": -37.0,
+                "vinyl": -35.0,
+                "reel_tape": -36.0,
+                "tape": -36.0,
+                "cassette": -36.0,
+                "cd_digital": -44.0,
+                "dat": -44.0,
+                "mp3_high": -42.0,
+                "mp3_low": -39.0,
+                "aac": -42.0,
+                "streaming": -42.0,
+                "default": -36.0,
+            }
+
+            # Family baseline for local explosion threshold in quiet zones.
+            _family_thr = {
+                "subtractive_cleanup": 2.0,
+                "harmonic_noise_control": 2.0,
+                "spectral_restoration": 2.2,
+                "reconstruction_inpainting": 2.6,
+                "harmonic_reconstruction": 2.6,
+                "time_pitch_transport": 2.0,
+                "stereo_phase_geometry": 2.0,
+                "stereo_enhancement": 2.2,
+                "source_enhancement": 2.4,
+                "tonal_enhancement": 2.4,
+                "dynamics_repair": 2.2,
+                "dynamics_control": 2.2,
+                "finalizer_output": 2.0,
+                "default": 2.2,
+            }
+
+            _ref_arr = np.asarray(_ref, dtype=np.float32)
+            _ref_m = np.mean(_ref_arr, axis=0) if _ref_arr.ndim == 2 else _ref_arr
+            _n = int(_ref_m.shape[-1])
+            _frame_db = np.array([-80.0], dtype=np.float64)
+            if _n > 4096:
+                _win = max(2048, int(1.0 * float(sample_rate)))
+                _hop = max(512, int(0.25 * float(sample_rate)))
+                _n_frames = max(1, (_n - _win) // _hop + 1)
+                _frame_db = np.empty(_n_frames, dtype=np.float64)
+                for _k in range(_n_frames):
+                    _s = _k * _hop
+                    _e = min(_s + _win, _n)
+                    _rms = float(np.sqrt(np.mean(_ref_m[_s:_e] ** 2) + 1e-12))
+                    _frame_db[_k] = 20.0 * np.log10(_rms + 1e-12)
+
+            _p10 = float(np.percentile(_frame_db, 10.0))
+            _p50 = float(np.percentile(_frame_db, 50.0))
+            _mat_floor = float(_material_quiet_floor.get(_mat_key, _material_quiet_floor["default"]))
+
+            # Song-adaptive quiet-zone boundary: max(material prior, song P10 + 2 dB).
+            _quiet_dbfs = float(np.clip(max(_mat_floor, _p10 + 2.0), -48.0, -22.0))
+
+            _thr_base = float(_family_thr.get(_family, _family_thr["default"]))
+            # Quality-adaptive threshold:
+            # - very clean songs (restorability > 80): stricter (protect natural dynamics)
+            # - very damaged songs (< 30): slightly more permissive to avoid over-triggering.
+            _quality_adj = -0.5 if _rest_score > 80.0 else (0.25 if _rest_score < 30.0 else 0.0)
+            # If the track has very low dynamic spread in quiet half, tighten further.
+            _quiet_spread = float(max(0.0, _p50 - _p10))
+            _spread_adj = -0.2 if _quiet_spread < 6.0 else 0.0
+            _thr_db = float(np.clip(_thr_base + _quality_adj + _spread_adj, 1.0, 3.5))
+
+            return {
+                "quiet_dbfs": _quiet_dbfs,
+                "threshold_db": _thr_db,
+                "ref_p10_dbfs": _p10,
+                "ref_p50_dbfs": _p50,
+                "restorability": _rest_score,
+            }
+
         def _phase_intervention_profile(phase_id: str) -> dict[str, Any]:
             """Build a phase-specific intervention profile (family + exact overrides)."""
             _meta = self.phase_metadata.get(phase_id, {})
@@ -16909,6 +17297,45 @@ class UnifiedRestorerV3:
             _work = _base.copy()
             _actions: list[dict[str, Any]] = []
             _prof = _phase_intervention_profile(phase_id)
+            _guard_contract = _derive_phase_guard_contract(phase_id, _ref_arr, _prof)
+
+            # Local quiet-zone explosion prevention (prevents intro/outro pegel spikes
+            # before final WPG catch-all). Runs for every phase and only attenuates.
+            _qz_guard_candidate, _qz_guard_meta = _apply_quiet_zone_explosion_guard(
+                _ref_arr,
+                _work,
+                _quiet_dbfs=float(_guard_contract.get("quiet_dbfs", -34.0)),
+                _thr_db=float(_guard_contract.get("threshold_db", 2.0)),
+            )
+            if float(_qz_guard_meta.get("applied", 0.0)) > 0.5:
+                _work = _qz_guard_candidate
+                _actions.append(
+                    {
+                        "type": "quiet_zone_local_guard",
+                        "quiet_dbfs": round(float(_guard_contract.get("quiet_dbfs", -34.0)), 3),
+                        "threshold_db": round(float(_guard_contract.get("threshold_db", 2.0)), 3),
+                        "before_count": int(_qz_guard_meta.get("before_count", 0.0)),
+                        "after_count": int(_qz_guard_meta.get("after_count", 0.0)),
+                        "before_max_delta_db": round(float(_qz_guard_meta.get("before_max_delta_db", 0.0)), 3),
+                        "before_delta_p95_db": round(float(_qz_guard_meta.get("before_delta_p95_db", 0.0)), 3),
+                        "after_delta_p95_db": round(float(_qz_guard_meta.get("after_delta_p95_db", 0.0)), 3),
+                        "before_delta_mean_db": round(float(_qz_guard_meta.get("before_delta_mean_db", 0.0)), 3),
+                        "after_delta_mean_db": round(float(_qz_guard_meta.get("after_delta_mean_db", 0.0)), 3),
+                        "max_attenuation_db": round(float(_qz_guard_meta.get("max_attenuation_db", 0.0)), 3),
+                    }
+                )
+                logger.warning(
+                    "§2.45a QuietZone-Guard %s: explosions %d→%d (qz<=%.1f dBFS thr=%.2f dB, maxΔ=%.2f dB, p95Δ %.2f→%.2f dB, att=%.2f dB)",
+                    phase_id,
+                    int(_qz_guard_meta.get("before_count", 0.0)),
+                    int(_qz_guard_meta.get("after_count", 0.0)),
+                    float(_guard_contract.get("quiet_dbfs", -34.0)),
+                    float(_guard_contract.get("threshold_db", 2.0)),
+                    float(_qz_guard_meta.get("before_max_delta_db", 0.0)),
+                    float(_qz_guard_meta.get("before_delta_p95_db", 0.0)),
+                    float(_qz_guard_meta.get("after_delta_p95_db", 0.0)),
+                    float(_qz_guard_meta.get("max_attenuation_db", 0.0)),
+                )
 
             # Fix 8: Per-Phase max_rms_drop_db_override — dereverb phases have stricter loudness
             # budget than the material default (reverb energy should be small, not 4.5 dB).
@@ -17045,8 +17472,9 @@ class UnifiedRestorerV3:
                 )
                 _fam_ni = str(_prof.get("family", "general"))
                 _out_ni = _base
-                if _fam_ni in _additive_families_ni and (-_rms_drop_ni) > 3.0:
-                    _excess_db_ni = (-_rms_drop_ni) - 3.0
+                _gain_ni = -_rms_drop_ni  # positive = louder than pre-phase
+                if _fam_ni in _additive_families_ni and _gain_ni > 3.0:
+                    _excess_db_ni = _gain_ni - 3.0
                     _atten_ni = float(10.0 ** (-_excess_db_ni / 20.0))
                     _out_ni = np.clip(_base * _atten_ni, -1.0, 1.0)
                     _rms_base_ni = _rms_dbfs_gated(_out_ni)
@@ -17056,6 +17484,19 @@ class UnifiedRestorerV3:
                         phase_id,
                         (-_rms_ref_ni + _rms_dbfs_gated(_base)),
                         _excess_db_ni,
+                    )
+                elif _gain_ni > 6.0:
+                    # §0h Universal-Gain-Cap (no-action path): backstop for all families
+                    _excess_db_ni = _gain_ni - 6.0
+                    _atten_ni = float(10.0 ** (-_excess_db_ni / 20.0))
+                    _out_ni = np.clip(_base * _atten_ni, -1.0, 1.0)
+                    _rms_base_ni = _rms_dbfs_gated(_out_ni)
+                    _rms_drop_ni = _rms_ref_ni - _rms_base_ni
+                    logger.warning(
+                        "§0h Universal-Gain-Cap %s no-action (family=%s): +%.2f dB → capped to +6.0 dB",
+                        phase_id,
+                        _fam_ni,
+                        _gain_ni,
                     )
                 logger.info(
                     "§2.45a Pegel %s: pre=%.1f dBFS post=%.1f dBFS drop=%+.2f dB mode=base",
@@ -17132,6 +17573,28 @@ class UnifiedRestorerV3:
                     }
                     if not _ok:
                         _penalty += max(0.0, (_hf_floor_eval - 0.03) - _hf_sig) * 4.0
+
+                if "quiet_zone_local_guard" in _action_types:
+                    _qz_stats = _quiet_zone_explosion_stats(
+                        _ref_arr,
+                        _sig,
+                        _quiet_dbfs=float(_guard_contract.get("quiet_dbfs", -34.0)),
+                        _thr_db=float(_guard_contract.get("threshold_db", 2.0)),
+                    )
+                    _qz_count = int(_qz_stats.get("count", 0.0))
+                    _qz_ok = bool(_qz_count == 0)
+                    _targets_local["quiet_zone"] = {
+                        "target_explosions": 0,
+                        "measured_explosions": _qz_count,
+                        "quiet_dbfs": round(float(_guard_contract.get("quiet_dbfs", -34.0)), 3),
+                        "threshold_db": round(float(_guard_contract.get("threshold_db", 2.0)), 3),
+                        "max_delta_db": round(float(_qz_stats.get("max_delta_db", 0.0)), 3),
+                        "delta_p95_db": round(float(_qz_stats.get("delta_p95_db", 0.0)), 3),
+                        "met": _qz_ok,
+                    }
+                    if not _qz_ok:
+                        # Strong penalty: local pegel spikes are RELEASE_MUST critical.
+                        _penalty += 8.0 + (2.0 * float(_qz_count))
 
                 _targets_met_local = bool(_targets_local) and all(
                     bool(v.get("met", False)) for v in _targets_local.values()
@@ -17219,6 +17682,26 @@ class UnifiedRestorerV3:
                 logger.warning(
                     "§2.45a ADDITIVE-Gain-Guard %s: +%.2f dB Gain → gedämpft um %.2f dB",
                     phase_id,
+                    _rms_gain_db,
+                    _excess_db,
+                )
+            # §0h Music-Death-Shield Universal-Gain-Cap (v9.12.1 fix): no phase — regardless of
+            # family — may boost the signal by more than +6 dB relative to the pre-phase level.
+            # +3 dB already enforced above for additive families; +6 dB is the universal backstop.
+            # BUG-FIX: Re-compute _rms_gain_db from current _rms_out_final (which may have been
+            # updated by the additive-family cap above) to avoid stale comparison.
+            # Use independent 'if' (not 'elif') so this always runs; re-compute prevents double-
+            # capping on additive families that were already handled by the +3 dB guard.
+            _rms_gain_db = _rms_out_final - _rms_ref_final  # re-compute after potential additive cap
+            if _rms_gain_db > 6.0:
+                _excess_db = _rms_gain_db - 6.0
+                _atten = float(10.0 ** (-_excess_db / 20.0))
+                _best_sig = np.clip(_best_sig * _atten, -1.0, 1.0)
+                _rms_out_final = _rms_dbfs_gated(_best_sig)
+                logger.warning(
+                    "§0h Universal-Gain-Cap %s (family=%s): +%.2f dB → capped to +6.0 dB (att=%.2f dB)",
+                    phase_id,
+                    _fam_check,
                     _rms_gain_db,
                     _excess_db,
                 )
@@ -18207,7 +18690,7 @@ class UnifiedRestorerV3:
                                 )
                                 if _hr_family in _ADDITIVE_HR_FAMILIES:
                                     # P4/P5-Goals — am stärksten von Enhancement-Phasen beeinflusst
-                                    _HR_GOALS = ("brillanz", "waerme", "raumtiefe", "bass_kraft", "sep_fidelity")
+                                    _HR_GOALS = ("brillanz", "waerme", "spatial_depth", "bass_kraft", "sep_fidelity")
                                     # Headroom-Fenster: innerhalb der letzten 0.25 zur Decke wird gedämpft.
                                     # Jenseits von 0.25 Headroom → volle Stärke (Phase kann frei arbeiten).
                                     # Wissen: psychoakustisches Sättigungsgesetz — Grenznutzen sinkt nahe
@@ -18237,6 +18720,27 @@ class UnifiedRestorerV3:
                                             _pre_hr_s,
                                             _combined_strength,
                                         )
+
+                            # §6.2a [RELEASE_MUST] Mandatory-Phase-Floor: Pflicht-Phasen aus
+                            # _MATERIAL_PRIORITY_PHASES werden unabhängig vom DefectScanner-Score
+                            # aktiviert (Scanner statistisch — einzelne Defekte unter Schwelle).
+                            # Daher darf _sev_factor diese Phasen nicht auf Near-Zero
+                            # reduzieren: floor = _mat_strength × 0.40 sichert minimale Wirkung.
+                            # PMGG retries down wenn Regression → kein Over-Processing-Risiko.
+                            # Ohne diesen Guard: shellac phase_09 bei sev=0.15 → strength=0.12
+                            # → crackle bleibt fast ungecancelt trotz Pflicht-Aktivierung.
+                            if _is_mandatory_phase:
+                                _mandatory_floor = _mat_strength * 0.40
+                                if _combined_strength < _mandatory_floor:
+                                    logger.debug(
+                                        "§6.2a MandatoryFloor %s: strength %.3f→%.3f "
+                                        "(mat_strength=%.2f × 0.40, sev_factor was low)",
+                                        phase_id,
+                                        _combined_strength,
+                                        _mandatory_floor,
+                                        _mat_strength,
+                                    )
+                                    _combined_strength = float(np.clip(_mandatory_floor, 0.05, 1.0))
 
                             _pmgg_audio_out, _pmgg_scores_curr, _pmgg_entry = _pmgg_gate.wrap_phase(
                                 _phase_for_exec,
@@ -19545,7 +20049,17 @@ class UnifiedRestorerV3:
         # BUG-FIX: Comparing _afg_pre_pipeline_audio (degraded raw input) to current_audio
         # (fully processed output) always returns 0.000 for any real restoration — intentional
         # signal changes look like artifacts. Use per-phase minimum instead.
-        self._artifact_freedom_score = _min_per_phase_afg_score
+        # §2.49 BUG-FIX v9.12.0 (Bug 4): IAD fraction integrates into artifact_freedom.
+        # _iad_artifact_fraction_penalty is set above when IAD detects artifacts.
+        _iad_af_penalty = getattr(self, "_iad_artifact_fraction_penalty", 1.0)
+        self._artifact_freedom_score = float(min(_min_per_phase_afg_score, _iad_af_penalty))
+        if _iad_af_penalty < 1.0:
+            logger.warning(
+                "§2.49 IAD reduces artifact_freedom: per_phase=%.3f iad_penalty=%.3f -> final=%.3f",
+                _min_per_phase_afg_score,
+                _iad_af_penalty,
+                self._artifact_freedom_score,
+            )
         self._artifact_freedom_detail = {}
         logger.info(
             "§2.49 Final artifact_freedom=%.3f (per-phase-min across %d accepted phases)",
@@ -19663,18 +20177,11 @@ class UnifiedRestorerV3:
         except Exception as _st_corr_exc:
             logger.debug("§2.51 Stereo-correlation guard failed (non-blocking): %s", _st_corr_exc)
 
-        # §LAG_PROBE 2a: am Ende von _execute_pipeline (vor return)
+        # §LAG_PROBE 2a: am Ende von _execute_pipeline (vor return) — GCC-PHAT O(n log n)
         try:
             if current_audio.ndim == 2:
-                import numpy as _lp_np2a
-
-                _lp2a_L = current_audio[:, 0] if current_audio.shape[1] == 2 else current_audio[0]
-                _lp2a_R = current_audio[:, 1] if current_audio.shape[1] == 2 else current_audio[1]
-                _lp2a_n = min(int(sample_rate * 5), len(_lp2a_L))
-                _lp2a_cc = _lp_np2a.correlate(
-                    _lp2a_L[:_lp2a_n].astype(_lp_np2a.float64), _lp2a_R[:_lp2a_n].astype(_lp_np2a.float64), mode="full"
-                )
-                _lp2a_lag = int(_lp_np2a.argmax(_lp_np2a.abs(_lp2a_cc))) - (_lp2a_n - 1)
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                _lp2a_lag = _gcc_lag(current_audio, sample_rate)
                 logger.info(
                     "LAG_PROBE 2a/end_execute_pipeline: lag=%d samples (%.1f ms)",
                     _lp2a_lag,

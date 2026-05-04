@@ -57,7 +57,7 @@
 | Roughness/Sharpness Anstieg ungeprüft | DYNAMICS/ADDITIVE-Phasen ohne psychoakustisches Gate | `ArtifactFreedomGate._compute_roughness_zwicker()` + `_compute_sharpness_bismarck()`; Penalty -0.05 / -0.10 (§2.49c) |
 | MERT als primäre Qualitätsmetrik | `MertPlugin.score()` als HPI-Haupt-Koeffizient wenn VERSA verfügbar | VERSA primär; MERT als Proxy-Fallback; `metadata["mert_proxy_used"]` setzen (§2.44) |
 | VERSA auf RESEARCH-Modus beschränkt | `use_versa_in_loop=deployment_mode == RESEARCH` | `use_versa_in_loop=True` — VERSA ist produktionsstabil (§2.44) |
-| DR-Expansion ohne Ceiling | `phase_26` expandiert ungeprüft über Material-Limit | `_MATERIAL_DR_CEILING_DB`: Vinyl ≤ 70 dB, Shellac ≤ 45 dB, Tape ≤ 68 dB, CD ≤ 96 dB (§6.2b) |
+| DR-Expansion ohne Ceiling | `phase_26` expandiert ungeprüft über Material-Limit | `_MATERIAL_DR_CEILING_DB`: Vinyl ≤ 70 dB, Shellac ≤ 45 dB, Kassette (tape) ≤ 62 dB, Reel-Tape ≤ 72 dB, CD ≤ 96 dB (§6.2b) |
 | BW-Extension ohne Ceiling | Phase_06/07/23/39 erzeugen Frequenzinhalt über Material-BW-Limit | `_MATERIAL_BW_CEILING_HZ` Hard-Cap: Shellac ≤ 8 kHz, Vinyl ≤ 16 kHz (§6.2c) |
 | Rauschtextur-Check fehlt | Denoising erzeugt weiße Rauschtextur statt Carrier-kohärentem Profil | `NoiseTextureCoherenceGuard` (§4.7): Kohärenz ≥ 0.80 in Restoration; `wet_mult=0.85` für [0.60,0.80) |
 | Goals gegen degradierten Input am Pipeline-Ende | `MusicalGoalsChecker.measure_all(restored, sr, original=degraded_input)` | Bei `carrier_chain_recovery_ratio > 0.15`: End-Referenz = `best_carrier_checkpoint` (§0d Ebene 2) |

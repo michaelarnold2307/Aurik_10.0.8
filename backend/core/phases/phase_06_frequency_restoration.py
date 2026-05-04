@@ -576,12 +576,68 @@ class FrequencyRestorationPhase(PhaseInterface):
             except Exception as _sfr_exc:
                 logger.debug("Phase 06: SourceFidelityEQ übersprungen: %s", _sfr_exc)
 
+        # §0a / §6.2c BW-Ceiling Hard-Cap: Additive HF-Energie darf das physikalische
+        # Trägerlimit niemals überschreiten (Shellac ≤ 8 kHz, Vinyl ≤ 16 kHz, WaxCyl ≤ 5 kHz).
+        # Gilt auch für den AudioSR-ML-Pfad — ML-Output ist nicht ceiling-aware.
+        _BW_CEILING_HZ: dict[str, float] = {
+            "shellac": 8000.0,
+            "wax_cylinder": 5000.0,
+            "vinyl": 16000.0,
+            "reel_tape": 18000.0,
+            "cassette": 15000.0,
+        }
+        _mat_key_06 = str(material_type).lower().replace(" ", "_").replace("-", "_")
+        _bw_cap_hz = _BW_CEILING_HZ.get(_mat_key_06, None)
+        if _bw_cap_hz is not None:
+            try:
+                from scipy.signal import butter as _butter06, sosfiltfilt as _sosfiltfilt06
+
+                _nyq06 = sample_rate / 2.0
+                _bw_ratio06 = float(np.clip(_bw_cap_hz / _nyq06, 0.01, 0.99))
+                _sos_lp06 = _butter06(8, _bw_ratio06, btype="low", output="sos")
+                if restored.ndim == 2:
+                    _nch06 = restored.shape[0] if restored.shape[0] <= 2 else restored.shape[1]
+                    if restored.shape[0] == 2 and restored.shape[1] > 2:
+                        restored = np.stack(
+                            [_sosfiltfilt06(_sos_lp06, restored[c]) for c in range(2)], axis=0
+                        ).astype(np.float32)
+                    else:
+                        restored = np.stack(
+                            [_sosfiltfilt06(_sos_lp06, restored[:, c]) for c in range(_nch06)], axis=1
+                        ).astype(np.float32)
+                else:
+                    restored = _sosfiltfilt06(_sos_lp06, restored).astype(np.float32)
+                logger.debug("§6.2c BW-Ceiling Hard-Cap: %s ≤ %.0f Hz angewandt", _mat_key_06, _bw_cap_hz)
+            except Exception as _bw_exc:
+                logger.debug("§6.2c BW-Ceiling fallback (non-blocking): %s", _bw_exc)
+
         # NaN/Inf-Guard final + §2.47 PMGG-Retry locality blend
         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
         restored = np.clip(restored, -1.0, 1.0)
         if _effective_strength < 1.0:
             restored = audio + _effective_strength * (restored - audio)
             restored = np.clip(restored, -1.0, 1.0)
+
+
+        # §2.46e Hallucination-Guard: verhindert HF-Halluzination ueber BW-Ceiling
+        _hg_mode_06 = str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower()
+        if _bw_cap_hz is not None:
+            try:
+                from backend.core.hallucination_guard import apply_hallucination_guard as _apply_hg06
+
+                restored, _hg_meta06 = _apply_hg06(
+                    audio, restored, sr=sample_rate,
+                    material_bw_ceiling_hz=_bw_cap_hz,
+                    mode=_hg_mode_06,
+                )
+                if _hg_meta06.get("hallucination_decision") == "rollback":
+                    logger.warning(
+                        "§2.46e Phase-06 Hallucination-Rollback: %s ceiling=%.0f Hz",
+                        _hg_meta06.get("hallucination_severity", "?"),
+                        _bw_cap_hz,
+                    )
+            except Exception as _hg_exc:
+                logger.debug("Phase 06 HallucinationGuard (non-blocking): %s", _hg_exc)
 
         return create_phase_result(
             audio=restored,
@@ -943,7 +999,9 @@ class FrequencyRestorationPhase(PhaseInterface):
             side = (audio[:, 0] - audio[:, 1]) * (1.0 / np.sqrt(2))
 
             restored_mid = self._restore_channel(mid, params, enable_sbr, hop_length, n_fft)
-            restored_mid = self._mrsa_gain_refinement(mid, restored_mid, self.sample_rate)
+            restored_mid = self._mrsa_gain_refinement_sbr_safe(
+                mid, restored_mid, self.sample_rate, params["rolloff_hz"]
+            )
 
             # Side: apply same structural gain envelope but at reduced strength so that the
             # stereo field opens up proportionally without independent spectral synthesis.
@@ -951,7 +1009,9 @@ class FrequencyRestorationPhase(PhaseInterface):
             _side_params["restoration_strength"] = params["restoration_strength"] * 0.35
             _side_params["sbr_ratio"] = params["sbr_ratio"] * 0.35
             restored_side = self._restore_channel(side, _side_params, enable_sbr, hop_length, n_fft)
-            restored_side = self._mrsa_gain_refinement(side, restored_side, self.sample_rate)
+            restored_side = self._mrsa_gain_refinement_sbr_safe(
+                side, restored_side, self.sample_rate, params["rolloff_hz"]
+            )
 
             # Decode M/S → L/R
             restored_left = (restored_mid + restored_side) * (1.0 / np.sqrt(2))
@@ -960,9 +1020,48 @@ class FrequencyRestorationPhase(PhaseInterface):
         else:
             restored = self._restore_channel(audio, params, enable_sbr, hop_length, n_fft)
             # MRSA post-processing: zone-aware gain refinement + PGHI
-            restored = self._mrsa_gain_refinement(audio, restored, self.sample_rate)
+            restored = self._mrsa_gain_refinement_sbr_safe(
+                audio, restored, self.sample_rate, params["rolloff_hz"]
+            )
 
         return restored
+
+    def _mrsa_gain_refinement_sbr_safe(
+        self,
+        audio_in: np.ndarray,
+        audio_out: np.ndarray,
+        sr: int,
+        rolloff_hz: float,
+    ) -> np.ndarray:
+        """MRSA with SBR-extension protection.
+
+        MRSA refinement is beneficial for pre-existing content (below rolloff),
+        but degrades the SBR extension band (above rolloff) because the zone gains
+        are computed from the input, where HF energy is near-zero, causing the zone
+        interpolation to under-estimate the gain needed for the extension band.
+
+        Fix: compare HF energy before and after MRSA.  If MRSA reduces HF by > 5%,
+        skip MRSA entirely and return the SBR output.  §0 Primum non nocere: the
+        SBR output is already a valid restoration — MRSA must only improve it.
+        """
+        try:
+            mrsa_result = self._mrsa_gain_refinement(audio_in, audio_out, sr)
+            nyq = float(sr / 2)
+            norm_rolloff = float(np.clip(rolloff_hz / nyq, 0.05, 0.95))
+            sos_hp = signal.butter(4, norm_rolloff, btype="high", output="sos")
+            rms_sbr = float(np.sqrt(np.mean(signal.sosfiltfilt(sos_hp, audio_out) ** 2)) + 1e-12)
+            rms_mrsa = float(np.sqrt(np.mean(signal.sosfiltfilt(sos_hp, mrsa_result) ** 2)) + 1e-12)
+            if rms_mrsa < rms_sbr * 0.95:
+                # MRSA degraded the SBR extension band → return SBR output unchanged
+                logger.debug(
+                    "MRSA HF degradation detected (%.1f%% drop) — using SBR output",
+                    (1.0 - rms_mrsa / rms_sbr) * 100,
+                )
+                return audio_out
+            return mrsa_result
+        except Exception as _mrsa_safe_exc:
+            logger.debug("_mrsa_gain_refinement_sbr_safe fallback: %s", _mrsa_safe_exc)
+            return audio_out
 
     def _mrsa_gain_refinement(self, audio_in: np.ndarray, audio_out: np.ndarray, sr: int) -> np.ndarray:
         """MRSA post-processing: zone-aware gain refinement + PGHI reconstruction.
@@ -1084,7 +1183,16 @@ class FrequencyRestorationPhase(PhaseInterface):
         G_combined = np.nan_to_num(G_combined, nan=1.0)
 
         # Apply blended gain to reference input STFT + PGHI
-        Zxx_refined = G_combined * mag_in_ref * np.exp(1j * np.angle(Zxx_in))
+        # §0 Primum non nocere: MRSA darf SBR-Gewinn niemals unter das SBR-Ergebnis senken.
+        # Root Cause: G_combined × mag_in × exp(j × angle_in) — bei inkohärenter Input-Phase
+        # (LP-Filter-Tail über Rolloff-Knie) entstehen OLA-Auslöschungen im ISTFT.
+        # Fix: MRSA-Magnitude aus G_combined × mag_in; Phase aus Zxx_out (SBR-Ergebnis,
+        # phasenkohärent durch seinen eigenen ISTFT-Schritt).
+        mag_mrsa = G_combined * mag_in_ref
+        # Sicherheitsnetz: MRSA darf nie unter SBR-Output sinken (§0 Primum non nocere)
+        mag_mrsa = np.maximum(mag_mrsa, mag_out_ref * 0.90)
+        # Phasenkohärenz: SBR-Phase aus Zxx_out nutzen (nicht die inkohärente Input-Phase)
+        Zxx_refined = mag_mrsa * np.exp(1j * np.angle(Zxx_out))
         if _PGHI_AVAILABLE_P06:
             try:
                 audio_refined = _pghi_p06(

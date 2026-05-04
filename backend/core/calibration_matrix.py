@@ -409,6 +409,22 @@ def estimate_song_goal_targets(
         for goal, delta in b_dict.items():
             bias[goal] = bias.get(goal, 0.0) + float(delta)
 
+    # §Bug#2 Alias-Propagation: bias tables use legacy keys (raumtiefe, mikrodynamik,
+    # tonalcenter, basskraft). Canonical dicts carry both old and new keys.
+    # Propagate biases so new-key lookups (spatial_depth, micro_dynamics, etc.) work.
+    _OLD_TO_NEW: dict[str, str] = {
+        "raumtiefe": "spatial_depth",
+        "mikrodynamik": "micro_dynamics",
+        "tonalcenter": "tonal_center",
+        "basskraft": "bass_kraft",
+    }
+    _NEW_TO_OLD: dict[str, str] = {v: k for k, v in _OLD_TO_NEW.items()}
+    for old_k, new_k in _OLD_TO_NEW.items():
+        if old_k in bias and new_k not in bias:
+            bias[new_k] = bias[old_k]
+        elif new_k in bias and old_k not in bias:
+            bias[old_k] = bias[new_k]
+
     # kappa: how strongly biases are applied (low restorability → more conservative)
     # Restoration: 0.45; Studio 2026: 0.65; modulated by restorability
     kappa_base = 0.65 if is_studio_2026 else 0.45
@@ -451,6 +467,156 @@ _MATERIAL_QUALITY_CEILING: dict[str, float] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# §09.8 Material-adaptive goal floors — get_material_floor (RELEASE_MUST)
+# ---------------------------------------------------------------------------
+
+def get_material_floor(
+    material_type: str,
+    goal: str,
+    is_studio_2026: bool = False,
+) -> float:
+    """Return the minimum achievable goal floor for a given material type (§09.1).
+
+    Unlike the canonical thresholds (CD-equivalent), this returns the
+    material-adjusted minimum floor accounting for physical medium limits.
+    REQUIRED: callers MUST use this instead of CANONICAL_THRESHOLDS directly
+    when evaluating goals against material-specific limits (§0a, §2.44, §2.45b).
+
+    Args:
+        material_type: e.g. "shellac", "vinyl", "cd_digital"
+        goal: goal key e.g. "brillanz", "natuerlichkeit"
+        is_studio_2026: mode flag
+
+    Returns:
+        float: minimum achievable floor ∈ [0.30, 0.99]
+
+    Examples:
+        shellac brillanz → ~0.72 (physical BW limit)
+        vinyl  brillanz → ~0.76
+        cd     brillanz → ~0.80
+    """
+    canonical = CANONICAL_THRESHOLDS_STUDIO2026 if is_studio_2026 else CANONICAL_THRESHOLDS_RESTORATION
+    floor = float(canonical.get(goal, 0.70))
+
+    mat = str(material_type or "").strip().lower()
+    mat_class = _MATERIAL_CLASS.get(mat, "analog")
+
+    # Apply material bias at minimum restorability kappa (worst-case → lowest floor).
+    # kappa_min = kappa_base * 0.60 (restorability=0, §09.2 kappa range).
+    kappa_base = 0.65 if is_studio_2026 else 0.45
+    kappa_min = kappa_base * 0.60
+
+    bias_val = float(_MATERIAL_BIAS.get(mat_class, {}).get(goal, 0.0))
+    material_floor = floor + kappa_min * bias_val
+    return float(np.clip(material_floor, 0.30, 0.99))
+
+
+# ---------------------------------------------------------------------------
+# §09.9 Material-adaptive phase strength ranges — get_phase_strength_range
+# ---------------------------------------------------------------------------
+
+# (min_strength, max_strength) per material class and phase.
+# max_strength caps over-processing on fragile media (§2.45b, §0a BW-Ceiling).
+# min_strength ensures the phase is effective enough to be worth running.
+# Phases not listed fall back to _DEFAULT_STRENGTH_RANGE.
+_PHASE_STRENGTH_RANGES: dict[str, dict[str, tuple[float, float]]] = {
+    "ultra_analog": {
+        # Shellac / wax_cylinder / wire_recording / lacquer_disc
+        # BW ≤ 8 kHz, SNR ~15 dB, Mono — aggressive processing would hallucinate.
+        "phase_03_denoise":                (0.15, 0.60),  # OMLSA/DFN: hard cap — SNR ~15 dB
+        "phase_06_frequency_restoration":  (0.05, 0.35),  # BW-Ceiling ≤ 8 kHz (§6.2c)
+        "phase_07_harmonic_restoration":   (0.05, 0.30),  # BW-Ceiling strict
+        "phase_09_crackle_removal":        (0.20, 0.75),  # Key phase for shellac/vinyl crackle
+        "phase_12_wow_flutter_fix":        (0.10, 0.55),  # Wow/Flutter present but gentle
+        "phase_20_reverb_reduction":       (0.05, 0.20),  # Studio early reflections protect
+        "phase_23_spectral_repair":        (0.10, 0.50),  # Spectral gaps limited
+        "phase_26_dynamic_range_expansion": (0.00, 0.25),  # DR ceiling shellac ≤ 45 dB
+        "phase_29_tape_hiss_reduction":    (0.10, 0.55),  # Surface noise, not tape hiss
+        "phase_35_multiband_compression":  (0.05, 0.20),  # Gentle — original dynamics key
+        "phase_46_spatial_enhancement":    (0.00, 0.10),  # Mono source — no stereo widening
+        "phase_48_stereo_width_enhancer":  (0.00, 0.00),  # VERBOTEN on mono material
+        "phase_49_advanced_dereverb":      (0.05, 0.20),  # Early reflections cap §2.46f
+        "phase_55_diffusion_inpainting":   (0.10, 0.45),  # Dropout repair — careful
+    },
+    "analog": {
+        # Vinyl / tape / reel_tape / cassette
+        # Moderate limitations — standard restoration range.
+        "phase_03_denoise":                (0.10, 0.75),
+        "phase_06_frequency_restoration":  (0.10, 0.60),  # BW vinyl ≤ 16 kHz
+        "phase_07_harmonic_restoration":   (0.10, 0.55),
+        "phase_09_crackle_removal":        (0.20, 0.85),
+        "phase_12_wow_flutter_fix":        (0.15, 0.70),
+        "phase_20_reverb_reduction":       (0.05, 0.35),
+        "phase_23_spectral_repair":        (0.15, 0.70),
+        "phase_26_dynamic_range_expansion": (0.00, 0.50),  # vinyl ≤ 70 dB
+        "phase_29_tape_hiss_reduction":    (0.15, 0.70),
+        "phase_35_multiband_compression":  (0.05, 0.40),
+        "phase_49_advanced_dereverb":      (0.05, 0.35),
+        "phase_55_diffusion_inpainting":   (0.15, 0.65),
+    },
+    "lossy": {
+        # mp3_low / mp3_high / aac / minidisc
+        # Codec artifacts — spectral repair is key, denoise moderate.
+        "phase_03_denoise":                (0.05, 0.55),
+        "phase_06_frequency_restoration":  (0.15, 0.70),  # HF reconstruction primary
+        "phase_07_harmonic_restoration":   (0.15, 0.65),
+        "phase_23_spectral_repair":        (0.25, 0.90),  # Primary phase for lossy
+        "phase_35_multiband_compression":  (0.05, 0.40),
+        "phase_50_spectral_repair":        (0.25, 0.85),
+    },
+    "digital": {
+        # cd_digital / dat — near-lossless, minimal intervention (§2.45b)
+        "phase_03_denoise":                (0.05, 0.35),
+        "phase_06_frequency_restoration":  (0.05, 0.40),
+        "phase_07_harmonic_restoration":   (0.05, 0.35),
+        "phase_09_crackle_removal":        (0.05, 0.30),
+        "phase_23_spectral_repair":        (0.10, 0.55),
+        "phase_26_dynamic_range_expansion": (0.00, 0.40),
+        "phase_35_multiband_compression":  (0.05, 0.30),
+        "phase_49_advanced_dereverb":      (0.05, 0.30),
+    },
+}
+
+_DEFAULT_STRENGTH_RANGE: tuple[float, float] = (0.05, 1.0)
+
+
+def get_phase_strength_range(
+    phase_id: str,
+    material_type: str | None = None,
+    restorability_score: float = 70.0,
+) -> tuple[float, float]:
+    """Return (min_strength, max_strength) for a phase given material and restorability.
+
+    The max_strength caps over-processing on fragile material (§0a, §0h).
+    The min_strength ensures the phase applies enough correction to be meaningful.
+    High restorability reduces max_strength toward near-passthrough (§2.45b).
+
+    Args:
+        phase_id: e.g. "phase_03_denoise"
+        material_type: e.g. "shellac", "vinyl", "cd_digital"
+        restorability_score: 0–100 from RestorabilityEstimator
+
+    Returns:
+        tuple[float, float]: (min_strength, max_strength) both ∈ [0.0, 1.0]
+    """
+    mat = str(material_type or "").strip().lower()
+    mat_class = _MATERIAL_CLASS.get(mat, "analog")
+
+    mat_ranges = _PHASE_STRENGTH_RANGES.get(mat_class, {})
+    min_s, max_s = mat_ranges.get(phase_id, _DEFAULT_STRENGTH_RANGE)
+
+    # §2.45b: high restorability → near-passthrough → scale down max_strength.
+    # Above 80 the scaling is linear from 1.0 to 0.30 at restorability=100.
+    rest = float(np.clip(restorability_score, 0.0, 100.0))
+    if rest > 80.0:
+        passthrough_factor = 1.0 - 0.70 * ((rest - 80.0) / 20.0)
+        passthrough_factor = float(np.clip(passthrough_factor, 0.30, 1.0))
+        max_s = float(np.clip(max_s * passthrough_factor, min_s, max_s))
+
+    return (float(min_s), float(max_s))
+
+
 def predict_quality_score(
     material_type: str,
     restorability: float,
@@ -482,5 +648,7 @@ __all__ = [
     "compute_retry_temperature",
     "compute_tcci",
     "estimate_song_goal_targets",
+    "get_material_floor",
+    "get_phase_strength_range",
     "predict_quality_score",
 ]

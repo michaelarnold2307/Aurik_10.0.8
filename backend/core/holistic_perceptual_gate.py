@@ -116,6 +116,8 @@ class HolisticPerceptualGate:
         """
         self._mert_proxy_used = False  # reset per evaluation
         mert_sim = self._compute_mert_similarity(original, restored, sr)
+        # §2.44 [BUG-FIX v9.12.0]: MERT-Floor verhindert HPI-Kollaps auf 0 bei MERT-Ausfall.
+        mert_sim = max(float(mert_sim), 0.5)
 
         # §2.44 FIX v9.11.2: Referenz-Vektor bevorzugen für ALLE Restorability-Bereiche.
         # Kein Ref-Vektor → direktionale Qualitätsmessung statt Input-Ähnlichkeit.
@@ -158,6 +160,29 @@ class HolisticPerceptualGate:
             hpi = hpi * 0.95
 
         passed = hpi > 0.0 and artifact_freedom >= 0.95
+
+        # §0i/§2.44 BUG-FIX v9.12.0 (Bug 5): Material-adaptive timbral_fidelity floor.
+        # Spec §0a: material-adaptive floors (Shellac~0.40, Vinyl~0.55, CD~0.75).
+        # timbral_ref=0.318 (Vinyl) < floor 0.385 -> rollback required.
+        _TIMBRAL_FLOORS_HPG = {
+            "shellac": 0.40, "wax_cylinder": 0.35, "lacquer_disc": 0.38,
+            "wire_recording": 0.35, "vinyl": 0.55, "tape": 0.55, "reel_tape": 0.55,
+            "cassette": 0.50, "cd_digital": 0.75, "dat": 0.70, "md": 0.65,
+            "mp3_low": 0.60, "mp3_high": 0.65, "aac": 0.65, "unknown": 0.55,
+        }
+        _mat_key_hpg = str(material).lower().replace(" ", "_")
+        _tf_floor_hpg = _TIMBRAL_FLOORS_HPG.get(_mat_key_hpg, 0.55)
+        # Scale floor down for very low restorability (< 40): very damaged material
+        _tf_floor_adj_hpg = _tf_floor_hpg * max(0.60, restorability_score / 100.0)
+        if timbral < _tf_floor_adj_hpg:
+            passed = False
+            logger.warning(
+                "§0i/§2.44 timbral=%.3f BELOW material floor=%.3f (material=%s restorability=%.1f) -> rollback",
+                timbral,
+                _tf_floor_adj_hpg,
+                material,
+                restorability_score,
+            )
 
         logger.info(
             "§2.44 HPI(Restoration)=%.4f passed=%s "

@@ -243,6 +243,18 @@ _PHASE_SPECIFIC_DRIFT_EXCLUSIONS: dict[str, frozenset[str]] = {
     # authentizitaet: chromagram and stereo-fingerprint diverge from crosstalk-distorted checkpoint
     # timbre_authentizitaet: spectral crosstalk coloration is removed → fingerprint shifts intentionally
     "phase_62": frozenset({"authentizitaet", "timbre_authentizitaet"}),
+    # Modulation noise reduction (phase_59) — same carrier-noise class as phase_29 (tape hiss):
+    # signal-adaptive spectral gating G(f)=max(G_floor, 1−α·N(f)/S(f)) changes all P1/P2 spectral proxies
+    # identically to broadband NR (OMLSA/DeepFilterNet) — same §2.44 Reference-Paradoxon mechanisms.
+    "phase_59": frozenset(
+        {"authentizitaet", "natuerlichkeit", "timbre_authentizitaet", "tonal_center", "artikulation"}
+    ),
+    # Inner groove distortion repair (phase_60): position-adaptive H3+ harmonic suppression.
+    # Identical scope to phase_61/phase_62 (narrow-band spectral fingerprint change vs. distorted ref).
+    "phase_60": frozenset({"authentizitaet", "timbre_authentizitaet"}),
+    # Intermodulation distortion reduction (phase_63): bispectrum M/S notch on sum/difference products.
+    # Identical scope to phase_61/phase_62 (narrow-band fingerprint change vs. IMD-distorted ref).
+    "phase_63": frozenset({"authentizitaet", "timbre_authentizitaet"}),
     # ── §2.54 PMGG→CIG SYNCHRONISATION BLOCK ──────────────────────────────────────────────
     # Architectural invariant: CIG._PHASE_SPECIFIC_DRIFT_EXCLUSIONS[phase] ⊇ PMGG.PHASE_GOAL_EXCLUSIONS[phase] ∩ P1P2
     # All entries below were added in v9.11.3 to close the CIG-PMGG mismatch gap.

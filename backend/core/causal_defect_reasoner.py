@@ -47,7 +47,8 @@ logger = logging.getLogger(__name__)
 # Typ-Definitionen
 # ---------------------------------------------------------------------------
 
-# 36 Kausal-Ursachen (Spec §2.4) — alle CAUSE_TO_PHASES-Einträge mit Bayesian-Posterior
+# 49 Kausal-Ursachen (Spec §2.4): 10 Magnetband + 4 Vinyl + 2 Elektrik + 9 Digital/Codec
+# + 2 Spektral + 2 Stereo + 5 Pitch/Dynamik/Vokal + 1 Vintage + 2 Transport + 12 v9.10.98
 CAUSES = [
     # ── Analoge Magnetband-Ursachen ──────────────────────────────────────────
     "tape_dropout",

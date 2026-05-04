@@ -75,7 +75,9 @@ Qualitätsdetektor nicht verfügbar war.
 11. True-Peak-Begrenzung: phase_47 (−1.0 dBTP)
 12. Musical Goals: alle 14 Ziele prüfen (verschärfte Studio-Schwellen)
 13. Vocos-Synthese (konditionell): wenn PQS-MOS < 4.3
-    → Vocos 48 kHz nativ (vocos_48khz.onnx) → Vocos 44 kHz → Vocos 24 kHz → HiFi-GAN → PGHI-ISTFT
+    → Vocos 48 kHz nativ (vocos_48khz.onnx) → BigVGAN-v2 → HiFi-GAN → PGHI-ISTFT
+    Fallback-Kaskade gem. Spec 04 §4.5: Vocos primär; BigVGAN-v2 bei Vocos-OOM/Fail;
+    HiFi-GAN als tertiärer Fallback; PGHI-ISTFT als deterministischer Letzter-Ausweg.
     VERBOTEN: vocos_mel_spec_24khz.onnx als primäres Modell (§4.4 SOTA-Matrix)
 ```
 
@@ -571,13 +573,16 @@ SAMPLE_DURATION_S: float = 5.0
 # Priority-Aware Retry-Budget (v9.10.79 + §2.31b v9.10.85):
 _RETRY_STRENGTHS: list[float] = [0.65, 0.50, 0.35, 0.25, 0.15]   # 5 Stufen, Floor 0.15 (Last-Resort)
 # §2.31b: initial_strength < 0.90 (SongCal vorreduziert) → Ankerpunkte [0.80, 0.65, 0.50, 0.35, 0.20]
-_PRIORITY_MAX_RETRIES: dict[int, int] = {1: 4, 2: 4, 3: 2, 4: 0, 5: 0}
-_PRIORITY_THRESHOLD_FACTOR: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.5, 4: 99.0, 5: 99.0}
+_PRIORITY_MAX_RETRIES: dict[int, int] = {1: 4, 2: 4, 3: 2, 4: 1, 5: 1}
+_PRIORITY_THRESHOLD_FACTOR: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.5, 4: 2.0, 5: 2.0}
 # P1/P2: volle Kaskade (4 Retries + Emergency)
 # Catastrophic-Threshold: max(0.08, 4.0 × adaptive_threshold) statt fest 0.20 (§2.31b)
 # P3: max 2 Retries, 1.5× Regression-Toleranz
 #   §2.31b: restorability_tier="good" → 3 Retries; tier="poor" → 1 Retry
-# P4/P5: Recovery-Lite (1 konservativer Retry), kein Emergency
+# P4/P5: Recovery-Lite (1 konservativer Retry, 2× Toleranz), kein Emergency
+#   Psychoakustische Begründung: P4 (Transparenz, Wärme, Bass) und P5 (Brillanz, Räumlichkeit)
+#   sind für den Hörer wahrnehmbar — ein einziger Recovery-Versuch verhindert unnötigen
+#   Komfort-Verlust ohne die Primum-non-nocere-Garantie (P1/P2) zu schwächen.
 # Stagnation-Abbruch: max(0.002, threshold × 0.15) (§2.31b proportional)
 
 # Schnell-Ziele (≤ 200 ms Gesamtcheck):
@@ -646,7 +651,7 @@ _RESTORATIVE_PHASES: frozenset[str] = frozenset({
     "phase_02",  # Hum removal (Kammfilter)
     "phase_03",  # Broadband denoise (OMLSA + ResembleEnhance)
     "phase_05",  # Rumble filter (subtractive LF cleanup)
-    "phase_09",  # BANQUET blind denoising
+    "phase_09",  # Crackle removal (BANQUET ONNX — blind neural denoising; targetiert impulsive Vinyl-Crackle)
     "phase_18",  # Noise gate (Silero VAD)
     "phase_20",  # Reverb reduction (SGMSE+)
     "phase_23",  # Spectral inpainting / gap-fill (AudioSR)
@@ -800,7 +805,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # Wow/Flutter: K-S volatile after pitch-/speed-correction + Centroid-CV disturbed.
     "phase_12": {"tonal_center", "timbre_authentizitaet"},
     # Noise gate: VAD mask applies binary gains → micro-dynamics artifacts.
-    "phase_18": {"micro_dynamics", "authentizitaet", "emotionalitaet", "groove"},
+    # artikulation: Note-Attack unterdrückt durch VAD-Gating → false P2 (bestätigt, VERBOTEN.md).
+    "phase_18": {"micro_dynamics", "authentizitaet", "emotionalitaet", "groove", "artikulation"},
     # SGMSE+ reverb reduction: SGMSE+ spectral deconvolution disturbs
     # CREPE pitch confidence → natuerlichkeit false P1.
     "phase_20": {"authentizitaet", "natuerlichkeit"},
@@ -832,7 +838,8 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     #     confirmed in real-run, PMGG dithered to strength=0.17). Same mechanism as phase_02.
     "phase_01": {"artikulation", "natuerlichkeit"},  # click impulses + interpolation → false P2/P1
     "phase_27": {"artikulation", "natuerlichkeit"},  # click/pop removal — identical to phase_01
-    # BANQUET blind denoising (phase_09): full-band neural spectral modification.
+    # Crackle removal via BANQUET ONNX (phase_09): phase_09_crackle_removal.py verwendet BANQUET
+    # als ML-Backbone für impulsive Vinyl-Crackle-Entfernung (full-band neural spectral modification).
     #   - natuerlichkeit: MFCC-smoothness proxy disturbed by full-band NR (same as phase_03/29).
     #   - groove: crackle events appear as periodic impulsive onsets. GrooveMetric onset-based
     #     DTW proxy registers the change in LF onset density as rhythmic disruption. Real-run
@@ -1423,6 +1430,26 @@ Die GP-Memory-Referenz-Vektoren werden **automatisch** aus dem Verarbeitungsverl
 
 **Beide Modi**: `HPI > 0` → Export | `HPI ≤ 0` → Rollback auf weniger aggressive Variante
 
+**[BUG-FIX v9.12.0] Material-adaptive `timbral_fidelity` Floor** (Bug 5):
+
+`HPI > 0` allein reicht nicht als Export-Bedingung. Ein `timbral_ref` von 0.318 (Vinyl, Restoration) mit MERT=0.65 ergibt `HPI ≈ 0.32 > 0` → Export trotz massiver Klangverfärbung. 
+
+```python
+# Material-adaptive timbral floors (nach §0a / Spec 09 / calibration_matrix.py):
+_TIMBRAL_FLOORS = {
+    "shellac": 0.40, "wax_cylinder": 0.35, "lacquer_disc": 0.38,
+    "vinyl": 0.55, "tape": 0.55, "reel_tape": 0.55, "cassette": 0.50,
+    "cd_digital": 0.75, "dat": 0.70, "mp3_low": 0.60, "unknown": 0.55,
+}
+_tf_floor = _TIMBRAL_FLOORS.get(material, 0.55)
+# Restorability-Skalierung: sehr beschädigtes Material (< 40) hat niedrigeren erreichbaren timbral
+_tf_floor_adj = _tf_floor * max(0.60, restorability_score / 100.0)
+if timbral < _tf_floor_adj:
+    passed = False  # timbral_fidelity unterhalb material-adaptiver Untergrenze
+```
+
+**Invariante**: Diese Prüfung erfolgt in `HolisticPerceptualGate._evaluate_restoration()` NACH der `passed = hpi > 0.0 and artifact_freedom >= 0.95` Zeile. Der FailReason ist `TIMBRAL_BELOW_FLOOR`.
+
 > **[RELEASE_MUST] VERSA-Primärpflicht**: In der HPI-Berechnung ist **VERSA** das primäre MOS-Modell (`use_versa_in_loop=True` — immer aktiv, produktionsstabil). MERT fungiert ausschließlich als Proxy-Fallback wenn VERSA fehlschlägt (`metadata["mert_proxy_used"] = True`). **VERBOTEN**: `use_versa_in_loop=False` oder MERT als primäre Qualitätsmetrik bei verfügbarem VERSA. Referenz: Spec 04 SOTA-Matrix, copilot-instructions.md VERBOTEN-Liste.
 
 ### §2.44a [RELEASE_MUST] carrier_chain_recovery_ratio — UV3-Pflichtfeld (v9.11.14)
@@ -1882,10 +1909,24 @@ def _post_additive_bw_guard(audio, sr, material_type, mode):
 
 ```python
 # Pre/Post-Additive-Phase:
+# BUG-FIX v9.12.0 (Bug 1): Band-relative Delta-Metrik statt Gesamtenergie-Verhältnis.
+# Die alte Formel (energy_new_bins / energy_total) war blind für Air-Band-Halluzinationen,
+# da Air-Band-Energie < 0.1% der Gesamtenergie → spectral_novelty nie > 0.03%.
+# Neue Metrik: Band-relative Energie-Verhältnis IM CEILING-BAND:
+ceiling_band_energy_before = energy_above_ceiling(audio_before, material_bw_ceiling_hz, sr)
+ceiling_band_energy_after  = energy_above_ceiling(audio_after,  material_bw_ceiling_hz, sr)
+ceiling_band_ratio = ceiling_band_energy_after / max(ceiling_band_energy_before, 1e-10)
+# Violation: ceiling_band_ratio > 8.0 ≈ +9 dB Anstieg im Ceiling-Band → Hard-Rollback
+
+# spectral_novelty (Breitband, sekundär):
 spectral_novelty = energy_new_bins / energy_total
 
 if spectral_novelty > 0.08:
     phase_score_penalty = 0.3   # PMGG-Penalty
+if ceiling_band_ratio > 8.0:
+    # BW-Ceiling-Verletzung durch Energie-Anstieg im Ceiling-Band → Hard-Rollback
+    return pre_phase_audio, {"hallucination_rollback": True, "bw_ceiling_ratio_rollback": True,
+                              "ceiling_band_ratio": ceiling_band_ratio}
 if spectral_novelty > 0.15:
     if mode == "restoration":
         # Phase-Rollback — Restoration ist absolut
@@ -1915,7 +1956,7 @@ if harmonic_ceiling_violation:   # rekonstruierte Harmonics > material BW_CEILIN
 ### Drei geschützte Kategorien
 
 | Kategorie | Erkennungskriterien | Schutzregel |
-|---|---|---|
+| --- | --- | --- |
 | **Atemgeräusche** | Energie −55 bis −40 dBFS, Dauer 50–500 ms, spectral_flatness > 0.4, Silero-VAD off | NR-Bypass + Gate-Bypass für dieses Segment |
 | **Natürliches Vibrato/Portamento** | F0-Varianz 4–7 Hz, Amplitude ≤ ±50 Cent | Pitch-Phase überspringt Segment; keine Quantisierung |
 | **Studio-Early-Reflections** | C80-Proxy > 3 dB in Onset-Fenstern (0–50 ms, §4.5c) | Dereverb wet_mix cap = 0.35; Early Reflections werden nicht entfernt |
@@ -2455,6 +2496,27 @@ Gewichtung: Musical Noise = 1.0, Pre-Echo = 0.8, Spectral Holes = 0.6, Phase-Can
 FALSCH (und verboten): `artifact_gate.evaluate(pre_pipeline_audio, pipeline_output)` — jede echte Restaurierung erzeugt dadurch zwangsläufig `artifact_freedom=0.000`, weil intentionale Signalveränderungen (Rauschen entfernen, Bandbreite erweitern) im Vollvergleich als Artefakte erscheinen.
 
 RICHTIG: Per-Phase-Minimum über alle Phasen, bei denen der Gate-Check durchgeführt wurde (`_min_per_phase_afg_score`). Phasen, die ge-rollt-back wurden, fließen nicht ein.
+
+**[BUG-FIX v9.12.0] IAD → artifact_freedom Kopplung** (Bug 4):
+
+`IntroducedArtifactDetector` (IAD, §2.23) läuft post-Pipeline und erkennt ML-Halluzinationen und neu eingebrachte Artefakte über die gesamte Kette. Sein Ergebnis **MUSS** in `artifact_freedom` einfließen — sonst kann `artifact_freedom=1.0` trotz bekannter IAD-Artefakte einen HPG-VETO-Fail verhindern.
+
+```python
+# IAD-Penalty-Formel (UV3, nach IAD-Rescue-Blend):
+# fraction=0.025 → af_penalty=0.75 → VETO (< 0.95)
+# fraction=0.05  → af_penalty=0.50 → VETO
+# fraction=0.10+ → af_penalty=0.0  → vollständiger VETO
+_iad_af_penalty = max(0.0, 1.0 - total_contaminated_fraction * 10.0)
+self._iad_artifact_fraction_penalty = _iad_af_penalty
+
+# Finale Berechnung (ersetzt einfache Zuweisung):
+_iad_af_penalty = getattr(self, "_iad_artifact_fraction_penalty", 1.0)
+self._artifact_freedom_score = float(min(_min_per_phase_afg_score, _iad_af_penalty))
+```
+
+**Invariante**: IAD-Penalty wird gesetzt für **jedes** `has_artifacts=True` — unabhängig vom Rescue-Threshold. Selbst `fraction=0.010` mit Typen `ml_hallucination`/`musical_noise` = `af_penalty=0.90` → VETO (< 0.95). Der Dry/Wet-Rescue-Blend (`_IAD_RESCUE_THRESHOLD=0.05`) ist ein separater Schritt und darf die Penalty-Logik nicht blockieren.
+
+**Gap-Fix v9.12.0**: Die ursprüngliche Implementierung setzte die Penalty nur innerhalb des `if fraction >= 0.05`-Blocks — damit war `fraction=0.025` (Elke-Best-Fall, Typen `ml_hallucination, musical_noise`) vollständig unsichtbar für den HPG-VETO. **VERBOTEN**: Penalty-Berechnung innerhalb eines Rescue-Threshold-Guards.
 
 ### §2.49b [RELEASE_MUST] Post-Pipeline Kumulativer Stereo-Collapse-Guard (v9.10.126)
 
@@ -3168,7 +3230,7 @@ PlateauStop aktiv. Fix: `mono = a[:, 0] if a.ndim == 2 else a`.
 ### Vollständige Recovery-Kaskade
 
 | Stufe | Aktion | Trigger |
-|---|---|---|
+| --- | --- | --- |
 | 1 | **Phase-Rollback**: Einzelphase zurückrollen → vorheriges Audio, Phase-Score negativ markiert | PMGG-Fail oder artifact_freedom < 0.95 für diese Phase |
 | 2 | **Strength-Reduktion**: Phase mit 50 % Strength wiederholen → neues PMGG-Check | Phase-Rollback × 2 für dieselbe Phase |
 | 3 | **Carrier-Checkpoint**: Rollback auf `best_carrier_checkpoint` (nach Stufe 1–4, vor Enhancement) | HPI ≤ 0 oder artifact_freedom < 0.95 am Pipeline-Ende |
@@ -3243,3 +3305,37 @@ if abs(len(output) - len(audio_in)) > 64:
 **VERBOTEN**: Stilles Zero-Padding als primäre Längenkorrektur (maskiert den Wurzelbug, erzeugt Stille am Ende). Richtig: Phase muss Länge intern korrekt einhalten; UV3-Guard ist Fangschicht, nicht Lösung.
 
 > Telemetrie: `metadata["length_corrections"]` (Liste betroffener Phase-IDs); CI-Test: `test_output_length_guard.py`
+
+---
+
+## §2.63 [RELEASE_MUST] Intro/Outro-Edge-Safety + Stereo-Lag-Invariante (v9.12.0)
+
+**Pegelexplosionen an Intro/Outro müssen in der Entstehung vermieden werden.**
+Nachträgliche Kaschierung (z. B. reiner Crossfade am Ausgang) ist nur sekundäre Fangschicht.
+
+### Primärmechanismus (Pflicht)
+
+Für Boundary-anfällige Phasen (insb. ML, STFT/ISTFT, Chunk-Stitching) gilt:
+
+1. Vor Verarbeitungsaufruf: Kontext-Padding (`reflect` oder `symmetric`) beidseitig anwenden.
+2. Nach Verarbeitungsaufruf: deterministisch auf Originallänge strippen.
+3. Erst danach optionale sekundäre Edge-Schutzschicht (Edge-Taper) anwenden.
+
+Referenzmuster:
+
+```python
+ctx = min(int(1.0 * sr), n_samples // 4)
+audio_pad = np.pad(audio, ((0, 0), (ctx, ctx)), mode="reflect")  # channel-first stereo
+processed = model(audio_pad)
+processed = processed[:, ctx:ctx + n_samples]  # deterministischer Strip
+```
+
+### Stereo-Lag-Invariante (Pflicht)
+
+- Werden L und R getrennt durch denselben Algorithmus geführt, müssen `ctx`, Strip-Offset und Zielsamplezahl identisch sein.
+- **VERBOTEN**: Kanalindividuelles Resampling als primäre Korrektur nach Boundary-Verarbeitung.
+- `interchannel_delay_out - interchannel_delay_in` darf nicht ansteigen; §2.51a Hard-Fail bei Delay > 1 ms bleibt bindend.
+
+### Invariante
+
+Restaurierung darf weder neue Intro/Outro-Peaks erzeugen noch neue L/R-Zeitverschiebung einführen.

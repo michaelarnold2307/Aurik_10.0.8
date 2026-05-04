@@ -39,6 +39,7 @@ Version: 3.0.0
 
 import importlib
 import logging
+import os
 import time
 from typing import Any
 
@@ -923,7 +924,125 @@ class SpectralRepair(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase23 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.36 Phonem-Schutz — Restore plosive burst frames aus Original
+        # (Spektralreparatur kann Burst-Transienten dämpfen/glätten)
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask
+
+            _ph23_mono = (
+                repaired_audio.mean(axis=0)
+                if (repaired_audio.ndim == 2 and repaired_audio.shape[0] <= 2 and repaired_audio.shape[1] > 2)
+                else (repaired_audio.mean(axis=1) if repaired_audio.ndim == 2 else repaired_audio)
+            )
+            _orig23_mono = (
+                audio.mean(axis=0)
+                if (audio.ndim == 2 and audio.shape[0] <= 2 and audio.shape[1] > 2)
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
+            _pmask23 = get_phoneme_mask(_ph23_mono.astype(np.float32), sample_rate, hop_length=512)
+            if np.any(_pmask23):
+                _n23 = len(_ph23_mono)
+                for _fi23, _fp23 in enumerate(_pmask23):
+                    if _fp23:
+                        _fs23 = _fi23 * 512
+                        _fe23 = min(_n23, _fs23 + 512)
+                        if repaired_audio.ndim == 2:
+                            repaired_audio[_fs23:_fe23, :] = audio[_fs23:_fe23, :]
+                        else:
+                            repaired_audio[_fs23:_fe23] = audio[_fs23:_fe23]
+        except Exception as _ph23_exc:
+            logger.debug("§2.36 Phase23 Phonem-Mask (non-blocking): %s", _ph23_exc)
+
+        # §2.46f NaturalPerformanceArtifacts-Guard — Restore atemgeräusche, vibrato, early-reflections
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa23 = get_natural_performance_detector()
+            _npa_result23 = _npa23.detect(
+                audio if audio.ndim == 1 else audio.mean(axis=0),
+                sample_rate,
+            )
+            if _npa_result23.success:
+                _npa_mask23 = _npa_result23.get_protected_mask(
+                    repaired_audio.shape[0] if repaired_audio.ndim == 1 else repaired_audio.shape[-1],
+                    sample_rate,
+                )
+                if np.any(_npa_mask23):
+                    if repaired_audio.ndim == 2:
+                        repaired_audio[_npa_mask23, :] = audio[_npa_mask23, :]
+                    else:
+                        repaired_audio[_npa_mask23] = audio[_npa_mask23]
+        except Exception as _npa23_exc:
+            logger.debug("§2.46f Phase23 NPA-Guard (non-blocking): %s", _npa23_exc)
+
+        # §2.46e Hallucination-Guard: Spektral-Inpainting/Reparatur darf kein Material
+        # einbringen das nicht im Input physikalisch vorhanden war (Restoration-Modus).
+        try:
+            from backend.core.hallucination_guard import apply_hallucination_guard
+            _mode23 = str(kwargs.get("mode", "restoration")).lower()
+            if "studio" not in _mode23:
+                _mat23 = str(getattr(material, "name", material)).lower()
+                _bw_ceilings23 = {
+                    "shellac": 8000.0, "wax_cylinder": 5000.0,
+                    "vinyl": 16000.0, "reel_tape": 18000.0, "cassette": 15000.0,
+                }
+                _bw23 = _bw_ceilings23.get(_mat23, 22050.0)
+                _mono_orig23 = audio.mean(axis=-1) if audio.ndim == 2 else audio
+                _mono_rep23 = repaired_audio.mean(axis=-1) if repaired_audio.ndim == 2 else repaired_audio
+                _mono_orig23 = _mono_orig23 if _mono_orig23.ndim == 1 else _mono_orig23.ravel()
+                _mono_rep23 = _mono_rep23 if _mono_rep23.ndim == 1 else _mono_rep23.ravel()
+                _, _h_meta23 = apply_hallucination_guard(
+                    _mono_orig23, _mono_rep23, sample_rate, _bw23, _mode23
+                )
+                _rollback23 = (
+                    _h_meta23.get("hallucination_decision") == "rollback"
+                    or bool(_h_meta23.get("rollback", False))
+                )
+                if _rollback23:
+                    logger.debug(
+                        "§2.46e Phase23 Hallucination rollback: novelty=%.3f severity=%s",
+                        _h_meta23.get("novelty", 0.0),
+                        _h_meta23.get("hallucination_severity", "unknown"),
+                    )
+                    repaired_audio = audio.copy()
+        except Exception as _hg23_exc:
+            logger.debug("§2.46e Phase23 Hallucination-Guard (non-blocking): %s", _hg23_exc)
+
         _report_progress(92.0, "Spektralreparatur: Abschluss")
+
+        # §2.46f Edge-Taper (defense-in-depth): secondary safety net after context-padding in
+        # _repair_single_channel above. Context-padding is the root-cause fix; edge-taper catches
+        # any residual boundary artefacts from DSP path or ISTFT stitching across MRSA zones.
+        try:
+            _et23_sr = sample_rate
+            _et23_fade_s = 0.5
+            _et23_n = int(_et23_fade_s * _et23_sr)
+            # Always use axis-0 (time axis): at this point repaired_audio is
+            # (N, 2) channels-last or (N,) mono — shape[-1] would give 2 for stereo.
+            _et23_total = repaired_audio.shape[0]
+            if _et23_total >= _et23_n * 4:
+                _et23_fade = np.linspace(0.0, 1.0, _et23_n, dtype=np.float32)
+                _orig23_et = audio
+                if repaired_audio.ndim == 2:
+                    # (N, 2) channels-last layout at this point (before channels-first restore)
+                    repaired_audio[:_et23_n, :] = (
+                        repaired_audio[:_et23_n, :] * _et23_fade[:, None]
+                        + _orig23_et[:_et23_n, :] * (1.0 - _et23_fade[:, None])
+                    ).astype(repaired_audio.dtype)
+                    repaired_audio[-_et23_n:, :] = (
+                        repaired_audio[-_et23_n:, :] * _et23_fade[::-1, None]
+                        + _orig23_et[-_et23_n:, :] * (1.0 - _et23_fade[::-1, None])
+                    ).astype(repaired_audio.dtype)
+                else:
+                    repaired_audio[:_et23_n] = (
+                        repaired_audio[:_et23_n] * _et23_fade + _orig23_et[:_et23_n] * (1.0 - _et23_fade)
+                    ).astype(repaired_audio.dtype)
+                    repaired_audio[-_et23_n:] = (
+                        repaired_audio[-_et23_n:] * _et23_fade[::-1] + _orig23_et[-_et23_n:] * (1.0 - _et23_fade[::-1])
+                    ).astype(repaired_audio.dtype)
+                logger.debug("Phase23 edge-taper: %.0f ms at intro+outro", _et23_fade_s * 1000)
+        except Exception as _et23_exc:
+            logger.debug("Phase23 edge-taper non-blocking: %s", _et23_exc)
 
         # Restore channels-first layout expected by UV3 (2, N)
         if _was_channels_first and repaired_audio.ndim == 2:
@@ -1233,6 +1352,21 @@ class SpectralRepair(PhaseInterface):
 
         # Decide: ML or DSP?
         use_ml = is_phase_ml_enabled(23) and QualityModeConfig.should_use_ml("phase_23", defect_severity)
+        # Crash-safety for local/default pytest runs:
+        # Phase-23 ML can allocate heavy model stacks and destabilize some hosts.
+        # Only allow ML during tests when explicitly enabled via --run-heavy-tests.
+        _in_pytest23 = "PYTEST_CURRENT_TEST" in os.environ
+        _allow_heavy_tests23 = os.environ.get("AURIK_RUN_HEAVY_TESTS", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if _in_pytest23 and not _allow_heavy_tests23:
+            use_ml = False
+            logger.info(
+                "phase_23: ML disabled in default pytest run (crash-safety); use --run-heavy-tests for ML path"
+            )
         if use_ml and system_thrashing and not allow_ml_under_pressure:
             logger.warning("phase_23: ML repair skipped — system thrashing detected, forcing DSP fallback")
             use_ml = False
@@ -1315,6 +1449,21 @@ class SpectralRepair(PhaseInterface):
                         ),
                         phase_deadline=phase_deadline,
                     )
+                    # §0h Defense-in-Depth-Gain-Cap: _repair_channel_mrsa hat bereits einen
+                    # internen +3 dB Cap (merge_zones filterbank-Überlapp-Schutz). Dieser
+                    # externe Cap hier fängt Edge-Cases ab, in denen der interne Cap durch
+                    # OOM-Passthrough, Budget-Exceedance oder unerwartete Signalenergie umgangen
+                    # wird. +3 dB Toleranz — nie über Pre-Phase-Level plus 3 dB.
+                    _in_rms_ch = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32) ** 2)) + 1e-12)
+                    _out_rms_ch = float(np.sqrt(np.mean(out ** 2)) + 1e-12)
+                    _gain_ch = 20.0 * float(np.log10(_out_rms_ch / _in_rms_ch))
+                    if _gain_ch > 3.0:
+                        _atten_ch = float(10.0 ** -((_gain_ch - 3.0) / 20.0))
+                        out = np.clip(out * _atten_ch, -1.0, 1.0).astype(np.float32)
+                        logger.warning(
+                            "phase_23 _repair_channel: external gain-cap +%.1f dB → capped to +3.0 dB",
+                            _gain_ch,
+                        )
                     _report(98.0, "MRSA fertig")
                     return out
                 except Exception as _mrsa_err:
@@ -1591,7 +1740,22 @@ class SpectralRepair(PhaseInterface):
                 progress_cb(100.0, "Zonen-Merge")
             except Exception:
                 pass
-        return merge_zones(zone_audios, zone_meta, sample_rate, len(audio_f32))
+        result = merge_zones(zone_audios, zone_meta, sample_rate, len(audio_f32))
+        # §0h Music-Death-Shield: MRSA output must not exceed +3 dB of input RMS.
+        # merge_zones sums 5 zone reconstructions — imperfect filterbank overlap or
+        # inpainting bias can create constructive gain of 10–20 dB (observed: +18.76 dB).
+        _mrsa_in_rms = float(np.sqrt(np.mean(audio_f32**2)) + 1e-12)
+        _mrsa_out_rms = float(np.sqrt(np.mean(result**2)) + 1e-12)
+        _mrsa_gain_db = 20.0 * np.log10(_mrsa_out_rms / _mrsa_in_rms)
+        if _mrsa_gain_db > 3.0:
+            _mrsa_atten = float(10.0 ** (-((_mrsa_gain_db - 3.0) / 20.0)))
+            result = np.clip(result * _mrsa_atten, -1.0, 1.0).astype(np.float32)
+            logger.warning(
+                "phase_23 MRSA: gain-cap applied (+%.1f dB → capped to +3.0 dB, att=%.2f dB)",
+                _mrsa_gain_db,
+                _mrsa_gain_db - 3.0,
+            )
+        return result
 
     def _repair_with_audiosr(
         self,
@@ -1635,13 +1799,35 @@ class SpectralRepair(PhaseInterface):
             if not self._has_sufficient_ml_headroom(audio, sample_rate):
                 return audio
 
+            # §2.46f Context-Padding — pre-compute ctx size ONCE so both L and R channels
+            # use the IDENTICAL strip offset → no inter-channel lag possible.
+            _asr23_total_n = audio.shape[-1] if np.asarray(audio).ndim == 2 else len(np.asarray(audio))
+            _asr23_ctx_n = min(int(1.0 * sample_rate), _asr23_total_n // 4)
+
             def _repair_single_channel(channel_audio: np.ndarray) -> np.ndarray:
-                # AudioSR.process() erwartet (audio: np.ndarray, sr: int, target_sr: int)
-                # — keine Dateipfade. Das Plugin übernimmt Resampling und DSP-Fallback intern.
+                # §2.46f Context-Padding: reflect-pad 1 s on both sides before ML so the model
+                # always operates on interior signal at what were previously the signal boundaries.
+                # This prevents ML boundary artefacts at the intro/outro entirely (root-cause fix).
+                #
+                # Lag-safety invariant: _asr23_ctx_n is computed ONCE outside this closure
+                # (same value for L and R). Strip is always exactly _asr23_ctx_n samples from
+                # the start, taking exactly len(channel_audio) samples → both channels end at
+                # identical length without any resampling, which would stretch them differently.
                 target_sr = 48000
-                repaired_channel = audiosr.process(channel_audio, sample_rate, target_sr)
-                repaired_channel = np.asarray(repaired_channel, dtype=np.float32)
+                _orig_len23 = len(channel_audio)
+                _use_pad23 = _asr23_ctx_n > 0 and _orig_len23 > _asr23_ctx_n * 4
+                if _use_pad23:
+                    _ch_padded23 = np.pad(channel_audio, (_asr23_ctx_n, _asr23_ctx_n), mode='reflect')
+                    _raw_repaired = audiosr.process(_ch_padded23, sample_rate, target_sr)
+                else:
+                    _raw_repaired = audiosr.process(channel_audio, sample_rate, target_sr)
+                repaired_channel = np.asarray(_raw_repaired, dtype=np.float32)
                 repaired_channel = np.squeeze(repaired_channel)
+                # Strip context padding: take exactly _orig_len23 samples at offset _asr23_ctx_n.
+                # Using a fixed slice guarantees L and R are trimmed identically → no inter-channel lag.
+                if _use_pad23 and repaired_channel.ndim == 1 and len(repaired_channel) >= _asr23_ctx_n + _orig_len23:
+                    repaired_channel = repaired_channel[_asr23_ctx_n : _asr23_ctx_n + _orig_len23]
+                    logger.debug("phase_23 AudioSR: context-padding stripped (%d samples offset)", _asr23_ctx_n)
 
                 if repaired_channel.ndim != 1:
                     logger.warning(
@@ -1651,9 +1837,23 @@ class SpectralRepair(PhaseInterface):
                     repaired_channel = channel_audio
 
                 if len(repaired_channel) != len(channel_audio):
-                    from scipy.signal import resample as _resample
-
-                    repaired_channel = _resample(repaired_channel, len(channel_audio))
+                    _target_len23 = len(channel_audio)
+                    _cur_len23 = len(repaired_channel)
+                    if _cur_len23 > _target_len23:
+                        # Deterministic hard-crop from start avoids time-warp and channel drift.
+                        repaired_channel = repaired_channel[:_target_len23]
+                    elif _cur_len23 < _target_len23:
+                        # End-pad only (no left-pad) keeps onset alignment and avoids lag injection.
+                        repaired_channel = np.pad(
+                            repaired_channel,
+                            (0, _target_len23 - _cur_len23),
+                            mode="edge",
+                        )
+                    logger.warning(
+                        "phase_23 AudioSR length corrected without resample: cur=%d target=%d",
+                        _cur_len23,
+                        _target_len23,
+                    )
 
                 audio_final = (
                     channel_audio * (1 - repair_strength)
@@ -1663,24 +1863,79 @@ class SpectralRepair(PhaseInterface):
 
             audio_arr = np.asarray(audio)
             if audio_arr.ndim == 1:
-                return _repair_single_channel(audio_arr)
+                result_asr23 = _repair_single_channel(audio_arr)
+            elif audio_arr.ndim == 2:
+                # §7.1a / §2.51 Stereo-Kohärenz: do NOT repair L/R independently.
+                # AudioSR path uses M/S domain: repair Mid only, keep Side unchanged.
+                def _repair_stereo_ms_channels_first(st_cf: np.ndarray) -> np.ndarray:
+                    l_in = st_cf[0].astype(np.float32, copy=False)
+                    r_in = st_cf[1].astype(np.float32, copy=False)
+                    mid = 0.5 * (l_in + r_in)
+                    side = 0.5 * (l_in - r_in)
+                    mid_repaired = _repair_single_channel(mid)
+                    l_out = np.clip(mid_repaired + side, -1.0, 1.0)
+                    r_out = np.clip(mid_repaired - side, -1.0, 1.0)
+                    return np.stack([l_out, r_out], axis=0)
 
-            if audio_arr.ndim == 2:
-                # UV3 uses channels-first stereo (2, N). Some standalone phase tests/use-cases
-                # still provide samples-first (N, 2). Preserve the incoming orientation.
-                if audio_arr.shape[0] <= 2 and audio_arr.shape[1] > 2:
-                    repaired_channels = [_repair_single_channel(audio_arr[ch]) for ch in range(audio_arr.shape[0])]
-                    return np.stack(repaired_channels, axis=0).astype(audio_arr.dtype, copy=False)
+                # UV3 uses channels-first stereo (2, N). Preserve incoming orientation.
+                if audio_arr.shape[0] == 2 and audio_arr.shape[1] > 2:
+                    result_asr23 = _repair_stereo_ms_channels_first(audio_arr).astype(audio_arr.dtype, copy=False)
+                elif audio_arr.shape[1] == 2 and audio_arr.shape[0] > 2:
+                    _cf = audio_arr.T
+                    _cf_repaired = _repair_stereo_ms_channels_first(_cf)
+                    result_asr23 = _cf_repaired.T.astype(audio_arr.dtype, copy=False)
+                else:
+                    logger.warning(
+                        "AudioSR repair received unsupported audio shape %s — falling back to passthrough",
+                        audio_arr.shape,
+                    )
+                    return audio
+            else:
+                logger.warning(
+                    "AudioSR repair received unsupported audio shape %s — falling back to passthrough",
+                    audio_arr.shape,
+                )
+                return audio
 
-                if audio_arr.shape[1] <= 2 and audio_arr.shape[0] > 2:
-                    repaired_channels = [_repair_single_channel(audio_arr[:, ch]) for ch in range(audio_arr.shape[1])]
-                    return np.column_stack(repaired_channels).astype(audio_arr.dtype, copy=False)
+            # §0a / §6.2c BW-Ceiling Hard-Cap: AudioSR generiert bis 48 kHz/2 = 24 kHz.
+            # Bei analogen Trägern mit physikalischem BW-Limit muss HF abgeschnitten werden
+            # (§2.46e Hallucination-Guard: keine Energie über Trägerlimit hinaus).
+            _BW_CAP_ASR23: dict[str, float] = {
+                "shellac": 8000.0,
+                "wax_cylinder": 5000.0,
+                "vinyl": 16000.0,
+                "reel_tape": 18000.0,
+                "cassette": 15000.0,
+            }
+            _mat_asr23 = str(getattr(self, "_current_material", "unknown")).lower().replace(" ", "_").replace("-", "_")
+            _bw_asr23 = _BW_CAP_ASR23.get(_mat_asr23, None)
+            if _bw_asr23 is not None:
+                try:
+                    from scipy.signal import butter as _butter_asr23, sosfiltfilt as _sosfiltfilt_asr23
 
-            logger.warning(
-                "AudioSR repair received unsupported audio shape %s — falling back to passthrough",
-                audio_arr.shape,
-            )
-            return audio
+                    _nyq_asr23 = float(sample_rate) / 2.0
+                    _ratio_asr23 = float(np.clip(_bw_asr23 / _nyq_asr23, 0.01, 0.99))
+                    _sos_asr23 = _butter_asr23(6, _ratio_asr23, btype="low", output="sos")
+                    if result_asr23.ndim == 2:
+                        if result_asr23.shape[0] <= 2 and result_asr23.shape[1] > 2:
+                            result_asr23 = np.stack(
+                                [_sosfiltfilt_asr23(_sos_asr23, result_asr23[c]) for c in range(result_asr23.shape[0])],
+                                axis=0,
+                            ).astype(np.float32)
+                        else:
+                            result_asr23 = np.stack(
+                                [_sosfiltfilt_asr23(_sos_asr23, result_asr23[:, c]) for c in range(result_asr23.shape[1])],
+                                axis=1,
+                            ).astype(np.float32)
+                    else:
+                        result_asr23 = _sosfiltfilt_asr23(_sos_asr23, result_asr23).astype(np.float32)
+                    logger.debug(
+                        "§6.2c phase_23 AudioSR BW-Ceiling: %s ≤ %.0f Hz", _mat_asr23, _bw_asr23
+                    )
+                except Exception as _bw_asr23_exc:
+                    logger.debug("§6.2c phase_23 BW-Ceiling (non-blocking): %s", _bw_asr23_exc)
+
+            return result_asr23
 
         except Exception as e:
             logger.error("AudioSR processing failed: %s, falling back to DSP", e)

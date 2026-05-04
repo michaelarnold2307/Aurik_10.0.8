@@ -109,28 +109,28 @@ class SurfaceNoiseProfiling(PhaseInterface):
         },
         MaterialType.VINYL: {
             "over_subtraction_alpha": 2.2,
-            "spectral_floor": 0.08,
+            "spectral_floor": 0.10,  # §2.62 hard min
             "vad_threshold_db": -42,
             "smoothing_frames": 10,
             "noise_learn_duration_s": 1.2,
         },
         MaterialType.TAPE: {
             "over_subtraction_alpha": 1.8,
-            "spectral_floor": 0.06,
+            "spectral_floor": 0.10,  # §2.62 hard min
             "vad_threshold_db": -48,
             "smoothing_frames": 12,
             "noise_learn_duration_s": 1.0,
         },
         MaterialType.CD_DIGITAL: {
             "over_subtraction_alpha": 1.3,
-            "spectral_floor": 0.04,
+            "spectral_floor": 0.10,  # §2.62 hard min
             "vad_threshold_db": -55,
             "smoothing_frames": 15,
             "noise_learn_duration_s": 0.8,
         },
         MaterialType.STREAMING: {
             "over_subtraction_alpha": 1.2,
-            "spectral_floor": 0.03,
+            "spectral_floor": 0.10,  # §2.62 hard min
             "vad_threshold_db": -60,
             "smoothing_frames": 15,
             "noise_learn_duration_s": 0.5,
@@ -262,6 +262,14 @@ class SurfaceNoiseProfiling(PhaseInterface):
         start_time = time.time()
         self.validate_input(audio)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — detect protected breath/vibrato zones before NR
+        _npa_result_28 = None
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+            _npa_result_28 = get_natural_performance_detector().detect(audio, sample_rate)
+        except Exception as _npa_exc_28:
+            logger.debug("§2.46f NPA detection non-blocking: %s", _npa_exc_28)
+
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
@@ -293,7 +301,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         is_stereo = audio.ndim == 2
         config = dict(self.NOISE_CONFIG.get(material, self.NOISE_CONFIG[MaterialType.CD_DIGITAL]))
         config["over_subtraction_alpha"] = float(1.0 + (config["over_subtraction_alpha"] - 1.0) * _safe_strength)
-        config["spectral_floor"] = float(np.clip(1.0 - (1.0 - config["spectral_floor"]) * _safe_strength, 0.03, 1.0))
+        config["spectral_floor"] = float(np.clip(1.0 - (1.0 - config["spectral_floor"]) * _safe_strength, 0.10, 1.0))  # §2.62 hard min
         config["smoothing_frames"] = int(max(3, round(config["smoothing_frames"] + (1.0 - _safe_strength) * 6.0)))
 
         # §2.51 Linked-Stereo: OMLSA-Gain aus Mid-Sidechain (L+R)/\u221a2, identisch auf L+R
@@ -356,6 +364,20 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         execution_time = time.time() - start_time
         rt_factor = execution_time / (len(audio) / sample_rate)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — restore protected breath/vibrato zones after NR
+        if _npa_result_28 is not None:
+            try:
+                _npa_n_28 = denoised_audio.shape[0]
+                _npa_mask_28 = _npa_result_28.get_protected_mask(_npa_n_28, sample_rate)
+                if np.any(_npa_mask_28):
+                    if denoised_audio.ndim == 2 and audio.ndim == 2 and audio.shape[1] == denoised_audio.shape[1]:
+                        denoised_audio[_npa_mask_28] = audio[_npa_mask_28]
+                    elif denoised_audio.ndim == 1 and audio.ndim == 1:
+                        denoised_audio[_npa_mask_28] = audio[_npa_mask_28]
+                    logger.debug("§2.46f NPA phase28: restored %d protected samples", int(np.sum(_npa_mask_28)))
+            except Exception as _npa_rest_28:
+                logger.debug("§2.46f NPA restoration non-blocking: %s", _npa_rest_28)
 
         denoised_audio = np.nan_to_num(denoised_audio, nan=0.0, posinf=0.0, neginf=0.0)
         denoised_audio = np.clip(denoised_audio, -1.0, 1.0)
@@ -475,6 +497,21 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # Step 3: OMLSA-Gain
         gain = self._compute_omlsa_gain(magnitude, noise_mag, config)
 
+        # §2.62 Psychoakustischer Masking-Guard (ISO 11172-3) — per-Band Floor (non-blocking)
+        try:
+            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p28
+            _mask_ratio_p28 = _cmask_p28(audio, sample_rate, n_fft=self.FRAME_SIZE, hop_length=self.HOP_SIZE)
+            _mfloor_p28 = np.mean(_mask_ratio_p28, axis=1).astype(np.float32)  # (n_freq,)
+            _mfreqs_p28 = np.linspace(0.0, sample_rate / 2.0, _mask_ratio_p28.shape[0], dtype=np.float32)
+            _mfloor_interp = np.interp(
+                np.linspace(0.0, sample_rate / 2.0, gain.shape[0], dtype=np.float32),
+                _mfreqs_p28, _mfloor_p28
+            ).astype(np.float32)
+            gain = np.maximum(gain, _mfloor_interp[:, np.newaxis])
+            logger.debug("§2.62 phase_28 Masking-Guard: mean_floor=%.3f", float(np.mean(_mfloor_p28)))
+        except Exception as _msk28_exc:
+            logger.debug("§2.62 phase_28 Masking-Guard nicht verfügbar (non-blocking): %s", _msk28_exc)
+
         # Step 4: Cappé-Gain-Glättung (vectorised IIR via lfilter — O(F) per col, no Python loop)
         alpha_g = 1.0 - 1.0 / max(config["smoothing_frames"], 1)
         # First-order causal IIR: y[n] = alpha_g*y[n-1] + (1-alpha_g)*x[n], y[0] = gain[0]
@@ -485,6 +522,24 @@ class SurfaceNoiseProfiling(PhaseInterface):
         gain_smooth, _ = _lfilter(_b_g, _a_g, gain, axis=1, zi=_zi_g)
         gain_smooth = np.nan_to_num(gain_smooth, nan=1.0, posinf=1.0, neginf=0.1)
         gain_smooth = np.clip(gain_smooth, 0.1, 1.0)
+
+        # §2.36 Phonem-Schutz: Konsonanten-Burst-Frames (/p/,/t/,/k/,/s/) → NR-Bypass (G=1.0)
+        # Breitbandige Energie-Spikes von Plosiven/Frikativen haben dasselbe spektrale Profil
+        # wie Surface-Noise → OMLSA würde Artikulation zerstören. (VERBOTEN §2.36)
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_p28
+            _pmask_p28 = _get_pmask_p28(audio.astype(np.float32), sample_rate, hop_length=self.HOP_SIZE)
+            if np.any(_pmask_p28):
+                _n_t_p28 = gain_smooth.shape[1]
+                _pidx_p28 = np.where(_pmask_p28[:_n_t_p28])[0]
+                if len(_pidx_p28) > 0:
+                    gain_smooth[:, _pidx_p28] = 1.0
+                    logger.debug(
+                        "§2.36 phase_28 Phonem-Bypass: %d/%d Frames auf G=1.0",
+                        len(_pidx_p28), _n_t_p28,
+                    )
+        except Exception as _pm28_exc:
+            logger.debug("§2.36 phase_28 Phonem-Mask (non-blocking): %s", _pm28_exc)
 
         # Step 5: Spectrum anwenden
         cleaned_mag = magnitude * gain_smooth
@@ -595,7 +650,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
             G: OMLSA-Gain (F × T) in [G_floor, 1.0]
         """
         G_floor = float(config.get("spectral_floor", 0.1))
-        G_floor = max(G_floor, 0.05)
+        G_floor = max(G_floor, 0.10)  # §2.62: VERBOTEN G_floor < 0.10
         # q: Rausch-Präsenz-Prior (material-adaptiv: Shellac aggressiver)
         q = 1.0 - float(config.get("spectral_floor", 0.1))  # höheres floor → mehr Rauschen erwartet
         q = np.clip(q, 0.05, 0.95)

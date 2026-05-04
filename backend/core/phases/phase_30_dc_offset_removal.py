@@ -365,6 +365,7 @@ class DCOffsetRemoval(PhaseInterface):
         max_lift_db = 0.6
 
         # §2.45a-I: Gated RMS — nur Frames > -50 dBFS (kein Stille-inflationierter RMS)
+        # §V04-EXEMPT: compute_gated_rms_linear() RMS measurement, NOT apply_musical_gain_envelope() — no reference_for_gate needed
         from backend.core.audio_utils import compute_gated_rms_linear as _grl_p30
 
         orig_rms = float(_grl_p30(orig, gate_dbfs=-50.0))

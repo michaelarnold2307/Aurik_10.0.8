@@ -100,3 +100,32 @@ def test_phase12_unsafe_polyphonic_fallback_not_bypassed_for_nonvocal() -> None:
         vocals_confidence=0.10,
         polyphonic_fallback=True,
     )
+
+
+def test_phase12_loudness_guard_realigns_stereo_delay() -> None:
+    phase = WowFlutterFix()
+    sr = 48000
+    t = np.linspace(0.0, 1.0, sr, endpoint=False, dtype=np.float64)
+    left = (0.25 * np.sin(2.0 * np.pi * 220.0 * t)).astype(np.float32)
+    delay = 220
+    right = np.pad(left, (delay, 0))[: len(left)].astype(np.float32)
+    original = np.column_stack([left, right])
+    processed = original.copy()
+
+    corrected, _delta_db, _makeup_db = phase._preserve_phase_loudness(original, processed, MaterialType.VINYL)
+
+    corr = np.correlate(corrected[:, 0], corrected[:, 1], mode="full")
+    lag = int(np.argmax(corr) - (len(corrected[:, 0]) - 1))
+    assert abs(lag) <= 2, f"L/R-Zeitversatz nicht korrigiert: lag={lag} samples"
+
+
+def test_phase12_loudness_guard_caps_percentile_peak() -> None:
+    phase = WowFlutterFix()
+    n = 48000
+    t = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float64)
+    original = (0.03 * np.sin(2.0 * np.pi * 440.0 * t)).astype(np.float32)
+    processed = (original * 30.0).astype(np.float32)
+
+    corrected, _delta_db, _makeup_db = phase._preserve_phase_loudness(original, processed, MaterialType.TAPE)
+    peak99 = float(np.percentile(np.abs(corrected), 99.9))
+    assert peak99 <= 0.986, f"p99.9-Peak zu hoch nach Guard: {peak99:.4f}"

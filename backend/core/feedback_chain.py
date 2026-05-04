@@ -315,9 +315,9 @@ class FeedbackChain:
             )
             _P4P5_KEYS = (
                 "brillanz",
-                "raumtiefe",
+                "spatial_depth",
                 "waerme",
-                "bassgewalt",
+                "bass_kraft",
             )
             _p1p2_vals = [self.goal_weights.get(k, 1.0) for k in _P1P2_KEYS]
             _p4p5_vals = [self.goal_weights.get(k, 1.0) for k in _P4P5_KEYS]

@@ -143,7 +143,8 @@ class PsychoAcousticMetrics:
             Sharpness score (0-1, normalized)
         """
         # Power spectral density
-        f, psd = welch(audio, fs=self.sample_rate, nperseg=2048)
+        _nperseg_sharpness = min(2048, max(1, len(audio)))
+        f, psd = welch(audio, fs=self.sample_rate, nperseg=_nperseg_sharpness)
 
         # Aures weighting: higher frequencies weighted more
         weights = (f / 1000 + 1e-10) ** 1.5
@@ -174,7 +175,8 @@ class PsychoAcousticMetrics:
             Spectral flatness (0-1)
         """
         # Periodogram
-        _f, psd = welch(audio, fs=self.sample_rate, nperseg=2048)
+        _nperseg_flatness = min(2048, max(1, len(audio)))
+        _f, psd = welch(audio, fs=self.sample_rate, nperseg=_nperseg_flatness)
 
         # Geometric and arithmetic means
         geometric_mean = np.exp(np.mean(np.log(psd + 1e-10)))
@@ -226,7 +228,8 @@ class PsychoAcousticMetrics:
             Coherence score (0-1, higher = better)
         """
         # STFT
-        _f, _t, Zxx = stft(audio, fs=self.sample_rate, nperseg=2048)
+        _nperseg_harm = min(2048, max(1, len(audio)))
+        _f, _t, Zxx = stft(audio, fs=self.sample_rate, nperseg=_nperseg_harm)
         magnitude = np.abs(Zxx)
 
         # Find spectral peaks (potential harmonics)

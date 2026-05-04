@@ -644,7 +644,7 @@ CARRIER_TRANSFER_CHARACTERISTICS = {
     "lacquer_disc":   ( 8000, -32, -4.5, 50),
     "wire_recording": ( 6000, -28, -5.5, 40),
     "vinyl":          (16000, -55, -2.0, 70),
-    "tape":           (15000, -50, -3.0, 68),
+    "tape":           (15000, -50, -3.0, 62),  # Kompaktkassette (cassette→tape normiert); Typ I ~55, Typ II ~65, Mittel 62 dB
     "reel_tape":      (18000, -60, -1.5, 72),
     "cassette":       (14000, -48, -3.5, 60),
     "dat":            (22000, -90, -0.2, 92),

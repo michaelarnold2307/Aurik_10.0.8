@@ -535,6 +535,13 @@ class SongPrognoseWidget(QWidget):
         self._rec_lbl.setWordWrap(True)
         self._rec_lbl.setStyleSheet(f"color:{_C_TEXT}; font-size:9pt; background:transparent; line-height:160%;")
         rec_inner.addWidget(self._rec_lbl)
+
+        self._preventive_lbl = QLabel("")
+        self._preventive_lbl.setWordWrap(True)
+        self._preventive_lbl.setStyleSheet(
+            f"color:{_C_TEXT_DIM}; font-size:8pt; background:transparent; line-height:150%;"
+        )
+        rec_inner.addWidget(self._preventive_lbl)
         main_layout.addWidget(rec_card)
 
         main_layout.addStretch()
@@ -572,6 +579,7 @@ class SongPrognoseWidget(QWidget):
         self._mode_rec_lbl.setText("")
 
         self._rec_lbl.setText("— Analyse läuft …")
+        self._preventive_lbl.setText("")
         self._defect_recs_lbl.setText("")
         self._clear_defect_pills()
         self._defect_placeholder.setText("— Scan läuft nach dem Start …")
@@ -827,6 +835,14 @@ class SongPrognoseWidget(QWidget):
                 self._mode_rec_lbl.setStyleSheet(
                     f"color:{_C_AMBER}; font-size:9pt; font-weight:bold; background:transparent;"
                 )
+
+    def set_preventive_actions(self, actions: list[str]) -> None:
+        """Display post-run preventive DSP actions in the analysis tab."""
+        if not actions:
+            self._preventive_lbl.setText("")
+            return
+        _txt = "\n".join(f"🛡 {a}" for a in actions[:3])
+        self._preventive_lbl.setText(_txt)
 
 
 # ---------------------------------------------------------------------------

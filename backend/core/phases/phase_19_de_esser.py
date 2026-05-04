@@ -929,6 +929,61 @@ class DeEsserPhase(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase19 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.36 Phonem-Schutz: De-Esser kann Plosiv-Bursts (/p/,/t/,/k/) als Sibilanten
+        # fehlinterpretieren — breitbandige HF-Energie-Spikes ähneln /s/-Sibilanten.
+        # Phonem-Mask-Frames aus Original restaurieren.
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_19
+
+            _hop_19 = 512
+            _mono_19 = audio.mean(axis=0) if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2) else (
+                audio.mean(axis=1) if (audio.ndim == 2) else audio
+            )
+            _pmask_19 = _get_pmask_19(_mono_19.astype(np.float32), sample_rate, hop_length=_hop_19)
+            if np.any(_pmask_19):
+                _n19 = len(_mono_19)
+                _smask_19 = np.zeros(_n19, dtype=bool)
+                for _fi19, _fp19 in enumerate(_pmask_19):
+                    if _fp19:
+                        _fs19 = _fi19 * _hop_19
+                        _fe19 = min(_n19, _fs19 + _hop_19)
+                        _smask_19[_fs19:_fe19] = True
+                if deessed_audio.ndim == 2 and audio.ndim == 2:
+                    if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
+                        deessed_audio[:, _smask_19] = audio[:, _smask_19]
+                    elif deessed_audio.shape == audio.shape:
+                        deessed_audio[_smask_19, :] = audio[_smask_19, :]
+                elif deessed_audio.ndim == 1 and audio.ndim == 1:
+                    deessed_audio[_smask_19] = audio[_smask_19]
+        except Exception as _pm19_exc:
+            logger.debug("§2.36 phase_19 Phonem-Mask (non-blocking): %s", _pm19_exc)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — Atemgeräusche zwischen Phrasen
+        # dürfen durch das sibilance-responsive Gate nicht abgeschnitten werden.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a19 = audio
+            if _npa_a19.ndim == 2 and _npa_a19.shape[0] == 2 and _npa_a19.shape[1] > _npa_a19.shape[0]:
+                _npa_a19 = _npa_a19.T
+            _npa_r19 = get_natural_performance_detector().detect(_npa_a19, sample_rate)
+            _npa_n19 = (
+                deessed_audio.shape[1]
+                if (deessed_audio.ndim == 2 and deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2)
+                else deessed_audio.shape[0]
+            )
+            _npa_m19 = _npa_r19.get_protected_mask(_npa_n19, sample_rate)
+            if np.any(_npa_m19):
+                if deessed_audio.ndim == 2 and audio.ndim == 2:
+                    if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
+                        deessed_audio[:, _npa_m19] = audio[:, _npa_m19]
+                    elif deessed_audio.shape == audio.shape:
+                        deessed_audio[_npa_m19, :] = audio[_npa_m19, :]
+                elif deessed_audio.ndim == 1 and audio.ndim == 1:
+                    deessed_audio[_npa_m19] = audio[_npa_m19]
+        except Exception as _npa19_exc:
+            logger.debug("§2.46f phase_19 NPA-Guard (non-blocking): %s", _npa19_exc)
+
         return PhaseResult(
             success=True,
             audio=deessed_audio,
@@ -1740,10 +1795,11 @@ class DeEsserPhase(PhaseInterface):
         high = min(formant_high, nyquist * 0.95) / nyquist
 
         try:
-            # Extrahiere Formant-Bereich
+            # sosfiltfilt (zero-phase) required: formant bands are recombined additively;
+            # causal sosfilt would introduce group delay → timing skew in formant_protected − formant_processed (§2.51, V11)
             sos = signal.butter(4, [low, high], btype="band", output="sos")
-            formant_original = signal.sosfilt(sos, original)
-            formant_processed = signal.sosfilt(sos, processed)
+            formant_original = signal.sosfiltfilt(sos, original)
+            formant_processed = signal.sosfiltfilt(sos, processed)
 
             # Blend: mehr Original für höheren Schutz
             formant_protected = protection_factor * formant_original + (1 - protection_factor) * formant_processed

@@ -129,3 +129,40 @@ class TestWSOLAStereoBalance:
         out = p._wsola_mono(audio, window_size, hop_a, hop_s)
 
         assert np.all(np.isfinite(out)), "WSOLA-Output enthält NaN/Inf"
+
+    def test_preventive_damage_shield_caps_rms_explosion(self, phase31_instance):
+        """DSP-Präventionsschicht muss starke Pegelsteigerung lokal begrenzen."""
+        p = phase31_instance
+        sr = p.sample_rate
+        t = np.linspace(0, 1.0, sr, endpoint=False).astype(np.float32)
+        orig = (0.02 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+        exploded = (orig * 12.0).astype(np.float32)
+
+        safe, meta = p._apply_preventive_damage_shield(orig, exploded, sr)
+
+        rms_in = float(np.sqrt(np.mean(orig**2)) + 1e-12)
+        rms_out = float(np.sqrt(np.mean(safe**2)) + 1e-12)
+        delta_db = float(20.0 * np.log10(rms_out / rms_in))
+
+        assert meta.get("phase31_damage_shield_applied") is True
+        assert meta.get("phase31_rms_cap_applied") is True
+        assert delta_db <= 2.8, f"RMS-Anstieg zu hoch trotz Shield: {delta_db:.2f} dB"
+        assert float(meta.get("phase31_peak99_after", 1.0)) <= 0.981
+
+    def test_preventive_damage_shield_corrects_lr_delay(self, phase31_instance):
+        """DSP-Präventionsschicht muss interkanalen Zeitversatz korrigieren."""
+        p = phase31_instance
+        sr = p.sample_rate
+        t = np.linspace(0, 1.0, sr, endpoint=False).astype(np.float32)
+        left = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        delay = 240
+        right = np.pad(left, (delay, 0))[: len(left)]
+        drifted = np.column_stack([left, right]).astype(np.float32)
+
+        safe, meta = p._apply_preventive_damage_shield(drifted, drifted, sr)
+
+        corr = np.correlate(safe[:, 0], safe[:, 1], mode="full")
+        lag = int(np.argmax(corr) - (len(safe[:, 0]) - 1))
+
+        assert meta.get("phase31_stereo_delay_corrected") is True
+        assert abs(lag) <= 2, f"L/R-Zeitversatz nicht korrigiert: lag={lag} samples"

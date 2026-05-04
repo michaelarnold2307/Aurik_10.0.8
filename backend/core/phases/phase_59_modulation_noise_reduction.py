@@ -50,7 +50,7 @@ def _rms_dbfs_gated(sig: np.ndarray) -> float:
 
 
 _MIN_MODULATION_NOISE_SCORE: float = 0.10
-_G_FLOOR: float = 0.08  # Minimum spectral gain to avoid musical noise
+_G_FLOOR: float = 0.10  # Minimum spectral gain — §2.62: VERBOTEN < 0.10
 
 
 def apply(
@@ -129,6 +129,20 @@ def apply(
     gain = np.maximum(g_floor, 1.0 - alpha * noise_estimate / (mag + 1e-12))
     gain = np.clip(gain, g_floor, 1.0).astype(np.float32)
 
+    # §2.62 Psychoakustischer Masking-Guard (ISO 11172-3) — per-Band Floor (non-blocking)
+    try:
+        from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p59
+        _mask_ratio_p59 = _cmask_p59(x, sample_rate, n_fft=n_fft, hop_length=hop)
+        _mfloor_p59 = np.mean(_mask_ratio_p59, axis=1).astype(np.float32)  # (n_freq,)
+        _mfreqs_p59 = np.linspace(0.0, sample_rate / 2.0, _mask_ratio_p59.shape[0], dtype=np.float32)
+        _mfloor_interp59 = np.interp(
+            np.linspace(0.0, sample_rate / 2.0, gain.shape[0], dtype=np.float32),
+            _mfreqs_p59, _mfloor_p59
+        ).astype(np.float32)
+        gain = np.maximum(gain, _mfloor_interp59[:, np.newaxis])
+    except Exception:
+        pass  # nie pipeline-blockierend
+
     # Apply gain and reconstruct
     stft_clean = (mag * gain * np.exp(1j * phase)).astype(np.complex64)
 
@@ -187,7 +201,7 @@ class ModulationNoiseReductionPhase(PhaseInterface):
 
         if any(token in _material for token in ("tape", "reel_tape", "cassette")):
             min_modulation_noise_score = 0.10
-            g_floor = 0.08
+            g_floor = 0.10  # §2.62 hard min
         elif any(token in _material for token in ("cd_digital", "dat", "streaming", "flac")):
             min_modulation_noise_score = 0.18
             g_floor = 0.12
@@ -212,7 +226,7 @@ class ModulationNoiseReductionPhase(PhaseInterface):
 
         return {
             "min_modulation_noise_score": float(np.clip(min_modulation_noise_score, 0.05, 0.25)),
-            "g_floor": float(np.clip(g_floor, 0.02, 0.30)),
+            "g_floor": float(np.clip(g_floor, 0.10, 0.30)),  # §2.62 hard min
         }
 
     def process(
@@ -282,6 +296,78 @@ class ModulationNoiseReductionPhase(PhaseInterface):
             import logging as _log59
 
             _log59.getLogger(__name__).debug("Phase59 masking clamp non-blocking: %s", _pm_exc)
+
+        # §2.36 Phonem-Schutz: Plosiv-/Frikativ-Frames via get_phoneme_mask() schützen.
+        # Das signal-adaptive Spektral-Gating dämpft Konsonanten-Bursts wie Modulationsrauschen.
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_59
+
+            _hop_59 = 512
+            _mono_59: np.ndarray
+            if audio.ndim == 2:
+                _mono_59 = np.mean(audio, axis=0) if audio.shape[0] == 2 else np.mean(audio, axis=1)
+            else:
+                _mono_59 = audio
+            _pmask_59 = _get_pmask_59(_mono_59.astype(np.float32), sample_rate, hop_length=_hop_59)
+            if np.any(_pmask_59):
+                _n59 = len(_mono_59)
+                _smask_59 = np.zeros(_n59, dtype=bool)
+                for _fi59, _fp59 in enumerate(_pmask_59):
+                    if _fp59:
+                        _fs59 = _fi59 * _hop_59
+                        _fe59 = min(_n59, _fs59 + _hop_59)
+                        _smask_59[_fs59:_fe59] = True
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _smask_59] = audio[:, _smask_59]
+                    else:
+                        result_audio[_smask_59, :] = audio[_smask_59, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_smask_59] = audio[_smask_59]
+                import logging as _log59p
+
+                _log59p.getLogger(__name__).debug(
+                    "§2.36 phase_59 Phonem-Schutz: %d/%d Frames restauriert",
+                    int(np.sum(_pmask_59)),
+                    len(_pmask_59),
+                )
+        except Exception as _pmask59_exc:
+            import logging as _log59q
+
+            _log59q.getLogger(__name__).debug("§2.36 phase_59 Phonem-Mask (non-blocking): %s", _pmask59_exc)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — Atemgeräusche und Vibrato schützen.
+        # Das Gating dämpft Atemgeräusche zwischen Phrasen als "niedrig-pegel Rauschen".
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a59 = audio
+            if _npa_a59.ndim == 2 and _npa_a59.shape[0] == 2 and _npa_a59.shape[1] > _npa_a59.shape[0]:
+                _npa_a59 = _npa_a59.T
+            _npa_r59 = get_natural_performance_detector().detect(_npa_a59, sample_rate)
+            _npa_n59 = (
+                result_audio.shape[1]
+                if (result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2)
+                else result_audio.shape[0]
+            )
+            _npa_m59 = _npa_r59.get_protected_mask(_npa_n59, sample_rate)
+            if np.any(_npa_m59):
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _npa_m59] = audio[:, _npa_m59]
+                    elif result_audio.shape == audio.shape:
+                        result_audio[_npa_m59, :] = audio[_npa_m59, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_npa_m59] = audio[_npa_m59]
+                import logging as _log59r
+
+                _log59r.getLogger(__name__).debug(
+                    "§2.46f phase_59 NPA: %d protected samples restauriert", int(np.sum(_npa_m59))
+                )
+        except Exception as _npa59_exc:
+            import logging as _log59s
+
+            _log59s.getLogger(__name__).debug("§2.46f phase_59 NPA-Guard (non-blocking): %s", _npa59_exc)
 
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0

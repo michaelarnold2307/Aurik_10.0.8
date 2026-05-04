@@ -214,6 +214,45 @@ class TestPhase44GuitarEnhancement:
         assert len(result.metadata.get("clap_embedding_32", [])) <= 32
         assert len(result.metadata.get("beats_embedding_32", [])) <= 32
 
+    def test_stereo_no_introduced_lr_imbalance(self):
+        """§2.51: Balanced stereo input → balanced output (imbalance delta ≤ 3 dB)."""
+        rng = np.random.default_rng(44)
+        sr = 48000
+        t = np.linspace(0.0, 0.5, sr // 2, dtype=np.float32)
+        base = 0.15 * np.sin(2 * np.pi * 440.0 * t)
+        left = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        right = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, sr)
+        assert result.success
+        out_l = result.audio[:, 0]
+        out_r = result.audio[:, 1]
+        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
+        assert imbalance_db <= 3.0, (
+            f"Phase 44 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
+        )
+
+    def test_stereo_no_quiet_tail_boost(self):
+        """§0h: Quiet intro must NOT be amplified by the EQ path."""
+        rng = np.random.default_rng(440)
+        sr = 48000
+        n = sr // 2
+        # Quiet noise at -35 dBFS
+        quiet_amp = 10.0 ** (-35.0 / 20.0)
+        noise = (rng.standard_normal((n, 2)) * quiet_amp).astype(np.float32)
+        result = self.phase.process(noise, sr)
+        assert result.success
+        rms_in = float(np.sqrt(np.mean(noise ** 2)))
+        rms_out = float(np.sqrt(np.mean(result.audio ** 2)))
+        # Output must not be louder than input (EQ is presence boost, but on quiet signal
+        # the peak normalisation step returns it to original level)
+        assert rms_out <= rms_in * 1.5, (
+            f"Phase 44 boosted quiet tail: rms_in={20*np.log10(rms_in+1e-12):.1f} dBFS, "
+            f"rms_out={20*np.log10(rms_out+1e-12):.1f} dBFS"
+        )
+
 
 # ===========================================================================
 # Phase 45 – Brass Enhancement
@@ -267,6 +306,42 @@ class TestPhase45BrassEnhancement:
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
 
+    def test_stereo_no_introduced_lr_imbalance(self):
+        """§2.51: Balanced stereo input → balanced output (imbalance delta ≤ 3 dB)."""
+        rng = np.random.default_rng(45)
+        sr = 48000
+        t = np.linspace(0.0, 0.5, sr // 2, dtype=np.float32)
+        base = 0.15 * np.sin(2 * np.pi * 440.0 * t)
+        left = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        right = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, sr)
+        assert result.success
+        out_l = result.audio[:, 0]
+        out_r = result.audio[:, 1]
+        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
+        assert imbalance_db <= 3.0, (
+            f"Phase 45 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
+        )
+
+    def test_stereo_no_quiet_tail_boost(self):
+        """§0h: Quiet intro must NOT be amplified by the EQ path."""
+        rng = np.random.default_rng(450)
+        sr = 48000
+        n = sr // 2
+        quiet_amp = 10.0 ** (-35.0 / 20.0)
+        noise = (rng.standard_normal((n, 2)) * quiet_amp).astype(np.float32)
+        result = self.phase.process(noise, sr)
+        assert result.success
+        rms_in = float(np.sqrt(np.mean(noise ** 2)))
+        rms_out = float(np.sqrt(np.mean(result.audio ** 2)))
+        assert rms_out <= rms_in * 1.5, (
+            f"Phase 45 boosted quiet tail: rms_in={20*np.log10(rms_in+1e-12):.1f} dBFS, "
+            f"rms_out={20*np.log10(rms_out+1e-12):.1f} dBFS"
+        )
+
 
 # ===========================================================================
 # Phase 46 – Spatial Enhancement
@@ -319,6 +394,26 @@ class TestPhase46SpatialEnhancement:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_stereo_no_introduced_lr_imbalance(self):
+        """§2.51: Balanced stereo input → allpass diffusion must not unbalance L/R (delta ≤ 3 dB)."""
+        rng = np.random.default_rng(46)
+        sr = 48000
+        t = np.linspace(0.0, 0.5, sr // 2, dtype=np.float32)
+        base = 0.15 * np.sin(2 * np.pi * 440.0 * t)
+        left = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        right = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, sr)
+        assert result.success
+        out_l = result.audio[:, 0]
+        out_r = result.audio[:, 1]
+        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
+        assert imbalance_db <= 3.0, (
+            f"Phase 46 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
+        )
 
 
 # ===========================================================================
@@ -438,6 +533,26 @@ class TestPhase48StereoWidthEnhancer:
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
         assert float(result.metadata.get("phase_locality_factor", 1.0)) <= 0.4 + 1e-6
+
+    def test_stereo_no_introduced_lr_imbalance(self):
+        """§2.51: Balanced stereo input → M/S width processing must not unbalance L/R (delta ≤ 3 dB)."""
+        rng = np.random.default_rng(48)
+        sr = 48000
+        t = np.linspace(0.0, 0.5, sr // 2, dtype=np.float32)
+        base = 0.15 * np.sin(2 * np.pi * 440.0 * t)
+        left = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        right = base + 0.01 * rng.standard_normal(len(t)).astype(np.float32)
+        stereo_in = np.column_stack([left, right])
+        result = self.phase.process(stereo_in, sr)
+        assert result.success
+        out_l = result.audio[:, 0]
+        out_r = result.audio[:, 1]
+        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
+        assert imbalance_db <= 3.0, (
+            f"Phase 48 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
+        )
 
 
 # ===========================================================================

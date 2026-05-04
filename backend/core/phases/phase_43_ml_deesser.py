@@ -177,8 +177,9 @@ def _deess_channel(
     try:
         sib_band = sig.sosfiltfilt(sos, ch)
     except ValueError:
-        # Fallback für sehr kurze Signale (< filter-Transiente)
-        sib_band = sig.sosfilt(sos, ch)
+        # Very short signal (< filter transient length) — skip de-essing to avoid
+        # sosfilt group delay in ch - sib_band recombination (§2.51, V11)
+        return ch.astype(ch.dtype), 0.0
 
     # 2. Hüllkurve
     envelope = _rms_envelope(sib_band, sr, 5.0)
@@ -440,7 +441,10 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 _mono_deessed / (mono_mix + _eps_ds * np.sign(mono_mix + _eps_ds)),
                 1.0,
             )
-            _gain_ds = np.clip(_gain_ds, 0.0, 10.0)
+            # Safety: de-esser gain must never boost. Boosting here can create
+            # scratchy distortion on narrow-band vocal events.
+            _gain_ds = np.nan_to_num(_gain_ds, nan=1.0, posinf=1.0, neginf=0.0)
+            _gain_ds = np.clip(_gain_ds, 0.0, 1.0)
             # Handle both (2, N) and (N, 2) channel indexing
             if x.shape[0] == 2 and x.shape[1] > 2:
                 # (2, N) channels-first
@@ -487,6 +491,43 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                     len(_sib_segs43),
                     100.0 * float(np.mean(_gate43)),
                 )
+        else:
+            # §2.36 Fallback: kein phoneme_timeline übergeben → get_phoneme_mask() zum
+            # Schutz von Plosiv-Bursts (/p/,/t/,/k/) die vom De-Esser als HF-Energie
+            # fehlgedeutet und breitbandig reduziert werden könnten. Non-blocking.
+            try:
+                from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_43
+
+                _hop_43 = 512
+                _mono_43: np.ndarray
+                if x.ndim == 2:
+                    _mono_43 = np.mean(x, axis=0) if x.shape[0] == 2 else np.mean(x, axis=1)
+                else:
+                    _mono_43 = x
+                _pmask_43 = _get_pmask_43(_mono_43.astype(np.float32), sample_rate, hop_length=_hop_43)
+                if np.any(_pmask_43):
+                    _n43_fb = len(_mono_43)
+                    _smask_43 = np.zeros(_n43_fb, dtype=bool)
+                    for _fi43_fb, _fp43_fb in enumerate(_pmask_43):
+                        if _fp43_fb:
+                            _fs43 = _fi43_fb * _hop_43
+                            _fe43 = min(_n43_fb, _fs43 + _hop_43)
+                            _smask_43[_fs43:_fe43] = True
+                    _x_ref43_fb = x.astype(processed.dtype)
+                    if processed.ndim == 2:
+                        if processed.shape[0] == 2 and processed.shape[1] > 2:
+                            processed[:, _smask_43] = _x_ref43_fb[:, _smask_43]
+                        else:
+                            processed[_smask_43, :] = _x_ref43_fb[_smask_43, :]
+                    else:
+                        processed[_smask_43] = _x_ref43_fb[_smask_43]
+                    logger.debug(
+                        "§2.36 phase_43 Phonem-Fallback: %d/%d Frames (Plosiv-Schutz)",
+                        int(np.sum(_pmask_43)),
+                        len(_pmask_43),
+                    )
+            except Exception as _pmask43_exc:
+                logger.debug("§2.36 phase_43 Phonem-Fallback (non-blocking): %s", _pmask43_exc)
 
         # Optional ML refinement with strict safety guard:
         # accept only if sibilance reduces and vocal core band is preserved.
@@ -495,7 +536,9 @@ class AdaptiveDeEsserPhase(PhaseInterface):
         ml_refine_model = "disabled"
         ml_blend = 0.0
         ml_refine_bypass_reason = "disabled"
-        if bool(kwargs.get("enable_ml_refine", True)):
+        _mode = str(kwargs.get("mode", "restoration")).strip().lower()
+        _enable_ml_refine_default = _mode != "restoration"
+        if bool(kwargs.get("enable_ml_refine", _enable_ml_refine_default)):
             ml_candidate, ml_refine_model = _try_mp_senet_refine(processed, sample_rate)
             ml_refine_bypass_reason = "unavailable" if ml_candidate is None else "shape_mismatch"
             if ml_refine_model != "mp_senet_onnx":
@@ -563,7 +606,7 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 "freq_low_hz": freq_low,
                 "freq_high_hz": freq_high,
                 "strength_cap": strength_cap,
-                "ml_refine_enabled": bool(kwargs.get("enable_ml_refine", True)),
+                "ml_refine_enabled": bool(kwargs.get("enable_ml_refine", _enable_ml_refine_default)),
                 "ml_refine_applied": ml_refine_applied,
                 "ml_refine_bypassed": ml_refine_bypassed,
                 "ml_refine_bypass_reason": ml_refine_bypass_reason,

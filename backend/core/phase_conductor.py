@@ -285,7 +285,15 @@ class PhaseConductor:
         # (Over-Processing-Schutz ohne PMGG-Notbremse).
         if song_goal_targets and current_goal_scores and next_phase_id not in _NEVER_SKIP:
             try:
-                _P1P2_GOALS = {"naturalness", "authenticity", "tonal_center", "timbre", "articulation"}
+                # Bug-Fix: Deutsche Goal-Keys aus studio_goal_targets.py (natuerlichkeit, authentizitaet,
+                # timbre_authentizitaet, artikulation) — nicht englische Namen. tonal_center ist in beiden gleich.
+                _P1P2_GOALS = {
+                    "natuerlichkeit",
+                    "authentizitaet",
+                    "tonal_center",
+                    "timbre_authentizitaet",
+                    "artikulation",
+                }
                 _goals_at_target = sum(
                     1
                     for g, target_val in song_goal_targets.items()
@@ -306,14 +314,23 @@ class PhaseConductor:
                     and _goals_at_target >= int(0.80 * _total_goals)
                     and (_p1p2_total == 0 or _p1p2_at_target >= _p1p2_total)
                 ):
-                    recommended_strength = 0.0
-                    logger.debug(
-                        "§2.31 Studio-Day-Target Stopp: %s — %d/%d Ziele erreicht, P1/P2 %d/%d",
-                        next_phase_id,
-                        _goals_at_target,
-                        _total_goals,
-                        _p1p2_at_target,
-                        _p1p2_total,
+                    # Bug-Fix: skip_recommended=True statt recommended_strength=0.0.
+                    # recommended_strength=0.0 wurde sofort durch max(..., _DEFAULT_MIN_STRENGTH=0.05)
+                    # auf 0.05 gehoben → Stop-Signal wirkungslos. skip_recommended=True bypasses
+                    # den min_strength-Floor und verhindert dass UV3 einen Strength-Hint speichert.
+                    _stop_reason = (
+                        f"§2.31 Studio-Day-Target Stopp: {next_phase_id} — "
+                        f"{_goals_at_target}/{_total_goals} Ziele erreicht, "
+                        f"P1/P2 {_p1p2_at_target}/{_p1p2_total}"
+                    )
+                    logger.debug(_stop_reason)
+                    return ConductorRecommendation(
+                        next_phase_id=next_phase_id,
+                        recommended_strength=0.0,
+                        skip_recommended=True,
+                        skip_reason=_stop_reason,
+                        confidence=confidence,
+                        state_snapshot=current_state,
                     )
             except Exception:
                 pass  # Non-blocking — Stopp-Signal-Fehler nie pipeline-blockierend

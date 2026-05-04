@@ -374,7 +374,9 @@ class ProcessingLogger:
 
         # High-pass filter at 100 Hz (remove low-frequency noise)
         sos = signal.butter(4, 100, "high", fs=sr, output="sos")
-        filtered = signal.sosfilt(sos, audio)
+        # sosfiltfilt (zero-phase) required: filtered is subtracted from audio for noise estimation;
+        # causal sosfilt would introduce group delay → inaccurate SNR estimate (§2.51, V11)
+        filtered = signal.sosfiltfilt(sos, audio)
 
         signal_power = np.mean(filtered**2)
         noise_power = np.mean((audio - filtered) ** 2)

@@ -645,7 +645,9 @@ class GenderAwareDeEsser:
         # Extract sibilance band
         freq_low, freq_high = params["freq_range"]
         sos = signal.butter(4, [freq_low, freq_high], "band", fs=self.sr, output="sos")
-        sibilant_band = signal.sosfilt(sos, audio)
+        # sosfiltfilt (zero-phase) required: sibilant_band is subtracted from audio in recombination;
+        # causal sosfilt would introduce group delay → timing skew → Pegelexplosion (§2.51, V11)
+        sibilant_band = signal.sosfiltfilt(sos, audio)
 
         # Detect sibilant regions (RMS in chunks)
         chunk_size = int(0.01 * self.sr)  # 10ms

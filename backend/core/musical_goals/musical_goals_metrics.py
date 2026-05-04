@@ -401,6 +401,13 @@ class BassKraftMetric:
         # Virtual Pitch / Missing Fundamental (Spec §8.1: Oberton-Analyse 120–500 Hz)
         virtual_pitch = self._virtual_pitch_score(magnitude, freqs)
 
+        # Energy-consistency gate: harmonic proxies must not dominate when real
+        # bass-band energy is weak. This keeps bass-light material from receiving
+        # inflated BassKraft scores due to voiced/F0 artifacts in upper bands.
+        bass_presence_gate = float(np.clip(bass_ratio / 0.03, 0.0, 1.0))
+        bass_harmonic_strength *= bass_presence_gate
+        virtual_pitch *= bass_presence_gate
+
         # Final score (weighted combination)
         score = (
             0.40 * bass_ratio * 20  # Normalize to 0-1 (bass_ratio typically 0-0.05)
@@ -2426,6 +2433,11 @@ class MicroDynamicsMetric:
         else:
             audio_mono = audio.astype(np.float32)
 
+        # Near-silence guard: reliability-blend uses neutral_prior=0.94 for short clips
+        # which overrides the correct neutral value (0.5) for silent signals.
+        if float(np.sqrt(np.mean(audio_mono**2) + 1e-12)) < 1e-5:
+            return 0.5
+
         win_samples = int(sr * self.WINDOW_MS / 1000.0)
         rms_rest = self._rms_profile(audio_mono, win_samples)
         crest_rest = self._crest_factor_db(audio_mono)
@@ -2699,6 +2711,11 @@ class SeparationFidelityMetric:
         """Referenzfreier Modus: Harmonizitäts- und Flatness-basierter Proxy."""
         if len(audio) < self.N_FFT:
             return 1.0
+
+        # Near-silence guard: hard floor 0.70 is for musical material without reference;
+        # silence has harmonicity ≈ 0 which gets clipped to 0.70 — wrong (should be 0.5).
+        if float(np.sqrt(np.mean(audio.astype(np.float32) ** 2) + 1e-12)) < 1e-5:
+            return 0.5
 
         # Multi-Band-Harmonizität
         bands = [

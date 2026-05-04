@@ -432,6 +432,62 @@ class PrintThroughReductionPhase(PhaseInterface):
 
             _log57.getLogger(__name__).debug("Phase57 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — Print-Through-Reduktion darf
+        # Atemgeräusche und Vibrato-Zonen nicht durch Subtraktionsfilter tilgen.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a57 = audio
+            if _npa_a57.ndim == 2 and _npa_a57.shape[0] == 2 and _npa_a57.shape[1] > _npa_a57.shape[0]:
+                _npa_a57 = _npa_a57.T
+            _npa_r57 = get_natural_performance_detector().detect(_npa_a57, sample_rate)
+            _npa_n57 = (
+                result_audio.shape[1]
+                if (result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2)
+                else result_audio.shape[0]
+            )
+            _npa_m57 = _npa_r57.get_protected_mask(_npa_n57, sample_rate)
+            if np.any(_npa_m57):
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _npa_m57] = audio[:, _npa_m57]
+                    elif result_audio.shape == audio.shape:
+                        result_audio[_npa_m57, :] = audio[_npa_m57, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_npa_m57] = audio[_npa_m57]
+        except Exception as _npa57_exc:
+            import logging as _log57n
+            _log57n.getLogger(__name__).debug("§2.46f phase_57 NPA-Guard (non-blocking): %s", _npa57_exc)
+
+        # §2.36 Phonem-Schutz: Print-Through-Reduktion subtrahiert Vor-/Nachhall-Energie.
+        # Plosive Burst-Transienten haben ähnliche Burst-Energie — Plosiv-Frames schützen.
+        try:
+            import logging as _log57p
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_57
+
+            _hop_57 = 512
+            _mono_57 = result_audio.mean(axis=0) if (
+                result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2
+            ) else (result_audio.mean(axis=1) if result_audio.ndim == 2 else result_audio)
+            _pmask_57 = _get_pmask_57(_mono_57.astype(np.float32), sample_rate, hop_length=_hop_57)
+            if np.any(_pmask_57):
+                _n_57 = _mono_57.shape[0]
+                _smask_57 = np.zeros(_n_57, dtype=bool)
+                for _fi57, _fp57 in enumerate(_pmask_57):
+                    if _fp57:
+                        _fs57 = _fi57 * _hop_57
+                        _fe57 = min(_n_57, _fs57 + _hop_57)
+                        _smask_57[_fs57:_fe57] = True
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _smask_57] = audio[:, _smask_57]
+                    elif result_audio.shape == audio.shape:
+                        result_audio[_smask_57, :] = audio[_smask_57, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_smask_57] = audio[_smask_57]
+        except Exception as _pm57_exc:
+            _log57p.getLogger(__name__).debug("§2.36 phase_57 Phonem-Mask (non-blocking): %s", _pm57_exc)
+
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0
         _pt_score = float((_defect_scores or {}).get("print_through", 0.0)) if _defect_scores else 0.0

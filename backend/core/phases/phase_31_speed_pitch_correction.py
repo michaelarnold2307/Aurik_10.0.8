@@ -67,6 +67,9 @@ from typing import Any
 import numpy as np
 import scipy.signal as signal
 
+from backend.core.audio_utils import compute_gated_rms_dbfs
+from backend.core.stereo_temporal_coherence_guard import get_stereo_temporal_coherence_guard
+
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
 
 logger = logging.getLogger(__name__)
@@ -156,6 +159,16 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             "algorithm": "hybrid",  # Best quality default
         },
     }
+
+    # Preventive DSP shield thresholds (pre-gate, phase-local)
+    _MAX_RMS_INCREASE_DB: float = 2.5
+    _MAX_PERCENTILE_PEAK: float = 0.98
+
+    # [RELEASE_MUST] §2.51 Stereo-Simultaneous-Processing-Invariante — normative Verriegelung.
+    # Pitch-Detektion: IMMER auf dem Mono-Mix. Stretch-Parameter (hop sizes, STFT ratio,
+    # f0/period arrays): EINMAL berechnet, IDENTISCH auf L und R angewendet.
+    # Setting this to False is VERBOTEN — löst assertion in _correct_wsola/_correct_phase_vocoder aus.
+    _STEREO_SIMULTANEOUS_PROCESSING: bool = True
 
     def get_metadata(self) -> PhaseMetadata:
         return PhaseMetadata(
@@ -380,11 +393,32 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             if 0.0 < _effective_strength < 1.0 and result_audio.shape == audio.shape:
                 result_audio = audio + _effective_strength * (result_audio - audio)
 
+            result_audio, shield_meta = self._apply_preventive_damage_shield(
+                original_audio=audio,
+                processed_audio=result_audio,
+                sample_rate=sample_rate,
+            )
+
             execution_time = time.time() - start_time
 
             result_audio = np.nan_to_num(result_audio, nan=0.0, posinf=0.0, neginf=0.0)
-
             result_audio = np.clip(result_audio, -1.0, 1.0)
+
+            # §2.46f NPA-Guard: Natürliches Vibrato/Portamento darf nicht quantisiert/geglättet
+            # werden. Segmente mit F0-Modulation 4–7 Hz, ≤±50 Cent: Original zurück.
+            try:
+                from backend.core.natural_performance_detector import get_natural_performance_detector
+                _mono31 = audio.mean(axis=0) if audio.ndim == 2 else audio
+                _npa_mask31 = get_natural_performance_detector().detect(
+                    _mono31, sample_rate
+                ).get_protected_mask(len(_mono31), sample_rate)
+                if _npa_mask31 is not None and _npa_mask31.any():
+                    if result_audio.ndim == 2:
+                        result_audio[:, _npa_mask31] = audio[:, _npa_mask31]
+                    else:
+                        result_audio[_npa_mask31] = audio[_npa_mask31]
+            except Exception as _npa31_exc:
+                logger.debug("§2.46f Phase31 NPA-Guard (non-blocking): %s", _npa31_exc)
 
             return create_phase_result(
                 audio=result_audio,
@@ -416,6 +450,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "execution_time_seconds": execution_time,
+                    **shield_meta,
                     "rms_drop_db": 0.0,
                     "loudness_makeup_db": 0.0,
                 },
@@ -451,6 +486,110 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                     "loudness_makeup_db": 0.0,
                 },
             )
+
+    def _match_reference_length(self, signal_in: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, bool]:
+        """Match output length to reference length (crop/pad), preserving channel layout."""
+        arr = np.asarray(signal_in)
+        ref = np.asarray(reference)
+
+        if arr.ndim == 1 and ref.ndim == 1:
+            target = len(ref)
+            if len(arr) > target:
+                return arr[:target], True
+            if len(arr) < target:
+                return np.pad(arr, (0, target - len(arr))), True
+            return arr, False
+
+        if arr.ndim == 2 and ref.ndim == 2:
+            # channels-last (N,2)
+            if arr.shape[1] == 2 and ref.shape[1] == 2:
+                target = ref.shape[0]
+                if arr.shape[0] > target:
+                    return arr[:target, :], True
+                if arr.shape[0] < target:
+                    pad = np.zeros((target - arr.shape[0], arr.shape[1]), dtype=arr.dtype)
+                    return np.vstack([arr, pad]), True
+                return arr, False
+            # channels-first (2,N)
+            if arr.shape[0] == 2 and ref.shape[0] == 2:
+                target = ref.shape[1]
+                if arr.shape[1] > target:
+                    return arr[:, :target], True
+                if arr.shape[1] < target:
+                    pad = np.zeros((arr.shape[0], target - arr.shape[1]), dtype=arr.dtype)
+                    return np.hstack([arr, pad]), True
+                return arr, False
+
+        return arr, False
+
+    def _apply_preventive_damage_shield(
+        self,
+        original_audio: np.ndarray,
+        processed_audio: np.ndarray,
+        sample_rate: int,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Prevent severe DSP damage before global gates run.
+
+        Applies four preventive measures directly in phase_31 output path:
+        1) Length invariance against reference
+        2) Inter-channel delay correction (stereo only)
+        3) Maximum gated-RMS increase cap
+        4) 99.9%-peak safety ceiling
+        """
+        out = np.asarray(processed_audio, dtype=np.float32)
+        ref = np.asarray(original_audio, dtype=np.float32)
+
+        meta: dict[str, Any] = {
+            "phase31_damage_shield_applied": True,
+            "phase31_length_corrected": False,
+            "phase31_stereo_delay_corrected": False,
+            "phase31_rms_increase_db": 0.0,
+            "phase31_rms_cap_applied": False,
+            "phase31_peak99_before": 0.0,
+            "phase31_peak99_after": 0.0,
+            "phase31_peak_cap_applied": False,
+        }
+
+        out, length_fixed = self._match_reference_length(out, ref)
+        meta["phase31_length_corrected"] = bool(length_fixed)
+
+        try:
+            if out.ndim == 2:
+                out_aligned = get_stereo_temporal_coherence_guard().correct_interchannel_delay(
+                    out,
+                    sample_rate,
+                    phase_id="phase_31_speed_pitch_correction",
+                )
+                meta["phase31_stereo_delay_corrected"] = not np.allclose(out_aligned, out, atol=1e-7)
+                out = np.asarray(out_aligned, dtype=np.float32)
+        except Exception as exc:
+            logger.debug("Phase 31 damage shield: STCG skipped (%s)", exc)
+
+        try:
+            rms_before = float(compute_gated_rms_dbfs(ref, gate_dbfs=-36.0))
+            rms_after = float(compute_gated_rms_dbfs(out, gate_dbfs=-36.0))
+            rms_delta = rms_after - rms_before
+            meta["phase31_rms_increase_db"] = float(rms_delta)
+            if rms_delta > self._MAX_RMS_INCREASE_DB:
+                attenuation_db = rms_delta - self._MAX_RMS_INCREASE_DB
+                attenuation_lin = float(10.0 ** (-attenuation_db / 20.0))
+                out = out * attenuation_lin
+                meta["phase31_rms_cap_applied"] = True
+        except Exception as exc:
+            logger.debug("Phase 31 damage shield: RMS cap skipped (%s)", exc)
+
+        peak99_before = float(np.percentile(np.abs(out), 99.9)) if out.size else 0.0
+        meta["phase31_peak99_before"] = peak99_before
+        if peak99_before > self._MAX_PERCENTILE_PEAK:
+            out = out * (self._MAX_PERCENTILE_PEAK / max(peak99_before, 1e-9))
+            meta["phase31_peak_cap_applied"] = True
+
+        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+        out = np.clip(out, -1.0, 1.0)
+        peak99_after = float(np.percentile(np.abs(out), 99.9)) if out.size else 0.0
+        meta["phase31_peak99_after"] = peak99_after
+
+        return out.astype(processed_audio.dtype, copy=False), meta
 
     def _detect_pitch_pyin(self, audio: np.ndarray, params: dict[str, Any]) -> tuple[float, float]:
         """pYIN Pitch-Detektion (Mauch & Dixon 2014) via librosa.pyin.
@@ -641,6 +780,13 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         ratio > 1.0: speed up
         ratio < 1.0: slow down
         """
+        # [RELEASE_MUST] §2.51 Stereo-Simultaneous-Processing-Invariante:
+        # hop_analysis und hop_synthesis werden EINMAL aus ratio berechnet und
+        # identisch auf L und R angewendet. Per-Kanal-Parameterberechnung ist VERBOTEN.
+        assert self._STEREO_SIMULTANEOUS_PROCESSING, (
+            "§2.51 STEREO_SIMULTANEOUS_PROCESSING invariant violated in _correct_wsola — "
+            "do not set _STEREO_SIMULTANEOUS_PROCESSING to False"
+        )
         # Parameters
         window_size = int(0.02 * self.sample_rate)  # 20ms
         hop_analysis = int(window_size / 2)
@@ -706,6 +852,12 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         ratio > 1.0: pitch up
         ratio < 1.0: pitch down
         """
+        # [RELEASE_MUST] §2.51 Stereo-Simultaneous-Processing-Invariante:
+        # ratio, nperseg, noverlap werden EINMAL berechnet — identisch auf L+R angewendet.
+        assert self._STEREO_SIMULTANEOUS_PROCESSING, (
+            "§2.51 STEREO_SIMULTANEOUS_PROCESSING invariant violated in _correct_phase_vocoder — "
+            "do not set _STEREO_SIMULTANEOUS_PROCESSING to False"
+        )
         # STFT parameters
         nperseg = 2048
         noverlap = nperseg // 2
@@ -785,31 +937,71 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
 
         sr = int(self.sample_rate)
         dtype = audio.dtype
-        y = audio.astype(np.float64)
 
-        # pYIN-basierte f0-Schätzung (Mauch & Dixon 2014)
+        # [RELEASE_MUST] §2.51 Stereo-Simultaneous-Processing-Invariante:
+        # f0/period-Berechnung IMMER auf dem Mono-Mix. Der geteilte period_samps-Array
+        # wird identisch auf L und R angewendet — niemals pro Kanal berechnet.
+        if audio.ndim == 2:
+            mono_for_f0 = np.mean(audio, axis=1).astype(np.float64)
+            period_samps = self._psola_compute_periods_mono(mono_for_f0, sr)
+            if period_samps is None:
+                return self._correct_phase_vocoder(audio, ratio, params)
+            left = self._psola_apply_mono(audio[:, 0].astype(np.float64), period_samps, ratio)
+            right = self._psola_apply_mono(audio[:, 1].astype(np.float64), period_samps, ratio)
+            n = len(audio)
+            stacked = np.column_stack([
+                np.clip(np.nan_to_num(left[:n], nan=0.0), -1.0, 1.0),
+                np.clip(np.nan_to_num(right[:n], nan=0.0), -1.0, 1.0),
+            ])
+            return stacked.astype(dtype)
+
+        y = audio.astype(np.float64)
+        period_samps = self._psola_compute_periods_mono(y, sr)
+        if period_samps is None:
+            return self._correct_phase_vocoder(audio, ratio, params)
+        result = self._psola_apply_mono(y, period_samps, ratio)
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(result, -1.0, 1.0).astype(dtype)
+
+    def _psola_compute_periods_mono(self, y_1d: np.ndarray, sr: int) -> np.ndarray | None:
+        """Compute PSOLA period array from a mono signal via pYIN.
+
+        Returns the per-frame period in samples (length = number of pYIN frames),
+        or None if f0 detection fails or no voiced frames are found.
+
+        Used exclusively by _correct_psola for shared-period stereo routing (§2.51):
+        the same period_samps is passed for both L and R to guarantee identical timing.
+        """
         try:
             import librosa
 
-            f0, voiced_flag, _voiced_prob = librosa.pyin(
-                y.astype(np.float32),
+            f0, voiced_flag, _ = librosa.pyin(
+                y_1d.astype(np.float32),
                 fmin=float(librosa.note_to_hz("C2")),
                 fmax=float(librosa.note_to_hz("C7")),
                 sr=sr,
             )
             f0 = np.nan_to_num(f0, nan=0.0)
             voiced = voiced_flag & (f0 > 0)
+            if not voiced.any():
+                return None
+            f0_safe = np.where(voiced & (f0 > 1.0), f0, 200.0)
+            return np.clip(np.round(sr / np.maximum(f0_safe, 1.0)).astype(int), 20, sr // 50)
         except Exception:
-            # Fallback: Phase-Vocoder
-            return self._correct_phase_vocoder(audio, ratio, params)
+            return None
 
-        # Periode in Samples pro f0-Frame
+    def _psola_apply_mono(self, y_1d: np.ndarray, period_samps: np.ndarray, ratio: float) -> np.ndarray:
+        """Apply PSOLA OLA synthesis with a pre-computed shared period array.
+
+        Used by _correct_psola for both mono and stereo (§2.51): the same
+        period_samps derived from the mono mix is passed for L and R to ensure
+        identical timing — no inter-channel skew.
+
+        Returns float64 array of the same length as y_1d.
+        """
         hop = 512  # librosa pyin default hop
-        f0_safe = np.where(voiced & (f0 > 1.0), f0, 200.0)  # 200 Hz Fallback
-        period_samps = np.clip(np.round(sr / np.maximum(f0_safe, 1.0)).astype(int), 20, sr // 50)
-
-        n_in = len(y)
-        max_period = int(np.max(period_samps))
+        n_in = len(y_1d)
+        max_period = int(np.max(period_samps)) if len(period_samps) > 0 else 480
         out_buf = np.zeros(n_in + max_period * 6, dtype=np.float64)
         weight_buf = np.zeros_like(out_buf)
 
@@ -828,7 +1020,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                 frame_idx += 1
                 continue
 
-            grain = y[i_s:i_e].copy()
+            grain = y_1d[i_s:i_e].copy()
             win = np.hanning(grain_len)
             grain *= win
 
@@ -856,9 +1048,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             frame_idx += 1
 
         safe_w = np.maximum(weight_buf[:n_in], 1e-8)
-        result = out_buf[:n_in] / safe_w
-        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
-        return np.clip(result, -1.0, 1.0).astype(dtype)
+        return out_buf[:n_in] / safe_w
 
     def _correct_hybrid(self, audio: np.ndarray, ratio: float, params: dict[str, Any]) -> np.ndarray:
         """

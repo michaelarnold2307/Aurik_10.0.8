@@ -551,6 +551,62 @@ class AdvancedDereverbPhase(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase49 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — Dereverb darf Atemgeräusche
+        # zwischen Phrasen und Early-Reflections des Aufnahmestudios nicht tilgen.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a49 = processed
+            if _npa_a49.ndim == 2 and _npa_a49.shape[0] == 2 and _npa_a49.shape[1] > _npa_a49.shape[0]:
+                _npa_a49 = _npa_a49.T
+            _npa_r49 = get_natural_performance_detector().detect(_npa_a49, sample_rate)
+            _npa_n49 = (
+                processed.shape[1]
+                if (processed.ndim == 2 and processed.shape[0] == 2 and processed.shape[1] > 2)
+                else processed.shape[0]
+            )
+            _npa_m49 = _npa_r49.get_protected_mask(_npa_n49, sample_rate)
+            if np.any(_npa_m49):
+                _npa_orig49 = audio
+                if processed.ndim == 2 and _npa_orig49.ndim == 2:
+                    if processed.shape[0] == 2 and processed.shape[1] > 2:
+                        processed[:, _npa_m49] = _npa_orig49[:, _npa_m49]
+                    elif processed.shape == _npa_orig49.shape:
+                        processed[_npa_m49, :] = _npa_orig49[_npa_m49, :]
+                elif processed.ndim == 1 and _npa_orig49.ndim == 1:
+                    processed[_npa_m49] = _npa_orig49[_npa_m49]
+        except Exception as _npa49_exc:
+            logger.debug("§2.46f phase_49 NPA-Guard (non-blocking): %s", _npa49_exc)
+
+        # §2.36 Phonem-Schutz: Dereverb-Nass-Anteil kann Konsonanten-Burst-Transienten
+        # glätten wenn Hüllkurven-Schätzer plosive Einsätze als Reverb-Onset klassifiziert.
+        # Plosiv-Burst-Frames aus Original restaurieren (sample-level).
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_49
+
+            _hop_49 = 512
+            _mono_49 = processed.mean(axis=0) if (
+                processed.ndim == 2 and processed.shape[0] == 2 and processed.shape[1] > 2
+            ) else (processed.mean(axis=1) if processed.ndim == 2 else processed)
+            _pmask_49 = _get_pmask_49(_mono_49.astype(np.float32), sample_rate, hop_length=_hop_49)
+            if np.any(_pmask_49):
+                _n_49 = _mono_49.shape[0]
+                _smask_49 = np.zeros(_n_49, dtype=bool)
+                for _fi49, _fp49 in enumerate(_pmask_49):
+                    if _fp49:
+                        _fs49 = _fi49 * _hop_49
+                        _fe49 = min(_n_49, _fs49 + _hop_49)
+                        _smask_49[_fs49:_fe49] = True
+                if processed.ndim == 2 and audio.ndim == 2:
+                    if processed.shape[0] == 2 and processed.shape[1] > 2:
+                        processed[:, _smask_49] = audio[:, _smask_49]
+                    elif processed.shape == audio.shape:
+                        processed[_smask_49, :] = audio[_smask_49, :]
+                elif processed.ndim == 1 and audio.ndim == 1:
+                    processed[_smask_49] = audio[_smask_49]
+        except Exception as _pm49_exc:
+            logger.debug("§2.36 phase_49 Phonem-Mask (non-blocking): %s", _pm49_exc)
+
         return PhaseResult(
             success=True,
             audio=restore_layout(processed, _p49_transposed),

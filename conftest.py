@@ -61,6 +61,7 @@ os.environ.setdefault("TERM", "xterm-256color")
 _VSCODE_LAST_FILE: str = ""
 _VSCODE_TEST_COUNTER: int = 0
 _VSCODE_GC_INTERVAL: int = 100
+_VSCODE_FULL_GC_INTERVAL: int = int(os.environ.get("AURIK_TEST_FULL_GC_INTERVAL", "0"))
 
 
 def pytest_configure(config) -> None:
@@ -180,7 +181,8 @@ def pytest_collection_finish(session) -> None:
         )
 
     _release_heavy_singletons()
-    _gc.collect()
+    # Fast incremental GC to avoid long collection stalls in VS Code.
+    _gc.collect(0)
 
 
 def pytest_runtest_teardown(item, nextitem) -> None:
@@ -196,8 +198,11 @@ def pytest_runtest_teardown(item, nextitem) -> None:
     if current_file and current_file != _VSCODE_LAST_FILE:
         _VSCODE_LAST_FILE = current_file
         _release_heavy_singletons()
-        _gc.collect()
+        _gc.collect(0)
     elif _VSCODE_TEST_COUNTER % _VSCODE_GC_INTERVAL == 0:
+        _gc.collect(0)
+
+    if _VSCODE_FULL_GC_INTERVAL > 0 and _VSCODE_TEST_COUNTER % _VSCODE_FULL_GC_INTERVAL == 0:
         _gc.collect()
 
 
@@ -234,6 +239,8 @@ _HEAVY_TEST_PATH_HINTS: tuple[str, ...] = (
     "test_phase31_ml_integration.py",
     "test_signal_forensics_integration.py",
     "test_unified_analyzer.py",
+    "test_phase_23_ml_hybrid.py",
+    "test_phase23_ml_hybrid.py",
 )
 
 
@@ -298,6 +305,8 @@ def pytest_collection_modifyitems(config, items) -> None:
     This prevents hard machine crashes in default/local selective test runs.
     """
     run_heavy = bool(config.getoption("--run-heavy-tests"))
+    # Publish heavy-test mode for runtime safety guards inside processing phases.
+    os.environ["AURIK_RUN_HEAVY_TESTS"] = "1" if run_heavy else "0"
     run_gui = bool(config.getoption("--run-gui-tests"))
     deselected: list = []
     kept: list = []

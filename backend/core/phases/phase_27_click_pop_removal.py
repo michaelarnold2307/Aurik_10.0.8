@@ -292,6 +292,47 @@ class ClickPopRemoval(PhaseInterface):
 
         cleaned_audio = np.nan_to_num(cleaned_audio, nan=0.0, posinf=0.0, neginf=0.0)
         cleaned_audio = np.clip(cleaned_audio, -1.0, 1.0)
+
+        # §2.36 Phonem-Schutz: Plosiv-Bursts (/p/,/t/,/k/) sind breitbandig und sehen
+        # dem AR-Residual-Profil eines Clicks ähnlich. Frame-Restore für Konsonanten-Bursts.
+        # §2.46f NPA-Guard: Atemgeräusche (50–500 ms, dumpf) dürfen nicht als Click gelöscht werden.
+        try:
+            from backend.core.lyrics_guided_enhancement import LyricsGuidedEnhancement
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+            _mono27 = cleaned_audio.mean(axis=0) if cleaned_audio.ndim == 2 else cleaned_audio
+            _orig27 = audio.mean(axis=0) if audio.ndim == 2 else audio
+            n_samples27 = _mono27.shape[0]
+            # §2.36 Phonem-Schutz
+            try:
+                _lge27 = LyricsGuidedEnhancement(sample_rate=sample_rate)
+                _phon_mask27 = _lge27.get_phoneme_mask(_orig27, sample_rate, hop_length=512)
+                if _phon_mask27 is not None and len(_phon_mask27) > 0:
+                    hop27 = 512
+                    for _fi, _is_burst in enumerate(_phon_mask27):
+                        if _is_burst:
+                            _s = min(_fi * hop27, n_samples27)
+                            _e = min(_s + hop27, n_samples27)
+                            if cleaned_audio.ndim == 2:
+                                cleaned_audio[:, _s:_e] = audio[:, _s:_e]
+                            else:
+                                cleaned_audio[_s:_e] = audio[_s:_e]
+            except Exception as _p27_exc:
+                logger.debug("§2.36 Phase27 Phonem-Guard (non-blocking): %s", _p27_exc)
+            # §2.46f NPA-Guard
+            try:
+                _npa_mask27 = get_natural_performance_detector().detect(
+                    _orig27, sample_rate
+                ).get_protected_mask(n_samples27, sample_rate)
+                if _npa_mask27 is not None and _npa_mask27.any():
+                    if cleaned_audio.ndim == 2:
+                        cleaned_audio[:, _npa_mask27] = audio[:, _npa_mask27]
+                    else:
+                        cleaned_audio[_npa_mask27] = audio[_npa_mask27]
+            except Exception as _npa27_exc:
+                logger.debug("§2.46f Phase27 NPA-Guard (non-blocking): %s", _npa27_exc)
+        except Exception as _guard27_exc:
+            logger.debug("§2.36/§2.46f Phase27 guards (non-blocking): %s", _guard27_exc)
+
         return PhaseResult(
             success=True,
             audio=cleaned_audio,

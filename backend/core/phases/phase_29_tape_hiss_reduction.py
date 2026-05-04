@@ -327,6 +327,15 @@ class TapeHissReductionPhase(PhaseInterface):
         self.validate_input(audio)
         audio, _p29_transposed = to_channels_last(audio)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — detect protected zones before tape hiss reduction
+        _npa_result_29 = None
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_result_29 = get_natural_performance_detector().detect(audio, sample_rate)
+        except Exception as _npa_exc_29:
+            logger.debug("§2.46f NPA detection non-blocking: %s", _npa_exc_29)
+
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
             from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict29
@@ -650,6 +659,18 @@ class TapeHissReductionPhase(PhaseInterface):
 
         audio_processed = np.nan_to_num(audio_processed, nan=0.0, posinf=0.0, neginf=0.0)
         audio_processed = np.clip(audio_processed, -1.0, 1.0)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — restore protected breath zones after hiss reduction
+        if _npa_result_29 is not None:
+            try:
+                _npa_n_29 = audio_processed.shape[0]
+                _npa_mask_29 = _npa_result_29.get_protected_mask(_npa_n_29, sample_rate)
+                if np.any(_npa_mask_29):
+                    audio_processed[_npa_mask_29] = audio[_npa_mask_29]
+                    logger.debug("§2.46f NPA phase29: restored %d protected samples", int(np.sum(_npa_mask_29)))
+            except Exception as _npa_rest_29:
+                logger.debug("§2.46f NPA restoration non-blocking: %s", _npa_rest_29)
+
         return PhaseResult(
             success=True,
             audio=restore_layout(audio_processed, _p29_transposed),
@@ -962,6 +983,22 @@ class TapeHissReductionPhase(PhaseInterface):
         except Exception as _pmm_exc:
             logger.debug("PsychoacousticMaskingModel nicht verfügbar: %s", _pmm_exc)
 
+        # §2.36 Phonem-Schutz: Plosiv-Burst-Frames aus Original restaurieren (sample-level).
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_p29o
+
+            _hop_29o = 512
+            _pmask_29o = _get_pmask_p29o(channel.astype(np.float32), sample_rate, hop_length=_hop_29o)
+            if np.any(_pmask_29o):
+                _n_29o = len(channel)
+                for _fi_29o, _fp_29o in enumerate(_pmask_29o):
+                    if _fp_29o:
+                        _fs_29o = _fi_29o * _hop_29o
+                        _fe_29o = min(_n_29o, _fs_29o + _hop_29o)
+                        processed[_fs_29o:_fe_29o] = channel[_fs_29o:_fe_29o]
+        except Exception as _pm_29o_exc:
+            logger.debug("§2.36 phase_29 _omlsa Phonem-Mask (non-blocking): %s", _pm_29o_exc)
+
         return processed
 
     def _process_channel_omlsa_mrsa(
@@ -1007,12 +1044,12 @@ class TapeHissReductionPhase(PhaseInterface):
         nyquist = float(sample_rate // 2)
         eps = 1e-10
 
-        # Material-adaptive G_floor
-        G_floor_map = {"SHELLAC": 0.12, "VINYL": 0.10, "TAPE": 0.08, "REEL_TAPE": 0.07, "DAT": 0.06}
+        # Material-adaptive G_floor — §2.62: absolute minimum 0.10 (VERBOTEN: G_floor < 0.10)
+        G_floor_map = {"SHELLAC": 0.12, "VINYL": 0.10, "TAPE": 0.10, "REEL_TAPE": 0.10, "DAT": 0.10}
         mat_name = getattr(material, "name", str(material)).upper()
         G_floor = G_floor_map.get(mat_name, 0.10)
         intensity_scale = float(np.clip(intensity_scale, 0.0, 1.0))
-        G_floor = float(np.clip(1.0 - intensity_scale * (1.0 - G_floor), 0.0, 1.0))
+        G_floor = float(np.clip(1.0 - intensity_scale * (1.0 - G_floor), 0.10, 1.0))  # hard min §2.62
         runtime_profile = getattr(self, "_omlsa_runtime_profile_current", {})
         q = float(np.clip(runtime_profile.get("omlsa_q", 0.5), 0.35, 0.65))
         b_min = float(np.clip(runtime_profile.get("imcra_b_min", 1.66), 1.40, 1.90))
@@ -1034,6 +1071,20 @@ class TapeHissReductionPhase(PhaseInterface):
 
         G_acc = np.zeros((n_bins, n_t), dtype=np.float64)
         w_acc = np.zeros(n_bins, dtype=np.float64)
+
+        # §2.62 Psychoakustischer Masking-Guard (ISO 11172-3):
+        # OMLSA-Gain darf pro Frequenzbin nicht unter die Maskierungsschwelle fallen.
+        # Rauschen das vom Musiksignal maskiert wird erzeugt bei Entfernung klinisches Klangbild.
+        _masking_floor_p29: np.ndarray | None = None
+        _masking_freqs_p29: np.ndarray | None = None
+        try:
+            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p29
+            _mask_ratio_p29 = _cmask_p29(channel, sample_rate, n_fft=2048, hop_length=512)
+            _masking_floor_p29 = np.mean(_mask_ratio_p29, axis=1).astype(np.float32)  # (n_freq_2048,)
+            _masking_freqs_p29 = np.linspace(0.0, sample_rate / 2.0, _mask_ratio_p29.shape[0], dtype=np.float32)
+            logger.debug("§2.62 phase_29 Masking-Guard: mean_floor=%.3f", float(np.mean(_masking_floor_p29)))
+        except Exception as _msk_exc_p29:
+            logger.debug("§2.62 phase_29 Masking-Guard nicht verfügbar (non-blocking): %s", _msk_exc_p29)
 
         for zone_name, zone_win, zone_hop, f_low, f_high in self._MRSA_ZONES:
             try:
@@ -1084,6 +1135,15 @@ class TapeHissReductionPhase(PhaseInterface):
                 log_G_z = (1.0 - p_z) * np.log(G_floor + eps) + p_z * np.log(np.maximum(G_H1_z, eps))
                 G_z = np.exp(np.clip(log_G_z, np.log(G_floor + eps), 0.0))
                 G_z = np.clip(np.nan_to_num(G_z, nan=G_floor), G_floor, 1.0)
+
+                # §2.62: Per-Frequenz-Masking-Floor anwenden (non-blocking).
+                # Verhindert Überunterdrückung in Bins wo Rauschen unterhalb der Maskierungsschwelle liegt.
+                if _masking_floor_p29 is not None and _masking_freqs_p29 is not None:
+                    try:
+                        _mfloor_zone = np.interp(f_z, _masking_freqs_p29, _masking_floor_p29).astype(np.float32)
+                        G_z = np.maximum(G_z, _mfloor_zone[:, np.newaxis])
+                    except Exception:
+                        pass  # nie pipeline-blockierend
 
                 # §v9.10.113: Stronger HF suppression in presence/air zones when DeepFilterNet absent.
                 # DeepFilterNet removes residual hiss 2–16 kHz; without it, G_floor must be lower.
@@ -1209,6 +1269,26 @@ class TapeHissReductionPhase(PhaseInterface):
             _dyn_floor = _bin_floor[:, None] + 0.08 * _frame_sal_n
             _dyn_floor = np.clip(_dyn_floor, _bin_floor[:, None], 0.36).astype(np.float32)
             G_combined[_hf_guard_mask, :] = np.maximum(G_combined[_hf_guard_mask, :], _dyn_floor)
+
+        # §2.36 Phonem-Schutz: Plosiv-Burst-Frames (/p/,/t/,/k/) via get_phoneme_mask()
+        # schützen — AR-Residual-Spikes dieser Konsonanten-Bursts weisen dasselbe
+        # spektrale Profil auf wie Tape-Hiss → OMLSA reduziert Artikulation.
+        # Bypass: G_combined[:, phoneme_frames] = 1.0 (kein Gain-Eingriff).
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_29
+
+            _pmask_29 = _get_pmask_29(channel.astype(np.float32), sample_rate, hop_length=REF_HOP)
+            if np.any(_pmask_29):
+                _n_t_29 = G_combined.shape[1]
+                _pidx_29 = np.where(_pmask_29[:_n_t_29])[0]
+                if len(_pidx_29) > 0:
+                    G_combined[:, _pidx_29] = 1.0
+                    logger.debug(
+                        "§2.36 phase_29 Phonem-Bypass: %d/%d Frames auf G=1.0",
+                        len(_pidx_29), _n_t_29,
+                    )
+        except Exception as _pm29_exc:
+            logger.debug("§2.36 phase_29 Phonem-Mask (non-blocking): %s", _pm29_exc)
 
         # Apply gain + iSTFT reconstruction.
         # NOTE: Zxx_proc preserves the original phase from Zxx_ref (G_combined is real positive,

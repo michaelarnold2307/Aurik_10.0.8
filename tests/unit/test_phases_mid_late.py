@@ -653,7 +653,14 @@ class TestPhase23SpectralRepair:
 
         assert repaired.shape == stereo_cf.shape
         assert repaired.dtype == stereo_cf.dtype
-        assert np.allclose(repaired, stereo_cf * 0.875, atol=1e-6)
+        # Edge safety intentionally blends intro/outro to avoid boundary artefacts.
+        # Validate the invariant in the unaffected center region.
+        edge_n = int(0.5 * SR)
+        assert np.allclose(
+            repaired[:, edge_n:-edge_n],
+            (stereo_cf * 0.875)[:, edge_n:-edge_n],
+            atol=1e-6,
+        )
 
     def test_audiosr_helper_preserves_samples_first_stereo_shape(self, stereo):
         class _FakeAudioSR:
@@ -675,7 +682,12 @@ class TestPhase23SpectralRepair:
 
         assert repaired.shape == stereo_sf.shape
         assert repaired.dtype == stereo_sf.dtype
-        assert np.allclose(repaired, stereo_sf * 0.875, atol=1e-6)
+        edge_n = int(0.5 * SR)
+        assert np.allclose(
+            repaired[edge_n:-edge_n, :],
+            (stereo_sf * 0.875)[edge_n:-edge_n, :],
+            atol=1e-6,
+        )
 
     def test_audiosr_helper_passthrough_for_unsupported_shape(self):
         class _FakeAudioSR:
@@ -752,6 +764,9 @@ class TestPhase23SpectralRepair:
         assert called["mrsa"] >= 1
 
     def test_thrashing_relax_ml_attempt_cap_limits_retries(self, mono, monkeypatch):
+        # Explicit opt-in for mocked ML path in pytest. Default test mode disables
+        # heavy ML to protect host stability.
+        monkeypatch.setenv("AURIK_RUN_HEAVY_TESTS", "1")
         monkeypatch.setattr(self.phase, "_is_system_thrashing", lambda: True)
         monkeypatch.setattr(
             self.phase,

@@ -71,11 +71,12 @@ def _peaking_eq(audio: np.ndarray, sr: int, freq: float, gain_db: float, q: floa
     b = np.array([b0 / a0, b1 / a0, b2 / a0])
     a = np.array([1.0, a1 / a0, a2 / a0])
 
+    # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
     if audio.ndim == 1:
-        return sig.lfilter(b, a, audio)
+        return sig.filtfilt(b, a, audio)
     result = np.empty_like(audio)
     for ch in range(audio.shape[1]):
-        result[:, ch] = sig.lfilter(b, a, audio[:, ch])
+        result[:, ch] = sig.filtfilt(b, a, audio[:, ch])
     return result
 
 
@@ -96,11 +97,12 @@ def _high_shelf(audio: np.ndarray, sr: int, freq: float, gain_db: float) -> np.n
     b = np.array([b0 / a0, b1 / a0, b2 / a0])
     a = np.array([1.0, a1 / a0, a2 / a0])
 
+    # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
     if audio.ndim == 1:
-        return sig.lfilter(b, a, audio)
+        return sig.filtfilt(b, a, audio)
     result = np.empty_like(audio)
     for ch in range(audio.shape[1]):
-        result[:, ch] = sig.lfilter(b, a, audio[:, ch])
+        result[:, ch] = sig.filtfilt(b, a, audio[:, ch])
     return result
 
 

@@ -784,6 +784,38 @@ class CrackleRemovalPhase(PhaseInterface):
             audio, transients_short, transients_medium, transients_long, params
         )
 
+        # §2.36 Phonem-Schutz: Plosiv-Bursts (/p/,/t/,/k/) erzeugen kurze breitbandige
+        # Energie-Spikes, die vom AR-Residual-Detektor als Crackle klassifiziert werden.
+        # Erkannte crackle_regions, die mit einem Konsonanten-Burst überlappen, werden
+        # nicht repariert — Artikulation bleibt erhalten (§2.36 RELEASE_MUST).
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_09
+
+            _hop_09 = 512
+            _mono_09: np.ndarray
+            if audio.ndim == 2:
+                _mono_09 = np.mean(audio, axis=0) if audio.shape[0] == 2 else np.mean(audio, axis=1)
+            else:
+                _mono_09 = audio
+            _pmask_09 = _get_pmask_09(_mono_09.astype(np.float32), self.sample_rate, hop_length=_hop_09)
+            if np.any(_pmask_09) and crackle_regions:
+                _n09 = len(_mono_09)
+                _smask_09 = np.zeros(_n09, dtype=bool)
+                for _fi09, _fp09 in enumerate(_pmask_09):
+                    if _fp09:
+                        _fs09 = _fi09 * _hop_09
+                        _fe09 = min(_n09, _fs09 + _hop_09)
+                        _smask_09[_fs09:_fe09] = True
+                _before_09 = len(crackle_regions)
+                crackle_regions = [(s, e) for s, e in crackle_regions if not np.any(_smask_09[s:e])]
+                logger.debug(
+                    "§2.36 phase_09 Phonem-Schutz: %d → %d crackle_regions (Plosiv-Bursts entfernt)",
+                    _before_09,
+                    len(crackle_regions),
+                )
+        except Exception as _pmask09_exc:
+            logger.debug("§2.36 phase_09 Phonem-Mask (non-blocking): %s", _pmask09_exc)
+
         # Step 3: Model Background Texture (if enabled)
         background_model = None
         if params["background_model"]:

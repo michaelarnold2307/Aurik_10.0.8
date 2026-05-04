@@ -272,6 +272,15 @@ class ReverbReduction(PhaseInterface):
         audio, _p20_transposed = to_channels_last(audio)
         start_time = time.time()
 
+        # §2.46f Natural-Performance-Artifacts-Guard — detect protected zones before reverb reduction
+        _npa_result_20 = None
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_result_20 = get_natural_performance_detector().detect(audio, sample_rate)
+        except Exception as _npa_exc_20:
+            logger.debug("§2.46f NPA detection non-blocking: %s", _npa_exc_20)
+
         strength = self.REDUCTION_STRENGTH.get(material, 0.4)
         damping = self.TAIL_DAMPING.get(material, 0.6)
 
@@ -787,6 +796,46 @@ class ReverbReduction(PhaseInterface):
         except Exception as _pm_exc:
             logger.debug("Phase20 masking clamp non-blocking: %s", _pm_exc)
 
+        # §2.46f Natural-Performance-Artifacts-Guard — restore protected breath zones after dereverb
+        if _npa_result_20 is not None:
+            try:
+                _npa_n_20 = reduced.shape[0]
+                _npa_mask_20 = _npa_result_20.get_protected_mask(_npa_n_20, sample_rate)
+                if np.any(_npa_mask_20):
+                    reduced[_npa_mask_20] = audio[_npa_mask_20]
+                    logger.debug("§2.46f NPA phase20: restored %d protected samples", int(np.sum(_npa_mask_20)))
+            except Exception as _npa_rest_20:
+                logger.debug("§2.46f NPA restoration non-blocking: %s", _npa_rest_20)
+
+        # §2.36 Phonem-Schutz: Nass-Anteil des Dereverb-Prozessors kann Transienten-Energie
+        # von Plosiv-Bursts absenken wenn der Hüllkurven-Schätzer sie als Reverb-Einsatz
+        # behandelt. Plosiv-Burst-Frames aus Original restaurieren.
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_20
+
+            _hop_20 = 512
+            _mono_20 = reduced.mean(axis=0) if (
+                reduced.ndim == 2 and reduced.shape[0] == 2 and reduced.shape[1] > 2
+            ) else (reduced.mean(axis=1) if reduced.ndim == 2 else reduced)
+            _pmask_20 = _get_pmask_20(_mono_20.astype(np.float32), sample_rate, hop_length=_hop_20)
+            if np.any(_pmask_20):
+                _n_20 = _mono_20.shape[0]
+                _smask_20 = np.zeros(_n_20, dtype=bool)
+                for _fi20, _fp20 in enumerate(_pmask_20):
+                    if _fp20:
+                        _fs20 = _fi20 * _hop_20
+                        _fe20 = min(_n_20, _fs20 + _hop_20)
+                        _smask_20[_fs20:_fe20] = True
+                if reduced.ndim == 2 and audio.ndim == 2:
+                    if reduced.shape[0] == 2 and reduced.shape[1] > 2:
+                        reduced[:, _smask_20] = audio[:, _smask_20]
+                    elif reduced.shape == audio.shape:
+                        reduced[_smask_20, :] = audio[_smask_20, :]
+                elif reduced.ndim == 1 and audio.ndim == 1:
+                    reduced[_smask_20] = audio[_smask_20]
+        except Exception as _pm20_exc:
+            logger.debug("§2.36 phase_20 Phonem-Mask (non-blocking): %s", _pm20_exc)
+
         return PhaseResult(
             success=True,
             audio=reduced,
@@ -1006,10 +1055,23 @@ class ReverbReduction(PhaseInterface):
         n_bins, n_t = f_ref.shape[0], Zxx_ref.shape[1]
 
         # OMLSA hyper-parameters
-        G_floor = float(np.clip(0.1 + (1.0 - strength) * 0.05, 0.04, 0.15))
+        G_floor = float(np.clip(0.1 + (1.0 - strength) * 0.05, 0.10, 0.15))  # hard min §2.62
         q = float(np.clip(strength * 0.60, 0.10, 0.80))
         b_min = 1.66  # IMCRA bias correction (Cohen 2003)
         alpha_g = 0.85  # Cappé smoothing (1994)
+
+        # §2.62 Psychoakustischer Masking-Guard (ISO 11172-3) — per-Band Floor
+        _masking_floor_p20: np.ndarray | None = None
+        _masking_freqs_p20: np.ndarray | None = None
+        try:
+            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p20
+            _src_p20 = audio.mean(axis=0) if audio.ndim == 2 else audio
+            _mask_ratio_p20 = _cmask_p20(_src_p20, sample_rate, n_fft=2048, hop_length=512)
+            _masking_floor_p20 = np.mean(_mask_ratio_p20, axis=1).astype(np.float32)
+            _masking_freqs_p20 = np.linspace(0.0, sample_rate / 2.0, _mask_ratio_p20.shape[0], dtype=np.float32)
+            logger.debug("§2.62 phase_20 Masking-Guard: mean_floor=%.3f", float(np.mean(_masking_floor_p20)))
+        except Exception as _msk20_exc:
+            logger.debug("§2.62 phase_20 Masking-Guard nicht verfügbar (non-blocking): %s", _msk20_exc)
 
         # Accumulate weighted zone gains
         G_acc = np.zeros((n_bins, n_t), dtype=np.float64)
@@ -1058,6 +1120,14 @@ class ReverbReduction(PhaseInterface):
                 log_G_z = (1.0 - p_H1_z) * np.log(G_floor + 1e-10) + p_H1_z * np.log(np.maximum(G_wiener_z, 1e-10))
                 G_z = np.exp(np.clip(log_G_z, np.log(G_floor + 1e-10), 0.0))
                 G_z = np.clip(G_z, G_floor, 1.0)
+
+                # §2.62: Per-Frequenz-Masking-Floor anwenden (non-blocking)
+                if _masking_floor_p20 is not None and _masking_freqs_p20 is not None:
+                    try:
+                        _mfloor_z20 = np.interp(f_z, _masking_freqs_p20, _masking_floor_p20).astype(np.float32)
+                        G_z = np.maximum(G_z, _mfloor_z20[:, np.newaxis])
+                    except Exception:
+                        pass
 
                 # Cappé temporal smoothing via fast IIR lfilter (no Python loop)
                 G_z_sm = _lfilter_p20([1.0 - alpha_g], [1.0, -alpha_g], G_z, axis=1)

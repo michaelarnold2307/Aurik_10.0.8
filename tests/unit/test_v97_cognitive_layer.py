@@ -472,6 +472,32 @@ class TestPerceptualQualityScorer:
         assert isinstance(r1.pqs_mos, float)
         assert isinstance(r2.pqs_mos, float)
 
+    def test_stereo_channels_first_no_stub(self):
+        """Channels-first (2, N) darf nicht den Stub (MOS=3.0, NSIM=0.5, MCD=25.0) auslösen.
+
+        Bug: len((2, N)) = 2 < 8 → Stub. Fix: Mono-Mix vor Längenberechnung.
+        """
+        from backend.core.perceptual_quality_scorer import score_audio, score_audio_absolute
+
+        sr = 48000
+        N = sr * 2  # 2 s
+        rng = np.random.default_rng(42)
+        ref_stereo = rng.standard_normal((2, N)).astype(np.float32) * 0.1
+        deg_stereo = ref_stereo + rng.standard_normal((2, N)).astype(np.float32) * 0.005
+
+        result = score_audio(ref_stereo, deg_stereo, sr)
+
+        # Stub-Werte wären exakt (3.0, 0.5, 25.0) — echte Berechnung weicht ab
+        assert not (result.mos == 3.0 and result.nsim == 0.5 and result.mcd_db == 25.0), (
+            f"Stub-Werte für Stereo-Input zurückgegeben: {result}"
+        )
+        assert result.nsim > 0.7, f"NSIM zu niedrig für nahidentische Signale: {result.nsim:.3f}"
+        assert result.mos > 3.5, f"MOS zu niedrig für gutes Signal: {result.mos:.2f}"
+
+        # score_audio_absolute darf auch kein len()-Problem haben
+        result_abs = score_audio_absolute(ref_stereo, sr)
+        assert isinstance(result_abs.mos, float)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Integration-Rauchtests (smoke tests)

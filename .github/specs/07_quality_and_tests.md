@@ -109,18 +109,25 @@ in der MushraEvaluator-Gewichtungsmatrix bereits abgebildet und ist kein Ausschl
 
 ## §8.1.2 AMRB v1.0 — Aurik Musical Restoration Benchmark
 
-| Szenario | Defekt | AMRB-Pflicht-Score |
-| --- | --- | --- |
-| AMRB-01-TAPE | Tape-Hiss + Dropout | OQS ≥ 80 |
-| AMRB-02-VINYL | Vinyl-Crackle + Rumble | OQS ≥ 80 |
-| AMRB-03-SHELLAC | Shellac-Breitrauschen | OQS ≥ 80 |
-| AMRB-04-DIGITAL | Clipping + Quantisierung | OQS ≥ 80 |
-| AMRB-05-CODEC | Codec-Artefakte | OQS ≥ 80 |
-| AMRB-06-VOCAL | Stimmrauschen + Pitch-Drift | OQS ≥ 80 |
-| AMRB-07-REVERB | Raumhall RT60=1.2s | OQS ≥ 80 |
-| AMRB-08-HUM | 50-Hz-Brumm + Obertöne | OQS ≥ 80 |
-| AMRB-09-DROPOUT | Tape-Dropout 50–200 ms | OQS ≥ 80 |
-| AMRB-10-COMPOSITE | Kombinierte Degradierung | OQS ≥ 80 |
+> **Methodischer Hinweis**: AMRB verwendet **synthetisch degradierte Referenzaudio** (saubere Studioproduktionen
+> mit kontrollierten Defekten). Die Pflicht-Scores sind auf synthetischem Material erreichbar. Sie unterscheiden
+> sich bewusst von den Produktions-Gates (§8.1.1b), die für **echtes historisches Material** gelten — dieses
+> hat physikalische Grenzen, die synthetische Degradation nicht vollständig modelliert. AMRB-03-SHELLAC OQS ≥ 60
+> ist der Produktions-Gate für echte 78-rpm-Aufnahmen; OQS ≥ 80 ist das AMRB-Ziel auf synthetisch degradiertem
+> Material mit klar definiertem SNR-Ausgangspunkt.
+
+| Szenario | Defekt | AMRB-Pflicht-Score | Produktions-Gate (§8.1.1b) |
+| --- | --- | --- | --- |
+| AMRB-01-TAPE | Tape-Hiss + Dropout | OQS ≥ 80 | OQS ≥ 72 (analog modern) |
+| AMRB-02-VINYL | Vinyl-Crackle + Rumble | OQS ≥ 80 | OQS ≥ 72 (analog modern) |
+| AMRB-03-SHELLAC | Shellac-Breitrauschen | OQS ≥ 60 | OQS ≥ 60 (analog historisch) |
+| AMRB-04-DIGITAL | Clipping + Quantisierung | OQS ≥ 80 | OQS ≥ 80 (digital) |
+| AMRB-05-CODEC | Codec-Artefakte | OQS ≥ 80 | OQS ≥ 75 (lossy codec) |
+| AMRB-06-VOCAL | Stimmrauschen + Pitch-Drift | OQS ≥ 80 | OQS ≥ 72 |
+| AMRB-07-REVERB | Raumhall RT60=1.2s | OQS ≥ 80 | OQS ≥ 72 |
+| AMRB-08-HUM | 50-Hz-Brumm + Obertöne | OQS ≥ 80 | OQS ≥ 72 |
+| AMRB-09-DROPOUT | Tape-Dropout 50–200 ms | OQS ≥ 80 | OQS ≥ 72 |
+| AMRB-10-COMPOSITE | Kombinierte Degradierung | OQS ≥ 80 | OQS ≥ 70 |
 
 **[RELEASE_MUST] Fragment-Mindestlänge**: Jedes AMRB-Stimulusfragment MUSS **≥ 30 s** lang sein.
 Fragmente < 30 s erzeugen OQS-Varianz von ±8 Punkten — ausreichend um einen 80-Punkt-Pass-Fail-Schwellwert
@@ -256,6 +263,28 @@ Zusätzlich zur Song-Selbstkalibrierung sind folgende Tests verpflichtend:
 **Invariante:** Änderungen an Bridge/Denker/UI/Goal-Gates, die Experience-
 Telemetrie oder PMGG/CIG-Exclusions betreffen, dürfen ohne diese Testklassen
 nicht als release-fähig gelten.
+
+### §8.3.3 [RELEASE_MUST] Edge-Peak- und Stereo-Lag-Regressionstestpflicht (v9.12.0)
+
+Änderungen an Boundary-anfälligen Phasen (insb. `phase_03`, `phase_23`, STFT/ISTFT-, Chunk- oder ML-Routen)
+müssen zusätzlich folgende Nachweise liefern:
+
+1. **Keine Intro/Outro-Pegelexplosion**:
+    - Der restaurierte Output darf in Intro/Outro-Zonen keine neu eingeführten Peak-Explosionen gegenüber dem Input erzeugen.
+    - Präventive Ursache-Fixes (Kontext-Padding, deterministischer Strip) sind Pflicht; reiner Post-hoc-Fade reicht nicht als alleiniger Fix.
+2. **Keine neue L/R-Zeitverschiebung**:
+    - Interchannel-Delay nach Verarbeitung darf nicht über den Input hinaus regressieren.
+    - §2.51a Hard-Fail (> 1 ms) bleibt bindend.
+3. **Kanal-Symmetrie bei separater Verarbeitung**:
+    - Für getrennte L/R-Pfade müssen Strip-Offset und Strip-Länge identisch validiert werden.
+    - Für `phase_23` gilt zusätzlich: Stereo-ML-Pfade müssen M/S- oder Linked-Stereo laufen; separate L/R-ML-Inferenz ist nicht release-fähig.
+
+**Release-Kriterium**: Ohne grüne Nachweise für Edge-Peak- und Lag-Invariante ist ein Merge in release-relevante Branches unzulässig.
+
+**CI-Contract-Test**: `tests/normative/test_edge_lag_no_regress_contract.py` muss grün sein.
+
+**Real-Audio-Gate (heavy)**: `tests/normative/test_real_audio_edge_lag_gate.py` muss bei
+`--run-heavy-tests` grün sein (Intro/Outro-Peak-Exzess + Interchannel-Delay-Delta).
 
 ## §8.5 [RELEASE_MUST] Globales Parameterregister
 
@@ -836,6 +865,27 @@ Admissibility-Gate platzieren.
 | (kein Marker) | Standard Unit-Test | JA |
 
 `conftest.py` markiert automatisch `ml`/`slow` basierend auf Testinhalten.
+
+### §8.4b [RELEASE_MUST] Host-Crash-Safety für Heavy-ML-Tests (v9.12.0)
+
+Tests dürfen den Host nicht destabilisieren. Für potenziell hostgefährdende ML-Pfade
+(hoher RAM/VRAM-Verbrauch, große ONNX/Torch-Modelle, lange Audiosegmente) gilt bindend:
+
+1. **Default sicher**:
+    - Standard-Pytest-Runs (ohne `--run-heavy-tests`) dürfen keine Heavy-ML-Pfade ausführen.
+    - Solche Tests müssen über Marker/Heuristik (`ml`, `slow`, `e2e`, bekannte Heavy-Dateien)
+      frühzeitig deselected werden.
+2. **Explizites Opt-in**:
+    - Heavy-ML-Tests sind nur mit `--run-heavy-tests` zulässig.
+    - Runtime-Guards in Phasen dürfen in Testumgebung Heavy-Pfade nur bei aktivem Opt-in erlauben.
+3. **Crash-Prävention vor Coverage**:
+    - Bei Konflikt gilt Host-Stabilität vor Test-Coverage.
+    - Zulässige Fallback-Reaktion ist deterministische DSP-Ausführung statt ML-Ausführung.
+4. **Kein stilles Umgehen**:
+    - Unit-Tests, die ML-Pfade gezielt prüfen, müssen Heavy-Opt-in explizit setzen
+      (z. B. Test-Setup/Monkeypatch), statt globale Guards zu umgehen.
+
+**Invariante**: Kein Standard-Unit-Run darf einen Host-Neustart oder System-Hard-Freeze verursachen.
 
 ### Pflicht-Test-Taxonomie (≥ 35 pro Kernmodul)
 

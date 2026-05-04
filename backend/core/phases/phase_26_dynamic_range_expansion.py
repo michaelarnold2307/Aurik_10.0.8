@@ -383,18 +383,20 @@ class DynamicRangeExpansion(PhaseInterface):
         Scientific basis: Linkwitz & Riley 1976, JAES 24(1).
         """
         # Crossover 1: 150 Hz
+        # sosfiltfilt (zero-phase) required: low is subtracted from audio to get rest_1;
+        # causal sosfilt would introduce group delay → timing skew in complementary bands → Pegelexplosion (§2.51, V11)
         sos1 = signal.butter(2, self.CROSSOVER_FREQS[0], btype="low", fs=sample_rate, output="sos")
-        low = signal.sosfilt(sos1, signal.sosfilt(sos1, audio))  # LR4 low-pass
+        low = signal.sosfiltfilt(sos1, audio)  # LR4-equivalent zero-phase low-pass
         rest_1 = audio - low  # Complementary high (>150 Hz)
 
         # Crossover 2: 800 Hz (applied to rest_1)
         sos2 = signal.butter(2, self.CROSSOVER_FREQS[1], btype="low", fs=sample_rate, output="sos")
-        mid_low = signal.sosfilt(sos2, signal.sosfilt(sos2, rest_1))  # LR4 low-pass
+        mid_low = signal.sosfiltfilt(sos2, rest_1)  # LR4-equivalent zero-phase
         rest_2 = rest_1 - mid_low  # >800 Hz
 
         # Crossover 3: 5000 Hz (applied to rest_2)
         sos3 = signal.butter(2, self.CROSSOVER_FREQS[2], btype="low", fs=sample_rate, output="sos")
-        mid_high = signal.sosfilt(sos3, signal.sosfilt(sos3, rest_2))  # LR4 low-pass
+        mid_high = signal.sosfiltfilt(sos3, rest_2)  # LR4-equivalent zero-phase
         high = rest_2 - mid_high  # >5000 Hz
 
         return [low, mid_low, mid_high, high]

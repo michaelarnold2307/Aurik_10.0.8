@@ -305,40 +305,84 @@ class VerbotenlLinter(ast.NodeVisitor):
                             self._add(node, "V08", "O(n²) Autokorrelation → scipy.signal.fftconvolve")
 
     # --- V11: sosfilt result added back to audio → sosfiltfilt (Zeitversatz-Invariante) ---
-    def _check_sosfilt_recombine(self, node: ast.Call) -> None:
-        """Flag sosfilt(...) when the variable it is assigned to is directly added to an audio signal.
+    def _check_sosfilt_scope(self, func_node: ast.AST) -> None:
+        """Scope-aware V11 check: only flag sosfilt vars later used in additive BinOp.
 
-        sosfilt is causal (introduces group delay).  When a band-filtered result is added back
-        to the original (e.g. band = sosfilt(sos, audio); out = audio + band), inter-band
-        time offsets cause destructive interference → Pegelexplosion.
-        Use sosfiltfilt (zero-phase) wherever the result is recombined.
+        Genuine violation pattern (flagged):
+            band = signal.sosfilt(sos, audio)      # group delay introduced
+            result = audio - band + band_modified  # timing skew → Pegelexplosion
 
-        This checker uses a heuristic: flag any sosfilt call whose parent Assign target
-        is a simple Name (e.g., `band = sosfilt(sos, audio)`) in files that also
-        contain `band + ` or `audio + band` addition patterns — the AST visitor tracks
-        assigned sosfilt names per function scope and cross-checks with BinOp nodes.
+        Analysis-only uses (NOT flagged):
+            band = signal.sosfilt(sos, audio)      # group delay
+            rms = np.sqrt(np.mean(band**2))        # measurement only — no recombination
+
+        This replaces the previous conservative per-call approach (96 noisy warnings)
+        with true scope-aware assignment + BinOp tracking (only genuine violations).
         """
-        func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr == "sosfilt"):
-            return
-        # Only flag in backend/plugins — not in tests or scripts
         parts = self.filepath.parts
         if "tests" in parts or "scripts" in parts:
             return
-        # Check caller: is this inside a signal module (audio processing context)?
-        # We flag conservatively: only when the function is signal.sosfilt (not some other sosfilt)
-        if isinstance(func.value, ast.Attribute) and func.value.attr == "signal":
-            self._add(
-                node,
-                "V11",
-                "signal.sosfilt() in Backend → sosfiltfilt (zero-phase) prüfen wenn Ergebnis zu Audio addiert wird",
-            )
-        elif isinstance(func.value, ast.Name) and func.value.id in ("signal", "sos"):
-            self._add(
-                node,
-                "V11",
-                "sosfilt() in Backend → sosfiltfilt (zero-phase) prüfen wenn Ergebnis zu Audio addiert wird",
-            )
+
+        # Pass 1: collect sosfilt-assigned variable names in direct scope
+        sosfilt_vars: dict[str, tuple[int, ast.AST]] = {}  # name → (lineno, assign_node)
+        for node in _walk_scope(func_node):
+            if node is func_node:
+                continue
+            if not isinstance(node, ast.Assign):
+                continue
+            if not isinstance(node.value, ast.Call):
+                continue
+            call = node.value
+            func_attr = call.func
+            if not (isinstance(func_attr, ast.Attribute) and func_attr.attr == "sosfilt"):
+                continue
+            # Only via signal/sig module imports
+            val_name = ""
+            if isinstance(func_attr.value, ast.Attribute):
+                val_name = func_attr.value.attr
+            elif isinstance(func_attr.value, ast.Name):
+                val_name = func_attr.value.id
+            if val_name not in ("signal", "sig", "scipy"):
+                continue
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    sosfilt_vars[t.id] = (node.lineno, node)
+
+        if not sosfilt_vars:
+            return
+
+        # Pass 2: flag any sosfilt var used as a DIRECT additive operand in statement-level
+        # assignments. Only Assign/AugAssign/Return values are checked — BinOps buried inside
+        # Call arguments (e.g. np.mean(band - mean)) are NOT flagged (analysis context).
+        reported: set[str] = set()
+        for stmt in _walk_scope_assignments(func_node):
+            if isinstance(stmt, (ast.Assign, ast.Return)):
+                check_expr = stmt.value  # type: ignore[union-attr]
+                stmt_lineno = stmt.lineno
+            elif isinstance(stmt, ast.AugAssign):
+                check_expr = stmt.value
+                stmt_lineno = stmt.lineno
+            else:
+                continue
+            if check_expr is None:
+                continue
+            for var, (defline, assign_node) in sosfilt_vars.items():
+                if stmt_lineno <= defline or var in reported:
+                    continue
+                if _var_in_additive_operands(var, check_expr):
+                    reported.add(var)
+                    self._add(
+                        assign_node,
+                        "V11",
+                        f"sosfilt result '{var}' (L{defline}) addiert/subtrahiert mit Audio (L{stmt_lineno}) → sosfiltfilt verwenden (§2.51, V11)",
+                    )
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """V11: trigger scope-aware sosfilt additive-recombination check per function."""
+        self._check_sosfilt_scope(node)
+        self.generic_visit(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
     def visit_Call(self, node: ast.Call) -> None:
         self._check_corrcoef(node)
@@ -349,7 +393,7 @@ class VerbotenlLinter(ast.NodeVisitor):
         self._check_map_location_cuda(node)
         self._check_wiener(node)
         self._check_np_correlate_full(node)
-        self._check_sosfilt_recombine(node)
+        # V11 is now handled by visit_FunctionDef/_check_sosfilt_scope (scope-aware)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -359,6 +403,85 @@ class VerbotenlLinter(ast.NodeVisitor):
             if "backend" in parts:
                 self._add(node, "V09", f"from {node.module} import ... in backend/")
         self.generic_visit(node)
+
+
+def _is_direct_var_operand(var: str, node: ast.expr) -> bool:
+    """True if `var` appears directly in `node` as a Name or via Mult/Div/UnaryOp (but NOT via +/-/Call).
+
+    This identifies `var` as a direct operand of the enclosing Add/Sub —
+    e.g. `audio - var`, `audio - var * factor`, `audio + (-var)`.
+    Does NOT recurse into Add/Sub (handled by _contains_additive_sosfilt_var).
+    Does NOT recurse into Call, Subscript, Attribute (analysis contexts).
+    """
+    if isinstance(node, ast.Name):
+        return node.id == var
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mult, ast.Div, ast.FloorDiv, ast.Mod)):
+        return _is_direct_var_operand(var, node.left) or _is_direct_var_operand(var, node.right)
+    if isinstance(node, ast.UnaryOp):
+        return _is_direct_var_operand(var, node.operand)
+    # Do NOT recurse into Call, Subscript, Attribute, Add/Sub, etc.
+    return False
+
+
+def _contains_additive_sosfilt_var(var: str, expr: ast.expr) -> bool:
+    """True if any Add/Sub BinOp reachable from `expr` has `var` as a direct operand.
+
+    Recurses into Add/Sub BinOps only (not into Call args or Subscript args).
+    Within an Add/Sub, `var` may appear directly as Name or via Mult/Div (band * factor).
+
+    Examples:
+        audio - var                         → True   (var is direct Sub operand)
+        audio - var + other                 → True   (var is in nested Sub)
+        audio - var * factor                → True   (var via Mult)
+        np.mean(var) + epsilon              → False  (var inside Call, not reached)
+        var[start:end]                      → False  (Subscript, not reached)
+        duration = end_idx - start_idx      → False  (var not present at all)
+        result = np.sqrt(var - mean) / std  → False  (var inside Call arg, not reached)
+    """
+    if isinstance(expr, ast.BinOp):
+        if isinstance(expr.op, (ast.Add, ast.Sub)):
+            # Check if var is a direct operand on either side
+            if _is_direct_var_operand(var, expr.left) or _is_direct_var_operand(var, expr.right):
+                return True
+        # Recurse into both sides to find nested +/- (but NOT into Call/Subscript args)
+        return _contains_additive_sosfilt_var(var, expr.left) or _contains_additive_sosfilt_var(var, expr.right)
+    if isinstance(expr, ast.UnaryOp):
+        return _contains_additive_sosfilt_var(var, expr.operand)
+    # Do NOT recurse into Call, Attribute, Subscript, Constant, etc.
+    return False
+
+
+def _var_in_additive_operands(var: str, node: ast.expr) -> bool:
+    """Compatibility alias — delegates to _contains_additive_sosfilt_var."""
+    return _contains_additive_sosfilt_var(var, node)
+
+
+def _walk_scope_assignments(node: ast.AST):
+    """Yield Assign/AugAssign/Return statement nodes in a scope without entering nested func/class defs.
+
+    Only statement-level nodes are yielded (not expressions inside function call args).
+    This prevents false positives like `float(np.mean((band - mean) / std) ** 4)`
+    where `band` appears in arithmetic inside a Call argument, not in audio recombination.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(child, (ast.Assign, ast.AugAssign, ast.Return)):
+            yield child
+        # Recurse into control flow containers (if/for/while/with/try bodies)
+        yield from _walk_scope_assignments(child)
+
+
+def _walk_scope(node: ast.AST):
+    """Iterate all AST nodes in a function scope without entering nested FunctionDef/AsyncFunctionDef/ClassDef.
+
+    Used by V11 scope-aware sosfilt checker to avoid cross-contamination between nested scopes.
+    """
+    yield node
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield from _walk_scope(child)
 
 
 # ---------------------------------------------------------------------------

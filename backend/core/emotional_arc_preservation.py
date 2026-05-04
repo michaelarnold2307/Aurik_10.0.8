@@ -856,7 +856,7 @@ class WaveformPlausibilityGuard:
     # §2.30b: vinyl surface noise floor sits at −33 to −38 dBFS after denoising.
     # −24.0 was too permissive — those frames bypassed the quiet-zone emergency trigger.
     # −36.0 aligns with the per-sample guard (same value used throughout MDEM + correct_arc).
-    _QUIET_ZONE_DBFS: float = -36.0
+    _QUIET_ZONE_DBFS: float = -34.0
     _QUIET_EXPLOSION_RATIO_MIN: float = 0.80
 
     # Mode-adaptive explosion thresholds

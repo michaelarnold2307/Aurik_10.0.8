@@ -338,6 +338,38 @@ class NoiseGate(PhaseInterface):
             gated_audio = audio + _effective_strength * (gated_audio - audio)
             gated_audio = np.clip(gated_audio, -1.0, 1.0)
 
+        # §2.36 Phonem-Schutz: Konsonanten-Burst-Frames (/p/,/t/,/k/) können vom
+        # Noise-Gate als Stille fehlklassifiziert werden → Original-Signal für diese
+        # Frames wiederherstellen (Gate öffnen). Non-blocking.
+        try:
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_18
+
+            _hop_18 = 512
+            _mono_18 = (safe_to_mono(audio) if is_stereo else audio).astype(np.float32)
+            _pmask_18 = _get_pmask_18(_mono_18, sample_rate, hop_length=_hop_18)
+            if np.any(_pmask_18):
+                _n18 = len(_mono_18)
+                _smask_18 = np.zeros(_n18, dtype=bool)
+                for _fi18, _fp18 in enumerate(_pmask_18):
+                    if _fp18:
+                        _fs18 = _fi18 * _hop_18
+                        _fe18 = min(_n18, _fs18 + _hop_18)
+                        _smask_18[_fs18:_fe18] = True
+                if is_stereo and gated_audio.ndim == 2:
+                    if gated_audio.shape[0] == 2 and gated_audio.shape[1] > 2:
+                        gated_audio[:, _smask_18] = audio[:, _smask_18]
+                    else:
+                        gated_audio[_smask_18, :] = audio[_smask_18, :]
+                else:
+                    gated_audio[_smask_18] = audio[_smask_18]
+                logger.debug(
+                    "§2.36 phase_18 Phonem-Schutz: %d/%d Frames restauriert",
+                    int(np.sum(_pmask_18)),
+                    len(_pmask_18),
+                )
+        except Exception as _pmask18_exc:
+            logger.debug("§2.36 phase_18 Phonem-Mask (non-blocking): %s", _pmask18_exc)
+
         gated_audio, loudness_stats = self._apply_material_loudness_preservation(audio, gated_audio, material)
 
         # §2.45a Post-Makeup-Guard: Stille-Anstieg nach Makeup prüfen.
@@ -367,6 +399,34 @@ class NoiseGate(PhaseInterface):
             )
         except Exception as _pm_exc:
             logger.debug("Phase18 masking clamp non-blocking: %s", _pm_exc)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — restore breath zones gated as silence.
+        # Atemgeräusche (−55 bis −40 dBFS, 50–500 ms) werden vom Gate als Stille klassifiziert
+        # und weggeschnitten. NPA-Detektor schützt diese Zonen. Non-blocking.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_audio_18 = audio
+            if _npa_audio_18.ndim == 2 and _npa_audio_18.shape[0] == 2 and _npa_audio_18.shape[1] > 2:
+                _npa_audio_18 = _npa_audio_18.T  # channels-first → channels-last
+            _npa_result_18 = get_natural_performance_detector().detect(_npa_audio_18, sample_rate)
+            _npa_n_18 = gated_audio.shape[1] if (gated_audio.ndim == 2 and gated_audio.shape[0] == 2 and gated_audio.shape[1] > gated_audio.shape[0]) else (gated_audio.shape[0] if gated_audio.ndim <= 2 else len(gated_audio))
+            _npa_mask_18 = _npa_result_18.get_protected_mask(_npa_n_18, sample_rate)
+            if np.any(_npa_mask_18):
+                if is_stereo and gated_audio.ndim == 2:
+                    if gated_audio.shape[0] == 2 and gated_audio.shape[1] > 2:
+                        gated_audio[:, _npa_mask_18] = audio[:, _npa_mask_18] if audio.ndim == 2 else gated_audio[:, _npa_mask_18]
+                    else:
+                        _a18_ref = audio if (audio.ndim == 2 and audio.shape == gated_audio.shape) else gated_audio
+                        gated_audio[_npa_mask_18, :] = _a18_ref[_npa_mask_18, :]
+                elif gated_audio.ndim == 1 and audio.ndim == 1:
+                    gated_audio[_npa_mask_18] = audio[_npa_mask_18]
+                logger.debug(
+                    "§2.46f phase_18 NPA: %d protected samples restauriert (Atemgeräusche/Vibrato)",
+                    int(np.sum(_npa_mask_18)),
+                )
+        except Exception as _npa18_exc:
+            logger.debug("§2.46f phase_18 NPA-Guard (non-blocking): %s", _npa18_exc)
 
         # Metrics — §2.45a-I: gated RMS, ignoriert Stille-Frames
         _rms_orig_db = _rms_dbfs_gated(audio)

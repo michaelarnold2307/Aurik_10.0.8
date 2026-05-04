@@ -326,6 +326,31 @@ class CrosstalkCancellationPhase(PhaseInterface):
         )
         elapsed = _time.perf_counter() - t0
 
+        # §2.46f NPA-Guard: Atemgeräusche und Early-Reflections vor Crosstalk-Subtraktion schützen.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+            _mono62 = audio.mean(axis=0) if audio.ndim == 2 else audio
+            _npa_mask62 = get_natural_performance_detector().detect(
+                _mono62, sample_rate
+            ).get_protected_mask(len(_mono62), sample_rate)
+            if _npa_mask62 is not None and _npa_mask62.any():
+                if result_audio.ndim == 2:
+                    result_audio[:, _npa_mask62] = audio[:, _npa_mask62]
+                else:
+                    result_audio[_npa_mask62] = audio[_npa_mask62]
+        except Exception as _npa62_exc:
+            logger.debug("§2.46f Phase62 NPA-Guard (non-blocking): %s", _npa62_exc)
+
+        # §2.62 Psychoakustischer Masking-Guard: Crosstalk-Subtraktion entfernt
+        # keine vom Musiksignal maskierten Komponenten (G_floor ≥ 0.10).
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            result_audio = apply_psychoacoustic_masking_clamp(
+                audio, result_audio, sample_rate, mode="restoration"
+            )
+        except Exception as _pmask62_exc:
+            logger.debug("§2.62 Phase62 Masking-Guard (non-blocking): %s", _pmask62_exc)
+
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0
         return PhaseResult(

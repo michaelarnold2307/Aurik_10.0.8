@@ -291,3 +291,86 @@ class TestPhase42PsychoacousticRegression:
         result = phase.process(audio, SR, strength=0.7)
         assert result.success
         assert np.all(np.isfinite(result.audio))
+
+
+class TestPhase42StemSafety:
+    """Regression tests for stereo stem masking and ML fallback behavior."""
+
+    def test_wiener_stereo_handles_channels_first(self):
+        from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
+        phase = VocalEnhancement()
+        ch_l = _make_vocal(0.4).astype(np.float32)
+        ch_r = (_make_vocal(0.4, f0=230.0) * 0.95).astype(np.float32)
+        audio_cf = np.vstack([ch_l, ch_r])  # (2, N)
+        voc_mono = np.mean(audio_cf, axis=0).astype(np.float32)
+
+        vocals, inst = phase._wiener_stereo_from_mono(audio_cf, voc_mono, SR)
+
+        assert vocals.shape == audio_cf.shape
+        assert inst.shape == audio_cf.shape
+        assert np.all(np.isfinite(vocals))
+        assert np.all(np.isfinite(inst))
+
+    def test_wiener_stereo_tail_ringing_guard(self):
+        """OLA tail ringing guard: last win_size samples must not exceed input RMS."""
+        from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+
+        phase = VocalEnhancement()
+        # Fade-out signal: loud music fading to near-silence in last 2s
+        total = int(SR * 5.0)
+        t = np.arange(total, dtype=np.float32) / SR
+        fade = np.clip(1.0 - t / 5.0, 0.0, 1.0)  # 1→0 envelope
+        music = (np.sin(2 * np.pi * 220.0 * t) * 0.5 * fade).astype(np.float32)
+        audio_cn = np.column_stack([music, music * 0.97])  # (N, 2)
+        voc_mono = music * 0.7  # mock vocal separation
+
+        vocals, inst = phase._wiener_stereo_from_mono(audio_cn, voc_mono, SR)
+
+        # Check the last win_size (2048) samples: output must not be louder than input
+        tail_n = 2048
+        orig_tail_rms = float(np.sqrt(np.mean(audio_cn[-tail_n:] ** 2)) + 1e-9)
+        voc_tail_rms = float(np.sqrt(np.mean(vocals[-tail_n:] ** 2)) + 1e-9)
+        inst_tail_rms = float(np.sqrt(np.mean(inst[-tail_n:] ** 2)) + 1e-9)
+
+        assert voc_tail_rms <= orig_tail_rms * 1.1, (
+            f"OLA tail ringing: vocals tail rms {voc_tail_rms:.6f} > input {orig_tail_rms:.6f} * 1.1"
+        )
+        assert inst_tail_rms <= orig_tail_rms * 1.1, (
+            f"OLA tail ringing: inst tail rms {inst_tail_rms:.6f} > input {orig_tail_rms:.6f} * 1.1"
+        )
+
+    def test_try_stem_separation_rejects_low_sdri_roformer(self, monkeypatch):
+        from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement
+        from plugins import bs_roformer_plugin as rof_mod
+        from plugins import mdx23c_plugin as mdx_mod
+
+        class _FakeSep:
+            def __init__(self, vocals: np.ndarray):
+                self.stems = {"vocals": vocals}
+                self.sr = SR
+                self.sdri_db = -4.8  # intentional bad quality
+                self.model_used = "bs_roformer"
+                self.confidence = 0.95
+
+        class _FakeRoformer:
+            def separate(self, audio, sr, stems=None):
+                return _FakeSep(np.asarray(audio, dtype=np.float32) * 0.4)
+
+        class _FakeMDX:
+            def process(self, audio, sr, stem="vocals"):
+                x = np.asarray(audio, dtype=np.float32)
+                return x * (0.45 if stem == "vocals" else 0.55)
+
+        monkeypatch.setattr(rof_mod, "get_bs_roformer", lambda: _FakeRoformer())
+        monkeypatch.setattr(mdx_mod, "get_mdx23c_plugin", lambda: _FakeMDX())
+
+        phase = VocalEnhancement()
+        mono = _make_vocal(0.5)
+        stereo = np.column_stack([mono, mono * 0.97]).astype(np.float32)
+
+        result = phase._try_stem_separation(stereo, SR, quality_mode="quality", quality_first_unleashed=True)
+
+        assert result is not None
+        _, _, _, model_used = result
+        assert model_used == "mdx23c_kim_vocal_2"

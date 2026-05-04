@@ -457,6 +457,34 @@ class SpectralRepairPhase(PhaseInterface):
 
         repaired_audio = np.nan_to_num(repaired_audio, nan=0.0, posinf=0.0, neginf=0.0)
         repaired_audio = np.clip(repaired_audio, -1.0, 1.0)
+
+        # §2.46e Hallucination-Guard: Additive Spectral-Reparatur kann Energie über Ceiling hinzufügen
+        try:
+            from backend.core.hallucination_guard import apply_hallucination_guard
+
+            _material_50 = kwargs.get("material_type", "unknown")
+            _mono_50 = repaired_audio.mean(axis=0) if (
+                repaired_audio.ndim == 2 and repaired_audio.shape[0] == 2 and repaired_audio.shape[1] > 2
+            ) else (repaired_audio.mean(axis=1) if repaired_audio.ndim == 2 else repaired_audio)
+            _audio_mono_50 = audio.mean(axis=0) if (
+                audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2
+            ) else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            _bw_ceiling_50 = {"shellac": 8000.0, "wax_cylinder": 5000.0, "vinyl": 16000.0, "reel_tape": 18000.0, "cassette": 15000.0}.get(
+                str(_material_50).lower().replace(" ", "_"), None
+            )
+            _, _hg_meta_50 = apply_hallucination_guard(
+                _audio_mono_50.astype(np.float32),
+                _mono_50.astype(np.float32),
+                sr=sample_rate,
+                material_bw_ceiling_hz=_bw_ceiling_50,
+                mode="restoration",  # phase_50 ist immer restorative
+            )
+            if _hg_meta_50.get("hallucination_decision") == "rollback":
+                logger.warning("§2.46e phase_50 Hallucination-Guard rollback: %s", _hg_meta_50.get("hallucination_severity"))
+                repaired_audio = audio.copy()
+        except Exception as _hg50_exc:
+            logger.debug("§2.46e phase_50 Hallucination-Guard (non-blocking): %s", _hg50_exc)
+
         _rms_in_50 = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float64) ** 2) + 1e-12))
         _rms_out_50 = float(np.sqrt(np.mean(np.asarray(repaired_audio, dtype=np.float64) ** 2) + 1e-12))
         _rms_drop_50 = 20.0 * np.log10(max(_rms_out_50 / _rms_in_50, 1e-30)) if _rms_in_50 > 1e-8 else 0.0

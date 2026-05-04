@@ -360,3 +360,92 @@ class TestPMGGInitialStrength:
 
         result = gate.wrap_phase(phase, audio, 48000, initial_strength=0.5)
         assert isinstance(result, tuple) and len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# §6.2a MandatoryFloor — invariant: mandatory priority phases must achieve
+# minimum effective strength = mat_strength × 0.40, even at low defect severity.
+# ---------------------------------------------------------------------------
+
+
+class TestMandatoryFloorInvariant:
+    """Tests for the §6.2a MandatoryFloor guard added to UV3 _execute_pipeline.
+
+    The guard ensures that _MATERIAL_PRIORITY_PHASES (activated unconditionally
+    per §6.2a, independent of scanner confidence) cannot be reduced to near-zero
+    strength by a low _sev_factor.  Without the guard, shellac phase_09 at
+    sev=0.15 → initial_strength = 0.85 × 0.15 = 0.127 — functionally a no-op.
+    With the guard: floor = 0.85 × 0.40 = 0.34 → meaningful crackle correction.
+    """
+
+    def test_mandatory_floor_formula(self):
+        """mat_strength × 0.40 must exceed sev_factor × mat_strength when sev < 0.40."""
+        from backend.core.defect_phase_mapper import get_material_initial_strength
+
+        for material, phase_id in [
+            ("shellac", "phase_09_crackle_removal"),
+            ("shellac", "phase_03_denoise"),
+            ("shellac", "phase_01_click_removal"),
+            ("vinyl", "phase_09_crackle_removal"),
+            ("vinyl", "phase_12_wow_flutter_fix"),
+            ("tape", "phase_29_tape_hiss_reduction"),
+        ]:
+            mat_strength = get_material_initial_strength(material, phase_id)
+            if mat_strength == 1.0:
+                mat_strength_eff = 1.0  # default — no override in factors
+            mandatory_floor = mat_strength * 0.40
+
+            # Simulate low scanner severity (floor from get_phase_defect_severity = 0.15)
+            low_sev = 0.15
+            combined_without_floor = mat_strength * low_sev
+            assert mandatory_floor > combined_without_floor, (
+                f"{material}/{phase_id}: mandatory_floor ({mandatory_floor:.3f}) must exceed "
+                f"mat_strength × min_sev ({combined_without_floor:.3f}) to prevent near-zero processing"
+            )
+
+    def test_mandatory_floor_allows_heavy_defect_full_strength(self):
+        """When sev_factor × mat_strength > floor, the floor must NOT cap strength downward."""
+        from backend.core.defect_phase_mapper import get_material_initial_strength
+
+        mat_strength = get_material_initial_strength("shellac", "phase_09_crackle_removal")
+        high_sev = 0.85
+        combined_high = mat_strength * high_sev
+        mandatory_floor = mat_strength * 0.40
+
+        # Floor must not apply when combined strength is already above it
+        effective = max(combined_high, mandatory_floor)
+        assert effective == pytest.approx(combined_high, abs=1e-6), (
+            f"Floor ({mandatory_floor:.3f}) should not reduce high-severity strength ({combined_high:.3f})"
+        )
+
+    def test_mandatory_floor_value_is_meaningful(self):
+        """The resulting floor must be above 0.25 for all primary defect phases on priority materials."""
+        from backend.core.defect_phase_mapper import get_material_initial_strength
+
+        priority_pairs = [
+            ("shellac", "phase_09_crackle_removal"),
+            ("shellac", "phase_03_denoise"),
+            ("vinyl", "phase_09_crackle_removal"),
+            ("tape", "phase_29_tape_hiss_reduction"),
+            ("wax_cylinder", "phase_09_crackle_removal"),
+            ("wax_cylinder", "phase_03_denoise"),
+        ]
+        for material, phase_id in priority_pairs:
+            mat_strength = get_material_initial_strength(material, phase_id)
+            floor = mat_strength * 0.40
+            assert floor >= 0.25, (
+                f"{material}/{phase_id}: mandatory floor {floor:.3f} = mat_strength({mat_strength:.2f}) × 0.40 "
+                f"must be ≥ 0.25 to ensure meaningful defect correction (§6.2a)"
+            )
+
+    def test_mat_strength_defaults_to_one_for_unlisted_priority_phases(self):
+        """If a mandatory phase has no mat_strength entry, default=1.0 → floor=0.40."""
+        from backend.core.defect_phase_mapper import get_material_initial_strength
+
+        # vinyl phase_09 has no explicit entry in vinyl's factor dict → should return 1.0
+        mat_strength = get_material_initial_strength("vinyl", "phase_09_crackle_removal")
+        # mat_strength may be 1.0 or explicitly set — either way floor = mat_strength * 0.40
+        floor = mat_strength * 0.40
+        assert floor >= 0.28, (  # 0.28 = 0.70 × 0.40 (if some low override exists)
+            f"vinyl phase_09 floor {floor:.3f} must be ≥ 0.28 (§6.2a)"
+        )

@@ -31,6 +31,48 @@ _SF_UNSUPPORTED_EXT: frozenset[str] = frozenset(
 )
 
 
+def _estimate_interchannel_lag_samples(audio: np.ndarray, sr: int, max_seconds: float = 5.0) -> int:
+    """Estimate L/R lag (samples) using GCC-PHAT on a bounded window.
+
+    Returns 0 for non-stereo inputs or on analysis failure.
+    """
+    try:
+        arr = np.asarray(audio, dtype=np.float32)
+        if arr.ndim != 2:
+            return 0
+        if arr.shape[1] == 2 and arr.shape[0] > 2:
+            l = arr[:, 0]
+            r = arr[:, 1]
+        elif arr.shape[0] == 2 and arr.shape[1] > 2:
+            l = arr[0]
+            r = arr[1]
+        else:
+            return 0
+
+        n = min(len(l), len(r), int(float(sr) * max_seconds))
+        if n < max(1024, sr // 10):
+            return 0
+
+        x = l[:n].astype(np.float64)
+        y = r[:n].astype(np.float64)
+        n_fft = 1
+        while n_fft < 2 * n:
+            n_fft <<= 1
+
+        X = np.fft.rfft(x, n=n_fft)
+        Y = np.fft.rfft(y, n=n_fft)
+        cross = X * np.conj(Y)
+        gcc = np.fft.irfft(cross / (np.abs(cross) + 1e-10), n=n_fft)
+
+        max_delay = min(int(sr * 0.2), n - 1)  # ±200 ms
+        if max_delay <= 0:
+            return 0
+        search = np.concatenate([gcc[n_fft - max_delay :], gcc[: max_delay + 1]])
+        return int(np.argmax(np.abs(search))) - max_delay
+    except Exception:
+        return 0
+
+
 def _lazy_get_carrier_tools():
     from .carrier_forensics import analyze_carrier_forensics
     from .carrier_ml_classifier import classify_carrier_ml
@@ -145,6 +187,18 @@ def load_audio_file(
 
         _ext = os.path.splitext(filepath)[1].lower()
         _sf_unsupported = _ext in _SF_UNSUPPORTED_EXT
+
+        # Opportunistic capability probe: some deployments support MP3/AAC via
+        # libsndfile plugins even when extension-only heuristics mark them unsupported.
+        # If SoundFile can read header metadata, prefer the SoundFile decode path
+        # because it preserves inter-channel alignment more reliably than FFmpeg fallbacks.
+        if _sf_unsupported:
+            try:
+                sf.info(filepath)
+                _sf_unsupported = False
+                logger.debug("load_audio_file: soundfile capability probe passed for %s", _ext)
+            except Exception:
+                pass
 
         # ── Metadata ─────────────────────────────────────────────────────────
         # soundfile.info() is fast and reliable for lossless formats.
@@ -336,11 +390,46 @@ def load_audio_file(
             sr = target_sr
         audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
         audio = np.clip(audio, -1.0, 1.0)
+
+        # Import-stage stereo blind-spot guard: detect unexpected L/R lag early.
+        # If critical and sr=48k, run STCG correction immediately.
+        _import_lag_before = _estimate_interchannel_lag_samples(audio, sr)
+        _import_lag_after = _import_lag_before
+        if abs(_import_lag_before) > 64:
+            logger.warning(
+                "load_audio_file: detected interchannel lag=%d samples (%.1f ms) before pipeline",
+                _import_lag_before,
+                (_import_lag_before / float(sr)) * 1000.0,
+            )
+            if sr == 48000:
+                try:
+                    from backend.core.stereo_temporal_coherence_guard import (
+                        get_stereo_temporal_coherence_guard,
+                    )
+
+                    audio = get_stereo_temporal_coherence_guard().correct_interchannel_delay(
+                        audio,
+                        sr,
+                        phase_id="import_pipeline",
+                    )
+                    audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+                    audio = np.clip(audio, -1.0, 1.0)
+                    _import_lag_after = _estimate_interchannel_lag_samples(audio, sr)
+                    logger.info(
+                        "load_audio_file: import lag corrected %d -> %d samples",
+                        _import_lag_before,
+                        _import_lag_after,
+                    )
+                except Exception as _lag_fix_exc:
+                    logger.debug("load_audio_file: import lag correction skipped: %s", _lag_fix_exc)
+
         result["audio"] = audio
         result["sr"] = sr
         result["channels"] = 1 if audio.ndim == 1 else audio.shape[-1]
         result["format"] = result["format"] or _ext[1:].upper()
         result["duration"] = result["duration"] or (len(audio) / sr)
+        result["interchannel_lag_samples_before"] = int(_import_lag_before)
+        result["interchannel_lag_samples_after"] = int(_import_lag_after)
         # Carrier detection (heuristic + forensics)
         # Skipped when do_carrier_analysis=False (e.g. BatchProcessingThread, AudioPlayer,
         # RecoveryCheckpoint) — carrier analysis is done once in _carrier_bg and cached.

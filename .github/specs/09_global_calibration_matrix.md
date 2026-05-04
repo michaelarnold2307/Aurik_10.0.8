@@ -19,7 +19,8 @@
 | `predict_quality_score` | `backend/core/calibration_matrix.py` | ✅ |
 | `compute_adaptive_drift_tolerance` | `backend/core/calibration_matrix.py` | ✅ |
 | `compute_tcci`, `compute_ibs` | `backend/core/calibration_matrix.py` | ✅ |
-| `get_phase_strength_range` | `backend/core/calibration_matrix.py` | 🔲 |
+| `get_phase_strength_range` | `backend/core/calibration_matrix.py` | ✅ |
+| `get_material_floor` | `backend/core/calibration_matrix.py` | ✅ |
 | UV3-Integration (SongGoalTargets → PMGG) | `backend/core/unified_restorer_v3.py` | ✅ |
 
 ---
@@ -61,24 +62,24 @@ CANONICAL_THRESHOLDS_RESTORATION = {
     "authentizitaet":              0.88,    # Original-Character bewahrt
 
     # P2: Kern-Klangtreue
-    "tonalcenter":                 0.95,    # Tonalität präzise
+    "tonal_center":                0.95,    # Tonalität präzise
     "timbre_authentizitaet":       0.87,    # Klangfarbe-Originalität
     "artikulation":                0.85,    # Transient-Klarheit
 
     # P3: Musikalische Kohärenz
     "emotionalitaet":              0.82,    # Gefühlsausdruck erhalten
-    "mikrodynamik":                0.88,    # Feindy-Struktur
+    "micro_dynamics":              0.88,    # Feindynamik-Struktur
     "groove":                      0.83,    # Rhythmische Intention
 
     # P4: Transparenz-Komponenten
     "transparenz":                 0.82,    # Spektral-Klarheit
     "waerme":                      0.75,    # HF-Wärme (Material-Charakter)
-    "basskraft":                   0.78,    # Subharmonische Kraft
+    "bass_kraft":                  0.78,    # Subharmonische Kraft
     "separation_fidelity":         0.78,    # L/R Koherenz
 
     # P5: Räumlichkeit (optional bei Mono-Quelle)
     "brillanz":                    0.78,    # HF-Präsenz
-    "raumtiefe":                   0.70,    # Spatial-Tiefe
+    "spatial_depth":               0.70,    # Spatial-Tiefe
 }
 ```
 
@@ -92,21 +93,21 @@ CANONICAL_THRESHOLDS_STUDIO2026 = {
     "natuerlichkeit":              0.92,    # Muss natürlich bleiben trotz Enhancement
     "authentizitaet":              0.90,    # Künstler-Intention bewahrt
 
-    "tonalcenter":                 0.96,
+    "tonal_center":                0.96,
     "timbre_authentizitaet":       0.89,
     "artikulation":                0.87,
 
     "emotionalitaet":              0.84,
-    "mikrodynamik":                0.90,    # Enhanced, aber nicht künstlich
+    "micro_dynamics":              0.90,    # Enhanced, aber nicht künstlich
     "groove":                      0.85,
 
     "transparenz":                 0.85,    # Moderne Klarheit
     "waerme":                      0.78,
-    "basskraft":                   0.80,
+    "bass_kraft":                  0.80,
     "separation_fidelity":         0.80,
 
     "brillanz":                    0.82,    # Modern glänzend, aber nicht hart
-    "raumtiefe":                   0.74,    # Enhanced Spatial
+    "spatial_depth":               0.74,    # Enhanced Spatial
 }
 ```
 
@@ -116,7 +117,7 @@ CANONICAL_THRESHOLDS_STUDIO2026 = {
 
 Nicht alle Songs sollten zu denselben Schwellwerten führen. Ein 1920er-Shellac-Aufnahme kann unmöglich 0.78 Brillanz haben (technische Grenze 8 kHz, Rolloff). Ein 1990er CD-Pop sollte 0.87+ Brillanz haben.
 
-### §09.2 PMGG-Blend-Invariante (normativ, v9.11.14)
+### §09.2a PMGG-Blend-Invariante (normativ, v9.11.14)
 
 **Problem**: Fixer 60/40-Blend (60 % canonical, 40 % SGT) erzeugt PMGG-Schwellwerte **über** der physikalischen Ceiling — z.B. `brillanz` Shellac: `0.60 × 0.78 + 0.40 × 0.51 = 0.71` bei physikalischer Grenze 0.51. Resultat: 5 Retries → 15 % Stärke → degradierte Restaurierung.
 
@@ -173,7 +174,7 @@ Wobei:
 ERA_BIAS_1920S = {
     "brillanz":     -0.28,   # 8 kHz Rolloff ist Material-Realität
     "transparenz":  -0.18,
-    "raumtiefe":    -0.14,   # Mono oder Pseudo-Stereo
+    "spatial_depth": -0.14,   # Mono oder Pseudo-Stereo
     "waerme":       +0.14,   # Warm-ätzender Sound ist Charakter
     "authentizitaet": +0.10,
     "natuerlichkeit": +0.08,
@@ -233,9 +234,9 @@ MATERIAL_BIAS_DIGITAL = {
 
 ```python
 GENRE_BIAS_KLASSIK = {
-    "raumtiefe":    +0.18,   # Saalakustik zentral
+    "spatial_depth": +0.18,   # Saalakustik zentral
     "natuerlichkeit": +0.12,
-    "mikrodynamik": +0.10,
+    "micro_dynamics": +0.10,
     "brillanz":     -0.08,   # Wärmere Interpretation
 }
 
@@ -667,7 +668,7 @@ Ergänzt §09.10d. Enhancement-Phasen der Familien `harmonic_reconstruction`, `h
 
 ```python
 HR_WINDOW = 0.25   # Fenster: innerhalb 0.25 zur Decke → Dämpfung beginnt
-HR_GOALS  = ("brillanz", "waerme", "raumtiefe", "bass_kraft", "sep_fidelity")
+HR_GOALS  = ("brillanz", "waerme", "spatial_depth", "bass_kraft", "sep_fidelity")
 
 min_hr = 1.0
 for goal in HR_GOALS:

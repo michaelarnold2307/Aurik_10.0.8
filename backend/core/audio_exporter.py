@@ -209,10 +209,19 @@ class AudioExporter:
                             reference_for_gate=audio_export,
                         )
                         _post_gain_peak = float(np.percentile(np.abs(audio_export), 99.9))
-                        # If adaptive gating classified all frames as non-musical, fall back to
-                        # uniform gain so normalize=True still raises level for low-level music.
+                        # If adaptive gating classified all frames as non-musical, log
+                        # a warning and skip the uniform boost — boosting a fully
+                        # non-musical signal uniformly would amplify quiet intro/outro
+                        # sections and violate §0h Music-Death-Shield (Pegelexplosion).
                         if _pre_gain_peak > 1e-9 and _post_gain_peak <= (_pre_gain_peak * 1.01):
-                            audio_export = np.clip(audio_export * _gain_linear, -1.0, 1.0)
+                            logger.warning(
+                                "LUFS-Normalisierung: envelope-aware gate found no musical frames "
+                                "— uniform fallback boost skipped to protect quiet zones "
+                                "(pre_peak=%.3f, post_peak=%.3f, gain=%.2f×).",
+                                _pre_gain_peak,
+                                _post_gain_peak,
+                                _gain_linear,
+                            )
                     else:
                         # Attenuation is safe to apply uniformly (reduces level, no explosion risk).
                         audio_export = np.clip(audio_export * _gain_linear, -1.0, 1.0)
@@ -233,7 +242,14 @@ class AudioExporter:
                     )
                     _post_floor_peak = float(np.percentile(np.abs(audio_export), 99.9))
                     if _pre_floor_peak > 1e-9 and _post_floor_peak <= (_pre_floor_peak * 1.01):
-                        audio_export = np.clip(audio_export * _floor_gain, -1.0, 1.0)
+                        logger.warning(
+                            "LUFS-Floor-Boost: envelope-aware gate found no musical frames "
+                            "— uniform fallback floor boost skipped to protect quiet zones "
+                            "(pre_peak=%.3f, post_peak=%.3f, gain=%.2f×).",
+                            _pre_floor_peak,
+                            _post_floor_peak,
+                            _floor_gain,
+                        )
                 # TruePeak safety: ≤ -0.1 dBTP — percentile 99.9 guards against
                 # crackle/click impulses blocking normalization of the whole signal.
                 _tp_peak = float(np.percentile(np.abs(audio_export), 99.9))

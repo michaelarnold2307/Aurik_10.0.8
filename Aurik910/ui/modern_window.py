@@ -10605,6 +10605,21 @@ class ModernMainWindow(QMainWindow):
             n_rem = len(cp.phases_remaining)
             _input_name = os.path.basename(cp.input_path) if cp.input_path else "Unbekannt"
 
+            # Bug-Fix: Checkpoint ohne abgeschlossene Phasen (SIGTERM sehr früh) hat
+            # nichts zu wiederaufnehmen — still löschen, kein Dialog, kein Auto-Start.
+            if n_done == 0 and n_rem == 0:
+                import logging
+                logging.getLogger(__name__).info(
+                    "OOM-Recovery: Checkpoint ohne ausgeführte Phasen (failure=%s) verworfen — kein Wiederaufnahme-Dialog.",
+                    cp.failure_phase,
+                )
+                try:
+                    _, _, _del_cp = _bridge_get_recovery_checkpoint_fns()
+                    _del_cp(cp.input_path)
+                except Exception:
+                    pass
+                return
+
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setWindowTitle(t("dialog.oom_recovery_title"))
@@ -10619,7 +10634,8 @@ class ModernMainWindow(QMainWindow):
                 )
             )
             msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+            # Default = No/Verwerfen — versehentliches Enter darf KEINEN Lauf starten
+            msg.setDefaultButton(QMessageBox.StandardButton.No)
             _btn_yes = msg.button(QMessageBox.StandardButton.Yes)
             _btn_no = msg.button(QMessageBox.StandardButton.No)
             if _btn_yes is not None:
@@ -16544,6 +16560,7 @@ class ModernMainWindow(QMainWindow):
             "degradation_status": "ok",
             "primary_error_code": "",
             "runtime_fallback_original": False,
+            "preventive_actions": [],
         }
 
         if restoration_result is None:
@@ -16614,6 +16631,27 @@ class ModernMainWindow(QMainWindow):
 
         _meta = getattr(r, "metadata", {}) or {}
         _stage_notes = getattr(r, "stage_notes", {}) or {}
+
+        # Make phase-local prevention actions visible in the frontend summary.
+        _preventive_actions: list[str] = []
+        if bool(_meta.get("phase31_damage_shield_applied", False)):
+            _phase31_parts: list[str] = ["Phase 31 Damage-Shield aktiv"]
+            if bool(_meta.get("phase31_length_corrected", False)):
+                _phase31_parts.append("Länge korrigiert")
+            if bool(_meta.get("phase31_stereo_delay_corrected", False)):
+                _phase31_parts.append("L/R-Realignment")
+            if bool(_meta.get("phase31_rms_cap_applied", False)):
+                _phase31_parts.append("RMS-Cap")
+            if bool(_meta.get("phase31_peak_cap_applied", False)):
+                _phase31_parts.append("Peak-Cap")
+            _preventive_actions.append(" · ".join(_phase31_parts))
+
+        _loudness_makeup_db = float(_meta.get("loudness_makeup_db") or 0.0)
+        if abs(_loudness_makeup_db) >= 0.05:
+            _preventive_actions.append(f"Phase 12 Loudness-Makeup: {_loudness_makeup_db:+.2f} dB")
+
+        if _preventive_actions:
+            ctx["preventive_actions"] = _preventive_actions
 
         ctx["primary_error_code"] = self._extract_first_error_code(_meta.get("fail_reasons"))
         if not ctx["primary_error_code"]:
@@ -16855,6 +16893,7 @@ class ModernMainWindow(QMainWindow):
         xp_fqf: dict,
         xp_ml_fallbacks: list[dict],
         xp_team_coord: dict,
+        preventive_actions: list[str],
     ) -> list[str]:
         """Build info banner sections for post-processing quality UI."""
         banner_sections: list[str] = []
@@ -16999,6 +17038,8 @@ class ModernMainWindow(QMainWindow):
             banner_sections.append(
                 "🏆  Das Beste aus dieser Aufnahme wurde herausgeholt — physikalische Grenzen erreicht."
             )
+        if preventive_actions:
+            banner_sections.append("🛡️  Präventionsschutz: " + " | ".join(preventive_actions[:3]))
 
         fidelity_parts: list[str] = []
         rc_ceiling = float(xp_recovery_certainty.get("recoverability_ceiling", 0.0) or 0.0)
@@ -17384,6 +17425,7 @@ class ModernMainWindow(QMainWindow):
                 _xp_team_coord: dict = _ctx["_xp_team_coord"]
                 _xp_carrier_ratio: float = float(_ctx["_xp_carrier_ratio"])
                 _xp_carrier_ref_shifted: bool = bool(_ctx["_xp_carrier_ref_shifted"])
+                preventive_actions: list[str] = _ctx["preventive_actions"]
                 quality_before_score: float = float(_ctx["quality_before_score"])
                 quality_after_score: float = float(_ctx["quality_after_score"])
                 quality_delta: float = float(_ctx["quality_delta"])
@@ -17461,9 +17503,15 @@ class ModernMainWindow(QMainWindow):
                     xp_fqf=_xp_fqf,
                     xp_ml_fallbacks=_xp_ml_fallbacks,
                     xp_team_coord=_xp_team_coord,
+                    preventive_actions=preventive_actions,
                 )
 
                 def _update_gui():
+                    if getattr(self, "prognose_widget", None) is not None:
+                        try:
+                            self.prognose_widget.set_preventive_actions(preventive_actions)  # type: ignore[union-attr]
+                        except Exception as _pp_exc:
+                            logger.debug("prognose_widget.set_preventive_actions failed: %s", _pp_exc)
                     self._apply_quality_header_and_banner(
                         musical_goals=musical_goals,
                         adaptive_thresholds=adaptive_thresholds,

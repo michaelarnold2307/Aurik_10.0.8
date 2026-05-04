@@ -791,8 +791,8 @@ class QualityRecoverySystem:
             mid = audio_f32
             mid_orig = orig_f32
 
-        nperseg = 2048
-        noverlap = nperseg * 3 // 4
+        nperseg = min(2048, max(1, len(mid)))
+        noverlap = min(nperseg * 3 // 4, nperseg - 1)
 
         try:
             _, _, Zxx = _stft(mid, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
@@ -898,8 +898,8 @@ class QualityRecoverySystem:
             mid = audio_f32
             mid_orig = orig_f32
 
-        nperseg = 2048
-        noverlap = nperseg * 3 // 4
+        nperseg = min(2048, max(1, len(mid)))
+        noverlap = min(nperseg * 3 // 4, nperseg - 1)
 
         try:
             _, _, Zxx_proc = _stft(mid, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)

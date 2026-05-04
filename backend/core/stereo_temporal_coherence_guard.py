@@ -350,6 +350,24 @@ class StereoTemporalCoherenceGuard:
             )
             return audio
 
+        # §0 Plausibility guard for pre-pipeline source-file corrections:
+        # Commercial recordings cannot have L-R offsets > 20 ms — any such reading
+        # is a GCC-PHAT false positive caused by stereo panning / mid-song
+        # decorrelation in the analysis window.  Applying it would corrupt the entire
+        # stereo image (observed: 79.4 ms false correction on Schlager MP3).
+        # Post-pipeline and stem corrections keep the full ±200 ms range because they
+        # compensate for ML-plugin latency that can legitimately reach 150+ ms.
+        _PRE_PIPELINE_MAX_MS: float = 20.0
+        if phase_id == "pre_pipeline" and abs(delay_ms) > _PRE_PIPELINE_MAX_MS:
+            logger.info(
+                "STCG [%s]: delay=%.1f ms exceeds pre-pipeline plausibility limit (%.0f ms) "
+                "— false positive likely (mid-window stereo decorrelation); skipping correction",
+                phase_id,
+                delay_ms,
+                _PRE_PIPELINE_MAX_MS,
+            )
+            return audio
+
         logger.info(
             "STCG [%s]: L-R delay=%.4f samples (%.3f ms) — correcting R channel",
             phase_id,

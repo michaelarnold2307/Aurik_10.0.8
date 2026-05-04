@@ -250,6 +250,49 @@ class InnerGrooveDistortionRepairPhase(PhaseInterface):
         )
         elapsed = _time.perf_counter() - t0
 
+        # §4.5 Psychoacoustic Masking Clamp — nur hörbare Verzerrungsprodukte reduzieren.
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+
+            result_audio = apply_psychoacoustic_masking_clamp(
+                audio,
+                result_audio,
+                sample_rate,
+                strength=_effective_strength,
+                mode="subtractive",
+            )
+        except Exception as _pm60_exc:
+            import logging as _log60m
+            _log60m.getLogger(__name__).debug("Phase60 masking clamp non-blocking: %s", _pm60_exc)
+
+        # §2.46f Natural-Performance-Artifacts-Guard — THD-Reduktion darf Atemgeräusche
+        # und Vibrato-Zonen nicht modifizieren (Notch-Filtering trifft harmonische
+        # Atemgeräusch-Obertöne genauso wie IGD-Verzerrungsprodukte).
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
+            _npa_a60 = audio
+            if _npa_a60.ndim == 2 and _npa_a60.shape[0] == 2 and _npa_a60.shape[1] > _npa_a60.shape[0]:
+                _npa_a60 = _npa_a60.T
+            _npa_r60 = get_natural_performance_detector().detect(_npa_a60, sample_rate)
+            _npa_n60 = (
+                result_audio.shape[1]
+                if (result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2)
+                else result_audio.shape[0]
+            )
+            _npa_m60 = _npa_r60.get_protected_mask(_npa_n60, sample_rate)
+            if np.any(_npa_m60):
+                if result_audio.ndim == 2 and audio.ndim == 2:
+                    if result_audio.shape[0] == 2 and result_audio.shape[1] > 2:
+                        result_audio[:, _npa_m60] = audio[:, _npa_m60]
+                    elif result_audio.shape == audio.shape:
+                        result_audio[_npa_m60, :] = audio[_npa_m60, :]
+                elif result_audio.ndim == 1 and audio.ndim == 1:
+                    result_audio[_npa_m60] = audio[_npa_m60]
+        except Exception as _npa60_exc:
+            import logging as _log60n
+            _log60n.getLogger(__name__).debug("§2.46f phase_60 NPA-Guard (non-blocking): %s", _npa60_exc)
+
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0
         return PhaseResult(

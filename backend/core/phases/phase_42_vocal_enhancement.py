@@ -875,11 +875,10 @@ class VocalEnhancement(PhaseInterface):
         original phase.
         """
         # Handle both (2,N) and (N,2) stereo orientations
-        _n_samples = (
-            audio_stereo.shape[1] if (audio_stereo.ndim == 2 and audio_stereo.shape[0] == 2) else audio_stereo.shape[0]
-        )
+        _is_channels_first = bool(audio_stereo.ndim == 2 and audio_stereo.shape[0] == 2 and audio_stereo.shape[1] > 2)
+        _n_samples = audio_stereo.shape[1] if _is_channels_first else audio_stereo.shape[0]
         n = min(_n_samples, len(voc_mono))
-        audio_st = audio_stereo[:, :n] if (audio_stereo.ndim == 2 and audio_stereo.shape[0] == 2) else audio_stereo[:n]
+        audio_st = audio_stereo[:, :n] if _is_channels_first else audio_stereo[:n]
         voc_m = voc_mono[:n]
         inst_m = np.clip(safe_to_mono(audio_st).astype(np.float32) - voc_m, -1.0, 1.0)
 
@@ -911,7 +910,7 @@ class VocalEnhancement(PhaseInterface):
         vocals_out = np.zeros_like(audio_st)
         instr_out = np.zeros_like(audio_st)
         for ch in range(2):
-            ch_data = audio_st[:, ch].astype(np.float32)
+            ch_data = (audio_st[ch, :] if _is_channels_first else audio_st[:, ch]).astype(np.float32)
             ch_padded = np.pad(ch_data, (0, win_size))
             frames = np.lib.stride_tricks.sliding_window_view(ch_padded, win_size)[::hop]
             X_ch = np.fft.rfft(frames * window)
@@ -940,8 +939,31 @@ class VocalEnhancement(PhaseInterface):
                 norm[pos:end] += window[:seg] ** 2
             norm = np.maximum(norm, 1e-8)
 
-            vocals_out[:, ch] = np.clip(v_out[:n] / norm[:n], -1.0, 1.0)
-            instr_out[:, ch] = np.clip(i_out[:n] / norm[:n], -1.0, 1.0)
+            _v_ch = np.clip(v_out[:n] / norm[:n], -1.0, 1.0)
+            _i_ch = np.clip(i_out[:n] / norm[:n], -1.0, 1.0)
+
+            # §2.61 / §0h OLA Tail-Ringing Guard — last win_size samples may contain
+            # STFT ringing from the zero-padded tail. Suppress output to max(input_rms)
+            # in the tail region to prevent Pegelexplosion at song end.
+            _tail_len = min(win_size, n)
+            _tail_orig = ch_data[n - _tail_len :]
+            _tail_orig_rms = float(np.sqrt(np.mean(_tail_orig**2)) + 1e-9)
+            _tail_v_rms = float(np.sqrt(np.mean(_v_ch[n - _tail_len :] ** 2)) + 1e-9)
+            _tail_i_rms = float(np.sqrt(np.mean(_i_ch[n - _tail_len :] ** 2)) + 1e-9)
+            # If the OLA output tail is louder than input (ringing artifact) → scale down
+            if _tail_v_rms > _tail_orig_rms * 1.05:
+                _scale = min(_tail_orig_rms / _tail_v_rms, 1.0)
+                _v_ch[n - _tail_len :] *= _scale
+            if _tail_i_rms > _tail_orig_rms * 1.05:
+                _scale = min(_tail_orig_rms / _tail_i_rms, 1.0)
+                _i_ch[n - _tail_len :] *= _scale
+
+            if _is_channels_first:
+                vocals_out[ch, :] = _v_ch
+                instr_out[ch, :] = _i_ch
+            else:
+                vocals_out[:, ch] = _v_ch
+                instr_out[:, ch] = _i_ch
 
         return vocals_out.astype(np.float32), instr_out.astype(np.float32)
 
@@ -1010,6 +1032,13 @@ class VocalEnhancement(PhaseInterface):
                         pass
                 sep = roformer.separate(audio_mono, sr, stems=["vocals"])
                 if sep is not None and "vocals" in sep.stems:
+                    _sdri_db = float(getattr(sep, "sdri_db", 0.0))
+                    if _sdri_db < -1.0:
+                        logger.warning(
+                            "Phase42 Stem-Sep: bs_roformer SDRi=%.1f dB < -1.0 dB → Fallback auf MDX23C/NMF/HPSS",
+                            _sdri_db,
+                        )
+                        raise ValueError(f"bs_roformer_low_sdri:{_sdri_db:.2f}")
                     voc_mono = np.asarray(sep.stems["vocals"], dtype=np.float32)
                     n = min(len(audio_mono), len(voc_mono))
                     inst_mono = np.clip(audio_mono[:n] - voc_mono[:n], -1.0, 1.0)

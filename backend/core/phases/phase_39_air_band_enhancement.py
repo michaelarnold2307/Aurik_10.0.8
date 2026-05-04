@@ -206,6 +206,39 @@ class AirBandEnhancement(PhaseInterface):
                 warnings=[],
             )
 
+        # §0a §2.46e BUG-FIX v9.12.0 (Bug 6): Air-Band-Enhancement in Restoration-Mode
+        # ist VERBOTEN fuer analoge Materialien (vinyl, shellac, tape) —
+        # Air-Band-Enhancement ist ein Harmonic Exciter (§0a) und eine additive
+        # Halluzination (§2.46e): es fuegt Energie ueber das physikalische BW-Ceiling hinzu,
+        # die im Original nicht vorhanden war.
+        _proc_mode_39 = str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower()
+        _ANALOG_RESTORATION_SKIP = {
+            "vinyl", "shellac", "wax_cylinder", "wire_recording",
+            "tape", "reel_tape", "cassette", "lacquer_disc",
+        }
+        _mat_name_39 = str(getattr(material, "name", str(material))).lower().replace(" ", "_").replace("-", "_")
+        if _proc_mode_39 == "restoration" and _mat_name_39 in _ANALOG_RESTORATION_SKIP:
+            _skip_audio = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            _skip_audio = np.clip(_skip_audio, -1.0, 1.0)
+            logger.info(
+                "Phase 39 §0a skip: Restoration-Mode + analog material '%s' — "
+                "Air-Band-Enhancement (Harmonic Exciter) verboten",
+                _mat_name_39,
+            )
+            return PhaseResult(
+                success=True,
+                audio=_skip_audio,
+                execution_time_seconds=time.time() - start_time,
+                metadata={
+                    "algorithm": "skipped_restoration_analog_material",
+                    "material": _mat_name_39,
+                    "mode": _proc_mode_39,
+                    "rms_drop_db": 0.0,
+                    "loudness_makeup_db": 0.0,
+                },
+                warnings=[],
+            )
+
         is_stereo = audio.ndim == 2
         config = dict(self.AIR_CONFIG.get(material, self.AIR_CONFIG[MaterialType.CD_DIGITAL]))
 
@@ -381,6 +414,63 @@ class AirBandEnhancement(PhaseInterface):
             enhanced_audio = enhanced_audio_pre_guard
             enhanced_audio = np.nan_to_num(enhanced_audio, nan=0.0, posinf=0.0, neginf=0.0)
             enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
+
+        # §0a / §6.2c BW-Ceiling Hard-Cap: Air-Band-Enhancement (Shelving-EQ) darf
+        # das physikalische Trägerlimit nicht überschreiten. Shellac shelf_freq=10kHz
+        # würde über das 8-kHz-Ceiling boostten — LPF kappt die Energie.
+        _BW_CEILING_39: dict[str, float] = {
+            "shellac": 8000.0,
+            "wax_cylinder": 5000.0,
+            "vinyl": 16000.0,
+            "reel_tape": 18000.0,
+            "cassette": 15000.0,
+        }
+        _mat_key_39 = str(getattr(material, "name", str(material))).lower().replace(" ", "_").replace("-", "_")
+        _bw_cap_39 = _BW_CEILING_39.get(_mat_key_39, None)
+        if _bw_cap_39 is not None and sample_rate > 0:
+            try:
+                from scipy.signal import butter as _butter39, sosfiltfilt as _sosfiltfilt39
+
+                _nyq39 = float(sample_rate) / 2.0
+                _ratio39 = float(np.clip(_bw_cap_39 / _nyq39, 0.01, 0.99))
+                _sos_lp39 = _butter39(8, _ratio39, btype="low", output="sos")
+                if enhanced_audio.ndim == 2:
+                    if enhanced_audio.shape[0] == 2 and enhanced_audio.shape[1] > 2:
+                        enhanced_audio = np.stack(
+                            [_sosfiltfilt39(_sos_lp39, enhanced_audio[c]) for c in range(2)], axis=0
+                        ).astype(np.float32)
+                    else:
+                        _nc39 = enhanced_audio.shape[1]
+                        enhanced_audio = np.stack(
+                            [_sosfiltfilt39(_sos_lp39, enhanced_audio[:, c]) for c in range(_nc39)], axis=1
+                        ).astype(np.float32)
+                else:
+                    enhanced_audio = _sosfiltfilt39(_sos_lp39, enhanced_audio).astype(np.float32)
+                enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
+            except Exception as _bw39_exc:
+                import logging as _log39bw
+                _log39bw.getLogger(__name__).debug("§6.2c phase_39 BW-Ceiling (non-blocking): %s", _bw39_exc)
+
+        # §2.46e Hallucination-Guard: prueft ob Air-Band-Enhancement HF halluziniert hat
+        _hg_mode_39 = str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower()
+        _bw_cap_hg_39 = _bw_cap_39  # already computed above
+        if _bw_cap_hg_39 is not None:
+            try:
+                from backend.core.hallucination_guard import apply_hallucination_guard as _apply_hg39
+
+                enhanced_audio, _hg_meta39 = _apply_hg39(
+                    audio, enhanced_audio, sr=sample_rate,
+                    material_bw_ceiling_hz=_bw_cap_hg_39,
+                    mode=_hg_mode_39,
+                )
+                if _hg_meta39.get("hallucination_decision") == "rollback":
+                    logger.warning(
+                        "§2.46e Phase-39 Hallucination-Rollback: %s ceiling=%.0f Hz",
+                        _hg_meta39.get("hallucination_severity", "?"),
+                        _bw_cap_hg_39,
+                    )
+            except Exception as _hg39_exc:
+                logger.debug("Phase 39 HallucinationGuard (non-blocking): %s", _hg39_exc)
 
         return PhaseResult(
             success=True,

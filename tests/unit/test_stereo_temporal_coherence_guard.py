@@ -274,3 +274,90 @@ class TestSingleton:
     def test_singleton_is_guard_type(self):
         g = get_stereo_temporal_coherence_guard()
         assert isinstance(g, StereoTemporalCoherenceGuard)
+
+
+# ---------------------------------------------------------------------------
+# 5. Pre-pipeline plausibility guard (> 20 ms → skip correction)
+# ---------------------------------------------------------------------------
+
+
+class TestPrePipelinePlausibilityGuard:
+    """§0 Plausibility guard: pre-pipeline corrections > 20 ms must be rejected.
+
+    Commercial recordings cannot have L-R offsets > 20 ms.  Any reading above
+    that threshold is a GCC-PHAT false positive caused by stereo panning or
+    mid-song decorrelation in the analysis window (observed: 79.4 ms false
+    correction on a Schlager MP3).
+    """
+
+    def setup_method(self):
+        from backend.core.stereo_temporal_coherence_guard import StereoTemporalCoherenceGuard
+        self.guard = StereoTemporalCoherenceGuard()
+
+    def _make_stereo_with_real_large_lag(self, lag_samples: int, n: int = SR * 12) -> np.ndarray:
+        """Stereo signal where R is genuinely shifted by lag_samples."""
+        rng = np.random.default_rng(42)
+        mono = rng.standard_normal(n).astype(np.float32) * 0.3
+        l = mono.copy()
+        r = np.zeros_like(mono)
+        if lag_samples >= 0:
+            r[lag_samples:] = mono[: n - lag_samples]
+        else:
+            r[: n + lag_samples] = mono[-lag_samples:]
+        return np.vstack([l[np.newaxis, :], r[np.newaxis, :]])  # (2, N)
+
+    def test_pre_pipeline_large_lag_is_not_corrected(self):
+        """phase_id='pre_pipeline' with apparent 79.4 ms lag must leave audio unchanged.
+
+        Root cause: STCG was falsely detecting 3813 samples (79.4 ms) via
+        mid-window GCC-PHAT on a commercial stereo MP3, then corrupting the entire
+        R channel.  Guard: delays > 20 ms are skipped for phase_id='pre_pipeline'.
+        """
+        # Build a stereo signal that looks correlated but where GCC-PHAT on the
+        # middle window would return a large lag.  We inject a real 79.4 ms lag
+        # to guarantee the detection fires, then verify the guard blocks correction.
+        lag = 3813  # samples (~79.4 ms @ 48 kHz)
+        audio_in = self._make_stereo_with_real_large_lag(lag)
+        audio_out = self.guard.correct_interchannel_delay(audio_in, SR, phase_id="pre_pipeline")
+
+        # The output must be identical to the input — no correction applied.
+        np.testing.assert_array_equal(
+            audio_out,
+            audio_in,
+            err_msg=(
+                "STCG pre_pipeline must NOT correct delays > 20 ms "
+                "(commercial recordings never have such offsets — false positive guard)"
+            ),
+        )
+
+    def test_post_pipeline_large_lag_is_corrected(self):
+        """phase_id='post_pipeline' with a 79.4 ms lag MUST be corrected.
+
+        Post-pipeline corrections can legitimately reach 150+ ms (ML-plugin latency)
+        and must not be limited by the pre-pipeline plausibility guard.
+        """
+        lag = 3813  # samples (~79.4 ms @ 48 kHz)
+        audio_in = self._make_stereo_with_real_large_lag(lag)
+        audio_out = self.guard.correct_interchannel_delay(audio_in, SR, phase_id="post_pipeline")
+
+        # After correction the L-R lag must be reduced (R was shifted by ≥1 sample).
+        l_out = audio_out[0]
+        r_in = audio_in[1]
+        r_out = audio_out[1]
+        # R channel must have changed (correction was applied)
+        assert not np.array_equal(r_out, r_in), (
+            "STCG post_pipeline must correct large delays (no plausibility limit applies)"
+        )
+
+    def test_pre_pipeline_small_lag_within_20ms_is_corrected(self):
+        """Small delays (≤ 20 ms) must still be corrected in pre_pipeline mode."""
+        lag = int(0.015 * SR)  # 15 ms = 720 samples — within plausibility limit
+        audio_in = self._make_stereo_with_real_large_lag(lag)
+        audio_out = self.guard.correct_interchannel_delay(audio_in, SR, phase_id="pre_pipeline")
+
+        r_in = audio_in[1]
+        r_out = audio_out[1]
+        # R channel must have changed (small lag correction applied)
+        assert not np.array_equal(r_out, r_in), (
+            "STCG pre_pipeline must still correct small delays ≤ 20 ms"
+        )

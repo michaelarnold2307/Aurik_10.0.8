@@ -138,6 +138,7 @@ class WowFlutterFix(PhaseInterface):
 
     # Formant preservation (prevent "chipmunk" effect)
     PRESERVE_FORMANTS = True
+    _MAX_PERCENTILE_PEAK = 0.985
 
     def __init__(self):
         super().__init__()
@@ -955,6 +956,22 @@ class WowFlutterFix(PhaseInterface):
             restored = audio + _effective_strength * (restored - audio)
             restored = np.clip(restored, -1.0, 1.0)
 
+        # §2.46f NPA-Guard: Natürliches Vibrato/Portamento (F0-Mod 4–7 Hz, ≤±50 Cent)
+        # darf nicht durch Wow/Flutter-Korrektur geglättet werden — Pitch-Segmente restaurieren.
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+            _mono12 = _original_audio.mean(axis=0) if _original_audio.ndim == 2 else _original_audio
+            _npa_mask12 = get_natural_performance_detector().detect(
+                _mono12, sample_rate
+            ).get_protected_mask(len(_mono12), sample_rate)
+            if _npa_mask12 is not None and _npa_mask12.any():
+                if restored.ndim == 2:
+                    restored[:, _npa_mask12] = _original_audio[:, _npa_mask12]
+                else:
+                    restored[_npa_mask12] = _original_audio[_npa_mask12]
+        except Exception as _npa12_exc:
+            logger.debug("§2.46f Phase12 NPA-Guard (non-blocking): %s", _npa12_exc)
+
         restored, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
             _original_audio,
             restored,
@@ -1010,6 +1027,21 @@ class WowFlutterFix(PhaseInterface):
         if orig.shape != proc.shape:
             return np.clip(np.asarray(processed_audio, dtype=np.float32), -1.0, 1.0), 0.0, 0.0
 
+        # Preventive timing safety: re-align stereo channels before loudness math.
+        # This avoids false loudness-drop detection from L/R anti-phase drift.
+        if proc.ndim == 2:
+            try:
+                from backend.core.stereo_temporal_coherence_guard import get_stereo_temporal_coherence_guard
+
+                proc_aligned = get_stereo_temporal_coherence_guard().correct_interchannel_delay(
+                    proc.astype(np.float32),
+                    48000,
+                    phase_id="phase_12_wow_flutter_fix",
+                )
+                proc = np.asarray(proc_aligned, dtype=np.float64)
+            except Exception as exc:
+                logger.debug("Phase 12 loudness-preservation: STCG skipped (%s)", exc)
+
         _max_rms_drop_db = {
             MaterialType.SHELLAC: 1.2,
             MaterialType.WAX_CYLINDER: 1.2,
@@ -1027,6 +1059,7 @@ class WowFlutterFix(PhaseInterface):
         _max_rms_lift_db = 1.0
 
         # §2.45a-I: Gated RMS — only frames > -50 dBFS (kein Stille-inflationierter RMS)
+        # §V04-EXEMPT: compute_gated_rms_linear() RMS measurement, NOT apply_musical_gain_envelope() — no reference_for_gate needed
         from backend.core.audio_utils import compute_gated_rms_linear as _grl_p12
 
         _orig_rms = float(_grl_p12(orig, gate_dbfs=-50.0))
@@ -1050,6 +1083,11 @@ class WowFlutterFix(PhaseInterface):
             # §2.45a-I: Einfache Multiplikation — kein Frame-Gate (hier globale Lautheitskorrektur,
             # nicht UV3-Mid-Pipeline-Drift-Guard; peak_p999 schützt gegen Clipping)
             proc = np.clip(proc * _gain, -1.0, 1.0)
+
+        # Final preventive cap: no phase output above percentile ceiling.
+        _peak_p999_out = float(np.percentile(np.abs(proc), 99.9) + 1e-12)
+        if _peak_p999_out > self._MAX_PERCENTILE_PEAK:
+            proc = np.clip(proc * (self._MAX_PERCENTILE_PEAK / _peak_p999_out), -1.0, 1.0)
 
         _out_rms = float(_grl_p12(proc, gate_dbfs=-50.0))
         _out_delta_db = float(20.0 * np.log10(max(_out_rms / _orig_rms, 1e-30)))

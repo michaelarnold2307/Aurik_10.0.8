@@ -3,7 +3,10 @@
 Kanonische Tabelle aller 16 Materialtypen mit physikalischen Grenzwerten.
 Alle Module importieren aus dieser Datei — niemals duplizieren.
 
-Version: 9.11.14 — instructions_version 7.3
+Version: 9.12.0 — instructions_version 9.0
+Changelog: tape DR-Ceiling 68→62 dB (Bug #4/#5): MediumDetector normiert cassette→tape;
+  tape repräsentiert Kompaktkassette (Typ I ~55 dB, Typ II ~65 dB, Mittel ≈62 dB);
+  nicht Reel-Tape (reel_tape = 72 dB). Inkonsistenz mit §0a Kassette-Ceiling behoben.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ CARRIER_TRANSFER_CHARACTERISTICS: dict[str, tuple[int, int, float, int]] = {
     "lacquer_disc": (8000, -32, -4.5, 50),
     "wire_recording": (6000, -28, -5.5, 40),
     "vinyl": (16000, -55, -2.0, 70),
-    "tape": (15000, -50, -3.0, 68),
+    "tape": (15000, -50, -3.0, 62),  # Kompaktkassette: MediumDetector normiert cassette→tape; DR Typ I ~55 dB, Typ II ~65 dB, Mittel 62 dB (§0a, §Bug#4)
     "reel_tape": (18000, -60, -1.5, 72),
     "cassette": (14000, -48, -3.5, 60),
     "dat": (22000, -90, -0.2, 92),

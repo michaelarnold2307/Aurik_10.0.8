@@ -14,6 +14,8 @@ from backend.core.calibration_matrix import (
     CANONICAL_THRESHOLDS_RESTORATION,
     CANONICAL_THRESHOLDS_STUDIO2026,
     estimate_song_goal_targets,
+    get_material_floor,
+    get_phase_strength_range,
     predict_quality_score,
 )
 
@@ -296,3 +298,210 @@ def test_quality_score_finite():
     """Output must never be NaN or Inf."""
     q = predict_quality_score("unknown_material", 55.0, 0.5, True)
     assert np.isfinite(q)
+
+
+# ---------------------------------------------------------------------------
+# §09.8 get_material_floor — material-adaptive goal floors
+# ---------------------------------------------------------------------------
+
+
+def test_get_material_floor_shellac_brillanz_below_canonical():
+    """Shellac brillanz floor must be below canonical (physical BW limit ≤ 8 kHz)."""
+    canonical_floor = CANONICAL_THRESHOLDS_RESTORATION["brillanz"]
+    shellac_floor = get_material_floor("shellac", "brillanz")
+    assert shellac_floor < canonical_floor, (
+        f"shellac brillanz floor {shellac_floor:.3f} must be < canonical {canonical_floor:.3f}"
+    )
+
+
+def test_get_material_floor_vinyl_between_shellac_and_cd():
+    """Vinyl brillanz floor must be between shellac and cd_digital."""
+    f_shellac = get_material_floor("shellac", "brillanz")
+    f_vinyl = get_material_floor("vinyl", "brillanz")
+    f_cd = get_material_floor("cd_digital", "brillanz")
+    assert f_shellac < f_vinyl <= f_cd, (
+        f"Expected shellac({f_shellac:.3f}) < vinyl({f_vinyl:.3f}) <= cd({f_cd:.3f})"
+    )
+
+
+def test_get_material_floor_cd_matches_canonical_closely():
+    """CD digital floor should be at or above canonical (digital bias is positive)."""
+    for goal in ["transparenz", "artikulation", "brillanz"]:
+        floor = get_material_floor("cd_digital", goal)
+        canonical = CANONICAL_THRESHOLDS_RESTORATION[goal]
+        assert floor >= canonical * 0.99, (
+            f"cd_digital {goal} floor {floor:.3f} unexpectedly far below canonical {canonical:.3f}"
+        )
+
+
+def test_get_material_floor_always_in_valid_range():
+    """All material/goal combinations must stay in [0.30, 0.99]."""
+    materials = ["wax_cylinder", "shellac", "vinyl", "tape", "cd_digital", "mp3_low", "unknown"]
+    goals = list(CANONICAL_THRESHOLDS_RESTORATION.keys())
+    for mat in materials:
+        for goal in goals:
+            floor = get_material_floor(mat, goal)
+            assert 0.30 <= floor <= 0.99, f"get_material_floor({mat!r}, {goal!r}) = {floor:.3f} out of [0.30, 0.99]"
+
+
+def test_get_material_floor_studio_2026_geq_restoration():
+    """Studio 2026 floors should be >= restoration floors (higher canonical base)."""
+    for goal in ["natuerlichkeit", "brillanz", "transparenz"]:
+        f_rest = get_material_floor("vinyl", goal, is_studio_2026=False)
+        f_s26 = get_material_floor("vinyl", goal, is_studio_2026=True)
+        assert f_s26 >= f_rest - 0.01, (
+            f"Studio2026 floor ({f_s26:.3f}) unexpectedly below restoration floor ({f_rest:.3f}) for vinyl/{goal}"
+        )
+
+
+def test_get_material_floor_unknown_material_returns_finite():
+    """Unknown material should fall back gracefully (analog class)."""
+    floor = get_material_floor("totally_unknown_carrier", "natuerlichkeit")
+    assert np.isfinite(floor)
+    assert 0.30 <= floor <= 0.99
+
+
+# ---------------------------------------------------------------------------
+# §09.9 get_phase_strength_range — material-adaptive strength caps
+# ---------------------------------------------------------------------------
+
+
+def test_get_phase_strength_range_ultra_analog_is_capped():
+    """Ultra-analog (shellac) phases must have lower max_strength than analog (vinyl)."""
+    _, max_shellac = get_phase_strength_range("phase_03_denoise", "shellac", 50.0)
+    _, max_vinyl = get_phase_strength_range("phase_03_denoise", "vinyl", 50.0)
+    assert max_shellac < max_vinyl, (
+        f"shellac max_strength ({max_shellac:.2f}) must be < vinyl ({max_vinyl:.2f}) for phase_03"
+    )
+
+
+def test_get_phase_strength_range_high_restorability_reduces_max():
+    """High restorability (>80) must reduce max_strength toward passthrough (§2.45b)."""
+    _, max_low = get_phase_strength_range("phase_03_denoise", "vinyl", 30.0)
+    _, max_high = get_phase_strength_range("phase_03_denoise", "vinyl", 95.0)
+    assert max_high < max_low, (
+        f"High restorability max ({max_high:.2f}) must be < low restorability max ({max_low:.2f})"
+    )
+
+
+def test_get_phase_strength_range_min_never_exceeds_max():
+    """min_strength must always be <= max_strength for all materials/phases."""
+    phases = [
+        "phase_03_denoise", "phase_07_harmonic_restoration", "phase_09_crackle_removal",
+        "phase_23_spectral_repair", "phase_26_dynamic_range_expansion", "phase_49_advanced_dereverb",
+    ]
+    materials = ["wax_cylinder", "shellac", "vinyl", "tape", "cd_digital", "mp3_low"]
+    for mat in materials:
+        for phase in phases:
+            min_s, max_s = get_phase_strength_range(phase, mat, 70.0)
+            assert min_s <= max_s, f"min({min_s:.2f}) > max({max_s:.2f}) for {mat}/{phase}"
+            assert 0.0 <= min_s <= 1.0
+            assert 0.0 <= max_s <= 1.0
+
+
+def test_get_phase_strength_range_returns_floats():
+    """Return values must be Python floats, not numpy scalars."""
+    min_s, max_s = get_phase_strength_range("phase_09_crackle_removal", "vinyl", 60.0)
+    assert isinstance(min_s, float)
+    assert isinstance(max_s, float)
+
+
+def test_get_phase_strength_range_stereo_forbidden_on_ultra_analog():
+    """Stereo width enhancer must have max_strength=0 on mono ultra_analog material."""
+    _, max_s = get_phase_strength_range("phase_48_stereo_width_enhancer", "shellac", 50.0)
+    assert max_s == 0.0, f"phase_48 must be disabled on shellac (max={max_s:.2f})"
+
+
+def test_get_phase_strength_range_unknown_phase_uses_default():
+    """Unknown phase IDs must return the safe default range."""
+    min_s, max_s = get_phase_strength_range("phase_99_nonexistent", "vinyl", 50.0)
+    assert max_s > 0.0  # default range is permissive
+    assert min_s <= max_s
+
+
+# ---------------------------------------------------------------------------
+# §09.8 Material-floor ordering — materials added to UV3 _ADAPTIVE_THR_MATERIAL_CEILING
+# (§0a §2.44 defensive ceiling for lacquer_disc, mp3_high, aac, minidisc, dat)
+# ---------------------------------------------------------------------------
+
+
+def test_material_floor_lacquer_disc_lower_than_vinyl_brillanz():
+    """lacquer_disc BW ≤ 8 kHz → brillanz floor must be below vinyl (BW ≤ 16 kHz)."""
+    f_lacquer = get_material_floor("lacquer_disc", "brillanz")
+    f_vinyl = get_material_floor("vinyl", "brillanz")
+    assert f_lacquer < f_vinyl, (
+        f"lacquer_disc brillanz floor {f_lacquer:.3f} should be below vinyl {f_vinyl:.3f} "
+        "(lacquer_disc BW ≤ 8 kHz, vinyl BW ≤ 16 kHz — §0a §6.2c)"
+    )
+
+
+def test_material_floor_dat_near_cd_level():
+    """DAT is near-CD quality; its brillanz floor must be ≥ 90 % of cd_digital floor."""
+    f_dat = get_material_floor("dat", "brillanz")
+    f_cd = get_material_floor("cd_digital", "brillanz")
+    assert f_dat >= 0.90 * f_cd, (
+        f"dat brillanz floor {f_dat:.3f} should be at least 90 % of cd_digital {f_cd:.3f} "
+        "(DAT is near-CD quality — §0a §2.44)"
+    )
+
+
+def test_material_floor_ordering_ultra_analog_to_digital():
+    """Physical material quality ordering must hold for brillanz floor:
+    wax_cylinder < shellac ≤ lacquer_disc < vinyl < mp3_low < minidisc ≤ mp3_high ≤ aac < dat < cd_digital
+    """
+    materials = ["wax_cylinder", "shellac", "lacquer_disc", "vinyl", "mp3_low",
+                 "minidisc", "mp3_high", "aac", "dat", "cd_digital"]
+    floors = [get_material_floor(m, "brillanz") for m in materials]
+    for i in range(len(floors) - 1):
+        assert floors[i] <= floors[i + 1] + 0.02, (  # 0.02 tolerance for equal-tier materials
+            f"brillanz floor ordering violated: {materials[i]}={floors[i]:.3f} "
+            f"> {materials[i+1]}={floors[i+1]:.3f} (§0a physical medium ordering)"
+        )
+
+
+def test_pmgg_canonical_thresholds_match_calibration_matrix():
+    """PMGG's internal threshold copy must stay in sync with calibration_matrix (§2.55).
+
+    Drift between PMGG's local _CANONICAL_THRESHOLDS_RESTORATION and
+    calibration_matrix.CANONICAL_THRESHOLDS_RESTORATION causes silent per-phase
+    gate inconsistencies — goals pass at pipeline end but fail in PMGG or vice versa.
+    """
+    from backend.core.per_phase_musical_goals_gate import (
+        _CANONICAL_THRESHOLDS_RESTORATION as pmgg_rest,
+        _CANONICAL_THRESHOLDS_STUDIO2026 as pmgg_s26,
+    )
+
+    # Key normalization: PMGG uses short aliases (micro_dynamics, bass_kraft, spatial_depth)
+    # calibration_matrix uses both aliases; we map them to a common key for comparison.
+    _ALIAS = {
+        "micro_dynamics": "mikrodynamik",
+        "bass_kraft": "basskraft",
+        "spatial_depth": "raumtiefe",
+        "tonalcenter": "tonal_center",
+    }
+
+    def _norm(d: dict) -> dict:
+        out = {}
+        for k, v in d.items():
+            key = _ALIAS.get(k, k)
+            out[key] = v
+        return out
+
+    pmgg_r_norm = _norm(pmgg_rest)
+    pmgg_s_norm = _norm(pmgg_s26)
+    cal_r_norm = _norm(CANONICAL_THRESHOLDS_RESTORATION)
+    cal_s_norm = _norm(CANONICAL_THRESHOLDS_STUDIO2026)
+
+    # Check every goal that appears in BOTH dicts
+    for goal in cal_r_norm:
+        if goal in pmgg_r_norm:
+            assert abs(pmgg_r_norm[goal] - cal_r_norm[goal]) < 0.005, (
+                f"PMGG restoration threshold for '{goal}' = {pmgg_r_norm[goal]:.4f} "
+                f"differs from calibration_matrix {cal_r_norm[goal]:.4f} — §2.55 sync violation"
+            )
+    for goal in cal_s_norm:
+        if goal in pmgg_s_norm:
+            assert abs(pmgg_s_norm[goal] - cal_s_norm[goal]) < 0.005, (
+                f"PMGG studio2026 threshold for '{goal}' = {pmgg_s_norm[goal]:.4f} "
+                f"differs from calibration_matrix {cal_s_norm[goal]:.4f} — §2.55 sync violation"
+            )

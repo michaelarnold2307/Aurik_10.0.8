@@ -320,6 +320,32 @@ class GrooveEchoCancellationPhase(PhaseInterface):
         )
         elapsed = _time.perf_counter() - t0
 
+        # §2.46f NPA-Guard: Early-Reflections (0-50 ms nach Onset) sind Recording-Chain-Signatur
+        # und dürfen nicht durch Groove-Echo-Subtraktion entfernt werden (§2.46f Kategorie 3).
+        try:
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+            _mono61 = audio.mean(axis=0) if audio.ndim == 2 else audio
+            _npa_mask61 = get_natural_performance_detector().detect(
+                _mono61, sample_rate
+            ).get_protected_mask(len(_mono61), sample_rate)
+            if _npa_mask61 is not None and _npa_mask61.any():
+                if result_audio.ndim == 2:
+                    result_audio[:, _npa_mask61] = audio[:, _npa_mask61]
+                else:
+                    result_audio[_npa_mask61] = audio[_npa_mask61]
+        except Exception as _npa61_exc:
+            logger.debug("§2.46f Phase61 NPA-Guard (non-blocking): %s", _npa61_exc)
+
+        # §2.62 Psychoakustischer Masking-Guard: Spektral-Subtraktion entfernt
+        # keine Komponenten die vom Musiksignal maskiert werden (G_floor ≥ 0.10).
+        try:
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            result_audio = apply_psychoacoustic_masking_clamp(
+                audio, result_audio, sample_rate, mode="restoration"
+            )
+        except Exception as _pmask61_exc:
+            logger.debug("§2.62 Phase61 Masking-Guard (non-blocking): %s", _pmask61_exc)
+
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0
 

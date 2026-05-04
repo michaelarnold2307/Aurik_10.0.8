@@ -39,14 +39,14 @@ CANONICAL_GOALS: list[str] = [
     "timbre_authentizitaet",  # P2
     "artikulation",  # P2
     "emotionalitaet",  # P3
-    "mikrodynamik",  # P3
+    "micro_dynamics",  # P3 (alias: mikrodynamik)
     "groove",  # P3
     "transparenz",  # P4
     "waerme",  # P4
-    "basskraft",  # P4
+    "bass_kraft",  # P4 (alias: basskraft)
     "sep_fidelity",  # P4
     "brillanz",  # P5
-    "raumtiefe",  # P5
+    "spatial_depth",  # P5 (alias: raumtiefe)
 ]
 
 # Kurzbezeichnungen für die ASCII-Tabelle (max 8 Zeichen)
@@ -57,14 +57,17 @@ GOAL_ABBREV: dict[str, str] = {
     "timbre_authentizitaet": "TIMBRE",
     "artikulation": "ARTIK",
     "emotionalitaet": "EMOTION",
-    "mikrodynamik": "MIKRODYN",
+    "micro_dynamics": "MIKRODYN",
+    "mikrodynamik": "MIKRODYN",  # backward-compat alias
     "groove": "GROOVE",
     "transparenz": "TRANSP",
     "waerme": "WAERME",
-    "basskraft": "BASSKR",
+    "bass_kraft": "BASSKR",
+    "basskraft": "BASSKR",  # backward-compat alias
     "sep_fidelity": "SEPFID",
     "brillanz": "BRILLANZ",
-    "raumtiefe": "RAUMTF",
+    "spatial_depth": "RAUMTF",
+    "raumtiefe": "RAUMTF",  # backward-compat alias
 }
 
 # Schwellwerte Restoration (P1-P5 Böden aus Spec 09)
@@ -75,14 +78,17 @@ RESTORATION_THRESHOLDS: dict[str, float] = {
     "timbre_authentizitaet": 0.87,
     "artikulation": 0.85,
     "emotionalitaet": 0.82,
-    "mikrodynamik": 0.88,
+    "micro_dynamics": 0.88,
+    "mikrodynamik": 0.88,  # backward-compat alias
     "groove": 0.83,
     "transparenz": 0.82,
     "waerme": 0.75,
-    "basskraft": 0.78,
+    "bass_kraft": 0.78,
+    "basskraft": 0.78,  # backward-compat alias
     "sep_fidelity": 0.78,
     "brillanz": 0.78,
-    "raumtiefe": 0.70,
+    "spatial_depth": 0.70,
+    "raumtiefe": 0.70,  # backward-compat alias
 }
 
 STUDIO_THRESHOLDS: dict[str, float] = {
@@ -92,14 +98,17 @@ STUDIO_THRESHOLDS: dict[str, float] = {
     "timbre_authentizitaet": 0.89,
     "artikulation": 0.87,
     "emotionalitaet": 0.84,
-    "mikrodynamik": 0.90,
+    "micro_dynamics": 0.90,
+    "mikrodynamik": 0.90,  # backward-compat alias
     "groove": 0.85,
     "transparenz": 0.85,
     "waerme": 0.78,
-    "basskraft": 0.80,
+    "bass_kraft": 0.80,
+    "basskraft": 0.80,  # backward-compat alias
     "sep_fidelity": 0.80,
     "brillanz": 0.82,
-    "raumtiefe": 0.74,
+    "spatial_depth": 0.74,
+    "raumtiefe": 0.74,  # backward-compat alias
 }
 
 
