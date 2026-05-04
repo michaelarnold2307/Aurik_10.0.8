@@ -241,7 +241,7 @@ repos:
 
       - id: aurik-stash-drift-guard
         name: "📦 Aurik Stash-Drift-Guard (verhindert Snapshot-Akkumulation)"
-        entry: bash -c 'count=$(git stash list | wc -l); if [ "$count" -gt 2 ]; then echo "WARNUNG: $count Stashes vorhanden. Vor Commit auflösen: git stash drop oder git stash pop."; exit 1; fi; files=$(git stash show 2>/dev/null | tail -1 | awk "{print \$1}"); if [ "${files:-0}" -gt 50 ]; then echo "WARNUNG: Aktiver Stash hat $files Dateien (Snapshot-Drift). Vor Commit mit HEAD abgleichen."; exit 1; fi; exit 0'
+        entry: "bash -c 'count=$(git stash list | wc -l); if [ \"$count\" -gt 2 ]; then echo \"WARNUNG: $count Stashes vorhanden. Vor Commit aufloesen: git stash drop oder git stash pop.\"; exit 1; fi; files=$(git stash show 2>/dev/null | tail -1 | awk \"{print \\$1}\"); if [ \"${files:-0}\" -gt 50 ]; then echo \"WARNUNG: Aktiver Stash hat $files Dateien (Snapshot-Drift). Vor Commit mit HEAD abgleichen.\"; exit 1; fi; exit 0'"
         language: system
         pass_filenames: false
         always_run: true
