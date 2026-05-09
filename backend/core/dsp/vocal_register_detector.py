@@ -198,3 +198,288 @@ def get_vocal_register_cache() -> _VocalRegisterCache:
             if _cache_instance is None:
                 _cache_instance = _VocalRegisterCache()
     return _cache_instance
+
+
+# ---------------------------------------------------------------------------
+# §Passaggio-Schutz — Registerübergangs-Glättung (v9.12.1)
+# ---------------------------------------------------------------------------
+
+# Fensterbreite (in Frames) für Übergangsglätte um erkannte Passaggio-Punkte.
+# ±5 Frames bei 30 ms Hop = ±150 ms Glättungszone.
+_PASSAGGIO_SMOOTH_HALF_WINDOW = 5
+
+
+def detect_vocal_register_temporal(
+    audio: np.ndarray,
+    sr: int,
+    panns_singing: float = 0.0,
+    segment_ms: float = 300.0,
+    hop_ms: float = 100.0,
+) -> list[tuple[float, float, str, float]]:
+    """
+    Zeitaufgelöste Register-Erkennung mit Passaggio-Glättung.
+
+    Gibt eine Liste von (start_s, end_s, register, energy_bias_db) zurück.
+    An erkannten Registerübergängen (Passaggio) wird eine Glättungszone
+    von ±_PASSAGGIO_SMOOTH_HALF_WINDOW Frames angelegt, in der der
+    energy_bias linear zwischen den Registerwerten interpoliert wird.
+
+    §Passaggio: Registersprünge (Brust→Kopf) erzeugen bei frameweise
+    unabhängiger Klassifikation einen abrupten energy_bias-Sprung von
+    -6 dB auf -3 dB. Das erzeugt einen messbaren Timbre-Knick an jeder
+    Registergrenze. Diese Funktion glättet den Übergang.
+
+    Args:
+        audio:        Eingangssignal (mono/stereo, float32)
+        sr:           Abtastrate (48000 Hz erwartet)
+        panns_singing: PANNs-Gesangskonfidenz [0,1]
+        segment_ms:   Analysefensterbreite in ms
+        hop_ms:       Hop-Schrittweite in ms
+
+    Returns:
+        Liste von (start_s, end_s, register, energy_bias_db)
+    """
+    if panns_singing < 0.25:
+        # Kein Gesang erkannt → uniform Chest-Default
+        duration_s = len(audio) / sr if audio.ndim == 1 else audio.shape[-1] / sr
+        return [(0.0, float(duration_s), "chest", _ENERGY_BIAS_CHEST)]
+
+    mono: np.ndarray
+    if audio.ndim == 2:
+        mono = np.mean(audio, axis=1 if audio.shape[1] <= 8 else 0).astype(np.float32)
+    else:
+        mono = audio.astype(np.float32)
+
+    n = len(mono)
+    seg_len = max(64, int(segment_ms / 1000.0 * sr))
+    hop_len = max(32, int(hop_ms / 1000.0 * sr))
+
+    # Per-Segment F0-Schätzung (FCPE) + Register-Klassifikation
+    registers: list[str] = []
+    biases: list[float] = []
+
+    try:
+        from plugins.fcpe_plugin import get_fcpe_plugin as _get_fcpe
+
+        _fcpe_result = _get_fcpe().analyze(mono, sr)
+        f0_full = (
+            np.asarray(_fcpe_result.get("f0", []), dtype=np.float32) if isinstance(_fcpe_result, dict) else np.array([])
+        )
+    except Exception:
+        f0_full = np.array([])
+
+    for start in range(0, n - seg_len + 1, hop_len):
+        seg = mono[start : start + seg_len]
+        flatness = _spectral_flatness(seg, sr)
+
+        # Whisper / Fry aus globaler F0 im Segment-Zeitbereich
+        seg_start_s = start / sr
+        seg_end_s = (start + seg_len) / sr
+
+        if flatness >= _WHISPER_FLATNESS_THRESHOLD:
+            registers.append("fry_whisper")
+            biases.append(_ENERGY_BIAS_FRY_WHISPER)
+            continue
+
+        # F0 im Segment-Bereich aus vorberechneten FCPE-Werten
+        if len(f0_full) > 0:
+            f0_hop_s = len(mono) / sr / max(len(f0_full), 1)
+            fi_start = int(seg_start_s / f0_hop_s)
+            fi_end = int(seg_end_s / f0_hop_s)
+            seg_f0 = f0_full[max(0, fi_start) : min(len(f0_full), fi_end + 1)]
+            voiced_f0 = seg_f0[seg_f0 > 50.0]
+        else:
+            voiced_f0 = np.array([])
+
+        if len(voiced_f0) < 2:
+            # Fallback pYIN
+            try:
+                import librosa  # type: ignore[import]
+
+                f0_p, vf, _ = librosa.pyin(seg, fmin=50.0, fmax=1000.0, sr=sr, frame_length=min(2048, seg_len))
+                voiced_f0 = f0_p[vf & (f0_p > 0)] if len(f0_p) > 0 else np.array([])
+            except Exception:
+                voiced_f0 = np.array([])
+
+        if len(voiced_f0) == 0:
+            reg = "chest" if flatness < _FRY_FLATNESS_THRESHOLD else "fry_whisper"
+            biases.append(_ENERGY_BIAS_CHEST if reg == "chest" else _ENERGY_BIAS_FRY_WHISPER)
+            registers.append(reg)
+            continue
+
+        f0_med = float(np.median(voiced_f0))
+        if f0_med < _FRY_F0_HZ:
+            registers.append("fry_whisper")
+            biases.append(_ENERGY_BIAS_FRY_WHISPER)
+        elif f0_med >= _HEAD_VOICE_F0_HZ:
+            registers.append("head")
+            biases.append(_ENERGY_BIAS_HEAD)
+        else:
+            registers.append("chest")
+            biases.append(_ENERGY_BIAS_CHEST)
+
+    if not registers:
+        return [(0.0, float(n / sr), "chest", _ENERGY_BIAS_CHEST)]
+
+    # Passaggio-Glättung: Linear interpolieren an erkannten Übergangspunkten
+    biases_arr = np.array(biases, dtype=np.float64)
+    n_frames = len(biases_arr)
+
+    for i in range(1, n_frames):
+        if registers[i] != registers[i - 1]:
+            # Übergang erkannt (Passaggio) — Glättungszone ±W Frames
+            w = _PASSAGGIO_SMOOTH_HALF_WINDOW
+            i_start = max(0, i - w)
+            i_end = min(n_frames, i + w + 1)
+            zone_len = i_end - i_start
+            bias_from = biases_arr[i_start]
+            bias_to = biases_arr[i_end - 1] if i_end < n_frames else biases_arr[-1]
+            # Linearer Übergang in der Glättungszone
+            for k, idx in enumerate(range(i_start, i_end)):
+                alpha = k / max(zone_len - 1, 1)
+                biases_arr[idx] = bias_from * (1.0 - alpha) + bias_to * alpha
+
+    # Segmente zusammenführen
+    result: list[tuple[float, float, str, float]] = []
+    for idx, (reg, bias) in enumerate(zip(registers, biases_arr.tolist())):
+        start_s = float(idx * hop_len / sr)
+        end_s = float(min((idx + 1) * hop_len + seg_len, n) / sr)
+        result.append((start_s, end_s, reg, float(bias)))
+
+    logger.debug(
+        "§Passaggio detect_vocal_register_temporal: %d Segmente, %d Übergänge geglättet",
+        len(result),
+        sum(1 for i in range(1, len(registers)) if registers[i] != registers[i - 1]),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# §Multi-Singer-Erkennung (v9.12.1)
+# ---------------------------------------------------------------------------
+
+# Schwellwert für simultane F0-Konturen (normierte ACF-Peak-Distanz)
+_MULTI_F0_MIN_DISTANCE_HZ = 30.0  # Mindestabstand zweier Grundfrequenzen in Hz
+_MULTI_F0_FRAME_VOTE_RATIO = 0.25  # 25% der Frames müssen Multi-F0 zeigen
+
+
+def detect_multi_singer(
+    audio: np.ndarray,
+    sr: int,
+    panns_singing: float = 0.0,
+) -> bool:
+    """
+    Erkennt ob mehrere Sänger/innen gleichzeitig aktiv sind.
+
+    Methode: Harmonic Sum Spectrum (HSS) zur Detektion simultaner F0-Konturen.
+    Wenn ≥ 2 dominante F0-Hypothesen mit Mindestabstand gefunden werden in
+    mindestens _MULTI_F0_FRAME_VOTE_RATIO der stimmhaften Frames, liegt
+    ein Multi-Singer-Signal vor.
+
+    Anwendung in UV3: Wenn True → metadata["multi_singer"] = True und
+    singer_identity_cosine-Gate deaktiviert (Resemblyzer-Embedding ist für
+    einzelne Identitätsprüfung konzipiert, nicht für Duett/Chor).
+
+    §0c Universalität: Funktioniert für Duette, Terzette, Chöre.
+
+    Args:
+        audio:         Eingangssignal (mono/stereo)
+        sr:            Abtastrate
+        panns_singing: PANNs-Gesangskonfidenz [0,1]
+
+    Returns:
+        True wenn Multi-Singer-Konstellation erkannt.
+    """
+    # Kurzschluss: kein Gesang → kein Multi-Singer
+    if panns_singing < 0.25:
+        return False
+
+    mono: np.ndarray
+    if audio.ndim == 2:
+        mono = np.mean(audio, axis=1 if audio.shape[1] <= 8 else 0).astype(np.float64)
+    else:
+        mono = audio.astype(np.float64)
+
+    if len(mono) < sr:
+        return False
+
+    try:
+        # HSS (Harmonic Sum Spectrum) Frame-weise Multi-F0-Detektion
+        n_fft = 4096  # Hohe Frequenzauflösung für F0-Trennung
+        hop = 1024
+        window = np.hanning(n_fft)
+        n_freqs = n_fft // 2 + 1
+        freqs = np.linspace(0, sr / 2.0, n_freqs)
+
+        # F0-Bereich: 60–800 Hz (Singstimmen)
+        f0_min_hz = 60.0
+        f0_max_hz = 800.0
+
+        multi_f0_frame_count = 0
+        total_voiced_frames = 0
+
+        for i in range(0, len(mono) - n_fft, hop):
+            frame = mono[i : i + n_fft] * window
+            rms = float(np.sqrt(np.mean(frame**2)))
+            if rms < 5e-4:
+                continue
+
+            mag = np.abs(np.fft.rfft(frame))
+
+            # HSS: Für jede Kandidat-F0, summiere Harmonik-Energie (1. bis 5. Oberton)
+            f0_range_mask = (freqs >= f0_min_hz) & (freqs <= f0_max_hz)
+            candidate_freqs = freqs[f0_range_mask]
+            hss = np.zeros(len(candidate_freqs))
+
+            for j, f0_cand in enumerate(candidate_freqs):
+                for harmonic in range(1, 6):
+                    hf = f0_cand * harmonic
+                    if hf >= sr / 2.0:
+                        break
+                    hf_idx = int(round(hf / (sr / n_fft)))
+                    hf_idx = min(hf_idx, n_freqs - 1)
+                    # Interpolierte Magnitude (Hann-Fenster breitert Peaks)
+                    hss[j] += mag[hf_idx] if hf_idx < n_freqs else 0.0
+
+            if np.max(hss) < 1e-6:
+                continue
+
+            total_voiced_frames += 1
+
+            # Suche nach dem dominantesten F0
+            best_idx = int(np.argmax(hss))
+            best_f0 = float(candidate_freqs[best_idx])
+
+            # Unterdrücke ±_MULTI_F0_MIN_DISTANCE_HZ um besten Peak und suche zweiten
+            suppress_mask = np.abs(candidate_freqs - best_f0) < _MULTI_F0_MIN_DISTANCE_HZ
+            # Harmonische des ersten F0 ebenfalls unterdrücken
+            for harm in [2.0, 3.0, 0.5]:
+                harm_f0 = best_f0 * harm
+                suppress_mask |= np.abs(candidate_freqs - harm_f0) < _MULTI_F0_MIN_DISTANCE_HZ * 0.5
+
+            hss_residual = hss.copy()
+            hss_residual[suppress_mask] = 0.0
+
+            # Zweiter Peak: muss signifikant sein (>40% des ersten)
+            second_peak = float(np.max(hss_residual))
+            if second_peak > 0.40 * float(hss[best_idx]):
+                multi_f0_frame_count += 1
+
+        if total_voiced_frames < 5:
+            return False
+
+        multi_ratio = multi_f0_frame_count / max(total_voiced_frames, 1)
+        is_multi = bool(multi_ratio >= _MULTI_F0_FRAME_VOTE_RATIO)
+
+        logger.debug(
+            "§Multi-Singer: ratio=%.2f (%d/%d Frames) → %s",
+            multi_ratio,
+            multi_f0_frame_count,
+            total_voiced_frames,
+            "MULTI" if is_multi else "SOLO",
+        )
+        return is_multi
+
+    except Exception as exc:
+        logger.debug("detect_multi_singer (non-critical): %s", exc)
+        return False

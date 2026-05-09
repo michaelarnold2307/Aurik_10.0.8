@@ -803,6 +803,24 @@ class DenoisePhase(PhaseInterface):
                         audio = np.nan_to_num(_dfn_result, nan=0.0, posinf=0.0, neginf=0.0)
                         audio = np.clip(audio, -1.0, 1.0)
                         _dfn_applied = True
+                        # §2.35c HNR-Guard: Stimmrauigkeit nach DFN prüfen.
+                        # Wenn ΔHNR > 3 dB → Dry-Blend um natürliche Rauigkeit zu erhalten.
+                        if _panns_singing >= 0.25:
+                            try:
+                                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr
+
+                                _hnr_audio_pre = (
+                                    _tdp_original_audio
+                                    if (_tdp_active and _tdp_original_audio is not None)
+                                    else audio.astype(np.float32)
+                                )
+                                audio_blended, _hnr_diag = _apply_hnr(
+                                    _hnr_audio_pre, audio.astype(np.float32), sample_rate
+                                )
+                                if _hnr_diag.get("over_cleaned"):
+                                    audio = audio_blended
+                            except Exception as _hnr_exc:
+                                logger.debug("§HNR-Guard phase_03 (non-blocking): %s", _hnr_exc)
                         logger.info(
                             "§4.5 DeepFilterNet Tier-0 PRIMARY: vocal broadband denoise applied "
                             "(panns_singing=%.2f, material=%s, energy_ratio=%.3f)",

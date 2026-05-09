@@ -62,6 +62,9 @@ ACCEPTED_STUBS: frozenset[tuple[str, str]] = frozenset(
         ("plugins/parameter_optimizer.py", "feedback"),
         # Intentionaler No-Op: absorbiert Legacy-Docker-kwargs (Docstring)
         ("plugins/mdx23c_plugin.py", "__init__"),
+        # MIIPHER ONNX-Inferenz: Modell nicht gebündelt, Stub bis Integration
+        # Fallback-Kette (DFN → Wiener) ist produktiv aktiv (§4.4 Roadmap)
+        ("plugins/miipher_plugin.py", "_enhance_miipher"),
     }
 )
 

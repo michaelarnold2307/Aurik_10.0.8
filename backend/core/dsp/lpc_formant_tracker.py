@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 
 # Maximaler Boost pro Formant (§2.35c — kein Over-Processing)
 _MAX_FORMANT_BOOST_DB = 3.0
-# LPC-Ordnung (typisch 2 + sr/1000; für sr=8 kHz Analyse → Ordnung 10–14)
-_LPC_ORDER = 12
+# LPC-Ordnung: §4.4 VERBOTEN: LPC < 12 as primary.
+# Strategie: Downsampling auf 16 kHz → LPC Ordnung 16 (§4.4 "alternativ: Downsampling
+# auf 16 kHz → LPC Ord. 16 → Upsampling"). Bei 16 kHz SR sind F1–F4 (< 8 kHz) sicher
+# erfasst; bei 48 kHz nativ bräuchte man Ord. 30–40 — hier nutzen wir den sicheren
+# Downsampling-Pfad, da Shellac BW ≤ 8 kHz und Ordnung 16 @ 16 kHz ausreicht.
+_LPC_ANALYSIS_SR = 16_000  # Analyse-SR nach Downsampling
+_LPC_ORDER = 16  # Ordnung 16 bei 16 kHz (entspricht ~30 bei 48 kHz)
 # Analyse-Bandbreite für Shellac (BW ≤ 8 kHz Material-Ceiling)
 _SHELLAC_BW_HZ = 7000.0
 
@@ -165,35 +170,67 @@ def lpc_formant_enhance(
         return audio_in
 
     frame_len = int(frame_len_ms / 1000.0 * sr)
-    hop_len = int(hop_len_ms / 1000.0 * sr)
+    # hop_len at native SR is not used after downsampling — analysis uses _hop_len_16k
 
     if frame_len < 64 or n < frame_len:
+        return audio_in
+
+    # §4.4 Downsampling auf 16 kHz für LPC-Analyse (Ordnung 16 bei 16 kHz).
+    # Shellac BW ≤ 8 kHz → Nyquist bei 16 kHz reicht vollständig aus.
+    # Rücktransformation nur für EQ-Anwendung, nicht für das Ausgangssignal.
+    try:
+        import resampy  # type: ignore[import]
+
+        mono_16k: np.ndarray = resampy.resample(mono, sr, _LPC_ANALYSIS_SR).astype(np.float64)
+        _analysis_sr = _LPC_ANALYSIS_SR
+    except Exception:
+        # Fallback: scipy resample wenn resampy nicht verfügbar
+        try:
+            from scipy.signal import resample_poly as _rspoly
+
+            _ratio_num = _LPC_ANALYSIS_SR
+            _ratio_den = sr
+            from math import gcd as _gcd
+
+            _g = _gcd(_ratio_num, _ratio_den)
+            mono_16k = _rspoly(mono, _ratio_num // _g, _ratio_den // _g).astype(np.float64)
+            _analysis_sr = _LPC_ANALYSIS_SR
+        except Exception:
+            mono_16k = mono.copy()
+            _analysis_sr = sr
+
+    # Frame-Parameter für Analyse-SR
+    frame_len_16k = int(frame_len_ms / 1000.0 * _analysis_sr)
+    _hop_len_16k = int(hop_len_ms / 1000.0 * _analysis_sr)
+    n_16k = len(mono_16k)
+
+    if frame_len_16k < 32 or n_16k < frame_len_16k:
         return audio_in
 
     # Analyse auf tiefpassgefiltertem Signal (Shellac-BW ≤ 8 kHz)
     try:
         from scipy.signal import butter, sosfilt
 
-        nyq = min(_SHELLAC_BW_HZ, sr / 2.0 - 100.0)
+        nyq = min(_SHELLAC_BW_HZ, _analysis_sr / 2.0 - 100.0)
         if nyq > 100.0:
-            sos_lp = butter(4, nyq, btype="low", fs=sr, output="sos")
-            mono_lp = sosfilt(sos_lp, mono)
+            sos_lp = butter(4, nyq, btype="low", fs=_analysis_sr, output="sos")
+            mono_lp = sosfilt(sos_lp, mono_16k)
         else:
-            mono_lp = mono.copy()
+            mono_lp = mono_16k.copy()
     except Exception:
-        mono_lp = mono.copy()
+        mono_lp = mono_16k.copy()
 
     # Frame-weise LPC + Formant-Extraktion
     all_formants: list[list[float]] = []
-    for fi in range(0, n - frame_len, hop_len):
-        frame = mono_lp[fi : fi + frame_len]
+    for fi in range(0, n_16k - frame_len_16k, _hop_len_16k):
+        frame = mono_lp[fi : fi + frame_len_16k]
         # Voiced-Gate: Rahmen mit genug Energie
         rms = float(np.sqrt(np.mean(frame**2)))
         if rms < 1e-4:
             continue
         try:
             a = _burg_lpc(frame * np.hanning(len(frame)), _LPC_ORDER)
-            frms = _lpc_to_formants(a, sr)
+            frms = _lpc_to_formants(a, _analysis_sr)
             if len(frms) >= 2:
                 all_formants.append(frms)
         except Exception:

@@ -697,9 +697,10 @@ class VocalEnhancement(PhaseInterface):
             # Fallback: process full audio without stem separation
             logger.debug("Phase42: Kein Stem-Sep — Vollbild-Verarbeitung")
 
-            # §2.35c Shellac-LPC-Formant-Fallback: Wenn kein Stem-Sep möglich und
-            # Material BW ≤ 8 kHz (Shellac/WaxCylinder), LPC-Formant-Tracker als
-            # primärer DSP-Pfad statt _enhance_channel (reduziert Artefakt-Risiko).
+            # §2.35c Shellac/WaxCylinder: DeepFormants (§4.4 primär) → LPC-Burg-Fallback.
+            # Formant-Enhancement via plugins/formant_tracker.py (DeepFormants CNN ONNX).
+            # Dies ersetzt den direkten lpc_formant_tracker-Aufruf: DeepFormants ist höhere
+            # Qualitätsstufe, LPC-Burg (§4.4 Fallback) bleibt intern im Plugin erhalten.
             _is_shellac_bw_limited = str(material.value if hasattr(material, "value") else material).lower() in (
                 "shellac",
                 "wax_cylinder",
@@ -708,19 +709,33 @@ class VocalEnhancement(PhaseInterface):
             )
             if _is_shellac_bw_limited:
                 try:
-                    from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc
+                    from plugins.formant_tracker import get_formant_tracker as _get_ft
 
-                    _lfc_result = _get_lfc().enhance(audio, sample_rate)
-                    if _lfc_result is not None and np.isfinite(_lfc_result).all():
-                        enhanced_audio = np.clip(_lfc_result, -1.0, 1.0).astype(np.float32)
-                        logger.debug(
-                            "§2.35c phase_42 Shellac-LPC-Formant-Tracker aktiv (material=%s)",
-                            material,
-                        )
+                    _ft_result = _get_ft().track(audio, sample_rate)
+                    if _ft_result.confidence >= 0.3 and len(_ft_result.formants) >= 2:
+                        # Gültige Formant-Schätzung → Bell-EQ-Boost über lpc_formant_tracker.enhance()
+                        from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc
+
+                        _lfc_result = _get_lfc().enhance(audio, sample_rate)
+                        if _lfc_result is not None and np.isfinite(_lfc_result).all():
+                            enhanced_audio = np.clip(_lfc_result, -1.0, 1.0).astype(np.float32)
+                            logger.debug(
+                                "§2.35c phase_42 FormantTracker(DeepFormants→LPC) aktiv "
+                                "(material=%s, F1=%.0f Hz, conf=%.2f)",
+                                material,
+                                _ft_result.formants[0] if _ft_result.formants else 0.0,
+                                _ft_result.confidence,
+                            )
+                        else:
+                            raise ValueError("LPC-Formant-Enhance: ungültiges Ergebnis")
                     else:
-                        raise ValueError("LPC-Formant-Tracker: ungültiges Ergebnis")
+                        # Zu wenige voiced Frames → _enhance_channel als sicherer Pfad
+                        raise ValueError(
+                            f"FormantTracker: niedrige Konfidenz {_ft_result.confidence:.2f} "
+                            f"/ {len(_ft_result.formants)} Formanten — kein Boost"
+                        )
                 except Exception as _lfc_exc:
-                    logger.debug("§2.35c LPC-Formant-Tracker fehlgeschlagen → _enhance_channel: %s", _lfc_exc)
+                    logger.debug("§2.35c FormantTracker fehlgeschlagen → _enhance_channel: %s", _lfc_exc)
                     # Fallback auf Standard-Vollbild-Enhancement
                     enhanced_audio = self._enhance_channel(
                         audio[:, 0] if audio.ndim == 2 and audio.shape[0] > 2 else audio,
