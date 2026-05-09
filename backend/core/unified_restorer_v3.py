@@ -6070,7 +6070,8 @@ class UnifiedRestorerV3:
             )
             if _bronze_removed:
                 logger.warning(
-                    "Bronze-Minimal-Guard: restoration material=%s -> %d Phase(n) deaktiviert, %d defensive Kernphasen verbleiben: %s",
+                    "Bronze-Minimal-Guard: restoration material=%s"
+                    " -> %d Phase(n) deaktiviert, %d defensive Kernphasen verbleiben: %s",
                     _bronze_material_key,
                     len(_bronze_removed),
                     len(selected_phases),
