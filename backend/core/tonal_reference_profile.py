@@ -1429,6 +1429,7 @@ class TonalReferenceProfiler:
         restorability: float = 50.0,
         is_studio_2026: bool = False,
     ) -> TonalCurve:
+        """Return cached TonalCurve for the given era/genre/material/mode combination."""
         key = (era_decade, str(genre_label).strip().lower(), str(material_type).strip().lower(), is_studio_2026)
         with self._lock:
             if key not in self._cache:
