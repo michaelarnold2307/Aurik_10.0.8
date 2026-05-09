@@ -44,6 +44,8 @@ import threading
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.signal import istft as _istft
+from scipy.signal import stft as _stft
 
 logger = logging.getLogger(__name__)
 
@@ -1024,9 +1026,6 @@ class TonalCurve:
                     gain_mask[bin_mask] = float(10.0 ** (steer_db[i] / 20.0))
 
             # Apply via STFT/ISTFT on each channel
-            from scipy.signal import istft as _istft
-            from scipy.signal import stft as _stft
-
             hop = 512
             window = "hann"
 
@@ -1234,9 +1233,6 @@ def _apply_bark_ceiling(
         gain_mask = 1.0 + blend * (gain_mask - 1.0)
 
     # Apply via STFT/ISTFT on each channel
-    from scipy.signal import istft as _istft
-    from scipy.signal import stft as _stft
-
     hop = 512
     window = "hann"
 
@@ -1475,7 +1471,7 @@ class TonalReferenceProfiler:
                 is_studio_2026=is_studio_2026,
             )
         try:
-            from backend.core.broadcast_archive_db import (
+            from backend.core.broadcast_archive_db import (  # pylint: disable=import-outside-toplevel
                 apply_provenance_to_chain,
                 get_provenance_adjustment,
             )
