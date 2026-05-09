@@ -3188,7 +3188,7 @@ class UnifiedRestorerV3:
     def _discover_phase_metadata(self) -> dict[str, dict]:
         """Findet alle Phasenmodule und liest Metadaten (ohne Instanziierung)."""
         phase_dir = os.path.join(os.path.dirname(__file__), "phases")
-        phase_files = [f for f in os.listdir(phase_dir) if f.startswith("phase_") and f.endswith(".py")]
+        phase_files: list[str] = [f for f in os.listdir(phase_dir) if f.startswith("phase_") and f.endswith(".py")]
         metadata = {}
         for fname in phase_files:
             modulename = f"backend.core.phases.{fname[:-3]}"
