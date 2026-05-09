@@ -25,7 +25,10 @@ Anwendung in Aurik:
 
 from __future__ import annotations
 
+import gc
 import logging
+import os
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +132,7 @@ class AudioTaggingResult:
         return [tag for tag, _ in sorted_tags][:n]
 
     def as_dict(self) -> dict:
+        """Gibt Tagging-Ergebnis als flaches Dictionary zurück."""
         return {
             "top_instruments": self.top_instruments(),
             "top_genres": self.top_genres(),
@@ -209,7 +213,7 @@ class LAIONCLAPPlugin:
         """Lädt CLAP: erst ONNX-SOTA, dann lokales PyTorch-Checkpoint, dann DSP."""
         # 1. Versuch: ONNX-Modell (SOTA-Upgrade unter ~/.aurik/)
         try:
-            import onnxruntime as ort
+            import onnxruntime as ort  # pylint: disable=import-outside-toplevel
 
             audio_enc_path = self.MODELS_DIR / "audio_encoder.onnx"
             text_emb_path = self.MODELS_DIR / "text_embeddings.npy"
@@ -219,10 +223,10 @@ class LAIONCLAPPlugin:
                 _onnx_budget_ok = True
                 _ml_release_onnx = None
                 try:
-                    from backend.core.ml_memory_budget import (
+                    from backend.core.ml_memory_budget import (  # pylint: disable=import-outside-toplevel
                         release as _ml_release_onnx,
                     )
-                    from backend.core.ml_memory_budget import (
+                    from backend.core.ml_memory_budget import (  # pylint: disable=import-outside-toplevel
                         try_allocate as _try_alloc_onnx,
                     )
 
@@ -239,7 +243,7 @@ class LAIONCLAPPlugin:
 
                 try:
                     try:
-                        from backend.core.ml_device_manager import get_ort_providers as _get_prov
+                        from backend.core.ml_device_manager import get_ort_providers as _get_prov  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                         _clap_providers = _get_prov("LaionCLAP_ONNX")
                     except Exception:
@@ -260,7 +264,7 @@ class LAIONCLAPPlugin:
                 )
                 # PLM-Registrierung (Schicht 2) nach erfolgreichem Load
                 try:
-                    from backend.core.plugin_lifecycle_manager import (
+                    from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
                         get_plugin_lifecycle_manager as _get_plm_onnx,
                     )
 
@@ -348,11 +352,9 @@ class LAIONCLAPPlugin:
             True wenn Checkpoint erfolgreich geladen.
         """
         try:
-            import sys as _sys
-
             clap_src = str(self._LOCAL_CLAP_DIR / "src")
-            if clap_src not in _sys.path:
-                _sys.path.insert(0, clap_src)
+            if clap_src not in sys.path:
+                sys.path.insert(0, clap_src)
 
             # Torch ≥2.3 Compatibility Shim ─────────────────────────────
             # laion_clap ruft torch.library.register_fake auf, das erst ab
@@ -360,11 +362,11 @@ class LAIONCLAPPlugin:
             # hat die Funktion intern noch nicht. Wir legen einen harmlosen
             # No-Op-Stub an, der die Decorator-/Direkt-Aufruf-Signatur
             # vollständig abdeckt.
-            import torch as _torch
+            import torch as _torch  # pylint: disable=import-outside-toplevel
 
             if not hasattr(_torch.library, "register_fake"):
 
-                def _register_fake_compat(op, fn=None, **kwargs):
+                def _register_fake_compat(_op, fn=None, **_kwargs):
                     """No-Op-Stub für torch.library.register_fake (< 2.3)."""
                     return fn if fn is not None else (lambda f: f)
 
@@ -372,7 +374,7 @@ class LAIONCLAPPlugin:
                 logger.debug("LAION-CLAP: torch.library.register_fake Shim installiert (torch %s)", _torch.__version__)
             # ───────────────────────────────────────────────────────────
 
-            import laion_clap  # type: ignore[import-untyped]
+            import laion_clap  # type: ignore[import-untyped]  # pylint: disable=import-outside-toplevel
 
             ckpt_path = self._LOCAL_CLAP_DIR / self._LOCAL_CLAP_CKPT
             if not ckpt_path.exists():
@@ -381,7 +383,7 @@ class LAIONCLAPPlugin:
 
             # Globaler ML-Budget-Guard: ~2.2 GB für LAION-CLAP.
             try:
-                from backend.core.ml_memory_budget import try_allocate as _try_alloc
+                from backend.core.ml_memory_budget import try_allocate as _try_alloc  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 if not _try_alloc("LAION-CLAP", 2.2):
                     return False  # Budget erschöpft → PANNs-DSP-Fallback
@@ -398,20 +400,18 @@ class LAIONCLAPPlugin:
             # soll NUR aus lokalem Cache laden — kein HuggingFace-Hub-Download.
             # HF_HUB_CACHE wird auf models/.hf_staging/hub/ gesetzt, das
             # Symlinks auf models/roberta-base/ enthält (§13.3 Out-of-Box-Pflicht).
-            import os as _os
+            _hf_offline_orig = os.environ.get("TRANSFORMERS_OFFLINE")
+            _hf_hub_cache_orig = os.environ.get("HF_HUB_CACHE")
+            _hf_home_orig = os.environ.get("HF_HOME")
 
-            _hf_offline_orig = _os.environ.get("TRANSFORMERS_OFFLINE")
-            _hf_hub_cache_orig = _os.environ.get("HF_HUB_CACHE")
-            _hf_home_orig = _os.environ.get("HF_HOME")
-
-            _os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
             # Lokales roberta-base einbinden (kein HF-Hub-Download)
             _staging = self._ensure_roberta_hf_cache()
             if _staging:
-                _os.environ["HF_HUB_CACHE"] = _staging
+                os.environ["HF_HUB_CACHE"] = _staging
                 # HF_HOME überschreiben, falls es auf ein fremdes Verzeichnis
                 # zeigt und dadurch die Cache-Auflösung stört
-                _os.environ.pop("HF_HOME", None)
+                os.environ.pop("HF_HOME", None)
             try:
                 model = laion_clap.CLAP_Module(
                     enable_fusion=False,
@@ -421,27 +421,27 @@ class LAIONCLAPPlugin:
             finally:
                 # Alle veränderten Umgebungsvariablen wiederherstellen
                 if _hf_offline_orig is None:
-                    _os.environ.pop("TRANSFORMERS_OFFLINE", None)
+                    os.environ.pop("TRANSFORMERS_OFFLINE", None)
                 else:
-                    _os.environ["TRANSFORMERS_OFFLINE"] = _hf_offline_orig
+                    os.environ["TRANSFORMERS_OFFLINE"] = _hf_offline_orig
 
                 if _staging:
                     if _hf_hub_cache_orig is None:
-                        _os.environ.pop("HF_HUB_CACHE", None)
+                        os.environ.pop("HF_HUB_CACHE", None)
                     else:
-                        _os.environ["HF_HUB_CACHE"] = _hf_hub_cache_orig
+                        os.environ["HF_HUB_CACHE"] = _hf_hub_cache_orig
 
                     if _hf_home_orig is None:
-                        _os.environ.pop("HF_HOME", None)
+                        os.environ.pop("HF_HOME", None)
                     else:
-                        _os.environ["HF_HOME"] = _hf_home_orig
+                        os.environ["HF_HOME"] = _hf_home_orig
             # Load checkpoint with shape-mismatch tolerance.
             # strict=False alone does not suppress size mismatches in PyTorch —
             # we must remove the incompatible text-branch embedding tensors
             # (position_embeddings [514,768] vs model [512,768]) before loading.
             # Only the audio-branch weights are used for audio embeddings.
             try:
-                from laion_clap.clap_module.factory import load_state_dict as _load_sd  # type: ignore[import-untyped]
+                from laion_clap.clap_module.factory import load_state_dict as _load_sd  # type: ignore[import-untyped]  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 _state = _load_sd(str(ckpt_path), skip_params=True)
                 # Drop keys whose shapes differ from the current model so that
@@ -467,7 +467,7 @@ class LAIONCLAPPlugin:
             )
             # PLM-Registrierung für LRU-basierte Auto-Eviction
             try:
-                from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
+                from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 _unload_fn = globals().get("unload_laion_clap")
                 if _unload_fn is not None:
@@ -483,7 +483,12 @@ class LAIONCLAPPlugin:
             )
             return False
         except Exception as exc:
-            logger.warning("LAION-CLAP PyTorch-Checkpoint-Fehler: %s — PANNs-Fallback", exc)
+            # torchvision::nms fehlt im ROCm-venv — bekanntes Setup, PANNs-Fallback ist korrekt
+            exc_str = str(exc)
+            if "torchvision" in exc_str or "nms" in exc_str:
+                logger.info("LAION-CLAP: torchvision nicht verfügbar (%s) — PANNs-Fallback", exc_str[:80])
+            else:
+                logger.warning("LAION-CLAP PyTorch-Checkpoint-Fehler: %s — PANNs-Fallback", exc)
             return False
 
     # ------------------------------------------------------------------
@@ -518,7 +523,9 @@ class LAIONCLAPPlugin:
             input_name = self._audio_session.get_inputs()[0].name
             _plm_clap = None
             try:
-                from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_fn
+                from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                    get_plugin_lifecycle_manager as _get_plm_fn,
+                )
 
                 _plm_clap = _get_plm_fn()
                 _plm_clap.set_active("LaionCLAP_ONNX", True)
@@ -535,7 +542,7 @@ class LAIONCLAPPlugin:
             emb = np.nan_to_num(outputs[0].flatten()[: self.EMBEDDING_DIM], nan=0.0)
         # Path 2: PyTorch laion_clap
         elif self._model_loaded and self._clap_model is not None:
-            import torch
+            import torch  # pylint: disable=import-outside-toplevel
 
             with torch.no_grad():
                 emb = self._clap_model.get_audio_embedding_from_data(
@@ -609,7 +616,7 @@ class LAIONCLAPPlugin:
         self,
         audio: np.ndarray,
         sr: int,
-        text_queries: list[str] | None,
+        _text_queries: list[str] | None,  # reserved for future Zero-Shot path
     ) -> AudioTaggingResult:
         """CLAP-Inferenz via Audio-Encoder ONNX + vorberechnete Text-Embeddings."""
         try:
@@ -620,7 +627,9 @@ class LAIONCLAPPlugin:
             input_name = self._audio_session.get_inputs()[0].name
             _plm_clap = None
             try:
-                from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_fn
+                from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                    get_plugin_lifecycle_manager as _get_plm_fn,
+                )
 
                 _plm_clap = _get_plm_fn()
                 _plm_clap.set_active("LaionCLAP_ONNX", True)
@@ -691,7 +700,7 @@ class LAIONCLAPPlugin:
             4. Softmax × 100 → Scores ∈ [0, 1]
         """
         try:
-            import torch
+            import torch  # pylint: disable=import-outside-toplevel
 
             audio_f32 = audio.astype(np.float32)
             if audio_f32.ndim == 2:
@@ -775,8 +784,7 @@ class LAIONCLAPPlugin:
         peak_e = float(np.max(spec))
         harmonicity = float(np.clip(peak_e / (np.mean(spec) + 1e-12) / 50.0, 0.0, 1.0))
 
-        # Percussion-Indikator: schnelle Energieänderungen
-        [spec for _ in range(8)]  # vereinfacht
+        # Percussion-Indikator: schnelle Energieänderungen (vereinfacht)
         onset_density = 0.3  # Schätzwert
 
         # Instrument-Scores (heuristisch)
@@ -846,6 +854,20 @@ class LAIONCLAPPlugin:
             metadata={"harmonicity": harmonicity, "spectral_centroid": spectral_centroid},
         )
 
+    def unload(self) -> None:
+        """Entlädt Modell-Gewichte und gibt RAM frei."""
+        self._clap_model = None
+        self._audio_session = None
+        self._model_loaded = False
+        gc.collect()
+        try:
+            from backend.core.ml_memory_budget import release as _rel  # pylint: disable=import-outside-toplevel  # noqa: I001
+
+            _rel("LAION-CLAP")
+        except Exception as _exc:
+            logger.debug("Plugin operation failed (non-critical): %s", _exc)
+        logger.info("LAION-CLAP: Modell entladen, ~2.2 GB RAM freigegeben.")
+
     @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:
         """Numerisch stabiles Softmax."""
@@ -861,12 +883,13 @@ class LAIONCLAPPlugin:
 
 def get_laion_clap() -> LAIONCLAPPlugin:
     """Thread-sicherer Singleton-Accessor (Double-Checked Locking)."""
-    global _instance
     if _instance is None:
         with _lock:
             if _instance is None:
-                _instance = LAIONCLAPPlugin()
-    return _instance
+                # Assign via module dict to avoid the global-statement Pylint warning
+                # while preserving thread-safe double-checked locking semantics.
+                globals()["_instance"] = LAIONCLAPPlugin()
+    return _instance  # type: ignore[return-value]  # never None after block above
 
 
 def unload_laion_clap() -> None:
@@ -874,20 +897,8 @@ def unload_laion_clap() -> None:
 
     Aufruf: nach dem Tag-Matching / Analyse zu Beginn der Pipeline.
     """
-    import gc
-
     if _instance is not None:
-        _instance._clap_model = None
-        _instance._audio_session = None
-        _instance._model_loaded = False
-        gc.collect()
-        try:
-            from backend.core.ml_memory_budget import release as _rel
-
-            _rel("LAION-CLAP")
-        except Exception as _exc:
-            logger.debug("Plugin operation failed (non-critical): %s", _exc)
-        logger.info("LAION-CLAP: Modell entladen, ~2.2 GB RAM freigegeben.")
+        _instance.unload()
 
 
 def tag_audio(

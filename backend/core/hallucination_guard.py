@@ -18,8 +18,9 @@ BUG-FIX v9.12.0: spectral_novelty Rollback-Threshold 0.25 => 0.15 (Spec §2.46e)
 """
 
 import logging
+
 import numpy as np
-from typing import Tuple, Optional
+from scipy import signal as _sp_signal
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def compute_spectral_novelty(
     audio_after: np.ndarray,
     sr: int = 48000,
     n_fft: int = 2048,
-) -> Tuple[float, dict]:
+) -> tuple[float, dict]:
     """
     §2.46e Hallucination-Guard: Misst Spektral-Neuheit (neue Bins, die nicht im Original waren).
 
@@ -43,11 +44,12 @@ def compute_spectral_novelty(
         (spectral_novelty: float [0, 1], metadata: dict)
     """
     try:
-        from scipy import signal
-
-        # Spektrum berechnen (nur Magnitude)
-        _, _, Pxx_before = signal.spectrogram(audio_before, fs=sr, nperseg=n_fft)
-        _, _, Pxx_after = signal.spectrogram(audio_after, fs=sr, nperseg=n_fft)
+        # §2.61 Guard: nperseg darf nie größer sein als die Audio-Länge
+        _nperseg = min(n_fft, audio_before.shape[-1], audio_after.shape[-1])
+        if _nperseg < 4:
+            return 0.0, {"error": "audio_too_short", "samples": _nperseg}
+        _, _, Pxx_before = _sp_signal.spectrogram(audio_before, fs=sr, nperseg=_nperseg)
+        _, _, Pxx_after = _sp_signal.spectrogram(audio_after, fs=sr, nperseg=_nperseg)
 
         # Frame-weise Energie
         E_before = np.mean(Pxx_before, axis=1)  # (n_freq,)
@@ -76,7 +78,7 @@ def check_harmonic_ceiling_violation(
     material_bw_ceiling_hz: float,
     sr: int = 48000,
     n_fft: int = 4096,
-) -> Tuple[bool, dict]:
+) -> tuple[bool, dict]:
     """
     §2.46e BUG-FIX v9.12.0: Band-relative Delta-Metrik statt ratio-zur-Gesamt-Energie.
 
@@ -142,9 +144,9 @@ def apply_hallucination_guard(
     audio_before: np.ndarray,
     audio_after: np.ndarray,
     sr: int = 48000,
-    material_bw_ceiling_hz: Optional[float] = None,
+    material_bw_ceiling_hz: float | None = None,
     mode: str = "restoration",  # "restoration" | "studio_2026"
-) -> Tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict]:
     """
     §2.46e Hallucination-Guard Master-Function: Prueft additive Phase auf Halluzinationen.
 

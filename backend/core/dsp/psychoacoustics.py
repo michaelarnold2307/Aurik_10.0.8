@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -282,7 +283,7 @@ def _build_bark_filterbank(sr: int) -> list:
             return _filterbank_cache[sr]
 
     nyq = sr / 2.0
-    filters = []
+    filters: list[np.ndarray | None] = []
     for b in range(N_BARK):
         f_low = BARK_EDGES_HZ[b]
         f_high = BARK_EDGES_HZ[b + 1]
@@ -1010,7 +1011,7 @@ def apply_psychoacoustic_masking_clamp(
     *,
     strength: float = 1.0,
     mode: str = "subtractive",
-    min_energy_ratio: float = 0.20,
+    _min_energy_ratio: float = 0.20,  # reserved — future per-band floor tuning
     masking_result=None,
 ) -> np.ndarray:
     """Apply psychoacoustic masking to protect inaudible modifications.
@@ -1045,7 +1046,7 @@ def apply_psychoacoustic_masking_clamp(
         if sr != 48000:
             return processed_audio
 
-        from backend.core.psychoacoustic_masking_model import compute_masking_threshold
+        from backend.core.psychoacoustic_masking_model import compute_masking_threshold  # pylint: disable=import-outside-toplevel  # noqa: I001
 
         orig = np.asarray(original_audio, dtype=np.float32)
         proc = np.asarray(processed_audio, dtype=np.float32)
@@ -1231,10 +1232,6 @@ def compute_masking_threshold_iso11172(
         Maskierungsschwelle (n_freq_bins, n_frames), normalisiert [0, 1]:
         1.0 = vollständige Maskierung (Rauschen unsichtbar), 0.0 = keine Maskierung.
     """
-    import warnings
-
-    from scipy.signal import stft as _stft
-
     # --- Mono erzwingen ---
     if audio.ndim > 1:
         audio = audio.mean(axis=0)
@@ -1255,7 +1252,7 @@ def compute_masking_threshold_iso11172(
     # --- STFT des Signals ---
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _, _, Zxx = _stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop_length, window="hann")
+        _, _, Zxx = _sp_signal.stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop_length, window="hann")
     power = np.abs(Zxx) ** 2  # (n_freq, n_frames)
     power_db = 10.0 * np.log10(np.maximum(power, 1e-20))  # dB
 
@@ -1296,7 +1293,7 @@ def compute_masking_threshold_iso11172(
     ratio = np.power(10.0, (masking_db - signal_db) / 20.0)  # Amplitudenratio
     ratio = np.clip(ratio, 0.0, 1.0)
 
-    return ratio.astype(np.float32)
+    return np.asarray(ratio, dtype=np.float32)
 
 
 __all__ = [

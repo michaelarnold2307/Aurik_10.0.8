@@ -45,6 +45,7 @@ import contextlib
 import hashlib
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -107,8 +108,8 @@ class DefectType(Enum):
     """
 
     # --- Ursprüngliche 11 ---
-    CLICKS = "clicks"  # Impulsartige Einzelstörungen — Janssen, Veldhuis & Vries (1986) IEEE TASLP 34:203; Godsill & Rayner (1998) Springer
-    CRACKLE = "crackle"  # Hochdichte Impulsfolgen (Vinyl-Knistern) — Bailey, Casebeer & Fazekas (2019) AES 147th Conv.; Godsill & Rayner (1998)
+    CLICKS = "clicks"  # Impulsartige Einzelstörungen — Janssen, Veldhuis & Vries (1986) IEEE TASLP 34:203
+    CRACKLE = "crackle"  # Hochdichte Impulsfolgen (Vinyl-Knistern) — Bailey, Casebeer & Fazekas (2019) AES 147th Conv.
     HUM = "hum"
     WOW = "wow"  # Tonhöhenschwankung < 0.5 Hz (IEC 60386 — Motorexzentrizität, Plattenteller-Gleichlaufschwankung)
     FLUTTER = "flutter"  # Tonhöhenschwankung 0.5–200 Hz (IEC 60386 — mechanische Vibration, Führungsrolle, Bandantrieb)
@@ -118,7 +119,7 @@ class DefectType(Enum):
     HIGH_FREQ_NOISE = "high_freq_noise"
     COMPRESSION_ARTIFACTS = "compression_artifacts"
     PHASE_ISSUES = "phase_issues"
-    DROPOUTS = "dropouts"  # Kurzzeit-Pegeleinbrüche durch Bandmaterial-Aussetzer — Dahimene, Richard & David (2008) IEEE TASLP 16:757
+    DROPOUTS = "dropouts"  # Kurzzeit-Pegeleinbrüche durch Bandmaterial-Aussetzer — Dahimene et al. (2008)
     # --- Weltklasse-Erweiterung Runde 1 ---
     CLIPPING = "clipping"  # Amplituden-Übersteuerung (Hard/Soft Clip)
     DC_OFFSET = "dc_offset"  # Gleichspannungsversatz
@@ -129,55 +130,45 @@ class DefectType(Enum):
     PRINT_THROUGH = "print_through"  # Magnetisches Übersprechen bei Tape (Pre-Echo)
     # --- Weltklasse-Erweiterung Runde 3 ---
     QUANTIZATION_NOISE = "quantization_noise"  # Quantisierungsrauschen (niedrige Bit-Tiefe / Resampling)
-    JITTER_ARTIFACTS = (
-        "jitter_artifacts"  # Zeitgitter-Fehler bei D/A-Wandlung (CD, DAT, Streaming) — Bitto (2000) AES Conv. 109
-    )
+    JITTER_ARTIFACTS = "jitter_artifacts"  # Zeitgitter-Fehler bei D/A-Wandlung (CD, DAT) — Bitto (2000) AES Conv. 109
     DYNAMIC_COMPRESSION_EXCESS = "dynamic_compression_excess"  # Übermäßige Dynamikkompression (Loudness War)
     # --- Spec §6.3: fehlende DefectTypes für 24-Wert-Katalog ---
     SOFT_SATURATION = "soft_saturation"  # Tube-/Tape-Sättigung (gerade Obertöne) — BEWAHREN! (§2.1, §6.3)
-    HEAD_WEAR = "head_wear"  # Kopf-/Azimuth-Fehler, komplette Frequenzband-Auslöschung → phase_56 (§4.5, §7.2)
-    AZIMUTH_ERROR = "azimuth_error"  # Kopf-Schrägstellung → HF-Phasen-Slope L/R > 20°/kHz (IEC 60386) → phase_56
-    TRANSIENT_SMEARING = "transient_smearing"  # Ansatz-Verschmierung durch Kompression/Limiter — GrooveMetric-relevant
-    PRE_ECHO = "pre_echo"  # MP3/AAC Temporal-Masking-Artefakt: Rauschen *vor* Transienten durch lange Codec-Analysefenster — Herre & Johnston (1996) AES Conv. 101 (§6.3)
+    HEAD_WEAR = "head_wear"  # Kopf-/Azimuth-Fehler, Frequenzband-Auslöschung → phase_56 (§4.5, §7.2)
+    AZIMUTH_ERROR = "azimuth_error"  # Kopf-Schrägstellung → HF-Phasen-Slope L/R > 20°/kHz → phase_56
+    TRANSIENT_SMEARING = "transient_smearing"  # Ansatz-Verschmierung durch Kompression/Limiter
+    PRE_ECHO = "pre_echo"  # MP3/AAC Temporal-Masking-Artefakt — Herre & Johnston (1996) AES Conv. 101 (§6.3)
     # --- Spec §6.3 v9.10.46c: 3 neue DefectTypes → 27 Gesamtanzahl ---
-    RIAA_CURVE_ERROR = "riaa_curve_error"  # Falsche Disc-Entzerrungskurve (Shellac/früher Vinyl: AES/NAB/FFRR/Columbia) → phase_04 + phase_06
-    ALIASING = (
-        "aliasing"  # Spiegelfrequenzen durch unzureichenden AA-Filter bei ADC-Digitalisierung → phase_03 + phase_23
-    )
-    BIAS_ERROR = "bias_error"  # Falscher Vormagnetisierungsstrom bei Bandaufnahme → phase_04 + phase_03 + phase_29
+    RIAA_CURVE_ERROR = "riaa_curve_error"  # Falsche Disc-Entzerrungskurve (Shellac/Vinyl: AES/NAB/FFRR) → phase_04
+    ALIASING = "aliasing"  # Spiegelfrequenzen durch unzureichenden AA-Filter bei ADC-Digitalisierung → phase_03
+    BIAS_ERROR = "bias_error"  # Falscher Vormagnetisierungsstrom bei Bandaufnahme → phase_04 + phase_29
     # --- Spec §6.3 v9.10.57: Sibilanten-Überbetonung (ergibt 28 DefectTypes) ---
     SIBILANCE = "sibilance"  # Zischlautüberbetonung (> 6 kHz) — De-Esser-Trigger (phase_19 + phase_43)
     # --- v9.10.57b: Transport-Bump (ergibt 29 DefectTypes) ---
-    TRANSPORT_BUMP = (
-        "transport_bump"  # Impulsartige Mikro-Geschwindigkeitssprünge 50–300 ms (Kassette/Tape-Holpern) → phase_12
-    )
+    TRANSPORT_BUMP = "transport_bump"  # Impulsartige Mikro-Geschwindigkeitssprünge 50–300 ms → phase_12
     # --- v9.10.77: Vocal-Harshness (ergibt 30 DefectTypes) ---
-    VOCAL_HARSHNESS = "vocal_harshness"  # Vokale Härte/Übersteuerung/Kratzigkeit im 2–6 kHz Band → phase_42 + phase_19
+    VOCAL_HARSHNESS = "vocal_harshness"  # Vokale Härte/Kratzigkeit im 2–6 kHz Band → phase_42 + phase_19
     # --- v9.10.x: Dolby NR Mismatch (ergibt 31 DefectTypes) ---
-    DOLBY_NR_MISMATCH = (
-        "dolby_nr_mismatch"  # Dolby B/C/S encode ohne passende Dekodierung → +6–20 dB HF-Anhebung → phase_04 + phase_14
-    )
+    DOLBY_NR_MISMATCH = "dolby_nr_mismatch"  # Dolby B/C/S encode ohne Dekodierung → +6–20 dB HF-Anhebung → phase_04
     # --- v9.10.x: Tape Head Level Dip (ergibt 32 DefectTypes) ---
-    TAPE_HEAD_LEVEL_DIP = "tape_head_level_dip"  # Graduelle Pegeleinbrüche durch Bandkopf-Kontaktdruckvariation / Capstan-Unregelmäßigkeit → phase_12
+    TAPE_HEAD_LEVEL_DIP = "tape_head_level_dip"  # Graduelle Pegeleinbrüche durch Bandkopf-Kontaktdruckvariation
     # --- v9.10.98: 12 neue DefectTypes → 44 Gesamtanzahl (SOTA-Erweiterung) ---
     # Echte Lücken (6 neue Defekttypen):
-    MODULATION_NOISE = "modulation_noise"  # Signal-abhängiges Rauschen bei Bandaufnahmen (moduliert mit Signalpegel) → phase_59 — Esquef & Biscainho 2006
-    INNER_GROOVE_DISTORTION = "inner_groove_distortion"  # Vinyl-IGD: Abtastverzerrung nimmt zum Platteninneren zu (geringere Rillengeschwindigkeit) → phase_60
+    MODULATION_NOISE = "modulation_noise"  # Signal-abhängiges Rauschen bei Bandaufnahmen → phase_59
+    INNER_GROOVE_DISTORTION = "inner_groove_distortion"  # Vinyl-IGD: Abtastverzerrung zum Platteninneren hin → phase_60
     GROOVE_ECHO = (
         "groove_echo"  # Vinyl-Rillen-Pre-Echo durch Deformation benachbarter Rillen (~1.8 s Vorecho) → phase_61
     )
     CROSSTALK = "crosstalk"  # Kanalübersprechen in frühen Stereo-Aufnahmen (Kanaltrennung < 20 dB) → phase_62
-    INTERMODULATION_DISTORTION = "intermodulation_distortion"  # IMD: Summen-/Differenzfrequenzen durch nichtlineare Verstärkerketten (Volterra) → phase_63
-    TAPE_SPLICE_ARTIFACT = "tape_splice_artifact"  # Bandschnitt-Artefakte: Klick + Pegelsprung + Phasendiskontinuität an Klebestellen → phase_64
+    INTERMODULATION_DISTORTION = "intermodulation_distortion"  # IMD: Summen-/Differenzfrequenzen → phase_63
+    TAPE_SPLICE_ARTIFACT = "tape_splice_artifact"  # Bandschnitt-Artefakte: Klick + Pegelsprung → phase_64
     # SOTA-Upgrades bestehender Defekte (6 neue Sub-Typen):
-    HF_REMANENCE_LOSS = "hf_remanence_loss"  # Magnetische Remanenz-Degradation: HF-Verlust durch Alterung (anders als nie aufgenommenes HF) → phase_06 + age-model
-    STYLUS_DAMAGE = "stylus_damage"  # Nadelbeschädigung/-abnutzung: asymmetrische Abtastverzerrung (anders als generisches Crackle) → phase_09 + phase_23
-    STICKY_SHED_RESIDUE = "sticky_shed_residue"  # Binder-Hydrolyse-Residuen: moduliertes Rauschen + Pegeleinbrüche nach Backen → phase_24 + phase_29
-    MULTIBAND_WOW_FLUTTER = "multiband_wow_flutter"  # Frequenzabhängiger Wow/Flutter (Kopfspalt-Geometrie) — Czyzewski 2023 → phase_12 (multi-band)
-    GENERATION_LOSS = (
-        "generation_loss"  # Kumulativer Generationsverlust durch Tape-Dubbing → ganzheitliches Degradationsmodell
-    )
-    MOTOR_INTERFERENCE = "motor_interference"  # Plattenspieler-Motorinterferenz: harmonische Obertöne 80–300 Hz (nicht nur Rumble) → phase_02 + phase_05
+    HF_REMANENCE_LOSS = "hf_remanence_loss"  # Magnetische Remanenz-Degradation: HF-Verlust durch Alterung → phase_06
+    STYLUS_DAMAGE = "stylus_damage"  # Nadelbeschädigung/-abnutzung: asymmetrische Abtastverzerrung → phase_09
+    STICKY_SHED_RESIDUE = "sticky_shed_residue"  # Binder-Hydrolyse-Residuen: moduliertes Rauschen → phase_24
+    MULTIBAND_WOW_FLUTTER = "multiband_wow_flutter"  # Frequenzabhängiger Wow/Flutter (Kopfspalt-Geometrie) → phase_12
+    GENERATION_LOSS = "generation_loss"  # Kumulativer Generationsverlust durch Tape-Dubbing
+    MOTOR_INTERFERENCE = "motor_interference"  # Plattenspieler-Motorinterferenz: 80–300 Hz → phase_02 + phase_05
 
 
 class MaterialType(Enum):
@@ -212,7 +203,10 @@ class DefectScore:
     metadata: dict = field(default_factory=dict)  # Zusätzliche Informationen
 
     def __repr__(self) -> str:
-        return f"DefectScore({self.defect_type.value}: {self.severity:.3f}, conf={self.confidence:.2f}, {len(self.locations)} events)"
+        return (
+            f"DefectScore({self.defect_type.value}: {self.severity:.3f},"
+            f" conf={self.confidence:.2f}, {len(self.locations)} events)"
+        )
 
 
 @dataclass
@@ -290,20 +284,20 @@ class DefectScanner:
             DefectType.ALIASING: 0.5,  # Archiv-Digitalisierung oft mit unzureichendem AA-Filter
             DefectType.BIAS_ERROR: 1.0,  # N/A: Shellac ist kein Magnetband — kein Aufnahme-Bias
             DefectType.AZIMUTH_ERROR: 1.0,  # N/A: Shellac ist Disc-Format — kein Magnetkopf-Azimuth
-            DefectType.SIBILANCE: 0.6,  # Schwere Nadel + begrenzter HF → Zischlaut-Verzerrung bei Hochpegel-Passagen
+            DefectType.SIBILANCE: 0.6,  # Schwere Nadel + begrenzter HF → Zischlaut-Verzerrung
             DefectType.TRANSPORT_BUMP: 0.5,  # Plattenteller-Transport: mechanisches Holpern bei 78 rpm
-            DefectType.VOCAL_HARSHNESS: 0.5,  # Schwere Nadel + Trichter: Vokal-Verzerrung im Mitteltonbereich häufig
-            DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: Shellac-Ära vor Dolby NR (Dolby 1966) — kein Dolby-Mismatch möglich
+            DefectType.VOCAL_HARSHNESS: 0.5,  # Schwere Nadel + Trichter: Vokal-Verzerrung häufig
+            DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: Shellac-Ära vor Dolby NR (1966) — kein Mismatch möglich
             DefectType.TAPE_HEAD_LEVEL_DIP: 1.0,  # N/A: Schellack hat keine Tape-Kopf-Mechanik
             # v9.10.98: 12 neue SOTA-DefectTypes
             DefectType.MODULATION_NOISE: 1.0,  # N/A: Shellac mechanisch — kein Magnetband-Modulationsrauschen
-            DefectType.INNER_GROOVE_DISTORTION: 0.2,  # SEHR HÄUFIG: Mechanische Abtastung, schwere Nadel → IGD extrem ausgeprägt
-            DefectType.GROOVE_ECHO: 0.3,  # Weiche Schellackmasse → starke Rillenverformung → Vorecho häufig
+            DefectType.INNER_GROOVE_DISTORTION: 0.2,  # SEHR HÄUFIG: Schwere Nadel → IGD extrem ausgeprägt
+            DefectType.GROOVE_ECHO: 0.3,  # Weiche Schellackmasse → Rillenverformung → Vorecho
             DefectType.CROSSTALK: 1.0,  # N/A: Shellac immer Mono
-            DefectType.INTERMODULATION_DISTORTION: 0.3,  # Trichter-Aufnahme nichtlinear → IMD durch mechanische Kopplung
+            DefectType.INTERMODULATION_DISTORTION: 0.3,  # Trichter-Aufnahme nichtlinear → IMD
             DefectType.TAPE_SPLICE_ARTIFACT: 1.0,  # N/A: Shellac ist kein Band — kein Schnitt
             DefectType.HF_REMANENCE_LOSS: 1.0,  # N/A: Shellac mechanisch — keine magnetische Remanenz
-            DefectType.STYLUS_DAMAGE: 0.2,  # SEHR HÄUFIG: Schwere Stahlnadeln zerstören Rillen bei Wiederholung
+            DefectType.STYLUS_DAMAGE: 0.2,  # SEHR HÄUFIG: Stahlnadeln zerstören Rillen bei Wiederholung
             DefectType.STICKY_SHED_RESIDUE: 1.0,  # N/A: Shellac hat keinen Binder wie Magnetband
             DefectType.MULTIBAND_WOW_FLUTTER: 0.5,  # Mechanischer Antrieb: frequenzunabhängiger Wow/Flutter
             DefectType.GENERATION_LOSS: 0.6,  # Matrizen-Pressung: jede Generation verliert Detail
@@ -341,18 +335,18 @@ class DefectScanner:
             DefectType.AZIMUTH_ERROR: 1.0,  # N/A: Vinyl ist Disc-Format — kein Magnetkopf-Azimuth
             DefectType.SIBILANCE: 0.7,  # Sehr häufig: Tonabnehmer-Sibilanz + Phono-Stufe; De-Esser-Pflicht
             DefectType.TRANSPORT_BUMP: 0.4,  # Plattenspieler-Transport: mechanisches Holpern möglich
-            DefectType.VOCAL_HARSHNESS: 0.4,  # Tonabnehmer-Verzerrung + Phono-Stufe → Vokal-Übersteuerung häufig
-            DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: Vinyl-Heimaufnahmen selten mit Dolby NR — Schallplatten nutzen kein Dolby
+            DefectType.VOCAL_HARSHNESS: 0.4,  # Tonabnehmer-Verzerrung + Phono-Stufe → Vokal-Übersteuerung
+            DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: Vinyl nutzt kein Dolby NR — kein Mismatch
             DefectType.TAPE_HEAD_LEVEL_DIP: 1.0,  # N/A: Vinyl hat keine Tape-Kopf-Mechanik
             # v9.10.98: 12 neue SOTA-DefectTypes
             DefectType.MODULATION_NOISE: 1.0,  # N/A: Vinyl mechanisch — kein Magnetband-Modulationsrauschen
-            DefectType.INNER_GROOVE_DISTORTION: 0.15,  # EXTREM HÄUFIG: Abtastverzerrung zum Platteninneren — Schlüsseldefekt!
-            DefectType.GROOVE_ECHO: 0.2,  # HÄUFIG: Laute Passagen deformieren Nachbarrille → Pre-Echo ~1.8 s
+            DefectType.INNER_GROOVE_DISTORTION: 0.15,  # EXTREM HÄUFIG: Abtastverzerrung zum Platteninneren!
+            DefectType.GROOVE_ECHO: 0.2,  # HÄUFIG: Laute Passagen deformieren Nachbarrille → Pre-Echo
             DefectType.CROSSTALK: 0.5,  # Frühe Stereo-Vinyl: Kanaltrennung oft nur 15–20 dB
             DefectType.INTERMODULATION_DISTORTION: 0.4,  # Schneidlack-Nichtlinearität → IMD bei Hochpegel
             DefectType.TAPE_SPLICE_ARTIFACT: 1.0,  # N/A: Vinyl hat keine Bandschnitte
             DefectType.HF_REMANENCE_LOSS: 1.0,  # N/A: Vinyl mechanisch — keine magnetische Remanenz
-            DefectType.STYLUS_DAMAGE: 0.3,  # Abgenutzte Nadel → asymmetrische Verzerrung, häufig bei gebrauchten Platten
+            DefectType.STYLUS_DAMAGE: 0.3,  # Abgenutzte Nadel → asymmetrische Verzerrung
             DefectType.STICKY_SHED_RESIDUE: 1.0,  # N/A: Vinyl hat keinen Binder
             DefectType.MULTIBAND_WOW_FLUTTER: 0.6,  # Plattenspieler: frequenzunabhängig
             DefectType.GENERATION_LOSS: 0.7,  # Pressung: marginal (Master→Stamper)
@@ -383,18 +377,18 @@ class DefectScanner:
             DefectType.SOFT_SATURATION: 0.4,  # Bandsättigung (gerade Obertöne H2/H4) — BEWAHREN vs. Clipping
             DefectType.HEAD_WEAR: 0.6,  # Kassettenköpfe durch Abnutzung → Hochton-Auslöschung häufig
             DefectType.PRE_ECHO: 1.0,  # N/A: Kassette analog — kein Codec-Pre-Echo
-            DefectType.TRANSIENT_SMEARING: 0.4,  # Dolby-Rauschreduktion und Bandsättigung können Transienten verschmieren
+            DefectType.TRANSIENT_SMEARING: 0.4,  # Dolby-Rauschreduktion und Bandsättigung → Transient-Smearing
             DefectType.RIAA_CURVE_ERROR: 1.0,  # N/A: Magnetband nutzt keine RIAA-Disc-Entzerrungskurve
             DefectType.ALIASING: 0.4,  # Digitalisierungs-AA variiert; Resampling in der Verarbeitungskette
             DefectType.BIAS_ERROR: 0.3,  # SEHR HÄUFIG: falscher Bias für Bandsorte (Chromdioxid/Normallage)
-            DefectType.AZIMUTH_ERROR: 0.30,  # Häufig! Kassettenköpfe neigen zu Azimuth-Drift zwischen verschiedenen Decks
-            DefectType.SIBILANCE: 0.5,  # Kassettenkopf-HF-Sättigung → Zischlaut-Betonung bei Hochfrequenz-Peaking
-            DefectType.TRANSPORT_BUMP: 0.3,  # Kassetten-Transport: Capstan/Andruckrolle-Holpern sehr häufig
-            DefectType.VOCAL_HARSHNESS: 0.4,  # Bandsättigung + HF-Peaking → Vokal-Härte bei Hochpegel-Passagen
-            DefectType.DOLBY_NR_MISMATCH: 0.25,  # SEHR HÄUFIG: Dolby B/C bei Heimkassetten 1975–2000; Playback ohne Dolby-Dekoder → HF-Anhebung +6–20 dB
-            DefectType.TAPE_HEAD_LEVEL_DIP: 0.20,  # SEHR HÄUFIG: Kompaktkassetten-Transport verursacht Kopf-Kontakt-Druckvariation durch Capstan/Andruckrolle
+            DefectType.AZIMUTH_ERROR: 0.30,  # Häufig! Kassettenköpfe neigen zu Azimuth-Drift
+            DefectType.SIBILANCE: 0.5,  # Kassettenkopf-HF-Sättigung → Zischlaut-Betonung
+            DefectType.TRANSPORT_BUMP: 0.3,  # Kassetten-Transport: Capstan/Andruckrolle-Holpern häufig
+            DefectType.VOCAL_HARSHNESS: 0.4,  # Bandsättigung + HF-Peaking → Vokal-Härte bei Hochpegel
+            DefectType.DOLBY_NR_MISMATCH: 0.25,  # SEHR HÄUFIG: Dolby B/C (1975–2000); ohne Dekoder → +6–20 dB HF
+            DefectType.TAPE_HEAD_LEVEL_DIP: 0.20,  # SEHR HÄUFIG: Capstan/Andruckrolle → Kopf-Kontakt-Druckvariation
             # v9.10.98: 12 neue SOTA-DefectTypes
-            DefectType.MODULATION_NOISE: 0.15,  # EXTREM HÄUFIG: Signal-abhängiges Rauschen bei JEDER Bandaufnahme — Esquef 2006
+            DefectType.MODULATION_NOISE: 0.15,  # EXTREM HÄUFIG: Signal-abhängiges Rauschen — Esquef 2006
             DefectType.INNER_GROOVE_DISTORTION: 1.0,  # N/A: Tape hat keine Rillen
             DefectType.GROOVE_ECHO: 1.0,  # N/A: Tape hat keine Rillen
             DefectType.CROSSTALK: 0.4,  # Kassette: Spur-Übersprechen bei schmalen 4-Spur-Kassetten
@@ -437,16 +431,16 @@ class DefectScanner:
             DefectType.ALIASING: 0.3,  # CD digital-nativ; Resampling-Artefakte bei Formatketten möglich
             DefectType.BIAS_ERROR: 1.0,  # N/A: CD digital — kein Wechselstrom-Bias
             DefectType.AZIMUTH_ERROR: 1.0,  # N/A: CD digital — kein Magnetkopf
-            DefectType.SIBILANCE: 0.3,  # CD: geringe Sibilanz-Gefahr; De-Emphasis-Fehler bei frühen CDs möglich
+            DefectType.SIBILANCE: 0.3,  # CD: geringe Sibilanz-Gefahr; De-Emphasis-Fehler möglich
             DefectType.TRANSPORT_BUMP: 1.0,  # N/A: CD digital — kein mechanischer Transport
-            DefectType.VOCAL_HARSHNESS: 0.25,  # Loudness-War-Mastering → Vokal-Übersteuerung/Harshness SEHR häufig bei CD
+            DefectType.VOCAL_HARSHNESS: 0.25,  # Loudness-War-Mastering → Vokal-Harshness SEHR häufig
             DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: CD ist digital, kein Dolby-Analogband-NR
             DefectType.TAPE_HEAD_LEVEL_DIP: 1.0,  # N/A: CD ist digital, kein Magnetband-Kopf
             # v9.10.98: 12 neue SOTA-DefectTypes
             DefectType.MODULATION_NOISE: 1.0,  # N/A: CD digital — kein analoges Modulationsrauschen
             DefectType.INNER_GROOVE_DISTORTION: 1.0,  # N/A: CD hat keine Rillen
             DefectType.GROOVE_ECHO: 1.0,  # N/A: CD hat keine Rillen
-            DefectType.CROSSTALK: 0.8,  # CD digital: Crosstalk nur in extremen Fällen (L/R-Bleed bei schlechtem Mastering)
+            DefectType.CROSSTALK: 0.8,  # CD digital: Crosstalk nur bei schlechtem Mastering
             DefectType.INTERMODULATION_DISTORTION: 0.7,  # CD: IMD nur bei analogem Mastering-Signalpfad
             DefectType.TAPE_SPLICE_ARTIFACT: 1.0,  # N/A: CD hat keine Bandschnitte
             DefectType.HF_REMANENCE_LOSS: 1.0,  # N/A: CD digital — keine magnetische Remanenz
@@ -486,13 +480,13 @@ class DefectScanner:
             DefectType.ALIASING: 0.3,  # Professionelle Digitalisierung meist gut — AA-Filter vorhanden
             DefectType.BIAS_ERROR: 0.3,  # Häufig: gemischte Bandsorten → falscher Bias-Strom beim Schnitt
             DefectType.AZIMUTH_ERROR: 0.25,  # Sehr häufig: Profi-Bandmaschinen mit verschiedenen Schnittköpfen
-            DefectType.SIBILANCE: 0.4,  # Profi-Spulenband: HF-Sättigung bei hohem Bandfluss → Zischlaut-Überbetonung
+            DefectType.SIBILANCE: 0.4,  # Profi-Spulenband: HF-Sättigung → Zischlaut-Überbetonung
             DefectType.TRANSPORT_BUMP: 0.2,  # Profi-Bandmaschine: Transport stabiler als Kassette
-            DefectType.VOCAL_HARSHNESS: 0.4,  # Profi-Bandsättigung bei hohem Bandfluss → Vokal-Härte möglich
-            DefectType.DOLBY_NR_MISMATCH: 0.6,  # Möglich: Profi-Spulenband mit Dolby A/SR — Broadcast-Dekoder fehlt oft bei Archivierung
-            DefectType.TAPE_HEAD_LEVEL_DIP: 0.40,  # Möglich: Spulenbandtransport stabiler als Kassette, aber Kopfverschleiß/Alignmentfehler möglich
+            DefectType.VOCAL_HARSHNESS: 0.4,  # Profi-Bandsättigung → Vokal-Härte bei hohem Bandfluss
+            DefectType.DOLBY_NR_MISMATCH: 0.6,  # Möglich: Dolby A/SR — Broadcast-Dekoder fehlt oft
+            DefectType.TAPE_HEAD_LEVEL_DIP: 0.40,  # Möglich: Kopfverschleiß/Alignmentfehler möglich
             # v9.10.98: 12 neue SOTA-DefectTypes
-            DefectType.MODULATION_NOISE: 0.12,  # EXTREM HÄUFIG: Profi-Spulenband bei hohem Bandfluss — Signal-abhängig
+            DefectType.MODULATION_NOISE: 0.12,  # EXTREM HÄUFIG: Signal-abhängig bei hohem Bandfluss
             DefectType.INNER_GROOVE_DISTORTION: 1.0,  # N/A: Tape hat keine Rillen
             DefectType.GROOVE_ECHO: 1.0,  # N/A: Tape hat keine Rillen
             DefectType.CROSSTALK: 0.3,  # Frühe Stereo-Spulenbänder: Spur-Übersprechen bei Halbspur-Stereo
@@ -500,7 +494,7 @@ class DefectScanner:
             DefectType.TAPE_SPLICE_ARTIFACT: 0.15,  # SEHR HÄUFIG: Professionelle Spulenbänder mit vielen Klebestellen
             DefectType.HF_REMANENCE_LOSS: 0.12,  # SEHR HÄUFIG: Profi-Spulenband altert → HF-Verlust
             DefectType.STYLUS_DAMAGE: 1.0,  # N/A: Tape hat keine Nadel
-            DefectType.STICKY_SHED_RESIDUE: 0.1,  # EXTREM HÄUFIG: Polyester-Urethan-Bänder (Ampex 456, Scotch 226) — Sticky-Shed-Syndrom
+            DefectType.STICKY_SHED_RESIDUE: 0.1,  # EXTREM HÄUFIG: Polyester-Urethan-Bänder (Ampex 456) — Sticky-Shed
             DefectType.MULTIBAND_WOW_FLUTTER: 0.2,  # Profi-Kopfspalt + Bandkontakt → frequenzabhängig
             DefectType.GENERATION_LOSS: 0.15,  # SEHR HÄUFIG: Studio-Dubbing (Mix → Master → Copy)
             DefectType.MOTOR_INTERFERENCE: 1.0,  # N/A: Profi-Tape-Motor → über WOW/FLUTTER abgedeckt
@@ -535,16 +529,16 @@ class DefectScanner:
             DefectType.ALIASING: 0.3,  # DAT digital-nativ; Resampling bei Weiterverarbeitung möglich
             DefectType.BIAS_ERROR: 1.0,  # N/A: DAT digital — kein analoger Bias erforderlich
             DefectType.AZIMUTH_ERROR: 0.50,  # DAT-Rotationskopf: Azimuth kann durch Kopfverschleiß driften
-            DefectType.SIBILANCE: 0.2,  # DAT digital — geringe Sibilanz-Gefahr (selten bei Profi-DAT-Aufnahmen)
+            DefectType.SIBILANCE: 0.2,  # DAT digital — geringe Sibilanz-Gefahr
             DefectType.TRANSPORT_BUMP: 0.6,  # DAT-Laufwerk: Rotationskopf-Transport kann holpern
             DefectType.VOCAL_HARSHNESS: 0.3,  # DAT: digitale Übersteuerung + Quell-Material-Härte möglich
             DefectType.DOLBY_NR_MISMATCH: 1.0,  # N/A: DAT ist digital — kein analoger Dolby-NR-Kompander
-            DefectType.TAPE_HEAD_LEVEL_DIP: 1.0,  # N/A: DAT ist digital mit Drehtrommel — keine analoge Kopf-Kontaktdruckvariation
+            DefectType.TAPE_HEAD_LEVEL_DIP: 1.0,  # N/A: DAT ist digital mit Drehtrommel — kein analoger Kopf
             # v9.10.98: 12 neue SOTA-DefectTypes
             DefectType.MODULATION_NOISE: 1.0,  # N/A: DAT digital — kein analoges Modulationsrauschen
             DefectType.INNER_GROOVE_DISTORTION: 1.0,  # N/A: DAT hat keine Rillen
             DefectType.GROOVE_ECHO: 1.0,  # N/A: DAT hat keine Rillen
-            DefectType.CROSSTALK: 0.8,  # DAT digital: minimalsts Crosstalk
+            DefectType.CROSSTALK: 0.8,  # DAT digital: minimales Crosstalk
             DefectType.INTERMODULATION_DISTORTION: 0.8,  # DAT: IMD nur bei analogem Eingang
             DefectType.TAPE_SPLICE_ARTIFACT: 1.0,  # N/A: DAT digital — kein physischer Schnitt
             DefectType.HF_REMANENCE_LOSS: 1.0,  # N/A: DAT digital — keine magnetische Remanenz
@@ -995,8 +989,6 @@ class DefectScanner:
         Returns:
             DefectAnalysisResult mit allen Scores
         """
-        import time
-
         # Bug-15-Fix: material_type als String (z.B. 'mp3_low') → MaterialType-Enum normalisieren.
         # ClassificationResult.material kann ein String sein (forensics/medium_detector.py L1026),
         # aber _DIGITAL_NO_BUMP enthält MaterialType-Enums → String-Vergleich schlägt immer fehl
@@ -1803,7 +1795,7 @@ class DefectScanner:
         # (in quiet passages) keep full severity.  This prevents unnecessary repairs
         # on inaudible defects and focuses the pipeline on what the ear can detect.
         try:
-            from backend.core.perceptual_salience import get_perceptual_salience_estimator
+            from backend.core.perceptual_salience import get_perceptual_salience_estimator  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _pse = get_perceptual_salience_estimator()
             _pse_audio = _audio_mono_full if _audio_mono_full is not None else audio_mono
@@ -1838,7 +1830,10 @@ class DefectScanner:
         duration = len(audio_mono) / sr
 
         logger.info(
-            f"DefectScan completed: {analysis_time:.2f}s für {duration:.1f}s Audio ({analysis_time / duration * 100:.1f}% overhead)"
+            "DefectScan completed: %.2fs für %.1fs Audio (%.1f%% overhead)",
+            analysis_time,
+            duration,
+            analysis_time / duration * 100,
         )
 
         # Forensische Tonträgerkettenerkennung (MediumDetector, DSP-basiert).
@@ -1857,7 +1852,7 @@ class DefectScanner:
             )
         else:
             try:
-                from backend.core.forensics.medium_detector import MediumDetector as _ForensicMD
+                from backend.core.forensics.medium_detector import MediumDetector as _ForensicMD  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 # Für lange Dateien: nur erste 30 s analysieren (Geschwindigkeit)
                 _max_forensic = sr * 30
@@ -1867,9 +1862,7 @@ class DefectScanner:
                 # MediumDetectionResult ist ein Dataclass — getattr statt .get()
                 _multi = getattr(_fmd_result, "is_multi_generation", None)
                 _chain_val = getattr(_fmd_result, "transfer_chain", None) or getattr(_fmd_result, "chain", "?")
-                logger.debug(
-                    f"[SCAN] MediumDetector OK: multi={_multi}, chain={_chain_val}",
-                )
+                logger.debug("[SCAN] MediumDetector OK: multi=%s, chain=%s", _multi, _chain_val)
             except Exception as _fmd_err:
                 logger.debug("[SCAN] MediumDetector FEHLER: %s", _fmd_err)
                 logger.debug("ForensicMediumDetector nicht verfügbar: %s", _fmd_err)
@@ -2199,7 +2192,10 @@ class DefectScanner:
         tape_score += 10.0  # Baseline-Bonus erhöht
 
         logger.debug(
-            f"Mono material scores: shellac={shellac_score:.2f}, vinyl={vinyl_score:.2f}, tape={tape_score:.2f}"
+            "Mono material scores: shellac=%.2f, vinyl=%.2f, tape=%.2f",
+            shellac_score,
+            vinyl_score,
+            tape_score,
         )
 
         # Select best match (minimum threshold 0.5)
@@ -2526,7 +2522,7 @@ class DefectScanner:
         Returns clicks-per-second (float). Analyses max. 30 s for efficiency.
         """
         try:
-            from scipy.linalg import solve_toeplitz as _solve_toeplitz
+            from scipy.linalg import solve_toeplitz as _solve_toeplitz  # pylint: disable=import-outside-toplevel
         except ImportError:
             return 0.0
 
@@ -2632,7 +2628,7 @@ class DefectScanner:
         severity = min(1.0, severity_raw * 10 * kurtosis_discount)
 
         # Find connected regions
-        from scipy.ndimage import label
+        from scipy.ndimage import label  # pylint: disable=import-outside-toplevel
 
         labeled_array, num_features = label(crackle_mask)  # type: ignore[misc]
         locations = []
@@ -2683,6 +2679,7 @@ class DefectScanner:
         best_freq = 50
         best_sharpness = 0.0
         seg_ratios: list[float] = []
+        half_band = max(1, int(2.0 / 1.0))  # Initialize with default bin_width
 
         for si in range(n_segs):
             start = si * (n - seg_len) // max(1, n_segs - 1) if n_segs > 1 else 0
@@ -2698,6 +2695,7 @@ class DefectScanner:
             half_band = max(1, int(2.0 / bin_width))
 
             def _measure_hum_weighted(hum_f_list):
+                # pylint: disable=cell-var-from-loop
                 energy = 0.0
                 sharpness_sum = 0.0
                 for ki, f in enumerate(hum_f_list):
@@ -2984,7 +2982,7 @@ class DefectScanner:
         flux_env = np.array(flux_list, dtype=np.float64) if flux_list else np.zeros(1)
 
         # --- Adaptive local baselines (rolling median, ~1 s context) ---
-        from scipy.ndimage import median_filter as _medfilt
+        from scipy.ndimage import median_filter as _medfilt  # pylint: disable=import-outside-toplevel
 
         ctx = max(3, int(1.0 / hop_s))  # 1 s context for stable baseline
         if ctx % 2 == 0:
@@ -3148,7 +3146,7 @@ class DefectScanner:
                     _rhythm_guard_applied = True
 
         logger.info(
-            "transport_bump detection: n_bumps=%d, density=%.1f/min, max_mag=%.3f, mean_score=%.2f, severity=%.3f, suppressed_head_dip_like=%d",
+            "transport_bump: n=%d, density=%.1f/min, max_mag=%.3f, mean=%.2f, sev=%.3f, suppressed=%d",
             n_bumps,
             bump_density,
             max_mag,
@@ -3617,7 +3615,7 @@ class DefectScanner:
             },
         )
 
-    def _detect_dropouts(self, audio: np.ndarray) -> DefectScore:
+    def _detect_dropouts(self, audio_data: np.ndarray) -> DefectScore:
         """Detect dropouts (short silence / level dip segments).
 
         Upgraded v9.10.77b: Multi-indicator dropout detection:
@@ -3633,12 +3631,12 @@ class DefectScanner:
         hop_size = window_size // 2
 
         # Vectorized RMS computation
-        n_frames = max(0, (len(audio) - window_size) // hop_size)
+        n_frames = max(0, (len(audio_data) - window_size) // hop_size)
         if n_frames < 4:
             return DefectScore(DefectType.DROPOUTS, 0.0, 0.5)
 
         rms_values = np.array(
-            [np.sqrt(np.mean(audio[i * hop_size : i * hop_size + window_size] ** 2)) for i in range(n_frames)],
+            [np.sqrt(np.mean(audio_data[i * hop_size : i * hop_size + window_size] ** 2)) for i in range(n_frames)],
             dtype=np.float64,
         )
 
@@ -3660,7 +3658,7 @@ class DefectScanner:
 
         # --- Local-context adaptive threshold (sliding median, 1s window) ---
         local_win = max(3, int(1.0 * self.sample_rate / hop_size))  # ~1s in frames
-        from scipy.ndimage import median_filter
+        from scipy.ndimage import median_filter  # pylint: disable=import-outside-toplevel
 
         local_median = median_filter(rms_values, size=local_win, mode="reflect")
         local_threshold = _threshold_ratio * local_median
@@ -3670,7 +3668,7 @@ class DefectScanner:
         dropout_mask = rms_values < combined_threshold
 
         # Connected-component labelling
-        from scipy.ndimage import label
+        from scipy.ndimage import label  # pylint: disable=import-outside-toplevel
 
         label_result = label(dropout_mask)
         if isinstance(label_result, tuple):
@@ -3697,9 +3695,9 @@ class DefectScanner:
             # --- Spectral dropout classification ---
             # Check if dropout is broadband (total) or partial (single-band loss)
             start_samp = int(indices[0] * hop_size)
-            end_samp = min(int((indices[-1] + 1) * hop_size + window_size), len(audio))
+            end_samp = min(int((indices[-1] + 1) * hop_size + window_size), len(audio_data))
             if end_samp - start_samp >= 256:
-                seg = audio[start_samp:end_samp]
+                seg = audio_data[start_samp:end_samp]
                 spec = np.abs(np.fft.rfft(seg))
                 if len(spec) > 8:
                     lo_e = float(np.sum(spec[: len(spec) // 4]))
@@ -3716,7 +3714,7 @@ class DefectScanner:
                 total_dropouts += 1
 
         # --- Severity ---
-        duration = len(audio) / self.sample_rate
+        duration = len(audio_data) / self.sample_rate
         dropout_fraction = total_dropout_s / max(duration, 1e-6)
         # Duration-based: 1% dropout = severity 0.5; 2% = 1.0
         sev_duration = float(np.clip(dropout_fraction / 0.02, 0.0, 1.0))
@@ -3867,7 +3865,7 @@ class DefectScanner:
 
         n = len(audio)
         dc_global = float(np.mean(audio))
-        peak = float(np.max(np.abs(audio)))
+        peak = float(np.percentile(np.abs(audio), 99.9))  # V08: Click-Spike darf DC-Ratio nicht verfälschen
 
         if peak < 1e-6:
             return DefectScore(DefectType.DC_OFFSET, 0.0, 0.5)
@@ -4523,7 +4521,7 @@ class DefectScanner:
         # --- 2. Instantaneous frequency variance (analytic signal) ---
         if_variance = 0.0
         try:
-            from scipy.signal import hilbert as _hilbert
+            from scipy.signal import hilbert as _hilbert  # pylint: disable=import-outside-toplevel
 
             # Use center 32k samples for efficiency
             center = max(0, n // 2 - 16384)
@@ -4982,7 +4980,8 @@ class DefectScanner:
             # which often accompanies vocal harshness.
             # Computed on full signal (not just presence band) because narrowband
             # crest is misleading for tonal content.
-            crest_db = 20.0 * np.log10((float(np.max(np.abs(audio))) + 1e-12) / (rms_total + 1e-12))
+            # V08: np.percentile robust gegen Click-Defekte
+            crest_db = 20.0 * np.log10((float(np.percentile(np.abs(audio), 99.9)) + 1e-12) / (rms_total + 1e-12))
             # Very compressed: <5 dB; normal: 8–15 dB
             crest_score = float(np.clip((6.0 - crest_db) / 4.0, 0.0, 1.0))
 
@@ -5071,7 +5070,8 @@ class DefectScanner:
                     chunk = audio[i : i + win_h]
                     chunk_pres = signal.sosfilt(sos_bp, chunk)
                     chunk_rms = float(np.sqrt(np.mean(chunk_pres**2)) + 1e-12)
-                    chunk_peak = float(np.max(np.abs(chunk_pres)) + 1e-12)
+                    # V08: Click-Spike darf Crest nicht verfälschen
+                    chunk_peak = float(np.percentile(np.abs(chunk_pres), 99.9) + 1e-12)
                     chunk_crest = 20.0 * np.log10(chunk_peak / chunk_rms)
                     # Local harshness: low crest + high presence energy
                     chunk_energy_ratio = float(np.mean(chunk_pres**2)) / (float(np.mean(chunk**2)) + 1e-12)
@@ -5375,7 +5375,7 @@ class DefectScanner:
             ref_frames = max(3, int(ref_win_s / 0.010))
             if ref_frames % 2 == 0:
                 ref_frames += 1
-            from scipy.ndimage import percentile_filter
+            from scipy.ndimage import percentile_filter  # pylint: disable=import-outside-toplevel
 
             ref_db = percentile_filter(rms_db, percentile=75, size=ref_frames, mode="reflect")
 
@@ -5383,7 +5383,7 @@ class DefectScanner:
             dip_mask = rms_db < (ref_db - dip_thresh_db)
 
             # Connected-component labelling
-            from scipy.ndimage import label as nd_label
+            from scipy.ndimage import label as nd_label  # pylint: disable=import-outside-toplevel
 
             _label_result: tuple[np.ndarray, int] = nd_label(dip_mask)  # type: ignore[assignment]
             labeled, n_dips_raw = _label_result
@@ -5704,7 +5704,7 @@ class DefectScanner:
 
         try:
             # --- Hilbert envelope (no self-smoothing bias) ---
-            from scipy.signal import hilbert as _hilbert
+            from scipy.signal import hilbert as _hilbert  # pylint: disable=import-outside-toplevel
 
             hp_sos = signal.butter(
                 2, float(np.clip(200.0 / (self.sample_rate / 2.0), 1e-6, 0.999)), btype="high", output="sos"
@@ -6350,7 +6350,7 @@ class DefectScanner:
 
             # Time-domain cross-correlation peak (delayed crosstalk) — FFT-based
             max_delay = int(0.002 * sr)  # Max 2ms delay for mechanical crosstalk
-            from backend.core.core_utils import fft_crosscorr
+            from backend.core.core_utils import fft_crosscorr  # pylint: disable=import-outside-toplevel
 
             xcorr = fft_crosscorr(left[:n_fft], right[:n_fft])
             center = len(xcorr) // 2
@@ -7070,7 +7070,7 @@ class DefectScanner:
             harmonic_fit_ratio = 0.0
             peak_freqs = [f for f, _ in motor_peaks]
             for f0 in peak_freqs:
-                if not (70.0 <= f0 <= 180.0):
+                if not 70.0 <= f0 <= 180.0:
                     continue
                 matched = 0
                 for f in peak_freqs:
@@ -7110,7 +7110,7 @@ _defect_scanner_lock = threading.Lock()
 
 def get_defect_scanner(sample_rate: int = 48000) -> "DefectScanner":
     """Return the module-level DefectScanner singleton (thread-safe, double-checked locking)."""
-    global _defect_scanner_instance
+    global _defect_scanner_instance  # pylint: disable=global-statement
     if _defect_scanner_instance is None:
         with _defect_scanner_lock:
             if _defect_scanner_instance is None:
@@ -7121,45 +7121,47 @@ def get_defect_scanner(sample_rate: int = 48000) -> "DefectScanner":
 # ========== CLI/Testing Interface ==========
 
 if __name__ == "__main__":
-    """Test DefectScanner mit Beispiel-Audio."""
+    # Test DefectScanner mit Beispiel-Audio.
 
     # Generiere Test-Audio mit künstlichen Defekten
-    duration = 10  # Sekunden
-    sr = 44100
-    t = np.linspace(0, duration, int(sr * duration))
+    _duration = 10  # Sekunden
+    _sr = 44100
+    _t = np.linspace(0, _duration, int(_sr * _duration))
 
     # Basis-Signal: 440 Hz Sinus
-    audio = 0.5 * np.sin(2 * np.pi * 440 * t)
+    _audio = 0.5 * np.sin(2 * np.pi * 440 * _t)
 
     # Füge Defekte hinzu
     # 1. Clicks (5 pro Sekunde)
-    for i in range(50):
-        pos = int(np.random.rand() * len(audio))
-        audio[pos : pos + 10] += 0.3 * np.random.randn(10)
+    for _i in range(50):
+        _pos = int(np.random.rand() * len(_audio))
+        _audio[_pos : _pos + 10] += 0.3 * np.random.randn(10)
 
     # 2. 60Hz Hum
-    audio += 0.05 * np.sin(2 * np.pi * 60 * t)
+    _audio += 0.05 * np.sin(2 * np.pi * 60 * _t)
 
     # 3. High-freq Noise (Tape Hiss)
-    audio += 0.02 * np.random.randn(len(audio))
+    _audio += 0.02 * np.random.randn(len(_audio))
 
     # 4. Rumble (20 Hz)
-    audio += 0.08 * np.sin(2 * np.pi * 20 * t)
+    _audio += 0.08 * np.sin(2 * np.pi * 20 * _t)
 
     # Test Scanner
-    scanner = DefectScanner(sample_rate=sr)
-    result = scanner.scan(audio, material_type=MaterialType.VINYL)
+    _scanner = DefectScanner(sample_rate=_sr)
+    _result = _scanner.scan(_audio, material_type=MaterialType.VINYL)
 
     logger.debug("\n%s", "=" * 60)
     logger.debug("DEFECT SCAN RESULTS")
     logger.debug("%s", "=" * 60)
-    logger.debug("Material: %s", result.material_type.value)
-    logger.debug("Duration: %.1fs", result.duration_seconds)
+    logger.debug("Material: %s", _result.material_type.value)
+    logger.debug("Duration: %.1fs", _result.duration_seconds)
     logger.debug(
-        f"Analysis Time: {result.analysis_time_seconds:.3f}s ({result.analysis_time_seconds / result.duration_seconds * 100:.1f}% overhead)"
+        "Analysis Time: %.3fs (%.1f%% overhead)",
+        _result.analysis_time_seconds,
+        _result.analysis_time_seconds / _result.duration_seconds * 100,
     )
     logger.debug("\nTop 5 Defects:")
-    for i, score in enumerate(result.get_top_defects(5), 1):
-        logger.debug("  %s. %s", i, score)
+    for _i, _score in enumerate(_result.get_top_defects(5), 1):
+        logger.debug("  %s. %s", _i, _score)
 
-    logger.debug("\nTotal Severity: %.3f", result.get_total_severity())
+    logger.debug("\nTotal Severity: %.3f", _result.get_total_severity())
