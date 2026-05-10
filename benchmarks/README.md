@@ -66,7 +66,7 @@ This directory contains tools and scripts for benchmarking Aurik 9.0 against:
 
 Pflichtlogik des Runners:
 
-- OQS pro Item via `backend/core/mushra_evaluator.py` gegen die gleiche Referenz.
+- OQS (algorithmisch, nicht formaler ITU-MUSHRA-Hörtest) pro Item via `backend/core/mushra_evaluator.py` gegen die gleiche Referenz.
 - Stratifizierte Matrix-Gates pro Zelle `material × defect_class`.
 - Standardmodus verlangt die volle 5×6-Matrix (30 Zellen):
   `tape, vinyl, shellac, digital, vocal` × `hiss, crackle, dropout, reverb, hum, codec`.

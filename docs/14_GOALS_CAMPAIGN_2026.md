@@ -165,7 +165,7 @@ WARNING: Musical Goals Verletzungen (3/14): emotionalitaet, transparenz, artikul
 
 ## Monitoring-Metriken
 
-Nach jedem Fix: `audit_golden_case_vocal.py` laufen lassen und tracken:
+Nach jedem Fix: `audit/audit_golden_case_vocal.py` laufen lassen und tracken:
 
 ```
 [Date] [Sprint] | Passed/14 | Δ Goals | Top 3 Improvements | Top 3 Regressions

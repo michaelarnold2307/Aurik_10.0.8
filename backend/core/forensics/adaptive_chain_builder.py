@@ -257,7 +257,7 @@ class AdaptiveChainBuilder:
 
         if verbose:
             logger.info("\n   Chain created: %s modules", len(chain.modules))
-            logger.info("   Confidence: %.1%", chain.confidence)
+            logger.info("   Confidence: %.1f", chain.confidence)
             logger.info("=" * 60)
 
         self.last_chain = chain

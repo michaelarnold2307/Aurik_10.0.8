@@ -592,9 +592,9 @@ class FeedbackChain:
                 if _prev_goals and isinstance(self.adaptive_goal_thresholds, dict) and self.adaptive_goal_thresholds:
                     _agt_local = self.adaptive_goal_thresholds
                     _deficits = [
-                        float(_agt_local[_dg] - _prev_goals[_dg])
+                        float(_agt_local[_dg] - _prev_goals[_dg])  # type: ignore[index]
                         for _dg in _prev_goals
-                        if _dg in _agt_local and _prev_goals[_dg] < _agt_local[_dg]
+                        if _dg in _agt_local and _prev_goals[_dg] < _agt_local[_dg]  # type: ignore[operator]
                     ]
                     if _deficits:
                         _max_deficit = max(_deficits)
@@ -714,7 +714,7 @@ class FeedbackChain:
             # Optionaler externer Priority-Callback (z.B. aus UnifiedRestorerV3).
             if callable(self.goal_priority_callback):
                 try:
-                    _cb_abort, _cb_reason = self.goal_priority_callback(current, candidate)
+                    _cb_abort, _cb_reason = self.goal_priority_callback(current, candidate)  # pylint: disable=not-callable
                     if _cb_abort:
                         _log_entry = (
                             f"FeedbackChain Iteration {i} abgebrochen: {_cb_reason or 'goal-priority callback'}"

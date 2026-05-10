@@ -361,9 +361,9 @@ class CrackleRemovalPhase(PhaseInterface):
         """Lazy load BANQUET Docker-Plugin (Fallback falls ONNX-Direktzugriff scheitert)."""
         if self._banquet_plugin is None:
             try:
-                from plugins.banquet_vinyl_plugin import BANQUETVinylPlugin
+                from plugins.banquet_vinyl_plugin import BanquetVinylPlugin
 
-                self._banquet_plugin = BANQUETVinylPlugin()
+                self._banquet_plugin = BanquetVinylPlugin()
                 logger.info("BANQUET Docker-Plugin geladen (Fallback-Pfad)")
             except Exception as e:
                 logger.warning("BANQUET Docker-Plugin nicht verfügbar: %s", e)

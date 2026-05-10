@@ -251,7 +251,7 @@ class PANNsPerceptualLoss(nn.Module):
             elif self.distance_metric == "l2":
                 feat_loss = F.mse_loss(output_feat, target_feat)
             elif self.distance_metric == "cosine":
-                feat_loss = 1.0 - F.cosine_similarity(output_feat.flatten(1), target_feat.flatten(1), dim=1).mean()
+                feat_loss = 1.0 - F.cosine_similarity(output_feat.flatten(1), target_feat.flatten(1), dim=1).mean()  # pylint: disable=not-callable
             else:
                 raise ValueError(f"Unknown distance metric: {self.distance_metric}")
 

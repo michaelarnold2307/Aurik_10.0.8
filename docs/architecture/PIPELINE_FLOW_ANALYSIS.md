@@ -98,7 +98,7 @@ CausalReasoner), dann optimiert intervenieren (GP-Optimizer), dann verifizieren
 
 ## Qualitätsgrenzen
 
-| Metrik | Hard-Fail-Schwelle | Weltklasse-Ziel |
+| Metrik | Hard-Fail-Schwelle | Internes Spitzenziel |
 | --- | --- | --- |
 | PQS MOS | >= 3.8 | >= 4.5 |
 | NSIM | >= 0.70 | >= 0.90 |

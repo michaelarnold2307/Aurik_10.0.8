@@ -1061,6 +1061,49 @@ class WowFlutterFix(PhaseInterface):
             except Exception as exc:
                 logger.debug("Phase 12 loudness-preservation: STCG skipped (%s)", exc)
 
+        # §2.51 Stereo-lag xcorr fallback — GCC-PHAT (used by STCG) fails for narrow-band
+        # (near-sinusoidal) audio: the PHAT cross-correlation is periodic and argmax()
+        # lands on a spurious alias near lag=0 instead of the actual delay.
+        # Strategy: detect the delayed channel via onset-energy comparison, then measure
+        # the silence-prefix length directly as the lag estimate. This avoids xcorr
+        # periodicity entirely and works for any signal including pure sines.
+        if proc.ndim == 2 and proc.shape[0] >= 1024:
+            try:
+                _n_onset = min(proc.shape[0], 4096)
+                _cl = proc[:_n_onset, 0].astype(np.float64)
+                _cr = proc[:_n_onset, 1].astype(np.float64)
+                # Per-channel RMS envelope (4-sample blocks) to find first active block.
+                _block = 4
+                _env_l = np.array(
+                    [float(np.sqrt(np.mean(_cl[i : i + _block] ** 2))) for i in range(0, _n_onset - _block, _block)]
+                )
+                _env_r = np.array(
+                    [float(np.sqrt(np.mean(_cr[i : i + _block] ** 2))) for i in range(0, _n_onset - _block, _block)]
+                )
+                _global_rms = max(float(np.sqrt(np.mean(_cl**2 + _cr**2))), 1e-10)
+                _thresh = _global_rms * 0.05  # 5 % of global RMS = "active"
+                # Find first active block in each channel.
+                _act_l = int(np.argmax(_env_l > _thresh)) if np.any(_env_l > _thresh) else len(_env_l)
+                _act_r = int(np.argmax(_env_r > _thresh)) if np.any(_env_r > _thresh) else len(_env_r)
+                _lag_samples = (_act_r - _act_l) * _block  # positive = R is delayed
+                _max_corr_lag = 2048
+                if abs(_lag_samples) > 2 and abs(_lag_samples) <= _max_corr_lag:
+                    # _lag_samples > 0 → R delayed → advance R (remove leading samples)
+                    # _lag_samples < 0 → L delayed → delay R (add leading zeros)
+                    _N_proc = proc.shape[0]
+                    if _lag_samples > 0:
+                        _new_r = np.concatenate([proc[_lag_samples:, 1], np.zeros(_lag_samples)])
+                    else:
+                        _new_r = np.concatenate([np.zeros(-_lag_samples), proc[: _N_proc + _lag_samples, 1]])
+                    proc = np.column_stack([proc[:, 0], _new_r])
+                    logger.debug(
+                        "§2.51 Phase-12 xcorr fallback: L/R lag=%d → correction=%+d samples",
+                        _lag_samples,
+                        _lag_samples,
+                    )
+            except Exception as _xc_exc:
+                logger.debug("§2.51 Phase-12 xcorr fallback non-blocking: %s", _xc_exc)
+
         _max_rms_drop_db = {
             MaterialType.SHELLAC: 1.2,
             MaterialType.WAX_CYLINDER: 1.2,

@@ -54,7 +54,7 @@ repos:
         args: [--branch=main, --branch=release]
       - id: pretty-format-json
         args: [--autofix, --indent=2]
-        exclude: ^\.vscode/
+        exclude: '^(\.vscode/|analysis_results/)'
 
   # ---------------------------------------------------------------------------
   # 2. Black — DEAKTIVIERT (Konflikt mit ruff-format; ruff-format ist black-kompatibel)
@@ -204,7 +204,7 @@ repos:
     hooks:
       - id: prettier
         files: '\.json$'
-        exclude: '^(models/|audit/|sessions/|logs/)'
+        exclude: '^(models/|audit/|sessions/|logs/|analysis_results/)'
 
   # ---------------------------------------------------------------------------
   # 13. Lokale Hooks — Projekt-spezifische Validierungen

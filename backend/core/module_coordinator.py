@@ -736,7 +736,7 @@ class ModuleCoordinator:
             f"Execution complete: {report['successful_modules']}/{report['num_modules_executed']} modules successful in {total_time:.2f}s"
         )
         if quality_guaranteed:
-            logger.info("✓ Quality Guaranteed: %+.1% improvement", mqa_report.musical_improvement)
+            logger.info("✓ Quality Guaranteed: %+.1f improvement", mqa_report.musical_improvement)
 
         return report
 

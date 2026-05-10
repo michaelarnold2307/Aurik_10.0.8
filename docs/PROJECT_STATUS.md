@@ -2,7 +2,7 @@
 
 **Datum:** April 2026  
 **Version:** 9.10.102  
-**Status:** ✅ Produktionsbereit — Weltführendes Musik-Restaurierungssystem
+**Status:** ✅ Produktionsbereit — auf Spitzenqualität ausgelegtes Musik-Restaurierungssystem
 
 > Hinweis: Diese Datei enthält einen historischen Snapshot. Verbindlicher Ist-Stand ist in `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md` dokumentiert.
 
@@ -18,7 +18,12 @@
 | Phasen | **64** (Phase 01–64, Defect-First) |
 | Materialien | **15** auto-erkannte Typen (inkl. wax_cylinder, wire_recording, lacquer_disc) |
 | Musical Goals | **14** psychoakustisch fundierte Ziele |
-| PQS MOS | **>= 4.0** (Minimum) / **>= 4.5** (Weltklasse) |
+| PQS MOS | **>= 4.0** (Minimum) / **>= 4.5** (internes Spitzenziel) |
+
+> Evidenzhinweis: Diese Datei ist ein historischer Snapshot. Aussagen zu Spitzenqualität,
+> Wettbewerbsführung oder formaler Hörtest-Nähe sind intern als Ziel- und Steuerungsrahmen
+> zu verstehen und werden erst durch externe Blindtests und reproduzierbare Vergleichsstudien
+> belastbar.
 | DefectTypes | **32** erkennbare Defektarten |
 | Hardware | CPU-only, Desktop (Linux AppImage & Windows 10/11) |
 | Netzwerk | Keine Cloud, keine Serverabhängigkeiten — 100 % offline |

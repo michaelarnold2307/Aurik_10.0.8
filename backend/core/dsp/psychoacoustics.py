@@ -1090,7 +1090,8 @@ def apply_psychoacoustic_masking_clamp(
                         gain_samples = np.interp(x, centers, gain_t).astype(np.float32)
                         scaled = 1.0 + effective_strength * (gain_samples - 1.0)
                         # Blend: in masked regions (low gain), keep more original
-                        blend = np.clip(scaled, 0.0, 1.0)
+                        # §2.62 G_floor≥0.10: kein NR-Gain unter 10% (verhindert Stille-Artefakt)
+                        blend = np.clip(scaled, 0.10, 1.0)
                         result[ch] = blend * ch_proc + (1.0 - blend) * ch_orig
                     else:
                         ch_orig = orig[:, ch] if ch < orig.shape[1] else orig[:, 0]
@@ -1098,14 +1099,16 @@ def apply_psychoacoustic_masking_clamp(
                         x = np.arange(len(ch_proc), dtype=np.float32)
                         gain_samples = np.interp(x, centers, gain_t).astype(np.float32)
                         scaled = 1.0 + effective_strength * (gain_samples - 1.0)
-                        blend = np.clip(scaled, 0.0, 1.0)
+                        # §2.62 G_floor≥0.10
+                        blend = np.clip(scaled, 0.10, 1.0)
                         result[:, ch] = blend * ch_proc + (1.0 - blend) * ch_orig
                 return np.clip(result, -1.0, 1.0).astype(processed_audio.dtype)
             else:
                 x = np.arange(len(proc_mono), dtype=np.float32)
                 gain_samples = np.interp(x, centers, gain_t).astype(np.float32)
                 scaled = 1.0 + effective_strength * (gain_samples - 1.0)
-                blend = np.clip(scaled, 0.0, 1.0)
+                # §2.62 G_floor≥0.10: verhindert klinisches Stille-Artefakt
+                blend = np.clip(scaled, 0.10, 1.0)
                 result = blend * proc_mono + (1.0 - blend) * orig_mono
                 return np.clip(result, -1.0, 1.0).astype(processed_audio.dtype)
 
@@ -1296,6 +1299,50 @@ def compute_masking_threshold_iso11172(
     return np.asarray(ratio, dtype=np.float32)
 
 
+def compute_versa_confidence(snr_estimate_db: float, material_type: str) -> float:
+    """Estimate how trustworthy a VERSA-style perceptual score is for the material.
+
+    The confidence is intentionally conservative for low-restorability carrier media
+    such as shellac and rises with cleaner, high-SNR digital sources.
+
+    Args:
+        snr_estimate_db: Estimated signal-to-noise ratio in dB.
+        material_type: Material key such as ``cd``, ``vinyl`` or ``shellac``.
+
+    Returns:
+        Confidence scalar in ``[0.10, 1.00]``.
+    """
+    material_key = str(material_type or "unknown").strip().lower()
+    material_key = {
+        "cd_digital": "cd",
+        "dat": "cd",
+        "streaming": "mp3_high",
+        "tape": "cassette",
+    }.get(material_key, material_key)
+
+    material_anchor = {
+        "cd": 0.96,
+        "aac": 0.90,
+        "mp3_high": 0.88,
+        "reel_tape": 0.86,
+        "vinyl": 0.82,
+        "mp3_low": 0.78,
+        "cassette": 0.74,
+        "minidisc": 0.80,
+        "shellac": 0.65,
+        "lacquer_disc": 0.64,
+        "wire_recording": 0.60,
+        "wax_cylinder": 0.58,
+        "unknown": 0.70,
+    }.get(material_key, 0.70)
+
+    snr_db = float(np.nan_to_num(snr_estimate_db, nan=0.0, posinf=45.0, neginf=-10.0))
+    snr_norm = float(np.clip((snr_db + 5.0) / 45.0, 0.0, 1.0))
+    snr_factor = 0.35 + 0.65 * snr_norm
+    confidence = material_anchor * snr_factor
+    return float(np.clip(confidence, 0.10, 1.00))
+
+
 __all__ = [
     "BARK_CENTERS_HZ",
     "BARK_EDGES_HZ",
@@ -1309,6 +1356,7 @@ __all__ = [
     "compute_noise_texture_profile",
     "compute_specific_loudness_array",
     "compute_specific_loudness_zwicker",
+    "compute_versa_confidence",
     "compute_time_varying_loudness",
     "evaluate_mid_pipeline_loudness_delta",
     "get_material_noise_texture",

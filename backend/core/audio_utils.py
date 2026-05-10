@@ -23,19 +23,18 @@ def safe_to_mono(audio: np.ndarray) -> np.ndarray:
     # Determine orientation and convert safely
     if audio.shape[0] == 2 and audio.shape[1] > 2:
         # (2, N) channels-first → mean over channels (axis=0)
-        return np.mean(audio, axis=0)
-    elif audio.shape[0] == 2 and audio.shape[1] == 2:
+        return np.asarray(np.mean(audio, axis=0))
+    if audio.shape[0] == 2 and audio.shape[1] == 2:
         # Edge case: exactly (2, 2) — ambiguous, but treat as (2, N) channels-first
         # This gives a (2,) output
-        return np.mean(audio, axis=0)
-    elif audio.shape[1] == 2:
+        return np.asarray(np.mean(audio, axis=0))
+    if audio.shape[1] == 2:
         # (N, 2) channels-last → mean over channels (axis=1)
-        return np.mean(audio, axis=1)
-    else:
-        # Ambiguous: use heuristic based on which dimension is smaller
-        # (channels are typically 2, samples >> 2)
-        axis = 0 if audio.shape[0] < audio.shape[1] else 1
-        return np.mean(audio, axis=axis)
+        return np.asarray(np.mean(audio, axis=1))
+    # Ambiguous: use heuristic based on which dimension is smaller
+    # (channels are typically 2, samples >> 2)
+    axis = 0 if audio.shape[0] < audio.shape[1] else 1
+    return np.asarray(np.mean(audio, axis=axis))
 
 
 def stereo_channel_view(audio: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

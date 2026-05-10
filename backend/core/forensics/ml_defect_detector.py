@@ -574,7 +574,7 @@ class MLDefectDetector:
             logger.info("=" * 60)
             logger.info("   Samples: %s, Features: %s", X.shape[0], X.shape[1])
             logger.info("   Defect Types: %s", len(self.DEFECT_TYPES))
-            logger.info("   Recall Target: %.1%", self.recall_target)
+            logger.info("   Recall Target: %.1f", self.recall_target)
 
         all_metrics = {}
 
@@ -638,7 +638,7 @@ class MLDefectDetector:
                 if rf_cv_recall.mean() >= self.recall_target or gb_cv_recall.mean() >= self.recall_target:
                     logger.info("   ✅ %s: Recall target MET!", defect_type)
                 else:
-                    logger.warning("   ⚠️ %s: Recall below target (%.1%)", defect_type, self.recall_target)
+                    logger.warning("   ⚠️ %s: Recall below target (%.1f)", defect_type, self.recall_target)
 
             all_metrics[defect_type] = {
                 "rf_recall_mean": rf_cv_recall.mean(),

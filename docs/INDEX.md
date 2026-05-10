@@ -1,7 +1,7 @@
 
 # 📚 Aurik 9.x.x — Projektdokumentation
 
-Offizielle Dokumentation von **Aurik 9.10.124** — dem weltweit ersten intelligenten,
+Offizielle Dokumentation von **Aurik 9.10.124** — einem intelligenten,
 kontextbewussten Musik- und Gesangs-Restaurierungs-, Reparatur- und
 Rekonstruktions-Denkersystem. Alle Inhalte sind an die KI-Programmierrichtlinien
 (`.github/copilot-instructions.md`) ausgerichtet.
@@ -9,6 +9,9 @@ Rekonstruktions-Denkersystem. Alle Inhalte sind an die KI-Programmierrichtlinien
 **Version:** 9.10.124 | **Phasen:** 64 | **Musical Goals:** 14 | **DefectTypes:** 32 | **Tests:** ~11.023
 
 > Hinweis: Verbindlicher Wahrheitsstand ist die Spezifikation in `.github/specs/01-08` plus `docs/CHANGELOG_HISTORY.md`. Wo Zahlen abweichen, gelten Specs/Changelog.
+> Evidenzhinweis: Interne Qualitätsmetriken, Competitive-Benchmarks und Studienpakete in dieser
+> Dokumentation dienen der technischen Steuerung und Validierung. Öffentliche Superlative oder
+> formale Hörtest-Äquivalenz sind erst mit unabhängiger externer Evidenz belastbar.
 
 ---
 

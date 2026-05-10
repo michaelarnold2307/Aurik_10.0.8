@@ -23,14 +23,14 @@ Du kannst jederzeit das Original erneut exportieren oder einen anderen Modus wä
 WAV, MP3, FLAC (weitere Formate in Planung).
 
 **Wie bekomme ich Hilfe?**
-Schreibe eine E-Mail an support@aurik.audio oder nutze den Hilfebutton im Programm.
+Schreibe eine E-Mail an [support@aurik.audio](mailto:support@aurik.audio) oder nutze den Hilfebutton im Programm.
 
 ## Support
 
-- Schnelle Hilfe: support@aurik.audio
+- Schnelle Hilfe: [support@aurik.audio](mailto:support@aurik.audio)
 - Video-Tutorials & Tipps: [www.aurik.audio/support](https://www.aurik.audio/support)
 - Feedback willkommen! Wir entwickeln Aurik mit und für euch weiter.
 
 ---
 
-**Aurik – Schlechter Sound rein, ein Klick, Weltklasse-Sound raus.**
+**Aurik – Schlechter Sound rein, ein Klick, deutlich besserer Sound raus.**

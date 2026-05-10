@@ -625,9 +625,9 @@ if __name__ == "__main__":
 
         logger.info("\n✅ Timeline created: %s", timeline)
         logger.info("\n📊 Statistics:")
-        logger.info("   Vocal: %.1%", timeline.vocal_percentage)
-        logger.info("   Sibilant: %.1%", timeline.sibilant_percentage)
-        logger.info("   Breath: %.1%", timeline.breath_percentage)
+        logger.info("   Vocal: %.1f", timeline.vocal_percentage)
+        logger.info("   Sibilant: %.1f", timeline.sibilant_percentage)
+        logger.info("   Breath: %.1f", timeline.breath_percentage)
         logger.info("\n⚙️ Global Parameters:")
         logger.info("   De-essing: %.2f", timeline.global_deessing_amount)
         logger.info("   Compression: %.1f:1", timeline.global_compression_ratio)

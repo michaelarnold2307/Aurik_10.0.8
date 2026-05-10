@@ -207,7 +207,7 @@ phase_39, phase_41, phase_43, phase_45, phase_51
 
 ## 📞 FRAGEN?
 
-- **Wo finde ich die Scan-Ergebnisse?** → `compliance_output.txt` und diese Datei
+- **Wo finde ich die Scan-Ergebnisse?** → `audit/compliance_output.txt` und `audit/spec_compliance_scan_summary.md`
 - **Kann ich die Fixes automatisieren?** → Ja, P0-Fixes sind mostly regex-replaceable
 - **Beeinflussen die Fixes die Audio-Qualität?** → Nein, es sind Code-Quality-Verbesserungen (nicht Audio-Processing-Änderungen)
 - **Wie wichtig ist phase_20 (CRITICAL)?** → Sehr. Es hat die meisten audio_slice_1d-Fehler und sollte zuerst adressiert werden

@@ -1,6 +1,6 @@
 # Aurik 9.x.x Roadmap – Stand April 2026 (Historischer Snapshot + aktueller Stand)
 
-> **Aurik 9 ist das weltweit erste intelligente, kontextbewusste Musik- und Gesangs-Restaurierungs-, Reparatur- und Rekonstruktions-System. Aktuelle Version: 9.10.102 (April 2026), 64 Phasen, ~11.023 Tests.**
+> **Aurik 9 ist ein intelligentes, kontextbewusstes Musik- und Gesangs-Restaurierungs-, Reparatur- und Rekonstruktions-System. Aktuelle Version: 9.10.102 (April 2026), 64 Phasen, ~11.023 Tests.**
 > Hinweis: Diese Roadmap bildet überwiegend einen historischen Planungsstand ab. Für den aktuellen normativen Zustand gelten `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md`.
 
 ## Abgeschlossene Versionen (Highlights)
@@ -362,18 +362,18 @@
 
 ### Meilenstein 4: Musikalische Exzellenz
 
-**Status:** ✅ 100% abgeschlossen — Weltführerschaft erreicht! (v9.10.46, 8. März 2026)
+**Status:** ✅ 100% abgeschlossen — historischer Milestone-Stand erreicht (v9.10.46, 8. März 2026)
 
 - [x] 50+ psychoakustische Metriken → **14 Musical Goals** (§1.2, `MusicalGoalsChecker`) ✅
 - [x] Material Quality Analyzer + **AdaptiveGoalThresholds** (§2.31) ✅
 - [x] **GoalApplicabilityFilter** + **PhysicalCeilingEstimator** + **GoalPriorityProtocol** ✅
 - [x] ML-Hybrid Quality Improvement (+0.05–0.07 Overall) ✅
-- [x] **Overall Quality: 0.88–0.90+ (PQS-MOS ≥ 4.3, Weltklasse)** ✅
+- [x] **Overall Quality: 0.88–0.90+ (PQS-MOS ≥ 4.3, internes Spitzenniveau)** ✅
 - [x] **Tier 1–3 Enhancement Suite vollständig abgeschlossen** ✅
   - [x] Vocal Enhancement Suite + PSOLA + ConsonantEnhancement ✅
   - [x] Instrumental Enhancement (Bass, Drums, Piano, Guitar, Brass) ✅
   - [x] TransparentDynamics + **MicroDynamicsEnvelopeMorphing** ✅
-  - [x] **GermanSchlagerClassifier** (World-First, Zero-Shot, 6-Schicht DSP+CLAP) ✅
+  - [x] **GermanSchlagerClassifier** (Zero-Shot, 6-Schicht DSP+CLAP) ✅
   - [x] **TransientDecoupledProcessing** + **HarmonicPreservationGuard** ✅
   - [x] **PerPhaseMusicalGoalsGate** (verhindert kumulative Degradation über 56 Phasen) ✅
   - [x] **StemRemixBalancer** + **EnsembleProcessor** + **PerceptualAttentionModel** ✅

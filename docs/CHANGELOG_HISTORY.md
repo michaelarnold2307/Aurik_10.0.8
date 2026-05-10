@@ -137,7 +137,7 @@
 - **§0 Oberstes Prinzip — Klangwahrheit**: Neu in Slim Core. Drei hierarchische Leitprinzipien
   (Primum non nocere > Minimal-Intervention > Perceptuelle Verbesserung). §0 ist normativ
   übergeordnet — Klang schlägt Metrik. §0a Modus-Differenzierung: Restoration (Original-Charakter)
-  vs. Studio 2026 (Weltklasse-Studio-Klang, maximal-zielgerichtete Intervention).
+  vs. Studio 2026 (Studio-Klang auf internem Spitzenniveau, maximal-zielgerichtete Intervention).
 - **§2.29d Differenziertes Regressions-Regime**: P1/P2 bleiben hart (keine Regression erlaubt).
   P3–P5 neu: Pipeline-Netto-Budget — Einzelphasen dürfen vorübergehend verschlechtern, wenn am
   Kettenende alle Goals ≥ Schwellwert. Verhindert übervorsichtiges Wet/Dry bei De-Hiss/EQ.
@@ -730,7 +730,7 @@ Testzahl: 6394 → **6312** (nach v2-Cleanup).
 
 - Musical Goal 9: **SpatialDepthMetric** (≥ 0.75)
 - OQS-Evaluator (algorithmische PEAQ-Approximation, kein BS.1534-3-Hörertest)
-- AMRB v1.0 (10 Szenarien, OS-Führerschaft ≥ 84.0)
+- AMRB v1.0 (10 Szenarien, interne Führungs-Schwelle ≥ 84.0)
 - §4.4: BS-RoFormer, CQTdiff+, Apollo, LAION-CLAP, UTMOS/VERSA als neue Primär-Algorithmen
 - BigVGAN-v2 (NVIDIA 2024, Apache-2.0) als primärer Vocoder-Endschritt (MOS < 4.3)
 - PESQ/DNSMOS/NISQA/STOI/POLQA explizit verboten (§4.4, §10.2, §11.3)

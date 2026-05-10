@@ -1633,7 +1633,7 @@ class AdaptiveProcessingPipeline:
 
                 # Docker-Plugin aufrufen
                 # Demucs separiert in output_dir/vocals.wav, output_dir/accompaniment.wav etc.
-                plugin.process(tmp_in.name, output_dir, stems=context["stem_count"])
+                plugin.process(tmp_in.name, output_dir, stems=context["stem_count"])  # type: ignore[call-arg]
 
                 # Lade separierte Vocals (oder andere Stems je nach goal)
                 vocals_path = os.path.join(output_dir, "vocals.wav")

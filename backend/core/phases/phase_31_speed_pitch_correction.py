@@ -67,7 +67,7 @@ from typing import Any
 import numpy as np
 import scipy.signal as signal
 
-from backend.core.audio_utils import compute_gated_rms_dbfs
+from backend.core.audio_utils import compute_gated_rms_dbfs, compute_signal_relative_gate_dbfs
 from backend.core.stereo_temporal_coherence_guard import get_stereo_temporal_coherence_guard
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
@@ -396,6 +396,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
                 original_audio=audio,
                 processed_audio=result_audio,
                 sample_rate=sample_rate,
+                material_type=material_type,
             )
 
             execution_time = time.time() - start_time
@@ -530,6 +531,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         original_audio: np.ndarray,
         processed_audio: np.ndarray,
         sample_rate: int,
+        material_type: str,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Prevent severe DSP damage before global gates run.
 
@@ -541,6 +543,7 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
         """
         out = np.asarray(processed_audio, dtype=np.float32)
         ref = np.asarray(original_audio, dtype=np.float32)
+        material_key = str(material_type)
 
         meta: dict[str, Any] = {
             "phase31_damage_shield_applied": True,
@@ -569,8 +572,10 @@ class SpeedPitchCorrectionPhase(PhaseInterface):
             logger.debug("Phase 31 damage shield: STCG skipped (%s)", exc)
 
         try:
-            rms_before = float(compute_gated_rms_dbfs(ref, gate_dbfs=-36.0))
-            rms_after = float(compute_gated_rms_dbfs(out, gate_dbfs=-36.0))
+            # §V04 signal-relative gate: derive from pre-phase noise floor + material floor
+            _gate_31 = compute_signal_relative_gate_dbfs(ref, material_key=material_key)
+            rms_before = float(compute_gated_rms_dbfs(ref, gate_dbfs=_gate_31))
+            rms_after = float(compute_gated_rms_dbfs(out, gate_dbfs=_gate_31))
             rms_delta = rms_after - rms_before
             meta["phase31_rms_increase_db"] = float(rms_delta)
             if rms_delta > self._MAX_RMS_INCREASE_DB:

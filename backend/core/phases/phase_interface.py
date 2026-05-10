@@ -63,6 +63,7 @@ class PhaseMetadata:
     musical_goals: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize phase metadata to a plain dictionary."""
         return {
             "phase_id": self.phase_id,
             "name": self.name,
@@ -115,6 +116,7 @@ class PhaseResult:
             self.metrics = self.metadata
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize the phase result payload to a plain dictionary."""
         return {
             "modifications": self.modifications,
             "warnings": self.warnings,
@@ -183,13 +185,13 @@ class PhaseInterface(abc.ABC):
         - Kein direktes Netzwerk-I/O
     """
 
-    def __init__(self, sample_rate: int = 48000, **kwargs) -> None:
+    def __init__(self, sample_rate: int = 48000, **_kwargs) -> None:
         """Basisinitialisierung für alle Phasen.
 
         Args:
             sample_rate: Sample-Rate (Standard 48000 Hz). Wird von Subklassen
                          via super().__init__(sample_rate) weitergegeben.
-            **kwargs:    Zusätzliche Konfigurations-Parameter (werden ignoriert,
+            **_kwargs:   Zusätzliche Konfigurations-Parameter (werden ignoriert,
                          aber akzeptiert, damit Subklassen **kwargs weiterreichen).
         """
         self._logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
@@ -219,7 +221,6 @@ class PhaseInterface(abc.ABC):
     @abc.abstractmethod
     def get_metadata(self) -> PhaseMetadata:
         """Gibt beschreibende Metadaten dieser Phase zurück."""
-        ...
 
     @abc.abstractmethod
     def process(
@@ -240,7 +241,6 @@ class PhaseInterface(abc.ABC):
         Returns:
             PhaseResult mit bereinigtem Audio, NaN/Inf-frei, geclippt auf [-1, 1]
         """
-        ...
 
     # ------------------------------------------------------------------
     # Konkrete Hilfsmethoden (von allen Phasen geerbt)

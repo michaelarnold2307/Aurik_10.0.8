@@ -27,7 +27,7 @@
 
 ## Übersicht
 
-Dieses Dokument ist die **Single Source of Truth** für alle Aurik-globalen Parameter, die garantieren, dass jeder Song reproduzierbar zum ursprünglichen Studio-Klang am Aufnahmetag restauriert wird.
+Dieses Dokument ist die **Single Source of Truth** für alle Aurik-globalen Parameter, die eine reproduzierbare, evidenzbasierte Annäherung an den rekonstruierten Studio-Zielklang steuern. Es definiert interne Kalibrierung und Zielableitung, nicht den externen Beweis eines historisch exakt bekannten Referenzsignals.
 
 **Eingaben** (determiniert die Kalibrierung):
 
@@ -53,17 +53,17 @@ Dieses Dokument ist die **Single Source of Truth** für alle Aurik-globalen Para
 
 ### §09.1a RESTORATION-Mode Schwellwerte (Spec §1.2a)
 
-Ziel: Klang zum Original-Studio-Monitor-Tag zurück.
+Ziel: Klang in Richtung des rekonstruierten Studio-Zielankers zurückführen.
 
 ```python
 CANONICAL_THRESHOLDS_RESTORATION = {
     # P1: Primär (Hartregeln, Minimal-Intervention §2.45)
     "natuerlichkeit":              0.90,    # keine unnaturalen Artefakte
-    "authentizitaet":              0.88,    # Original-Character bewahrt
+    "authentizitaet":              0.88,    # historischer/künstlerischer Charakter bewahrt
 
     # P2: Kern-Klangtreue
     "tonal_center":                0.95,    # Tonalität präzise
-    "timbre_authentizitaet":       0.87,    # Klangfarbe-Originalität
+    "timbre_authentizitaet":       0.87,    # Klangfarbe treu zum rekonstruierten Zielanker
     "artikulation":                0.85,    # Transient-Klarheit
 
     # P3: Musikalische Kohärenz

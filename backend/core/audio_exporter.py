@@ -497,7 +497,7 @@ if __name__ == "__main__":
     # Export to various formats
     exporter = AudioExporter()
 
-    logger.debug("Available formats:", exporter.list_supported_formats())
+    logger.debug("Available formats: %s", exporter.list_supported_formats())
 
     # Single export
     wav_path = exporter.export(audio, sr, Path("test_output.wav"), bit_depth=24)

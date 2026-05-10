@@ -1741,8 +1741,12 @@ def _apply_precise_metric_overrides(
     # (e.g. MicroDynamicsMetric reliability-blend: 0.94; SeparationFidelity floor: 0.70).
     # The quick proxy in _measure_quick already sets all affected goals to 0.5 (neutral)
     # for near-silence — preserve that correct behavior by skipping precise overrides.
-    _rms_guard = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2) + 1e-12)) if audio.ndim == 1 else float(
-        np.sqrt(np.mean(np.mean(audio.astype(np.float32), axis=0 if audio.shape[0] <= 2 else 1) ** 2) + 1e-12)
+    _rms_guard = (
+        float(np.sqrt(np.mean(audio.astype(np.float32) ** 2) + 1e-12))
+        if audio.ndim == 1
+        else float(
+            np.sqrt(np.mean(np.mean(audio.astype(np.float32), axis=0 if audio.shape[0] <= 2 else 1) ** 2) + 1e-12)
+        )
     )
     if _rms_guard < 1e-5:
         return scores  # proxy values (0.5 = neutral) are correct for silence
@@ -1879,12 +1883,16 @@ def _measure_quick(
             # §9.7.18: reference FFT uses same 4096-sample STFT basis as fft_mag
             if len(_ref_mono) >= _N_FFT_QK:
                 _n_ref_qk = min(200, max(1, (len(_ref_mono) - _N_FFT_QK) // _hop_qk))
-                _ref_fft = np.stack(
-                    [
-                        np.abs(np.fft.rfft(_ref_mono[_j * _hop_qk : _j * _hop_qk + _N_FFT_QK] * _win_qk))
-                        for _j in range(_n_ref_qk)
-                    ]
-                ).mean(axis=0).astype(np.float32)
+                _ref_fft = (
+                    np.stack(
+                        [
+                            np.abs(np.fft.rfft(_ref_mono[_j * _hop_qk : _j * _hop_qk + _N_FFT_QK] * _win_qk))
+                            for _j in range(_n_ref_qk)
+                        ]
+                    )
+                    .mean(axis=0)
+                    .astype(np.float32)
+                )
             else:
                 _ref_fft = np.abs(np.fft.rfft(_ref_mono, n=_N_FFT_QK)).astype(np.float32)
         except Exception:
@@ -1921,7 +1929,7 @@ def _measure_quick(
                 # Musik mit Becken/Streicher/Brillanz: ratio ~ 0.15–0.40 → score 0.5–1.0
                 # Tiefes Mono-Signal (Bass only): ratio ~ 0.005 → score 0.0
                 # Kalibrierung: ratio 0.05 → 0.25; 0.20 → 0.75; 0.35+ → 1.0
-                _hf_energy_b = float(np.mean(_hf_bins_b ** 2))
+                _hf_energy_b = float(np.mean(_hf_bins_b**2))
                 _mid_hf_energy_b = float(np.mean(np.concatenate([_mid_bins_b, _hf_bins_b]) ** 2)) + 1e-12
                 _hf_ratio_b = float(_hf_energy_b / _mid_hf_energy_b)
                 # score: 0 at ratio=0, 0.5 at 0.15, 1.0 at 0.30+
@@ -2269,7 +2277,7 @@ def _measure_quick(
                 if np.sum(_active_mask_nat) >= 4:
                     _log_active = _log_mel_nat[_active_mask_nat]
                     # Smoothness über aktive Bänder (NR-Artefakte = jagged Envelope)
-                    _n_act = len(_log_active)
+                    len(_log_active)
                     _sm_act = (_log_active[:-2] + _log_active[1:-1] + _log_active[2:]) / 3.0
                     _irr_num_nat = float(np.sum(np.abs(_log_active[1:-1] - _sm_act)))
                     _irr_den_nat = float(np.sum(np.abs(_log_active))) + 1e-12
@@ -2330,7 +2338,7 @@ def _measure_quick(
                     _sfq = np.fft.rfftfreq(1024, d=1.0 / sr)
                     for _bi in range(12):
                         _bm = (_sfq >= _mel_edges_tb[_bi]) & (_sfq < _mel_edges_tb[_bi + 1])
-                        _tb_matrix[_fi, _bi] = float(np.mean(_sfft[_bm]**2)) if _bm.any() else 0.0
+                        _tb_matrix[_fi, _bi] = float(np.mean(_sfft[_bm] ** 2)) if _bm.any() else 0.0
                 # Normiere jede Zeile (Frame) auf relative Verteilung
                 _row_sums = _tb_matrix.sum(axis=1, keepdims=True) + 1e-12
                 _tb_norm = _tb_matrix / _row_sums
@@ -2405,9 +2413,7 @@ def _measure_quick(
         if _rms_auth < 1e-5:
             scores["authentizitaet"] = 0.5
         else:
-            _mel_auth_edges = np.exp(
-                np.linspace(np.log(100.0), np.log(16000.0), 25)
-            ).astype(np.float32)
+            _mel_auth_edges = np.exp(np.linspace(np.log(100.0), np.log(16000.0), 25)).astype(np.float32)
             _mel_auth_powers: list[float] = []
             for _k in range(24):
                 _m_auth = (freqs >= _mel_auth_edges[_k]) & (freqs < _mel_auth_edges[_k + 1])
@@ -2453,10 +2459,7 @@ def _measure_quick(
             # Musik mit Dynamik: starke Onsets → crest_env 2–6
             hop_e = max(1, sr // 100)  # 10ms Frames
             rms_frames = np.array(
-                [
-                    float(np.sqrt(np.mean(mono[i : i + hop_e] ** 2) + 1e-12))
-                    for i in range(0, len(mono) - hop_e, hop_e)
-                ]
+                [float(np.sqrt(np.mean(mono[i : i + hop_e] ** 2) + 1e-12)) for i in range(0, len(mono) - hop_e, hop_e)]
             )
             _env_peak = float(np.percentile(rms_frames, 99)) + 1e-12
             _env_mean = float(np.mean(rms_frames)) + 1e-12
@@ -2482,9 +2485,7 @@ def _measure_quick(
             # crest_score (Hüllkurven-Crest): Rauschen → flach → ~0; Musik m. Dynamik → hoch.
             # variance_score (dB-Bereich p90-p10): Pausen/Crescendo → hoch; steady-state → 0.
             # Kalibrierung: echte Musik mit Pausen liefert crest_score ~0.40–0.80 → 0.76.
-            scores["emotionalitaet"] = float(
-                np.clip(0.60 * crest_score + 0.40 * variance_score, 0.0, 1.0)
-            )
+            scores["emotionalitaet"] = float(np.clip(0.60 * crest_score + 0.40 * variance_score, 0.0, 1.0))
             # §9.7.5 Preservation: RMS-envelope correlation (dynamics preservation)
             if _ref_mono is not None:
                 _rm_ml = min(len(mono), len(_ref_mono))
@@ -2495,10 +2496,7 @@ def _measure_quick(
                     ]
                 )
                 _proc_rms = np.array(
-                    [
-                        float(np.sqrt(np.mean(mono[i : i + hop_e] ** 2) + 1e-12))
-                        for i in range(0, _rm_ml - hop_e, hop_e)
-                    ]
+                    [float(np.sqrt(np.mean(mono[i : i + hop_e] ** 2) + 1e-12)) for i in range(0, _rm_ml - hop_e, hop_e)]
                 )
                 _r = _safe_pearson(_ref_rms, _proc_rms)
                 if _r > 0.7:
@@ -2541,7 +2539,7 @@ def _measure_quick(
             for _fl_t, _fh_t in _oct_bands_t:
                 _b_t = fft_mag[(freqs >= _fl_t) & (freqs < _fh_t)]
                 if len(_b_t) > 5:
-                    _band_energies_t.append(float(np.mean(_b_t ** 2)))
+                    _band_energies_t.append(float(np.mean(_b_t**2)))
             if len(_band_energies_t) >= 3:
                 _be_arr = np.array(_band_energies_t, dtype=np.float64)
                 _be_sum = _be_arr.sum() + 1e-12
@@ -2561,9 +2559,16 @@ def _measure_quick(
 
     # ── Spatial Depth (M/S-Korrelation bei Stereo, 0.5 bei Mono) ──────
     try:
-        if audio.ndim == 2 and audio.shape[1] >= 2:
-            left = audio[:, 0].astype(np.float32)
-            right = audio[:, 1].astype(np.float32)
+        # §2.51/§2.63 Stereo-Orientierungs-Fix (v9.12.3): UV3 übergibt (2,N) channels-first.
+        # audio.shape[1] >= 2 war bei (2,N) True (N >> 2), aber audio[:,0] = 2-Sample-Spalte ≠ Kanal.
+        # Folge: left/right = 2-Sample-Array → near-silence RMS → score = 0.5 (konstant).
+        # Fix: orientierungs-adaptives L/R-Splitting — analog zur mono-Konvertierung oben.
+        _audio_sd = audio
+        if audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2:
+            _audio_sd = audio.T  # (2,N) channels-first → (N,2) samples-first
+        if _audio_sd.ndim == 2 and _audio_sd.shape[1] >= 2:
+            left = _audio_sd[:, 0].astype(np.float32)
+            right = _audio_sd[:, 1].astype(np.float32)
             _rms_sd = float(np.sqrt(np.mean(left**2) + np.mean(right**2) + 1e-12))
             if _rms_sd < 1e-5:
                 scores["spatial_depth"] = 0.5  # near-silence: 1e-12/(2e-12) → ratio=0.5 → score 1.0 (misleading)
@@ -2620,9 +2625,7 @@ def _measure_quick(
         if _rms_sep < 1e-5:
             scores["separation_fidelity"] = 0.5
         else:
-            _mel_sep_edges = np.exp(
-                np.linspace(np.log(100.0), np.log(16000.0), 25)
-            ).astype(np.float32)
+            _mel_sep_edges = np.exp(np.linspace(np.log(100.0), np.log(16000.0), 25)).astype(np.float32)
             _mel_sep_powers: list[float] = []
             for _k in range(24):
                 _m_sep = (freqs >= _mel_sep_edges[_k]) & (freqs < _mel_sep_edges[_k + 1])
@@ -3115,8 +3118,7 @@ class PerPhaseMusicalGoalsGate:
             if self._rollback_count > 3 and not self._user_warned:
                 self._user_warned = True
                 logger.warning(
-                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke"
-                    " angewendet, um den Klang zu schützen."
+                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, um den Klang zu schützen."
                 )
 
         goal_regressions = {

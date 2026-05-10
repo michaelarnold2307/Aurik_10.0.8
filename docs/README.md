@@ -1,6 +1,6 @@
 # Aurik 9 — Intelligentes Musik-Restaurierungssystem
 
-**Version:** 9.11.53 | **Status:** ✅ Produktionsbereit — Weltführend
+**Version:** 9.11.53 | **Status:** ✅ Produktionsbereit — auf Spitzenqualität ausgerichtet
 
 **Datum:** April 2026
 
@@ -8,11 +8,14 @@
 
 ---
 
-> Aurik 9.x.x ist ein _weltweit erstmaliges intelligentes, kontextbewusstes
+> Aurik 9.x.x ist ein _intelligentes, kontextbewusstes
 > Musik- und Gesangs-Restaurierungs-, Reparatur- und Rekonstruktions-Denkersystem_.
 > Es kombiniert psychoakustisch fundierte DSP, Bayesianische Kausalinferenz,
 > Gaussianische Prozess-Optimierung und perceptuelle Qualitätsbewertung zu einer
 > kognitiven Restaurierungs-Intelligenz.
+> Evidenzhinweis: Öffentliche Superlative und formale Hörtest-Äquivalenz werden
+> erst durch unabhängige, verblindete Hörtests und reproduzierbare externe
+> Wettbewerbsvergleiche belastbar.
 
 ---
 

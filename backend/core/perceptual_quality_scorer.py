@@ -156,8 +156,8 @@ class PerceptualQualityScorer:
             _deg_mel = np.dot(_mel_basis, _deg_stft) + 1e-10
             from scipy.fft import dct
 
-            _ref_mfcc = dct(np.log(_ref_mel), type=2, axis=0, norm="ortho")[:13, :]
-            _deg_mfcc = dct(np.log(_deg_mel), type=2, axis=0, norm="ortho")[:13, :]
+            _ref_mfcc = dct(np.log(_ref_mel), type=2, axis=0, norm="ortho")[:13, :]  # type: ignore[index]
+            _deg_mfcc = dct(np.log(_deg_mel), type=2, axis=0, norm="ortho")[:13, :]  # type: ignore[index]
             _min_t = min(_ref_mfcc.shape[1], _deg_mfcc.shape[1])
             _mcd_frames = np.sqrt(np.sum((_ref_mfcc[:, :_min_t] - _deg_mfcc[:, :_min_t]) ** 2, axis=0))
             # MCD in dB: (10/ln10) × sqrt(2) × mean_euclidean ≈ 6.14 × mean

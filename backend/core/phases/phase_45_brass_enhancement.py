@@ -47,10 +47,25 @@ from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, Phase
 try:
     from dsp.formant_system import FormantSystem as _FormantSystemCls
 
-    _FORMANT_SYSTEM_BRASS: Any = None
+    _FORMANT_SYSTEM_BRASS: list[Any] = [None]  # mutable container — avoids global statement
 except Exception:
     _FormantSystemCls = None  # type: ignore[assignment,misc]
-    _FORMANT_SYSTEM_BRASS = None
+    _FORMANT_SYSTEM_BRASS = [None]
+
+try:
+    from dsp.instrument_formant_corrector import correct_instrument_formant_drift as _correct_instrument_formant_drift
+except Exception:
+    _correct_instrument_formant_drift = None  # type: ignore[assignment]
+
+try:
+    from backend.core.sub_stem_processor import process_sub_stems as _process_sub_stems
+except Exception:
+    _process_sub_stems = None  # type: ignore[assignment]
+
+try:
+    from backend.core.physics_resonance_enhancer import enhance_physics_resonance as _enhance_physics_resonance
+except Exception:
+    _enhance_physics_resonance = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +148,9 @@ class BrassEnhancementPhase(PhaseInterface):
             description=self.description,
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:
+    def process(
+        self, audio: np.ndarray, sample_rate: int = 48000, material_type: str = "unknown", **kwargs
+    ) -> PhaseResult:
         """
         Brass Enhancement: Harmonics + EQ.
 
@@ -144,7 +161,6 @@ class BrassEnhancementPhase(PhaseInterface):
                           presence_db (float, default 2.5)   — Presence-EQ-Gain dB
                           air_db      (float, default 1.8)   — Air-Shelf-Gain dB
         """
-        sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p45_transposed = to_channels_last(audio)
         self.validate_input(audio)
@@ -190,8 +206,7 @@ class BrassEnhancementPhase(PhaseInterface):
         #      This inserts the second harmonic at the correct phase relationship to the fundamental.
         #    Band-limited to 500–4000 Hz HP-filtered copy to avoid LF mud.
         try:
-            from scipy.signal import hilbert as _hilbert
-
+            _hilbert = sig.hilbert
             # §2.51 Anti-Zeitversatz: sosfiltfilt — BP-gefiltertes Signal liefert Phase/Amplitude
             # für H2-Synthese; h2 wird auf x/mid aufaddiert; sosfilt erzeugt Zeitversatz.
             sos_bp = sig.butter(2, [300.0, 4000.0], btype="band", fs=sample_rate, output="sos")
@@ -253,11 +268,10 @@ class BrassEnhancementPhase(PhaseInterface):
         # Instrument-guided formant enhancement (Benade 1976 brass resonance targets)
         igt_frames = 0
         try:
-            global _FORMANT_SYSTEM_BRASS
             if _FormantSystemCls is not None:
-                if _FORMANT_SYSTEM_BRASS is None:
-                    _FORMANT_SYSTEM_BRASS = _FormantSystemCls(enhance_singers_formant=False)
-                processed, igt_report = _FORMANT_SYSTEM_BRASS.instrument_guided_enhance(
+                if _FORMANT_SYSTEM_BRASS[0] is None:
+                    _FORMANT_SYSTEM_BRASS[0] = _FormantSystemCls(enhance_singers_formant=False)
+                processed, igt_report = _FORMANT_SYSTEM_BRASS[0].instrument_guided_enhance(
                     processed, sample_rate, instrument="brass", correction_strength=0.20
                 )
                 igt_frames = igt_report.get("frames_processed", 0)
@@ -267,39 +281,47 @@ class BrassEnhancementPhase(PhaseInterface):
 
         # Formant-Drift-Korrektur via DTW (Schritt 3)
         try:
-            from dsp.instrument_formant_corrector import correct_instrument_formant_drift
-
-            drift_result = correct_instrument_formant_drift(processed, sample_rate, instrument="brass")
-            processed = drift_result.audio
-            logger.debug(
-                "Phase 45 drift correction: detected=%s frames=%d/%d drift=%.1fHz",
-                drift_result.drift_detected,
-                drift_result.n_frames_corrected,
-                drift_result.total_frames,
-                drift_result.mean_drift_hz,
-            )
+            if _correct_instrument_formant_drift is not None:
+                drift_result = _correct_instrument_formant_drift(processed, sample_rate, instrument="brass")
+                processed = drift_result.audio
+                logger.debug(
+                    "Phase 45 drift correction: detected=%s frames=%d/%d drift=%.1fHz",
+                    drift_result.drift_detected,
+                    drift_result.n_frames_corrected,
+                    drift_result.total_frames,
+                    drift_result.mean_drift_hz,
+                )
         except Exception as _drift_exc:
             logger.debug("Phase 45 drift correction skipped: %s", _drift_exc)
 
         # Sub-Stem-Verarbeitung (Schritt 4)
         try:
-            from backend.core.sub_stem_processor import process_sub_stems
-
-            ss_result = process_sub_stems(processed, sample_rate, instrument="brass", processing_strength=0.30)
-            processed = ss_result.audio
-            logger.debug("Phase 45 sub-stem: bands=%d strength=%.2f", ss_result.n_bands, ss_result.processing_strength)
+            if _process_sub_stems is not None:
+                # SubStemProcessor MAX_STRENGTH=0.60; 0.55 for brass (bright harmonics — conservative)
+                # outer blend (_effective_strength) is the PMGG control knob.
+                ss_result = _process_sub_stems(processed, sample_rate, instrument="brass", processing_strength=0.55)
+                processed = ss_result.audio
+                logger.debug(
+                    "Phase 45 sub-stem: bands=%d strength=%.2f",
+                    ss_result.n_bands,
+                    ss_result.processing_strength,
+                )
         except Exception as _ss_exc:
             logger.debug("Phase 45 sub-stem skipped: %s", _ss_exc)
 
         # Physics-Resonanz (Schritt 5 — Biquad Body Resonance)
         try:
-            from backend.core.physics_resonance_enhancer import enhance_physics_resonance
-
-            pr_result = enhance_physics_resonance(processed, sample_rate, instrument="brass", enhancement_strength=0.40)
-            processed = pr_result.audio
-            logger.debug(
-                "Phase 45 physics resonance: peaks=%d strength=%.2f", pr_result.n_peaks, pr_result.enhancement_strength
-            )
+            if _enhance_physics_resonance is not None:
+                # PhysicsResonanceEnhancer MAX_STRENGTH=1.0; 0.65 for brass (internal 4 dB ceiling).
+                pr_result = _enhance_physics_resonance(
+                    processed, sample_rate, instrument="brass", enhancement_strength=0.65
+                )
+                processed = pr_result.audio
+                logger.debug(
+                    "Phase 45 physics resonance: peaks=%d strength=%.2f",
+                    pr_result.n_peaks,
+                    pr_result.enhancement_strength,
+                )
         except Exception as _pr_exc:
             logger.debug("Phase 45 physics resonance skipped: %s", _pr_exc)
 

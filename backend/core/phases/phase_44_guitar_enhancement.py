@@ -48,7 +48,31 @@ except Exception:
     _FormantSystemCls = None  # type: ignore[assignment,misc]
     _FORMANT_SYSTEM_GUITAR = None
 
+try:
+    from dsp.instrument_formant_corrector import correct_instrument_formant_drift
+except Exception:
+    correct_instrument_formant_drift = None  # type: ignore[assignment]
+
+try:
+    from backend.core.sub_stem_processor import process_sub_stems
+except Exception:
+    process_sub_stems = None  # type: ignore[assignment]
+
+try:
+    from backend.core.physics_resonance_enhancer import enhance_physics_resonance
+except Exception:
+    enhance_physics_resonance = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+
+def _get_formant_system_guitar():
+    """Return the cached guitar formant system instance when available."""
+    if _FormantSystemCls is None:
+        return None
+    if _FORMANT_SYSTEM_GUITAR is None:
+        return _FormantSystemCls(enhance_singers_formant=False)
+    return _FORMANT_SYSTEM_GUITAR
 
 
 def _spectral_centroid(audio: np.ndarray) -> float:
@@ -110,13 +134,20 @@ class GuitarEnhancementPhase(PhaseInterface):
             description=self.PHASE_DESCRIPTION,
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         Guitar Enhancement: Transient + Exciter + EQ.
 
         Args:
             audio:        Mono oder Stereo
             sample_rate:  Hz
+            material_type: Träger-Material z.B. "tape", "vinyl", "unknown"
             **kwargs:     transient_gain (float, default 0.15)
                           exciter_gain   (float, default 1.0 = Genre-Default)
         """
@@ -286,57 +317,66 @@ class GuitarEnhancementPhase(PhaseInterface):
         # Instrument-guided formant enhancement (InstrumentFormantTargets — guitar body resonances)
         igt_frames = 0
         try:
-            global _FORMANT_SYSTEM_GUITAR
-            if _FormantSystemCls is not None:
-                if _FORMANT_SYSTEM_GUITAR is None:
-                    _FORMANT_SYSTEM_GUITAR = _FormantSystemCls(enhance_singers_formant=False)
-                formant_system = _FORMANT_SYSTEM_GUITAR
-                if formant_system is not None:
-                    processed, igt_report = formant_system.instrument_guided_enhance(
-                        processed, sample_rate, instrument="guitar", correction_strength=0.20
-                    )
-                    igt_frames = igt_report.get("frames_processed", 0)
-                    logger.debug("Phase 44 InstrumentFormant: guitar frames=%d", igt_frames)
+            formant_system = _get_formant_system_guitar()
+            if formant_system is not None:
+                processed, igt_report = formant_system.instrument_guided_enhance(
+                    processed, sample_rate, instrument="guitar", correction_strength=0.20
+                )
+                igt_frames = igt_report.get("frames_processed", 0)
+                logger.debug("Phase 44 InstrumentFormant: guitar frames=%d", igt_frames)
         except Exception as _igt_exc:
             logger.debug("Phase 44 instrument_guided_enhance skipped: %s", _igt_exc)
 
         # Formant-Drift-Korrektur via DTW (Schritt 3)
         try:
-            from dsp.instrument_formant_corrector import correct_instrument_formant_drift
-
-            drift_result = correct_instrument_formant_drift(processed, sample_rate, instrument="guitar")
-            processed = drift_result.audio
-            logger.debug(
-                "Phase 44 drift correction: detected=%s frames=%d/%d drift=%.1fHz",
-                drift_result.drift_detected,
-                drift_result.n_frames_corrected,
-                drift_result.total_frames,
-                drift_result.mean_drift_hz,
-            )
+            _drift_corrector = correct_instrument_formant_drift
+            if _drift_corrector is not None:
+                drift_result = _drift_corrector(processed, sample_rate, instrument="guitar")
+                processed = drift_result.audio
+                logger.debug(
+                    "Phase 44 drift correction: detected=%s frames=%d/%d drift=%.1fHz",
+                    drift_result.drift_detected,
+                    drift_result.n_frames_corrected,
+                    drift_result.total_frames,
+                    drift_result.mean_drift_hz,
+                )
         except Exception as _drift_exc:
             logger.debug("Phase 44 drift correction skipped: %s", _drift_exc)
 
         # Sub-Stem-Verarbeitung (Schritt 4)
         try:
-            from backend.core.sub_stem_processor import process_sub_stems
-
-            ss_result = process_sub_stems(processed, sample_rate, instrument="guitar", processing_strength=0.35)
-            processed = ss_result.audio
-            logger.debug("Phase 44 sub-stem: bands=%d strength=%.2f", ss_result.n_bands, ss_result.processing_strength)
+            if process_sub_stems is not None:
+                # MAX_STRENGTH cap for SubStemProcessor is 0.60; outer blend (_effective_strength)
+                # controls final PMGG mix, so internal processing runs at full capacity.
+                ss_result = process_sub_stems(
+                    processed,
+                    sample_rate,
+                    instrument="guitar",
+                    processing_strength=0.60,
+                )
+                processed = ss_result.audio
+                logger.debug(
+                    "Phase 44 sub-stem: bands=%d strength=%.2f",
+                    ss_result.n_bands,
+                    ss_result.processing_strength,
+                )
         except Exception as _ss_exc:
             logger.debug("Phase 44 sub-stem skipped: %s", _ss_exc)
 
         # Physics-Resonanz (Schritt 5 — Biquad Body Resonance)
         try:
-            from backend.core.physics_resonance_enhancer import enhance_physics_resonance
-
-            pr_result = enhance_physics_resonance(
-                processed, sample_rate, instrument="guitar", enhancement_strength=0.40
-            )
-            processed = pr_result.audio
-            logger.debug(
-                "Phase 44 physics resonance: peaks=%d strength=%.2f", pr_result.n_peaks, pr_result.enhancement_strength
-            )
+            if enhance_physics_resonance is not None:
+                # PhysicsResonanceEnhancer MAX_STRENGTH=1.0; 0.70 = conservative-max for guitar
+                # (internal MAX_GAIN_DB=4.0 provides hard per-peak ceiling).
+                pr_result = enhance_physics_resonance(
+                    processed, sample_rate, instrument="guitar", enhancement_strength=0.70
+                )
+                processed = pr_result.audio
+                logger.debug(
+                    "Phase 44 physics resonance: peaks=%d strength=%.2f",
+                    pr_result.n_peaks,
+                    pr_result.enhancement_strength,
+                )
         except Exception as _pr_exc:
             logger.debug("Phase 44 physics resonance skipped: %s", _pr_exc)
 

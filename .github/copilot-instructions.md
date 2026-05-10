@@ -1,8 +1,8 @@
 # Aurik 9.x.x — KI-Programmierrichtlinien für GitHub Copilot
 
-> **Systemidentität**: Aurik 9.x.x ist ein *weltweit erstmaliges intelligentes,
+> **Systemidentität**: Aurik 9.x.x ist ein *intelligentes,
 > kontextbewusstes Musik- und Gesangs-Restaurations-, Reparatur- und
-> Rekonstruktions-Denkersystem.* Stand: Mai 2026 — Version **9.12.0**
+> Rekonstruktions-Denkersystem mit Anspruch auf Spitzenqualität.* Stand: Mai 2026 — Version **9.12.0**
 >
 > **instructions_version: 9.0** — Far-beyond-SOTA-Revision: §0h Music-Death-Shield + §0g Autonomes-Entscheidungs-Doktrin + §0i Perceptual-Transparency-Guarantee + §0a Crossfire-Modus-Invariante + §2.44 HPI-Floor-Bug-Fix + §2.44 VERSA-Primärpflicht + §2.45b Hochrestorabilität-Gate + §2.46e Hallucination-Guard + §2.46f Natural-Performance-Artifacts-Guard + §2.60 Rollback-Hierarchie-Komplettierung + §2.61 Output-Length-Guard + §2.62 Psychoakustischer-Masking-Guard + §4.4 SOTA-Matrix 2026-Update + §0j KI-Modell-Limitation-Awareness + §2.46b-Deduplizierung + Material-adaptive-Böden-Erklärung + Per-Song-Studio-Day-Target + §2.36-LyricsGuided-Phonem-Schutz + CAUSE_TO_PHASES-Sync-VERBOTEN normiert 01.05.2026
 >
@@ -12,7 +12,7 @@
 
 ## §0 Oberstes Prinzip — Klangwahrheit (vor allen technischen Regeln)
 
-**Das Ziel jeder Restaurierung ist, dass der Hörer die Augen schließt und die originale Performance hört — nicht eine technisch korrekte Signalverarbeitung, und nicht eine „verbesserte“ Version.** Jede Entscheidung in Pipeline, Phase, Metrik und Export wird an diesem Maßstab gemessen.
+**Das Ziel jeder Restaurierung ist, dass der Hörer die Augen schließt und die originale Performance hört — nicht eine technisch korrekte Signalverarbeitung, und nicht eine „verbesserte“ Version.** Jede Entscheidung in Pipeline, Phase, Metrik und Export wird an diesem Maßstab gemessen. Dieser Satz ist ein bindendes Qualitätsziel; öffentliche Überlegenheits- oder Transparenz-Claims erfordern zusätzlich externe Evidenz.
 
 **Drei Leitprinzipien** (hierarchisch, bei Konflikt gilt die höhere Stufe):
 
@@ -33,7 +33,7 @@
 
 ### §0i [RELEASE_MUST] Perceptual Transparency Guarantee (v9.12.0)
 
-**Restoration-Ziel**: Der Hörer soll **keinen Eingriff wahrnehmen** — er hört das Original wie am Tag der Aufnahme im Studio, nicht eine „restaurierte" Version. Eingriffe, die wahrnehmbar sind, gelten als Restaurierungsfehler, auch wenn sie technisch korrekt sind.
+**Restoration-Ziel**: Der Hörer soll **keinen Eingriff wahrnehmen** — er hört das Original wie am Tag der Aufnahme im Studio, nicht eine „restaurierte" Version. Eingriffe, die wahrnehmbar sind, gelten als Restaurierungsfehler, auch wenn sie technisch korrekt sind. Intern wird dieses Ziel über Proxys wie OQS, timbral_fidelity und Frisson-Schutz gesteuert; externe Hörtest-Äquivalenz ist davon getrennt nachzuweisen.
 
 **Mess-Kriterien für Perceptual Transparency**:
 - `OQS ≥ 80` (algorithmisch, §8.1.1 — 0–100-Skala, kein ITU-R BS.1534-3-Hörertest; Referenzpunkt: best_carrier_checkpoint oder degradierter Input)
@@ -41,7 +41,7 @@
 - `timbral_fidelity ≥ 0.93` zum best_carrier_checkpoint (nicht zum degradierten Input)
 - Frisson-Zonen vollständig erhalten (§2.56/§Frisson): kein Klimax gedämpft, keine Gänsehaut-Passage geglättet
 
-**Invariante**: Aurik zeigt dem Hörer **nie** ein Ergebnis, das technisch besser aussieht aber schlechter klingt. Der OQS ist bindend (Materialgrenze gem. §8.1.1b). Wenn er unter dem Material-Minimum liegt, wird Strength reduziert oder auf Checkpoint zurückgerollt.
+**Invariante**: Aurik zeigt dem Hörer **nie** ein Ergebnis, das technisch besser aussieht aber schlechter klingt. Der OQS ist bindend (Materialgrenze gem. §8.1.1b) als interne Gate- und Steuerungsmetrik. Wenn er unter dem Material-Minimum liegt, wird Strength reduziert oder auf Checkpoint zurückgerollt.
 
 ### §0g [RELEASE_MUST] Autonomes Entscheidungs-Doktrin (v9.12.0)
 
@@ -92,7 +92,7 @@
 
 | Prinzip | Restoration | Studio 2026 |
 |---|---|---|
-| **Klangziel** | **Tonträgerkette invertieren** — den Klang wiederherstellen, der im Studio aus den Monitoren kam, bevor Trägermedium, Kopien und Alterung ihn degradiert haben | Bestmöglicher Studio-Klang — als wäre das Stück heute in einem Weltklasse-Studio aufgenommen |
+| **Klangziel** | **Tonträgerkette invertieren** — den Klang wiederherstellen, der im Studio aus den Monitoren kam, bevor Trägermedium, Kopien und Alterung ihn degradiert haben | Bestmöglicher Studio-Klang — als wäre das Stück heute in einem Spitzenstudio aufgenommen |
 | **Primum non nocere** | Unverändert — kein Artefakt, kein Klangschaden | Unverändert — auch Enhancement darf keine Artefakte erzeugen |
 | **Intervention** | **Minimal** — nur Tonträgerverluste rückgängig machen, nichts hinzufügen | **Maximal-zielgerichtet** — volle Enhancement-Kette (Stem-Sep, Vocal-AI, Reference-Mastering, Stereo-Imaging), aber jede Phase muss messbaren Klanggewinn bringen |
 | **Natürlichkeit** | Original-Charakter: Studio-Raumakustik, Ära-Klang, Recording-Chain-Signatur bewahren | Studio-Natürlichkeit: Klingt wie eine echte, professionelle Aufnahme — nicht synthetisch, nicht überbearbeitet |

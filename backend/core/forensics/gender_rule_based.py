@@ -41,7 +41,7 @@ class RuleBasedGenderDetector:
             return "unknown"
         audio, sr = _af_res["audio"], int(_af_res["sr"])
         if audio.ndim > 1:
-            audio = audio[0]  # Mono
+            audio = audio[:, 0]  # Mono (left channel, §VERBOTEN: audio[0] wrong for (samples×channels))
         # Robustere Pitch-Schätzung: Median über voiced frames
         f0, voiced_ratio = self._estimate_pitch(audio, sr)
         # Formanten: Mittelwert über mehrere Frames

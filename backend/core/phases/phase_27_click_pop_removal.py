@@ -299,12 +299,13 @@ class ClickPopRemoval(PhaseInterface):
         try:
             from backend.core.lyrics_guided_enhancement import LyricsGuidedEnhancement
             from backend.core.natural_performance_detector import get_natural_performance_detector
+
             _mono27 = cleaned_audio.mean(axis=0) if cleaned_audio.ndim == 2 else cleaned_audio
             _orig27 = audio.mean(axis=0) if audio.ndim == 2 else audio
             n_samples27 = _mono27.shape[0]
             # §2.36 Phonem-Schutz
             try:
-                _lge27 = LyricsGuidedEnhancement(sample_rate=sample_rate)
+                _lge27 = LyricsGuidedEnhancement()
                 _phon_mask27 = _lge27.get_phoneme_mask(_orig27, sample_rate, hop_length=512)
                 if _phon_mask27 is not None and len(_phon_mask27) > 0:
                     hop27 = 512
@@ -320,9 +321,11 @@ class ClickPopRemoval(PhaseInterface):
                 logger.debug("§2.36 Phase27 Phonem-Guard (non-blocking): %s", _p27_exc)
             # §2.46f NPA-Guard
             try:
-                _npa_mask27 = get_natural_performance_detector().detect(
-                    _orig27, sample_rate
-                ).get_protected_mask(n_samples27, sample_rate)
+                _npa_mask27 = (
+                    get_natural_performance_detector()
+                    .detect(_orig27, sample_rate)
+                    .get_protected_mask(n_samples27, sample_rate)
+                )
                 if _npa_mask27 is not None and _npa_mask27.any():
                     if cleaned_audio.ndim == 2:
                         cleaned_audio[:, _npa_mask27] = audio[:, _npa_mask27]

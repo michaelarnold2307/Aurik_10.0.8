@@ -79,11 +79,11 @@ def _to_mono_analysis(audio: np.ndarray) -> np.ndarray:
     if arr.ndim == 2:
         # Detect orientation: channels-first (2, N) vs channels-last (N, 2)
         if arr.shape[0] == 2 and arr.shape[1] > 2:
-            return (arr[0] + arr[1]) * 0.5  # (2, N) → mono
+            return ((arr[0] + arr[1]) * 0.5).astype(np.float32)  # type: ignore  # (2, N) → mono
         if arr.shape[1] == 2 and arr.shape[0] > 2:
-            return (arr[:, 0] + arr[:, 1]) * 0.5  # (N, 2) → mono
+            return ((arr[:, 0] + arr[:, 1]) * 0.5).astype(np.float32)  # type: ignore  # (N, 2) → mono
         # Fallback: sum along shorter axis
-        return arr.mean(axis=0 if arr.shape[0] <= arr.shape[1] else 1)
+        return arr.mean(axis=0 if arr.shape[0] <= arr.shape[1] else 1)  # type: ignore
     # Unexpected rank — return first row/channel
     return arr.reshape(-1)[: arr.size // arr.shape[0]]
 
@@ -228,11 +228,14 @@ def _apply_correction_shift(signal: np.ndarray, shift_samples: float) -> np.ndar
         cval=0.0,
         order=_INTERP_ORDER,
     )
-    return np.clip(
-        np.nan_to_num(shifted, nan=0.0, posinf=0.0, neginf=0.0),
-        -1.0,
-        1.0,
-    ).astype(np.float32)
+    return np.asarray(
+        np.clip(
+            np.nan_to_num(shifted, nan=0.0, posinf=0.0, neginf=0.0),
+            -1.0,
+            1.0,
+        ),
+        dtype=np.float32,
+    )
 
 
 def _apply_shift_to_audio(audio: np.ndarray, shift_samples: float) -> np.ndarray:
@@ -460,7 +463,7 @@ _lock = threading.Lock()
 
 def get_stereo_temporal_coherence_guard() -> StereoTemporalCoherenceGuard:
     """Return the process-wide StereoTemporalCoherenceGuard singleton."""
-    global _instance
+    global _instance  # pylint: disable=global-statement
     if _instance is None:
         with _lock:
             if _instance is None:

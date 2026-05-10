@@ -319,7 +319,7 @@ class QualityRecoverySystem:
         logger.info("Recovery Plan Generated: %s strategies", len(actions))
         for i, action in enumerate(actions, 1):
             logger.info("  %s. [%s] %s", i, action.strategy.value, action.description)
-            logger.info("     Expected improvement: %.1%", action.expected_improvement)
+            logger.info("     Expected improvement: %.1f", action.expected_improvement)
 
         return plan
 
@@ -614,7 +614,7 @@ class QualityRecoverySystem:
         # Less processed = more original
         blended = (1 - intensity_factor) * original + intensity_factor * processed
 
-        logger.info("  → Blending: %.1% original + %.1% processed", (1 - intensity_factor), intensity_factor)
+        logger.info("  → Blending: %.1f original + %.1f processed", (1 - intensity_factor), intensity_factor)
 
         return blended.astype(np.float32)
 
@@ -744,7 +744,7 @@ class QualityRecoverySystem:
         # Move 25% towards target
         incremental = original + step_size * (target - original)
 
-        logger.info("  → Incremental step: %.1% towards target", step_size)
+        logger.info("  → Incremental step: %.1f towards target", step_size)
 
         return incremental.astype(np.float32)
 

@@ -224,6 +224,8 @@ def merge_zones(
             btype = "bandpass"
             lo = max(hz_lo / nyq, 0.001)
             hi = min(hz_hi / nyq, 0.999)
+            lo_arr = lo
+            hi_arr = hi
             if hz_lo <= 20.0:
                 btype = "lowpass"
                 hi_arr = hi

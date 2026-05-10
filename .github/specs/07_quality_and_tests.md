@@ -9,7 +9,7 @@
 
 ### PQS-Metriken (`core/perceptual_quality_scorer.py`)
 
-| Metrik | Hard-Fail-Minimum | Weltklasse-Ziel |
+| Metrik | Hard-Fail-Minimum | Internes Spitzenziel |
 | --- | --- | --- |
 | PQS MOS | ≥ 3.8 | ≥ 4.5 |
 | PQS NSIM | ≥ 0.70 | ≥ 0.90 |
@@ -46,9 +46,21 @@ Erlaubte Musikmetriken: **PEAQ, FAD, PQS-MOS, ViSQOL v3 (`--audio` Mode), Musica
 
 > ⚠ **Wichtig**: `core/mushra_evaluator.py` ist eine algorithmische Approximation
 > (PEAQ-ähnlich). Es ist **kein** ITU-R BS.1534-3-konformer MUSHRA-Hörertest.
-> In externen Berichten: „OQS (algorithmisch)" — niemals „MUSHRA-Score".> Die 14 Musical-Goal-Schwellwerte sind aus AMRB-Daten hergeleitet („best engineering estimate“).
+> In externen Berichten: „OQS (algorithmisch)" — niemals „MUSHRA-Score".
+> Die 14 Musical-Goal-Schwellwerte sind aus AMRB-Daten hergeleitet („best engineering estimate“).
 > Externe Validierung durch subjektiven Hörertest (ITU-R BS.1534-3) steht aus.
 > Änderungen an Schwellwerten erfordern dokumentierten Hörertest als Präzedenz.
+
+**Evidenzhierarchie**:
+
+1. Interne Proxy-Metriken: OQS, PQS-MOS, Musical Goals, HPI
+2. Interne Real-Audio-Gates und UAT-Matrizen
+3. Reproduzierbare Competitive-Benchmarks gegen Referenzsysteme
+4. Externe verblindete Hörtests
+
+**Invariante**: Level 1 bis 3 dürfen harte Release-Entscheidungen steuern. Öffentliche Superlative,
+„transparent wie das Original“ oder formale Hörtest-Äquivalenz sind erst mit Level 4 belastbar.
+
 | OQS-Stufe | Score | Pflicht |
 | --- | --- | --- |
 | Excellent (A) | ≥ 91 | Exzellenz-Label — kein harter Gate-Wert |
@@ -134,7 +146,7 @@ Fragmente < 30 s erzeugen OQS-Varianz von ±8 Punkten — ausreichend um einen 8
 unzuverlässig zu machen. `run_amrb_baseline.py` erzwingt diesen Guard automatisch (`_MIN_AMRB_FRAGMENT_S = 30.0`)
 und korrigiert kürzere `--duration`-Angaben mit einem Warn-Log. `n_items ≥ 5` bleibt Pflicht (Nightly-Config).
 
-**OS-Führerschaft-Schwelle**: Gesamt-Score ≥ **84.0** UND ≥ 8/10 Szenarien bestanden.
+**Interne Führungs-Schwelle**: Gesamt-Score ≥ **84.0** UND ≥ 8/10 Szenarien bestanden.
 
 ```python
 from benchmarks.musical_restoration_benchmark import run_benchmark, BenchmarkConfig
@@ -577,7 +589,7 @@ Wenn alle Stellen gleich laut klingen, ist die Spannungs-Mechanik zerstört und 
 
 ---
 
-## §8.1.3 [RELEASE_MUST] FAD (Fréchet Audio Distance) — Weltklasse-Indikator (v9.12.0)
+## §8.1.3 [RELEASE_MUST] FAD (Fréchet Audio Distance) — interner Spitzenqualitäts-Indikator (v9.12.0)
 
 **Motivation**: OQS und AMRB messen Ähnlichkeit zum Original. FAD misst **Verteilungsähnlichkeit zum Studio-Audio-Referenzset** — d.h. ob restauriertes Audio klingt wie professionelles Studio-Material, unabhängig vom konkreten Original.
 
@@ -591,7 +603,7 @@ Wenn alle Stellen gleich laut klingen, ist die Spannungs-Mechanik zerstört und 
 | Digital → Restoration | ≤ 3.0 | ≤ 5.0 |
 | Studio 2026 (alle) | ≤ 2.0 | ≤ 4.0 |
 
-**FAD < 5.0** ist der allgemeine Weltklasse-Indikator für moderne Studio-Klangqualität.
+**FAD < 5.0** ist der allgemeine interne Spitzenqualitäts-Indikator für moderne Studio-Klangqualität.
 
 **Referenzset**: `benchmarks/fad_reference_set/` — 50 professionelle Studioaufnahmen (2010–2023, gemischt Genre/Ära). Referenzset darf nie durch restauriertes Audio befüllt werden.
 
@@ -657,7 +669,7 @@ mos_composite = versa_score * versa_confidence + mert_score * mert_weight
    - Anchor: 3.5 kHz Lowpass (ITU-R BS.1534-3 Standard)
    - Kandidaten: Aurik Restoration, Aurik Studio 2026, iZotope RX 11, Manual Restoration
 4. **Skala**: 0–100 (100 = nicht unterscheidbar von Referenz)
-5. **Mindest-Score für Weltklasse-Anspruch**: Ø ≥ 80 MUSHRA über alle Materialien
+5. **Mindest-Score für extern belegbaren Spitzenanspruch**: Ø ≥ 80 MUSHRA über alle Materialien
 6. **Protokoll-Datei**: `docs/mushra_protocol.pdf` (nach Durchführung)
 
 **Bis zur Durchführung**: Algorithmischer OQS-Score (§8.1.1) als Proxy — klar als solcher ausgewiesen.

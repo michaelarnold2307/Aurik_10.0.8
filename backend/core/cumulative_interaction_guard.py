@@ -14,6 +14,7 @@ song context — never hard-coded constants (§2.54).
 
 Reference: Spec 02 §2.48, §2.54 (Adaptives Phasen-Optimum)
 """
+# pylint: disable=line-too-long
 
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ _lock = threading.Lock()
 
 def get_interaction_guard() -> CumulativeInteractionGuard:
     """Thread-safe Singleton accessor."""
-    global _instance
+    global _instance  # pylint: disable=global-statement
     if _instance is None:
         with _lock:
             if _instance is None:
@@ -89,8 +90,8 @@ _PHASE_SPECIFIC_DRIFT_EXCLUSIONS: dict[str, frozenset[str]] = {
     # Prefix-based keys (startswith), robust for "phase_30" and "phase_30_dc_offset_removal".
     "phase_30": frozenset({"authentizitaet", "natuerlichkeit"}),
     "phase_05": frozenset(
-        {"authentizitaet", "natuerlichkeit", "bass_kraft", "waerme"}
-    ),  # §2.55 sync with PMGG (2026-04-26): HPF intentionally removes sub-bass + low-mid energy → bass_kraft/waerme DSP proxies drop as intended; not a musical regression
+        {"authentizitaet", "natuerlichkeit", "bass_kraft", "waerme", "tonal_center"}
+    ),  # §2.55 sync with PMGG (2026-04-26): HPF intentionally removes sub-bass + low-mid energy → bass_kraft/waerme DSP proxies drop as intended; not a musical regression. tonal_center: §2.55 sync (2026-05-06): HPF at 24 Hz attenuates C1 (~32.7 Hz) → K-S chroma bin for lowest octave shifts → key-label changes up to 4 semitones → false P2 catastrophic regression. Musical key unchanged; only sub-bass chroma distribution shifts (see PMGG phase_05 comment).
     # Wow/flutter correction shifts chroma AND amplitude envelope vs. defective checkpoint:
     # - authentizitaet: chromagram correlation drops because pitch-wobble artefacts are removed
     # - natuerlichkeit: spectral/temporal consistency changes vs. wow-distorted reference
@@ -1199,8 +1200,8 @@ class CumulativeInteractionGuard:
         reference: np.ndarray,
         current: np.ndarray,
         sr: int,
-        phase_id: str = "",
-        state: InteractionGuardState | None = None,
+        phase_id: str = "",  # pylint: disable=unused-argument
+        state: InteractionGuardState | None = None,  # pylint: disable=unused-argument
     ) -> float:
         """Measure 95th-percentile STFT group delay deviation in milliseconds.
 

@@ -175,7 +175,7 @@ _MATERIAL_BW_CEILING_HZ = {
 **Modus-Differenzierung**:
 
 - **Restoration**: Hard-Cap. Output-BW darf Material-Ceiling nicht überschreiten.
-- **Studio 2026**: Volle Extension erlaubt, aber MUSHRA-Score ≥ 3.5 im Extension-Band (8 kHz–Nyquist) Pflicht; darunter → Rollback auf Material-Cap.
+- **Studio 2026**: Volle Extension erlaubt, aber OQS-äquivalenter Hörqualitätsnachweis ≥ 3.5 im Extension-Band (8 kHz–Nyquist) Pflicht; darunter → Rollback auf Material-Cap.
 
 **Invariante**: `_MATERIAL_BW_CEILING_HZ` ist identisch mit der `bw_ceiling_hz`-Spalte in `CARRIER_TRANSFER_CHARACTERISTICS` (§4.8). Änderungen müssen synchron erfolgen.
 

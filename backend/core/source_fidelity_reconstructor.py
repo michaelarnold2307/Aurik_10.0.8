@@ -717,8 +717,8 @@ class SourceFidelityEQProcessor:
         try:
             fir = firwin2(
                 self._FILTER_TAPS,
-                freqs=freqs_norm,
-                gains=gains_linear,
+                freq=freqs_norm,
+                gain=gains_linear,
                 antisymmetric=False,
             )
         except Exception as _fir_exc:

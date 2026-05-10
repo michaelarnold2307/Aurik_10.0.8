@@ -272,6 +272,7 @@ def compute_vqi(
     audio_restored: np.ndarray,
     sr: int,
     vocal_segments: list[tuple[float, float]] | None = None,
+    skip_singer_identity: bool = False,
 ) -> dict[str, float]:
     """Berechnet den VocalQualityIndex (§2.35c).
 
@@ -327,8 +328,12 @@ def compute_vqi(
     orig_m = np.nan_to_num(orig_m, nan=0.0, posinf=0.0, neginf=0.0)
     rest_m = np.nan_to_num(rest_m, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Komponente 1: Singer-Identity
-    singer_cosine, dsp_fallback = _compute_singer_identity(orig_m, rest_m, sr)
+    # Komponente 1: Singer-Identity (§MultiSinger: überspringen bei Duett/Chor)
+    if skip_singer_identity:
+        singer_cosine, dsp_fallback = 0.85, True  # neutral fallback — kein Rollback-Trigger
+        logger.debug("§MultiSinger: singer_identity_cosine-Gate übersprungen (Duett/Chor)")
+    else:
+        singer_cosine, dsp_fallback = _compute_singer_identity(orig_m, rest_m, sr)
 
     # Komponente 2: Formant-Stabilität
     formant_score = _compute_formant_stability(orig_m, rest_m, sr)

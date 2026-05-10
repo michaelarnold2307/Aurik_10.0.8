@@ -22,7 +22,7 @@
 
 **Studio-2026-Modus Pflicht-Invarianten:**
 
-- PQS MOS ≥ 4.5 (Weltklasse)
+- PQS MOS ≥ 4.5 (internes Spitzenziel)
 - Brillanz-Score ≥ 0.90 (verschärft)
 - Bass-Kraft ≥ 0.88 (verschärft)
 - Rauschboden ≤ −72 dBFS (§0a)

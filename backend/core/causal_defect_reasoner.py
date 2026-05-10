@@ -949,7 +949,8 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     "bandwidth_loss": [
         "phase_06_frequency_restoration",
         "phase_07_harmonic_restoration",
-        "phase_39_air_band_enhancement",
+        # phase_39_air_band_enhancement ENTFERNT (BUG-FIX v9.12.0 §6.2c):
+        # phase_39 erzeugt Halluzinationen über BW-Ceiling analoger Materialien im Restoration-Modus.
     ],
     "high_freq_noise": ["phase_29_tape_hiss_reduction", "phase_03_denoise", "phase_18_noise_gate"],
     # ── Stereo / Phase ───────────────────────────────────────────────────────
@@ -979,7 +980,7 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     "dynamic_compression_excess": [
         "phase_26_dynamic_range_expansion",
         "phase_54_transparent_dynamics",
-        "phase_35_multiband_compression",
+        # phase_35_multiband_compression ENTFERNT (BUG-FIX v9.12.0 §0a): Stem-Enhancement VERBOTEN in Restoration
     ],
     "head_wear": [
         "phase_56_spectral_band_gap_repair",  # §4.5/§7.2
@@ -1026,7 +1027,7 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     "sibilance": [
         "phase_19_de_esser",  # Primär: De-Esser (Sibilantenreduktion)
         "phase_43_ml_deesser",  # ML-gestützter De-Esser
-        "phase_42_vocal_enhancement",  # Gesangs-Enhancement (Frikativ-Balance)
+        # phase_42_vocal_enhancement ENTFERNT (BUG-FIX v9.12.0 §0a): Stem-Enhancement VERBOTEN in Restoration
     ],
     # ── Transport-Bump (v9.10.57b — Kassetten-Holpern) ───────────────────────
     "transport_bump": [
@@ -1060,7 +1061,7 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     ],
     # ── Vocal-Harshness (v9.10.77 — Vokal-Härte/Übersteuerung/Kratzigkeit) ──
     "vocal_harshness": [
-        "phase_42_vocal_enhancement",  # Primär: Vocal-Enhancement mit Harshness-Absenkung (2–6 kHz)
+        # phase_42_vocal_enhancement ENTFERNT (BUG-FIX v9.12.0 §0a): Stem-Enhancement VERBOTEN in Restoration
         "phase_19_de_esser",  # De-Esser reduziert auch obere Härte-Frequenzen
         "phase_43_ml_deesser",  # ML-De-Esser (zweiter Pass, Frikativ-Kontrolle)
         "phase_23_spectral_repair",  # Spektrale Reparatur bei starker Verzerrung
@@ -1521,7 +1522,7 @@ def _compute_pitch_instability(mono: np.ndarray, sr: int) -> float:
     for i in range(0, len(mono) - frame_len, hop):
         seg = mono[i : i + frame_len]
         # Autokorrelation — FFT-based O(N log N)
-        from backend.core.core_utils import fft_autocorr
+        from backend.core.core_utils import fft_autocorr  # pylint: disable=import-outside-toplevel
 
         ac = fft_autocorr(seg)
         ac = ac / (ac[0] + 1e-9)
@@ -1581,7 +1582,7 @@ def _likelihood_vinyl_warp(sf: SpectralFeatures, defect_scores: dict[str, float]
     return float(np.clip(p, 0.0, 1.0))
 
 
-def _likelihood_electrical_hum(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:
+def _likelihood_electrical_hum(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:  # pylint: disable=unused-argument
     p = 0.0
     p += sf.hum_score * 0.60
     p += _gaussian_score(sf.lf_energy_ratio, mu=0.35, sigma=0.15) * 0.25
@@ -1599,7 +1600,7 @@ def _likelihood_head_misalignment(sf: SpectralFeatures, defect_scores: dict[str,
     return float(np.clip(p, 0.0, 1.0))
 
 
-def _likelihood_dc_offset(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:
+def _likelihood_dc_offset(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:  # pylint: disable=unused-argument
     p = 0.0
     p += _sigmoid_score(abs(sf.dc_offset), k=20, x0=0.03) * 0.70
     p += _gaussian_score(sf.lf_energy_ratio, mu=0.40, sigma=0.15) * 0.20
@@ -1615,7 +1616,7 @@ def _likelihood_digital_clip(sf: SpectralFeatures, defect_scores: dict[str, floa
     return float(np.clip(p, 0.0, 1.0))
 
 
-def _likelihood_soft_saturation(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:
+def _likelihood_soft_saturation(sf: SpectralFeatures, defect_scores: dict[str, float]) -> float:  # pylint: disable=unused-argument
     """P(Merkmale | soft_saturation) — Röhren-/Tape-Sättigung (gerade Obertöne).
 
     Soft-Saturation erzeugt gerade Harmonische (H2, H4) und runde Wellenformen
@@ -2389,7 +2390,7 @@ class CausalDefectReasoner:
         # belonging to the highest-posterior causes are processed first.
         _high_sev_defects = [k for k, v in defect_scores.items() if v >= 0.70]
         if len(_high_sev_defects) >= 3:
-            import re as _re
+            import re as _re  # pylint: disable=import-outside-toplevel
 
             _phase_priority: dict[str, float] = {}
             for _cause_k, _cause_prob in ranked[:10]:
@@ -2455,7 +2456,7 @@ _reasoner_lock = threading.Lock()
 
 def get_reasoner() -> CausalDefectReasoner:
     """Globaler Singleton-Reasoner."""
-    global _reasoner
+    global _reasoner  # pylint: disable=global-statement
     if _reasoner is None:
         with _reasoner_lock:
             if _reasoner is None:

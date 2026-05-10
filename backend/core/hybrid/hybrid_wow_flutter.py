@@ -371,7 +371,7 @@ class HybridWowFlutter:
             logger.debug("RMVPE nicht verfügbar (%s) — CREPE-Fallback (§4.4 Tier-3)", e)
         # Tier-3: PESTO
         try:
-            from plugins.pesto_plugin import get_pesto_plugin
+            from plugins.pesto_plugin import get_pesto_plugin  # pylint: disable=no-name-in-module
 
             self.crepe = get_pesto_plugin()  # type: ignore[assignment]
             logger.info("PESTO plugin geladen für wow/flutter-Detektion (§4.4 Tier-3)")
@@ -411,6 +411,8 @@ class HybridWowFlutter:
         pyin_applied = False
         crepe_applied = False
         metadata = {}
+        pitch_trajectory: np.ndarray = np.array([])
+        confidence: np.ndarray = np.array([])
 
         # Stufe 1: pYIN-Detektion (Mauch & Dixon 2014) — §4.2 konform
         if strategy in [PitchDetectionStrategy.PYIN_ONLY, PitchDetectionStrategy.HYBRID]:

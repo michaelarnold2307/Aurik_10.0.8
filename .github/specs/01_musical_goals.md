@@ -235,7 +235,7 @@ proximity_score = (
 
 ## §2.35c [RELEASE_MUST] VocalQualityIndex (VQI) — Gesangs-Gesamtqualitäts-Gate (v9.12.0)
 
-**Motivation**: Die bestehenden 14 Musical Goals und §2.35/§2.35b messen jeweils Teilaspekte des Gesangs. Ein zusammengesetzter `VocalQualityIndex` liefert ein einzelnes, messbares Qualitätssignal für Gesangsmaterial — und ermöglicht damit den Anspruch „weltbeste Gesangsrestaurierung" überhaupt erst zu belegen.
+**Motivation**: Die bestehenden 14 Musical Goals und §2.35/§2.35b messen jeweils Teilaspekte des Gesangs. Ein zusammengesetzter `VocalQualityIndex` liefert ein einzelnes, messbares Qualitätssignal für Gesangsmaterial — und ermöglicht damit, einen extern belegbaren Spitzenanspruch für Gesangsrestaurierung überhaupt erst zu prüfen.
 
 **Formel**:
 
@@ -253,7 +253,7 @@ VQI = (
 
 | VQI | Bedeutung | Pipeline-Reaktion |
 | --- | --- | --- |
-| ≥ 0.88 | Weltklasse-Gesang | Export freigegeben |
+| ≥ 0.88 | Gesang auf internem Spitzenniveau | Export freigegeben |
 | 0.80–0.87 | Sehr gut | Export freigegeben, `metadata["vqi_tier"] = "good"` |
 | 0.72–0.79 | Akzeptabel | WARNING + Dry/Wet-Rescue empfohlen |
 | < 0.72 | Unter Schwelle | Recovery-Kaskade: Rollback auf bestes Vokal-Checkpoint |

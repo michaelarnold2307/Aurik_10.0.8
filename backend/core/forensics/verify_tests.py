@@ -72,7 +72,7 @@ def main() -> None:
     logger.debug("\nSignal Forensics System:")
     logger.debug("  Status: ✅ PRODUCTION READY")
     logger.debug("  Quality: ✅ EXCELLENT")
-    logger.debug("  Test Coverage: ✅ 100%")
+    logger.debug("  Test Coverage: ✅ 100%%")
     logger.debug("=" * 70)
 
 

@@ -483,9 +483,9 @@ def get_restorer_classes() -> tuple[type, type]:
 
 def get_unified_restorer_v3_instance():
     """Gibt den UV3-Prozess-Singleton zurück (lazy import über Bridge)."""
-    from backend.core.unified_restorer_v3 import get_unified_restorer_v3  # type: ignore[import]
+    from backend.core.unified_restorer_v3 import get_restorer  # type: ignore[import]
 
-    return get_unified_restorer_v3()
+    return get_restorer()
 
 
 def get_aurik_denker_class() -> type:

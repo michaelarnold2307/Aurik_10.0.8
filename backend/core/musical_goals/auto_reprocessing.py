@@ -427,7 +427,7 @@ class AutoReprocessingEngine:
 
         params = {"processed_weight": proc_weight, "original_weight": orig_weight}
 
-        logger.info("Hybrid blend: %.0% processed + %.0% original", proc_weight, orig_weight)
+        logger.info("Hybrid blend: %.0f processed + %.0f original", proc_weight, orig_weight)
 
         return blended, params
 

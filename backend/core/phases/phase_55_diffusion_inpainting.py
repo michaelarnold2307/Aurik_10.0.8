@@ -591,7 +591,9 @@ def _try_consistency_model_inpainting(channel: np.ndarray, start: int, end: int,
         if _os.path.abspath(_plugins_dir) not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from plugins.consistency_inpaint_plugin import get_consistency_inpaint_plugin
+        from plugins.consistency_inpaint_plugin import (
+            get_consistency_inpaint_plugin,  # pylint: disable=no-name-in-module
+        )
 
         from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55d
 
@@ -1309,15 +1311,18 @@ class DiffusionInpaintingPhase(PhaseInterface):
         # §2.46f NPA-Guard: Atemgeräusche/Vibrato in Lücken-Rändern nicht überschreiben.
         # §2.46e Hallucination-Guard: ML-Inpainting darf kein neues spektrales Material einbringen.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
             from backend.core.hallucination_guard import apply_hallucination_guard
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
             _mono55 = source_audio.mean(axis=0) if source_audio.ndim == 2 else source_audio
             n_samples55 = _mono55.shape[0]
             # §2.46f NPA-Guard
             try:
-                _npa_mask55 = get_natural_performance_detector().detect(
-                    _mono55, sample_rate
-                ).get_protected_mask(n_samples55, sample_rate)
+                _npa_mask55 = (
+                    get_natural_performance_detector()
+                    .detect(_mono55, sample_rate)
+                    .get_protected_mask(n_samples55, sample_rate)
+                )
                 if _npa_mask55 is not None and _npa_mask55.any():
                     if repaired.ndim == 2:
                         repaired[:, _npa_mask55] = source_audio[:, _npa_mask55]
@@ -1330,7 +1335,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
             # Artikulation schlägt Lücken-Filling (§2.36 RELEASE_MUST).
             try:
                 from backend.core.lyrics_guided_enhancement import LyricsGuidedEnhancement
-                _lge55 = LyricsGuidedEnhancement(sample_rate=sample_rate)
+
+                _lge55 = LyricsGuidedEnhancement()
                 _phon_mask55 = _lge55.get_phoneme_mask(_mono55, sample_rate, hop_length=512)
                 if _phon_mask55 is not None and len(_phon_mask55) > 0:
                     hop55 = 512
@@ -1354,9 +1360,8 @@ class DiffusionInpaintingPhase(PhaseInterface):
                     _repaired_mono_h, _h_meta55 = apply_hallucination_guard(
                         _mono_src55, _mono_rep55, sample_rate, _bw_cap55, _mode55
                     )
-                    _rollback55 = (
-                        _h_meta55.get("hallucination_decision") == "rollback"
-                        or bool(_h_meta55.get("rollback", False))
+                    _rollback55 = _h_meta55.get("hallucination_decision") == "rollback" or bool(
+                        _h_meta55.get("rollback", False)
                     )
                     if _rollback55:
                         logger.debug(

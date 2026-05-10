@@ -435,7 +435,7 @@ def _detect_language(mono: np.ndarray, sr: int = 16_000) -> tuple[str, float]:
             # LPC via scipy (preferred) with numpy fallback
             roots: np.ndarray | None = None
             try:
-                from scipy.signal import lpc as _scipy_lpc
+                from scipy.signal import lpc as _scipy_lpc  # pylint: disable=no-name-in-module
 
                 A = _scipy_lpc(frame - np.mean(frame), lpc_order)
                 if not np.isfinite(A).all():

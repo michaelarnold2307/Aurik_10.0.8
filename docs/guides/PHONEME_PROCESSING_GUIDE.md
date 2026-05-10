@@ -26,7 +26,7 @@ AURIK's Phoneme-Aware Processing System is the **industry's first** audio restor
 ### Key Advantages
 
 | Feature | Traditional Approach | AURIK Phoneme-Aware |
-|---------|---------------------|---------------------|
+| --- | --- | --- |
 | **Sibilant Handling** | Fixed frequency threshold | Detects actual /s/, /ʃ/, /f/ phonemes |
 | **Vowel Preservation** | Blind formant shifting | Vowel-specific formant preservation |
 | **Intelligibility** | No concept of clarity | Phoneme-level clarity scoring |
@@ -141,7 +141,7 @@ class PhonemeDetectionResult:
 #### Parameters
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `model_name` | str | `"facebook/wav2vec2-lv-60-espeak-cv-ft"` | HuggingFace model identifier |
 | `sample_rate` | int | `16000` | Target sample rate for processing |
 | `confidence_threshold` | float | `0.3` | Min confidence to include phoneme |
@@ -217,9 +217,11 @@ class PhonemeCategory(Enum):
 #### IPA Support
 
 **Vowels:** 23 IPA symbols
+
 - `a, e, i, o, u, ɑ, ɛ, ɪ, ɔ, ʊ, ə, æ, ʌ, ɜ, ɒ, y, ø, œ, ɨ, ʉ, ɯ, ɤ, ɐ`
 
 **Consonants:** 42 IPA symbols
+
 - Plosives: `p, b, t, d, k, g, ʔ`
 - Fricatives: `f, v, θ, ð, s, z, ʃ, ʒ, h, x, ɣ, χ, ʁ, ħ, ʕ`
 - Sibilants: `s, z, ʃ, ʒ`
@@ -538,7 +540,7 @@ def genre_adaptive_processing(audio: np.ndarray, sr: int, genre: str) -> np.ndar
 ### Computational Cost
 
 | Operation | CPU Time | Memory |
-|-----------|----------|--------|
+| --- | --- | --- |
 | **PhonemeDetector.detect()** | 200-300ms/sec | 1.4GB |
 | **PhonemeClassifier.classify()** | <1ms | <10MB |
 | **Feature extraction** | 5-10ms/phoneme | <1MB |
@@ -619,6 +621,7 @@ def process_long_audio(audio: np.ndarray, sr: int, chunk_size: int = 30) -> list
 **Symptom:** `OSError: Unable to download model from HuggingFace`
 
 **Solution:**
+
 ```bash
 # Set HuggingFace cache directory
 export HF_HOME=/path/to/cache
@@ -632,11 +635,13 @@ python -c "from transformers import Wav2Vec2ForCTC; Wav2Vec2ForCTC.from_pretrain
 **Symptom:** All confidence scores < 0.3
 
 **Causes:**
+
 - Low audio quality (SNR < 10dB)
 - Wrong sample rate
 - Non-speech audio (music, noise)
 
 **Solution:**
+
 ```python
 # Check audio quality first
 snr = calculate_snr(audio)
@@ -656,6 +661,7 @@ detector = PhonemeDetector(confidence_threshold=0.2)
 **Symptom:** System runs out of RAM processing long audio files
 
 **Solution:**
+
 ```python
 # Reduce chunk size for long audio
 chunk_size = 10  # Process 10 seconds at a time
@@ -676,10 +682,12 @@ def process_in_segments(audio, sr, segment_duration=30):
 **Symptom:** Vowels classified as consonants, etc.
 
 **Causes:**
+
 - IPA symbol not in classifier database
 - Dialect/accent differences
 
 **Solution:**
+
 ```python
 # Check if phoneme is recognized
 phoneme = "ɹ"  # American English 'r'
@@ -699,12 +707,14 @@ if phoneme not in classifier.PHONEME_CATEGORIES:
 **ETA:** 8-14. Februar 2026
 
 **Features:**
+
 - Phoneme-aware sibilant reduction
 - Consonant clarity preservation
 - Musical sibilance vs technical sibilance detection
 - Genre-adaptive profiles
 
 **Integration:**
+
 ```python
 from backend.ml.inference_only.context_aware_processing import ContextAwareDeEsserV2
 
@@ -722,6 +732,7 @@ processed = deesser.process(audio, sr=sr)
 **ETA:** März-Mai 2026
 
 **Features:**
+
 - Harmonic context analysis (integrates with phoneme timing)
 - Voice type detection (uses phoneme formant data)
 - Vibrato quality analysis (phoneme-level pitch tracking)
@@ -732,6 +743,7 @@ processed = deesser.process(audio, sr=sr)
 **ETA:** Juli-August 2026
 
 **Features:**
+
 - Multi-language phoneme support (50+ languages)
 - Accent/dialect detection
 - Phoneme-level audio forensics
@@ -746,7 +758,7 @@ processed = deesser.process(audio, sr=sr)
 **Common English Phonemes:**
 
 | IPA | Example | Description |
-|-----|---------|-------------|
+| --- | --- | --- |
 | `i` | "b**ea**t" | Close front unrounded vowel |
 | `ɪ` | "b**i**t" | Near-close front unrounded vowel |
 | `e` | "b**ai**t" | Close-mid front unrounded vowel |
@@ -790,7 +802,7 @@ processed = deesser.process(audio, sr=sr)
 **Test System:** Intel i7-10700K, 32GB RAM
 
 | Audio Duration | CPU Time | Memory Peak |
-|----------------|----------|-------------|
+| --- | --- | --- |
 | 1 second | 0.22s | 1.42GB |
 | 10 seconds | 2.18s | 1.45GB |
 | 1 minute | 13.2s | 1.58GB |
@@ -799,7 +811,7 @@ processed = deesser.process(audio, sr=sr)
 **Accuracy Benchmarks:**
 
 | Test Set | Phoneme Accuracy | Category Accuracy |
-|----------|------------------|-------------------|
+| --- | --- | --- |
 | TIMIT (clean) | 91.3% | 96.7% |
 | LibriSpeech (clean) | 88.7% | 94.2% |
 | VCTK (multi-speaker) | 86.4% | 92.8% |
@@ -826,6 +838,7 @@ processed = deesser.process(audio, sr=sr)
 **Module Version:** Week 7 Complete
 
 **For issues or questions:**
+
 - GitHub Issues: `aurik-standalone/issues`
 - Documentation: `docs/PHONEME_PROCESSING_GUIDE.md`
 - Tests: `tests/test_phoneme_detector.py`, `tests/test_phoneme_classifier.py`

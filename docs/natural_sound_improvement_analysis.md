@@ -9,6 +9,7 @@
 ## Executive Summary
 
 **Aktueller Stand:**
+
 - ✅ 3 Phasen ML-hybrid implementiert (23, 18, 9)
 - ⚠️ 4 kritische Phasen noch rein DSP (1, 2, 24, 29)
 - ❌ Keine Metriken-basierte Feedback-Loops
@@ -25,6 +26,7 @@
 **Problem:** DSP-Median-Filtering erzeugt unnatürliche Übergänge, schneidet Transienten ab
 
 **ML-Lösung:**
+
 ```python
 # Priority 4: DeepFilterNet v3 II für Click Removal
 Models:
@@ -41,6 +43,7 @@ Expected Quality: 0.50 → 0.80 (+0.30, +60%)
 ```
 
 **Implementation:**
+
 ```python
 # core/phases/phase_01_click_removal.py
 def _remove_click_ml(self, audio, click_regions, deepfilternet):
@@ -65,6 +68,7 @@ def _remove_click_ml(self, audio, click_regions, deepfilternet):
 **Problem:** DSP-Notch-Filter zerstört harmonisch verwandte Musik-Inhalte
 
 **ML-Lösung:**
+
 ```python
 # Priority 5: DeepFilterNet v3 II für Hum Removal
 Models:
@@ -80,6 +84,7 @@ Expected Quality: 0.50 → 0.75 (+0.25, +50%)
 ```
 
 **Key Innovation:** Frequency-Selective ML Processing
+
 - DSP bearbeitet nur 50/60 Hz ± Harmonics
 - ML restauriert danach musikalische Inhalte in diesen Bändern
 - Preserve: Alles außerhalb Hum-Frequenzen
@@ -91,6 +96,7 @@ Expected Quality: 0.50 → 0.75 (+0.25, +50%)
 **Problem:** DSP-Interpolation bei langen Dropouts unrealistisch (>100ms)
 
 **ML-Lösung:**
+
 ```python
 # Priority 6: AudioSR für Dropout Repair
 Models:
@@ -106,6 +112,7 @@ Expected Quality: 0.50 → 0.80 (+0.30, +60%)
 ```
 
 **Efficiency Optimization:**
+
 ```python
 # Nur lange Dropouts brauchen ML
 if dropout_length_ms > 100:
@@ -123,6 +130,7 @@ else:
 **Problem:** DSP-Spectral-Subtraction entfernt zu viel High-Frequency Detail
 
 **ML-Lösung:**
+
 ```python
 # Priority 7: DeepFilterNet v3 II für Tape Hiss
 Models:
@@ -139,6 +147,7 @@ Expected Quality: 0.50 → 0.80 (+0.30, +60%)
 ```
 
 **Tape-Specific Tuning:**
+
 - Preserve "Tape Character" (warmth, saturation)
 - Remove only hiss, keep tape compression artifacts
 - Material-adaptive: Analog Master vs. Cassette
@@ -150,6 +159,7 @@ Expected Quality: 0.50 → 0.80 (+0.30, +60%)
 **Problem:** Bereits gut (0.83), aber High-SNR Audio kann noch besser
 
 **ML-Lösung:**
+
 ```python
 # Priority 8: FullSubNet+ für extreme Denoise
 Models:
@@ -353,6 +363,7 @@ class QualityFeedbackLoop:
 ```
 
 **Expected Impact:**
+
 - +0.05 Natürlichkeit durch adaptive Parameter
 - Verhindert Über-Processing (häufigste Ursache für Unnatürlichkeit)
 - Minimal Performance-Kosten (~5-10% zusätzlich)
@@ -389,11 +400,13 @@ def should_process_phase(
 ```
 
 **Use Cases:**
+
 - Phase 3 (Denoise): Skip wenn SNR bereits >30dB
 - Phase 9 (Crackle): Skip wenn kein Vinyl-Rauschen detektiert
 - Phase 29 (Tape Hiss): Skip wenn kein Tape-Material
 
 **Expected Impact:**
+
 - ±0 Natürlichkeit, aber 20-40% schnellere Verarbeitung
 - Verhindert unnötige Phasen (die nur verschlechtern können)
 
@@ -447,6 +460,7 @@ class EnsembleProcessor:
 ```
 
 **Expected Impact:**
+
 - +0.08 Natürlichkeit durch Model-Selection
 - 3× langsamer (nur MAXIMUM mode)
 - Robust gegen einzelne Model-Fehler
@@ -473,6 +487,7 @@ for band_name, (f_low, f_high) in bands.items():
 ```
 
 **Expected Impact:**
+
 - +0.10 Natürlichkeit durch frequenz-spezifische Modelle
 - Jedes Modell optimiert für seinen Frequenzbereich
 
@@ -569,6 +584,7 @@ class PsychoAcousticMetrics:
 ```
 
 **Integration in Quality Feedback:**
+
 ```python
 def comprehensive_quality_score(audio: np.ndarray, reference: np.ndarray = None) -> Dict[str, float]:
     """Combine multiple metrics for holistic quality assessment."""
@@ -596,6 +612,7 @@ def comprehensive_quality_score(audio: np.ndarray, reference: np.ndarray = None)
 ```
 
 **Expected Impact:**
+
 - +0.05 Natürlichkeit durch objektive Validierung
 - Automatische Qualitäts-Regression-Detection in Tests
 - Vergleichbarkeit mit Industrie-Standards
@@ -617,16 +634,19 @@ Target Models:
   3. DeepFilterNet: Spezialisiere auf Tape/Hum-Charakteristika
 
 Data Requirements:
+
   - 100h clean audio (golden references)
   - 100h degraded audio (real-world inputs)
   - Paired training data: degraded → clean
 
 Expected Improvement:
   - +0.10 Natürlichkeit durch domain-specific training
+
   - Better preservation of material-specific "character"
 ```
 
 **Workflow:**
+
 ```bash
 # 1. Collect Training Data
 aurik_collect_training_pairs.py --hours 100 --materials vinyl,shellac,tape
@@ -735,12 +755,14 @@ Aurik Advantages:
 ## 9. Conclusio & Call to Action
 
 **Zusammenfassung:**
+
 1. ✅ **3 Phasen ML-hybrid:** Fundament gelegt
 2. 🎯 **4 Phasen verbleibend:** Klarer Implementierungsplan
 3. 📊 **Metriken fehlen:** Große Chance für automatische Optimierung
 4. 🚀 **Potential: +0.30 Natürlichkeit** durch systematische Verbesserungen
 
 **Nächste Schritte:**
+
 ```bash
 # Sprint 2 (Week 2): ML-Hybrid completion
 git checkout -b feature/ml-hybrid-phase-1-click-removal
@@ -756,7 +778,9 @@ git checkout -b feature/ensemble-processing
 ```
 
 **Frage an Dich:**
+
 Soll ich beginnen mit:
+
 - **A) Phase 1 Click Removal (DeepFilterNet)?** → Größte Einzelverbesserung
 - **B) QualityFeedbackLoop?** → Framework für alle Phasen
 - **C) PsychoAcousticMetrics?** → Objektive Validierung
@@ -764,4 +788,4 @@ Soll ich beginnen mit:
 
 ---
 
-**Aurik 9.0 → Weltklasse Audio Restoration** 🎵✨
+**Aurik 9.0 → Audio Restoration auf Spitzenniveau** 🎵✨

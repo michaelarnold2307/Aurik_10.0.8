@@ -457,18 +457,22 @@ class PrintThroughReductionPhase(PhaseInterface):
                     result_audio[_npa_m57] = audio[_npa_m57]
         except Exception as _npa57_exc:
             import logging as _log57n
+
             _log57n.getLogger(__name__).debug("§2.46f phase_57 NPA-Guard (non-blocking): %s", _npa57_exc)
 
         # §2.36 Phonem-Schutz: Print-Through-Reduktion subtrahiert Vor-/Nachhall-Energie.
         # Plosive Burst-Transienten haben ähnliche Burst-Energie — Plosiv-Frames schützen.
         try:
-            import logging as _log57p
+            pass
+
             from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_57
 
             _hop_57 = 512
-            _mono_57 = result_audio.mean(axis=0) if (
-                result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2
-            ) else (result_audio.mean(axis=1) if result_audio.ndim == 2 else result_audio)
+            _mono_57 = (
+                result_audio.mean(axis=0)
+                if (result_audio.ndim == 2 and result_audio.shape[0] == 2 and result_audio.shape[1] > 2)
+                else (result_audio.mean(axis=1) if result_audio.ndim == 2 else result_audio)
+            )
             _pmask_57 = _get_pmask_57(_mono_57.astype(np.float32), sample_rate, hop_length=_hop_57)
             if np.any(_pmask_57):
                 _n_57 = _mono_57.shape[0]
@@ -486,7 +490,7 @@ class PrintThroughReductionPhase(PhaseInterface):
                 elif result_audio.ndim == 1 and audio.ndim == 1:
                     result_audio[_smask_57] = audio[_smask_57]
         except Exception as _pm57_exc:
-            _log57p.getLogger(__name__).debug("§2.36 phase_57 Phonem-Mask (non-blocking): %s", _pm57_exc)
+            logging.getLogger(__name__).debug("\u00a72.36 phase_57 Phonem-Mask (non-blocking): %s", _pm57_exc)
 
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0

@@ -94,8 +94,6 @@ except ImportError:
 
 # PGHI phase-reconstruction instead of direct iSTFT after spectral gain application
 try:
-    pass
-
     _PGHI_AVAILABLE = True
 except ImportError:
     _PGHI_AVAILABLE = False
@@ -214,7 +212,7 @@ class DenoisePhase(PhaseInterface):
         },
         "dat": {
             "strength": 0.20,  # Very clean medium — minimal NR needed
-            "g_floor": 0.05,  # Low floor safe for high-SNR sources
+            "g_floor": 0.10,  # §2.62: minimum 0.10 — verhindert klinisches Stille-Artefakt
             "bands": {
                 "low": {"threshold": -38, "reduction": 0.15},
                 "mid": {"threshold": -36, "reduction": 0.20},
@@ -240,7 +238,7 @@ class DenoisePhase(PhaseInterface):
         },
         "mp3_high": {
             "strength": 0.30,
-            "g_floor": 0.08,
+            "g_floor": 0.10,  # §2.62: minimum 0.10 — verhindert klinisches Stille-Artefakt
             "bands": {
                 "low": {"threshold": -40, "reduction": 0.18},
                 "mid": {"threshold": -38, "reduction": 0.28},
@@ -253,7 +251,7 @@ class DenoisePhase(PhaseInterface):
         },
         "aac": {
             "strength": 0.28,
-            "g_floor": 0.07,
+            "g_floor": 0.10,  # §2.62: minimum 0.10 — verhindert klinisches Stille-Artefakt
             "bands": {
                 "low": {"threshold": -40, "reduction": 0.18},
                 "mid": {"threshold": -38, "reduction": 0.25},
@@ -329,10 +327,10 @@ class DenoisePhase(PhaseInterface):
             is_cpu_intensive=True,
             is_io_intensive=False,
             quality_impact=0.93,  # Professional (was 0.75)
-            description="Professional hybrid noise reduction with musical noise suppression (comparable to iZotope RX Voice De-noise)",
+            description="Professional hybrid noise reduction with musical noise suppression (comparable to iZotope RX Voice De-noise)",  # pylint: disable=line-too-long
         )
 
-    def process(
+    def process(  # type: ignore[override]  # pylint: disable=arguments-renamed
         self,
         audio: np.ndarray,
         material_type: str = "unknown",
@@ -358,7 +356,7 @@ class DenoisePhase(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
-            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict
+            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _get_plm_evict().evict_for_phase("phase_03_denoise")
         except Exception:
@@ -479,7 +477,7 @@ class DenoisePhase(PhaseInterface):
         # §2.46f Natural-Performance-Artifacts-Guard — detect protected zones before NR
         _npa_result_03 = None
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
+            from backend.core.natural_performance_detector import get_natural_performance_detector  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _npa_audio_03 = audio
             if _npa_audio_03.ndim == 2 and _npa_audio_03.shape[0] == 2 and _npa_audio_03.shape[1] > 2:
@@ -498,9 +496,9 @@ class DenoisePhase(PhaseInterface):
                 use_lightweight = False
             elif use_lightweight:
                 logger.info(
-                    f"Phase 03: Resource constraint detected, forcing DSP-only mode "
-                    f"(CPU: {adaptive_resource_manager.get_cpu_usage():.1f}%, "
-                    f"Memory: {adaptive_resource_manager.get_memory_usage():.1f}%)"
+                    "Phase 03: Resource constraint detected, forcing DSP-only mode (CPU: %.1f%%, Memory: %.1f%%)",
+                    adaptive_resource_manager.get_cpu_usage(),
+                    adaptive_resource_manager.get_memory_usage(),
                 )
 
         # §2.47 [RELEASE_MUST] SNR > 35 dB Dry-Signal Bypass
@@ -579,7 +577,7 @@ class DenoisePhase(PhaseInterface):
         _tdp_processor = None
         if _tdp_enabled:
             try:
-                from backend.core.transient_decoupled_processor import get_transient_decoupled_processor
+                from backend.core.transient_decoupled_processor import get_transient_decoupled_processor  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 _tdp_processor = get_transient_decoupled_processor()
                 _tdp_original_audio = np.asarray(audio, dtype=np.float32).copy()
@@ -698,7 +696,7 @@ class DenoisePhase(PhaseInterface):
         _dfn_energy_bias_db = -6.0  # Default: Bruststimme
         if _is_vocal_material and _panns_singing >= 0.25:
             try:
-                from backend.core.dsp.vocal_register_detector import detect_vocal_register as _det_reg
+                from backend.core.dsp.vocal_register_detector import detect_vocal_register as _det_reg  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 _reg_label, _reg_bias = _det_reg(audio, sample_rate, panns_singing=_panns_singing)
                 _dfn_energy_bias_db = _reg_bias
@@ -719,10 +717,13 @@ class DenoisePhase(PhaseInterface):
         if _dfn_eligible:
             _plm03_dfn = None
             try:
-                from plugins.deepfilternet_v3_ii_plugin import get_deepfilternet_plugin
+                from plugins.deepfilternet_v3_ii_plugin import get_deepfilternet_plugin  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 try:
-                    from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm03d
+                    # pylint: disable=import-outside-toplevel
+                    from backend.core.plugin_lifecycle_manager import (
+                        get_plugin_lifecycle_manager as _get_plm03d,
+                    )
 
                     _plm03_dfn = _get_plm03d()
                     _plm03_dfn.set_active("DeepFilterNetV3", True)
@@ -766,7 +767,10 @@ class DenoisePhase(PhaseInterface):
                         # ML-Modell hat keinen Phonem-Kontext → Plosiv-Bursts können gedämpft sein.
                         # Konsonanten-Burst-Frames aus Original wiederherstellen, bevor audio überschrieben.
                         try:
-                            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_dfn
+                            # pylint: disable=import-outside-toplevel
+                            from backend.core.lyrics_guided_enhancement import (
+                                get_phoneme_mask as _get_pmask_dfn,
+                            )
 
                             _dfn_hop = 512
                             _dfn_mono = audio
@@ -807,7 +811,7 @@ class DenoisePhase(PhaseInterface):
                         # Wenn ΔHNR > 3 dB → Dry-Blend um natürliche Rauigkeit zu erhalten.
                         if _panns_singing >= 0.25:
                             try:
-                                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr
+                                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                                 _hnr_audio_pre = (
                                     _tdp_original_audio
@@ -862,10 +866,13 @@ class DenoisePhase(PhaseInterface):
         if _sgmse_eligible:
             _plm03_sgmse = None
             try:
-                from plugins.sgmse_plugin import get_sgmse_plus_plugin
+                from plugins.sgmse_plugin import get_sgmse_plus_plugin  # pylint: disable=import-outside-toplevel
 
                 try:
-                    from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm03
+                    # pylint: disable=import-outside-toplevel
+                    from backend.core.plugin_lifecycle_manager import (
+                        get_plugin_lifecycle_manager as _get_plm03,
+                    )
 
                     _plm03_sgmse = _get_plm03()
                     _plm03_sgmse.set_active("SGMSE+", True)  # §4.6b: protect from eviction
@@ -1016,9 +1023,12 @@ class DenoisePhase(PhaseInterface):
                     noise_reduction_db = 15.0  # Default estimate
 
                 logger.info(
-                    f"ML-Hybrid complete: OMLSA={ml_result.omlsa_applied}, "
-                    f"Resemble={ml_result.resemble_applied}, quality={ml_result.quality_estimate:.3f}, "
-                    f"reduction={noise_reduction_db:.1f}dB, time={execution_time:.2f}s"
+                    "ML-Hybrid complete: OMLSA=%s, Resemble=%s, quality=%.3f, reduction=%.1fdB, time=%.2fs",
+                    ml_result.omlsa_applied,
+                    ml_result.resemble_applied,
+                    ml_result.quality_estimate,
+                    noise_reduction_db,
+                    execution_time,
                 )
 
                 # Generate warnings
@@ -1048,7 +1058,7 @@ class DenoisePhase(PhaseInterface):
                         _ml_e_out / _ml_e_in,
                     )
                     warnings.append(
-                        f"ML energy-preservation: Resemble near-silence (ratio={_ml_e_out / _ml_e_in:.3f}) → DSP fallback"
+                        f"ML energy-preservation: Resemble near-silence (ratio={_ml_e_out / _ml_e_in:.3f}) → DSP fallback"  # pylint: disable=line-too-long
                     )
                     # Re-run DSP path (OMLSA/IMCRA) which has its own §8.2 guard
                     dsp_params_fb = dict(params)
@@ -1209,7 +1219,7 @@ class DenoisePhase(PhaseInterface):
         # noise floor after denoising — preserves vinyl warmth, tape hiss texture).
         _noise_texture_applied = False
         try:
-            from backend.core.dsp.psychoacoustics import (
+            from backend.core.dsp.psychoacoustics import (  # pylint: disable=import-outside-toplevel
                 compute_noise_texture_profile,
                 get_material_noise_texture,
                 synthesize_comfort_noise,
@@ -1274,7 +1284,7 @@ class DenoisePhase(PhaseInterface):
 
         # §2.62 Psychoakustischer Masking-Guard — protect inaudible content from clinical silence
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             result_audio = apply_psychoacoustic_masking_clamp(
                 original_audio=audio,
@@ -1387,7 +1397,7 @@ class DenoisePhase(PhaseInterface):
         quality_mode: str,
     ) -> tuple[np.ndarray, dict[str, float]]:
         """Keep restoration denoise effective while preventing audible loudness collapse."""
-        from backend.core.audio_utils import (
+        from backend.core.audio_utils import (  # pylint: disable=import-outside-toplevel
             apply_musical_gain_envelope,
             compute_gated_rms_dbfs,
             compute_signal_relative_gate_dbfs,
@@ -1487,7 +1497,7 @@ class DenoisePhase(PhaseInterface):
         try:
             _pmm = None
             if _pmm is None:
-                from backend.core.psychoacoustic_masking_model import compute_masking_threshold
+                from backend.core.psychoacoustic_masking_model import compute_masking_threshold  # pylint: disable=import-outside-toplevel  # noqa: I001
 
                 _pmm = compute_masking_threshold(audio.astype(np.float32), self.sample_rate)
             # Mittlerer Gain-Modifier over Bark-Bänder → skalare Zeitkurve [n_frames]
@@ -1602,7 +1612,7 @@ class DenoisePhase(PhaseInterface):
         _masking_floor_ref: np.ndarray | None = None
         _masking_freqs_ref: np.ndarray | None = None
         try:
-            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_03
+            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_03  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _mono_ref_03 = audio if audio.ndim == 1 else audio[0]  # channel-first
             _mask_ratio_03 = _cmask_03(_mono_ref_03, sr, n_fft=2048, hop_length=512)
@@ -1758,7 +1768,7 @@ class DenoisePhase(PhaseInterface):
         # §2.36 LyricsGuided-Phonem-Schutz: Konsonanten-Bursts (Plosive/Frikative) → NR-Bypass
         # VERBOTEN: NR auf Vokal-Stems ohne phonem-bewusste Maske (§2.36 Pflicht ab 9.10.x)
         try:
-            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _p36_mask = _get_pmask(audio, sr, hop_length=REF_HOP)
             if len(_p36_mask) != n_t:
@@ -2225,7 +2235,7 @@ class DenoisePhase(PhaseInterface):
     def _estimate_noise_profile_adaptive(
         self,
         Zxx: np.ndarray,
-        freqs: np.ndarray,
+        freqs: np.ndarray,  # pylint: disable=unused-argument
         times: np.ndarray,
         noise_start: float,
         noise_end: float,
@@ -2410,77 +2420,79 @@ class DenoisePhase(PhaseInterface):
 
         return max(0, reduction_db)  # Clamp to non-negative
 
-    def supports_material(self, material_type: str) -> bool:
+    def supports_material(self, material_type: str) -> bool:  # pylint: disable=unused-argument
         """All materials supported."""
         return True
 
 
 if __name__ == "__main__":
-    """Test Professional Denoise Phase."""
+    # Test Professional Denoise Phase.
 
     logger.debug("=" * 80)
     logger.debug("Professional Denoise Phase v2.0 - Test")
     logger.debug("=" * 80)
 
     # Generate test audio
-    sr = 44100
-    duration = 5
-    t = np.linspace(0, duration, sr * duration)
+    _sr = 44100
+    _duration = 5
+    _t = np.linspace(0, _duration, _sr * _duration)
 
     # Clean music signal
-    audio = 0.3 * np.sin(2 * np.pi * 440 * t)  # A4 note
-    audio += 0.15 * np.sin(2 * np.pi * 880 * t)  # A5 (harmonic)
-    audio += 0.08 * np.sin(2 * np.pi * 1320 * t)  # Harmonic
+    _audio = 0.3 * np.sin(2 * np.pi * 440 * _t)  # A4 note
+    _audio += 0.15 * np.sin(2 * np.pi * 880 * _t)  # A5 (harmonic)
+    _audio += 0.08 * np.sin(2 * np.pi * 1320 * _t)  # Harmonic
 
     # Add transient (drum hit at t=1s)
-    hit_pos = int(1.0 * sr)
-    audio[hit_pos : hit_pos + 1000] += 0.5 * np.exp(-np.arange(1000) / 100) * np.random.randn(1000)
+    _hit_pos = int(1.0 * _sr)
+    _audio[_hit_pos : _hit_pos + 1000] += 0.5 * np.exp(-np.arange(1000) / 100) * np.random.randn(1000)
 
     # Add broadband noise (tape hiss)
-    noise = 0.08 * np.random.randn(len(audio))
+    _noise = 0.08 * np.random.randn(len(_audio))
 
     # High-frequency emphasis (tape hiss characteristic)
-    sos_hf = signal.butter(2, 5000, btype="high", fs=sr, output="sos")
-    noise_hf = signal.sosfilt(sos_hf, noise)
+    _sos_hf = signal.butter(2, 5000, btype="high", fs=_sr, output="sos")
+    _noise_hf = signal.sosfilt(_sos_hf, _noise)
 
-    audio_with_noise = audio + noise_hf
+    _audio_with_noise = _audio + _noise_hf
 
     # Make stereo
-    audio_with_noise = np.column_stack([audio_with_noise, audio_with_noise * 0.95])
+    _audio_with_noise = np.column_stack([_audio_with_noise, _audio_with_noise * 0.95])
 
-    logger.debug("\nTest Audio: %ss @ %s Hz (stereo)", duration, sr)
+    logger.debug("\nTest Audio: %ss @ %s Hz (stereo)", _duration, _sr)
     logger.debug("Content: 440 Hz tone + harmonics + drum transient")
     logger.debug("Noise: Broadband high-frequency hiss (tape characteristic)")
 
     # Test with different materials
-    materials = ["tape", "vinyl", "cd_digital"]
+    _materials = ["tape", "vinyl", "cd_digital"]
 
-    for material in materials:
+    for _material in _materials:
         logger.debug("\n%s", "-" * 80)
-        logger.debug("Testing with material: %s", material.upper())
+        logger.debug("Testing with material: %s", _material.upper())
         logger.debug("%s", "-" * 80)
 
-        phase = DenoisePhase(sample_rate=sr)
-        result = phase.process(audio_with_noise.copy(), material_type=material)
+        _phase = DenoisePhase(sample_rate=_sr)
+        _result = _phase.process(_audio_with_noise.copy(), material_type=_material)
 
-        if result.success:
-            logger.debug("✅ Processing Complete!")
+        if _result.success:
+            logger.debug("Processing Complete!")
             logger.debug(
-                f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
+                "   Execution Time: %.3fs (%.2f\u00d7 realtime)",
+                _result.metadata["execution_time_seconds"],
+                _result.metadata["execution_time_seconds"] / _duration,
             )
-            logger.debug("   Noise Reduction: %.1f dB", result.modifications["noise_reduction_db"])
-            logger.debug("   Musical Noise Suppression: %.2f", result.modifications["musical_noise_suppression"])
-            logger.debug("   Strength: %s", result.modifications["strength"])
-            logger.debug("   Multi-Band: %s", result.metadata["multi_band"])
-            logger.debug("   Adaptive Tracking: %s", result.metadata["adaptive_noise_tracking"])
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
+            logger.debug("   Noise Reduction: %.1f dB", _result.modifications["noise_reduction_db"])
+            logger.debug("   Musical Noise Suppression: %.2f", _result.modifications["musical_noise_suppression"])
+            logger.debug("   Strength: %s", _result.modifications["strength"])
+            logger.debug("   Multi-Band: %s", _result.metadata["multi_band"])
+            logger.debug("   Adaptive Tracking: %s", _result.metadata["adaptive_noise_tracking"])
+            logger.debug("   Warnings: %s", _result.warnings if _result.warnings else "None")
         else:
-            logger.debug("❌ Processing Failed!")
+            logger.debug("Processing Failed!")
 
     logger.debug("\n%s", "=" * 80)
-    logger.debug("✅ Professional Denoise v2.0 Test Complete!")
+    logger.debug("Professional Denoise v2.0 Test Complete!")
     logger.debug("%s", "=" * 80)
-    logger.debug("Algorithm: %s", result.metadata["algorithm"])
-    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
-    logger.debug("Benchmark: %s", result.metadata["benchmark"])
+    logger.debug("Algorithm: %s", _result.metadata["algorithm"])
+    logger.debug("Scientific Reference: %s", _result.metadata["scientific_ref"])
+    logger.debug("Benchmark: %s", _result.metadata["benchmark"])
     logger.debug("Quality Impact: 0.93 (Professional-Grade)")

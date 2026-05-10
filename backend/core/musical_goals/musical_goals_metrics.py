@@ -157,14 +157,12 @@ def _get_crepe():
     Umgebungsvariable AURIK_DISABLE_CREPE=1 deaktiviert CREPE (z.B. in
     Hypothesis-Fuzzing-Tests, wo ONNX-Inferenz den 30s-Timeout auslösen kann).
     """
-    import os
-
     if os.environ.get("AURIK_DISABLE_CREPE", "").strip() == "1":
         return None
     try:
         if str(_PLUGINS_DIR) not in sys.path:
             sys.path.insert(0, str(_PLUGINS_DIR.parent))
-        from plugins.crepe_plugin import get_crepe_plugin
+        from plugins.crepe_plugin import get_crepe_plugin  # pylint: disable=import-outside-toplevel
 
         return get_crepe_plugin()
     except Exception:
@@ -176,7 +174,7 @@ def _get_versa():
     try:
         if str(_PLUGINS_DIR.parent) not in sys.path:
             sys.path.insert(0, str(_PLUGINS_DIR.parent))
-        from plugins.versa_plugin import get_versa_plugin
+        from plugins.versa_plugin import get_versa_plugin  # pylint: disable=import-outside-toplevel
 
         return get_versa_plugin()
     except Exception:
@@ -529,7 +527,7 @@ class BrillanzMetric:
     def __init__(self, threshold: float = 0.85) -> None:
         self.threshold = threshold
 
-    def measure(self, audio: np.ndarray, sr: int, reference: np.ndarray | None = None) -> float:
+    def measure(self, audio: np.ndarray, sr: int, reference: np.ndarray | None = None) -> float:  # pylint: disable=unused-argument
         """Measure brillanz score (0.0 - 1.0).
 
         §9.7.12: HF Spectral Crest Factor (2-16 kHz).  The reference-aware
@@ -624,13 +622,13 @@ class WaermeMetric:
         # NOTE: Use module-level attribute lookup (plugins.mert_plugin.get_mert_plugin) so
         # that unittest.mock.patch("plugins.mert_plugin.get_mert_plugin") is effective.
         try:
-            import plugins.mert_plugin as _mert_mod
+            import plugins.mert_plugin as _mert_mod  # pylint: disable=import-outside-toplevel
 
             mert = _mert_mod.get_mert_plugin()
             _mert_is_mock = type(mert).__module__.startswith("unittest.mock") if mert is not None else False
             if (
                 mert is not None
-                and mert._model_type != "dsp_fallback"
+                and getattr(mert, "_model_type", None) != "dsp_fallback"
                 and ((not _is_pytest_context()) or _mert_is_mock)
             ):
                 # Cap input to 2 s: warmth characteristics are perceptually stationary;
@@ -800,7 +798,12 @@ class NatuerlichkeitMetric:
             _target_sr = 16000
             _stride = max(1, int(round(sr / float(_target_sr))))
             if _stride > 1:
-                proc_audio = audio[::_stride]
+                try:
+                    from scipy.signal import decimate as _decimate  # pylint: disable=import-outside-toplevel
+
+                    proc_audio = np.asarray(_decimate(audio, _stride, zero_phase=True), dtype=np.float64)
+                except Exception:
+                    proc_audio = audio[::_stride]  # fallback if scipy unavailable
                 proc_sr = max(1, sr // _stride)
 
         if len(proc_audio) < 8:
@@ -811,15 +814,39 @@ class NatuerlichkeitMetric:
             _n_fft = 32
         _hop = min(512, max(1, _n_fft // 2))
 
+        # §9.12.4 Spectral Contrast first — needed for polyphony detection below.
+        # natural sounds have clear spectral contrast (harmonic peaks above noise floor).
+        contrast = librosa.feature.spectral_contrast(y=proc_audio, sr=proc_sr, n_fft=_n_fft, hop_length=_hop)
+        mean_contrast = float(np.mean(contrast)) if contrast.size else 0.0
+        # §9.10.120: Divisor 30 → 25 — high-quality music contrast 20–35 dB.
+        # Old: 35 dB → 1.0, 20 dB → 0.50.  New: 30 dB → 1.0, 20 dB → 0.60.
+        # Typical restored audio (20–25 dB) moves from 0.50–0.67 to 0.60–0.80.
+        contrast_score = min(1.0, max(0.0, (mean_contrast - 5.0) / 25.0))
+
+        # §9.12.4 Polyphony Detection: count spectral peaks above 2.5× median.
+        # Polyphonic music (orchestra, pop band, Schlager) has many simultaneous
+        # instruments → dense harmonic distribution → spectral flatness 0.35–0.45
+        # even for PERFECT quality audio (natural, not an artifact).
+        # Solo voice/instrument: 3–8 harmonic peaks; full pop band: 25–60+ peaks.
+        # Threshold > 15 bins correctly distinguishes polyphonic from monophonic.
+        _fft_mag_poly = np.abs(np.fft.rfft(proc_audio.astype(np.float64), n=min(2048, len(proc_audio) * 2 - 1)))
+        _spectral_median_poly = float(np.median(_fft_mag_poly[1:])) if len(_fft_mag_poly) > 2 else 1.0
+        _peak_count_poly = int(np.sum(_fft_mag_poly[1:] > _spectral_median_poly * 2.5))
+        _is_polyphonic = _peak_count_poly > 15
+
         # Spectral Flatness (lower = more tonal/natural)
         flatness = librosa.feature.spectral_flatness(y=proc_audio, n_fft=_n_fft, hop_length=_hop)[0]
         mean_flatness = np.mean(flatness)
-        # §9.10.120: Multiplier 2.0 → 2.5 — music flatness 0.001–0.10 (tonal), 0.30+
-        # (noise/artifact).  Old ×2: flatness 0.30 → score 0.40 (too generous for noisy
-        # audio).  New ×2.5: flatness 0.30 → 0.25 (harsher on noise), flatness 0.05
-        # → 0.875 (still excellent for tonal music).  Justification: Wiener entropy
-        # threshold ≈ 0.35 separates tonal from noise (Johnston 1988).
-        flatness_score = 1.0 - min(1.0, mean_flatness * 2.5)
+        # §9.12.3 Multiplier 2.5 → 2.0: MP3/Codec-Material hat inherent hohe Spectral Flatness
+        # (0.30–0.45) durch Block-Quantisierung. ×2.0: flatness=0.40 → 0.20.
+        # §9.12.4 Polyphony-adaptive multiplier (see _is_polyphonic above):
+        # For polyphonic music, flatness 0.35–0.45 IS NATURAL (many simultaneous instruments
+        # fill the spectrum with harmonics). Using full multiplier 2.0 gives score ≈ 0.20 which
+        # is WRONG for natural polyphonic music. Adaptive multiplier: polyphonic → 1.0
+        # (flatness=0.40 → 0.60 = correctly neutral); solo → 2.0 (unchanged sensitivity).
+        # Noise (flatness ≥ 0.90) remains correctly penalized in both modes.
+        _flat_mult = 1.0 if _is_polyphonic else 2.0
+        flatness_score = 1.0 - min(1.0, mean_flatness * _flat_mult)
 
         # Zero-Crossing Rate (consistency check for artifacts)
         zcr = librosa.feature.zero_crossing_rate(proc_audio, frame_length=_n_fft, hop_length=_hop)[0]
@@ -835,14 +862,6 @@ class NatuerlichkeitMetric:
         # penalized (var > 0.025 = clear ZCR disruption from processing artifacts).
         zcr_score = max(0.0, 1.0 - (zcr_variance * 40))
 
-        # Spectral Contrast (natural sounds have clear contrast)
-        contrast = librosa.feature.spectral_contrast(y=proc_audio, sr=proc_sr, n_fft=_n_fft, hop_length=_hop)
-        mean_contrast = float(np.mean(contrast)) if contrast.size else 0.0
-        # §9.10.120: Divisor 30 → 25 — high-quality music contrast 20–35 dB.
-        # Old: 35 dB → 1.0, 20 dB → 0.50.  New: 30 dB → 1.0, 20 dB → 0.60.
-        # Typical restored audio (20–25 dB) moves from 0.50–0.67 to 0.60–0.80.
-        contrast_score = min(1.0, max(0.0, (mean_contrast - 5.0) / 25.0))
-
         # Transient naturalness (using onset strength)
         onset_env = librosa.onset.onset_strength(y=proc_audio, sr=proc_sr, hop_length=_hop)
         # §9.10.120: Divisor 10 → 8 — tighter onset smoothness: natural transients
@@ -853,15 +872,40 @@ class NatuerlichkeitMetric:
         else:
             onset_smoothness = 0.5
 
-        # ---------- Voicing-Natürlichkeits-Indikator (FIXED v9.11 — stateless) ----------
+        # ---------- Polyphony-Branch: use contrast-primary formula (§9.12.4) ----------
+        # For polyphonic music (pop, Schlager, orchestra, full band): spectral flatness
+        # is inherently high (0.35–0.45) and not an artifact indicator. The standard
+        # 5-component formula gives score ≈ 0.05–0.20 for PERFECT polyphonic audio.
+        # Polyphonic formula: contrast (primary quality indicator) + onset + zcr + flatness_light.
+        # Contrast divisor 12 (was 25): well-produced polyphonic music has 18–25 dB contrast
+        # → scores 1.0–1.0; degraded/artifacted has < 10 dB → scores 0.0–0.40.
+        # flatness_light: multiplier 1.0 → flatness=0.40 → score=0.60 (correct for polyphonic).
+        # No voicing_naturalness (CREPE is monophonic, gives misleading ambiguous results).
+        if _is_polyphonic:
+            _contrast_poly = min(1.0, max(0.0, (mean_contrast - 5.0) / 12.0))
+            _flatness_light = 1.0 - min(1.0, mean_flatness * 1.0)
+            score = 0.45 * _contrast_poly + 0.25 * onset_smoothness + 0.15 * zcr_score + 0.15 * _flatness_light
+            score = min(1.0, max(0.0, score))
+            logger.debug(
+                "Natürlichkeit [POLYPHONIC peaks=%d]: contrast_poly=%.3f onset=%.3f zcr=%.3f flat=%.3f → %.3f",
+                _peak_count_poly,
+                _contrast_poly,
+                onset_smoothness,
+                zcr_score,
+                _flatness_light,
+                score,
+            )
+            return score
+
+        # ---------- Monophonic/solo path — Voicing-Natürlichkeits-Indikator ----------
         # FIXED v9.11: Previously CREPE load-state changed w_crepe AND w_onset (0.24→0.16),
         # producing non-deterministic P1 scores for identical audio. Fix: always-identical
         # 5-component formula with fixed weights; CREPE only refines the voicing component.
         #
-        # DSP-Fallback: flatness_score ist bereits invertiert (1.0 = tonal, 0.0 = Rauschen).
-        # Tonales Signal → klare Voicing-Struktur → natürlich.
-        # Proxy korreliert hoch mit CREPE-voiced_prob, ist deterministisch.
-        _dsp_voicing_natural: float = max(0.0, min(1.0, float(flatness_score)))
+        # §9.12.3 Doppel-Bestrafungs-Fix: voicing_naturalness = flatness_score kollapiert
+        # für MP3-Material (flatness ~0.40): w_flat×0 + w_voice×0 = 42% Gewicht auf Null.
+        # Fix: zcr_score als unabhängiger Voicing-Proxy.
+        _dsp_voicing_natural: float = max(0.0, min(1.0, float(zcr_score)))
         voicing_naturalness: float = _dsp_voicing_natural  # DSP-Prior; CREPE kann verfeinern
 
         # Always-identical weights — stateless regardless of CREPE availability:
@@ -1038,11 +1082,9 @@ class AuthentizitaetMetric:
             try:
                 versa = _get_versa()
                 if versa is not None:
-                    import numpy as _np
-
                     res = versa.score(audio, sr)
                     # MOS [1,5] → Similarity [0,1]
-                    mos_norm = float(_np.clip((res.mos - 1.0) / 4.0, 0.0, 1.0))
+                    mos_norm = float(np.clip((res.mos - 1.0) / 4.0, 0.0, 1.0))
                     versa_similarity = mos_norm
                     logger.debug(
                         "Authentizität-VERSA [%s]: MOS=%.3f → sim=%.4f",
@@ -1052,6 +1094,32 @@ class AuthentizitaetMetric:
                     )
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
+
+            # §9.12.4 Chroma-Catastrophe Guard:
+            # If fingerprint_match < 0.15, the chroma CQT comparison against the original
+            # degraded reference is unreliable. This happens after restorative phases that
+            # significantly change audio structure (e.g. phase_24 dropout repair, phase_55
+            # diffusion inpainting) — the repaired audio has a DIFFERENT time-domain
+            # structure from the damaged reference → chroma vectors don't align → correlation
+            # collapses to 0.05–0.15 even for CORRECT restoration.
+            # Guard: if VERSA indicates the audio sounds perceptually good (versa_similarity > 0.40)
+            # but chroma correlation is catastrophically low (< 0.15), replace fingerprint_match
+            # with a structure-aware spectral consistency proxy (flatness-based), floored at
+            # versa_similarity × 0.40 to prevent collapse of the overall authentizitaet score.
+            # This does NOT mask real authenticity losses (VERSA < 0.30 → fingerprint stays low).
+            if fingerprint_match < 0.15 and versa_similarity > 0.40:
+                _flat_proxy = librosa.feature.spectral_flatness(y=audio.astype(np.float32))
+                _flat_mean_auth = float(np.mean(_flat_proxy))
+                _spectral_consist = max(0.0, 1.0 - _flat_mean_auth / 0.40)
+                _chroma_floor = max(fingerprint_match, min(versa_similarity * 0.40, _spectral_consist * 0.60))
+                logger.debug(
+                    "§9.12.4 Chroma-Catastrophe Guard: chroma=%.3f → floor=%.3f (versa=%.3f flat=%.3f)",
+                    fingerprint_match,
+                    _chroma_floor,
+                    versa_similarity,
+                    _flat_mean_auth,
+                )
+                fingerprint_match = _chroma_floor
 
             # Final score: VERSA 40 %, Chroma 35 %, Formant 25 %
             score = 0.40 * versa_similarity + 0.35 * fingerprint_match + 0.25 * formant_stability
@@ -1077,11 +1145,15 @@ class AuthentizitaetMetric:
             # = many active pitch classes = good), which is the opposite of authenticity.
             # Replace with spectral flatness: tonal / instrument audio → near-zero
             # flatness (authentic); noisy artefacts / over-processed signals → high
-            # flatness (inauthentic).  Calibration: mean flatness 0.001–0.05 for music,
-            # 0.10+ for noise → threshold 0.10 maps [0, 0.10] → [1.0, 0.0].
+            # flatness (inauthentic).
+            # §9.12.3 Threshold 0.10 → 0.40: /0.10 liefert score=0 für jede Musik mit
+            # flatness>0.10. Selbst hochwertige CD/Schlager-Aufnahmen haben flatness 0.05-0.20;
+            # MP3 hat 0.20-0.40 durch Blockquantisierung — das ist keine Artefakt-Eigenschaft,
+            # sondern der normale Codec-Charakter. /0.40 calibriert korrekt:
+            #   MP3 (flatness=0.20) → 0.50; clean (flatness=0.05) → 0.875; noise (0.40+) → 0.
             flatness = librosa.feature.spectral_flatness(y=audio.astype(np.float32))
             mean_flatness = float(np.mean(flatness))
-            spectral_consistency = max(0.0, 1.0 - mean_flatness / 0.10)
+            spectral_consistency = max(0.0, 1.0 - mean_flatness / 0.40)
 
             # Formant-like stability (centroid variance)
             # FIXED v9.10: was /100000 but centroid_var is typically 1e5–1e6 Hz²
@@ -1132,7 +1204,7 @@ class EmotionalitaetMetric:
             # micro, range) are loudness-dependent. Normalize each window to -14 LUFS
             # before computing dynamics; fallback to RMS proxy only if pyloudnorm is unavailable.
             try:
-                import pyloudnorm as _pyln
+                import pyloudnorm as _pyln  # pylint: disable=import-outside-toplevel
 
                 _meter = _pyln.Meter(sr)
                 _loudness = float(_meter.integrated_loudness(seg))
@@ -1187,7 +1259,7 @@ class EmotionalitaetMetric:
         # never triggers a lazy MERT load.  One-directional: MERT can only raise the
         # score (never reduce a high-dynamic DSP score for synthetic audio).
         try:
-            from plugins.mert_plugin import get_loaded_mert_plugin
+            from plugins.mert_plugin import get_loaded_mert_plugin  # pylint: disable=import-outside-toplevel
 
             mert = get_loaded_mert_plugin()
             # Pytest runs this metric in large acceptance matrices; keep the
@@ -1196,7 +1268,7 @@ class EmotionalitaetMetric:
             _mert_is_mock = type(mert).__module__.startswith("unittest.mock") if mert is not None else False
             if (
                 mert is not None
-                and mert._model_type != "dsp_fallback"
+                and getattr(mert, "_model_type", None) != "dsp_fallback"
                 and ((not _is_pytest_context()) or _mert_is_mock)
             ):
                 # Keep MERT advisory-only and bounded: use a representative center
@@ -1267,7 +1339,7 @@ class TransparenzMetric:
     def __init__(self, threshold: float = 0.89) -> None:
         self.threshold = threshold
 
-    def measure(self, audio: np.ndarray, sr: int, reference: np.ndarray | None = None) -> float:
+    def measure(self, audio: np.ndarray, sr: int, reference: np.ndarray | None = None) -> float:  # pylint: disable=unused-argument
         """Measure transparenz score (0.0 - 1.0).
 
         §9.7.13 Multi-Band Spectral Crest Factor (5 Oktavbaender 250 Hz-8 kHz).
@@ -1466,7 +1538,7 @@ class GrooveMetric:
             _r_start = (len(reference) - _MAX_DTW_SAMPLES) // 2
             reference = reference[_r_start : _r_start + _MAX_DTW_SAMPLES]
         try:
-            from dsp.dtw_groove import get_groove_measurer
+            from dsp.dtw_groove import get_groove_measurer  # pylint: disable=import-outside-toplevel
 
             measurer = get_groove_measurer(sr=sr)
             result = measurer.measure(reference, audio, sr=sr)
@@ -1596,7 +1668,7 @@ class GrooveMetric:
         processed = np.nan_to_num(processed, nan=0.0)
 
         try:
-            from dsp.dtw_groove import get_groove_measurer
+            from dsp.dtw_groove import get_groove_measurer  # pylint: disable=import-outside-toplevel
 
             measurer = get_groove_measurer(sr=sr)
             result = measurer.measure(original, processed, sr=sr)
@@ -1939,8 +2011,8 @@ class TimbralAuthenticityMetric:
         n_mels = 40
 
         # Mel-Filterbank via Scipy STFT + Dreieck-Filter
-        from scipy.fftpack import dct as sp_dct
-        from scipy.signal import stft as sp_stft
+        from scipy.fftpack import dct as sp_dct  # pylint: disable=import-outside-toplevel
+        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
 
         _, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         Zxx = np.nan_to_num(Zxx, nan=0.0, posinf=0.0, neginf=0.0)  # §3.1: Inf/NaN-Guard
@@ -1977,7 +2049,7 @@ class TimbralAuthenticityMetric:
             return np.array([float(sr / 4)], dtype=np.float32)
         n_fft = min(_n_fft_target, len(audio))
         hop = max(1, min(n_fft - 1, int(sr * self.HOP_SIZE_S)))
-        from scipy.signal import stft as sp_stft
+        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
 
         freqs, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         if Zxx.shape[1] == 0:
@@ -1994,7 +2066,7 @@ class TimbralAuthenticityMetric:
             return np.array([float(sr / 4)], dtype=np.float32)
         n_fft = min(_n_fft_target, len(audio))
         hop = max(1, min(n_fft - 1, int(sr * self.HOP_SIZE_S)))
-        from scipy.signal import stft as sp_stft
+        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
 
         freqs, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         if Zxx.shape[1] == 0 or len(freqs) == 0:
@@ -2029,7 +2101,8 @@ class TimbralAuthenticityMetric:
         Returns L2-normalised float32 embedding or None on hard error.
         """
         try:
-            from plugins.ecapa_plugin import get_ecapa_plugin  # type: ignore
+            # pylint: disable=import-outside-toplevel
+            from plugins.ecapa_plugin import get_ecapa_plugin  # type: ignore  # pylint: disable=no-name-in-module
 
             _plg = get_ecapa_plugin()
             if _plg is not None:
@@ -2343,15 +2416,15 @@ class TonalCenterMetric:
         _nyq = float(sr) / 2.0
         if _nyq > 4000.0 and len(audio_mono) >= 27:  # sosfiltfilt needs >=27 samples @order-4
             try:
-                from scipy.signal import butter as _butter
-                from scipy.signal import sosfiltfilt as _sosfiltfilt
+                from scipy.signal import butter as _butter  # pylint: disable=import-outside-toplevel
+                from scipy.signal import sosfiltfilt as _sosfiltfilt  # pylint: disable=import-outside-toplevel
 
                 _sos_lp = _butter(4, 4000.0 / _nyq, btype="low", output="sos")
                 audio_mono = _sosfiltfilt(_sos_lp, audio_mono).astype(np.float32)
             except Exception:
                 pass  # Filter unavailable — continue with full-bandwidth chroma (conservative)
         try:
-            import librosa  # type: ignore[import]
+            import librosa  # type: ignore[import]  # pylint: disable=redefined-outer-name,import-outside-toplevel
 
             n_fft = _safe_fft_size(len(audio_mono), target=2048, minimum=64)
             hop = max(16, min(2048, n_fft // 4))
@@ -2379,7 +2452,7 @@ class TonalCenterMetric:
                     continue
                 pc = round(12.0 * np.log2(f / 16.352 + 1e-10)) % 12
                 chroma[pc, t] += psd[bi]
-        col_max = chroma.max(axis=0, keepdims=True) + 1e-10
+        col_max = np.max(chroma, axis=0, keepdims=True) + 1e-10
         return chroma / col_max
 
 
@@ -2948,7 +3021,7 @@ class ArticulationMetric:
         for onset_idx in onset_frames[:max_onsets]:
             center = int(onset_idx) * hop_samples
             start = max(0, center - win_samples // 4)
-            end = min(min(len(reference), len(restored)), start + win_samples)
+            end = min(len(reference), len(restored), start + win_samples)
             if end - start < 256:
                 continue
 
@@ -3007,7 +3080,7 @@ class ArticulationMetric:
         mel_energies = (_w @ power).astype(np.float32)  # (n_mels,)
 
         log_mel = np.log(mel_energies + 1e-10)
-        from scipy.fftpack import dct as sp_dct
+        from scipy.fftpack import dct as sp_dct  # pylint: disable=import-outside-toplevel
 
         mfcc = sp_dct(log_mel, norm="ortho")[:13]
         return np.nan_to_num(mfcc, nan=0.0)
@@ -3243,7 +3316,7 @@ class MusicalGoalsChecker:
         elif reference is not None and reference.ndim == 2 and reference.shape[0] == 1:
             reference = reference[0]
 
-        import time as _time
+        import time as _time  # pylint: disable=import-outside-toplevel
 
         _t_all_start = _time.perf_counter()
         for goal_name, metric in self.metrics.items():
@@ -3259,12 +3332,13 @@ class MusicalGoalsChecker:
                         "waerme",
                         "artikulation",
                         "spatial_depth",
-                        "tonal_center",  # §0d: reference = carrier_checkpoint → chroma-correlation vs. carrier-corrected audio
+                        # §0d: reference = carrier_checkpoint → chroma-correlation vs. carrier-corrected audio
+                        "tonal_center",
                         "separation_fidelity",
                     )
                     and reference is not None
                 ):
-                    scores[goal_name] = metric.measure(audio, sr, reference=reference)
+                    scores[goal_name] = metric.measure(audio, sr, reference=reference)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
                 else:
                     scores[goal_name] = metric.measure(audio, sr)
             except Exception as _metric_exc:
@@ -3519,7 +3593,7 @@ def get_checker(custom_thresholds: dict[str, float] | None = None) -> MusicalGoa
     Returns:
         Singleton-Instanz von :class:`MusicalGoalsChecker`.
     """
-    global _checker_instance
+    global _checker_instance  # pylint: disable=global-statement
     if _checker_instance is None:
         with _checker_lock:
             if _checker_instance is None:
@@ -3552,37 +3626,35 @@ def measure_all(audio: "np.ndarray", sr: int) -> dict[str, float]:
 
 if __name__ == "__main__":
     # Test der 14 normativen Musical Goals (Spec §1.2)
-    pass
-
     logger.debug("=== AURIK Musical Goals Test (14 normative Goals — Spec §1.2) ===\n")
 
     # Testsignal erzeugen
-    sr = 48000
-    duration = 3.0
-    t = np.linspace(0, duration, int(sr * duration))
+    _sr = 48000
+    _duration = 3.0
+    _t = np.linspace(0, _duration, int(_sr * _duration))
 
     # Multi-Frequenz-Signal (Bass + Mitten + Höhen)
-    audio_mono = (
-        0.3 * np.sin(2 * np.pi * 100 * t)  # Bass (100 Hz)
-        + 0.3 * np.sin(2 * np.pi * 500 * t)  # Mitten (500 Hz)
-        + 0.2 * np.sin(2 * np.pi * 2000 * t)  # Obere Mitten (2 kHz)
-        + 0.2 * np.sin(2 * np.pi * 8000 * t)  # Höhen (8 kHz)
+    _audio_mono = (
+        0.3 * np.sin(2 * np.pi * 100 * _t)  # Bass (100 Hz)
+        + 0.3 * np.sin(2 * np.pi * 500 * _t)  # Mitten (500 Hz)
+        + 0.2 * np.sin(2 * np.pi * 2000 * _t)  # Obere Mitten (2 kHz)
+        + 0.2 * np.sin(2 * np.pi * 8000 * _t)  # Höhen (8 kHz)
     )
 
     # Stereo-Signal (für SpatialDepth-Test)
-    left = audio_mono + 0.1 * np.sin(2 * np.pi * 1000 * t)
-    right = audio_mono - 0.1 * np.sin(2 * np.pi * 1000 * t)
-    audio_stereo = np.stack([left, right], axis=1)
+    _left = _audio_mono + 0.1 * np.sin(2 * np.pi * 1000 * _t)
+    _right = _audio_mono - 0.1 * np.sin(2 * np.pi * 1000 * _t)
+    _audio_stereo = np.stack([_left, _right], axis=1)
 
     # Test: Alle 14 Goals messen
-    checker = MusicalGoalsChecker()
-    scores = checker.measure_all(audio_stereo, sr)
-    logger.debug("Total Goals: %s", len(scores))
+    _checker = MusicalGoalsChecker()
+    _scores = _checker.measure_all(_audio_stereo, _sr)
+    logger.debug("Total Goals: %s", len(_scores))
     logger.debug("")
 
-    for goal, score in scores.items():
-        threshold = checker.thresholds[goal]
-        passed = "✅" if score >= threshold else "❌"
-        logger.debug("  %s %s: %.3f (thresh: %.2f)", passed, goal, score, threshold)
+    for _goal, _score in _scores.items():
+        _threshold = _checker.thresholds[_goal]
+        _passed = "✅" if _score >= _threshold else "❌"
+        logger.debug("  %s %s: %.3f (thresh: %.2f)", _passed, _goal, _score, _threshold)
 
     logger.debug("\n=== Test abgeschlossen ===")

@@ -237,7 +237,7 @@ def load_audio_file(
             try:
                 from pedalboard.io import AudioFile as _PBAudioFile  # type: ignore
 
-                with _PBAudioFile(filepath) as _f:
+                with _PBAudioFile(filepath) as _f:  # pylint: disable=not-context-manager
                     sr = int(_f.samplerate)
                     _frames = _f.frames
                     _chunk = sr * 300  # 300 s chunks to avoid OOM on long files
@@ -321,7 +321,7 @@ def load_audio_file(
             try:
                 from pedalboard.io import AudioFile as _PBAudioFile  # type: ignore
 
-                with _PBAudioFile(filepath) as _f:
+                with _PBAudioFile(filepath) as _f:  # pylint: disable=not-context-manager
                     sr = int(_f.samplerate)
                     _frames = _f.frames
                     _chunk = sr * 300  # 300 s chunks to avoid OOM on long files

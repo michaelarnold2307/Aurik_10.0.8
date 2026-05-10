@@ -242,6 +242,9 @@ _MATERIAL_BIAS: dict[str, dict[str, float]] = {
         "transparenz": -0.12,
         "waerme": +0.10,
         "authentizitaet": +0.10,
+        # §09.2 Material-adaptive floor: Shellac SNR~15dB, BW~7kHz → natuerlichkeit physikalisch ≤0.72
+        # Formula: floor = canonical(0.90) + kappa_min(0.27) * bias → bias = (0.72-0.90)/0.27 = -0.667
+        "natuerlichkeit": -0.67,
         # P3 — dynamisch/rhythmisch limitiert durch Wow/Flutter, surface noise floor, limited DR
         "groove": -0.18,  # Wow/Flutter, Crackle-Onsets maskieren rhythmische Präzision
         "micro_dynamics": -0.14,  # Rauschboden und limitierte DR reduzieren Dynamik-Headroom
@@ -260,16 +263,28 @@ _MATERIAL_BIAS: dict[str, dict[str, float]] = {
         "waerme": +0.10,
         "brillanz": -0.06,
         "authentizitaet": +0.08,
+        # §09.2 Material-adaptive floor: Vinyl SNR~55dB, BW~16kHz → natuerlichkeit physikalisch ≤0.82
+        # Formula: floor = canonical(0.90) + kappa_min(0.27) * bias → bias = (0.82-0.90)/0.27 = -0.296
+        "natuerlichkeit": -0.30,
         # P3/P4: milde Biases — physikalische Einschränkungen des Carriers ohne Extremwerte
         "groove": -0.04,  # Leichtes Wow/Flutter; stärker für Kassette (via cassette-Klasse)
         "bass_kraft": -0.06,  # Vinyl-Schneidebeschränkung LF; Tape-Bias-Sättigung
         "separation_fidelity": -0.06,  # Narrow-Stereo, Early-Stereo-Artefakte
     },
-    # Digital (CD, DAT, Streaming)
+    # Digital (CD, DAT, Streaming) — near-lossless; natuerlichkeit at full canonical floor 0.90
     "digital": {
         "transparenz": +0.08,
         "artikulation": +0.06,
         "brillanz": +0.06,
+    },
+    # Lossy (mp3_low, mp3_high, aac, minidisc) — codec artifacts reduce naturalness
+    # §09.2 Material-adaptive floor: mp3_low 128kbps → natuerlichkeit physikalisch ≤0.78
+    # Formula: floor = canonical(0.90) + kappa_min(0.27) * bias → bias = (0.78-0.90)/0.27 = -0.444
+    "lossy": {
+        "natuerlichkeit": -0.44,
+        "transparenz": +0.04,
+        "artikulation": +0.04,
+        "brillanz": +0.04,
     },
 }
 
@@ -287,10 +302,11 @@ _MATERIAL_CLASS: dict[str, str] = {
     "cd_digital": "digital",
     "cd": "digital",
     "dat": "digital",
-    "minidisc": "digital",
-    "mp3_low": "digital",
-    "mp3_high": "digital",
-    "aac": "digital",
+    "mp3_low": "lossy",
+    "mp3_high": "lossy",
+    "aac": "lossy",
+    "minidisc": "lossy",
+    "streaming": "lossy",
 }
 
 _GENRE_BIAS: dict[str, dict[str, float]] = {
@@ -471,6 +487,7 @@ _MATERIAL_QUALITY_CEILING: dict[str, float] = {
 # §09.8 Material-adaptive goal floors — get_material_floor (RELEASE_MUST)
 # ---------------------------------------------------------------------------
 
+
 def get_material_floor(
     material_type: str,
     goal: str,
@@ -509,6 +526,21 @@ def get_material_floor(
 
     bias_val = float(_MATERIAL_BIAS.get(mat_class, {}).get(goal, 0.0))
     material_floor = floor + kappa_min * bias_val
+
+    # §0a/§9.12.3 Studio2026-Invarianz: Studio2026-Floor darf NIEMALS unter dem
+    # Restoration-Floor für dasselbe Material liegen. Studio2026 ist eine Obermenge
+    # von Restoration (macht alles was Restoration tut + Enhancement). Wenn der größere
+    # kappa_base (0.65 vs 0.45) zusammen mit negativem Material-Bias die Studio2026-
+    # Formel unter den Restoration-Wert drückt, ist das ein Kalibrierungsfehler:
+    # vinyl/natuerlichkeit: studio=0.92-0.39*0.30=0.803 < restoration=0.90-0.27*0.30=0.819.
+    # Fix: Studio2026-Floor = max(computed, restoration_floor) → Monotonie-Invariante.
+    if is_studio_2026:
+        rest_canonical = float(CANONICAL_THRESHOLDS_RESTORATION.get(goal, 0.70))
+        rest_kappa_min = 0.45 * 0.60  # kappa_min für Restoration
+        rest_floor = rest_canonical + rest_kappa_min * bias_val
+        rest_floor = float(np.clip(rest_floor, 0.30, 0.99))
+        material_floor = max(material_floor, rest_floor)
+
     return float(np.clip(material_floor, 0.30, 0.99))
 
 
@@ -524,57 +556,57 @@ _PHASE_STRENGTH_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "ultra_analog": {
         # Shellac / wax_cylinder / wire_recording / lacquer_disc
         # BW ≤ 8 kHz, SNR ~15 dB, Mono — aggressive processing would hallucinate.
-        "phase_03_denoise":                (0.15, 0.60),  # OMLSA/DFN: hard cap — SNR ~15 dB
-        "phase_06_frequency_restoration":  (0.05, 0.35),  # BW-Ceiling ≤ 8 kHz (§6.2c)
-        "phase_07_harmonic_restoration":   (0.05, 0.30),  # BW-Ceiling strict
-        "phase_09_crackle_removal":        (0.20, 0.75),  # Key phase for shellac/vinyl crackle
-        "phase_12_wow_flutter_fix":        (0.10, 0.55),  # Wow/Flutter present but gentle
-        "phase_20_reverb_reduction":       (0.05, 0.20),  # Studio early reflections protect
-        "phase_23_spectral_repair":        (0.10, 0.50),  # Spectral gaps limited
+        "phase_03_denoise": (0.15, 0.60),  # OMLSA/DFN: hard cap — SNR ~15 dB
+        "phase_06_frequency_restoration": (0.05, 0.35),  # BW-Ceiling ≤ 8 kHz (§6.2c)
+        "phase_07_harmonic_restoration": (0.05, 0.30),  # BW-Ceiling strict
+        "phase_09_crackle_removal": (0.20, 0.75),  # Key phase for shellac/vinyl crackle
+        "phase_12_wow_flutter_fix": (0.10, 0.55),  # Wow/Flutter present but gentle
+        "phase_20_reverb_reduction": (0.05, 0.20),  # Studio early reflections protect
+        "phase_23_spectral_repair": (0.10, 0.50),  # Spectral gaps limited
         "phase_26_dynamic_range_expansion": (0.00, 0.25),  # DR ceiling shellac ≤ 45 dB
-        "phase_29_tape_hiss_reduction":    (0.10, 0.55),  # Surface noise, not tape hiss
-        "phase_35_multiband_compression":  (0.05, 0.20),  # Gentle — original dynamics key
-        "phase_46_spatial_enhancement":    (0.00, 0.10),  # Mono source — no stereo widening
-        "phase_48_stereo_width_enhancer":  (0.00, 0.00),  # VERBOTEN on mono material
-        "phase_49_advanced_dereverb":      (0.05, 0.20),  # Early reflections cap §2.46f
-        "phase_55_diffusion_inpainting":   (0.10, 0.45),  # Dropout repair — careful
+        "phase_29_tape_hiss_reduction": (0.10, 0.55),  # Surface noise, not tape hiss
+        "phase_35_multiband_compression": (0.05, 0.20),  # Gentle — original dynamics key
+        "phase_46_spatial_enhancement": (0.00, 0.10),  # Mono source — no stereo widening
+        "phase_48_stereo_width_enhancer": (0.00, 0.00),  # VERBOTEN on mono material
+        "phase_49_advanced_dereverb": (0.05, 0.20),  # Early reflections cap §2.46f
+        "phase_55_diffusion_inpainting": (0.10, 0.45),  # Dropout repair — careful
     },
     "analog": {
         # Vinyl / tape / reel_tape / cassette
         # Moderate limitations — standard restoration range.
-        "phase_03_denoise":                (0.10, 0.75),
-        "phase_06_frequency_restoration":  (0.10, 0.60),  # BW vinyl ≤ 16 kHz
-        "phase_07_harmonic_restoration":   (0.10, 0.55),
-        "phase_09_crackle_removal":        (0.20, 0.85),
-        "phase_12_wow_flutter_fix":        (0.15, 0.70),
-        "phase_20_reverb_reduction":       (0.05, 0.35),
-        "phase_23_spectral_repair":        (0.15, 0.70),
+        "phase_03_denoise": (0.10, 0.75),
+        "phase_06_frequency_restoration": (0.10, 0.60),  # BW vinyl ≤ 16 kHz
+        "phase_07_harmonic_restoration": (0.10, 0.55),
+        "phase_09_crackle_removal": (0.20, 0.85),
+        "phase_12_wow_flutter_fix": (0.15, 0.70),
+        "phase_20_reverb_reduction": (0.05, 0.35),
+        "phase_23_spectral_repair": (0.15, 0.70),
         "phase_26_dynamic_range_expansion": (0.00, 0.50),  # vinyl ≤ 70 dB
-        "phase_29_tape_hiss_reduction":    (0.15, 0.70),
-        "phase_35_multiband_compression":  (0.05, 0.40),
-        "phase_49_advanced_dereverb":      (0.05, 0.35),
-        "phase_55_diffusion_inpainting":   (0.15, 0.65),
+        "phase_29_tape_hiss_reduction": (0.15, 0.70),
+        "phase_35_multiband_compression": (0.05, 0.40),
+        "phase_49_advanced_dereverb": (0.05, 0.35),
+        "phase_55_diffusion_inpainting": (0.15, 0.65),
     },
     "lossy": {
         # mp3_low / mp3_high / aac / minidisc
         # Codec artifacts — spectral repair is key, denoise moderate.
-        "phase_03_denoise":                (0.05, 0.55),
-        "phase_06_frequency_restoration":  (0.15, 0.70),  # HF reconstruction primary
-        "phase_07_harmonic_restoration":   (0.15, 0.65),
-        "phase_23_spectral_repair":        (0.25, 0.90),  # Primary phase for lossy
-        "phase_35_multiband_compression":  (0.05, 0.40),
-        "phase_50_spectral_repair":        (0.25, 0.85),
+        "phase_03_denoise": (0.05, 0.55),
+        "phase_06_frequency_restoration": (0.15, 0.70),  # HF reconstruction primary
+        "phase_07_harmonic_restoration": (0.15, 0.65),
+        "phase_23_spectral_repair": (0.25, 0.90),  # Primary phase for lossy
+        "phase_35_multiband_compression": (0.05, 0.40),
+        "phase_50_spectral_repair": (0.25, 0.85),
     },
     "digital": {
         # cd_digital / dat — near-lossless, minimal intervention (§2.45b)
-        "phase_03_denoise":                (0.05, 0.35),
-        "phase_06_frequency_restoration":  (0.05, 0.40),
-        "phase_07_harmonic_restoration":   (0.05, 0.35),
-        "phase_09_crackle_removal":        (0.05, 0.30),
-        "phase_23_spectral_repair":        (0.10, 0.55),
+        "phase_03_denoise": (0.05, 0.35),
+        "phase_06_frequency_restoration": (0.05, 0.40),
+        "phase_07_harmonic_restoration": (0.05, 0.35),
+        "phase_09_crackle_removal": (0.05, 0.30),
+        "phase_23_spectral_repair": (0.10, 0.55),
         "phase_26_dynamic_range_expansion": (0.00, 0.40),
-        "phase_35_multiband_compression":  (0.05, 0.30),
-        "phase_49_advanced_dereverb":      (0.05, 0.30),
+        "phase_35_multiband_compression": (0.05, 0.30),
+        "phase_49_advanced_dereverb": (0.05, 0.30),
     },
 }
 

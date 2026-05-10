@@ -165,10 +165,21 @@ class HolisticPerceptualGate:
         # Spec §0a: material-adaptive floors (Shellac~0.40, Vinyl~0.55, CD~0.75).
         # timbral_ref=0.318 (Vinyl) < floor 0.385 -> rollback required.
         _TIMBRAL_FLOORS_HPG = {
-            "shellac": 0.40, "wax_cylinder": 0.35, "lacquer_disc": 0.38,
-            "wire_recording": 0.35, "vinyl": 0.55, "tape": 0.55, "reel_tape": 0.55,
-            "cassette": 0.50, "cd_digital": 0.75, "dat": 0.70, "md": 0.65,
-            "mp3_low": 0.60, "mp3_high": 0.65, "aac": 0.65, "unknown": 0.55,
+            "shellac": 0.40,
+            "wax_cylinder": 0.35,
+            "lacquer_disc": 0.38,
+            "wire_recording": 0.35,
+            "vinyl": 0.55,
+            "tape": 0.55,
+            "reel_tape": 0.55,
+            "cassette": 0.50,
+            "cd_digital": 0.75,
+            "dat": 0.70,
+            "md": 0.65,
+            "mp3_low": 0.60,
+            "mp3_high": 0.65,
+            "aac": 0.65,
+            "unknown": 0.55,
         }
         _mat_key_hpg = str(material).lower().replace(" ", "_")
         _tf_floor_hpg = _TIMBRAL_FLOORS_HPG.get(_mat_key_hpg, 0.55)
@@ -730,7 +741,7 @@ class HolisticPerceptualGate:
         Returns a score in [0, 1] (1.0 = highest quality). Non-blocking.
         """
         try:
-            from plugins.noresqa_plugin import get_noresqa_plugin  # type: ignore
+            from plugins.noresqa_plugin import get_noresqa_plugin  # type: ignore  # pylint: disable=no-name-in-module
 
             _plg = get_noresqa_plugin()
             if _plg is not None:

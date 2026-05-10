@@ -6,7 +6,7 @@
 
 ![Tests](https://img.shields.io/badge/tests-6571%2B%20passing-brightgreen)
 ![Musical Goals](https://img.shields.io/badge/Musical%20Goals-14%2F14-brightgreen)
-![Quality MOS](https://img.shields.io/badge/MOS-%E2%89%A54.5%20Weltklasse-brightgreen)
+![Quality MOS](https://img.shields.io/badge/MOS-%E2%89%A54.5%20internes%20Spitzenziel-brightgreen)
 ![Materials](https://img.shields.io/badge/Materialien-17%20Typen-blue)
 ![Phases](https://img.shields.io/badge/Phasen-56-blue)
 ![DefectTypes](https://img.shields.io/badge/DefectTypes-32-blue)
@@ -17,7 +17,7 @@
 
 ## 🎯 Was ist Aurik 9.x.x?
 
-Aurik 9.x.x ist ein **weltweit erstmaliges intelligentes, kontextbewusstes Musik- und
+Aurik 9.x.x ist ein **intelligentes, kontextbewusstes Musik- und
 Gesangs-Restaurations-, Reparatur- und Rekonstruktions-Denkersystem**.
 
 Es kombiniert psychoakustisch fundierte DSP, Bayesianische Kausalinferenz,
@@ -31,10 +31,15 @@ vollständig offline, ohne Cloud- oder Netzwerkabhängigkeiten.
 - ✅ **56 Phasen** — Defect-First-Pipeline inkl. SpectralBandGapRepair
 - ✅ **17 Materialien** — auto-erkannt (tape, vinyl, shellac, wax_cylinder, wire_recording, lacquer_disc, dat, cd_digital, mp3_low, mp3_high, aac, minidisc, streaming, unknown, …)
 - ✅ **14 Musical Goals** — psychoakustisch fundiert, alle Schwellwerte erreicht
-- ✅ **PQS MOS ≥ 4.5** — Weltklasse-Qualität
+- ✅ **PQS MOS ≥ 4.5** — internes Spitzenziel im aktuellen Bewertungsmodell
 - ✅ **CPU-only** — keine GPU-Pflicht, läuft auf Standard-Desktop-Hardware
 - ✅ **GP-Lerngedächtnis** — optimiert sich dauerhaft pro Material und Ära
 - ✅ **Zero-Shot-Genre-Erkennung** — Deutscher Schlager ohne vortrainiertes Modell
+
+**Hinweis zur Evidenz:** Interne Qualitätsangaben wie PQS-MOS und OQS dienen als
+technische Steuerungs- und Freigabemetriken. Externe Superlative wie
+"weltbeste" oder formale Hörtest-Äquivalenz werden erst durch unabhängige,
+verblindete Hörtests und reproduzierbare Wettbewerbsvergleiche belastbar.
 
 **Über-SOTA DSP-Algorithmen (v9.x.x — vollständig implementiert):**
 
@@ -329,7 +334,7 @@ und `GoalApplicabilityFilter`). Regression in einem Ziel macht das Feature ungü
 
 **PQS-Metriken** (`PerceptualQualityScorer`):
 
-| Metrik | Minimum | Weltklasse |
+| Metrik | Minimum | Internes Spitzenziel |
 | --- | --- | --- |
 | MOS | ≥ 3.8 | ≥ 4.5 |
 | NSIM | ≥ 0.70 | ≥ 0.90 |
@@ -338,14 +343,14 @@ und `GoalApplicabilityFilter`). Regression in einem Ziel macht das Feature ungü
 
 ### ⚡ Verarbeitungs-Modi
 
-**💿 Restoration-Modus** (originalgetreu):
+**💿 Restoration-Modus** (auf Originaltreue optimiert):
 
 - Chroma-Korrelation ≥ 0.95 · LUFS-Differenz ≤ 1 LU
 - Kein Harmonic-Exciter-Material · Authentizität über alles
 - `ExcellenceOptimizer(mode="restoration")`: konservative GP-Params
 - `MicroDynamicsEnvelopeMorphing` MAX_GAIN = 2.0 LU
 
-**🎯 Studio 2026-Modus** (Highend-Sound):
+**🎯 Studio 2026-Modus** (auf modernen Studiosound optimiert):
 
 - PQS MOS ≥ 4.5 · Brillanz ≥ 0.90 · Bass-Kraft ≥ 0.88
 - Stem-Separation (MDX23C/BS-RoFormer) → `StemRemixBalancer` → Re-Mix
@@ -395,10 +400,10 @@ inkl. NaN/Inf-Tests, Bounds-Tests, Mono+Stereo, Edge-Cases, Thread-Safety.
 # Vor-Assessment (< 5 s)
 python aurik_cli.py --input aufnahme.wav --pre-assess
 
-# AMRB v1.0 (10 Szenarien, OS-Führerschaft ≥ 84.0)
+# AMRB v1.0 (10 Szenarien, interne Führungs-Schwelle ≥ 84.0)
 python benchmarks/musical_restoration_benchmark.py
 
-# Kompetitiver Benchmark (vs. iZotope RX 11)
+# Kompetitiver Benchmark (vs. iZotope RX 11; interner Führungsindikator)
 python scripts/competitive_benchmark.py
 
 # Competitive CI-Gate (schneller CI-Run)

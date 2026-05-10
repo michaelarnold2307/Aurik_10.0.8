@@ -496,6 +496,16 @@ class FrequencyRestorationPhase(PhaseInterface):
 
         # Step 2: Multi-band HF restoration with ML-Hybrid support
         # =========================================================
+        # §0j [RELEASE_MUST]: energy_bias für Vokal-Material (DeepFilterNet/AudioSR auf SBR)
+        # Verhindert, dass Harmonik-Regionen als Rauschen weggedrückt werden.
+        _panns_singing_06 = float(kwargs.get("panns_singing", kwargs.get("panns_singing_confidence", 0.0)) or 0.0)
+        if _panns_singing_06 >= 0.4:
+            # Vokalmaterial: max_boost_db um 6 dB reduzieren (energy_bias = −6 dB)
+            # um Harmonik-Erosion bei SBR/AudioSR zu verhindern
+            params["max_boost_db"] = float(params.get("max_boost_db", 8.0)) - 6.0
+            params["max_boost_db"] = max(0.0, params["max_boost_db"])
+            logger.debug("§0j energy_bias -6 dB: phase_06 Vokal (panns_singing=%.2f)", _panns_singing_06)
+
         quality_mode = kwargs.get("quality_mode", "balanced")
         use_ml_hybrid = (
             ML_HYBRID_AVAILABLE

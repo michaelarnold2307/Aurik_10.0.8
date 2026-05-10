@@ -679,6 +679,7 @@ class UnifiedRestorerV3:
         self._iad_artifact_fraction_penalty: float = 1.0
         self._artifact_freedom_score: float = 1.0
         self._ssa_segments: list | None = None  # §2.52b SongStructureAnalyzer result
+        self._cstc_noise_profile: object = None  # §CSTC pre-pipeline noise profile
         # Additional per-restore() attrs (avoid Pyright 'defined outside __init__')
         self._detected_vocal_gender: str | None = None
         self._phase_plan_intelligence: object = None
@@ -2593,10 +2594,19 @@ class UnifiedRestorerV3:
                 mask = (_freqs >= flo) & (_freqs < fhi)
                 return float(_np.sum(_spec[mask] ** 2)) + _eps
 
-            # --- P1: Natuerlichkeit proxy — spectral smoothness (low variance = natural)
-            _log_spec = _np.log1p(_spec + _eps)
-            _smooth = 1.0 - float(_np.clip(_np.std(_np.diff(_log_spec)) / (_np.mean(_log_spec) + _eps), 0.0, 1.0))
-            result["natuerlichkeit"] = float(_np.clip(_smooth, 0.0, 1.0))
+            # --- P1: Natuerlichkeit proxy — harmonic energy concentration
+            # §2.64 v9.12.1: Spectral smoothness proxy was structurally broken for music
+            # (std/mean of log-spectrum → always ≥ 0.8 for harmonic signals → max ~0.2).
+            # Fix: measure energy concentration in top spectral bins (harmonics concentrate
+            # energy; Musical Noise / artefacts spread energy uniformly).
+            _sorted_desc = _np.sort(_spec)[::-1]
+            _top_n = max(1, len(_sorted_desc) // 8)  # top 12.5% of bins
+            _top_energy = float(_np.sum(_sorted_desc[:_top_n] ** 2))
+            _total_energy_all = float(_np.sum(_spec**2)) + _eps
+            _conc = _top_energy / _total_energy_all
+            # Natural music: top-12.5% bins hold ≥ 40 % energy → conc ≈ 0.50–0.80.
+            # Musical Noise / white noise: conc ≈ 0.12–0.25.
+            result["natuerlichkeit"] = float(_np.clip((_conc - 0.15) / 0.60, 0.0, 1.0))
 
             # --- P1: Authentizitaet proxy — harmonic-to-noise ratio (via autocorrelation)
             _acf = _np.correlate(mono[: min(N, 8192)], mono[: min(N, 8192)], mode="full")
@@ -2649,13 +2659,16 @@ class UnifiedRestorerV3:
             _emot = _band_energy(60.0, 300.0) / (_band_energy(60.0, 8000.0) + _eps)
             result["emotionalitaet"] = float(_np.clip(_emot * 3.0, 0.0, 1.0))
 
-            # --- P3: Groove proxy — periodicity in onset envelope (simple)
+            # --- P3: Groove proxy — periodicity in onset envelope
+            # §2.64 v9.12.1: ACF search window was len//4 — for an 8-frame RMS window
+            # that is only 1..2 entries, missing beat periods entirely (BPM ≤ 180 at 512
+            # hop / 48 kHz needs ≥ 93 frames for 120 BPM period → extend to len//2).
             if len(_rms_frames) >= 8:
                 _rms_arr2 = _np.array(_rms_frames)
                 _acf2 = _np.correlate(_rms_arr2, _rms_arr2, mode="full")
                 _acf2 = _acf2[len(_acf2) // 2 :]
                 _acf2 /= _acf2[0] + _eps
-                _groove_peak = float(_np.max(_acf2[1 : max(2, len(_acf2) // 4)]))
+                _groove_peak = float(_np.max(_acf2[1 : max(2, len(_acf2) // 2)]))
                 result["groove"] = float(_np.clip((_groove_peak + 1.0) / 2.0, 0.0, 1.0))
             else:
                 result["groove"] = 0.5
@@ -2693,14 +2706,20 @@ class UnifiedRestorerV3:
             else:
                 result["sep_fidelity"] = 0.5
 
-            # --- P5: Brillanz proxy — HF crest factor (2–16 kHz)
-            _hf_energy = _band_energy(2000.0, 16000.0)
-            _hf_bins = _spec[(_freqs >= 2000.0) & (_freqs < 16000.0)]
-            if len(_hf_bins) > 4:
-                _p95 = float(_np.percentile(_hf_bins, 95)) + _eps
-                _p50 = float(_np.percentile(_hf_bins, 50)) + _eps
-                _crest = (_p95 / _p50 - 1.5) / 10.5
-                result["brillanz"] = float(_np.clip(_crest, 0.0, 1.0))
+            # --- P5: Brillanz proxy — HF energy ratio (4–16 kHz vs 500 Hz–16 kHz)
+            # §2.64 v9.12.1 BUG-FIX: Single-frame crest factor systematically underestimates
+            # brillanz (~0.19 cap for typical music). The real BrillanzMetric averages over
+            # many STFT frames before computing crest, yielding 6-12× crest. A single-frame
+            # crest is 2.5-4×, mapping to brillanz 0.09-0.24 regardless of HF content.
+            # Fix: Use band energy ratio (4-16 kHz / total 500 Hz-16 kHz) which directly
+            # tracks HF presence and is sensitive to phase_06 (AudioSR) and phase_23 (Apollo).
+            # Calibration: ratio 0.02 (no HF) → 0.0; ratio 0.40+ (bright/restored) → 1.0.
+            _hf4k_energy = _band_energy(4000.0, 16000.0)
+            _mid_energy_bri = _band_energy(500.0, 4000.0) + _eps
+            if _hf4k_energy + _mid_energy_bri > _eps:
+                _brillanz_ratio = _hf4k_energy / (_hf4k_energy + _mid_energy_bri)
+                # Calibration: ratio 0.02 → 0.0; ratio 0.40 → 1.0
+                result["brillanz"] = float(_np.clip((_brillanz_ratio - 0.02) / 0.38, 0.0, 1.0))
             else:
                 result["brillanz"] = 0.0
 
@@ -2708,6 +2727,10 @@ class UnifiedRestorerV3:
             _late_energy = _band_energy(4000.0, 16000.0)
             _total_energy = _band_energy(200.0, 16000.0) + _eps
             result["raumtiefe"] = float(_np.clip(_late_energy / _total_energy * 2.5, 0.0, 1.0))
+            # §2.64 v9.12.1 BUG-FIX: _P3P5_MAS_GOALS referenced 'spatial_depth' but
+            # _fast_goal_snapshot only wrote 'raumtiefe' → MAS-convergence for P3–P5
+            # never found the key → _mas_p3p5_achieved stayed False → pipeline ran longer.
+            result["spatial_depth"] = result["raumtiefe"]
 
         except Exception as _fgs_exc:
             logger.debug("§2.64 _fast_goal_snapshot failed (non-blocking): %s", _fgs_exc)
@@ -2724,8 +2747,56 @@ class UnifiedRestorerV3:
             "artikulation",
         }
     )
+    _P3P5_MAS_GOALS: frozenset[str] = frozenset(
+        {
+            "emotionalitaet",
+            "micro_dynamics",
+            "groove",
+            "transparenz",
+            "waerme",
+            "bass_kraft",
+            "separation_fidelity",
+            "brillanz",
+            "raumtiefe",
+            "spatial_depth",  # §2.64 v9.12.1: alias → _fast_goal_snapshot also writes this key
+        }
+    )
     _MAS_TOLERANCE: float = 0.02  # §0k: all P1/P2 ≤ MAS+0.02 → convergence
+    _MAS_FULL_TOLERANCE: float = 0.05  # §2.65: P3–P5 full convergence marker
     _MAS_OVERSHOOT_TOLERANCE: float = 0.03  # §0k: goal > MAS+0.03 → strength clamp signal
+
+    def _check_mas_convergence(self, post_scores: dict[str, float], mas_gap: dict[str, float], phase_id: str) -> None:
+        """Signal early pipeline stop when the song-specific MAS is achieved."""
+        if not post_scores or not mas_gap or not phase_id or getattr(self, "_mas_fully_achieved", False):
+            return
+
+        _p1p2_gaps = {
+            g: float(mas_gap[g])
+            for g in self._P1P2_MAS_GOALS
+            if g in mas_gap and mas_gap.get(g) is not None and post_scores.get(g) is not None
+        }
+        if not _p1p2_gaps or not all(gap <= self._MAS_TOLERANCE for gap in _p1p2_gaps.values()):
+            return
+
+        _p3p5_gaps = {
+            g: float(mas_gap[g])
+            for g in self._P3P5_MAS_GOALS
+            if g in mas_gap and mas_gap.get(g) is not None and post_scores.get(g) is not None
+        }
+        _p3p5_achieved = bool(_p3p5_gaps) and all(gap <= self._MAS_FULL_TOLERANCE for gap in _p3p5_gaps.values())
+
+        self._mas_fully_achieved = True
+        _mas_meta = getattr(self, "_phase_metadata_accumulator", None)
+        if isinstance(_mas_meta, dict):
+            _mas_meta["mas_achieved_at_phase"] = phase_id
+            _mas_meta["mas_gaps_at_convergence"] = {g: round(v, 4) for g, v in _p1p2_gaps.items()}
+            _mas_meta["mas_p3p5_achieved"] = _p3p5_achieved
+        logger.info(
+            "§2.65 MAS-Convergence REACHED at %s — all P1/P2 goals ≤ MAS+%.2f: %s",
+            phase_id,
+            self._MAS_TOLERANCE,
+            " ".join(f"{g}={_p1p2_gaps[g]:+.3f}" for g in sorted(_p1p2_gaps)),
+        )
 
     @staticmethod
     def _compute_harmonic_adaptation_scalar(
@@ -5649,6 +5720,26 @@ class UnifiedRestorerV3:
             except Exception as _sb250_exc:
                 logger.debug("§2.50 Source-Baseline-Messung fehlgeschlagen: %s", _sb250_exc)
 
+            # §CSTC Cross-Segment Timbral Coherence Guard — Pre-Pipeline Rauschprofil (§0a).
+            # Referenzprofil wird VOR der Pipeline extrahiert; nach NR-Phasen wird Kohärenz ≥ 0.80
+            # geprüft. Verhindert "Pumping"-Artefakte durch inkohärenten Rauschboden nach NR.
+            self._cstc_noise_profile = None  # reset for each restore() call
+            try:
+                from backend.core.dsp.timbral_coherence_guard import extract_song_noise_profile as _cstc_extract
+
+                _cstc_audio_in = (
+                    _analysis_audio.astype(np.float32)
+                    if isinstance(_analysis_audio, np.ndarray)
+                    else np.zeros(sample_rate, dtype=np.float32)
+                )
+                self._cstc_noise_profile = _cstc_extract(_cstc_audio_in, sample_rate)
+                logger.debug(
+                    "§CSTC song_noise_profile extrahiert (shape=%s)",
+                    getattr(self._cstc_noise_profile, "shape", "?"),
+                )
+            except Exception as _cstc_exc:
+                logger.debug("§CSTC extract_song_noise_profile fehlgeschlagen (non-blocking): %s", _cstc_exc)
+
             _sgi = estimate_goal_importance(
                 genre_label=_cal_genre_label
                 or (str(getattr(_schlager_result, "genre_label", "")) if _schlager_result is not None else ""),
@@ -5884,7 +5975,7 @@ class UnifiedRestorerV3:
         # §7.5a [RELEASE_MUST] Phase-DAG-Validierung — HARD_BEFORE-Constraints prüfen
         try:
             from backend.core.phase_dag import (
-                validate_phase_order as _validate_phase_order,  # pylint: disable=import-outside-toplevel
+                validate_phase_order as _validate_phase_order,
             )
 
             _dag_violations = _validate_phase_order(selected_phases)
@@ -5905,7 +5996,7 @@ class UnifiedRestorerV3:
         self._ssa_segments = None
         try:
             from backend.core.song_structure_analyzer import (
-                get_song_structure_analyzer,  # pylint: disable=import-outside-toplevel
+                get_song_structure_analyzer,
             )
 
             _ssa_audio = audio
@@ -8064,7 +8155,14 @@ class UnifiedRestorerV3:
                 else set(_mg_checker.thresholds.keys())
             )
             # reference= gibt Authentizitäts- und Timbre-Metriken entscheidend mehr Kontext
-            _mg_ref = original_audio_for_goals if original_audio_for_goals.shape == restored_audio.shape else None
+            # §9.12.3 Shape-Invarianz-Fix: (2,N) vs (N,2) Orientierungsunterschied darf
+            # reference NICHT auf None setzen → würde no-reference Pfad in AuthentizitaetMetric
+            # triggern (spectral_consistency = max(0, 1 - flatness/0.40) statt Chroma-Korrelation).
+            # Fix: Shape-Check nur auf Audio-Länge (max(shape)), nicht auf exaktes Shape-Match.
+            # measure_all() transponiert (2,N)→(N,2) intern via audio.T — Orientierung kein Problem.
+            _orig_n = int(np.max(original_audio_for_goals.shape))
+            _rest_n = int(np.max(restored_audio.shape))
+            _mg_ref = original_audio_for_goals if abs(_orig_n - _rest_n) <= 64 else None
 
             # §0d Ebene 2 / §1.2a [RELEASE_MUST] Carrier-Recovery-Referenz-Shift:
             # §2.54 Material-adaptiver Threshold: analoge Carrier-Inversion (vinyl/tape/shellac)
@@ -8086,7 +8184,7 @@ class UnifiedRestorerV3:
                     "minidisc",
                 }
             )
-            _ccr_threshold = 0.05 if _ccr_mat_val in _CCR_ANALOG_MATS else 0.15
+            _ccr_threshold = 0.05  # §0d: unified threshold for all materials (analog + digital)
             _ccr_contract_shift = _ccr_ratio > 0.15
             if (
                 _ccr_ratio > _ccr_threshold
@@ -9418,6 +9516,18 @@ class UnifiedRestorerV3:
                 "Export läuft im degrade-Modus mit vorhandenen Sicherheitsgates"
             )
 
+        # §MultiSinger [RELEASE_MUST]: detect multi-singer before singer_identity_cosine gate
+        try:
+            from backend.core.dsp.vocal_register_detector import detect_multi_singer as _detect_ms
+
+            _ms_panns = float(getattr(self, "_panns_singing", 0.0))
+            _is_multi_singer = _detect_ms(restored_audio, sample_rate, _ms_panns)
+            if _is_multi_singer:
+                self._phase_metadata_accumulator["multi_singer"] = True
+                logger.info("§MultiSinger: Duett/Chor erkannt — Resemblyzer-Gate übersprungen")
+        except Exception as _ms_exc:
+            logger.debug("§MultiSinger detect_multi_singer non-blocking: %s", _ms_exc)
+
         # §2.35c [RELEASE_MUST] VQI-Gate — Gesangs-Qualitäts-Gate bei Singing >= 0.35
         # Aktivierung: PANNs Singing confidence >= 0.35 (§0k vierte Export-Konvergenzbedingung)
         try:
@@ -9426,11 +9536,13 @@ class UnifiedRestorerV3:
                 from backend.core.musical_goals.vocal_quality_index import compute_vqi as _compute_vqi
 
                 _vqi_orig = original_audio_for_goals if original_audio_for_goals is not None else restored_audio
+                _is_multi_singer_gate = bool((self._phase_metadata_accumulator or {}).get("multi_singer", False))
                 _vqi_result = _compute_vqi(
                     audio_orig=_vqi_orig,
                     audio_restored=restored_audio,
                     sr=sample_rate,
                     vocal_segments=None,
+                    skip_singer_identity=_is_multi_singer_gate,  # §MultiSinger: skip Resemblyzer for choirs/duets
                 )
                 _vqi_score = float(_vqi_result.get("vqi", 0.85))
                 self._phase_metadata_accumulator["vqi"] = _vqi_score
@@ -15816,12 +15928,11 @@ class UnifiedRestorerV3:
         # ════════════════════════════════════
         selected += [
             "phase_16_final_eq",  # Finales EQ-Trimming
+            "phase_17_mastering_polish",  # Finales Feintuning vor Loudness/TruePeak
             "phase_40_loudness_normalization",  # −14 LUFS (Streaming) / −18 (Archiv) — VOR TruePeak (EBU R128)
             "phase_47_truepeak_limiter",  # True-Peak −1.0 dBTP (EBU R128) — NACH LUFS-Normierung
             "phase_41_output_format_optimization",  # Dithering, Metadaten, Format
         ]
-        if self.is_studio_mode():
-            selected.insert(selected.index("phase_40_loudness_normalization"), "phase_17_mastering_polish")
 
         # Duplikate entfernen, Reihenfolge beibehalten
         seen: set = set()
@@ -15934,6 +16045,9 @@ class UnifiedRestorerV3:
             _move_before("phase_28_surface_noise_profiling", "phase_09_crackle_removal")
             # Narrow-band (hum) before broadband NR
             _move_before("phase_02_hum_removal", "phase_03_denoise")
+            # DC/click cleanup before wow/flutter correction.
+            # Otherwise timing correction can smear click impulses and violate §7.5a.
+            _move_before("phase_01_click_removal", "phase_12_wow_flutter_fix")
             # Denoise before frequency extension (clean before reconstruct)
             _move_before("phase_03_denoise", "phase_06_frequency_restoration")
             # Frequency restoration before harmonic restoration (Grundfrequenz vor Obertöne)
@@ -17091,6 +17205,74 @@ class UnifiedRestorerV3:
             except Exception as _zw_exc:
                 logger.debug("§4.1b ZwickerGuard non-blocking error %s: %s", phase_metadata.phase_id, _zw_exc)
 
+        # §HNR [RELEASE_MUST]: apply_hnr_blend after NR phases on vocal material (UV3 hook)
+        # phase_03_denoise already has its own internal HNR blend — skip to avoid double-blend.
+        _NR_PHASES_HNR = frozenset({"phase_18_noise_gate", "phase_20_reverb_reduction", "phase_29_tape_hiss_reduction"})
+        if (
+            phase_metadata.phase_id in _NR_PHASES_HNR
+            and hasattr(result, "audio")
+            and isinstance(result.audio, np.ndarray)
+            and result.audio.shape == audio.shape
+        ):
+            try:
+                _panns_singing_hnr = float(
+                    kwargs.get("panns_singing", kwargs.get("panns_singing_confidence", 0.0)) or 0.0
+                )
+                if _panns_singing_hnr >= 0.25:
+                    from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_blend
+
+                    _sr_hnr = int(kwargs.get("sample_rate", 48000) or 48000)
+                    result.audio = _apply_hnr_blend(audio, result.audio, _sr_hnr)
+                    logger.debug(
+                        "§HNR apply_hnr_blend: %s panns_singing=%.2f",
+                        phase_metadata.phase_id,
+                        _panns_singing_hnr,
+                    )
+            except Exception as _hnr_exc:
+                logger.debug("§HNR apply_hnr_blend non-blocking: %s", _hnr_exc)
+
+        # §CSTC Cross-Segment Timbral Coherence Guard — Post-NR-Phase Check (§0a).
+        # Nach jeder breitband-subtraktiven Phase prüfen, dass die Rauschboden-Textur
+        # kohärent zum Referenzprofil bleibt (Kohärenz ≥ 0.80, warn-only, non-blocking).
+        _CSTC_NR_PHASES = frozenset(
+            {
+                "phase_03_denoise",
+                "phase_18_noise_gate",
+                "phase_20_reverb_reduction",
+                "phase_28_surface_noise_profiling",
+                "phase_29_tape_hiss_reduction",
+                "phase_49_advanced_dereverb",
+            }
+        )
+        if (
+            phase_metadata.phase_id in _CSTC_NR_PHASES
+            and hasattr(result, "audio")
+            and isinstance(result.audio, np.ndarray)
+            and result.audio.shape == audio.shape
+        ):
+            try:
+                _cstc_profile = getattr(self, "_cstc_noise_profile", None)
+                if _cstc_profile is not None:
+                    from backend.core.dsp.timbral_coherence_guard import (
+                        compute_timbral_coherence_score as _cstc_score,
+                    )
+
+                    _cstc_result = _cstc_score(
+                        result.audio.astype(np.float32),
+                        _cstc_profile,
+                        int(kwargs.get("sample_rate", 48000) or 48000),
+                    )
+                    if not _cstc_result.get("pass", True):
+                        logger.warning(
+                            "§CSTC %s: Kohärenz=%.2f < 0.80 — Rauschboden-Textur inkohärent (non-blocking)",
+                            phase_metadata.phase_id,
+                            _cstc_result.get("coherence_score", 0.0),
+                        )
+                    if hasattr(result, "metadata") and isinstance(result.metadata, dict):
+                        result.metadata["cstc_coherence"] = round(float(_cstc_result.get("coherence_score", 1.0)), 3)
+            except Exception as _cstc_exc:
+                logger.debug("§CSTC post-phase check non-blocking: %s", _cstc_exc)
+
         # Generic psychoacoustic masking clamp for phases without internal clamp.
         # This broadens masking coverage beyond explicitly integrated phase modules.
         if hasattr(result, "audio") and isinstance(result.audio, np.ndarray) and result.audio.shape == audio.shape:
@@ -17260,26 +17442,10 @@ class UnifiedRestorerV3:
                             _song_targets_d: dict[str, Any] = dict(_song_targets)
                             _mas_gaps = {
                                 g: float(_song_targets_d.get(g, 0.0)) - float(_post_snap.get(g, 0.0))
-                                for g in UnifiedRestorerV3._P1P2_MAS_GOALS
+                                for g in (self._P1P2_MAS_GOALS | self._P3P5_MAS_GOALS)
                                 if _song_targets_d.get(g) is not None and _post_snap.get(g) is not None
                             }
-                            if _mas_gaps and all(gap <= UnifiedRestorerV3._MAS_TOLERANCE for gap in _mas_gaps.values()):
-                                self._mas_fully_achieved = True
-                                if not hasattr(self, "_phase_deltas"):
-                                    self._phase_deltas = {}
-                                # Write convergence marker to metadata
-                                _mas_meta = getattr(self, "_phase_metadata_accumulator", None)
-                                if isinstance(_mas_meta, dict):
-                                    _mas_meta["mas_achieved_at_phase"] = _phase_delta_pid
-                                    _mas_meta["mas_gaps_at_convergence"] = {
-                                        g: round(v, 4) for g, v in _mas_gaps.items()
-                                    }
-                                logger.info(
-                                    "§2.65 MAS-Convergence REACHED at %s — all P1/P2 goals ≤ MAS+%.2f: %s",
-                                    _phase_delta_pid,
-                                    UnifiedRestorerV3._MAS_TOLERANCE,
-                                    " ".join(f"{g}={_mas_gaps[g]:+.3f}" for g in sorted(_mas_gaps)),
-                                )
+                            self._check_mas_convergence(_post_snap, _mas_gaps, _phase_delta_pid)
             except Exception as _delta_exc:
                 logger.debug("§2.64 phase_delta non-blocking error for %s: %s", _phase_delta_pid, _delta_exc)
 

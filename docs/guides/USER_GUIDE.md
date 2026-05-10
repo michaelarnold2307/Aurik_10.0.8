@@ -21,7 +21,7 @@
 AURIK ist ein **vollautomatisches System** zur Restauration, Reparatur und Rekonstruktion von Audio-Material. Das Besondere:
 
 ✅ **Keine Nutzereingriffe erforderlich** — Magic Button  
-✅ **14 Musikalische Qualitätsziele** — Weltklasse-Restaurierung  
+✅ **14 Musikalische Qualitätsziele** — auf Spitzenqualität ausgerichtete Restaurierung  
 ✅ **100% lokal** — Keine Cloud, volle Datenkontrolle  
 ✅ **100% offline** — Alle ML-Modelle lokal gebundelt  
 ✅ **CPU-only** — Kein GPU erforderlich
@@ -31,6 +31,7 @@ AURIK ist ein **vollautomatisches System** zur Restauration, Reparatur und Rekon
 **"Primum non nocere"** - Zuerst einmal nicht schaden.
 
 AURIK folgt einem konservativen Ansatz:
+
 - **Bewahrung vor Verbesserung** - Original wird respektiert
 - **Stabilität vor Brillanz** - Sicher statt riskant
 - **Natürlichkeit vor Perfektion** - Organisch statt künstlich
@@ -46,12 +47,14 @@ AURIK bietet zwei grundlegend verschiedene Verarbeitungsmodi:
 **Ziel:** Historische Bewahrung mit maximaler Originalintegrität
 
 **Wann verwenden:**
+
 - Historische Aufnahmen (Vinyl, Shellac, Tape)
 - Kulturell bedeutsame Werke
 - Archiv-Material
 - Wenn Authentizität wichtiger ist als moderne Klangästhetik
 
 **Was passiert:**
+
 - Konservative Störfaktor-Entfernung
 - Minimale Klangveränderung
 - Erhaltung von zeitlichen Charakteristiken
@@ -60,6 +63,7 @@ AURIK bietet zwei grundlegend verschiedene Verarbeitungsmodi:
 **Restaurations-Aggressivität:** 0.3 (conservative)
 
 **Beispiel-Anwendungen:**
+
 - 1950er Jazz-Vinyl → Sauberes Vinyl (ohne Knistern)
 - 1930er Shellac → Hörbares Archiv (ohne Klicks)
 - 1970er Tape → Digitales Master (ohne Dropout)
@@ -69,12 +73,14 @@ AURIK bietet zwei grundlegend verschiedene Verarbeitungsmodi:
 **Ziel:** Klingt wie 2026 im Highend-Profi-Studio neu aufgenommen
 
 **Wann verwenden:**
+
 - Moderne Releases/Re-Releases
 - Kommerzielle Nutzung
 - Streaming-Publikation
 - Wenn moderne Klangästhetik gewünscht
 
 **Was passiert:**
+
 - Aggressive Störfaktor-Beseitigung
 - Moderne Klangästhetik (2026 Studio-Standard)
 - Frequency Extension (wenn möglich)
@@ -84,6 +90,7 @@ AURIK bietet zwei grundlegend verschiedene Verarbeitungsmodi:
 **Restaurations-Aggressivität:** 0.8 (aggressive, but HIPS-safe)
 
 **Beispiel-Anwendungen:**
+
 - 1960er Beatles-Remaster → 2026 Streaming-Qualität
 - 1980er Pop → Moderne Höhen/Dynamik
 - Spoken Word → Studio-Mikrofonqualität
@@ -91,7 +98,7 @@ AURIK bietet zwei grundlegend verschiedene Verarbeitungsmodi:
 ### Modus-Vergleich
 
 | Aspekt | Restoration | Modern Reproduction |
-|--------|-------------|---------------------|
+| --- | --- | --- |
 | **Philosophie** | "Wie Original gemeint" | "Wie heute aufgenommen" |
 | **Frequenzgang** | Original-Charakteristik | Moderner Full-Range |
 | **Dynamik** | Original-Dynamik | Optimierte Dynamik |
@@ -120,6 +127,7 @@ curl -X POST http://localhost:8000/process \
 ### Schritt 2: Automatische Analyse
 
 AURIK analysiert automatisch:
+
 - **Medium-Erkennung** - Vinyl, Shellac, Tape, Digital, Cassette
 - **Defekt-Erkennung** - Clicks, Crackle, Hiss, Hum, Distortion
 - **Content-Analyse** - Music/Speech, Vocal/Instrumental
@@ -158,11 +166,13 @@ AURIK analysiert automatisch:
 ### Schritt 4: Output
 
 **Ausgabe-Formate:**
+
 - WAV (24-bit/96kHz) - Master-Qualität
 - FLAC - Verlustfreie Kompression
 - MP3/AAC - Streaming-tauglich
 
 **Zusätzliche Outputs:**
+
 - `*_processed.wav` - Verarbeitetes Audio
 - `*_audit_report.json` - Vollständiger Audit-Trail
 - `*_comparison.html` - Vorher/Nachher-Vergleich
@@ -265,12 +275,14 @@ AURIK analysiert automatisch:
   - Restoration: Nur extreme Sibilanten (> 12 dB over average)
   - Modern: Alle problematischen Sibilanten (> 6 dB over average)
 - **Algorithmus:**
+
   ```python
   - Sibilant detection (4-12 kHz energy)
   - Formant-aware compression
   - Spectral shaping (preserve voice character)
   - Transient preservation
   ```
+
 - **Best Practice:**
   - Reduction: 3-6 dB (nie mehr!)
   - Frequency: 6-9 kHz (sweet spot)
@@ -301,6 +313,7 @@ Formanten sind die charakteristischen Resonanzen der Stimme/Instrumente.
 **Problem:** Viele Algorithmen verschieben Formanten → unnatürlich
 
 **AURIK-Lösung:**
+
 ```python
 - Formant detection (cepstral analysis)
 - Formant-aware processing (separate envelope vs. fine structure)
@@ -314,6 +327,7 @@ Transienten definieren den "Attack" (z.B. Trommel-Schlag, Gitarren-Anschlag).
 **Problem:** Smoothing-Algorithmen zerstören Transienten → matschig
 
 **AURIK-Lösung:**
+
 ```python
 - Transient detection (onset detection)
 - Selective processing (smooth only sustain, not attack)
@@ -327,6 +341,7 @@ Phase-Beziehungen zwischen Frequenzen sind kritisch für Räumlichkeit.
 **Problem:** Spektrale Verarbeitung zerstört Phase → flach
 
 **AURIK-Lösung:**
+
 ```python
 - Phase-aware STFT (linear phase where possible)
 - Phase reconstruction (after magnitude processing)
@@ -340,6 +355,7 @@ Natürliche Klänge haben harmonische Obertonreihen.
 **Problem:** Noise Reduction entfernt Harmonics → dünn
 
 **AURIK-Lösung:**
+
 ```python
 - Harmonic tracking (F0 + overtones)
 - Selective filtering (noise vs. harmonics)
@@ -353,6 +369,7 @@ Kleinste Lautstärke-Schwankungen = Lebendigkeit.
 **Problem:** Compression zerstört Micro-Dynamics → leblos
 
 **AURIK-Lösung:**
+
 ```python
 - Adaptive compression (preserve micro-dynamics)
 - Transient enhancement (restore lost dynamics)
@@ -362,7 +379,7 @@ Kleinste Lautstärke-Schwankungen = Lebendigkeit.
 ### Qualitätsindikatoren für Natürlichkeit
 
 | Metric | Threshold | Bedeutung |
-|--------|-----------|-----------|
+| --- | --- | --- |
 | **THD (Total Harmonic Distortion)** | < 0.5% | Keine künstliche Verzerrung |
 | **IMD (Intermodulation Distortion)** | < 0.3% | Natürliche Frequenz-Interaktion |
 | **Phase Coherence** | > 0.95 | Räumlichkeit erhalten |
@@ -377,11 +394,13 @@ Kleinste Lautstärke-Schwankungen = Lebendigkeit.
 ### Problem: "Stimme klingt unnatürlich/robotisch"
 
 **Mögliche Ursachen:**
+
 1. Zu aggressive Sibilant-Behandlung
 2. Formant-Verschiebung durch Pitch Correction
 3. Zu viel Noise Reduction
 
 **Lösung:**
+
 ```bash
 # Reduziere Sibilant-Aggressivität
 aurik process input.wav --sibilant-threshold 9  # statt 6 dB
@@ -396,11 +415,13 @@ aurik process input.wav --noise-reduction 0.3  # statt 0.8
 ### Problem: "Clicks noch hörbar"
 
 **Mögliche Ursachen:**
+
 1. Modus "restoration" ist zu konservativ
 2. Clicks sind sehr laut/frequent
 3. Audio ist stark beschädigt
 
 **Lösung:**
+
 ```bash
 # Verwende "modern_reproduction" Modus
 aurik process input.wav --mode modern_reproduction
@@ -415,11 +436,13 @@ aurik process input.wav --click-passes 3
 ### Problem: "Klang zu dünn/flach"
 
 **Mögliche Ursachen:**
+
 1. Zu viel Noise Reduction
 2. Zu viel Hum Removal (entfernt low frequencies)
 3. Phase-Probleme
 
 **Lösung:**
+
 ```bash
 # Moderate Processing
 aurik process input.wav --conservative
@@ -434,11 +457,13 @@ aurik process input.wav --no-hum-removal
 ### Problem: "HIPS Violation"
 
 **Mögliche Ursachen:**
+
 1. Audio ist stark beschädigt (Clipping, extreme Noise)
 2. Processing würde zu viel Schaden anrichten
 3. Unsicherheit zu hoch
 
 **Lösung:**
+
 ```bash
 # Prüfe Audit Report
 cat output_audit_report.json
@@ -469,6 +494,7 @@ aurik analyze input.wav
 ```
 
 **Achte auf:**
+
 - Clipping (sollte < 0.1% sein)
 - SNR (> 30 dB für gute Ergebnisse)
 - Dynamic Range (> 10 dB)
@@ -481,6 +507,7 @@ open output_comparison.html
 ```
 
 **Bewerte:**
+
 - Natürlichkeit (klingt es echt?)
 - Artefakte (neue Störungen?)
 - Verbesserung (besser als vorher?)

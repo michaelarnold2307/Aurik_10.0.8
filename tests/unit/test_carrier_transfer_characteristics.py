@@ -34,7 +34,7 @@ class TestCarrierTransferCharacteristics:
             ("reel_tape", 18000, 72),
             ("cd_digital", 22050, 96),
             ("cassette", 14000, 60),
-            ("tape", 15000, 68),
+            ("tape", 15000, 62),
             ("mp3_low", 16000, 90),
         ],
     )

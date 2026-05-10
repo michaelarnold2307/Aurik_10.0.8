@@ -676,7 +676,7 @@ if __name__ == "__main__":
 
     logger.info("\n📖 Words (%s):", len(result.words))
     for word in result.words:
-        logger.info('   [%.2fs - %.2fs] "%s" (conf: %.1%)', word.start_time, word.end_time, word.word, word.confidence)
+        logger.info('   [%.2fs - %.2fs] "%s" (conf: %.1f)', word.start_time, word.end_time, word.word, word.confidence)
         logger.info("      Phonemes: %s", len(word.phonemes))
         for phoneme in word.phonemes[:3]:  # Show first 3
             logger.info(

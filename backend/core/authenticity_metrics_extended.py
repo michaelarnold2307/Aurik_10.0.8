@@ -769,6 +769,8 @@ if __name__ == "__main__":
             detector = BrushTextureDetector()
         elif args.detector == "vinyl":
             detector = VinylCharacterDetector()
+        else:
+            raise ValueError(f"Unknown detector: {args.detector}")
 
         # §VERBOTEN: audio[0] liefert bei (samples×channels)-Shape nur 2 Samples → audio[:, 0] korrekt
         audio_mono = audio[:, 0] if audio.ndim == 2 else audio

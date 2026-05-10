@@ -900,7 +900,7 @@ class ContextManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
+                    cls._instance._initialized = False  # pylint: disable=attribute-defined-outside-init
         return cls._instance
 
     def __init__(self):

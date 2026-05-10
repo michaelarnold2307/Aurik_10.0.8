@@ -157,7 +157,7 @@ class BayesianLinear(nn.Module):
         bias_eps = torch.randn_like(bias_std)
         bias = self.bias_mu + bias_eps * bias_std
 
-        return F.linear(x, weight, bias)
+        return F.linear(x, weight, bias)  # pylint: disable=not-callable
 
     def kl_divergence(self) -> torch.Tensor:
         """

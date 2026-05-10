@@ -853,9 +853,9 @@ class MediumClassifier:
 
     def _try_clap_classification(self, audio: np.ndarray, sr: int) -> ClassificationResult | None:
         try:
-            from plugins.laion_clap_plugin import get_laion_clap_plugin
+            from plugins.laion_clap_plugin import get_laion_clap
 
-            plugin = get_laion_clap_plugin()
+            plugin = get_laion_clap()
             r = plugin.classify_medium(audio, sr)
             if r is not None and r.confidence >= 0.35:
                 r.classifier_source = "clap_ml"

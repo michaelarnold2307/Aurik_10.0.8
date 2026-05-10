@@ -437,7 +437,7 @@ class EmergencyRestorationEngine:
 
         # === 2. Check if Restoration is Possible ===
         if not assessment.can_attempt_restoration:
-            logger.error("  ❌ Material beyond restoration threshold (>95% corrupted)")
+            logger.error("  ❌ Material beyond restoration threshold (>95%% corrupted)")
 
             report = EmergencyReport(
                 input_corruption_percent=assessment.overall_corruption_percent,

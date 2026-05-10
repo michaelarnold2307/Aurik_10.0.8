@@ -198,7 +198,7 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
 
     # Tier-3: PESTO
     try:
-        from plugins.pesto_plugin import get_pesto_plugin
+        from plugins.pesto_plugin import get_pesto_plugin  # pylint: disable=no-name-in-module
 
         result = get_pesto_plugin().analyze(mono, sr)
         voiced_mask = result.voiced_prob >= 0.55
@@ -747,15 +747,18 @@ class SpectralBandGapRepairPhase(PhaseInterface):
         # §2.46f NPA-Guard: Atemgeräusche/Vibrato in reparierten Bändern nicht überschreiben.
         # §2.46e Hallucination-Guard: Additive Spektral-Synthese darf kein neues Material einbringen.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
             from backend.core.hallucination_guard import apply_hallucination_guard
+            from backend.core.natural_performance_detector import get_natural_performance_detector
+
             _mono56 = audio.mean(axis=-1) if audio.ndim == 2 else audio
             n_samples56 = _mono56.shape[0]
             # §2.46f NPA-Guard
             try:
-                _npa_mask56 = get_natural_performance_detector().detect(
-                    _mono56, sample_rate
-                ).get_protected_mask(n_samples56, sample_rate)
+                _npa_mask56 = (
+                    get_natural_performance_detector()
+                    .detect(_mono56, sample_rate)
+                    .get_protected_mask(n_samples56, sample_rate)
+                )
                 if _npa_mask56 is not None and _npa_mask56.any():
                     if out.ndim == 2:
                         out[_npa_mask56, :] = audio[_npa_mask56, :]
@@ -769,12 +772,9 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                 if "studio" not in _mode56:
                     _bw_cap56 = float(_band_gap_profile.get("bw_cap_hz", 22050.0))
                     _mono_out56 = out.mean(axis=-1) if out.ndim == 2 else out
-                    _, _h_meta56 = apply_hallucination_guard(
-                        _mono56, _mono_out56, sample_rate, _bw_cap56, _mode56
-                    )
-                    _rollback56 = (
-                        _h_meta56.get("hallucination_decision") == "rollback"
-                        or bool(_h_meta56.get("rollback", False))
+                    _, _h_meta56 = apply_hallucination_guard(_mono56, _mono_out56, sample_rate, _bw_cap56, _mode56)
+                    _rollback56 = _h_meta56.get("hallucination_decision") == "rollback" or bool(
+                        _h_meta56.get("rollback", False)
                     )
                     if _rollback56:
                         logger.debug(

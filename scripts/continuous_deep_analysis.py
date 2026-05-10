@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -81,6 +82,52 @@ class ContinuousDeepAnalyzer:
         self.anomalies_detected: list[str] = []
         self.pegelexplosion_detector = PegelexplosionDetector() if PegelexplosionDetector else None
         self._last_phase_audio = None
+        self._final_musical_goals: dict[str, float] = {}
+        self._last_progress_pct: int = -1
+        self._last_progress_phase: str = ""
+        self._last_progress_elapsed_s: float = 0.0
+        self._last_progress_update_t: float = 0.0
+        self._last_progress_phase_start_t: float = 0.0
+
+    def _progress_watchdog(self, stop_event: threading.Event, interval_s: float = 30.0) -> None:
+        """Emit periodic heartbeat logs while restore() is busy inside a long phase."""
+        while not stop_event.wait(interval_s):
+            if self._last_progress_update_t <= 0.0:
+                continue
+            stale_s = time.monotonic() - self._last_progress_update_t
+            if stale_s < interval_s:
+                continue
+            phase_runtime_s = stale_s
+            if self._last_progress_phase_start_t > 0.0:
+                phase_runtime_s = time.monotonic() - self._last_progress_phase_start_t
+            self.logger.info(
+                "  - Heartbeat: %d%% | Phase: %s | letzte Aktualisierung vor %.1fs | Phase aktiv seit %.1fs",
+                self._last_progress_pct,
+                self._last_progress_phase or "unknown_phase",
+                stale_s,
+                phase_runtime_s,
+            )
+
+    def _restore_progress_callback(self, pct: int, phase: str, elapsed_s: float) -> None:
+        """Emit sparse progress updates so long restoration runs are not mistaken for hangs."""
+        _pct = int(max(0, min(100, pct)))
+        _phase = str(phase or "unknown_phase")
+        _elapsed = float(max(0.0, elapsed_s))
+        self._last_progress_elapsed_s = _elapsed
+        self._last_progress_update_t = time.monotonic()
+        if _pct == self._last_progress_pct and _phase == self._last_progress_phase:
+            return
+        if (
+            _pct < 100
+            and self._last_progress_pct >= 0
+            and _pct - self._last_progress_pct < 5
+            and _phase == self._last_progress_phase
+        ):
+            return
+        self._last_progress_phase_start_t = self._last_progress_update_t
+        self._last_progress_pct = _pct
+        self._last_progress_phase = _phase
+        self.logger.info("  - Fortschritt: %d%% | Phase: %s | Laufzeit: %.1fs", _pct, _phase, _elapsed)
 
     def run_analysis(
         self,
@@ -154,6 +201,19 @@ class ContinuousDeepAnalyzer:
             pre_result = None
 
         # 3. Restaurierung mit Monitoring durchführen
+        self._last_progress_pct = -1
+        self._last_progress_phase = ""
+        self._last_progress_elapsed_s = 0.0
+        self._last_progress_update_t = 0.0
+        self._last_progress_phase_start_t = 0.0
+        _watchdog_stop = threading.Event()
+        _watchdog_thread = threading.Thread(
+            target=self._progress_watchdog,
+            args=(_watchdog_stop,),
+            name="continuous-deep-analysis-progress-watchdog",
+            daemon=True,
+        )
+        _watchdog_thread.start()
         try:
             from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 
@@ -164,22 +224,37 @@ class ContinuousDeepAnalyzer:
             restoration_result = restorer.restore(
                 audio=audio,
                 sample_rate=sr_imported,
+                progress_callback=self._restore_progress_callback,
                 is_studio_2026=is_studio_2026,
                 pre_analysis_result=pre_result,
                 enable_debug_trace=True,
             )
 
+            _final_goals = getattr(restoration_result, "musical_goals", None)
+            if isinstance(_final_goals, dict):
+                self._final_musical_goals = {
+                    str(k): float(v) for k, v in _final_goals.items() if isinstance(v, (int, float))
+                }
+
             self._collect_checkpoints_from_restore_result(restoration_result, pre_result)
 
-            self.logger.info(f"✓ Restaurierung komplett (Dauer: {time.monotonic() - _start_t:.1f}s)")
-            self.logger.info(f"  - HPI: {restoration_result.metadata.get('hpi_score', 'N/A')}")
+            _hpg = restoration_result.metadata.get("holistic_perceptual_gate", {}) or {}
+            _afg = restoration_result.metadata.get("artifact_freedom", {}) or {}
+            self.logger.info("✓ Restaurierung komplett (Dauer: %.1fs)", time.monotonic() - _start_t)
+            self.logger.info("  - HPI: %s", _hpg.get("hpi", restoration_result.metadata.get("hpi_score", "N/A")))
             self.logger.info(
-                f"  - Artefakt-Freiheit: {restoration_result.metadata.get('artifact_freedom_score', 'N/A')}"
+                "  - Artefakt-Freiheit: %s",
+                _afg.get("score", restoration_result.metadata.get("artifact_freedom_score", "N/A"))
+                if isinstance(_afg, dict)
+                else _afg,
             )
 
         except Exception as e:
             self.logger.error(f"✗ Restaurierung fehlgeschlagen: {e}", exc_info=True)
             self.anomalies_detected.append(f"Restoration failed: {e}")
+        finally:
+            _watchdog_stop.set()
+            _watchdog_thread.join(timeout=1.0)
 
         # 4. Ergebnisse speichern
         os.makedirs(output_dir, exist_ok=True)
@@ -188,6 +263,7 @@ class ContinuousDeepAnalyzer:
             "audio_path": audio_path,
             "mode": mode,
             "checkpoints": [cp.to_dict() for cp in self.checkpoints],
+            "final_musical_goals": dict(self._final_musical_goals),
             "anomalies": self.anomalies_detected,
             "summary": self._generate_summary(),
         }
@@ -206,11 +282,23 @@ class ContinuousDeepAnalyzer:
         if not isinstance(entries, list):
             return
 
-        final_hpi = self._metric_to_float(metadata.get("hpi_score"), ("hpi", "hpi_score", "score", "value"))
+        # UV3 stores HPI under metadata["holistic_perceptual_gate"]["hpi"] (not flat "hpi_score")
+        _hpg = metadata.get("holistic_perceptual_gate") or {}
+        _hpg = _hpg if isinstance(_hpg, dict) else {}
+        final_hpi = self._metric_to_float(
+            _hpg.get("hpi") if _hpg.get("hpi") is not None else metadata.get("hpi_score"),
+            ("hpi", "hpi_score", "score", "value"),
+        )
+        # UV3 stores AFG as dict: metadata["artifact_freedom"]["score"] or inside holistic_perceptual_gate
+        _afg_raw = metadata.get("artifact_freedom")
+        if isinstance(_afg_raw, dict):
+            _afg_val = _afg_raw.get("score", _afg_raw.get("artifact_freedom"))
+        elif _afg_raw is not None:
+            _afg_val = _afg_raw
+        else:
+            _afg_val = _hpg.get("artifact_freedom") or metadata.get("artifact_freedom_score")
         final_afg = self._metric_to_float(
-            metadata.get("artifact_freedom")
-            if metadata.get("artifact_freedom") is not None
-            else metadata.get("artifact_freedom_score"),
+            _afg_val,
             ("artifact_freedom", "artifact_freedom_score", "score", "value"),
         )
         final_ccr = self._metric_to_float(
@@ -386,7 +474,8 @@ class ContinuousDeepAnalyzer:
 
         last_cp = self.checkpoints[-1]
         p1_goals = ["natuerlichkeit", "authentizitaet"]
-        p1_scores = [last_cp.musical_goals.get(g, 0.0) for g in p1_goals]
+        _summary_goals = self._final_musical_goals if self._final_musical_goals else last_cp.musical_goals
+        p1_scores = [float(_summary_goals.get(g, 0.0)) for g in p1_goals]
         p1_avg = np.mean(p1_scores) if p1_scores else 0.0
 
         return {
@@ -395,6 +484,7 @@ class ContinuousDeepAnalyzer:
             "final_hpi": last_cp.hpi_score,
             "final_artifact_freedom": last_cp.artifact_freedom,
             "p1_avg_score": float(p1_avg),
+            "p1_source": "final_musical_goals" if self._final_musical_goals else "pmgg_debug_trace",
             "quality_status": "EXCELLENT" if p1_avg >= 0.90 else "GOOD" if p1_avg >= 0.80 else "NEEDS_REVIEW",
         }
 

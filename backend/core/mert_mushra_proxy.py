@@ -1479,9 +1479,9 @@ class MertMushraProxy:
         and compares sharpness ratios.
         """
         try:
-            from backend.core.authenticity_metrics import AuthentizitaetMetric
+            from backend.core.authenticity_metrics import AuthenticityMetrics
 
-            metric = AuthentizitaetMetric()
+            metric = AuthenticityMetrics()
             preservation_rate, _orig_events, _proc_events = metric.compute_transient_preservation(ref, test, sr)
             return float(np.clip(preservation_rate, 0.0, 1.0))
         except Exception as exc:

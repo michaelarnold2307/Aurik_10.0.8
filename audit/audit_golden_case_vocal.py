@@ -14,16 +14,24 @@ from pathlib import Path
 import librosa
 import numpy as np
 
+_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+
 # Backend imports
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(_WORKSPACE_ROOT))
+
+# Pylint C0413 is intentional here: the script can be executed directly via
+# `python audit/audit_golden_case_vocal.py`, so the workspace root must be added
+# before importing backend modules.
+from backend.core.calibration_matrix import CANONICAL_THRESHOLDS_RESTORATION  # pylint: disable=wrong-import-position
+from backend.core.musical_goals.musical_goals_metrics import (  # pylint: disable=wrong-import-position
+    MusicalGoalsChecker,
+)
+from backend.core.unified_restorer_v3 import UnifiedRestorerV3  # pylint: disable=wrong-import-position
+from backend.file_import import load_audio_file  # pylint: disable=wrong-import-position
 
 
 def run_audit():
     """Lade Audio, starte Restaurierung, messe Goals."""
-    from backend.core.calibration_matrix import CANONICAL_THRESHOLDS_RESTORATION
-    from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
-    from backend.core.unified_restorer_v3 import UnifiedRestorerV3
-    from backend.file_import import load_audio_file
 
     def _meta_get(d: dict, *path: str, default=None):
         cur = d
@@ -35,7 +43,7 @@ def run_audit():
                 return default
         return cur
 
-    audio_path = Path(__file__).parent / "test_audio" / "vocals" / "opera_sibilance.wav"
+    audio_path = _WORKSPACE_ROOT / "test_audio" / "vocals" / "opera_sibilance.wav"
     if not audio_path.exists():
         print(f"❌ Audio file not found: {audio_path}")
         return 1

@@ -16,20 +16,21 @@ Author: Aurik 9.0 Team
 Date: February 15, 2026
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import argparse
 import json
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
 
 import numpy as np
+
+try:
+    import soundfile as sf
+except Exception:
+    sf = None  # type: ignore[assignment]
+
 from tqdm import tqdm
 
 try:
@@ -47,6 +48,11 @@ try:
     from denker.aurik_denker import get_aurik_denker as _get_aurik_denker
 except ImportError:
     _get_aurik_denker = None  # type: ignore[assignment,misc]
+
+try:
+    from backend.core.album_consistency import get_album_consistency_pass
+except Exception:
+    get_album_consistency_pass = None  # type: ignore[assignment]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,15 +85,15 @@ class BatchProcessor:
         self.state_file = self.output_dir / ".batch_state.json"
         self.completed = self._load_state() if resume else set()
 
-        logger.info(f"BatchProcessor initialized: {workers} workers, output: {output_dir}")
+        logger.info("BatchProcessor initialized: %d workers, output: %s", workers, output_dir)
         if resume and self.completed:
-            logger.info(f"Resume mode: {len(self.completed)} files already processed")
+            logger.info("Resume mode: %d files already processed", len(self.completed))
 
     def _load_state(self) -> set:
         """Load completed files from state file."""
         if self.state_file.exists():
             try:
-                with open(self.state_file) as f:
+                with open(self.state_file, encoding="utf-8") as f:
                     state = json.load(f)
                 return set(state.get("completed", []))
             except Exception:
@@ -96,7 +102,7 @@ class BatchProcessor:
 
     def _save_state(self):
         """Save completed files to state file."""
-        with open(self.state_file, "w") as f:
+        with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump({"completed": list(self.completed)}, f)
 
     def find_audio_files(self, input_paths: list[str]) -> list[Path]:
@@ -129,16 +135,15 @@ class BatchProcessor:
         if self.resume:
             files = [f for f in files if str(f) not in self.completed]
 
-        logger.info(f"Found {len(files)} audio files to process")
+        logger.info("Found %d audio files to process", len(files))
         return files
 
-    def process_file(self, input_file: Path, material: Any, config: dict | None = None) -> dict:
+    def process_file(self, input_file: Path, config: dict | None = None) -> dict:
         """
         Process a single audio file.
 
         Args:
             input_file: Input audio file path
-            material: Material type
             config: Custom configuration
 
         Returns:
@@ -151,7 +156,7 @@ class BatchProcessor:
             output_file = self.output_dir / f"{input_file.stem}_restored{input_file.suffix}"
 
             # Process via AurikDenker (Pflicht-Einstiegspunkt §2.2)
-            logger.info(f"Processing: {input_file.name}")
+            logger.info("Processing: %s", input_file.name)
             if _load_audio_file is None:
                 raise RuntimeError(
                     "Audio-Importmodul nicht verfügbar. "
@@ -215,13 +220,11 @@ class BatchProcessor:
                     ", ".join(_failed_goals),
                 )
 
-            try:
-                import soundfile as sf
-            except Exception as exc:
+            if sf is None:
                 raise RuntimeError(
                     "Audio-Export fehlgeschlagen: soundfile konnte nicht geladen werden. "
                     "Lösung: Installation prüfen und erneut starten."
-                ) from exc
+                )
 
             # Aurik-internes Format: (channels, samples) → normalisieren auf (samples, channels)
             if isinstance(restored_audio, np.ndarray):
@@ -251,17 +254,16 @@ class BatchProcessor:
 
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error(f"Failed to process {input_file.name}: {e}")
+            logger.error("Failed to process %s: %s", input_file.name, e)
 
             return {"file": str(input_file), "success": False, "error": str(e), "elapsed": elapsed}
 
-    def process_batch(self, input_files: list[Path], material: Any, config: dict | None = None) -> list[dict]:
+    def process_batch(self, input_files: list[Path], config: dict | None = None) -> list[dict]:
         """
         Process multiple audio files in parallel.
 
         Args:
             input_files: List of input audio files
-            material: Material type
             config: Custom configuration
 
         Returns:
@@ -273,7 +275,7 @@ class BatchProcessor:
         with tqdm(total=len(input_files), desc="Processing", unit="file") as pbar:
             with ThreadPoolExecutor(max_workers=self.workers) as executor:
                 # Submit all tasks
-                future_to_file = {executor.submit(self.process_file, f, material, config): f for f in input_files}
+                future_to_file = {executor.submit(self.process_file, f, config): f for f in input_files}
 
                 # Process as completed
                 for future in as_completed(future_to_file):
@@ -318,6 +320,7 @@ class BatchProcessor:
 
 
 def main():
+    """Parse CLI arguments and run batch processing."""
     parser = argparse.ArgumentParser(description="Batch process audio files with Aurik 9.0")
     parser.add_argument("inputs", nargs="+", help="Input files or directories")
     parser.add_argument("-o", "--output", required=True, help="Output directory")
@@ -370,7 +373,7 @@ def main():
         return
 
     # Process
-    logger.info(f"Starting batch processing: {len(files)} files, {args.workers} workers")
+    logger.info("Starting batch processing: %d files, %d workers", len(files), args.workers)
     results = processor.process_batch(files, material)
 
     # Album Consistency Pass (§ Album-Konsistenz-Pass)
@@ -382,7 +385,8 @@ def main():
         _output_files = [r["output"] for r in results if r.get("success") and r.get("output")]
         if len(_output_files) >= 3:
             try:
-                from backend.core.album_consistency import get_album_consistency_pass
+                if get_album_consistency_pass is None:
+                    raise RuntimeError("Album-Konsistenz-Modul nicht verfügbar")
 
                 _album_pass = get_album_consistency_pass()
                 _report = _album_pass.process_output_files(

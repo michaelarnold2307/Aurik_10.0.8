@@ -712,7 +712,7 @@ class VocalEnhancement(PhaseInterface):
                     from plugins.formant_tracker import get_formant_tracker as _get_ft
 
                     _ft_result = _get_ft().track(audio, sample_rate)
-                    if _ft_result.confidence >= 0.3 and len(_ft_result.formants) >= 2:
+                    if _ft_result.confidence >= 0.5 and len(_ft_result.formants) >= 2:
                         # Gültige Formant-Schätzung → Bell-EQ-Boost über lpc_formant_tracker.enhance()
                         from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc
 

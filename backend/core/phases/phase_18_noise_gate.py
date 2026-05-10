@@ -62,6 +62,35 @@ from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, Phase
 logger = logging.getLogger(__name__)
 
 
+def _compute_band_masking_gain_floors(audio: np.ndarray, sample_rate: int) -> list[float] | None:
+    """Derive one psychoacoustic gain floor per gate band for §2.62."""
+    try:
+        from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172
+
+        _mono = safe_to_mono(audio) if audio.ndim == 2 else audio
+        _mask_ratio = compute_masking_threshold_iso11172(_mono, sample_rate, n_fft=2048, hop_length=512)
+        _mask_floor = np.mean(_mask_ratio, axis=1).astype(np.float32)
+        _freqs = np.linspace(0.0, sample_rate / 2.0, _mask_floor.shape[0], dtype=np.float32)
+        _bands_hz = (
+            (0.0, float(NoiseGate.CROSSOVER_FREQS[0])),
+            (float(NoiseGate.CROSSOVER_FREQS[0]), float(NoiseGate.CROSSOVER_FREQS[1])),
+            (float(NoiseGate.CROSSOVER_FREQS[1]), float(NoiseGate.CROSSOVER_FREQS[2])),
+            (float(NoiseGate.CROSSOVER_FREQS[2]), float(sample_rate / 2.0)),
+        )
+        _floors: list[float] = []
+        for _f_lo, _f_hi in _bands_hz:
+            _mask = (_freqs >= _f_lo) & (_freqs <= _f_hi)
+            if not np.any(_mask):
+                _floors.append(0.10)
+                continue
+            _band_floor = float(np.clip(np.mean(_mask_floor[_mask]), 0.10, 1.0))
+            _floors.append(_band_floor)
+        return _floors
+    except Exception as exc:
+        logger.debug("§2.62 phase_18 Masking-Guard nicht verfügbar (non-blocking): %s", exc)
+        return None
+
+
 def _rms_dbfs_gated(sig: np.ndarray) -> float:
     """§2.45a-I: Frame-basierter RMS in dBFS, ignoriert Frames < −50 dBFS (Stille).
 
@@ -262,6 +291,7 @@ class NoiseGate(PhaseInterface):
         is_stereo = audio.ndim == 2
         config = dict(self.GATE_CONFIG.get(material, self.GATE_CONFIG[MaterialType.CD_DIGITAL]))
         config["reductions_db"] = [float(r * _effective_strength) for r in config["reductions_db"]]
+        config["masking_gain_floors"] = _compute_band_masking_gain_floors(audio, sample_rate)
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -410,12 +440,18 @@ class NoiseGate(PhaseInterface):
             if _npa_audio_18.ndim == 2 and _npa_audio_18.shape[0] == 2 and _npa_audio_18.shape[1] > 2:
                 _npa_audio_18 = _npa_audio_18.T  # channels-first → channels-last
             _npa_result_18 = get_natural_performance_detector().detect(_npa_audio_18, sample_rate)
-            _npa_n_18 = gated_audio.shape[1] if (gated_audio.ndim == 2 and gated_audio.shape[0] == 2 and gated_audio.shape[1] > gated_audio.shape[0]) else (gated_audio.shape[0] if gated_audio.ndim <= 2 else len(gated_audio))
+            _npa_n_18 = (
+                gated_audio.shape[1]
+                if (gated_audio.ndim == 2 and gated_audio.shape[0] == 2 and gated_audio.shape[1] > gated_audio.shape[0])
+                else (gated_audio.shape[0] if gated_audio.ndim <= 2 else len(gated_audio))
+            )
             _npa_mask_18 = _npa_result_18.get_protected_mask(_npa_n_18, sample_rate)
             if np.any(_npa_mask_18):
                 if is_stereo and gated_audio.ndim == 2:
                     if gated_audio.shape[0] == 2 and gated_audio.shape[1] > 2:
-                        gated_audio[:, _npa_mask_18] = audio[:, _npa_mask_18] if audio.ndim == 2 else gated_audio[:, _npa_mask_18]
+                        gated_audio[:, _npa_mask_18] = (
+                            audio[:, _npa_mask_18] if audio.ndim == 2 else gated_audio[:, _npa_mask_18]
+                        )
                     else:
                         _a18_ref = audio if (audio.ndim == 2 and audio.shape == gated_audio.shape) else gated_audio
                         gated_audio[_npa_mask_18, :] = _a18_ref[_npa_mask_18, :]
@@ -657,6 +693,10 @@ class NoiseGate(PhaseInterface):
             attack_ms = config["attack_ms"][i]
             release_ms = config["release_ms"][i]
             knee_db = config["knee_db"]
+            masking_gain_floor = 0.10
+            _masking_floors = config.get("masking_gain_floors")
+            if isinstance(_masking_floors, list) and i < len(_masking_floors):
+                masking_gain_floor = float(np.clip(_masking_floors[i], 0.10, 1.0))
 
             gated_band = self._apply_gate(
                 band_audio,
@@ -666,6 +706,7 @@ class NoiseGate(PhaseInterface):
                 attack_ms,
                 release_ms,
                 knee_db,
+                masking_gain_floor,
                 vad_probabilities,  # Pass VAD info to gate
             )
             gated_bands.append(gated_band)
@@ -716,6 +757,7 @@ class NoiseGate(PhaseInterface):
         attack_ms: float,
         release_ms: float,
         knee_db: float,
+        masking_gain_floor: float,
         vad_probabilities: np.ndarray | None = None,
     ) -> np.ndarray:
         """Apply gating to a single frequency band with optional VAD guidance.
@@ -796,6 +838,7 @@ class NoiseGate(PhaseInterface):
 
         # Convert to linear gain and apply
         gain_linear = 10 ** (gain_db_smooth / 20)
+        gain_linear = np.maximum(gain_linear, float(np.clip(masking_gain_floor, 0.10, 1.0)))
         gated = audio * gain_linear
 
         return gated

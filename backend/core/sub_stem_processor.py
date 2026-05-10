@@ -77,9 +77,11 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import scipy.signal as sig
+from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
@@ -185,22 +187,22 @@ class SubStemResult:
 # ── LR4 crossover helpers ─────────────────────────────────────────────────────
 
 
-def _lr4_lowpass(audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+def _lr4_lowpass(audio: np.ndarray, sr: int, cutoff_hz: float) -> NDArray[np.float32]:
     """4th-order Linkwitz-Riley low-pass at *cutoff_hz* (two cascaded Butterworth-2)."""
     cutoff_hz = float(np.clip(cutoff_hz, 5.0, sr / 2.0 - 1.0))
     sos = sig.butter(2, cutoff_hz, btype="low", fs=sr, output="sos")
-    out = sig.sosfilt(sos, audio.astype(np.float64))
-    out = sig.sosfilt(sos, out)  # cascade for LR4 phase response
-    return out.astype(np.float32)
+    out: NDArray[np.float64] = np.asarray(sig.sosfilt(sos, audio.astype(np.float64)), dtype=np.float64)
+    out = np.asarray(sig.sosfilt(sos, out), dtype=np.float64)  # cascade for LR4 phase response
+    return np.asarray(out, dtype=np.float32)
 
 
-def _lr4_highpass(audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+def _lr4_highpass(audio: np.ndarray, sr: int, cutoff_hz: float) -> NDArray[np.float32]:
     """4th-order Linkwitz-Riley high-pass at *cutoff_hz*."""
     cutoff_hz = float(np.clip(cutoff_hz, 5.0, sr / 2.0 - 1.0))
     sos = sig.butter(2, cutoff_hz, btype="high", fs=sr, output="sos")
-    out = sig.sosfilt(sos, audio.astype(np.float64))
-    out = sig.sosfilt(sos, out)
-    return out.astype(np.float32)
+    out: NDArray[np.float64] = np.asarray(sig.sosfilt(sos, audio.astype(np.float64)), dtype=np.float64)
+    out = np.asarray(sig.sosfilt(sos, out), dtype=np.float64)
+    return np.asarray(out, dtype=np.float32)
 
 
 def _extract_band(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> np.ndarray:
@@ -295,13 +297,13 @@ def _soft_spectral_subtraction(
 # ── EQ gain helper ────────────────────────────────────────────────────────────
 
 
-def _apply_gain_db(audio: np.ndarray, gain_db: float, strength: float) -> np.ndarray:
+def _apply_gain_db(audio: np.ndarray, gain_db: float, strength: float) -> NDArray[np.float32]:
     """Apply a linear gain (dB) scaled by *strength* to *audio*."""
     effective_db = gain_db * float(np.clip(strength, 0.0, 1.0))
     if abs(effective_db) < 0.01:
-        return audio
+        return np.asarray(audio, dtype=np.float32)
     gain_lin = 10.0 ** (effective_db / 20.0)
-    return (audio * gain_lin).astype(np.float32)
+    return np.asarray(audio * gain_lin, dtype=np.float32)
 
 
 # ── Core class ────────────────────────────────────────────────────────────────
@@ -468,8 +470,19 @@ class SubStemProcessor:
 
 # ── Singleton (§3.2 Double-Checked Locking) ──────────────────────────────────
 
-_instance: SubStemProcessor | None = None
 _lock = threading.Lock()
+_SINGLETON_INSTANCES: dict[type, Any] = {}
+
+
+class _SingletonMeta(type):
+    """Metaclass for thread-safe singleton pattern without global statement."""
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in _SINGLETON_INSTANCES:
+            with _lock:
+                if cls not in _SINGLETON_INSTANCES:
+                    _SINGLETON_INSTANCES[cls] = super().__call__(*args, **kwargs)
+        return _SINGLETON_INSTANCES[cls]
 
 
 def get_sub_stem_processor() -> SubStemProcessor:
@@ -477,12 +490,7 @@ def get_sub_stem_processor() -> SubStemProcessor:
 
     Thread-safe via double-checked locking (§3.2).
     """
-    global _instance
-    if _instance is None:
-        with _lock:
-            if _instance is None:
-                _instance = SubStemProcessor()
-    return _instance
+    return SubStemProcessor()
 
 
 def process_sub_stems(

@@ -179,14 +179,14 @@ class ForensicsTrainingPipeline:
         self.reports.append(report)
 
         logger.info("\n✅ Medium Detector Training Complete")
-        logger.info("   Test Accuracy: %.1%", test_accuracy)
-        logger.info("   CV Mean: %.1% ± %.1%", report.cross_val_mean, report.cross_val_std)
+        logger.info("   Test Accuracy: %.1f", test_accuracy)
+        logger.info("   CV Mean: %.1f \u00b1 %.1f", report.cross_val_mean, report.cross_val_std)
         logger.info("   Training Time: %.1fs", training_time)
 
         if test_accuracy >= 0.99:
-            logger.info("   🎯 TARGET REACHED: %.1% >= 99%%", test_accuracy)
+            logger.info("   🎯 TARGET REACHED: %.1f >= 99%%", test_accuracy)
         else:
-            logger.warning("   ⚠ Below target: %.1% < 99%%", test_accuracy)
+            logger.warning("   ⚠ Below target: %.1f < 99%%", test_accuracy)
 
         return detector, report
 
@@ -255,14 +255,14 @@ class ForensicsTrainingPipeline:
         self.reports.append(report)
 
         logger.info("\n✅ Era Detector Training Complete")
-        logger.info("   Test Accuracy: %.1%", test_accuracy)
-        logger.info("   CV Mean: %.1% ± %.1%", report.cross_val_mean, report.cross_val_std)
+        logger.info("   Test Accuracy: %.1f", test_accuracy)
+        logger.info("   CV Mean: %.1f \u00b1 %.1f", report.cross_val_mean, report.cross_val_std)
         logger.info("   Training Time: %.1fs", training_time)
 
         if test_accuracy >= 0.95:
-            logger.info("   🎯 TARGET REACHED: %.1% >= 95%%", test_accuracy)
+            logger.info("   🎯 TARGET REACHED: %.1f >= 95%%", test_accuracy)
         else:
-            logger.warning("   ⚠ Below target: %.1% < 95%%", test_accuracy)
+            logger.warning("   ⚠ Below target: %.1f < 95%%", test_accuracy)
 
         return detector, report
 
@@ -330,14 +330,14 @@ class ForensicsTrainingPipeline:
         self.reports.append(report)
 
         logger.info("\n✅ Defect Detector Training Complete")
-        logger.info("   Mean Recall: %.1%", test_recall)
-        logger.info("   CV Mean Recall: %.1% ± %.1%", report.cross_val_mean, report.cross_val_std)
+        logger.info("   Mean Recall: %.1f", test_recall)
+        logger.info("   CV Mean Recall: %.1f \u00b1 %.1f", report.cross_val_mean, report.cross_val_std)
         logger.info("   Training Time: %.1fs", training_time)
 
         if test_recall >= 0.98:
-            logger.info("   🎯 TARGET REACHED: %.1% >= 98%%", test_recall)
+            logger.info("   🎯 TARGET REACHED: %.1f >= 98%%", test_recall)
         else:
-            logger.warning("   ⚠ Below target: %.1% < 98%%", test_recall)
+            logger.warning("   ⚠ Below target: %.1f < 98%%", test_recall)
 
         return detector, report
 

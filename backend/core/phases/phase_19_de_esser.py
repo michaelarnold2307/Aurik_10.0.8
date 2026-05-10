@@ -103,7 +103,7 @@ except ImportError:  # pragma: no cover
 # AURIK 8.0 ENHANCEMENT MODULES — aktiviert ab Phase 19 v5.0
 # ========================================================================
 try:
-    from dsp.breath_intelligence import BreathDetector, BreathIntelligence
+    from dsp.breath_intelligence import BreathIntelligence
     from dsp.formant_system import FormantSystem, FormantTracker
     from dsp.vocal_dynamics_intelligence import VocalDynamicsIntelligence
     from dsp.vocal_presence_enhancer import VocalPresenceEnhancer
@@ -112,7 +112,6 @@ try:
     AURIK_8_AVAILABLE = True
     logger.debug("Aurik 8.0 Enhancement-Module geladen (Formant, Breath, Presence, Inpainting, Dynamics)")
 except ImportError as _aurik8_err:
-    BreathDetector = None  # type: ignore
     BreathIntelligence = None  # type: ignore
     FormantSystem = None  # type: ignore
     FormantTracker = None  # type: ignore
@@ -130,6 +129,26 @@ try:
 except ImportError:
     _RobustGenderDetector = None  # type: ignore
     _HAS_ROBUST_GENDER = False
+
+try:
+    from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp as _apply_masking_clamp_19
+except Exception:  # pragma: no cover
+    _apply_masking_clamp_19 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_19
+except Exception:  # pragma: no cover
+    _get_pmask_19 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.natural_performance_detector import get_natural_performance_detector as _get_npa_detector_19
+except Exception:  # pragma: no cover
+    _get_npa_detector_19 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.core_utils import fft_autocorr as _fft_autocorr_19
+except Exception:  # pragma: no cover
+    _fft_autocorr_19 = None  # type: ignore[assignment]
 
 
 class VocalGender:
@@ -272,14 +291,14 @@ class DeEsserPhase(PhaseInterface):
         lookahead_ms = float(np.clip(_base + _mode_adj + _rest_adj, 2.0, 10.0))
         return {"lookahead_ms": lookahead_ms}
 
-    def __init__(self, gender: str = VocalGender.AUTO):
+    def __init__(self, gender_type: str = VocalGender.AUTO):
         super().__init__()
         self.name = "Gender-Aware De-Esser v4.0"
-        self.gender = gender
+        self.gender = gender_type
 
         # Load Gender-Profile
-        if gender in [VocalGender.FEMALE, VocalGender.MALE, VocalGender.CHILD]:
-            self.vocal_profile = VOCAL_PROFILES[gender]
+        if gender_type in [VocalGender.FEMALE, VocalGender.MALE, VocalGender.CHILD]:
+            self.vocal_profile = VOCAL_PROFILES[gender_type]
         else:
             # Fallback: FEMALE (statistisch häufiger + mittlere Parameter)
             self.vocal_profile = VOCAL_PROFILES[VocalGender.FEMALE]
@@ -344,7 +363,7 @@ class DeEsserPhase(PhaseInterface):
             "sibilant_types_detected": [],
             "max_gain_reduction_db": 0.0,
             "intelligibility_protected": False,
-            "gender_profile": gender,
+            "gender_profile": gender_type,
             "aurik_8_stages_used": AURIK_8_AVAILABLE,
             "breath_events_detected": 0,
             "formants_corrected": 0,
@@ -353,8 +372,8 @@ class DeEsserPhase(PhaseInterface):
             "brilliance_preservation": self.vocal_profile.get("brilliance_preserve", 0.90),
         }
 
-    def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType, gender: str | None = None, **kwargs
+    def process(  # pylint: disable=signature-differs
+        self, audio: np.ndarray, sample_rate: int, material_type: MaterialType, gender: str | None = None, **kwargs
     ) -> PhaseResult:
         """
         🏆 WORLD'S LEADING VOCAL ENHANCEMENT: 8-Stage Pipeline
@@ -397,6 +416,7 @@ class DeEsserPhase(PhaseInterface):
             PhaseResult with enhanced audio + comprehensive metrics
         """
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
+        material = material_type  # alias: method body uses 'material' throughout
         start_time = time.time()
         self.validate_input(audio)
         audio, _p19_transposed = to_channels_last(audio)
@@ -589,9 +609,11 @@ class DeEsserPhase(PhaseInterface):
                     enhanced_audio = _stage_audio
 
                 logger.info(
-                    f"✅ Aurik 8.0 Enhancement: {self.stats['breath_events_detected']} breaths, "
-                    f"{self.stats['formants_corrected']} formants, {self.stats['spectral_gaps_repaired']} gaps"
-                    + (f" (cap: {_STAGE_CAP_S}s/{_stage_full_len // sample_rate}s)" if _stage_cap_active else "")
+                    "✅ Aurik 8.0 Enhancement: %s breaths, %s formants, %s gaps%s",
+                    self.stats["breath_events_detected"],
+                    self.stats["formants_corrected"],
+                    self.stats["spectral_gaps_repaired"],
+                    f" (cap: {_STAGE_CAP_S}s/{_stage_full_len // sample_rate}s)" if _stage_cap_active else "",
                 )
 
             except Exception as e:
@@ -695,7 +717,6 @@ class DeEsserPhase(PhaseInterface):
                 logger.debug("Phase 19: sibilant_band_hz fallback: %s", _ptl_exc)
 
         # Multi-Band De-Essing anwenden (mit Gender-Profil)
-        gender_bands_used = None
         if is_stereo:
             # §2.51 Stereo-Kohärenz: kein unabhängiges L/R-De-Essing.
             # M/S-Verarbeitung: Mid voll, Side konservativ.
@@ -703,7 +724,7 @@ class DeEsserPhase(PhaseInterface):
             _mid = (enhanced_audio[:, 0] + enhanced_audio[:, 1]) / _sqrt2
             _side = (enhanced_audio[:, 0] - enhanced_audio[:, 1]) / _sqrt2
 
-            deessed_mid, gender_bands_used = self._process_channel_multiband_gender_aware(
+            deessed_mid, _ = self._process_channel_multiband_gender_aware(
                 _mid,
                 sample_rate,
                 material,
@@ -869,12 +890,14 @@ class DeEsserPhase(PhaseInterface):
         execution_time = time.time() - start_time
 
         logger.info(
-            f"🏆 Phase 19 v4.0 Complete: {sibilance_reduction_db:.1f} dB reduction, "
-            f"{len(self.stats['sibilant_types_detected'])} sibilant types, "
-            f"GR={self.stats['max_gain_reduction_db']:.1f} dB, "
-            f"Breaths={self.stats['breath_events_detected']}, "
-            f"Formants={self.stats['formants_corrected']}, "
-            f"Time={execution_time:.2f}s"
+            "🏆 Phase 19 v4.0 Complete: %.1f dB reduction, %s sibilant types, "
+            "GR=%.1f dB, Breaths=%s, Formants=%s, Time=%.2fs",
+            sibilance_reduction_db,
+            len(self.stats["sibilant_types_detected"]),
+            self.stats["max_gain_reduction_db"],
+            self.stats["breath_events_detected"],
+            self.stats["formants_corrected"],
+            execution_time,
         )
 
         deessed_audio = np.nan_to_num(deessed_audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -917,15 +940,14 @@ class DeEsserPhase(PhaseInterface):
 
         # §4.5 Psychoacoustic Masking Clamp — only reduce sibilance above masking threshold
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
-
-            deessed_audio = apply_psychoacoustic_masking_clamp(
-                audio,
-                deessed_audio,
-                sample_rate,
-                strength=_effective_strength,
-                mode="subtractive",
-            )
+            if _apply_masking_clamp_19 is not None:
+                deessed_audio = _apply_masking_clamp_19(
+                    audio,
+                    deessed_audio,
+                    sample_rate,
+                    strength=_effective_strength,
+                    mode="subtractive",
+                )
         except Exception as _pm_exc:
             logger.debug("Phase19 masking clamp non-blocking: %s", _pm_exc)
 
@@ -933,54 +955,54 @@ class DeEsserPhase(PhaseInterface):
         # fehlinterpretieren — breitbandige HF-Energie-Spikes ähneln /s/-Sibilanten.
         # Phonem-Mask-Frames aus Original restaurieren.
         try:
-            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_19
-
-            _hop_19 = 512
-            _mono_19 = audio.mean(axis=0) if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2) else (
-                audio.mean(axis=1) if (audio.ndim == 2) else audio
-            )
-            _pmask_19 = _get_pmask_19(_mono_19.astype(np.float32), sample_rate, hop_length=_hop_19)
-            if np.any(_pmask_19):
-                _n19 = len(_mono_19)
-                _smask_19 = np.zeros(_n19, dtype=bool)
-                for _fi19, _fp19 in enumerate(_pmask_19):
-                    if _fp19:
-                        _fs19 = _fi19 * _hop_19
-                        _fe19 = min(_n19, _fs19 + _hop_19)
-                        _smask_19[_fs19:_fe19] = True
-                if deessed_audio.ndim == 2 and audio.ndim == 2:
-                    if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
-                        deessed_audio[:, _smask_19] = audio[:, _smask_19]
-                    elif deessed_audio.shape == audio.shape:
-                        deessed_audio[_smask_19, :] = audio[_smask_19, :]
-                elif deessed_audio.ndim == 1 and audio.ndim == 1:
-                    deessed_audio[_smask_19] = audio[_smask_19]
+            if _get_pmask_19 is not None:
+                _hop_19 = 512
+                _mono_19 = (
+                    audio.mean(axis=0)
+                    if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                    else (audio.mean(axis=1) if (audio.ndim == 2) else audio)
+                )
+                _pmask_19 = _get_pmask_19(_mono_19.astype(np.float32), sample_rate, hop_length=_hop_19)
+                if np.any(_pmask_19):
+                    _n19 = len(_mono_19)
+                    _smask_19 = np.zeros(_n19, dtype=bool)
+                    for _fi19, _fp19 in enumerate(_pmask_19):
+                        if _fp19:
+                            _fs19 = _fi19 * _hop_19
+                            _fe19 = min(_n19, _fs19 + _hop_19)
+                            _smask_19[_fs19:_fe19] = True
+                    if deessed_audio.ndim == 2 and audio.ndim == 2:
+                        if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
+                            deessed_audio[:, _smask_19] = audio[:, _smask_19]
+                        elif deessed_audio.shape == audio.shape:
+                            deessed_audio[_smask_19, :] = audio[_smask_19, :]
+                    elif deessed_audio.ndim == 1 and audio.ndim == 1:
+                        deessed_audio[_smask_19] = audio[_smask_19]
         except Exception as _pm19_exc:
             logger.debug("§2.36 phase_19 Phonem-Mask (non-blocking): %s", _pm19_exc)
 
         # §2.46f Natural-Performance-Artifacts-Guard — Atemgeräusche zwischen Phrasen
         # dürfen durch das sibilance-responsive Gate nicht abgeschnitten werden.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
-
-            _npa_a19 = audio
-            if _npa_a19.ndim == 2 and _npa_a19.shape[0] == 2 and _npa_a19.shape[1] > _npa_a19.shape[0]:
-                _npa_a19 = _npa_a19.T
-            _npa_r19 = get_natural_performance_detector().detect(_npa_a19, sample_rate)
-            _npa_n19 = (
-                deessed_audio.shape[1]
-                if (deessed_audio.ndim == 2 and deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2)
-                else deessed_audio.shape[0]
-            )
-            _npa_m19 = _npa_r19.get_protected_mask(_npa_n19, sample_rate)
-            if np.any(_npa_m19):
-                if deessed_audio.ndim == 2 and audio.ndim == 2:
-                    if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
-                        deessed_audio[:, _npa_m19] = audio[:, _npa_m19]
-                    elif deessed_audio.shape == audio.shape:
-                        deessed_audio[_npa_m19, :] = audio[_npa_m19, :]
-                elif deessed_audio.ndim == 1 and audio.ndim == 1:
-                    deessed_audio[_npa_m19] = audio[_npa_m19]
+            if _get_npa_detector_19 is not None:
+                _npa_a19 = audio
+                if _npa_a19.ndim == 2 and _npa_a19.shape[0] == 2 and _npa_a19.shape[1] > _npa_a19.shape[0]:
+                    _npa_a19 = _npa_a19.T
+                _npa_r19 = _get_npa_detector_19().detect(_npa_a19, sample_rate)
+                _npa_n19 = (
+                    deessed_audio.shape[1]
+                    if (deessed_audio.ndim == 2 and deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2)
+                    else deessed_audio.shape[0]
+                )
+                _npa_m19 = _npa_r19.get_protected_mask(_npa_n19, sample_rate)
+                if np.any(_npa_m19):
+                    if deessed_audio.ndim == 2 and audio.ndim == 2:
+                        if deessed_audio.shape[0] == 2 and deessed_audio.shape[1] > 2:
+                            deessed_audio[:, _npa_m19] = audio[:, _npa_m19]
+                        elif deessed_audio.shape == audio.shape:
+                            deessed_audio[_npa_m19, :] = audio[_npa_m19, :]
+                    elif deessed_audio.ndim == 1 and audio.ndim == 1:
+                        deessed_audio[_npa_m19] = audio[_npa_m19]
         except Exception as _npa19_exc:
             logger.debug("§2.46f phase_19 NPA-Guard (non-blocking): %s", _npa19_exc)
 
@@ -1063,7 +1085,7 @@ class DeEsserPhase(PhaseInterface):
         self,
         audio: np.ndarray,
         sample_rate: int,
-        material: MaterialType,
+        _material: MaterialType,
         band_weights: dict[str, float],
         max_reduction_db: float,
         threshold_ratio: float,
@@ -1189,9 +1211,9 @@ class DeEsserPhase(PhaseInterface):
 
         deessed = audio.copy()
 
-        for band_name, result in band_results.items():
+        for _, _band_data in band_results.items():
             # Subtract original band, add reduced band
-            deessed = deessed - result["original"] + result["reduced"]
+            deessed = deessed - _band_data["original"] + _band_data["reduced"]
 
         return deessed
 
@@ -1250,9 +1272,8 @@ class DeEsserPhase(PhaseInterface):
         if np.min(gain_curve) > 0.998:
             return band_audio * gain_curve
 
-        from scipy.signal import istft as _istft_fn
-        from scipy.signal import stft as _stft_fn
-
+        _istft_fn = signal.istft
+        _stft_fn = signal.stft
         # STFT parameters: ~4 ms hop, 75 % overlap (good sibilant time resolution)
         hop = max(64, sample_rate // 250)  # ~4 ms
         nperseg = hop * 4  # ~16 ms window
@@ -1569,7 +1590,7 @@ class DeEsserPhase(PhaseInterface):
         nyquist = sample_rate / 2.0
         total_energy = 0.0
 
-        for band_name, (f_low, f_high) in bands.items():
+        for _, (f_low, f_high) in bands.items():
             low = f_low / nyquist
             high = min(f_high, nyquist * 0.95) / nyquist
 
@@ -1618,13 +1639,19 @@ class DeEsserPhase(PhaseInterface):
 
         if s_high > safe_nyquist:
             logger.warning(
-                f"⚠️ Sibilance band {s_high:.0f} Hz > Nyquist {nyquist:.0f} Hz, clamping to {safe_nyquist:.0f} Hz"
+                "⚠️ Sibilance band %.0f Hz > Nyquist %.0f Hz, clamping to %.0f Hz",
+                s_high,
+                nyquist,
+                safe_nyquist,
             )
             s_high = safe_nyquist
 
         if s_low > safe_nyquist:
             logger.warning(
-                f"⚠️ Sibilance band lower bound {s_low:.0f} Hz > Nyquist, adjusting to {safe_nyquist * 0.7:.0f}-{safe_nyquist:.0f} Hz"
+                "⚠️ Sibilance band lower bound %.0f Hz > Nyquist, adjusting to %.0f-%.0f Hz",
+                s_low,
+                safe_nyquist * 0.7,
+                safe_nyquist,
             )
             s_low = safe_nyquist * 0.7  # Notfall-Band: 70-95% Nyquist
 
@@ -1730,9 +1757,13 @@ class DeEsserPhase(PhaseInterface):
 
         # Autocorrelation für F0-Schätzung — FFT-based O(N log N)
         n = len(audio)
-        from backend.core.core_utils import fft_autocorr
+        if _fft_autocorr_19 is None:
+            import scipy.signal as _sp_sig
 
-        autocorr = fft_autocorr(audio)
+            _autocorr_full = _sp_sig.correlate(audio, audio, mode="full")
+            autocorr = _autocorr_full[len(audio) - 1 :]
+        else:
+            autocorr = _fft_autocorr_19(audio)
         # Guard: autocorr[0] == 0 bei Stille => division by zero
         if autocorr[0] == 0.0:
             return VocalGender.FEMALE  # Stille: neutraler Fallback
@@ -1796,7 +1827,8 @@ class DeEsserPhase(PhaseInterface):
 
         try:
             # sosfiltfilt (zero-phase) required: formant bands are recombined additively;
-            # causal sosfilt would introduce group delay → timing skew in formant_protected − formant_processed (§2.51, V11)
+            # causal sosfilt would introduce group delay → timing skew
+            # in formant_protected − formant_processed (§2.51, V11)
             sos = signal.butter(4, [low, high], btype="band", output="sos")
             formant_original = signal.sosfiltfilt(sos, original)
             formant_processed = signal.sosfiltfilt(sos, processed)
@@ -1840,18 +1872,20 @@ class DeEsserPhase(PhaseInterface):
         )
 
 
-if __name__ == "__main__":
-    """Test der DeEsserPhase v4.0 (Gender-Aware De-Esser)."""
+def _run_test() -> None:
+    # Test der DeEsserPhase v4.0 (Gender-Aware De-Esser).
 
     logger.debug("=" * 80)
     logger.debug("🎯 Phase 19: Gender-Aware De-Esser v4.0 Test")
     logger.debug("🎵 Features: Detection → De-Essing → Preservation + Musical Goals")
     logger.debug(
-        "🎵 7 Musikalische Ziele: Brillanz | Wärme | Natürlichkeit | Authentizität | Emotionalität | Transparenz | Bass-Kraft"
+        "🎵 7 Musikalische Ziele: Brillanz | Wärme | Natürlichkeit | Authentizität"
+        " | Emotionalität | Transparenz | Bass-Kraft"
     )
     logger.debug("=" * 80)
     logger.debug(
-        f"\n{'⚠️  Aurik 8.0 Enhancement Modules: ' + ('AVAILABLE ✅' if AURIK_8_AVAILABLE else 'ROADMAP ⏸️ (v5.0/Phase 54)')}"
+        "\n%s",
+        "⚠️  Aurik 8.0 Enhancement Modules: " + ("AVAILABLE ✅" if AURIK_8_AVAILABLE else "ROADMAP ⏸️ (v5.0/Phase 54)"),
     )
     logger.debug("")
 
@@ -1862,7 +1896,7 @@ if __name__ == "__main__":
         logger.debug("%s", "─" * 80)
         logger.debug("Profile Settings: %s", VOCAL_PROFILES[gender])
 
-        processor = DeEsserPhase(gender=gender)
+        processor = DeEsserPhase(gender_type=gender)
 
         sr = 48000
         duration = 2.0
@@ -1920,14 +1954,18 @@ if __name__ == "__main__":
             logger.debug("      ✅ Brillanz: %.2f (HF preserved)", result.metadata.get("brilliance_preservation", 0.9))
             logger.debug("      ✅ Wärme: Formants %s Hz protected", VOCAL_PROFILES[gender]["formant_range"])
             logger.debug(
-                f"      ✅ Natürlichkeit: Soft-Knee {processor.SOFT_KNEE_DB}dB + Look-ahead {processor.LOOKAHEAD_MS}ms"
+                "      ✅ Natürlichkeit: Soft-Knee %sdB + Look-ahead %sms",
+                processor.SOFT_KNEE_DB,
+                processor.LOOKAHEAD_MS,
             )
             logger.debug(
-                f"      ✅ Authentizität: {result.metadata.get('formant_preservation', 0.85):.2f} (voice identity preserved)"
+                "      ✅ Authentizität: %.2f (voice identity preserved)",
+                result.metadata.get("formant_preservation", 0.85),
             )
             logger.debug("      ✅ Emotionalität: Micro-Compression (syllable-level dynamics)")
             logger.debug(
-                f"      ✅ Transparenz: {result.metrics.get('musical_goal_transparenz', 0.8):.2f} clarity score"
+                "      ✅ Transparenz: %.2f clarity score",
+                result.metrics.get("musical_goal_transparenz", 0.8),
             )
 
             if gender == VocalGender.MALE:
@@ -1938,7 +1976,9 @@ if __name__ == "__main__":
             logger.debug("\n   📊 De-Essing Metrics:")
             logger.debug("      Sibilance Reduction: %.2f dB", result.metrics.get("sibilance_reduction_db", 0))
             logger.debug(
-                f"      Max Gain Reduction: {result.metrics.get('max_gain_reduction_db', 0):.2f} dB (target: {VOCAL_PROFILES[gender]['max_depth_db']} dB)"
+                "      Max Gain Reduction: %.2f dB (target: %s dB)",
+                result.metrics.get("max_gain_reduction_db", 0),
+                VOCAL_PROFILES[gender]["max_depth_db"],
             )
             logger.debug("   Processing Time: %.3fs", elapsed)
         else:
@@ -1948,7 +1988,7 @@ if __name__ == "__main__":
     logger.debug("\n%s", "─" * 80)
     logger.debug("Testing AUTO Gender Detection")
     logger.debug("%s", "─" * 80)
-    processor_auto = DeEsserPhase(gender=VocalGender.AUTO)
+    processor_auto = DeEsserPhase(gender_type=VocalGender.AUTO)
 
     # Male voice test signal (low F0)
     sr = 48000
@@ -1984,7 +2024,7 @@ if __name__ == "__main__":
     logger.debug("  [7] Gender-Adaptive De-Essing ✅")
     logger.debug("  [8] Preservation & Quality Gates ✅")
 
-    logger.debug("\n🎯 De-Essing + Musical Goals: 100%")
+    logger.debug("\n🎯 De-Essing + Musical Goals: 100%%")
     logger.debug("  ✅ Brillanz | ✅ Wärme | ✅ Natürlichkeit | ✅ Authentizität")
     logger.debug("  ✅ Emotionalität | ✅ Transparenz | ✅ Bass-Kraft (Male)")
 
@@ -1992,3 +2032,7 @@ if __name__ == "__main__":
     logger.debug("\n📈 Quality Impact: 0.95 (exzellent für De-Essing)")
     logger.debug("⏱️  Performance: ~0.3× Realtime (sehr schnell)")
     logger.debug("=" * 80)
+
+
+if __name__ == "__main__":
+    _run_test()

@@ -243,9 +243,9 @@ def quality_gates(audio: np.ndarray, sr: int) -> bool:
                         if mse > 0.1:
                             passed = False
         else:
-            logger.error("[GACELA] Fehler beim Aufruf:", result.stderr)
+            logger.error("[GACELA] Fehler beim Aufruf: %s", result.stderr)
     except Exception as e:
-        logger.error("[GACELA] Exception:", e)
+        logger.error("[GACELA] Exception: %s", e)
     mos_result = estimate_mos(audio, sr)
     results["UTMOS"] = mos_result.as_dict() if hasattr(mos_result, "as_dict") else float(mos_result)
     mos_score = results["UTMOS"] if isinstance(results["UTMOS"], float) else results["UTMOS"].get("mos", 0.0)

@@ -356,10 +356,10 @@ if __name__ == "__main__":
     # Demo
     logger.debug("AURIK Phase Skipping Logic")
     logger.debug("=" * 60)
-    logger.debug("\nEnables 20-40% speedup for clean inputs by skipping")
+    logger.debug("\nEnables 20-40%% speedup for clean inputs by skipping")
     logger.debug("unnecessary processing phases.")
     logger.debug("\nPhases that can be skipped:")
-    logger.debug("  • Declipping (if <0.5% clipped)")
+    logger.debug("  • Declipping (if <0.5%% clipped)")
     logger.debug("  • Click removal (if no clicks, not vinyl)")
     logger.debug("  • Dehum (if no 50/60 Hz hum)")
     logger.debug("  • Dropout repair (if no dropouts, not tape)")

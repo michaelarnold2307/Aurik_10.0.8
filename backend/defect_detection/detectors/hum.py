@@ -111,7 +111,7 @@ class HumDetector(DefectDetector):
             "hum_ratio": float(hum_ratio),
             "num_harmonics": len(harmonic_energies),
             "num_significant_harmonics": int(num_significant_harmonics),
-            "frequencies": [float(f) for f in harmonic_freqs[:num_significant_harmonics]],
+            "frequencies": [float(f) for f in harmonic_freqs[:num_significant_harmonics]],  # type: ignore[misc]
             "total_hum_energy_db": float(10 * np.log10(total_hum_energy + 1e-10)),
         }
 

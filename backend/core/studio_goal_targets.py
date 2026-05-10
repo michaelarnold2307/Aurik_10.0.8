@@ -25,6 +25,46 @@ _GOAL_KEY_ALIASES: dict[str, str] = {
     "spatial_depth": "raumtiefe",
 }
 
+# §09.11 PHYSICAL_CEILING — Physikalisch maximal erreichbare Goal-Scores pro Material.
+# Nur Materialien/Goals mit nachgewiesenen physikalischen Grenzen eingetragen.
+# Leeres Dict = kein Ceiling (CD/DAT/FLAC).
+_PHYSICAL_CEILING: dict[str, dict[str, float]] = {
+    "shellac": {
+        "brillanz": 0.72,
+        "transparenz": 0.72,
+        "spatial_depth": 0.55,
+        "raumtiefe": 0.55,
+        "artikulation": 0.78,
+        "separation_fidelity": 0.60,
+    },
+    "wax_cylinder": {
+        "brillanz": 0.55,
+        "transparenz": 0.60,
+        "spatial_depth": 0.45,
+        "raumtiefe": 0.45,
+        "artikulation": 0.70,
+    },
+    "vinyl": {
+        "brillanz": 0.86,
+        "transparenz": 0.84,
+        "spatial_depth": 0.80,
+        "raumtiefe": 0.80,
+    },
+    "tape": {
+        "brillanz": 0.88,
+        "transparenz": 0.86,
+    },
+    "reel_tape": {
+        "brillanz": 0.90,
+        "transparenz": 0.88,
+    },
+    "mp3_low": {
+        "brillanz": 0.80,
+        "transparenz": 0.78,
+        "artikulation": 0.82,
+    },
+}
+
 
 @dataclass(frozen=True)
 class SongGoalTargets:
@@ -38,7 +78,7 @@ class SongGoalTargets:
 
 def _safe_float(v: object, default: float = 1.0) -> float:
     try:
-        f = float(v)
+        f = float(v)  # type: ignore[arg-type]
     except Exception:
         return default
     if not np.isfinite(f):
@@ -50,7 +90,8 @@ def _safe_int(v: object, default: int | None = None) -> int | None:
     try:
         if v is None:
             return default
-        return int(v)
+        _f = float(v)  # type: ignore[arg-type]
+        return int(_f)
     except Exception:
         return default
 
@@ -184,7 +225,7 @@ def estimate_song_goal_targets(
         upper = min(0.97, studio_threshold + 0.06)
         kappa = 0.45 (restoration), 0.65 (studio_2026)
     """
-    from backend.core.per_phase_musical_goals_gate import (
+    from backend.core.per_phase_musical_goals_gate import (  # pylint: disable=import-outside-toplevel
         _CANONICAL_THRESHOLDS_STUDIO2026,
         _get_canonical_thresholds,
     )
@@ -246,6 +287,16 @@ def estimate_song_goal_targets(
     for alias, canonical in _GOAL_KEY_ALIASES.items():
         if canonical in targets:
             targets[alias] = float(targets[canonical])
+
+    # §09.11 PHYSICAL_CEILING-Clamp: Restoration targets must not exceed the
+    # physically achievable maximum for the carrier material.
+    # Studio 2026 is exempt (deliberate enhancement beyond carrier limits is allowed).
+    if not is_studio_2026:
+        mk = canonical_material_key(material_type)
+        material_ceiling = _PHYSICAL_CEILING.get(mk, {})
+        for g, ceiling_val in material_ceiling.items():
+            if g in targets and targets[g] > ceiling_val:
+                targets[g] = float(ceiling_val)
 
     return SongGoalTargets(
         targets=targets,

@@ -86,10 +86,10 @@ class DifferentiableEQ(nn.Module):
         Full IIR filtering would require custom CUDA kernels for backprop.
         """
         # Simplified: Use frequency-domain filtering (differentiable)
-        audio_fft = torch.fft.rfft(audio, dim=-1)
+        audio_fft = torch.fft.rfft(audio, dim=-1)  # pylint: disable=not-callable
 
         # Compute frequency response
-        freqs = torch.fft.rfftfreq(audio.shape[-1], d=1.0 / self.sr, device=audio.device)
+        freqs = torch.fft.rfftfreq(audio.shape[-1], d=1.0 / self.sr, device=audio.device)  # pylint: disable=not-callable
         omega = 2.0 * np.pi * freqs
         z = torch.exp(1j * omega)
 
@@ -114,7 +114,7 @@ class DifferentiableEQ(nn.Module):
         audio_fft_filtered = audio_fft * H.squeeze(1)
 
         # Convert back to time domain
-        audio_filtered = torch.fft.irfft(audio_fft_filtered, n=audio.shape[-1], dim=-1)
+        audio_filtered = torch.fft.irfft(audio_fft_filtered, n=audio.shape[-1], dim=-1)  # pylint: disable=not-callable
 
         return audio_filtered
 
@@ -314,8 +314,8 @@ class DifferentiableNoiseGate(nn.Module):
         batch_size, n_channels, n_samples = level_db.shape
         level_db_flat = level_db.view(batch_size * n_channels, 1, n_samples)
 
-        level_db_padded = F.pad(level_db_flat, (kernel_size - 1, 0), mode="replicate")
-        level_db_smooth_flat = F.conv1d(level_db_padded, kernel, padding=0)
+        level_db_padded = F.pad(level_db_flat, (kernel_size - 1, 0), mode="replicate")  # pylint: disable=not-callable
+        level_db_smooth_flat = F.conv1d(level_db_padded, kernel, padding=0)  # pylint: disable=not-callable
 
         # Restore shape
         level_db_smooth = level_db_smooth_flat.view(batch_size, n_channels, -1)
@@ -561,7 +561,7 @@ class E2EOptimizationFramework:
 
         # Extract EQ parameters
         eq_params = {
-            "frequencies": torch.exp(self.diff_eq.log_frequencies).detach().cpu().numpy().tolist(),
+            "frequencies": torch.exp(self.diff_eq.log_frequencies).detach().cpu().numpy().tolist(),  # pylint: disable=not-callable
             "gains_db": self.diff_eq.gains_db.detach().cpu().numpy().tolist(),
             "q_factors": torch.exp(self.diff_eq.log_q_factors).detach().cpu().numpy().tolist(),
         }

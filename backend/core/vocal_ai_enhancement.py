@@ -1059,7 +1059,7 @@ if __name__ == "__main__":
     logger.debug("Sibilance Reduced: %.1f dB", result.sibilance_reduced_db)
     logger.debug("Breath Preserved: %.1f%%", result.breath_preserved_ratio)
     logger.debug("Emotion Preservation: %.1f%%", result.emotion_preservation_score)
-    logger.debug("Formant Preservation: %.1%", result.formant_preservation_score)
+    logger.debug("Formant Preservation: %.1f", result.formant_preservation_score)
     logger.debug("Quality Improvement: %+.2f", result.quality_improvement)
     logger.debug("\nProcessing Applied:")
     for proc in result.processing_applied:

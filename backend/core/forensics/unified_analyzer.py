@@ -140,7 +140,7 @@ class UnifiedForensicAnalyzer:
             features_used += medium_result.features_used
 
             if verbose:
-                logger.info("         Medium: %s (%.1%)", medium_result.category, medium_result.confidence)
+                logger.info("         Medium: %s (%.1f)", medium_result.category, medium_result.confidence)
         else:
             # Default values if detector not available
             results["medium"] = MediumResult(
@@ -158,7 +158,7 @@ class UnifiedForensicAnalyzer:
             features_used += era_result.features_used
 
             if verbose:
-                logger.info("         Era: %s (%.1%)", era_result.era, era_result.confidence)
+                logger.info("         Era: %s (%.1f)", era_result.era, era_result.confidence)
         else:
             # Default values
             results["era"] = EraDetectionResult(
@@ -218,7 +218,7 @@ class UnifiedForensicAnalyzer:
         detailed_report = self._generate_detailed_report(results, consistency_score)
 
         if verbose:
-            logger.info("\n   Overall Confidence: %.1%", overall_confidence)
+            logger.info("\n   Overall Confidence: %.1f", overall_confidence)
             logger.info("   Analysis Quality: %s", analysis_quality)
             logger.info("=" * 60)
 

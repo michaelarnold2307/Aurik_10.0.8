@@ -97,8 +97,8 @@ class AudioAugmentations:
         # In practice, use proper filter design
 
         # FFT
-        spec = torch.fft.rfft(audio, dim=-1)
-        freqs = torch.fft.rfftfreq(audio.size(-1), d=1 / sr)
+        spec = torch.fft.rfft(audio, dim=-1)  # pylint: disable=not-callable
+        freqs = torch.fft.rfftfreq(audio.size(-1), d=1 / sr)  # pylint: disable=not-callable
 
         # Create filter
         if gain_db > 0:
@@ -115,7 +115,7 @@ class AudioAugmentations:
         filtered_spec = spec * mask.to(spec.device)
 
         # IFFT
-        filtered = torch.fft.irfft(filtered_spec, n=audio.size(-1), dim=-1)
+        filtered = torch.fft.irfft(filtered_spec, n=audio.size(-1), dim=-1)  # pylint: disable=not-callable
 
         return filtered
 
@@ -139,7 +139,7 @@ class AudioAugmentations:
         # Surface noise (pink noise)
         pink_noise = torch.randn_like(audio)
         # Approximate pink noise with lowpass filter
-        pink_noise = F.avg_pool1d(pink_noise.unsqueeze(1), kernel_size=5, stride=1, padding=2).squeeze(1)
+        pink_noise = F.avg_pool1d(pink_noise.unsqueeze(1), kernel_size=5, stride=1, padding=2).squeeze(1)  # pylint: disable=not-callable
 
         # Clicks and pops (random impulses)
         clicks = torch.zeros_like(audio)
@@ -186,7 +186,7 @@ class AudioAugmentations:
     def add_mp3_artifacts(audio: torch.Tensor, quality: float) -> torch.Tensor:
         """Simulate MP3 compression artifacts."""
         # Simplified: add quantization noise in frequency domain
-        spec = torch.fft.rfft(audio, dim=-1)
+        spec = torch.fft.rfft(audio, dim=-1)  # pylint: disable=not-callable
 
         # Quantize based on quality (lower quality = more quantization)
         quantization_step = (1.0 - quality) * 0.1
@@ -196,7 +196,7 @@ class AudioAugmentations:
 
         quantized_spec = torch.complex(quantized_real, quantized_imag)
 
-        augmented = torch.fft.irfft(quantized_spec, n=audio.size(-1), dim=-1)
+        augmented = torch.fft.irfft(quantized_spec, n=audio.size(-1), dim=-1)  # pylint: disable=not-callable
 
         return augmented
 

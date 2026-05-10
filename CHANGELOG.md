@@ -1,6 +1,8 @@
 # Aurik 9 — Changelog
 
 > Hinweis: Dieses Dokument ist eine Versionshistorie. Ältere Versionsnummern und Kennzahlen sind hier erwartbar und keine veralteten Reststände.
+> Historische Qualitäts- und Marketingformulierungen bleiben zur Nachvollziehbarkeit erhalten
+> und sind nicht automatisch als aktueller, normativ bindender Außenclaim zu verstehen.
 
 ## Version 9.11.57 — Phase 29 Incident-Dokumentation (Apr 2026)
 
@@ -5960,7 +5962,7 @@ in allen Dokumenten durch korrekte Werte ersetzt.
 ### Zusammenfassung
 
 Aurik 9.7.0 vervollständigt die **kognitive Architektur** von Aurik 9 durch vier
-vollständig unabhängige Weltklasse-Module, die das System vom Audio-Prozessor zum
+vollständig unabhängige Module auf internem Spitzenniveau, die das System vom Audio-Prozessor zum
 _denkenden Restaurierungs-Intelligenzsystem_ erheben. Jedes Modul ist eigenständig
 einsetzbar, wissenschaftlich fundiert und auf Forschungsniveau implementiert.
 
@@ -6218,7 +6220,7 @@ Flux Continuity, Micro-Dynamic Variation), FeedbackChain Excellence-Modus.
 
 ---
 
-## Version 9.5.0 — Weltklasse-Restaurierung (18. Februar 2026)
+## Version 9.5.0 — Restaurierung auf internem Spitzenniveau (18. Februar 2026)
 
 ### 🆕 Neue Module
 
