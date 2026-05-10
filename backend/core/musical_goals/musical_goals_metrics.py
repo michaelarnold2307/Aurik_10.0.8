@@ -795,7 +795,13 @@ class NatuerlichkeitMetric:
         proc_audio = audio
         proc_sr = sr
         if len(audio) > int(sr * 2):
-            _target_sr = 16000
+            # §9.12.5 [BUG-FIX v9.12.1] target_sr 16000→22050:
+            # At 48 kHz pipeline-SR: round(48000/16000)=3 → proc_sr=16000.
+            # At 16 kHz, spectral_contrast on vinyl-degraded audio ≈ 5 dB →
+            # _contrast_poly=(5−5)/12=0.0 → natuerlichkeit collapses to ~0.05.
+            # At target_sr=22050: round(48000/22050)=round(2.177)=2 → proc_sr=24000;
+            # round(44100/22050)=2 → proc_sr=22050. spectral_contrast ≈ 18–24 dB → correct.
+            _target_sr = 22050
             _stride = max(1, int(round(sr / float(_target_sr))))
             if _stride > 1:
                 try:
@@ -1106,8 +1112,14 @@ class AuthentizitaetMetric:
             # but chroma correlation is catastrophically low (< 0.15), replace fingerprint_match
             # with a structure-aware spectral consistency proxy (flatness-based), floored at
             # versa_similarity × 0.40 to prevent collapse of the overall authentizitaet score.
-            # This does NOT mask real authenticity losses (VERSA < 0.30 → fingerprint stays low).
-            if fingerprint_match < 0.15 and versa_similarity > 0.40:
+            # This does NOT mask real authenticity losses (VERSA < 0.20 → fingerprint stays low).
+            # §9.12.5 [BUG-FIX v9.12.1] threshold 0.40→0.25: after restorative phases like
+            # phase_24 (dropout repair) or phase_55 (diffusion inpainting) the VERSA MOS
+            # is typically 1.8–2.2 (versa_sim≈0.20–0.30) because VERSA evaluates the
+            # post-repair audio against no reference — correct restoration is rated "fair".
+            # Guard must activate at versa_sim>0.25 to protect against chroma collapse
+            # caused by intentional time-domain restructuring (§0d Carrier-Recovery).
+            if fingerprint_match < 0.15 and versa_similarity > 0.25:
                 _flat_proxy = librosa.feature.spectral_flatness(y=audio.astype(np.float32))
                 _flat_mean_auth = float(np.mean(_flat_proxy))
                 _spectral_consist = max(0.0, 1.0 - _flat_mean_auth / 0.40)
