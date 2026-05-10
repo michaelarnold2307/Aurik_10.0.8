@@ -2579,37 +2579,58 @@ class UnifiedRestorerV3:
             if N < 512:
                 return {}
 
-            # FFT basis (reused for multiple goals)
+            # FFT basis — §2.64 v9.12.2 MULTI-SEGMENT FIX:
+            # Single-centre-segment spectral analysis is unreliable for song-level quality:
+            # (a) compressed pop/Schlager: centre segment of a dense chord spreads energy
+            #     → natuerlichkeit proxy <<< true value for a musical signal.
+            # (b) vintage material: a pause segment gives artificially low transparenz/brillanz.
+            # Fix: average spectral metrics over 3 representative segments (25 %, 50 %, 75 %).
             fft_n = min(4096, N)
             _win = _np.hanning(fft_n)
-            # Use centre segment for representativeness
-            _seg = mono[max(0, N // 2 - fft_n // 2) : max(0, N // 2 - fft_n // 2) + fft_n]
-            if len(_seg) < fft_n:
-                _seg = _np.pad(_seg, (0, fft_n - len(_seg)))
-            _spec = _np.abs(_np.fft.rfft(_seg * _win))
-            _freqs = _np.fft.rfftfreq(fft_n, d=1.0 / float(sr))
             _eps = 1e-12
+            _seg_starts = [
+                max(0, N // 4 - fft_n // 2),
+                max(0, N // 2 - fft_n // 2),
+                max(0, 3 * N // 4 - fft_n // 2),
+            ]
+            _specs: list[_np.ndarray] = []
+            for _s0 in _seg_starts:
+                _seg = mono[_s0 : _s0 + fft_n]
+                if len(_seg) < fft_n:
+                    _seg = _np.pad(_seg, (0, fft_n - len(_seg)))
+                _specs.append(_np.abs(_np.fft.rfft(_seg * _win)))
+            # Averaged spectrum: representative of multiple sections of the song.
+            _spec = _np.mean(_np.stack(_specs, axis=0), axis=0)
+            _freqs = _np.fft.rfftfreq(fft_n, d=1.0 / float(sr))
 
             def _band_energy(flo: float, fhi: float) -> float:
                 mask = (_freqs >= flo) & (_freqs < fhi)
                 return float(_np.sum(_spec[mask] ** 2)) + _eps
 
-            # --- P1: Natuerlichkeit proxy — harmonic energy concentration
-            # §2.64 v9.12.1: Spectral smoothness proxy was structurally broken for music
-            # (std/mean of log-spectrum → always ≥ 0.8 for harmonic signals → max ~0.2).
-            # Fix: measure energy concentration in top spectral bins (harmonics concentrate
-            # energy; Musical Noise / artefacts spread energy uniformly).
-            _sorted_desc = _np.sort(_spec)[::-1]
-            _top_n = max(1, len(_sorted_desc) // 8)  # top 12.5% of bins
-            _top_energy = float(_np.sum(_sorted_desc[:_top_n] ** 2))
-            _total_energy_all = float(_np.sum(_spec**2)) + _eps
-            _conc = _top_energy / _total_energy_all
+            # --- P1: Natuerlichkeit proxy — harmonic energy concentration (multi-segment)
+            # §2.64 v9.12.1 (single-segment fix) + §2.64 v9.12.2 (multi-segment stability).
+            # Harmonics concentrate energy; Musical Noise / artefacts spread energy uniformly.
+            # Average concentration over segments: prevents single-chord passages from
+            # artificially lowering the proxy (which would mis-guide PMGG strength).
+            _conc_vals: list[float] = []
+            for _sp in _specs:
+                _sd = _np.sort(_sp)[::-1]
+                _tn = max(1, len(_sd) // 8)
+                _conc_vals.append(float(_np.sum(_sd[:_tn] ** 2)) / (float(_np.sum(_sd**2)) + _eps))
+            _conc = float(_np.mean(_conc_vals))
             # Natural music: top-12.5% bins hold ≥ 40 % energy → conc ≈ 0.50–0.80.
             # Musical Noise / white noise: conc ≈ 0.12–0.25.
             result["natuerlichkeit"] = float(_np.clip((_conc - 0.15) / 0.60, 0.0, 1.0))
 
-            # --- P1: Authentizitaet proxy — harmonic-to-noise ratio (via autocorrelation)
-            _acf = _np.correlate(mono[: min(N, 8192)], mono[: min(N, 8192)], mode="full")
+            # --- P1: Authentizitaet proxy — HNR via autocorrelation (§2.64 v9.12.2)
+            # §2.64 v9.12.2 BUG-FIX: ACF on first-8192-samples is hypersensitive to
+            # dropout-repair (phase_24) inpainting at song start → crash from 0.71→0.06.
+            # Fix: use centre-third segment (avoids intro/outro + repaired dropout zones)
+            # and MAXIMUM over 3 ACF peaks (voiced sections always have high periodicity).
+            _acf_start = max(0, N // 3)
+            _acf_len = min(8192, N - _acf_start)
+            _acf_seg = mono[_acf_start : _acf_start + _acf_len]
+            _acf = _np.correlate(_acf_seg, _acf_seg, mode="full")
             _acf = _acf[len(_acf) // 2 :]
             _acf /= _acf[0] + _eps
             _lag_min = int(sr / 1000.0)  # 1 kHz max F0
@@ -2673,11 +2694,27 @@ class UnifiedRestorerV3:
             else:
                 result["groove"] = 0.5
 
-            # --- P4: Transparenz proxy — noise floor estimate (lower = more transparent)
-            _noise_floor = float(_np.percentile(_np.abs(mono), 5)) + _eps
-            _signal_peak = float(_np.percentile(_np.abs(mono), 99)) + _eps
-            _snr_proxy = float(_np.clip(_np.log10(_signal_peak / _noise_floor) / 5.0, 0.0, 1.0))
-            result["transparenz"] = _snr_proxy
+            # --- P4: Transparenz proxy — wideband SNR proxy (§2.64 v9.12.2 FIX)
+            # §2.64 v9.12.2 BUG-FIX: Single-centre-segment 5th/99th percentile SNR is
+            # unreliable for compressed pop/Schlager: a loud centre segment has 5th-%ile
+            # ≈ 0.1–0.2 → log10(peak/noise) ≈ 0.5–1.2 → SNR-proxy 0.10–0.24 even for
+            # clean material. This mis-guides PMGG and gives persistently low scores.
+            # Fix: use full-signal percentile (robust over entire track) + spectral
+            # flatness as secondary signal-to-noise indicator, averaged over 3 segments.
+            _p05_full = float(_np.percentile(_np.abs(mono), 5)) + _eps
+            _p95_full = float(_np.percentile(_np.abs(mono), 95)) + _eps
+            _snr_full = float(_np.clip(_np.log10(_p95_full / _p05_full) / 4.0, 0.0, 1.0))
+            # Spectral flatness (Wiener entropy) averages across 3 segments for stability.
+            _sfm_vals: list[float] = []
+            for _sp in _specs:
+                _sp_pos = _np.maximum(_sp, _eps)
+                _sfm = float(_np.exp(_np.mean(_np.log(_sp_pos))) / (_np.mean(_sp_pos) + _eps))
+                _sfm_vals.append(float(_np.clip(_sfm, 0.0, 1.0)))
+            _sfm_avg = float(_np.mean(_sfm_vals))
+            # Low flatness = tonal / harmonic (music) = transparent; high = noisy.
+            # Blend: 70 % dynamic-range proxy + 30 % inverted spectral flatness.
+            _transp = 0.70 * _snr_full + 0.30 * (1.0 - _sfm_avg)
+            result["transparenz"] = float(_np.clip(_transp, 0.0, 1.0))
 
             # --- P4: Waerme proxy — low-mid energy ratio (200–2000 Hz)
             _waerme = _band_energy(200.0, 2000.0) / (_band_energy(50.0, 20000.0) + _eps)

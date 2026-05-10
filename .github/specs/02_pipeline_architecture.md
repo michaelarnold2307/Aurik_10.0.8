@@ -3521,6 +3521,18 @@ def _profiled_phase_call_with_delta(self, phase_fn, audio, phase_id, **kwargs):
 - Delta-Log `metadata["phase_deltas"]` ist Pflicht für jeden Phasenaufruf — ohne Log kein konvergenzgesteuertes Stoppen.
 - `_RESTORATIVE_PHASES` (phase_02/03/09/18/20/23/24/29/49) sind von P1/P2-Regression-Check ausgenommen (§2.29c Baseline-Capping).
 
+### [RELEASE_MUST] Proxy-Kalibrierungs-Invarianten (v9.12.2)
+
+Drei bekannte Proxy-Calibration-Bugs, die zu systematisch zu niedrigen Delta-Werten für **alle Import-Songs** führen:
+
+1. **Single-Segment-Bias**: FFT-Basis auf einem einzigen Zentrum-Segment (`N//2`) ist nicht repräsentativ für den gesamten Song. Ein lauter Chord oder eine Pause treibt spektrale Proxys auf ≤ 0.20. **Pflicht**: Multi-Segment-Mittelung über 25 %/50 %/75 % des Songs; `_spec = mean([fft(seg25), fft(seg50), fft(seg75)])`.
+
+2. **`authentizitaet`-ACF-Crash nach phase_24**: ACF auf ersten 8192 Samples ist hypersensitiv zu phase_24-Inpainting (Dropout-Repair). Ein reparierter Dropout am Songbeginn kollabiert den ACF-Peak von 0.71 → 0.06. **Pflicht**: ACF auf Zentral-Drittel `mono[N//3 : N//3+8192]` berechnen — vermeidet Intro/Dropout-reparierte Segmente.
+
+3. **`transparenz`-Proxy für komprimiertes Pop/Schlager**: 5th/99th-Perzentil-SNR auf dem Zentrum-Segment gibt ≤ 0.20 für normales Musikmaterial, weil der 5th-Percentile in einem lauten Segment ≈ 0.1–0.2 liegt. **Pflicht**: `_p05_full + _p95_full` auf **Vollsignal** (nicht Segment) + Spectral-Flatness-Blend: `0.70 × log10(p95/p05)/4.0 + 0.30 × (1 − sfm_avg)`.
+
+**VERBOTEN**: Jeden dieser drei Proxys in einer neuen Session auf Single-Segment zurückzuportieren — diese Bugs waren systemische Ursache für PMGG-Fehlsteuerung und persistente Proxy-Werte unter Material-Floor für alle Import-Songs.
+
 ---
 
 ## §2.65 [RELEASE_MUST] MAS-Convergence-Early-Stop (v9.12.1)
