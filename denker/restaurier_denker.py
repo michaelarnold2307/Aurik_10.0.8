@@ -409,7 +409,7 @@ class RestaurierDenker:
                 raw = restorer.restore(audio, **_uv3_kwargs)
                 return self._konvertiere(raw, material=material)
             except Exception as uv3_exc:
-                logger.warning("UV3 Direkt-Pfad fehlgeschlagen: %s — Fallback.", uv3_exc)
+                logger.warning("UV3 Direkt-Pfad fehlgeschlagen: %s — Fallback.", uv3_exc, exc_info=True)
                 return self._fallback(audio, material or "unknown", str(uv3_exc))
 
         # ── Fallback ohne Caches: ARE → UV3 (Legacy-Pfad) ────────────────────
