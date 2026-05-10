@@ -63,6 +63,12 @@ class TestUnifiedRestorerWiringContracts:
         assert 'adaptive_thresholds=locals().get("_effective_goal_thresholds", {})' in src
         assert "goal_applicability=(" in src
 
+    def test_04b_goal_applicability_wiring_normalizes_none_sets(self) -> None:
+        """Result-Serialisierung darf bei malformierten GAF-Sets nicht an None iterieren."""
+        src = Path("backend/core/unified_restorer_v3.py").read_text(encoding="utf-8")
+        assert 'frozenset(getattr(_goal_applicability_result, "applicable", ()) or ())' in src
+        assert 'frozenset(getattr(_goal_applicability_result, "inapplicable", ()) or ())' in src
+
 
 class TestUnifiedRestorerRuntimeIntegration:
     @pytest.mark.ml

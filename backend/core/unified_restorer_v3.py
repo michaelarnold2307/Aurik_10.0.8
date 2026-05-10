@@ -10608,6 +10608,9 @@ class UnifiedRestorerV3:
                     "phase_cancellation_ratio": getattr(
                         getattr(self, "_source_material_baseline", None), "phase_cancellation_ratio", None
                     ),
+                    "interchannel_lag_samples": getattr(
+                        getattr(self, "_source_material_baseline", None), "interchannel_lag_samples", None
+                    ),
                     "stereo_mono_compat_mean": getattr(
                         getattr(self, "_source_material_baseline", None), "stereo_mono_compat_mean", None
                     ),
@@ -10770,8 +10773,10 @@ class UnifiedRestorerV3:
             physical_ceiling=(dict(getattr(_physical_ceiling, "ceiling", {})) if _physical_ceiling is not None else {}),
             goal_applicability=(
                 {
-                    g: (g in _goal_applicability_result.applicable)
-                    for g in _goal_applicability_result.applicable.union(_goal_applicability_result.inapplicable)
+                    g: (g in (frozenset(getattr(_goal_applicability_result, "applicable", ()) or ())))
+                    for g in (
+                        frozenset(getattr(_goal_applicability_result, "applicable", ()) or ())
+                    ).union(frozenset(getattr(_goal_applicability_result, "inapplicable", ()) or ()))
                 }
                 if _goal_applicability_result is not None
                 else {}

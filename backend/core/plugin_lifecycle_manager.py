@@ -222,22 +222,27 @@ class PluginLifecycleManager:
         """
         ram_pct = self._ram_percent()
         free_mb = self._free_mb()
+        swap_pct = self._swap_percent()
         # §Safety: Während Pipeline-Ausführung normalerweise keine automatische
         # Eviction — ONNX-Session-Destruktoren können mit laufender Inferenz
         # kollidieren. ABER: bei kritischem RAM-Druck (>= 82%) MUSS trotzdem
         # evicted werden, sonst killt systemd-oomd den gesamten Prozess.
         if self._pipeline_active > 0 and required_mb <= 0:
-            if ram_pct < _PIPELINE_EMERGENCY_PCT and free_mb >= _MIN_FREE_MB_HARD:
+            if (
+                ram_pct < _PIPELINE_EMERGENCY_PCT
+                and free_mb >= _MIN_FREE_MB_HARD
+                and swap_pct <= _SWAP_EVICT_THRESHOLD_PCT
+            ):
                 return 0
             logger.warning(
-                "PLM: Pipeline aktiv, aber RAM kritisch (%.0f %%, %.0f MB frei) "
+                "PLM: Pipeline aktiv, aber Speicher kritisch (RAM=%.0f %%, frei=%.0f MB, swap=%.0f %%) "
                 "— erzwinge Notfall-Eviction inaktiver Plugins",
                 ram_pct,
                 free_mb,
+                swap_pct,
             )
         # required_mb kommt bereits MIT Margin aus ml_memory_budget._preflight_system_memory.
         # Keine doppelte Margin (war 1.25×) — direkt prüfen ob genug frei ist.
-        swap_pct = self._swap_percent()
         needs_evict = (
             ram_pct > _RAM_EVICT_THRESHOLD_PCT
             or free_mb < _MIN_FREE_MB_HARD
@@ -349,7 +354,12 @@ class PluginLifecycleManager:
             if not force_all:
                 ram_pct = self._ram_percent()
                 free_mb = self._free_mb()
-                if ram_pct <= target_pct and free_mb >= _MIN_FREE_MB_HARD:
+                swap_pct = self._swap_percent()
+                if (
+                    ram_pct <= target_pct
+                    and free_mb >= _MIN_FREE_MB_HARD
+                    and swap_pct <= _SWAP_EVICT_THRESHOLD_PCT
+                ):
                     break
             try:
                 logger.info(

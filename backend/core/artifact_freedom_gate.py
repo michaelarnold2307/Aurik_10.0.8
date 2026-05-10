@@ -88,6 +88,7 @@ class SourceMaterialBaseline:
     phase_cancellation_ratio: float = 0.0  # fraction of 100ms frames already mono-incompatible
     stereo_mono_compat_mean: float = 1.0  # mean mono_compat across all frames in source
     stereo_lr_corr_mean: float = 1.0  # mean L/R Pearson correlation in source
+    interchannel_lag_samples: int = 0  # signed L/R delay estimate from source material
     has_critical_stereo_issue: bool = False  # True when > 20 % frames mono-incompatible
     has_anti_phase_region: bool = False  # True when any frame has lr_corr < 0
     # Spectral health
@@ -1648,6 +1649,47 @@ class ArtifactFreedomGate:
             return "cd"
         return "digital"
 
+    @staticmethod
+    def _estimate_interchannel_lag_samples(audio: np.ndarray, sr: int, max_seconds: float = 5.0) -> int:
+        """Estimate signed L/R lag using GCC-PHAT on a bounded source window."""
+        try:
+            arr = np.asarray(audio, dtype=np.float32)
+            if arr.ndim != 2:
+                return 0
+            if arr.shape[0] >= 2:
+                left = arr[0]
+                right = arr[1]
+            elif arr.shape[1] >= 2:
+                left = arr[:, 0]
+                right = arr[:, 1]
+            else:
+                return 0
+
+            n = min(len(left), len(right), int(float(sr) * max_seconds))
+            if n < max(1024, sr // 10):
+                return 0
+
+            x = left[:n].astype(np.float64)
+            y = right[:n].astype(np.float64)
+            if max(float(np.sqrt(np.mean(x * x))), float(np.sqrt(np.mean(y * y)))) < 1e-6:
+                return 0
+            n_fft = 1
+            while n_fft < 2 * n:
+                n_fft <<= 1
+
+            X = np.fft.rfft(x, n=n_fft)
+            Y = np.fft.rfft(y, n=n_fft)
+            cross = X * np.conj(Y)
+            gcc = np.fft.irfft(cross / (np.abs(cross) + 1e-10), n=n_fft)
+
+            max_delay = min(int(sr * 0.2), n - 1)
+            if max_delay <= 0:
+                return 0
+            search = np.concatenate([gcc[n_fft - max_delay :], gcc[: max_delay + 1]])
+            return int(np.argmax(np.abs(search))) - max_delay
+        except Exception:
+            return 0
+
     # ── §2.50 Source Material Baseline ────────────────────────────────────
 
     def measure_source_baseline(
@@ -1674,6 +1716,7 @@ class ArtifactFreedomGate:
         if audio.ndim == 2 and audio.shape[0] >= 2 and audio.shape[1] > sr // 10:
             left = audio[0]
             right = audio[1]
+            baseline.interchannel_lag_samples = int(self._estimate_interchannel_lag_samples(audio, sr))
             frame_len = int(0.1 * sr)
             hop = frame_len // 2
             n_frames = max(1, (len(left) - frame_len) // hop)
@@ -1716,21 +1759,26 @@ class ArtifactFreedomGate:
                 baseline.has_critical_stereo_issue = baseline.phase_cancellation_ratio > 0.20
                 baseline.has_anti_phase_region = anti_phase_found
 
+                if abs(int(baseline.interchannel_lag_samples)) > max(1, int(sr * 0.001)):
+                    baseline.has_critical_stereo_issue = True
+
                 if baseline.has_critical_stereo_issue:
                     logger.warning(
                         "§2.50 Quellmaterial-Baseline: kritisches Stereo-Feldproblem "
-                        "(ratio=%.2f, mean_compat=%.3f, mean_corr=%.3f, mat=%s) — "
+                        "(ratio=%.2f, mean_compat=%.3f, mean_corr=%.3f, lag=%d, mat=%s) — "
                         "phase_14/phase_15 werden als Remediation-Phasen aktiviert",
                         baseline.phase_cancellation_ratio,
                         baseline.stereo_mono_compat_mean,
                         baseline.stereo_lr_corr_mean,
+                        baseline.interchannel_lag_samples,
                         mat_key,
                     )
                 else:
                     logger.debug(
-                        "§2.50 Quellmaterial-Baseline: stereo OK (ratio=%.2f, mean_compat=%.3f, mat=%s)",
+                        "§2.50 Quellmaterial-Baseline: stereo OK (ratio=%.2f, mean_compat=%.3f, lag=%d, mat=%s)",
                         baseline.phase_cancellation_ratio,
                         baseline.stereo_mono_compat_mean,
+                        baseline.interchannel_lag_samples,
                         mat_key,
                     )
 

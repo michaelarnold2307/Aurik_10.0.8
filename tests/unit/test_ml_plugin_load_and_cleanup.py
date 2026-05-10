@@ -1197,6 +1197,27 @@ class TestGlobalBudgetInvariants:
         assert plm._auto_evict_thread is None, "Shutdown muss Thread-Referenz freigeben"
         assert monitor_thread is not None and not monitor_thread.is_alive(), "Monitor-Thread läuft nach Shutdown weiter"
 
+    def test_plm_evicts_on_swap_pressure_while_pipeline_active(self):
+        """Swap-Druck darf im pipeline_active-Fast-Return nicht verloren gehen."""
+        from backend.core.plugin_lifecycle_manager import PluginLifecycleManager
+
+        plm = PluginLifecycleManager()
+        evicted: list[str] = []
+        try:
+            plm.register("SwapVictim", 0.5, lambda: evicted.append("SwapVictim"))
+            plm.enter_pipeline()
+
+            plm._ram_percent = lambda: 50.0  # type: ignore[method-assign]
+            plm._free_mb = lambda: 12_000.0  # type: ignore[method-assign]
+            plm._swap_percent = lambda: 100.0  # type: ignore[method-assign]
+
+            count = plm.evict_if_needed()
+
+            assert count == 1
+            assert evicted == ["SwapVictim"]
+        finally:
+            plm.shutdown()
+
     def test_cleanup_after_all_plugins_budget_stays_zero(self):
         """Nach komplettem Cleanup aller Plugin-Budget-Slots ist _total_gb==0."""
         from backend.core import ml_memory_budget as _bud

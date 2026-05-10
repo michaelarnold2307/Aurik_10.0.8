@@ -103,6 +103,21 @@ def test_critical_stereo_issue_above_20_percent(gate, sr):
     assert baseline.has_critical_stereo_issue
 
 
+def test_critical_stereo_issue_when_interchannel_lag_exceeds_1ms(gate, sr):
+    """§2.51a: Bereits > 1 ms Quell-L/R-Lag muss den Stereo-Hard-Fail triggern."""
+    n = sr * 3
+    lag_samples = int(sr * 0.079)
+    t = np.arange(n, dtype=np.float32) / float(sr)
+    sig = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    delayed = np.concatenate([np.zeros(lag_samples, dtype=np.float32), sig[:-lag_samples]])
+    audio = _make_stereo(sig, delayed)
+
+    baseline = gate.measure_source_baseline(audio, sr, "vinyl")
+
+    assert abs(baseline.interchannel_lag_samples) > int(sr * 0.001)
+    assert baseline.has_critical_stereo_issue
+
+
 def test_mono_audio_no_crash(gate, sr):
     """Mono-Audio → keine Exception, Stereo-Felder bleiben auf Default."""
     mono = np.random.randn(sr * 3).astype(np.float32) * 0.1
