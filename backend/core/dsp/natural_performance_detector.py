@@ -25,6 +25,11 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+try:
+    from scipy.signal import correlate as _sp_correlate
+except Exception:  # pragma: no cover
+    _sp_correlate = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,9 +354,17 @@ def _detect_vibrato_zones(
         # Modulationsrate via Autocorrelation der Cent-Kurve
         cents_full = np.zeros(len(window_f0), dtype=np.float64)
         cents_full[valid] = cents_deviation
-        from scipy.signal import correlate as _sp_correlate
-
-        corr_full = _sp_correlate(cents_full - cents_full.mean(), cents_full - cents_full.mean(), mode="full")
+        if _sp_correlate is not None:
+            corr_full = _sp_correlate(cents_full - cents_full.mean(), cents_full - cents_full.mean(), mode="full")
+        else:
+            # FFT-based autocorrelation O(N log N) — scipy unavailable fallback
+            _x = cents_full - cents_full.mean()
+            _n2 = 1
+            while _n2 < 2 * len(_x):
+                _n2 <<= 1
+            _X = np.fft.rfft(_x, n=_n2)
+            corr_full = np.fft.irfft(_X * np.conj(_X))[: len(_x)]
+            corr_full = np.concatenate([corr_full[::-1][:-1], corr_full])
         corr = corr_full[len(corr_full) // 2 :]
         if len(corr) < 3:
             continue

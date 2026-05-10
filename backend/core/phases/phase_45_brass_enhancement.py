@@ -149,7 +149,11 @@ class BrassEnhancementPhase(PhaseInterface):
         )
 
     def process(
-        self, audio: np.ndarray, sample_rate: int = 48000, material_type: str = "unknown", **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
     ) -> PhaseResult:
         """
         Brass Enhancement: Harmonics + EQ.

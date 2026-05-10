@@ -1758,9 +1758,7 @@ class DeEsserPhase(PhaseInterface):
         # Autocorrelation für F0-Schätzung — FFT-based O(N log N)
         n = len(audio)
         if _fft_autocorr_19 is None:
-            import scipy.signal as _sp_sig
-
-            _autocorr_full = _sp_sig.correlate(audio, audio, mode="full")
+            _autocorr_full = signal.correlate(audio, audio, mode="full")
             autocorr = _autocorr_full[len(audio) - 1 :]
         else:
             autocorr = _fft_autocorr_19(audio)
