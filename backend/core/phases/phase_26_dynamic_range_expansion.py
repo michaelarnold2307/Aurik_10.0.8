@@ -304,6 +304,7 @@ class DynamicRangeExpansion(PhaseInterface):
         # §6.2b DR-Material-Ceiling — Expansion darf physikalisches Medium-Maximum nicht überschreiten
         _dr_ceiling_capped = False
         try:
+            # pylint: disable-next=import-outside-toplevel
             from backend.core.carrier_transfer_characteristics import get_dr_ceiling_db
 
             _mat_key = material.value if hasattr(material, "value") else str(material)
@@ -520,7 +521,7 @@ class DynamicRangeExpansion(PhaseInterface):
         """Compute RMS envelope."""
         audio_squared = audio**2
         # Use uniform filter for efficiency
-        from scipy.ndimage import uniform_filter1d
+        from scipy.ndimage import uniform_filter1d  # pylint: disable=import-outside-toplevel
 
         rms = np.sqrt(uniform_filter1d(audio_squared, window_samples, mode="nearest"))
         return rms
