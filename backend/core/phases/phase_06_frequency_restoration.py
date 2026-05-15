@@ -832,6 +832,65 @@ class FrequencyRestorationPhase(PhaseInterface):
             except Exception as _mic6_exc:
                 logger.debug("§6.4a MicrophoneResponseLibrary non-blocking: %s", _mic6_exc)
 
+        # §Gap5 Console Character — Studio 2026 only (§0a: NEVER in restoration mode).
+        # Applies a subtle classic-console EQ fingerprint (Neve/SSL/API) to add
+        # analog warmth and air that is characteristic of a modern mastering chain.
+        # Wet mix = 0.25 (subtle coloration, no audible artifact risk).
+        if "studio" in str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower():
+            try:
+                from backend.core.tonal_reference_profile import (  # pylint: disable=import-outside-toplevel
+                    get_tonal_reference_profiler as _get_trp_c06,
+                )
+
+                _console_type_06 = str(kwargs.get("console_type", "neve_1073"))
+                _console_bps_06 = _get_trp_c06().get_studio_console_curve(_console_type_06)
+                if _console_bps_06 and len(_console_bps_06) >= 2:
+                    _c06_n_fft = 2048
+                    _c06_nyq = float(sample_rate) / 2.0
+                    _c06_fft_freqs = np.linspace(0.0, _c06_nyq, _c06_n_fft // 2 + 1, dtype=np.float32)
+                    _c06_bps_f = np.array([bp[0] for bp in _console_bps_06], dtype=np.float32)
+                    _c06_bps_g = np.array([bp[1] for bp in _console_bps_06], dtype=np.float32)
+                    _c06_gain_db = np.interp(_c06_fft_freqs, _c06_bps_f, _c06_bps_g).astype(np.float32)
+                    _c06_gain_lin = np.power(10.0, _c06_gain_db / 20.0).astype(np.float32)
+
+                    def _apply_console_eq_06(sig: np.ndarray) -> np.ndarray:
+                        from scipy import signal as _sig_c06  # pylint: disable=import-outside-toplevel
+
+                        _, _, _stft_c06 = _sig_c06.stft(
+                            sig, fs=sample_rate, nperseg=_c06_n_fft, noverlap=_c06_n_fft - 512, boundary="even"
+                        )
+                        _, _out_c06 = _sig_c06.istft(
+                            _stft_c06 * _c06_gain_lin[:, np.newaxis],
+                            fs=sample_rate,
+                            nperseg=_c06_n_fft,
+                            noverlap=_c06_n_fft - 512,
+                            boundary=True,
+                        )
+                        _out_c06 = np.asarray(_out_c06[: len(sig)], dtype=np.float32)
+                        return np.nan_to_num(_out_c06, nan=0.0, posinf=0.0, neginf=0.0)
+
+                    _c06_wet = 0.25  # §Gap5: subtle console coloration
+                    if restored.ndim == 2 and restored.shape[0] == 2:
+                        _c06_eq0 = _apply_console_eq_06(restored[0])
+                        _c06_eq1 = _apply_console_eq_06(restored[1])
+                        restored = np.clip(
+                            restored * (1.0 - _c06_wet) + np.stack([_c06_eq0, _c06_eq1]) * _c06_wet, -1.0, 1.0
+                        )
+                    elif restored.ndim == 2:
+                        _c06_eq0 = _apply_console_eq_06(restored[:, 0])
+                        _c06_eq1 = _apply_console_eq_06(restored[:, 1])
+                        restored = np.clip(
+                            restored * (1.0 - _c06_wet) + np.stack([_c06_eq0, _c06_eq1], axis=1) * _c06_wet,
+                            -1.0,
+                            1.0,
+                        )
+                    else:
+                        _c06_eq = _apply_console_eq_06(restored)
+                        restored = np.clip(restored * (1.0 - _c06_wet) + _c06_eq * _c06_wet, -1.0, 1.0)
+                    logger.info("§Gap5 Console-Character Studio 2026: %s wet=%.2f", _console_type_06, _c06_wet)
+            except Exception as _c06_exc:
+                logger.debug("§Gap5 ConsoleCharacter non-blocking: %s", _c06_exc)
+
         return create_phase_result(
             audio=restored,
             modifications={

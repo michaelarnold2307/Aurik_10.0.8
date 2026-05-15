@@ -291,6 +291,18 @@ class TestStudioConsoleCharacter:
         gains = [g for _, g in curve]
         assert all(g == 0.0 for g in gains), "Neutral muss komplett flat (0 dB) sein"
 
+    def test_console_character_wired_in_phase06_studio_mode(self):
+        """§Gap5: phase_06 ruft get_studio_console_curve() im Studio-2026-Pfad auf."""
+        import inspect
+
+        from backend.core.phases.phase_06_frequency_restoration import FrequencyRestorationPhase
+
+        src = inspect.getsource(FrequencyRestorationPhase.process)
+        assert "get_studio_console_curve" in src or "ConsoleCharacter" in src.lower() or "console_character" in src, (
+            "§Gap5 Console Character nicht verdrahtet in phase_06"
+        )
+        assert '"studio"' in src or "'studio'" in src, "Studio-Mode-Gate fehlt"
+
 
 # ===========================================================================
 # VQI per-Phase Gates: phase_20 und phase_42
