@@ -820,6 +820,48 @@ class HarmonicRestorationPhase(PhaseInterface):
         except Exception as _h2_exc:
             logger.debug("§ERA_HARMONIC phase_07 H2-Target (non-blocking): %s", _h2_exc)
 
+        # §Gap5 Console-Character (Studio 2026 only — §0a).
+        # Applies a subtle EQ coloration matching a classic studio console fingerprint
+        # (e.g. Neve 1073 warm transformer core) to the harmonic restoration output.
+        # Hallucination-Guard (§2.46e) is applied after to prevent spectral novelty.
+        _console_applied = False
+        if "studio" in _mode_07:
+            try:
+                from backend.core.dsp.hallucination_guard import (  # pylint: disable=import-outside-toplevel
+                    check_hallucination as _chk_hall_07,
+                )
+                from backend.core.tonal_reference_profile import (  # pylint: disable=import-outside-toplevel
+                    get_tonal_reference_profiler as _get_trp_07,
+                )
+
+                _console_type_07 = str(kwargs.get("console_type", "neve_1073")).lower()
+                _console_bp_07 = _get_trp_07().get_studio_console_curve(_console_type_07)
+                # soft_saturation_severity guard (§2.46g): phase_07 hard-cap 0.20
+                _sat_sev_07c = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+                _console_str_07 = min(1.0, 1.0 - max(0.0, (_sat_sev_07c - 0.3) * 1.2))
+                _console_str_07 = float(np.clip(_console_str_07, 0.0, 0.20))
+                if _console_str_07 > 0.0:
+                    _restored_pre_con = restored.copy()
+                    restored = self._apply_console_eq(restored, _console_bp_07, sample_rate, _console_str_07)
+                    # §2.46e Hallucination-Guard
+                    _hall_con = _chk_hall_07(_restored_pre_con, restored, sr=sample_rate, mode="studio")
+                    if _hall_con.requires_rollback:
+                        restored = _restored_pre_con
+                        logger.debug(
+                            "§Gap5 Console-Character rolled back (hallucination): novel=%.3f",
+                            _hall_con.spectral_novelty,
+                        )
+                    else:
+                        _console_applied = True
+                        logger.info(
+                            "§Gap5 Console-Character applied: console=%s str=%.2f novel=%.3f",
+                            _console_type_07,
+                            _console_str_07,
+                            _hall_con.spectral_novelty,
+                        )
+            except Exception as _con_exc:
+                logger.debug("§Gap5 Console-Character (non-blocking): %s", _con_exc)
+
         restored = restore_layout(restored, _p07_transposed)
         return create_phase_result(
             audio=restored,
@@ -861,6 +903,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "spectral_tilt_capped": _tilt_capped_p07,
                 "lattice_enforced": _lattice_enforced,
                 "lattice_coherence_score": _lattice_score,
+                "console_character_applied": _console_applied,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },
@@ -1310,6 +1353,66 @@ class HarmonicRestorationPhase(PhaseInterface):
         thd = rms_harmonics / rms_original * 100.0 if rms_original > 0 else 0.0
 
         return thd
+
+    @staticmethod
+    def _apply_console_eq(
+        audio: np.ndarray,
+        breakpoints: list[tuple[float, float]],
+        sample_rate: int,
+        strength: float = 1.0,
+    ) -> np.ndarray:
+        """Apply a console EQ curve (frequency-gain breakpoints) via STFT/ISTFT.
+
+        Interpolates the breakpoints logarithmically across FFT bins and
+        multiplies the magnitude by the resulting gain mask.  ``strength`` scales
+        the dB values before conversion to linear (0.0 = bypass, 1.0 = full).
+
+        Non-blocking: returns *audio* unchanged on any error.
+        """
+        try:
+            n_fft = 2048
+            hop = 512
+            freqs = np.fft.rfftfreq(n_fft, 1.0 / sample_rate)
+            # Build log-interpolated gain mask
+            bp_hz = np.array([f for f, _ in breakpoints], dtype=np.float64)
+            bp_db = np.array([g * float(strength) for _, g in breakpoints], dtype=np.float64)
+            gain_db = np.interp(freqs, bp_hz, bp_db, left=bp_db[0], right=bp_db[-1])
+            gain_lin = 10.0 ** (gain_db / 20.0)
+
+            def _apply_mono(ch: np.ndarray) -> np.ndarray:
+                n_orig = len(ch)
+                _, _, Z = signal.stft(
+                    ch.astype(np.float64),
+                    fs=sample_rate,
+                    nperseg=n_fft,
+                    noverlap=n_fft - hop,
+                    window="hann",
+                )
+                Z_eq = Z * gain_lin[:, np.newaxis]
+                _, out = signal.istft(
+                    Z_eq,
+                    fs=sample_rate,
+                    nperseg=n_fft,
+                    noverlap=n_fft - hop,
+                    window="hann",
+                )
+                out = np.real(out)
+                if len(out) >= n_orig:
+                    out = out[:n_orig]
+                else:
+                    out = np.pad(out, (0, n_orig - len(out)))
+                return out.astype(np.float32)
+
+            if audio.ndim == 1:
+                result = _apply_mono(audio)
+            elif audio.ndim == 2:
+                result = np.column_stack([_apply_mono(audio[:, c]) for c in range(audio.shape[1])])
+            else:
+                return audio
+            result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+            return np.clip(result, -1.0, 1.0).astype(np.float32)
+        except Exception:  # pylint: disable=broad-except
+            return audio
 
     @staticmethod
     def _measure_h2_ratio(audio: np.ndarray, sample_rate: int) -> float:

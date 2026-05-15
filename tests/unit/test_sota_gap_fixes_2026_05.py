@@ -1095,3 +1095,110 @@ class TestEraHarmonicProfileAndPhase07H2Steering:
         short = np.zeros(100, dtype=np.float32)
         ratio = HarmonicRestorationPhase._measure_h2_ratio(short, 48000)
         assert ratio == 0.0
+
+
+class TestConsoleCharacterStudio2026:
+    """Todo 5: Console-Character in Studio 2026 (§Gap5)."""
+
+    def test_phase07_source_contains_console_character_block(self):
+        """phase_07 process() must contain the §Gap5 Console-Character block."""
+        import inspect
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        src = inspect.getsource(HarmonicRestorationPhase.process)
+        assert "Gap5" in src or "console_character" in src.lower(), (
+            "phase_07.process() must contain §Gap5 Console-Character block"
+        )
+        assert "get_studio_console_curve" in src, "phase_07 must call get_studio_console_curve"
+        assert "studio" in src, "Console-Character block must be gated on studio mode"
+
+    def test_phase07_studio_mode_only_guard(self):
+        """Console-Character must only activate in studio mode, not restoration."""
+        import inspect
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        src = inspect.getsource(HarmonicRestorationPhase.process)
+        # The guard condition must check for "studio" in mode
+        assert '"studio" in _mode_07' in src, "Console-Character must be gated on '\"studio\" in _mode_07'"
+
+    def test_phase07_console_hallucination_guard_present(self):
+        """phase_07 must apply hallucination_guard after console EQ (§2.46e)."""
+        import inspect
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        src = inspect.getsource(HarmonicRestorationPhase.process)
+        assert "hallucination_guard" in src or "check_hallucination" in src, (
+            "phase_07 must import hallucination_guard for console EQ"
+        )
+
+    def test_apply_console_eq_method_exists(self):
+        """_apply_console_eq must be a static method of HarmonicRestorationPhase."""
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        assert hasattr(HarmonicRestorationPhase, "_apply_console_eq"), (
+            "_apply_console_eq missing from HarmonicRestorationPhase"
+        )
+
+    def test_apply_console_eq_passthrough_on_neutral(self):
+        """Neutral console profile (0 dB at all freqs) must return near-identical audio."""
+        import numpy as np
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        sr = 48000
+        audio = np.random.default_rng(42).standard_normal(sr * 3).astype(np.float32) * 0.3
+        neutral_bp = [(20.0, 0.0), (20000.0, 0.0)]
+        result = HarmonicRestorationPhase._apply_console_eq(audio, neutral_bp, sr, strength=1.0)
+        # Should be within ±3 dB RMS of the original
+        rms_orig = float(np.sqrt(np.mean(audio**2)))
+        rms_out = float(np.sqrt(np.mean(result**2)))
+        assert abs(rms_out - rms_orig) / (rms_orig + 1e-8) < 0.20, (
+            f"Neutral console EQ should preserve RMS, orig={rms_orig:.4f} out={rms_out:.4f}"
+        )
+
+    def test_apply_console_eq_strength_zero_returns_passthrough(self):
+        """strength=0 must return audio effectively unchanged."""
+        import numpy as np
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        sr = 48000
+        audio = np.random.default_rng(7).standard_normal(sr * 2).astype(np.float32) * 0.3
+        neve_bp = [
+            (20.0, 0.5),
+            (80.0, 2.0),
+            (200.0, 0.5),
+            (1000.0, 0.0),
+            (3000.0, 1.0),
+            (18000.0, -0.5),
+            (20000.0, -0.8),
+        ]
+        result = HarmonicRestorationPhase._apply_console_eq(audio, neve_bp, sr, strength=0.0)
+        rms_diff = float(np.sqrt(np.mean((result - audio) ** 2)))
+        assert rms_diff < 0.005, f"strength=0 should be passthrough, diff RMS={rms_diff:.6f}"
+
+    def test_phase07_console_character_in_metadata(self):
+        """phase_07 metadata must include console_character_applied key."""
+        import inspect
+
+        from backend.core.phases.phase_07_harmonic_restoration import (
+            HarmonicRestorationPhase,
+        )
+
+        src = inspect.getsource(HarmonicRestorationPhase.process)
+        assert "console_character_applied" in src, "phase_07 return metadata must include 'console_character_applied'"
