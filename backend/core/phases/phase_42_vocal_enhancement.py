@@ -292,7 +292,7 @@ class VocalEnhancement(PhaseInterface):
             description="Comprehensive vocal processing chain for clarity and polish",
         )
 
-    def process(
+    def process(  # pylint: disable=arguments-renamed
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
         """
@@ -323,6 +323,7 @@ class VocalEnhancement(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
+            # pylint: disable-next=import-outside-toplevel
             from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict42
 
             _get_plm_evict42().evict_for_phase("phase_42_vocal_enhancement")
@@ -438,6 +439,7 @@ class VocalEnhancement(PhaseInterface):
         _age_breath_preservation: float = 0.70
         if VOCAL_AI_AVAILABLE and _UnifiedVocalAI is not None:
             try:
+                # pylint: disable-next=import-outside-toplevel
                 from backend.core.vocal_ai_enhancement import GenderDetector as _GenderDetectorCls
 
                 _age_audio = (
@@ -460,7 +462,8 @@ class VocalEnhancement(PhaseInterface):
                     config["formant_gain_db"] = float(config["formant_gain_db"] * _fs)
                     config["chest_gain_db"] = float(config["chest_gain_db"] * _ches)
                     logger.info(
-                        "Phase42 age-adaptive: age_group=%s breath_red×%.2f comp×%.2f formant×%.2f chest×%.2f breath_pres=%.2f",
+                        "Phase42 age-adaptive: age_group=%s "
+                        "breath_red×%.2f comp×%.2f formant×%.2f chest×%.2f breath_pres=%.2f",
                         _detected_age_group_value,
                         _brs,
                         _cs,
@@ -603,6 +606,7 @@ class VocalEnhancement(PhaseInterface):
             _hpg_vocal_mask = None
             _hpg_vocal_href = None
             try:
+                # pylint: disable-next=import-outside-toplevel
                 from backend.core.harmonic_preservation_guard import get_harmonic_preservation_guard
 
                 _hpg_v = get_harmonic_preservation_guard()
@@ -672,7 +676,7 @@ class VocalEnhancement(PhaseInterface):
             # (STFT rounding, ML inference, compression, formant EQ can shift the stem by
             # sub-sample amounts). The original vocals_stem is the timing reference.
             try:
-                from backend.core.stereo_temporal_coherence_guard import (
+                from backend.core.stereo_temporal_coherence_guard import (  # pylint: disable=import-outside-toplevel
                     get_stereo_temporal_coherence_guard as _get_stcg,
                 )
 
@@ -684,6 +688,7 @@ class VocalEnhancement(PhaseInterface):
 
             # StemRemixBalancer: LUFS-korrekter Re-Mix (§1.4 Spec)
             try:
+                # pylint: disable-next=import-outside-toplevel
                 from backend.core.stem_remix_balancer import StemRemixBalancer
 
                 enhanced_audio = StemRemixBalancer().balance_remix(
@@ -709,11 +714,13 @@ class VocalEnhancement(PhaseInterface):
             )
             if _is_shellac_bw_limited:
                 try:
+                    # pylint: disable-next=import-outside-toplevel
                     from plugins.formant_tracker import get_formant_tracker as _get_ft
 
                     _ft_result = _get_ft().track(audio, sample_rate)
                     if _ft_result.confidence >= 0.5 and len(_ft_result.formants) >= 2:
                         # Gültige Formant-Schätzung → Bell-EQ-Boost über lpc_formant_tracker.enhance()
+                        # pylint: disable-next=import-outside-toplevel
                         from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc
 
                         _lfc_result = _get_lfc().enhance(audio, sample_rate)
@@ -926,7 +933,7 @@ class VocalEnhancement(PhaseInterface):
             return 0.5
 
     @staticmethod
-    def _wiener_stereo_from_mono(
+    def _wiener_stereo_from_mono(  # pylint: disable=unused-argument
         audio_stereo: np.ndarray,
         voc_mono: np.ndarray,
         sr: int,
@@ -1060,7 +1067,7 @@ class VocalEnhancement(PhaseInterface):
 
         _skip_roformer_reason: str | None = None
         try:
-            import psutil as _psutil
+            import psutil as _psutil  # pylint: disable=import-outside-toplevel
 
             _avail_gb = float(_psutil.virtual_memory().available / (1024**3))
             # MelBandRoformer (T²-Transformer) needs ~9 GB working memory per 15s chunk.
@@ -1086,9 +1093,10 @@ class VocalEnhancement(PhaseInterface):
         else:
             _plm42_rof = None
             try:
-                from plugins.bs_roformer_plugin import get_bs_roformer
+                from plugins.bs_roformer_plugin import get_bs_roformer  # pylint: disable=import-outside-toplevel
 
                 try:
+                    # pylint: disable-next=import-outside-toplevel
                     from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm42r
 
                     _plm42_rof = _get_plm42r()
@@ -1140,9 +1148,10 @@ class VocalEnhancement(PhaseInterface):
         # ── 2: MDX23C fallback (Kim_Vocal_2) ─────────────────────────────────
         _plm42_mdx = None
         try:
-            from plugins.mdx23c_plugin import get_mdx23c_plugin
+            from plugins.mdx23c_plugin import get_mdx23c_plugin  # pylint: disable=import-outside-toplevel
 
             try:
+                # pylint: disable-next=import-outside-toplevel
                 from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm42m
 
                 _plm42_mdx = _get_plm42m()
@@ -1187,11 +1196,11 @@ class VocalEnhancement(PhaseInterface):
 
         # ── 3: NMF-β Fallback (§2.47 ML-Failure-Degradationskascade: NMF-β→HPSS) ──
         try:
-            from plugins.mdx23c_plugin import MDX23CModel as _MDX23CModel
+            from plugins.mdx23c_plugin import MDX23CModel as _MDX23CModel  # pylint: disable=import-outside-toplevel
 
             _audio_2d = audio_mono[np.newaxis, :] if audio_mono.ndim == 1 else audio_mono
-            voc_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=True)
-            inst_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=False)
+            voc_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=True)  # pylint: disable=protected-access
+            inst_nmf_2d = _MDX23CModel._nmf_beta_fallback(_audio_2d, is_vocals=False)  # pylint: disable=protected-access
             voc_nmf = voc_nmf_2d[0] if voc_nmf_2d.ndim == 2 else voc_nmf_2d
             inst_nmf = inst_nmf_2d[0] if inst_nmf_2d.ndim == 2 else inst_nmf_2d
             # §2.47 sdB ≥ 5 Guard: NMF-β nur wenn Separation-Güte ausreichend.
@@ -1218,9 +1227,7 @@ class VocalEnhancement(PhaseInterface):
 
         # ── 4: HPSS tertiärer Fallback ────────────────────────────────────────
         try:
-            import time as _time
-
-            import librosa
+            import librosa  # pylint: disable=import-outside-toplevel
 
             if audio.ndim == 2:
                 mono_in = audio_mono
@@ -1236,9 +1243,9 @@ class VocalEnhancement(PhaseInterface):
                     _audio_dur_s,
                     _hpss_max_s,
                 )
-            _t0_hpss = _time.monotonic()
+            _t0_hpss = time.monotonic()
             harmonic_mono, _ = librosa.effects.hpss(mono_in)
-            _hpss_elapsed = _time.monotonic() - _t0_hpss
+            _hpss_elapsed = time.monotonic() - _t0_hpss
             if _hpss_elapsed > _hpss_max_s:
                 logger.warning(
                     "Phase42 HPSS wall-time überschritten (%.0fs > %.0fs) — Ergebnis verworfen",
@@ -2143,7 +2150,7 @@ class VocalEnhancement(PhaseInterface):
         # §2.45a-II: apply makeup gain only to musical frames (not silence) to prevent
         # amplification of surface noise in fade-out / silent sections.
         if makeup_linear > 1.0005:
-            from backend.core.audio_utils import apply_musical_gain_envelope
+            from backend.core.audio_utils import apply_musical_gain_envelope  # pylint: disable=import-outside-toplevel
 
             # §2.45a-II v9.12.2: reference_for_gate=compressed → signal-relative gate
             compressed = apply_musical_gain_envelope(
@@ -2180,7 +2187,7 @@ class VocalEnhancement(PhaseInterface):
         Falls back gracefully if MDEM module isn't available.
         """
         try:
-            from backend.core.micro_dynamics_envelope_morphing import get_mdem
+            from backend.core.micro_dynamics_envelope_morphing import get_mdem  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _mdem = get_mdem()
             # Ensure matching lengths
