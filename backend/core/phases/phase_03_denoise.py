@@ -696,7 +696,8 @@ class DenoisePhase(PhaseInterface):
         _dfn_energy_bias_db = -6.0  # Default: Bruststimme
         if _is_vocal_material and _panns_singing >= 0.25:
             try:
-                from backend.core.dsp.vocal_register_detector import detect_vocal_register_temporal as _dvrt_p03  # pylint: disable=import-outside-toplevel  # noqa: I001
+                # pylint: disable-next=import-outside-toplevel
+                from backend.core.dsp.vocal_register_detector import detect_vocal_register_temporal as _dvrt_p03
 
                 # §0p Passaggio-Schutz [RELEASE_MUST]: Temporal register detection mit ±5-Frame-Glättung.
                 # Übergangszonen (Brust→Kopf): energy_bias = max der Zonen-Biases = -3.0 dB.
@@ -1409,6 +1410,7 @@ class DenoisePhase(PhaseInterface):
         # §TimbralCoherence: Carrier-Rauchtextur nach Over-NR wiederherstellen.
         # ML-NR (DFN, SGMSE+) kann den Träger-Rauschboden zu stark abtragen.
         try:
+            # pylint: disable-next=import-outside-toplevel
             from backend.core.dsp.noise_texture_resynth import restore_carrier_noise_texture as _restore_ntr_p03
 
             _ntr_strength_p03 = float(np.clip(effective_strength * 0.6, 0.0, 0.8))
@@ -1428,6 +1430,7 @@ class DenoisePhase(PhaseInterface):
         # auf Eingangs-Audio zurückfallen, um Stimmqualitätsverlust durch NR zu verhindern.
         if _panns_singing >= 0.35:
             try:
+                # pylint: disable-next=import-outside-toplevel
                 from backend.core.musical_goals.vocal_quality_index import compute_vqi as _compute_vqi_p03
 
                 _vqi_result_p03 = _compute_vqi_p03(audio_orig=audio, audio_restored=result_audio, sr=sample_rate)
