@@ -111,7 +111,7 @@ def _apply_bw_cap(segment: np.ndarray, sample_rate: int, cap_hz: float) -> np.nd
         return segment
     nyq = sample_rate / 2.0
     norm_cut = min(cap_hz / nyq, 0.99)
-    from scipy import signal as _sps
+    from scipy import signal as _sps  # pylint: disable=import-outside-toplevel
 
     sos = _sps.butter(4, norm_cut, btype="low", output="sos")
     # filtfilt for zero-phase; fall back to sosfilt for very short segments
@@ -145,7 +145,7 @@ def _burg_ar_predict(context: np.ndarray, order: int, n_samples: int) -> np.ndar
         return np.zeros(n_samples)
 
     # Autokorrelation schätzen — FFT-based O(N log N)
-    from backend.core.core_utils import fft_autocorr
+    from backend.core.core_utils import fft_autocorr  # pylint: disable=import-outside-toplevel
 
     ac = fft_autocorr(context, max_lag=order)
     if ac[0] < 1e-10:
@@ -196,7 +196,7 @@ def _detect_gaps(audio: np.ndarray, sample_rate: int, min_gap_ms: float) -> list
     # - absolute floor (historical dropout floor)
     # - AND local context dip (>=10 dB below 250ms neighborhood median)
     # So musical quiet passages won't be flagged as transport dropouts.
-    from scipy.ndimage import median_filter as _medfilt
+    from scipy.ndimage import median_filter as _medfilt  # pylint: disable=import-outside-toplevel
 
     _ctx = max(5, int(0.25 * sample_rate / frame_size))
     if _ctx % 2 == 0:
@@ -364,7 +364,7 @@ def _nmf_gap_fallback(
     ctx_end = min(len(channel), end + ctx_samples)
     context = channel[ctx_start:ctx_end].astype(np.float64)
 
-    from scipy import signal as _sps
+    from scipy import signal as _sps  # pylint: disable=import-outside-toplevel
 
     _, _, Z_ctx = _sps.stft(context, fs=sr, window="hann", nperseg=_n_fft, noverlap=_n_fft - _hop)
     mag_ctx = np.abs(Z_ctx)  # (n_bins, n_frames)
@@ -412,7 +412,7 @@ def _nmf_gap_fallback(
 
     # Phase-coherent reconstruction via PGHI (§2.47 VERBOTEN: direktes ISTFT)
     try:
-        from dsp.pghi import pghi_reconstruct as _pghi_rec
+        from dsp.pghi import pghi_reconstruct as _pghi_rec  # pylint: disable=import-outside-toplevel
 
         _initial_phase_gap = gap_phase.astype(np.float32)
         _gap_audio = _pghi_rec(
@@ -460,15 +460,17 @@ def _try_cqtdiff_plus_plugin(audio: np.ndarray, start: int, end: int, sample_rat
     if gap_ms < 50.0:
         return None  # Kurze Lücken → DSP-Diffusion (NMF-β-Äquivalent)
     try:
-        import os as _os
-        import sys
+        import os as _os  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
 
         _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
         if _plugins_dir not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55a
-        from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus
+        from backend.core.plugin_lifecycle_manager import (
+            get_plugin_lifecycle_manager as _get_plm55a,  # pylint: disable=import-outside-toplevel
+        )
+        from plugins.cqtdiff_plus_plugin import get_cqtdiff_plus  # pylint: disable=import-outside-toplevel
 
         plugin = get_cqtdiff_plus()
         _plm55a = _get_plm55a()
@@ -503,16 +505,18 @@ def _try_flow_matching_plugin(
     Aktiviert für Lücken aller Größen (20 ms – 30 s).
     """
     try:
-        import os as _os
-        import sys
+        import os as _os  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
 
         _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
         if _plugins_dir not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from flow_matching_plugin import inpaint_flow
+        from flow_matching_plugin import inpaint_flow  # pylint: disable=import-outside-toplevel
 
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55b
+        from backend.core.plugin_lifecycle_manager import (
+            get_plugin_lifecycle_manager as _get_plm55b,  # pylint: disable=import-outside-toplevel
+        )
 
         _plm55b = _get_plm55b()
         _plm55b.set_active("FlowMatching", True)
@@ -543,9 +547,9 @@ def _try_diffwave_plugin(audio: np.ndarray, start: int, end: int, sample_rate: i
     Fallback-Priorität 2 nach FlowMatchingPlugin.
     """
     try:
-        import importlib
-        import os
-        import sys
+        import importlib  # pylint: disable=import-outside-toplevel
+        import os  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
 
         plugins_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "plugins")
         if plugins_dir not in sys.path:
@@ -555,7 +559,9 @@ def _try_diffwave_plugin(audio: np.ndarray, start: int, end: int, sample_rate: i
         if not hasattr(dw, "inpaint"):
             return None
 
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55c
+        from backend.core.plugin_lifecycle_manager import (
+            get_plugin_lifecycle_manager as _get_plm55c,  # pylint: disable=import-outside-toplevel
+        )
 
         _plm55c = _get_plm55c()
         _plm55c.set_active("DiffWave", True)
@@ -582,21 +588,23 @@ def _try_consistency_model_inpainting(channel: np.ndarray, start: int, end: int,
     if gap_len <= 0:
         return None
     try:
-        import os as _os
-        import sys
+        import os as _os  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
 
         _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
         if _os.path.abspath(_plugins_dir) not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
         try:
-            from plugins.consistency_inpaint_plugin import (
+            from plugins.consistency_inpaint_plugin import (  # pylint: disable=import-outside-toplevel
                 get_consistency_inpaint_plugin,
             )
         except (ImportError, ModuleNotFoundError):
             return None
 
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55d
+        from backend.core.plugin_lifecycle_manager import (
+            get_plugin_lifecycle_manager as _get_plm55d,  # pylint: disable=import-outside-toplevel
+        )
 
         cm = get_consistency_inpaint_plugin()
         if cm is None:
@@ -637,15 +645,17 @@ def _try_dac_token_inpainting(channel: np.ndarray, start: int, end: int, sample_
     if gap_len <= 0:
         return None
     try:
-        import os as _os
-        import sys
+        import os as _os  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
 
         _plugins_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "plugins")
         if _os.path.abspath(_plugins_dir) not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55e
-        from plugins.dac_plugin import get_dac_plugin
+        from backend.core.plugin_lifecycle_manager import (
+            get_plugin_lifecycle_manager as _get_plm55e,  # pylint: disable=import-outside-toplevel
+        )
+        from plugins.dac_plugin import get_dac_plugin  # pylint: disable=import-outside-toplevel
 
         dac = get_dac_plugin()
         if dac is None:
@@ -677,15 +687,15 @@ def _is_ml_thrashing() -> bool:
 
     Result is cached for 30 s to avoid log-spam from per-channel calls (BUG H).
     """
-    import threading as _th  # pylint: disable=protected-access
+    import threading as _th  # pylint: disable=import-outside-toplevel
 
     _cache = getattr(_is_ml_thrashing, "_cache", None)
     _lock = getattr(_is_ml_thrashing, "_lock", None)
     if _lock is None:
-        _is_ml_thrashing._lock = _th.Lock()  # type: ignore[attr-defined]
-        _is_ml_thrashing._cache = (False, 0.0)  # type: ignore[attr-defined]
-        _lock = _is_ml_thrashing._lock  # type: ignore[attr-defined]
-        _cache = _is_ml_thrashing._cache  # type: ignore[attr-defined]
+        _is_ml_thrashing._lock = _th.Lock()  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        _is_ml_thrashing._cache = (False, 0.0)  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        _lock = _is_ml_thrashing._lock  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        _cache = _is_ml_thrashing._cache  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
     now = time.monotonic()
     if _cache is None:
@@ -698,7 +708,7 @@ def _is_ml_thrashing() -> bool:
         if now - _ts < 30.0:
             return _result
         try:
-            from backend.core.ml_memory_budget import is_system_thrashing
+            from backend.core.ml_memory_budget import is_system_thrashing  # pylint: disable=import-outside-toplevel
 
             _result = bool(is_system_thrashing())
         except Exception:
@@ -1081,7 +1091,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
         Returns:
             Inpainted audio, identical shape to input, NaN/Inf-frei, ∈ [-1, 1].
         """
-        from scipy import signal as _sps
+        from scipy import signal as _sps  # pylint: disable=import-outside-toplevel
 
         _n_fft = 2048
         _hop = 512
@@ -1121,7 +1131,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         # Phase-coherent ISTFT via PGHI (§2.47)
         try:
-            from dsp.pghi import pghi_reconstruct as _pghi_fb
+            from dsp.pghi import pghi_reconstruct as _pghi_fb  # pylint: disable=import-outside-toplevel
 
             _repaired_mono = _pghi_fb(
                 _mag_repaired.astype(np.float32),
@@ -1166,7 +1176,9 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
-            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict55
+            from backend.core.plugin_lifecycle_manager import (
+                get_plugin_lifecycle_manager as _get_plm_evict55,  # pylint: disable=import-outside-toplevel
+            )
 
             _get_plm_evict55().evict_for_phase("phase_55_diffusion_inpainting")
         except Exception:
@@ -1313,8 +1325,12 @@ class DiffusionInpaintingPhase(PhaseInterface):
         # §2.46f NPA-Guard: Atemgeräusche/Vibrato in Lücken-Rändern nicht überschreiben.
         # §2.46e Hallucination-Guard: ML-Inpainting darf kein neues spektrales Material einbringen.
         try:
-            from backend.core.hallucination_guard import apply_hallucination_guard
-            from backend.core.natural_performance_detector import get_natural_performance_detector
+            from backend.core.hallucination_guard import (
+                apply_hallucination_guard,  # pylint: disable=import-outside-toplevel
+            )
+            from backend.core.natural_performance_detector import (
+                get_natural_performance_detector,  # pylint: disable=import-outside-toplevel
+            )
 
             _mono55 = source_audio.mean(axis=0) if source_audio.ndim == 2 else source_audio
             n_samples55 = _mono55.shape[0]
@@ -1336,7 +1352,9 @@ class DiffusionInpaintingPhase(PhaseInterface):
             # klassifiziert wurden dürfen nicht durch ML-Inpainting ersetzt werden —
             # Artikulation schlägt Lücken-Filling (§2.36 RELEASE_MUST).
             try:
-                from backend.core.lyrics_guided_enhancement import LyricsGuidedEnhancement
+                from backend.core.lyrics_guided_enhancement import (
+                    LyricsGuidedEnhancement,  # pylint: disable=import-outside-toplevel
+                )
 
                 _lge55 = LyricsGuidedEnhancement()
                 _phon_mask55 = _lge55.get_phoneme_mask(_mono55, sample_rate, hop_length=512)
