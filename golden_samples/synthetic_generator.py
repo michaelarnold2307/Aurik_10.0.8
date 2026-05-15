@@ -26,7 +26,6 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -79,7 +78,7 @@ class SyntheticGoldenSampleGenerator:
         for category in ["vocal", "instrumental", "classical", "jazz", "references"]:
             (self.output_dir / category).mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"SyntheticGoldenSampleGenerator initialized: {output_dir}, {sample_rate} Hz")
+        logger.info("SyntheticGoldenSampleGenerator initialized: %s, %s Hz", output_dir, sample_rate)
 
     def generate_all(self, target_counts: dict[str, int] | None = None) -> list[GoldenSampleSpec]:
         """
@@ -94,13 +93,13 @@ class SyntheticGoldenSampleGenerator:
         if target_counts is None:
             target_counts = {"vocal": 20, "instrumental": 10, "classical": 5, "jazz": 5}
 
-        logger.info(f"Generating synthetic golden samples: {sum(target_counts.values())} total")
+        logger.info("Generating synthetic golden samples: %s total", sum(target_counts.values()))
 
         all_specs = []
 
         # Generate each category
         for category, count in target_counts.items():
-            logger.info(f"Generating {count} {category} samples...")
+            logger.info("Generating %s %s samples...", count, category)
 
             for i in range(count):
                 spec = self._generate_sample(category, i + 1)
@@ -109,7 +108,7 @@ class SyntheticGoldenSampleGenerator:
         # Update metadata.json
         self._update_metadata(all_specs)
 
-        logger.info(f"✓ Generated {len(all_specs)} synthetic golden samples")
+        logger.info("✓ Generated %s synthetic golden samples", len(all_specs))
 
         return all_specs
 
@@ -152,6 +151,7 @@ class SyntheticGoldenSampleGenerator:
 
         # Quality baseline: measure actual 14 Musical Goals on generated audio
         try:
+            # pylint: disable-next=import-outside-toplevel
             from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
 
             checker = MusicalGoalsChecker()
@@ -189,7 +189,7 @@ class SyntheticGoldenSampleGenerator:
             },
         )
 
-        logger.debug(f"Generated: {category}/{filename}")
+        logger.debug("Generated: %s/%s", category, filename)
 
         return spec
 
@@ -223,7 +223,7 @@ class SyntheticGoldenSampleGenerator:
         # Formant 1: 800 Hz (vowel "ah")
         # Formant 2: 1200 Hz
         # Formant 3: 2600 Hz
-        from scipy.signal import butter, sosfiltfilt
+        from scipy.signal import butter, sosfiltfilt  # pylint: disable=import-outside-toplevel
 
         for formant_freq in [800, 1200, 2600]:
             sos = butter(4, [formant_freq - 50, formant_freq + 50], btype="band", fs=self.sample_rate, output="sos")
@@ -432,15 +432,15 @@ class SyntheticGoldenSampleGenerator:
             "instructions": "Generated synthetic golden samples for benchmark/regression testing",
         }
 
-        with open(metadata_path, "w") as f:
+        with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        logger.info(f"✓ Updated metadata.json: {len(specs)} samples")
+        logger.info("✓ Updated metadata.json: %s samples", len(specs))
 
 
 def main():
     """Generate synthetic golden samples."""
-    import argparse
+    import argparse  # pylint: disable=import-outside-toplevel
 
     parser = argparse.ArgumentParser(description="Generate synthetic golden samples")
     parser.add_argument(
