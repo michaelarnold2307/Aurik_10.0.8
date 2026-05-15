@@ -287,7 +287,7 @@ class ReverbReduction(PhaseInterface):
         # §2.46f Natural-Performance-Artifacts-Guard — detect protected zones before reverb reduction
         _npa_result_20 = None
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
+            from backend.core.natural_performance_detector import get_natural_performance_detector  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _npa_result_20 = get_natural_performance_detector().detect(audio, sample_rate)
         except Exception as _npa_exc_20:
@@ -572,7 +572,7 @@ class ReverbReduction(PhaseInterface):
                 )
 
             except Exception as e:
-                import traceback as _tb
+                import traceback as _tb  # pylint: disable=import-outside-toplevel
 
                 _err_text = str(e)
                 _is_deterministic_ml_fail = (
@@ -801,7 +801,7 @@ class ReverbReduction(PhaseInterface):
 
         # §4.5 Psychoacoustic Masking Clamp — preserve reverb tails below masking threshold
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             reduced = apply_psychoacoustic_masking_clamp(
                 audio,
@@ -828,7 +828,7 @@ class ReverbReduction(PhaseInterface):
         # von Plosiv-Bursts absenken wenn der Hüllkurven-Schätzer sie als Reverb-Einsatz
         # behandelt. Plosiv-Burst-Frames aus Original restaurieren.
         try:
-            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_20
+            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_20  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _hop_20 = 512
             _mono_20 = (
@@ -864,7 +864,8 @@ class ReverbReduction(PhaseInterface):
         # Dereverb in Passaggio-Zonen kann Register-Übergänge strukturell beschädigen → blend-back schützt.
         if _p20_panns >= 0.25:
             try:
-                from backend.core.dsp.vocal_register_detector import detect_vocal_register_temporal as _dvrt_p20  # pylint: disable=import-outside-toplevel  # noqa: I001
+                # pylint: disable-next=import-outside-toplevel
+                from backend.core.dsp.vocal_register_detector import detect_vocal_register_temporal as _dvrt_p20
 
                 _reg_seq_p20 = _dvrt_p20(audio, sample_rate, panns_singing=_p20_panns)
                 _has_passaggio_p20 = len({_r for _, _, _r, _ in _reg_seq_p20}) > 1
@@ -1009,8 +1010,8 @@ class ReverbReduction(PhaseInterface):
                 # §2.45a-II: canonical apply_musical_gain_envelope (audio_utils) with
                 # adaptive noise-floor gate — prevents Pegelexplosion in vinyl/shellac
                 # silent sections (surface noise ~-40 dBFS > fixed -50 dBFS gate).
-                from backend.core.audio_utils import apply_musical_gain_envelope as _amge_20
-                from backend.core.audio_utils import compute_signal_relative_gate_dbfs as _sig_gate_20
+                from backend.core.audio_utils import apply_musical_gain_envelope as _amge_20  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.audio_utils import compute_signal_relative_gate_dbfs as _sig_gate_20  # pylint: disable=import-outside-toplevel
 
                 # §2.45a-II: signal-relative gate — CEDAR/iZotope RX approach (v9.12.2)
                 _gate_dbfs_20 = _sig_gate_20(original_audio, material_key=material_key)
@@ -1151,13 +1152,14 @@ class ReverbReduction(PhaseInterface):
         _masking_floor_p20: np.ndarray | None = None
         _masking_freqs_p20: np.ndarray | None = None
         try:
-            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p20
+            from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172 as _cmask_p20  # pylint: disable=import-outside-toplevel  # noqa: I001
 
             _src_p20 = audio.mean(axis=0) if audio.ndim == 2 else audio
             _mask_ratio_p20 = _cmask_p20(_src_p20, sample_rate, n_fft=2048, hop_length=512)
             _masking_floor_p20 = np.mean(_mask_ratio_p20, axis=1).astype(np.float32)
             _masking_freqs_p20 = np.linspace(0.0, sample_rate / 2.0, _mask_ratio_p20.shape[0], dtype=np.float32)
-            logger.debug("§2.62 phase_20 Masking-Guard: mean_floor=%.3f", float(np.mean(_masking_floor_p20)))  # type: ignore[arg-type]
+            _mf_mean = float(np.mean(_masking_floor_p20))  # type: ignore[arg-type]
+            logger.debug("§2.62 phase_20 Masking-Guard: mean_floor=%.3f", _mf_mean)
         except Exception as _msk20_exc:
             logger.debug("§2.62 phase_20 Masking-Guard nicht verfügbar (non-blocking): %s", _msk20_exc)
 
@@ -1426,7 +1428,7 @@ if __name__ == "__main__":
 
     # Generate test audio with synthetic reverb
     duration = 3.0
-    sample_rate = 44100  # pylint: disable=redefined-outer-name
+    sample_rate = 44100
     t = np.linspace(0, duration, int(sample_rate * duration))
     dry_signal = np.zeros_like(t)
 
@@ -1454,7 +1456,7 @@ if __name__ == "__main__":
         (MaterialType.CD_DIGITAL, "CD_DIGITAL"),
     ]
 
-    for material, material_name in materials:  # pylint: disable=redefined-outer-name
+    for material, material_name in materials:
         logger.debug("─" * 80)
         logger.debug("Material: %s", material_name)
         logger.debug("─" * 80)
