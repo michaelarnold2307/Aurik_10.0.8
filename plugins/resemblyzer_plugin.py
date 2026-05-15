@@ -33,9 +33,16 @@ from typing import Any, cast
 import numpy as np
 
 try:
-    from librosa import resample as _librosa_resample
+    import librosa as _librosa
 except Exception:
-    _librosa_resample = None
+    _librosa = None
+
+try:
+    from resemblyzer import VoiceEncoder as _ResemblyzerVoiceEncoder
+    from resemblyzer import preprocess_wav as _resemblyzer_preprocess_wav
+except Exception:
+    _ResemblyzerVoiceEncoder = None
+    _resemblyzer_preprocess_wav = None
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +84,12 @@ class ResemblyzerPlugin:
     def _load(self) -> None:
         """Lädt VoiceEncoder einmalig lazy; warnt bei Fehler, kein Absturz."""
         try:
-            from resemblyzer import VoiceEncoder, preprocess_wav  # type: ignore[import]
+            if _ResemblyzerVoiceEncoder is None or _resemblyzer_preprocess_wav is None:
+                raise ImportError("resemblyzer unavailable")
 
             # CPU-only: Resemblyzer ist leichtgewichtig (§0j)
-            self._encoder = VoiceEncoder("cpu")
-            self._preprocess_wav_fn = preprocess_wav
+            self._encoder = _ResemblyzerVoiceEncoder("cpu")
+            self._preprocess_wav_fn = _resemblyzer_preprocess_wav
             logger.info("resemblyzer_plugin: VoiceEncoder loaded (256-dim d-vector, CPU, §2.35c)")
         except Exception as exc:
             logger.warning("resemblyzer_plugin: Resemblyzer nicht verfügbar — DSP-Fallback aktiv: %s", exc)
@@ -116,9 +124,9 @@ class ResemblyzerPlugin:
 
             # Auf Resemblyzer-SR resamplen (16 kHz)
             if sr != self.MODEL_SR:
-                if _librosa_resample is None:
+                if _librosa is None:
                     return None
-                mono = np.asarray(_librosa_resample(mono, orig_sr=sr, target_sr=self.MODEL_SR), dtype=np.float32)
+                mono = np.asarray(_librosa.resample(mono, orig_sr=sr, target_sr=self.MODEL_SR), dtype=np.float32)
 
             # preprocess_wav → normiert + getrimmtes float32
             wav = np.asarray(

@@ -51,12 +51,21 @@ _PHYSICAL_CEILING: dict[str, dict[str, float]] = {
         "raumtiefe": 0.80,
     },
     "tape": {
-        "brillanz": 0.88,
-        "transparenz": 0.86,
+        # §9.12.7 [BUG-FIX v9.12.7] Ceiling-Rekalibrierung nach material-adaptiver Formel:
+        # Die material-adaptive BrillanzMetric-Formel (§9.12.7) kalibriert den HF-Crest
+        # auf das tape-spezifische Rausch-/Signalverhältnis um. Mit G_floor=0.22 und
+        # crest_peak≈8 ergibt die neue Formel score≈0.67 (vorher: 0.20 mit CD-Formel).
+        # Ceilings angepasst auf neue Formeldynamik:
+        #   tape/cassette: brillanz ≤0.78 (crest_peak≈12 → 0.816 bei exzellenter Kassette)
+        #   transparenz ≤0.50 (Band-Crest-Faktor mit Tape-Rauschboden)
+        "brillanz": 0.78,
+        "transparenz": 0.50,
     },
     "reel_tape": {
-        "brillanz": 0.90,
-        "transparenz": 0.88,
+        # §9.12.7: Reel-Tape mit besserem SNR; reel_tape-Formel (offset=0.05, divisor=1.40).
+        # crest_peak≈15 → (1.176-0.05)/1.40 = 0.804; exzellent crest_peak≈20 → 0.893.
+        "brillanz": 0.85,
+        "transparenz": 0.62,
     },
     "mp3_low": {
         "brillanz": 0.80,

@@ -17,13 +17,17 @@ import json
 import re
 import subprocess
 import sys
+import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
 
 
 class ResultStatus(Enum):
+    """Normalized execution states for criteria and release gates."""
+
     PASSED = "PASSED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
@@ -32,6 +36,8 @@ class ResultStatus(Enum):
 
 @dataclass
 class CriterionResult:
+    """Parsed result payload for one acceptance criterion."""
+
     criterion_id: str
     name: str
     severity: str
@@ -44,6 +50,8 @@ class CriterionResult:
 
 @dataclass
 class GateResult:
+    """Parsed result payload for one release gate."""
+
     gate_id: str
     name: str
     ko: bool
@@ -55,6 +63,8 @@ class GateResult:
 
 @dataclass
 class UATSummary:
+    """Aggregated execution summary for the generated UAT artifacts."""
+
     generated_at: str
     aurik_version: str = "9.10.77"
     restoration_total: int = 15
@@ -80,7 +90,11 @@ class UATSummary:
 
 
 class UATReportGenerator:
-    def __init__(self, output_dir: Path = None, json_output: Path = None):
+    """Run UATs, parse their output and render markdown plus JSON artifacts."""
+
+    RESULT_MARKER_PREFIX = "UAT_RESULT_JSON:"
+
+    def __init__(self, output_dir: Path | None = None, json_output: Path | None = None):
         self.output_dir = output_dir or Path("docs")
         self.json_output = json_output or Path("audit") / f"uat_results_{self._now_suffix()}.json"
         self.workspace_root = Path("/media/michael/Software 4TB/Aurik_Standalone")
@@ -108,6 +122,7 @@ class UATReportGenerator:
                     "tests/test_uat_acceptance_criteria.py",
                     "-p",
                     "no:xdist",
+                    "-s",
                     "--run-heavy-tests",
                     "--override-ini=addopts=--strict-markers --import-mode=importlib",
                     "--timeout=180",
@@ -118,6 +133,7 @@ class UATReportGenerator:
                 ],
                 cwd=self.workspace_root,
                 capture_output=True,
+                check=False,
                 timeout=1200,
                 text=True,
             )
@@ -160,6 +176,53 @@ class UATReportGenerator:
 
         lines = output.split("\n")
         for line in lines:
+            marker_pos = line.find(self.RESULT_MARKER_PREFIX)
+            if marker_pos >= 0:
+                try:
+                    payload = json.loads(line[marker_pos + len(self.RESULT_MARKER_PREFIX) :].strip())
+                except Exception:
+                    continue
+                kind = str(payload.get("kind", "") or "")
+                cid = str(payload.get("criterion_id", "") or "")
+                evidence = str(payload.get("evidence", "") or "")
+                notes = str(payload.get("notes", "") or "")
+                timestamp = str(payload.get("timestamp", "") or datetime.now().isoformat())
+                raw_status = str(payload.get("result", "") or "").upper()
+                status = {
+                    "PASS": ResultStatus.PASSED,
+                    "PASSED": ResultStatus.PASSED,
+                    "FAIL": ResultStatus.FAILED,
+                    "FAILED": ResultStatus.FAILED,
+                    "SKIP": ResultStatus.SKIPPED,
+                    "SKIPPED": ResultStatus.SKIPPED,
+                    "ERROR": ResultStatus.ERROR,
+                }.get(raw_status)
+                if status is None:
+                    continue
+                if kind == "restoration" and cid:
+                    restoration_map[cid] = CriterionResult(
+                        criterion_id=cid,
+                        name="",
+                        severity="MUST",
+                        category="",
+                        status=status,
+                        evidence=evidence,
+                        notes=notes,
+                        timestamp=timestamp,
+                    )
+                elif kind == "studio_2026" and cid:
+                    studio_map[cid] = CriterionResult(
+                        criterion_id=cid,
+                        name="",
+                        severity="MUST",
+                        category="",
+                        status=status,
+                        evidence=evidence,
+                        notes=notes,
+                        timestamp=timestamp,
+                    )
+                continue
+
             if "tests/test_uat_acceptance_criteria.py::" not in line:
                 continue
             status = _status_from_line(line)
@@ -216,17 +279,15 @@ class UATReportGenerator:
         """Populate criterion names and metadata from test definitions."""
         print("[INFO] Populating criterion names...")
 
-        # Import test definitions to get names
         sys.path.insert(0, str(self.workspace_root))
         try:
-            from tests.test_uat_acceptance_criteria import (
-                RELEASE_GATES,
-                RESTORATION_CRITERIA,
-                STUDIO_2026_CRITERIA,
-            )
+            criteria_module = import_module("tests.test_uat_acceptance_criteria")
+            release_gates = criteria_module.RELEASE_GATES
+            restoration_criteria = criteria_module.RESTORATION_CRITERIA
+            studio_2026_criteria = criteria_module.STUDIO_2026_CRITERIA
 
             # Map names to restoration results
-            rc_map = {c["id"]: c for c in RESTORATION_CRITERIA}
+            rc_map = {criterion["id"]: criterion for criterion in restoration_criteria}
             for result in self.restoration_results:
                 if result.criterion_id in rc_map:
                     result.name = rc_map[result.criterion_id]["name"]
@@ -234,7 +295,7 @@ class UATReportGenerator:
                     result.severity = rc_map[result.criterion_id]["severity"]
 
             # Map names to studio 2026 results
-            sc_map = {c["id"]: c for c in STUDIO_2026_CRITERIA}
+            sc_map = {criterion["id"]: criterion for criterion in studio_2026_criteria}
             for result in self.studio_2026_results:
                 if result.criterion_id in sc_map:
                     result.name = sc_map[result.criterion_id]["name"]
@@ -242,11 +303,11 @@ class UATReportGenerator:
                     result.severity = sc_map[result.criterion_id]["severity"]
 
             # Map names to gate results
-            gate_map = {g["id"]: g for g in RELEASE_GATES}
-            for result in self.gate_results:
-                if result.gate_id in gate_map:
-                    result.name = gate_map[result.gate_id]["name"]
-                    result.ko = gate_map[result.gate_id]["ko"]
+            gate_map = {gate["id"]: gate for gate in release_gates}
+            for gate_result in self.gate_results:
+                if gate_result.gate_id in gate_map:
+                    gate_result.name = gate_map[gate_result.gate_id]["name"]
+                    gate_result.ko = gate_map[gate_result.gate_id]["ko"]
 
         except Exception as e:
             print(f"[WARNING] Could not populate names: {e}")
@@ -331,8 +392,9 @@ class UATReportGenerator:
                 if r.status == ResultStatus.FAILED
                 else "⊘ SKIP"
             )
+            evidence_cell = self._scorecard_cell(r.evidence, r.notes)
             lines.append(
-                f"| {r.criterion_id} | {r.name} | {r.category} | {r.severity} | {result_sym} | {r.evidence[:50]}{'...' if len(r.evidence) > 50 else ''} |"
+                f"| {r.criterion_id} | {r.name} | {r.category} | {r.severity} | {result_sym} | {evidence_cell} |"
             )
 
         lines.extend(
@@ -353,8 +415,9 @@ class UATReportGenerator:
                 if r.status == ResultStatus.FAILED
                 else "⊘ SKIP"
             )
+            evidence_cell = self._scorecard_cell(r.evidence, r.notes)
             lines.append(
-                f"| {r.criterion_id} | {r.name} | {r.category} | {r.severity} | {result_sym} | {r.evidence[:50]}{'...' if len(r.evidence) > 50 else ''} |"
+                f"| {r.criterion_id} | {r.name} | {r.category} | {r.severity} | {result_sym} | {evidence_cell} |"
             )
 
         lines.extend(
@@ -402,9 +465,18 @@ class UATReportGenerator:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _scorecard_cell(evidence: str, notes: str, limit: int = 110) -> str:
+        text = evidence.strip()
+        if notes.strip():
+            text = f"{text}; {notes.strip()}" if text else notes.strip()
+        text = text.replace("|", "/")
+        return f"{text[:limit]}..." if len(text) > limit else text
+
     def generate_final_report(self) -> str:
         """Generate formal final report."""
         print("[INFO] Generating final report...")
+        criteria_pass_rate = (self.summary.restoration_passed + self.summary.studio_2026_passed) / 30 * 100
 
         rec_emoji = (
             "✅"
@@ -483,7 +555,7 @@ class UATReportGenerator:
                 f"- **Total Passed:** {self.summary.restoration_passed + self.summary.studio_2026_passed}",
                 f"- **Total Failed:** {self.summary.restoration_failed + self.summary.studio_2026_failed}",
                 f"- **Total Skipped:** {self.summary.restoration_skipped + self.summary.studio_2026_skipped}",
-                f"- **Pass Rate:** {((self.summary.restoration_passed + self.summary.studio_2026_passed) / 30 * 100):.1f}%",
+                f"- **Pass Rate:** {criteria_pass_rate:.1f}%",
                 "",
                 "### Release Gate Summary",
                 "",
@@ -505,10 +577,30 @@ class UATReportGenerator:
                 "",
                 "| Criteria | Threshold | Actual | Status |",
                 "| --- | --- | --- | --- |",
-                f"| Acceptance Criteria Passed | ≥ 24/30 | {self.summary.restoration_passed + self.summary.studio_2026_passed}/30 | {'✅' if (self.summary.restoration_passed + self.summary.studio_2026_passed) >= 24 else '❌'} |",
-                f"| K.O. Violations | = 0 | {self.summary.ko_violations} | {'✅' if self.summary.ko_violations == 0 else '❌'} |",
-                f"| Release Gates Passed | ≥ 5/7 | {self.summary.gates_passed}/7 | {'✅' if self.summary.gates_passed >= 5 else '❌'} |",
-                f"| Executed Criteria Failed | = 0 (für Staging) | {self.summary.criteria_failed} | {'✅' if self.summary.criteria_failed == 0 else '❌'} |",
+                self._decision_matrix_line(
+                    "Acceptance Criteria Passed",
+                    "≥ 24/30",
+                    f"{self.summary.restoration_passed + self.summary.studio_2026_passed}/30",
+                    (self.summary.restoration_passed + self.summary.studio_2026_passed) >= 24,
+                ),
+                self._decision_matrix_line(
+                    "K.O. Violations",
+                    "= 0",
+                    str(self.summary.ko_violations),
+                    self.summary.ko_violations == 0,
+                ),
+                self._decision_matrix_line(
+                    "Release Gates Passed",
+                    "≥ 5/7",
+                    f"{self.summary.gates_passed}/7",
+                    self.summary.gates_passed >= 5,
+                ),
+                self._decision_matrix_line(
+                    "Executed Criteria Failed",
+                    "= 0 (für Staging)",
+                    str(self.summary.criteria_failed),
+                    self.summary.criteria_failed == 0,
+                ),
                 "",
                 "---",
                 "",
@@ -524,12 +616,19 @@ class UATReportGenerator:
 
     @staticmethod
     def _recommendation_to_action(rec: str) -> str:
+        """Translate the summary recommendation into a human-readable release action."""
         if rec == "GO":
             return "✅ **Ready for Release** — All acceptance criteria met. Proceed with deployment."
         elif rec == "CONDITIONAL":
             return "⚠️ **Conditional Approval** — Minor issues detected. Recommend review before release."
         else:
             return "❌ **Not Approved** — Acceptance criteria not met. Requires remediation."
+
+    @staticmethod
+    def _decision_matrix_line(label: str, threshold: str, actual: str, passed: bool) -> str:
+        """Render one markdown line for the final decision matrix."""
+        status = "✅" if passed else "❌"
+        return f"| {label} | {threshold} | {actual} | {status} |"
 
     def save_results(self) -> None:
         """Save results to JSON for machine parsing."""
@@ -611,13 +710,12 @@ class UATReportGenerator:
 
         except Exception as e:
             print(f"[FATAL] Error during report generation: {e}", file=sys.stderr)
-            import traceback
-
             traceback.print_exc()
             return 2
 
 
 def main():
+    """Parse CLI arguments and execute the UAT report generator."""
     parser = argparse.ArgumentParser(description="Generate UAT Report for Aurik 9.10.77")
     parser.add_argument(
         "--output-dir",

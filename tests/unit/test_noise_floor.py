@@ -283,7 +283,7 @@ class TestPipelineNoiseFloor:
             pytest.skip("phase_40_loudness_normalization nicht verfügbar")
 
         audio = _silence(duration_s=3.0)
-        result = phase.process(audio, sample_rate=SR, material=_material)
+        result = phase.process(audio, sample_rate=SR, material_type=_material)
         rms_after = _rms_dbfs(result.audio)
         # Selbst wenn Normalisierung auf −14 LUFS → Stille bleibt Stille
         assert rms_after < SILENCE_THRESHOLD_DBFS + 30.0, (

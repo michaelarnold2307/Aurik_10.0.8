@@ -230,6 +230,28 @@ _ROUGHNESS_APPLICABLE_TYPES: frozenset = frozenset(
 )
 
 
+def _as_membership_tuple(values: object) -> tuple[object, ...]:
+    """Normalize membership sources so runtime checks survive scalar misconfiguration."""
+    if values is None:
+        return ()
+    if isinstance(values, (str, bytes)):
+        return (values,)
+    try:
+        return tuple(values)
+    except TypeError:
+        return (values,)
+
+
+def _safe_contains(values: object, candidate: object) -> bool:
+    return candidate in _as_membership_tuple(values)
+
+
+def _safe_startswith_any(prefixes: object, text: str) -> bool:
+    if not text:
+        return False
+    return any(isinstance(prefix, str) and text.startswith(prefix) for prefix in _as_membership_tuple(prefixes))
+
+
 class ArtifactFreedomGate:
     """§2.49 Artefakt-Freiheits-Gate — 5 artifact types, material-adaptive, salienz-weighted."""
 
@@ -339,8 +361,8 @@ class ArtifactFreedomGate:
         _phase_type = get_phase_type(phase_id) if phase_id else PhaseOperationType.ENHANCEMENT
         _is_restorative = (
             _phase_type in (PhaseOperationType.SUBTRACTIVE, PhaseOperationType.CORRECTIVE)
-            or phase_id in self._RESTORATIVE_PHASE_IDS
-            or any(phase_id.startswith(p) for p in self._RESTORATIVE_PHASE_IDS)
+            or _safe_contains(self._RESTORATIVE_PHASE_IDS, phase_id)
+            or _safe_startswith_any(self._RESTORATIVE_PHASE_IDS, phase_id)
         )
         _per_phase_mode = bool(phase_id)
 
@@ -357,7 +379,7 @@ class ArtifactFreedomGate:
         #    ML_GENERATIVE: Diffusionsausgang hat keine MDCT-Quantisierungsstruktur.
         #    ADDITIVE: Harmonik-Synthese erzeugt keine kausale Prä-Echo-Struktur.
         #    (Richter et al. 2022; Brandenburg & Johnston 1994)
-        _pre_echo_valid = _phase_type in PRE_ECHO_VALID_TYPES
+        _pre_echo_valid = _safe_contains(PRE_ECHO_VALID_TYPES, _phase_type)
         _level_scale = 1.0
         if _pre_echo_valid:
             if _per_phase_mode:
@@ -444,7 +466,7 @@ class ArtifactFreedomGate:
         # Noise texture coherence — §2.48a: Nur valide für SUBTRACTIVE Phasen.
         # (Schwarz & Grill 2004: BW-Erweiterung ändert Spektral-Tilt intentional.)
         # ADDITIVE, CORRECTIVE, ML_GENERATIVE: Tilt-Änderung ist kein Artefakt.
-        _noise_texture_valid = _phase_type in NOISE_TEXTURE_VALID_TYPES
+        _noise_texture_valid = _safe_contains(NOISE_TEXTURE_VALID_TYPES, _phase_type)
         if _noise_texture_valid:
             noise_dev, noise_penalty = self._check_noise_texture(orig_mono, rest_mono, sr)
         else:
@@ -454,7 +476,7 @@ class ArtifactFreedomGate:
         _roughness_delta = 0.0
         _sharpness_delta = 0.0
         _rs_penalty = 0.0
-        if _phase_type in _ROUGHNESS_APPLICABLE_TYPES:
+        if _safe_contains(_ROUGHNESS_APPLICABLE_TYPES, _phase_type):
             try:
                 rough_orig = self._compute_roughness_zwicker(orig_mono, sr)
                 rough_rest = self._compute_roughness_zwicker(rest_mono, sr)

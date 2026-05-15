@@ -1705,6 +1705,70 @@ class TestPhase42VocalEnhancement:
 
 
 # ===========================================================================
+# Phase 43 – Adaptive De-Esser
+# ===========================================================================
+class TestPhase43AdaptiveDeEsser:
+    def setup_method(self):
+        from backend.core.phases.phase_43_ml_deesser import MLDeEsserPhase
+
+        self.phase = MLDeEsserPhase()
+
+    def test_mono_returns_phase_result(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+    def test_musical_goal_keys_in_metrics(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert "musical_goal_brillanz" in result.metrics
+        assert "musical_goal_artikulation" in result.metrics
+        assert "musical_goal_authentizitaet" in result.metrics
+        assert "musical_goal_transparenz" in result.metrics
+
+    def test_musical_goal_metrics_bounded(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert 0.0 <= float(result.metrics["musical_goal_brillanz"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_artikulation"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_authentizitaet"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_transparenz"]) <= 1.0
+
+    def test_transparency_metric_tracks_intelligibility_score(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert result.metrics["musical_goal_transparenz"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_score"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_authentizitaet_metric_tracks_presence_ratio(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert result.metrics["musical_goal_authentizitaet"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_presence_ratio"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_brillanz_metric_tracks_air_ratio(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert result.metrics["musical_goal_brillanz"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_air_ratio"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_artikulation_metric_tracks_articulation_ratio(self, mono):
+        result = self.phase.process(mono, SR, MaterialType.VINYL)
+        _assert_phase_result(result, mono)
+
+        assert result.metrics["musical_goal_artikulation"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_articulation_ratio"], 0.0, 1.0)), abs=1e-6
+        )
+
+
+# ===========================================================================
 # Phase 49 – Advanced Deverb
 # ===========================================================================
 class TestPhase49AdvancedDereverb:

@@ -267,7 +267,6 @@ def _inpaint_gap_dsp(
     audio: np.ndarray,
     start: int,
     end: int,
-    sample_rate: int,
     n_steps: int = _DIFFUSION_STEPS,
 ) -> np.ndarray:
     """
@@ -367,7 +366,7 @@ def _nmf_gap_fallback(
 
     from scipy import signal as _sps
 
-    freqs_ctx, times_ctx, Z_ctx = _sps.stft(context, fs=sr, window="hann", nperseg=_n_fft, noverlap=_n_fft - _hop)
+    _, _, Z_ctx = _sps.stft(context, fs=sr, window="hann", nperseg=_n_fft, noverlap=_n_fft - _hop)
     mag_ctx = np.abs(Z_ctx)  # (n_bins, n_frames)
     n_bins, n_frames = mag_ctx.shape
     if n_frames < 4 or n_bins < 4:
@@ -390,7 +389,6 @@ def _nmf_gap_fallback(
 
     # Estimate gap magnitude from average activations
     gap_start_ctx = start - ctx_start
-    end - ctx_start
     gap_duration = gap_len / sr
     n_gap_frames = max(1, int(np.round(gap_duration * sr / _hop)))
     avg_H = np.mean(_H, axis=1, keepdims=True)  # (rank, 1)
@@ -591,9 +589,12 @@ def _try_consistency_model_inpainting(channel: np.ndarray, start: int, end: int,
         if _os.path.abspath(_plugins_dir) not in sys.path:
             sys.path.insert(0, _os.path.abspath(_plugins_dir))
 
-        from plugins.consistency_inpaint_plugin import (
-            get_consistency_inpaint_plugin,  # pylint: disable=no-name-in-module
-        )
+        try:
+            from plugins.consistency_inpaint_plugin import (
+                get_consistency_inpaint_plugin,
+            )
+        except (ImportError, ModuleNotFoundError):
+            return None
 
         from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm55d
 
@@ -676,23 +677,24 @@ def _is_ml_thrashing() -> bool:
 
     Result is cached for 30 s to avoid log-spam from per-channel calls (BUG H).
     """
-    import threading as _th
-    import time as _time
+    import threading as _th  # pylint: disable=protected-access
 
     _cache = getattr(_is_ml_thrashing, "_cache", None)
     _lock = getattr(_is_ml_thrashing, "_lock", None)
     if _lock is None:
         _is_ml_thrashing._lock = _th.Lock()  # type: ignore[attr-defined]
         _is_ml_thrashing._cache = (False, 0.0)  # type: ignore[attr-defined]
-        _lock = _is_ml_thrashing._lock
-        _cache = _is_ml_thrashing._cache
+        _lock = _is_ml_thrashing._lock  # type: ignore[attr-defined]
+        _cache = _is_ml_thrashing._cache  # type: ignore[attr-defined]
 
-    now = _time.monotonic()
+    now = time.monotonic()
+    if _cache is None:
+        _cache = (False, 0.0)
     _result, _ts = _cache
     if now - _ts < 30.0:
         return _result
     with _lock:
-        _result, _ts = _is_ml_thrashing._cache  # type: ignore[attr-defined]
+        _result, _ts = _is_ml_thrashing._cache  # type: ignore[attr-defined]  # pylint: disable=protected-access
         if now - _ts < 30.0:
             return _result
         try:
@@ -701,7 +703,7 @@ def _is_ml_thrashing() -> bool:
             _result = bool(is_system_thrashing())
         except Exception:
             _result = False
-        _is_ml_thrashing._cache = (_result, now)  # type: ignore[attr-defined]
+        _is_ml_thrashing._cache = (_result, now)  # type: ignore[attr-defined]  # pylint: disable=protected-access
     return _result
 
 
@@ -808,7 +810,7 @@ def _process_channel(
         _last_warn_ts = getattr(_is_ml_thrashing, "_last_warn_ts", 0.0)
         if _now_warn - _last_warn_ts >= 60.0:
             logger.warning("phase_55: ML-Thrashing erkannt — konservativer DSP-Pfad zum Schutz von Musik/Sprache aktiv")
-            _is_ml_thrashing._last_warn_ts = _now_warn  # type: ignore[attr-defined]
+            _is_ml_thrashing._last_warn_ts = _now_warn  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
     for start, end in gaps:
         if wall_budget_s > 0.0 and (time.perf_counter() - _t_channel_start) > wall_budget_s:
@@ -855,7 +857,7 @@ def _process_channel(
             # Repeated allocation attempts under swap=100% create minute-long loops
             # without quality gain; deterministic DSP/NMF fallback is safer/faster.
             try:
-                candidate = _inpaint_gap_dsp(channel, start, end, sample_rate, n_steps)
+                candidate = _inpaint_gap_dsp(channel, start, end, n_steps)
             except Exception as _dsp_exc:
                 logger.debug(
                     "DSP-AR-Diffusion fehlgeschlagen — NMF-\u03b2-Fallback (gap %d:%d): %s", start, end, _dsp_exc
@@ -905,7 +907,7 @@ def _process_channel(
                         if plugin_result is None:
                             # Priorität 2+: DSP AR-Diffusion → NMF-β IS-Divergenz (§2.47 Fallback-Pflicht)
                             try:
-                                candidate = _inpaint_gap_dsp(channel, start, end, sample_rate, n_steps)
+                                candidate = _inpaint_gap_dsp(channel, start, end, n_steps)
                             except Exception as _dsp_exc:
                                 logger.debug(
                                     "DSP-AR-Diffusion fehlgeschlagen — NMF-\u03b2-Fallback (gap %d:%d): %s",
@@ -943,7 +945,7 @@ def _process_channel(
 
 
 # ─── Energie-Kontinuitäts-Score (PESQ-Proxy) ────────────────────────────
-def _reconstruction_quality_score(original: np.ndarray, repaired: np.ndarray, gaps: list[tuple[int, int]]) -> float:
+def _reconstruction_quality_score(_original: np.ndarray, repaired: np.ndarray, gaps: list[tuple[int, int]]) -> float:
     """Schätzt die Rekonstruktionsqualität (0–1) durch Energie-Kontinuität."""
     if not gaps:
         return 1.0
@@ -1151,7 +1153,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         return _repaired_mono.astype(np.float32)
 
-    def process(
+    def process(  # pylint: disable=arguments-renamed
         self,
         audio: np.ndarray,
         sample_rate: int,

@@ -477,6 +477,34 @@ class HarmonicRestorationPhase(PhaseInterface):
         params["strength"] = float(np.clip(float(params["strength"]) * _effective_strength, 0.0, 1.0))
         params["blend"] = float(np.clip(float(params["blend"]) * _effective_strength, 0.0, 1.0))
 
+        # §soft_saturation-Guard: Harmonic-Restoration bei saturiertem Material begrenzen.
+        # Soft_saturation liefert bereits geradzahlige Obertöne (H2/H4); weitere additive
+        # Sättigung kompoundiert die Verzerrung und macht Gesang "übersteuert/kratzig" (§0h).
+        # soft_saturation_preserve=True (z.B. Schlager-Profil) → max. 20 % Stärke.
+        # Analogie Toningenieur: Schallplatten-Sättigungscharakter bewahren, nicht verstärken.
+        _p07_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p07_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p07_soft_sat_preserve or _p07_soft_sat_sev > 0.35:
+            _p07_sat_scale = 1.0
+            if _p07_soft_sat_sev > 0.35:
+                # Lineare Reduzierung: severity 0.35→scale 1.0, severity 1.0→scale 0.12
+                _p07_sat_scale = float(np.clip(1.0 - (_p07_soft_sat_sev - 0.35) * 1.35, 0.12, 1.0))
+            if _p07_soft_sat_preserve and _p07_sat_scale > 0.20:
+                _p07_sat_scale = 0.20  # Hard-Cap: max. 20 % bei preserve=True (Vintage Aesthetics §0)
+            params["strength"] = float(params["strength"] * _p07_sat_scale)
+            params["blend"] = float(params["blend"] * _p07_sat_scale)
+            params["drive"] = float(np.clip(params.get("drive", 1.5) * max(_p07_sat_scale, 0.5), 1.0, 2.5))
+            logger.debug(
+                "Phase 07 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f "
+                "(strength=%.3f blend=%.3f drive=%.2f)",
+                _p07_soft_sat_sev,
+                _p07_soft_sat_preserve,
+                _p07_sat_scale,
+                params["strength"],
+                params["blend"],
+                params["drive"],
+            )
+
         # Check if restoration needed
         if float(params["strength"]) < 0.1:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -674,19 +702,24 @@ class HarmonicRestorationPhase(PhaseInterface):
         try:
             from backend.core.hallucination_guard import apply_hallucination_guard
 
-            _mono_07 = restored.mean(axis=0) if (
-                restored.ndim == 2 and restored.shape[0] == 2 and restored.shape[1] > 2
-            ) else (restored.mean(axis=1) if restored.ndim == 2 else restored)
-            _audio_mono_07 = audio.mean(axis=0) if (
-                audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2
-            ) else (audio.mean(axis=1) if audio.ndim == 2 else audio)
-            _BW_CEILINGS_07 = {
-                "shellac": 8000.0, "wax_cylinder": 5000.0, "vinyl": 16000.0,
-                "reel_tape": 18000.0, "cassette": 15000.0,
-            }
-            _bw_ceiling_07 = _BW_CEILINGS_07.get(
-                str(material_type).lower().replace(" ", "_"), None
+            _mono_07 = (
+                restored.mean(axis=0)
+                if (restored.ndim == 2 and restored.shape[0] == 2 and restored.shape[1] > 2)
+                else (restored.mean(axis=1) if restored.ndim == 2 else restored)
             )
+            _audio_mono_07 = (
+                audio.mean(axis=0)
+                if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
+            _BW_CEILINGS_07 = {
+                "shellac": 8000.0,
+                "wax_cylinder": 5000.0,
+                "vinyl": 16000.0,
+                "reel_tape": 18000.0,
+                "cassette": 15000.0,
+            }
+            _bw_ceiling_07 = _BW_CEILINGS_07.get(str(material_type).lower().replace(" ", "_"))
             _, _hg_meta_07 = apply_hallucination_guard(
                 _audio_mono_07.astype(np.float32),
                 _mono_07.astype(np.float32),
@@ -706,6 +739,7 @@ class HarmonicRestorationPhase(PhaseInterface):
         # §TonalReference: era/genre/material recording-chain ceiling (Eargle 2004)
         try:
             from backend.core.tonal_reference_profile import get_tonal_reference_profiler
+
             _era_r_07 = kwargs.get("era_result")
             _era_d_07 = int(getattr(_era_r_07, "decade", None) or 0) or None
             _genre_07 = str(kwargs.get("genre_label", "")).strip()
@@ -724,12 +758,17 @@ class HarmonicRestorationPhase(PhaseInterface):
             # (H2/H3-Profil des erkannten Geräte-Setups, z.B. Neve 1073 HF-Shelf, Röhren-Wärme).
             # Sanfte Stärke (0.25) — Phase 07 arbeitet subtil, Phase 06 ist der primäre HF-Restorer.
             restored = _tonal_curve_07.apply_target_steering(
-                audio, restored, sample_rate,
+                audio,
+                restored,
+                sample_rate,
                 steering_strength=0.25,
             )
             logger.debug(
                 "Phase 07 TonalReference: era=%s genre=%s mat=%s conf=%.2f",
-                _era_d_07, _genre_07 or "?", _mat_key_07, _tonal_curve_07.confidence,
+                _era_d_07,
+                _genre_07 or "?",
+                _mat_key_07,
+                _tonal_curve_07.confidence,
             )
         except Exception as _tc07_exc:
             logger.debug("Phase 07 TonalReference ceiling (non-blocking): %s", _tc07_exc)
@@ -766,8 +805,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                     " Hurchalla (2019), Klapuri (2006), Terhardt (1982)"
                 ),
                 "benchmark": (
-                    "Waves Aphex Vintage Warmer, SPL Vitalizer,"
-                    " iZotope Ozone Exciter, Softube Saturation Knob"
+                    "Waves Aphex Vintage Warmer, SPL Vitalizer, iZotope Ozone Exciter, Softube Saturation Knob"
                 ),
                 "algorithm_version": "3.0_multi_pitch",
                 "execution_time_seconds": execution_time,

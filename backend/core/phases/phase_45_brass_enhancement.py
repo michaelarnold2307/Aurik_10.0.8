@@ -192,6 +192,26 @@ class BrassEnhancementPhase(PhaseInterface):
                 metrics={"gain_h2": 0.0, "presence_db": 0.0, "air_db": 0.0},
             )
 
+        # §2.46g soft_saturation-Guard: Brass H2-Harmonic-Exciter, Presence und Air
+        # addieren Energie in Regionen, die soft_saturation bereits anreichert.
+        # Hard-Cap bei preserve=True: 35 %.
+        _p45_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p45_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p45_soft_sat_preserve or _p45_soft_sat_sev > 0.30:
+            _p45_sat_scale = 1.0
+            if _p45_soft_sat_sev > 0.30:
+                _p45_sat_scale = float(np.clip(1.0 - (_p45_soft_sat_sev - 0.30) * 1.0, 0.20, 1.0))
+            if _p45_soft_sat_preserve and _p45_sat_scale > 0.35:
+                _p45_sat_scale = 0.35
+            _effective_strength = float(_effective_strength * _p45_sat_scale)
+            logger.debug(
+                "Phase 45 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (strength=%.3f)",
+                _p45_soft_sat_sev,
+                _p45_soft_sat_preserve,
+                _p45_sat_scale,
+                _effective_strength,
+            )
+
         gain_h2: float = float(kwargs.get("gain_h2", 0.04))
         presence_db: float = float(kwargs.get("presence_db", 2.5))
         air_db: float = float(kwargs.get("air_db", 1.8))

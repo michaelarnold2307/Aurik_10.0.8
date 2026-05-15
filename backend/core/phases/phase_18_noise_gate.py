@@ -52,10 +52,51 @@ from typing import Any
 
 import numpy as np
 from scipy import signal
+from scipy.interpolate import interp1d
 
-from backend.core.audio_utils import audio_sample_count, safe_to_mono, stereo_channel_view, stereo_like
+from backend.core.audio_utils import (
+    apply_musical_gain_envelope,
+    audio_sample_count,
+    compute_signal_relative_gate_dbfs,
+    safe_to_mono,
+    stereo_channel_view,
+    stereo_like,
+)
 from backend.core.defect_scanner import MaterialType
 from backend.core.quality_mode import QualityModeConfig, is_phase_ml_enabled, log_mode_decision
+
+try:
+    from backend.core.dsp.psychoacoustics import (
+        apply_psychoacoustic_masking_clamp,
+        compute_masking_threshold_iso11172,
+    )
+except ImportError:  # pragma: no cover
+    apply_psychoacoustic_masking_clamp = None  # type: ignore[assignment]
+    compute_masking_threshold_iso11172 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_phoneme_mask_18
+except ImportError:  # pragma: no cover
+    _get_phoneme_mask_18 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.ml_memory_budget import release as _release_ml_budget_18
+    from backend.core.ml_memory_budget import try_allocate as _try_allocate_ml_budget_18
+except ImportError:  # pragma: no cover
+    _release_ml_budget_18 = None  # type: ignore[assignment]
+    _try_allocate_ml_budget_18 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.natural_performance_detector import (
+        get_natural_performance_detector as _get_natural_performance_detector_18,
+    )
+except ImportError:  # pragma: no cover
+    _get_natural_performance_detector_18 = None  # type: ignore[assignment]
+
+try:
+    from plugins.silero_plugin import get_silero_plugin as _get_silero_plugin_18
+except ImportError:  # pragma: no cover
+    _get_silero_plugin_18 = None  # type: ignore[assignment]
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -65,7 +106,8 @@ logger = logging.getLogger(__name__)
 def _compute_band_masking_gain_floors(audio: np.ndarray, sample_rate: int) -> list[float] | None:
     """Derive one psychoacoustic gain floor per gate band for §2.62."""
     try:
-        from backend.core.dsp.psychoacoustics import compute_masking_threshold_iso11172
+        if compute_masking_threshold_iso11172 is None:
+            raise RuntimeError("psychoacoustics unavailable")
 
         _mono = safe_to_mono(audio) if audio.ndim == 2 else audio
         _mask_ratio = compute_masking_threshold_iso11172(_mono, sample_rate, n_fft=2048, hop_length=512)
@@ -227,9 +269,10 @@ class NoiseGate(PhaseInterface):
         """Lazy load Silero VAD plugin for ML-based voice activity detection."""
         if self._silero_vad is None:
             try:
-                from plugins.silero_plugin import get_silero_plugin
+                if _get_silero_plugin_18 is None:
+                    raise RuntimeError("Silero plugin unavailable")
 
-                self._silero_vad = get_silero_plugin()
+                self._silero_vad = _get_silero_plugin_18()
                 logger.info("Silero VAD plugin loaded successfully")
             except Exception as e:
                 logger.warning("Failed to load Silero VAD plugin: %s", e)
@@ -265,7 +308,11 @@ class NoiseGate(PhaseInterface):
             return np.ones(len(audio), dtype=np.float32)
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs: Any,
     ) -> PhaseResult:
         """
         Apply multi-band noise gate to audio.
@@ -273,7 +320,7 @@ class NoiseGate(PhaseInterface):
         Args:
             audio: Input audio (mono or stereo)
             sample_rate: Sample rate in Hz
-            material: Material type for adaptive processing
+            material_type: Material type for adaptive processing
 
         Returns:
             PhaseResult with gated audio
@@ -282,6 +329,16 @@ class NoiseGate(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         self.validate_input(audio)
+        if isinstance(material_type, MaterialType):
+            material = material_type
+        else:
+            try:
+                material = MaterialType(str(material_type).upper())
+            except ValueError:
+                try:
+                    material = MaterialType[str(material_type).upper()]
+                except (KeyError, AttributeError):
+                    material = MaterialType.UNKNOWN
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -372,11 +429,12 @@ class NoiseGate(PhaseInterface):
         # Noise-Gate als Stille fehlklassifiziert werden → Original-Signal für diese
         # Frames wiederherstellen (Gate öffnen). Non-blocking.
         try:
-            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_18
+            if _get_phoneme_mask_18 is None:
+                raise RuntimeError("lyrics-guided enhancement unavailable")
 
             _hop_18 = 512
             _mono_18 = (safe_to_mono(audio) if is_stereo else audio).astype(np.float32)
-            _pmask_18 = _get_pmask_18(_mono_18, sample_rate, hop_length=_hop_18)
+            _pmask_18 = _get_phoneme_mask_18(_mono_18, sample_rate, hop_length=_hop_18)
             if np.any(_pmask_18):
                 _n18 = len(_mono_18)
                 _smask_18 = np.zeros(_n18, dtype=bool)
@@ -418,7 +476,8 @@ class NoiseGate(PhaseInterface):
 
         # §4.5 Psychoacoustic Masking Clamp — protect musically masked gate regions
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            if apply_psychoacoustic_masking_clamp is None:
+                raise RuntimeError("psychoacoustic masking clamp unavailable")
 
             gated_audio = apply_psychoacoustic_masking_clamp(
                 audio,
@@ -434,12 +493,13 @@ class NoiseGate(PhaseInterface):
         # Atemgeräusche (−55 bis −40 dBFS, 50–500 ms) werden vom Gate als Stille klassifiziert
         # und weggeschnitten. NPA-Detektor schützt diese Zonen. Non-blocking.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
+            if _get_natural_performance_detector_18 is None:
+                raise RuntimeError("natural performance detector unavailable")
 
             _npa_audio_18 = audio
             if _npa_audio_18.ndim == 2 and _npa_audio_18.shape[0] == 2 and _npa_audio_18.shape[1] > 2:
                 _npa_audio_18 = _npa_audio_18.T  # channels-first → channels-last
-            _npa_result_18 = get_natural_performance_detector().detect(_npa_audio_18, sample_rate)
+            _npa_result_18 = _get_natural_performance_detector_18().detect(_npa_audio_18, sample_rate)
             _npa_n_18 = (
                 gated_audio.shape[1]
                 if (gated_audio.ndim == 2 and gated_audio.shape[0] == 2 and gated_audio.shape[1] > gated_audio.shape[0])
@@ -589,8 +649,6 @@ class NoiseGate(PhaseInterface):
         processed_audio: np.ndarray,
         material: MaterialType,
     ) -> tuple[np.ndarray, dict[str, float]]:
-        from backend.core.audio_utils import apply_musical_gain_envelope, compute_signal_relative_gate_dbfs
-
         material_key = getattr(material, "name", str(material)).lower()
         max_rms_drop_db = float(self._MAX_RMS_DROP_DB.get(material_key, self._MAX_RMS_DROP_DB["unknown"]))
 
@@ -657,12 +715,12 @@ class NoiseGate(PhaseInterface):
                 _vad_budget_ok = False
                 _vad_release = None
                 try:
-                    from backend.core.ml_memory_budget import release as _rel_18
-                    from backend.core.ml_memory_budget import try_allocate as _try_alloc_18
+                    if _try_allocate_ml_budget_18 is None:
+                        raise ImportError
 
-                    if _try_alloc_18("SileroVAD_phase18", 0.08):
+                    if _try_allocate_ml_budget_18("SileroVAD_phase18", 0.08):
                         _vad_budget_ok = True
-                        _vad_release = _rel_18
+                        _vad_release = _release_ml_budget_18
                     else:
                         logger.debug("SileroVAD_phase18: ml_memory_budget insufficient — DSP-Fallback")
                 except ImportError:
@@ -783,8 +841,6 @@ class NoiseGate(PhaseInterface):
         if vad_probabilities is not None:
             # Resample VAD to match audio length
             if len(vad_probabilities) != len(audio):
-                from scipy.interpolate import interp1d
-
                 x_vad = np.linspace(0, 1, len(vad_probabilities))
                 x_audio = np.linspace(0, 1, len(audio))
                 f = interp1d(x_vad, vad_probabilities, kind="linear", fill_value="extrapolate")

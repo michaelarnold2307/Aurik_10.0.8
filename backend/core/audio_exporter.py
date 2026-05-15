@@ -166,6 +166,7 @@ class AudioExporter:
         quality: str = "high",
         metadata: dict[str, str] | None = None,
         normalize: bool = False,
+        reference_audio: np.ndarray | None = None,
     ) -> Path:
         """
         Export audio to file with specified format and options.
@@ -178,6 +179,7 @@ class AudioExporter:
             quality: Quality for lossy formats ('low', 'medium', 'high', 'veryh igh')
             metadata: Optional metadata dict (title, artist, album, etc.)
             normalize: Normalize audio to -0.1dBFS before export
+            reference_audio: Original import audio used for final quiet-edge clamp
 
         Returns:
             Path to exported file
@@ -194,6 +196,7 @@ class AudioExporter:
 
         # Prepare audio
         audio_export = audio.copy()
+        reference_export = None if reference_audio is None else np.asarray(reference_audio, dtype=np.float32).copy()
 
         # Normalize if requested — LUFS ITU-R BS.1770 (pyloudnorm) + TruePeak safety limiter.
         # For very quiet material we apply a small post-LUFS floor boost so that
@@ -281,6 +284,14 @@ class AudioExporter:
                 peak = float(np.percentile(np.abs(audio_export), 99.9))
                 if peak > 0:
                     audio_export = audio_export * (0.989 / peak)
+
+        if reference_export is not None:
+            try:
+                # §0h Music-Death-Shield: 0.5 dB tolerance — tighter than default 2.0 dB
+                # to guarantee no audible Pegelexplosion at quiet edges in exported file.
+                audio_export = _limit_quiet_edge_boost(reference_export, audio_export, sr=sr, max_edge_boost_db=0.5)
+            except Exception as _quiet_edge_exc:
+                logger.debug("Final quiet-edge export clamp skipped: %s", _quiet_edge_exc)
 
         # Ensure correct dtype for bit depth
         if not format_info["lossy"]:

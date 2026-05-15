@@ -3,15 +3,20 @@
 
 # Core Deep Learning — CPU-only (§13.4, §9.5 — kein CUDA erlaubt)
 # Installation via install_aurik.sh oder:
-# pip install torch==2.2.2+cpu torchaudio==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.2+cpu
-torchaudio==2.2.2+cpu
+# pip install torch==2.7.0+cpu torchaudio==2.7.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+# Sicherheitsfix: torch>=2.6.0 behebt CVE-2025-32434 (critical RCE via torch.load),
+#   CVE-2024-31580 (heap-based buffer overflow), CVE-2024-31583 (use-after-free).
+torch==2.7.0+cpu
+torchaudio==2.7.0+cpu
 
 # Hyperparameter Optimization
 optuna>=3.5.0
 
 # Neural Architecture Search
-sympy>=1.13.0  # For symbolic expression handling, avoid 1.14.0 (incompatible with PyTorch)
+# sympy: >=1.13.1 behebt ReDoS/Infinite-loop-Schwachstellen in 1.13.0;
+# <1.14.0 schließt bekannte Code-Injection (Eval-Injection) in 1.14.x aus
+# und behält PyTorch-Kompatibilität.
+sympy>=1.13.1,<1.14.0
 
 # Performance Testing
 pytest-benchmark>=5.2.3  # For performance benchmarking tests

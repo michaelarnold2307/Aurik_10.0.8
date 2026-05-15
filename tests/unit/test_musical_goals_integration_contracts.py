@@ -69,6 +69,14 @@ class TestUnifiedRestorerWiringContracts:
         assert 'frozenset(getattr(_goal_applicability_result, "applicable", ()) or ())' in src
         assert 'frozenset(getattr(_goal_applicability_result, "inapplicable", ()) or ())' in src
 
+    def test_04c_restoration_critical_best_effort_rolls_back_reconstruction(self) -> None:
+        """Restoration must not ship phase_24/55 best_effort reconstruction output."""
+        src = Path("backend/core/unified_restorer_v3.py").read_text(encoding="utf-8")
+        assert '"phase_24_dropout_repair"' in src
+        assert '"phase_55_diffusion_inpainting"' in src
+        assert '"phase_17_mastering_polish"' in src
+        assert '"phase_42_vocal_enhancement"' in src
+
 
 class TestUnifiedRestorerRuntimeIntegration:
     @pytest.mark.ml

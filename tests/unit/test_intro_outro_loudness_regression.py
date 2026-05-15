@@ -50,10 +50,9 @@ def _make_song_with_quiet_zones(
     amp_quiet = 10.0 ** (quiet_dbfs / 20.0)
 
     t = np.linspace(0.0, float(n_body) / SR, n_body)
-    body = (
-        np.sin(2 * np.pi * 440 * t) * amp_body * 0.7
-        + np.sin(2 * np.pi * 880 * t) * amp_body * 0.3
-    ).astype(np.float32)
+    body = (np.sin(2 * np.pi * 440 * t) * amp_body * 0.7 + np.sin(2 * np.pi * 880 * t) * amp_body * 0.3).astype(
+        np.float32
+    )
 
     intro = (rng.randn(n_intro) * amp_quiet).astype(np.float32)
     outro = (rng.randn(n_outro) * amp_quiet).astype(np.float32)
@@ -101,7 +100,7 @@ class TestMusicalGainEnvelopeQuietZones:
 
     @pytest.fixture(autouse=True)
     def _import_guard(self):
-        from backend.core.audio_utils import apply_musical_gain_envelope  # noqa: PLC0415
+        from backend.core.audio_utils import apply_musical_gain_envelope
 
         self._fn = apply_musical_gain_envelope
 
@@ -117,8 +116,7 @@ class TestMusicalGainEnvelopeQuietZones:
         out_db = _zone_rms_dbfs(out, 0, n_intro)
         boost = out_db - in_db
         assert boost <= MAX_INTRO_OUTRO_BOOST_DB, (
-            f"Intro: gain={gain:.1f}× → Pegelexplosion +{boost:.1f} dB "
-            f"(limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
+            f"Intro: gain={gain:.1f}× → Pegelexplosion +{boost:.1f} dB (limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
         )
 
     @pytest.mark.parametrize("gain", [2.0, 3.0, 6.0, 10.0])
@@ -134,8 +132,7 @@ class TestMusicalGainEnvelopeQuietZones:
         out_db = _zone_rms_dbfs(out, n_outro_start, n_total)
         boost = out_db - in_db
         assert boost <= MAX_INTRO_OUTRO_BOOST_DB, (
-            f"Outro: gain={gain:.1f}× → Pegelexplosion +{boost:.1f} dB "
-            f"(limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
+            f"Outro: gain={gain:.1f}× → Pegelexplosion +{boost:.1f} dB (limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
         )
 
     def test_stereo_intro_not_boosted(self) -> None:
@@ -149,9 +146,7 @@ class TestMusicalGainEnvelopeQuietZones:
             in_db = _zone_rms_dbfs(audio[:, ch], 0, n_intro)
             out_db = _zone_rms_dbfs(out[:, ch], 0, n_intro)
             boost = out_db - in_db
-            assert boost <= MAX_INTRO_OUTRO_BOOST_DB, (
-                f"Stereo Intro [{name}]: gain=5× → Pegelexplosion +{boost:.1f} dB"
-            )
+            assert boost <= MAX_INTRO_OUTRO_BOOST_DB, f"Stereo Intro [{name}]: gain=5× → Pegelexplosion +{boost:.1f} dB"
 
     def test_music_body_is_boosted(self) -> None:
         """Musikkörper muss tatsächlich angehoben werden (kein False-Pass durch No-Op)."""
@@ -179,7 +174,7 @@ class TestMusicalGainEnvelopeQuietZones:
         vinyl = (rng.randn(int(1.0 * SR)) * amp_vinyl).astype(np.float32)
         audio = np.concatenate([music, vinyl])
 
-        from backend.core.audio_utils import apply_musical_gain_envelope  # noqa: PLC0415
+        from backend.core.audio_utils import apply_musical_gain_envelope
 
         out = apply_musical_gain_envelope(audio, gain=4.0, gate_dbfs=-36.0, sr=SR)
 
@@ -226,8 +221,7 @@ class TestSosfiltSplitRecombineNoExplosion:
         out_db = 20.0 * np.log10(out_peak + 1e-12)
 
         assert out_db <= in_db + 3.0, (
-            f"sosfiltfilt Split+Recombine: Peak +{out_db - in_db:.1f} dB "
-            "(über +3 dB-Grenze → mögliche Pegelexplosion)"
+            f"sosfiltfilt Split+Recombine: Peak +{out_db - in_db:.1f} dB (über +3 dB-Grenze → mögliche Pegelexplosion)"
         )
 
     def test_sosfilt_causal_phase_shift_is_measurable(self) -> None:
@@ -311,7 +305,7 @@ class TestStereoLinkedNormalizationNoGainMismatch:
         """
         # Asymmetrisches Stereo: R-Kanal leiser (typisches Vinyl-Material)
         n = int(2.0 * SR)
-        rng = np.random.RandomState(7)
+        np.random.RandomState(7)
         amp_l = 10.0 ** (-18.0 / 20.0)
         amp_r = 10.0 ** (-24.0 / 20.0)  # R ist 6 dB leiser
         t = np.linspace(0, 2.0, n)
@@ -339,8 +333,7 @@ class TestStereoLinkedNormalizationNoGainMismatch:
         )
         # Falsches Pattern: normiert beide weg → Imbalance ≈ 0
         assert imbalance_wrong < 1.0, (
-            f"Per-Kanal-Normierung hätte L/R-Imbalance auflösen sollen "
-            f"(got {imbalance_wrong:.1f} dB)"
+            f"Per-Kanal-Normierung hätte L/R-Imbalance auflösen sollen (got {imbalance_wrong:.1f} dB)"
         )
 
     def test_linked_normalization_preserves_stereo_balance(self) -> None:
@@ -373,7 +366,7 @@ class TestCheckGainSafetyPreFlight:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from backend.core.audio_utils import check_gain_safety  # noqa: PLC0415
+        from backend.core.audio_utils import check_gain_safety
 
         self._fn = check_gain_safety
 
@@ -381,7 +374,7 @@ class TestCheckGainSafetyPreFlight:
         """Hoher Gain auf Material nahe 0 dBFS wird auf sicheren Wert begrenzt."""
         # Audio bei -6 dBFS Peak
         amp = 10.0 ** (-6.0 / 20.0)
-        audio = (np.ones(SR, dtype=np.float32) * amp)
+        audio = np.ones(SR, dtype=np.float32) * amp
 
         safe_gain, was_clamped = self._fn(audio, requested_gain=5.0, max_peak_dbfs=-1.0)
 
@@ -390,13 +383,13 @@ class TestCheckGainSafetyPreFlight:
         # Nach Anwendung darf Peak nicht über -1 dBTP liegen
         out_peak = float(np.max(np.abs(audio * safe_gain)))
         assert out_peak <= 10.0 ** (-1.0 / 20.0) + 0.001, (
-            f"Peak nach safe_gain: {20*np.log10(out_peak+1e-12):.1f} dBFS (limit: -1 dBTP)"
+            f"Peak nach safe_gain: {20 * np.log10(out_peak + 1e-12):.1f} dBFS (limit: -1 dBTP)"
         )
 
     def test_quiet_material_no_clamp(self) -> None:
         """Auf leisem Material (-40 dBFS) wird Gain 3.0 nicht begrenzt."""
         amp = 10.0 ** (-40.0 / 20.0)
-        audio = (np.ones(SR, dtype=np.float32) * amp)
+        audio = np.ones(SR, dtype=np.float32) * amp
 
         safe_gain, was_clamped = self._fn(audio, requested_gain=3.0, max_peak_dbfs=-1.0)
 
@@ -429,7 +422,7 @@ class TestEndToEndQuietZoneInvariant:
         self, audio: np.ndarray, eq_gain_db: float = 6.0, makeup_gain: float = 2.0
     ) -> np.ndarray:
         """Minimal-Simulation einer Restaurierungsphase mit EQ + Makeup-Gain."""
-        from backend.core.audio_utils import apply_musical_gain_envelope  # noqa: PLC0415
+        from backend.core.audio_utils import apply_musical_gain_envelope
 
         # EQ-Band (Presence-Boost, ~3 kHz)
         sos = sp_signal.butter(2, [2000, 6000], btype="band", fs=SR, output="sos")
@@ -438,9 +431,7 @@ class TestEndToEndQuietZoneInvariant:
         processed = audio + eq_band * eq_linear
 
         # Makeup-Gain mit Guard
-        out = apply_musical_gain_envelope(
-            processed, gain=makeup_gain, gate_dbfs=-36.0, sr=SR, reference_for_gate=audio
-        )
+        out = apply_musical_gain_envelope(processed, gain=makeup_gain, gate_dbfs=-36.0, sr=SR, reference_for_gate=audio)
 
         # Soft-Limiter
         peak = float(np.percentile(np.abs(out), 99.9))
@@ -498,6 +489,241 @@ class TestEndToEndQuietZoneInvariant:
             out_db = _zone_rms_dbfs(out, start, end)
             boost = out_db - in_db
             assert boost <= MAX_INTRO_OUTRO_BOOST_DB, (
-                f"{name} mit makeup_gain={makeup_gain:.1f}×: "
-                f"+{boost:.1f} dB (limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
+                f"{name} mit makeup_gain={makeup_gain:.1f}×: +{boost:.1f} dB (limit: +{MAX_INTRO_OUTRO_BOOST_DB} dB)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: §0h limit_quiet_edge_boost — 0.5 dB finale Exporttoleranz
+# ---------------------------------------------------------------------------
+
+# Tight tolerance used in final export guards (UV3 + AudioExporter + fallback path)
+MAX_FINAL_EXPORT_BOOST_DB = 0.5
+# +0.01 dB floating-point rounding margin (inaudible; limit_quiet_edge_boost clamps to exactly
+# max_edge_boost_db=0.5 but dB-conversion of the linear scale factor introduces ~1e-6 dB rounding)
+_FINAL_BOOST_LIMIT = MAX_FINAL_EXPORT_BOOST_DB + 0.01
+
+
+class TestLimitQuietEdgeBoostFinalTolerance:
+    """§0h Music-Death-Shield: limit_quiet_edge_boost mit max_edge_boost_db=0.5 dB.
+
+    Stellt sicher, dass die finale Export-Schutzschicht Pegelexplosionen auf
+    max. 0.5 dB begrenzt — kein hörbarer Pegel-Burst in stillen Intro/Outro-Zonen.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from backend.core.audio_utils import limit_quiet_edge_boost
+
+        self._fn = limit_quiet_edge_boost
+
+    def _ref_with_quiet_edges(
+        self,
+        quiet_dbfs: float = -55.0,
+        music_dbfs: float = -18.0,
+        total_s: float = 5.0,
+        edge_s: float = 1.0,
+        stereo: bool = False,
+        seed: int = 1,
+    ) -> np.ndarray:
+        rng = np.random.RandomState(seed)
+        n_total = int(total_s * SR)
+        n_edge = int(edge_s * SR)
+        n_body = n_total - 2 * n_edge
+        amp_q = 10.0 ** (quiet_dbfs / 20.0)
+        amp_m = 10.0 ** (music_dbfs / 20.0)
+        t = np.linspace(0, float(n_body) / SR, n_body)
+        body = (np.sin(2 * np.pi * 440 * t) * amp_m).astype(np.float32)
+        intro = (rng.randn(n_edge) * amp_q).astype(np.float32)
+        outro = (rng.randn(n_edge) * amp_q).astype(np.float32)
+        mono = np.concatenate([intro, body, outro])
+        if stereo:
+            ch_r = np.concatenate(
+                [
+                    (rng.randn(n_edge) * amp_q).astype(np.float32),
+                    body * 0.98,
+                    (rng.randn(n_edge) * amp_q).astype(np.float32),
+                ]
+            )
+            return np.column_stack([mono, ch_r])
+        return mono
+
+    @pytest.mark.parametrize("boost_db", [1.0, 2.0, 4.0, 8.0])
+    def test_mono_intro_clamped_to_05db(self, boost_db: float) -> None:
+        """Mono-Intro: Boost von {boost_db} dB → nach Clamp ≤ 0.5 dB über Referenz."""
+        ref = self._ref_with_quiet_edges()
+        n_edge = int(1.0 * SR)
+        boost_lin = 10.0 ** (boost_db / 20.0)
+        # Simulate a candidate that has been boosted at the intro
+        candidate = ref.copy()
+        candidate[:n_edge] *= boost_lin
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        ref_db = _zone_rms_dbfs(ref, 0, n_edge)
+        out_db = _zone_rms_dbfs(result, 0, n_edge)
+        actual_boost = out_db - ref_db
+        assert actual_boost <= _FINAL_BOOST_LIMIT, (
+            f"Intro boost_db={boost_db:.1f} → nach Clamp {actual_boost:.2f} dB (limit: {MAX_FINAL_EXPORT_BOOST_DB} dB)"
+        )
+
+    @pytest.mark.parametrize("boost_db", [1.0, 2.0, 4.0, 8.0])
+    def test_mono_outro_clamped_to_05db(self, boost_db: float) -> None:
+        """Mono-Outro: Boost von {boost_db} dB → nach Clamp ≤ 0.5 dB über Referenz."""
+        ref = self._ref_with_quiet_edges()
+        n_total = len(ref)
+        n_edge = int(1.0 * SR)
+        boost_lin = 10.0 ** (boost_db / 20.0)
+        candidate = ref.copy()
+        candidate[-n_edge:] *= boost_lin
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        ref_db = _zone_rms_dbfs(ref, n_total - n_edge, n_total)
+        out_db = _zone_rms_dbfs(result, n_total - n_edge, n_total)
+        actual_boost = out_db - ref_db
+        assert actual_boost <= _FINAL_BOOST_LIMIT, (
+            f"Outro boost_db={boost_db:.1f} → nach Clamp {actual_boost:.2f} dB (limit: {MAX_FINAL_EXPORT_BOOST_DB} dB)"
+        )
+
+    @pytest.mark.parametrize("boost_db", [1.0, 2.0, 4.0, 8.0])
+    def test_stereo_both_channels_clamped(self, boost_db: float) -> None:
+        """Stereo: Beide Kanäle werden auf 0.5 dB geclampt."""
+        ref = self._ref_with_quiet_edges(stereo=True)
+        n_edge = int(1.0 * SR)
+        boost_lin = 10.0 ** (boost_db / 20.0)
+        candidate = ref.copy()
+        candidate[:n_edge, :] *= boost_lin
+        candidate[-n_edge:, :] *= boost_lin
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        n_total = ref.shape[0]
+        for ch_idx, ch_name in [(0, "L"), (1, "R")]:
+            for zone, start, end in [
+                ("Intro", 0, n_edge),
+                ("Outro", n_total - n_edge, n_total),
+            ]:
+                ref_db = _zone_rms_dbfs(ref[:, ch_idx], start, end)
+                out_db = _zone_rms_dbfs(result[:, ch_idx], start, end)
+                actual_boost = out_db - ref_db
+                assert actual_boost <= _FINAL_BOOST_LIMIT, (
+                    f"[{ch_name}] {zone} boost_db={boost_db:.1f} → "
+                    f"{actual_boost:.2f} dB (limit: {MAX_FINAL_EXPORT_BOOST_DB} dB)"
+                )
+
+    def test_music_body_unaffected_by_edge_clamp(self) -> None:
+        """Musikkörper (keine stille Edge): Clamp ändert nichts."""
+        ref = self._ref_with_quiet_edges()
+        n_edge = int(1.0 * SR)
+        n_body_start = n_edge
+        n_body_end = len(ref) - n_edge
+        # Boost only in body (not at edges) — edge clamp must not touch body
+        candidate = ref.copy()
+        candidate[n_body_start:n_body_end] *= 1.5
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        # Body remains boosted
+        body_in_db = _zone_rms_dbfs(ref, n_body_start, n_body_end)
+        body_out_db = _zone_rms_dbfs(result, n_body_start, n_body_end)
+        assert body_out_db > body_in_db + 1.0, (
+            f"Musikkörper sollte noch geboosted sein: in={body_in_db:.1f}, out={body_out_db:.1f} dB"
+        )
+
+    def test_attenuation_at_edges_is_never_applied_when_not_loud(self) -> None:
+        """Keine Absenkung wenn Kandidat bereits leiser als Referenz (kein falsch-positiver Clamp)."""
+        ref = self._ref_with_quiet_edges()
+        n_edge = int(1.0 * SR)
+        # Candidate is QUIETER at edges than reference (e.g. after noise reduction)
+        candidate = ref.copy()
+        candidate[:n_edge] *= 0.1  # -20 dB → much quieter
+        candidate[-n_edge:] *= 0.1
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        # Clamp must not boost the already-quiet edges
+        n_total = len(ref)
+        for zone, start, end in [("Intro", 0, n_edge), ("Outro", n_total - n_edge, n_total)]:
+            cand_db = _zone_rms_dbfs(candidate, start, end)
+            out_db = _zone_rms_dbfs(result, start, end)
+            # Should be equal or quieter (never louder than the candidate)
+            assert out_db <= cand_db + 0.1, (
+                f"{zone}: result ({out_db:.1f} dB) sollte ≤ candidate ({cand_db:.1f} dB) sein"
+            )
+
+    def test_vinyl_noise_floor_at_minus33_clamped_to_05db(self) -> None:
+        """Vinyl-Rauschen bei -33 dBFS: Boost auf -31 dBFS wird auf -32.5 dBFS geclampt."""
+        # Reference: vinyl noise at -33 dBFS at edges
+        ref = self._ref_with_quiet_edges(quiet_dbfs=-33.0, music_dbfs=-18.0)
+        n_edge = int(1.0 * SR)
+        # Candidate: edge boosted by +2 dB (from -33 to -31 dBFS)
+        candidate = ref.copy()
+        candidate[:n_edge] *= 10.0 ** (2.0 / 20.0)
+        candidate[-n_edge:] *= 10.0 ** (2.0 / 20.0)
+
+        result = self._fn(ref, candidate, SR, max_edge_boost_db=0.5)
+
+        n_total = len(ref)
+        for zone, start, end in [("Intro", 0, n_edge), ("Outro", n_total - n_edge, n_total)]:
+            ref_db = _zone_rms_dbfs(ref, start, end)
+            out_db = _zone_rms_dbfs(result, start, end)
+            actual_boost = out_db - ref_db
+            assert actual_boost <= _FINAL_BOOST_LIMIT, (
+                f"Vinyl-Edge {zone}: ref={ref_db:.1f} dB, out={out_db:.1f} dB, "
+                f"boost={actual_boost:.2f} dB (limit: {MAX_FINAL_EXPORT_BOOST_DB} dB)"
+            )
+
+
+class TestAudioExporterEdgeClampTolerance:
+    """§0h Smoke-Test: AudioExporter wendet finale Edge-Guard mit 0.5 dB Toleranz an."""
+
+    def test_exporter_final_guard_uses_05db_tolerance(self, tmp_path) -> None:
+        """AudioExporter: Quiet-Edge-Clamp limitiert auf 0.5 dB über Referenz."""
+        pytest.importorskip("soundfile")
+        from backend.core.audio_exporter import AudioExporter
+
+        n = int(5.0 * SR)
+        n_edge = int(1.0 * SR)
+        rng = np.random.RandomState(42)
+        amp_q = 10.0 ** (-55.0 / 20.0)
+        amp_m = 10.0 ** (-18.0 / 20.0)
+        t = np.linspace(0, float(n - 2 * n_edge) / SR, n - 2 * n_edge)
+        body = (np.sin(2 * np.pi * 440 * t) * amp_m).astype(np.float32)
+        reference = np.concatenate(
+            [
+                (rng.randn(n_edge) * amp_q).astype(np.float32),
+                body,
+                (rng.randn(n_edge) * amp_q).astype(np.float32),
+            ]
+        )
+
+        # Candidate: 4 dB boost at both edges (simulating cumulative pipeline gain)
+        candidate = reference.copy()
+        boost_lin = 10.0 ** (4.0 / 20.0)
+        candidate[:n_edge] *= boost_lin
+        candidate[-n_edge:] *= boost_lin
+
+        out_path = tmp_path / "test_edge_guard.wav"
+        exporter = AudioExporter()
+        exporter.export(
+            candidate,
+            SR,
+            out_path,
+            bit_depth=24,
+            normalize=False,
+            reference_audio=reference,
+        )
+
+        import soundfile as sf_
+
+        exported, _ = sf_.read(str(out_path))
+
+        for zone, start, end in [("Intro", 0, n_edge), ("Outro", n - n_edge, n)]:
+            ref_db = _zone_rms_dbfs(reference, start, end)
+            out_db = _zone_rms_dbfs(exported, start, end)
+            actual_boost = out_db - ref_db
+            assert actual_boost <= _FINAL_BOOST_LIMIT + 0.1, (  # +0.1 dB dither margin
+                f"AudioExporter {zone}: ref={ref_db:.1f} dB, exported={out_db:.1f} dB, "
+                f"boost={actual_boost:.2f} dB (limit: {MAX_FINAL_EXPORT_BOOST_DB} dB + 0.1 dB Dither)"
             )

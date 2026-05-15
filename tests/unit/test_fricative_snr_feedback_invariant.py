@@ -153,8 +153,8 @@ class TestPhase19FeedbackInvariantMetadata:
         from backend.core.defect_scanner import MaterialType
         from backend.core.phases.phase_19_de_esser import DeEsserPhase
 
-        phase = DeEsserPhase(gender=gender)
-        result = phase.process(audio, SR, MaterialType.TAPE, gender=gender)
+        phase = DeEsserPhase(gender_type=gender)
+        result = phase.process(audio, SR, material_type=MaterialType.TAPE, gender=gender)
         return result.metadata
 
     def test_11_metadata_contains_snr_fields(self):
@@ -217,8 +217,8 @@ class TestPhase19FeedbackInvariantMetadata:
         from backend.core.phases.phase_19_de_esser import DeEsserPhase
 
         audio = _hf_noise() * 0.3 + _white_noise()
-        phase = DeEsserPhase(gender="female")
-        result = phase.process(audio, SR, MaterialType.VINYL, gender="female")
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(audio, SR, material_type=MaterialType.VINYL, gender="female")
         assert np.isfinite(result.audio).all(), "Output darf kein NaN/Inf enthalten"
         assert np.max(np.abs(result.audio)) <= 1.0, "Output darf nicht clippen"
 
@@ -253,8 +253,8 @@ class TestPhase19FeedbackInvariantMetadata:
         from backend.core.defect_scanner import MaterialType
         from backend.core.phases.phase_19_de_esser import DeEsserPhase
 
-        phase = DeEsserPhase(gender="female")
-        result = phase.process(_white_noise(2.0), SR, MaterialType.TAPE)
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(_white_noise(2.0), SR, material_type=MaterialType.TAPE)
         assert result.success is True
 
     def test_25_metadata_present_when_consonant_enhancement_unavailable(self):
@@ -268,8 +268,8 @@ class TestPhase19FeedbackInvariantMetadata:
             p19._HAS_CONSONANT_ENHANCEMENT = False
             from backend.core.defect_scanner import MaterialType
 
-            phase = p19.DeEsserPhase(gender="female")
-            result = phase.process(_white_noise(2.0), SR, MaterialType.TAPE)
+            phase = p19.DeEsserPhase(gender_type="female")
+            result = phase.process(_white_noise(2.0), SR, material_type=MaterialType.TAPE)
             meta = result.metadata
             # Felder müssen vorhanden sein (Defaults: True / 0.0 / 0.0)
             assert "fricative_snr_invariant_met" in meta
@@ -277,3 +277,97 @@ class TestPhase19FeedbackInvariantMetadata:
             assert "fricative_snr_after_chain_db" in meta
         finally:
             p19._HAS_CONSONANT_ENHANCEMENT = original
+
+
+class TestAssessDeEsserIntelligibility:
+    """Direkte Unit-Tests für den Intelligibility-Helper aus Commit 7."""
+
+    @staticmethod
+    def _tone(freq_hz: float, amp: float = 0.3, seconds: float = 1.0) -> np.ndarray:
+        t = np.linspace(0.0, seconds, int(SR * seconds), endpoint=False, dtype=np.float32)
+        return (amp * np.sin(2.0 * np.pi * freq_hz * t)).astype(np.float32)
+
+    def test_26_report_is_finite_and_typed(self):
+        from backend.core.dsp.deesser_intelligibility import (
+            DeEsserIntelligibilityReport,
+            assess_deesser_intelligibility_preservation,
+        )
+
+        original = self._tone(3000.0) + self._tone(6500.0) + self._tone(10000.0)
+        report = assess_deesser_intelligibility_preservation(original, original, SR, voice_gender="female")
+
+        assert isinstance(report, DeEsserIntelligibilityReport)
+        assert math.isfinite(report.presence_ratio)
+        assert math.isfinite(report.articulation_ratio)
+        assert math.isfinite(report.air_ratio)
+        assert math.isfinite(report.intelligibility_score)
+        assert report.should_protect is False
+
+    def test_27_air_only_loss_is_less_severe_than_presence_articulation_loss(self):
+        from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
+
+        original = 0.35 * self._tone(3000.0) + 0.30 * self._tone(6500.0) + 0.25 * self._tone(10000.0)
+        air_only_loss = 0.35 * self._tone(3000.0) + 0.30 * self._tone(6500.0) + 0.05 * self._tone(10000.0)
+        speech_loss = 0.20 * self._tone(3000.0) + 0.16 * self._tone(6500.0) + 0.25 * self._tone(10000.0)
+
+        air_report = assess_deesser_intelligibility_preservation(original, air_only_loss, SR, voice_gender="female")
+        speech_report = assess_deesser_intelligibility_preservation(original, speech_loss, SR, voice_gender="female")
+
+        assert air_report.intelligibility_loss < speech_report.intelligibility_loss
+        assert speech_report.should_protect is True
+
+    def test_28_zero_band_reference_stays_safe(self):
+        from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
+
+        original = np.zeros(SR, dtype=np.float32)
+        after = np.zeros(SR, dtype=np.float32)
+        report = assess_deesser_intelligibility_preservation(original, after, SR, voice_gender="male")
+
+        assert report.presence_ratio == pytest.approx(1.0, abs=1e-6)
+        assert report.articulation_ratio == pytest.approx(1.0, abs=1e-6)
+        assert report.air_ratio == pytest.approx(1.0, abs=1e-6)
+
+
+class TestPhase19IntelligibilityMetadata:
+    """Phase 19 exportiert die neuen Intelligibility-Metadaten vollständig."""
+
+    def test_29_metadata_contains_intelligibility_fields(self):
+        from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase
+
+        audio = 0.35 * TestAssessDeEsserIntelligibility._tone(3000.0)
+        audio += 0.30 * TestAssessDeEsserIntelligibility._tone(6500.0)
+        audio += 0.25 * TestAssessDeEsserIntelligibility._tone(10000.0)
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(audio.astype(np.float32), SR, material_type=MaterialType.TAPE, gender="female")
+        meta = result.metadata
+        metrics = result.metrics
+
+        assert "intelligibility_protected" in meta
+        assert "intelligibility_score" in meta
+        assert "intelligibility_presence_ratio" in meta
+        assert "intelligibility_articulation_ratio" in meta
+        assert "intelligibility_air_ratio" in meta
+        assert "intelligibility_fricative_snr_delta_db" in meta
+        assert "intelligibility_score" in metrics
+        assert "intelligibility_presence_ratio" in metrics
+        assert "intelligibility_articulation_ratio" in metrics
+        assert "intelligibility_air_ratio" in metrics
+        assert "intelligibility_fricative_snr_delta_db" in metrics
+
+    def test_30_intelligibility_values_are_finite_and_bounded(self):
+        from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase
+
+        audio = _stereo(_hf_noise() * 0.35 + _white_noise())
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(audio, SR, material_type=MaterialType.VINYL, gender="female")
+        meta = result.metadata
+
+        assert isinstance(meta["intelligibility_protected"], bool)
+        assert 0.0 <= meta["intelligibility_score"] <= 1.0
+        assert 0.0 <= meta["intelligibility_presence_ratio"] <= 1.25
+        assert 0.0 <= meta["intelligibility_articulation_ratio"] <= 1.25
+        assert 0.0 <= meta["intelligibility_air_ratio"] <= 1.25
+        assert math.isfinite(meta["intelligibility_fricative_snr_delta_db"])

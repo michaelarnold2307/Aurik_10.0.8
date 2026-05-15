@@ -227,3 +227,45 @@ def test_12_quiet_edge_reference_clamps_intentionally_quiet_intro_outro():
     assert intro_out <= intro_ref + 2.05, f"Quiet intro was over-boosted: {intro_out - intro_ref:.1f} dB"
     assert outro_out <= outro_ref + 2.05, f"Quiet outro was over-boosted: {outro_out - outro_ref:.1f} dB"
     assert body_out >= body_ref + 2.0, "Music body should still receive meaningful gain"
+
+
+def test_13_stereo_right_channel_quiet_edges_are_clamped_independently():
+    """A single over-boosted stereo channel at intro/outro must be clamped on that channel too."""
+    n = int(8.0 * SR)
+    t = np.linspace(0.0, 8.0, n, endpoint=False)
+    base = (0.18 * np.sin(2.0 * np.pi * 220.0 * t)).astype(np.float32)
+
+    left_ref = base.copy()
+    right_ref = (base * 0.92).astype(np.float32)
+    left_ref[: int(1.0 * SR)] *= 0.10
+    right_ref[: int(1.0 * SR)] *= 0.10
+    left_ref[-int(1.0 * SR) :] *= 0.08
+    right_ref[-int(1.0 * SR) :] *= 0.08
+    reference = np.stack([left_ref, right_ref], axis=0)
+
+    processed = reference.copy()
+    processed[1, : int(1.0 * SR)] *= 3.8
+    processed[1, -int(1.0 * SR) :] *= 3.4
+
+    out = apply_musical_gain_envelope(
+        processed,
+        gain=2.5,
+        gate_dbfs=-36.0,
+        sr=SR,
+        reference_for_gate=reference,
+    )
+
+    right_intro_ref = _rms_dbfs(reference[1, : int(1.0 * SR)])
+    right_intro_out = _rms_dbfs(out[1, : int(1.0 * SR)])
+    right_outro_ref = _rms_dbfs(reference[1, -int(1.0 * SR) :])
+    right_outro_out = _rms_dbfs(out[1, -int(1.0 * SR) :])
+    body_ref = _rms_dbfs(reference[1, int(2.0 * SR) : int(6.0 * SR)])
+    body_out = _rms_dbfs(out[1, int(2.0 * SR) : int(6.0 * SR)])
+
+    assert right_intro_out <= right_intro_ref + 2.05, (
+        f"Right intro was over-boosted: {right_intro_out - right_intro_ref:.1f} dB"
+    )
+    assert right_outro_out <= right_outro_ref + 2.05, (
+        f"Right outro was over-boosted: {right_outro_out - right_outro_ref:.1f} dB"
+    )
+    assert body_out >= body_ref + 2.0, "Right channel music body should still receive meaningful gain"

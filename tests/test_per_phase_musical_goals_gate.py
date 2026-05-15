@@ -63,6 +63,16 @@ def _noise(duration_s: float = 8.0, amp: float = 0.1) -> np.ndarray:
     return np.random.randn(int(duration_s * SR)).astype(np.float32) * amp
 
 
+def _vocal_like(duration_s: float = 8.0, f0: float = 220.0) -> np.ndarray:
+    """Synthetisches gesangsähnliches Signal mit Harmonischen und leichter Hüllkurve."""
+    t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False, dtype=np.float32)
+    envelope = 0.55 + 0.25 * np.sin(2 * np.pi * 2.7 * t)
+    harmonics = sum((1.0 / idx) * np.sin(2 * np.pi * f0 * idx * t) for idx in range(1, 7))
+    formant_tilt = 0.65 * np.sin(2 * np.pi * 900.0 * t) + 0.35 * np.sin(2 * np.pi * 2500.0 * t)
+    signal = 0.18 * envelope * harmonics + 0.04 * formant_tilt
+    return np.clip(signal, -1.0, 1.0).astype(np.float32)
+
+
 class _PhaseResult:
     """Ergebnis-Objekt mit .audio-Attribut (wie viele echte Phasen)."""
 
@@ -130,7 +140,7 @@ class _StrengthCapturingPhase:
     def __init__(self) -> None:
         self.captured_strengths: list[float] = []
 
-    def __call__(self, audio: np.ndarray, strength: float = 1.0, **kw) -> np.ndarray:
+    def process(self, audio: np.ndarray, strength: float = 1.0, **kw) -> np.ndarray:
         self.captured_strengths.append(strength)
         return np.zeros_like(audio)  # Regression erzwingen → Retries
 
@@ -573,10 +583,135 @@ class TestPreciseMetricOverrides:
         assert scores["transparenz"] == pytest.approx(0.83, abs=1e-9)
 
 
+class TestVocalSensitiveQuickMetrics:
+    """Vocal-sensitive PMGG corrections must help vocal material without inflating noise."""
+
+    def test_50_vocal_reference_bonus_lifts_vocal_goals(self):
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        reference = _vocal_like(5.0)
+        processed = np.clip(reference * 0.96, -1.0, 1.0).astype(np.float32)
+
+        scores_plain = _measure_quick(
+            processed,
+            SR,
+            reference=reference,
+            precise_override=False,
+            enable_vocal_guard=False,
+        )
+        scores_ref = _measure_quick(
+            processed,
+            SR,
+            reference=reference,
+            precise_override=False,
+            enable_vocal_guard=True,
+        )
+
+        nat_delta = scores_ref["natuerlichkeit"] - scores_plain["natuerlichkeit"]
+        timbre_delta = scores_ref["timbre_authentizitaet"] - scores_plain["timbre_authentizitaet"]
+        artik_delta = scores_ref["artikulation"] - scores_plain["artikulation"]
+
+        assert nat_delta >= 0.0
+        assert timbre_delta >= 0.0
+        assert artik_delta >= 0.0
+        assert max(nat_delta, timbre_delta, artik_delta) > 0.0
+
+    def test_51_noise_reference_path_does_not_get_large_vocal_bonus(self):
+        from backend.core.per_phase_musical_goals_gate import _measure_quick
+
+        reference = _noise(5.0, amp=0.05)
+        processed = np.clip(reference * 0.96, -1.0, 1.0).astype(np.float32)
+
+        scores_plain = _measure_quick(
+            processed,
+            SR,
+            reference=reference,
+            precise_override=False,
+            enable_vocal_guard=False,
+        )
+        scores_ref = _measure_quick(
+            processed,
+            SR,
+            reference=reference,
+            precise_override=False,
+            enable_vocal_guard=True,
+        )
+
+        assert abs(scores_ref["natuerlichkeit"] - scores_plain["natuerlichkeit"]) <= 0.02
+        assert abs(scores_ref["timbre_authentizitaet"] - scores_plain["timbre_authentizitaet"]) <= 0.02
+        assert abs(scores_ref["artikulation"] - scores_plain["artikulation"]) <= 0.02
+
+    def test_52_wrap_phase_logs_vocal_guard_metadata(self):
+        audio = _vocal_like(8.0)
+
+        _, _, log_entry = wrap_phase(_noisy_phase, audio, SR)
+
+        assert "vocal_presence_proxy" in log_entry.metadata
+        assert "vocal_formant_stability" in log_entry.metadata
+        assert "vocal_fricative_stability" in log_entry.metadata
+        assert "vocal_transient_integrity" in log_entry.metadata
+        assert "vocal_guard_active" in log_entry.metadata
+        assert 0.0 <= float(log_entry.metadata["vocal_presence_proxy"]) <= 1.0
+        assert isinstance(log_entry.metadata["vocal_guard_active"], bool)
+
+    def test_53_wrap_phase_caps_retry_budget_under_wall_budget_pressure(self):
+        audio = _tone(8.0)
+        phase = _StrengthCapturingPhase()
+        gate = PerPhaseMusicalGoalsGate()
+
+        _, _, log_entry = gate.wrap_phase(
+            phase,
+            audio,
+            SR,
+            phase_id="phase_17_mastering_polish",
+            phase_kwargs={
+                "retry_budget_hint": {
+                    "reason": "reserve_for_priority_followup",
+                    "future_priority_phases": ["phase_58_lyrics_guided_enhancement"],
+                    "retry_budget_scale": 0.35,
+                    "max_retries_cap": 2,
+                }
+            },
+        )
+
+        assert 2 <= len(phase.captured_strengths) <= 3
+        assert log_entry.metadata["retry_budget_policy_active"] is True
+        assert log_entry.metadata["retry_budget_reason"] == "reserve_for_priority_followup"
+        assert log_entry.metadata["retry_budget_max_retries"] == 2
+        assert log_entry.metadata["retry_budget_future_priority_phases"] == ["phase_58_lyrics_guided_enhancement"]
+
+    def test_54_wrap_phase_caps_retry_budget_for_historically_weak_phase(self):
+        audio = _tone(8.0)
+        phase = _StrengthCapturingPhase()
+        gate = PerPhaseMusicalGoalsGate()
+
+        _, _, log_entry = gate.wrap_phase(
+            phase,
+            audio,
+            SR,
+            phase_id="phase_39_air_band_enhancement",
+            phase_kwargs={
+                "retry_budget_hint": {
+                    "reason": "historically_weak_delta",
+                    "retry_budget_scale": 0.15,
+                    "max_retries_cap": 1,
+                    "history_samples": 3,
+                    "history_mean_net_gain": 0.001,
+                }
+            },
+        )
+
+        assert len(phase.captured_strengths) == 2
+        assert log_entry.metadata["retry_budget_policy_active"] is True
+        assert log_entry.metadata["retry_budget_reason"] == "historically_weak_delta"
+        assert log_entry.metadata["retry_budget_max_retries"] == 1
+        assert log_entry.metadata["retry_budget_history_samples"] == 3
+
+
 class TestWetDryBlendStereoSafety:
     """Stereo wet/dry blend must remain channel-safe and non-silent."""
 
-    def test_50_wet_dry_blend_stereo_low_strength_keeps_shape_and_energy(self):
+    def test_53_wet_dry_blend_stereo_low_strength_keeps_shape_and_energy(self):
         gate = PerPhaseMusicalGoalsGate()
         rng = np.random.default_rng(123)
         dry = rng.normal(0.0, 0.15, size=(SR * 3, 2)).astype(np.float32)
@@ -593,7 +728,7 @@ class TestWetDryBlendStereoSafety:
         rms_h2 = float(np.sqrt(np.mean(h2**2)))
         assert rms_h2 > 1e-4
 
-    def test_51_wet_dry_blend_stereo_length_match_no_channel_pad_corruption(self):
+    def test_54_wet_dry_blend_stereo_length_match_no_channel_pad_corruption(self):
         gate = PerPhaseMusicalGoalsGate()
         rng = np.random.default_rng(7)
         dry = rng.normal(0.0, 0.2, size=(10_000, 2)).astype(np.float32)

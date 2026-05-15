@@ -27,7 +27,7 @@ SR = 48_000
 def de_esser():
     from backend.core.phases.phase_19_de_esser import DeEsserPhase, VocalGender
 
-    return DeEsserPhase(gender=VocalGender.FEMALE)
+    return DeEsserPhase(gender_type=VocalGender.FEMALE)
 
 
 def _sine_band(freq_hz: float, n: int = SR, amp: float = 0.5) -> np.ndarray:
@@ -379,7 +379,7 @@ class TestPhase19Integration:
 
         n = SR
         audio = _sine_band(8500.0, n, amp=0.5)
-        result = de_esser.process(audio, SR, material=MaterialType.CD_DIGITAL)
+        result = de_esser.process(audio, SR, material_type=MaterialType.CD_DIGITAL)
         assert result.success
         assert np.all(np.isfinite(result.audio))
         assert np.max(np.abs(result.audio)) <= 1.0
@@ -389,7 +389,7 @@ class TestPhase19Integration:
 
         n = SR
         audio = self._make_stereo_sibilant(n)
-        result = de_esser.process(audio, SR, material=MaterialType.VINYL)
+        result = de_esser.process(audio, SR, material_type=MaterialType.VINYL)
         assert result.success
         assert result.audio.shape == (n, 2)
 
@@ -402,7 +402,7 @@ class TestPhase19Integration:
 
         n = 4 * SR
         audio = _sine_band(9000.0, n, amp=0.4)
-        result = de_esser.process(audio, SR, material=MaterialType.TAPE)
+        result = de_esser.process(audio, SR, material_type=MaterialType.TAPE)
         assert result.success is True
 
     def test_short_audio_no_crash(self, de_esser):
@@ -410,6 +410,6 @@ class TestPhase19Integration:
         from backend.core.defect_scanner import MaterialType
 
         audio = np.zeros(512)
-        result = de_esser.process(audio, SR, material=MaterialType.CD_DIGITAL)
+        result = de_esser.process(audio, SR, material_type=MaterialType.CD_DIGITAL)
         assert result.success
         assert np.all(np.isfinite(result.audio))

@@ -305,7 +305,7 @@ def test_26_ml_hallucination_window_cap_limits_runtime_cost(monkeypatch):
     monkeypatch.setattr(iad, "_harmonicity", _fake_harmonicity)
     residuum = (np.random.randn(SR * 120) * 0.1).astype(np.float32)  # 2 min
 
-    _ = iad._detect_ml_hallucinations(residuum, SR)
+    _ = iad._detect_ml_hallucinations(residuum, residuum, SR)
     assert calls["n"] <= iad.MAX_HALLUCINATION_WINDOWS
 
 

@@ -193,6 +193,7 @@ class MasteringPolishPhase(PhaseInterface):
         super().__init__()
         self.name = "Professional Mastering Polish"
 
+    # pylint: disable-next=arguments-renamed
     def process(self, audio: np.ndarray, sample_rate: int, material: MaterialType, **kwargs) -> PhaseResult:
         """
         Wendet Professional Mastering Chain an.
@@ -254,6 +255,40 @@ class MasteringPolishPhase(PhaseInterface):
 
         # PMGG strength — scales all processing intensities for retry compatibility
         _strength = _effective_strength
+
+        # §2.46g soft_saturation-Guard: Mastering-Polish bei gesättigtem Material zurückhalten.
+        # Phase_17 addiert Presence (+1 dB @ 3 kHz), Air (+1.5 dB @ 12 kHz) und Harmonics —
+        # alles Regionen, die soft_saturation bereits anreichert. Hard-Cap: 40 % bei preserve=True.
+        _p17_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p17_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p17_soft_sat_preserve or _p17_soft_sat_sev > 0.3:
+            _p17_sat_scale = 1.0
+            if _p17_soft_sat_sev > 0.3:
+                _p17_sat_scale = float(np.clip(1.0 - (_p17_soft_sat_sev - 0.3) * 1.0, 0.25, 1.0))
+            if _p17_soft_sat_preserve and _p17_sat_scale > 0.40:
+                _p17_sat_scale = 0.40
+            _strength = float(_strength * _p17_sat_scale)
+            logger.debug(
+                "Phase 17 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (strength=%.3f)",
+                _p17_soft_sat_sev,
+                _p17_soft_sat_preserve,
+                _p17_sat_scale,
+                _strength,
+            )
+
+        # §vocal_presence: PANNs-Singing ≥ 0.35 → Mastering-Polish zurückhalten.
+        # Phase 17 addiert Presence (3 kHz) und Air (12 kHz) — sensitiv bei Vokalaufnahmen.
+        # Konservativere Skalierung als phase_38 (max 40 %) da Phase breiter agiert.
+        _vp_active_17 = bool(kwargs.get("vocal_presence_active", False))
+        if _vp_active_17:
+            _vp_strength_17 = float(np.clip(kwargs.get("vocal_presence_strength", 0.0), 0.0, 1.0))
+            _vp_scale_17 = float(np.clip(1.0 - 0.40 * _vp_strength_17, 0.60, 1.0))
+            _strength = float(_strength * _vp_scale_17)
+            logger.debug(
+                "Phase 17: vocal_presence_active → strength_scale=%.2f (vp_strength=%.2f)",
+                _vp_scale_17,
+                _vp_strength_17,
+            )
 
         # Pipeline-Metriken sammeln
         pipeline_metrics = {}
@@ -329,7 +364,11 @@ class MasteringPolishPhase(PhaseInterface):
         # **GUARD: Short-Audio-Buffer (§2.47, §0 Primum non nocere)**
         MIN_AUDIO_SAMPLES = 512  # 10 ms @ 48 kHz
         if len(audio) < MIN_AUDIO_SAMPLES:
-            logger.debug(f"phase_17: audio too short ({len(audio)} < {MIN_AUDIO_SAMPLES}), returning passthrough bands")
+            logger.debug(
+                "phase_17: audio too short (%d < %d), returning passthrough bands",
+                len(audio),
+                MIN_AUDIO_SAMPLES,
+            )
             # Return audio as all 4 bands (band 1 = full, bands 2-4 = silence)
             return [audio.copy(), np.zeros_like(audio), np.zeros_like(audio), np.zeros_like(audio)]
 
@@ -638,15 +677,15 @@ class MasteringPolishPhase(PhaseInterface):
 
 
 if __name__ == "__main__":
-    """Test der MasteringPolishPhase."""
+    # Test der MasteringPolishPhase.
 
     logger.debug("=" * 80)
     logger.debug("Phase 17: Professional Mastering Polish v2.0")
     logger.debug("=" * 80)
 
-    sample_rate = 44100
+    _test_sr = 44100
     duration = 3.0
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    t = np.linspace(0, duration, int(_test_sr * duration), endpoint=False)
 
     # Test-Audio: Multi-Frequenz mit moderatem Level (simuliert pre-mastered Audio)
     # - Bass (100 Hz)
@@ -666,32 +705,34 @@ if __name__ == "__main__":
 
     test_audio_stereo = np.column_stack((test_audio_left, test_audio_right))
 
-    rms_before = np.sqrt(np.mean(test_audio_stereo**2))
-    peak_before = np.abs(test_audio_stereo).max()
+    _test_rms_before = np.sqrt(np.mean(test_audio_stereo**2))
+    _test_peak_before = np.abs(test_audio_stereo).max()
 
-    logger.debug("\nGeneriert %ss Pre-Mastered Test-Audio @ %s Hz", duration, sample_rate)
+    logger.debug("\nGeneriert %ss Pre-Mastered Test-Audio @ %s Hz", duration, _test_sr)
     logger.debug("Multi-Frequenz: 100 Hz (Bass), 1000 Hz (Mid), 5000 Hz (High)")
     logger.debug("Stereo mit leichter Phasenverschiebung")
-    logger.debug("RMS vor Mastering: %.1f dBFS", 20 * np.log10(rms_before))
-    logger.debug("Peak vor Mastering: %.1f dBFS", 20 * np.log10(peak_before))
+    logger.debug("RMS vor Mastering: %.1f dBFS", 20 * np.log10(_test_rms_before))
+    logger.debug("Peak vor Mastering: %.1f dBFS", 20 * np.log10(_test_peak_before))
 
     phase = MasteringPolishPhase()
 
     # Test mit 3 Materialien
     test_materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.CD_DIGITAL]
 
-    for material in test_materials:
+    for _test_mat in test_materials:
         logger.debug("\n%s", "─" * 80)
-        logger.debug("Material: %s", material.name)
+        logger.debug("Material: %s", _test_mat.name)
         logger.debug("%s", "─" * 80)
 
-        result = phase.process(test_audio_stereo, sample_rate, material)
+        result = phase.process(test_audio_stereo, _test_sr, _test_mat)
 
         if result.success:
             logger.debug("\n✅ Professional Mastering Chain Complete:")
             logger.debug("   RMS Change: %.2f dB", result.metrics["rms_change_db"])
             logger.debug(
-                f"   Peak: {result.metrics['peak_before_db']:.1f} → {result.metrics['peak_after_db']:.1f} dBFS"
+                "   Peak: %.1f \u2192 %.1f dBFS",
+                result.metrics["peak_before_db"],
+                result.metrics["peak_after_db"],
             )
 
             # Pipeline Details
@@ -703,8 +744,8 @@ if __name__ == "__main__":
             if "eq" in pm:
                 eq_gains = pm["eq"]["band_gains_db"]
                 logger.debug("   1. Mastering EQ:")
-                for band, gain in eq_gains.items():
-                    logger.debug("      %s: %+.1f dB", band, gain)
+                for _test_band, gain in eq_gains.items():
+                    logger.debug("      %s: %+.1f dB", _test_band, gain)
 
             # 2. Transient
             if "transient" in pm:
@@ -720,28 +761,33 @@ if __name__ == "__main__":
                 sat_drive = pm["harmonic"]["saturation_drive"]
                 logger.debug("   3. Harmonic Enhancement:")
                 logger.debug("      Saturation Strength: %.2f", sat_strength)
-                logger.debug("      Saturation Drive: %.2f×", sat_drive)
+                logger.debug("      Saturation Drive: %.2f\u00d7", sat_drive)
 
             # 4. Stereo
             if "stereo" in pm:
-                width = pm["stereo"]["stereo_width"]
+                _test_width = pm["stereo"]["stereo_width"]
                 mono_compat = pm["stereo"]["mono_compatibility"]
                 logger.debug("   4. Stereo Enhancement:")
-                logger.debug("      Width: %.2f×", width)
-                logger.debug("      Mono Compatibility: %.2f (%s)", mono_compat, "✅" if mono_compat > 0.7 else "⚠️")
+                logger.debug("      Width: %.2f\u00d7", _test_width)
+                logger.debug(
+                    "      Mono Compatibility: %.2f (%s)",
+                    mono_compat,
+                    "\u2705" if mono_compat > 0.7 else "\u26a0\ufe0f",
+                )
 
             # 5. Polish
             if "polish" in pm:
                 norm_gain = pm["polish"]["normalization_gain_db"]
-                final_peak = pm["polish"]["final_peak_db"]
+                _test_final_peak = pm["polish"]["final_peak_db"]
                 target = pm["polish"]["target_db"]
                 logger.debug("   5. Final Polish:")
                 logger.debug("      Normalization Gain: %+.1f dB", norm_gain)
-                logger.debug("      Final Peak: %.2f dBFS (Target: %.1f dBFS)", final_peak, target)
+                logger.debug("      Final Peak: %.2f dBFS (Target: %.1f dBFS)", _test_final_peak, target)
 
             logger.debug(
-                f"\n   Verarbeitungszeit: {result.execution_time_seconds:.3f}s "
-                f"({result.execution_time_seconds / duration:.2f}× realtime)"
+                "\n   Verarbeitungszeit: %.3fs (%.2f\u00d7 realtime)",
+                result.execution_time_seconds,
+                result.execution_time_seconds / duration,
             )
 
     logger.debug("\n%s", "=" * 80)

@@ -44,6 +44,32 @@ import numpy as np
 import scipy.signal as sig
 
 from backend.core.audio_utils import safe_to_mono
+from backend.core.consonant_enhancement import measure_fricative_snr
+from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
+
+try:
+    from backend.core.ml_memory_budget import release as _release_ml_budget_43
+    from backend.core.ml_memory_budget import try_allocate as _try_allocate_ml_budget_43
+except ImportError:  # pragma: no cover
+    _release_ml_budget_43 = None  # type: ignore[assignment]
+    _try_allocate_ml_budget_43 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.plugin_lifecycle_manager import (
+        get_plugin_lifecycle_manager as _get_plugin_lifecycle_manager_43,
+    )
+except ImportError:  # pragma: no cover
+    _get_plugin_lifecycle_manager_43 = None  # type: ignore[assignment]
+
+try:
+    from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_phoneme_mask_43
+except ImportError:  # pragma: no cover
+    _get_phoneme_mask_43 = None  # type: ignore[assignment]
+
+try:
+    from plugins.mp_senet_plugin import get_mp_senet_plugin as _get_mp_senet_plugin_43
+except ImportError:  # pragma: no cover
+    _get_mp_senet_plugin_43 = None  # type: ignore[assignment]
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -233,30 +259,26 @@ def _try_mp_senet_refine(audio: np.ndarray, sr: int) -> tuple[np.ndarray | None,
     # §2.47 ml_memory_budget guard (250 MB for MP-SENet)
     _dfn_release = None
     try:
-        from backend.core.ml_memory_budget import release as _rel_43
-        from backend.core.ml_memory_budget import try_allocate as _try_alloc_43
-
-        if not _try_alloc_43("MpSeNet_phase43", 0.25):
+        if _try_allocate_ml_budget_43 is not None and not _try_allocate_ml_budget_43("MpSeNet_phase43", 0.25):
             logger.debug("MP-SENet phase_43: ml_memory_budget insufficient — DSP-Fallback")
             return None, "unavailable"
-        _dfn_release = _rel_43
+        _dfn_release = _release_ml_budget_43
     except ImportError:
         pass  # budget tracking unavailable — allow inference
 
     # §4.6b: PLM active-guard — prevents emergency-eviction during MP-SENet inference
     _plm43_mps = None
     try:
-        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm43
-
-        _plm43_mps = _get_plm43()
-        _plm43_mps.set_active("MP-SENet", True)
+        if _get_plugin_lifecycle_manager_43 is not None:
+            _plm43_mps = _get_plugin_lifecycle_manager_43()
+            _plm43_mps.set_active("MP-SENet", True)
     except Exception:
         pass
 
     try:
-        from plugins.mp_senet_plugin import get_mp_senet_plugin
-
-        plugin = get_mp_senet_plugin()
+        if _get_mp_senet_plugin_43 is None:
+            return None, "unavailable"
+        plugin = _get_mp_senet_plugin_43()
         result = plugin.enhance(audio, sr)
         return result.audio, result.model_used
     except Exception as exc:
@@ -300,7 +322,13 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             description=self.PHASE_DESCRIPTION,
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         De-Essing: Sibilanten reduzieren (stimmtyp-adaptiv, §2.8).
 
@@ -324,9 +352,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
-            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm_evict43
-
-            _get_plm_evict43().evict_for_phase("phase_43_ml_deesser")
+            if _get_plugin_lifecycle_manager_43 is not None:
+                _get_plugin_lifecycle_manager_43().evict_for_phase("phase_43_ml_deesser")
         except Exception:
             pass
 
@@ -496,15 +523,15 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             # Schutz von Plosiv-Bursts (/p/,/t/,/k/) die vom De-Esser als HF-Energie
             # fehlgedeutet und breitbandig reduziert werden könnten. Non-blocking.
             try:
-                from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_43
-
                 _hop_43 = 512
                 _mono_43: np.ndarray
                 if x.ndim == 2:
                     _mono_43 = np.mean(x, axis=0) if x.shape[0] == 2 else np.mean(x, axis=1)
                 else:
                     _mono_43 = x
-                _pmask_43 = _get_pmask_43(_mono_43.astype(np.float32), sample_rate, hop_length=_hop_43)
+                if _get_phoneme_mask_43 is None:
+                    raise RuntimeError("lyrics-guided enhancement unavailable")
+                _pmask_43 = _get_phoneme_mask_43(_mono_43.astype(np.float32), sample_rate, hop_length=_hop_43)
                 if np.any(_pmask_43):
                     _n43_fb = len(_mono_43)
                     _smask_43 = np.zeros(_n43_fb, dtype=bool)
@@ -529,8 +556,27 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             except Exception as _pmask43_exc:
                 logger.debug("§2.36 phase_43 Phonem-Fallback (non-blocking): %s", _pmask43_exc)
 
+        intelligibility_report = assess_deesser_intelligibility_preservation(
+            x,
+            processed,
+            sample_rate,
+            voice_gender=gender,
+        )
+        intelligibility_protected = False
+        if intelligibility_report.should_protect:
+            _protect_blend = float(np.clip(0.35 + intelligibility_report.intelligibility_loss, 0.35, 0.70))
+            processed = x + (1.0 - _protect_blend) * (processed - x)
+            processed = np.clip(np.nan_to_num(processed, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+            intelligibility_protected = True
+            intelligibility_report = assess_deesser_intelligibility_preservation(
+                x,
+                processed,
+                sample_rate,
+                voice_gender=gender,
+            )
+
         # Optional ML refinement with strict safety guard:
-        # accept only if sibilance reduces and vocal core band is preserved.
+        # accept only if sibilance reduces and vocal intelligibility is preserved.
         ml_refine_applied = False
         ml_refine_bypassed = False
         ml_refine_model = "disabled"
@@ -547,21 +593,24 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             elif ml_candidate is not None and ml_candidate.shape == processed.shape:
                 sibilance_before = _band_rms(processed, sample_rate, freq_low, freq_high)
                 sibilance_after = _band_rms(ml_candidate, sample_rate, freq_low, freq_high)
-                vocal_core_before = _band_rms(processed, sample_rate, 300.0, 3000.0)
-                vocal_core_after = _band_rms(ml_candidate, sample_rate, 300.0, 3000.0)
+                ml_intelligibility = assess_deesser_intelligibility_preservation(
+                    processed,
+                    ml_candidate,
+                    sample_rate,
+                    voice_gender=gender,
+                )
 
                 rms_before = _overall_rms(processed)
                 rms_after = _overall_rms(ml_candidate)
                 rms_delta_db = float(20.0 * np.log10((rms_after + 1e-12) / (rms_before + 1e-12)))
 
                 sibilance_improvement = float((sibilance_before - sibilance_after) / (sibilance_before + 1e-12))
-                core_ratio = float((vocal_core_after + 1e-12) / (vocal_core_before + 1e-12))
 
                 # Acceptance criteria tuned conservative to avoid musical-goal regressions.
                 # 1) Sibilance must improve by at least 2%
-                # 2) Vocal core band must not lose more than 3%
+                # 2) Presence/articulation score must remain intelligible
                 # 3) Overall loudness shift must stay within +-1.0 dB
-                if sibilance_improvement >= 0.02 and core_ratio >= 0.97 and abs(rms_delta_db) <= 1.0:
+                if sibilance_improvement >= 0.02 and not ml_intelligibility.should_protect and abs(rms_delta_db) <= 1.0:
                     # Adaptive blend: stronger blend only with stronger measured improvement.
                     ml_blend = float(np.clip(0.10 + 0.80 * sibilance_improvement, 0.10, 0.35))
                     ml_blend *= _effective_strength
@@ -573,11 +622,37 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                     ml_refine_bypassed = True
                     ml_refine_bypass_reason = "safety_gate"
                     logger.debug(
-                        "Phase 43 ML refinement rejected: sib_impr=%.3f core_ratio=%.3f rms_delta_db=%.2f",
+                        "Phase 43 ML refinement rejected: sib_impr=%.3f intelligibility=%.3f rms_delta_db=%.2f",
                         sibilance_improvement,
-                        core_ratio,
+                        ml_intelligibility.intelligibility_score,
                         rms_delta_db,
                     )
+
+        # §2.8 follow-up invariant for the second de-essing pass:
+        # Phase 43 must not reduce fricative SNR below its own input reference.
+        _snr_ref = 0.0
+        _snr_after_chain = 0.0
+        _fricative_snr_invariant_met = True
+        try:
+            _snr_ref = measure_fricative_snr(x, sample_rate, gender)
+            _snr_after_chain = measure_fricative_snr(processed, sample_rate, gender)
+            if _snr_ref > -50.0:
+                _fricative_snr_invariant_met = _snr_after_chain >= _snr_ref
+                if not _fricative_snr_invariant_met and processed.shape == x.shape:
+                    _deficit_db = _snr_ref - _snr_after_chain
+                    _protect_blend = float(np.clip(0.25 + _deficit_db / 12.0, 0.25, 0.75))
+                    processed = x + (1.0 - _protect_blend) * (processed - x)
+                    processed = np.clip(np.nan_to_num(processed, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
+                    _snr_after_chain = measure_fricative_snr(processed, sample_rate, gender)
+                    _fricative_snr_invariant_met = _snr_after_chain >= _snr_ref
+                    intelligibility_report = assess_deesser_intelligibility_preservation(
+                        x,
+                        processed,
+                        sample_rate,
+                        voice_gender=gender,
+                    )
+        except Exception as _snr_exc:
+            logger.debug("Phase 43 §2.8 SNR invariant skipped: %s", _snr_exc)
 
         logger.info(
             "Phase 43 DeEsser: gender=%s freq=[%.0f–%.0f Hz] "
@@ -598,6 +673,7 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             audio=processed,
             execution_time_seconds=time.time() - t0,
             metadata={
+                "material_type": material_type,
                 "gender": gender,
                 "threshold_db": threshold_db,
                 "ratio": ratio,
@@ -606,6 +682,15 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 "freq_low_hz": freq_low,
                 "freq_high_hz": freq_high,
                 "strength_cap": strength_cap,
+                "intelligibility_protected": intelligibility_protected,
+                "intelligibility_score": intelligibility_report.intelligibility_score,
+                "intelligibility_presence_ratio": intelligibility_report.presence_ratio,
+                "intelligibility_articulation_ratio": intelligibility_report.articulation_ratio,
+                "intelligibility_air_ratio": intelligibility_report.air_ratio,
+                "intelligibility_fricative_snr_delta_db": intelligibility_report.fricative_snr_delta_db,
+                "fricative_snr_invariant_met": _fricative_snr_invariant_met,
+                "fricative_snr_before_deessing_db": round(_snr_ref, 2),
+                "fricative_snr_after_chain_db": round(_snr_after_chain, 2),
                 "ml_refine_enabled": bool(kwargs.get("enable_ml_refine", _enable_ml_refine_default)),
                 "ml_refine_applied": ml_refine_applied,
                 "ml_refine_bypassed": ml_refine_bypassed,
@@ -617,7 +702,18 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },
-            metrics={"avg_gain_reduction_db": avg_gr},
+            metrics={
+                "avg_gain_reduction_db": avg_gr,
+                "intelligibility_score": intelligibility_report.intelligibility_score,
+                "intelligibility_presence_ratio": intelligibility_report.presence_ratio,
+                "intelligibility_articulation_ratio": intelligibility_report.articulation_ratio,
+                "intelligibility_air_ratio": intelligibility_report.air_ratio,
+                "intelligibility_fricative_snr_delta_db": intelligibility_report.fricative_snr_delta_db,
+                "musical_goal_brillanz": float(np.clip(intelligibility_report.air_ratio, 0.0, 1.0)),
+                "musical_goal_artikulation": float(np.clip(intelligibility_report.articulation_ratio, 0.0, 1.0)),
+                "musical_goal_authentizitaet": float(np.clip(intelligibility_report.presence_ratio, 0.0, 1.0)),
+                "musical_goal_transparenz": float(np.clip(intelligibility_report.intelligibility_score, 0.0, 1.0)),
+            },
         )
 
 

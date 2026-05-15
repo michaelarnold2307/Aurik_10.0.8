@@ -192,6 +192,7 @@ class DynamicRangeExpansion(PhaseInterface):
             description="Multi-band upward/downward expansion for dynamic restoration",
         )
 
+    # pylint: disable-next=arguments-renamed
     def process(
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
@@ -252,6 +253,30 @@ class DynamicRangeExpansion(PhaseInterface):
         # Scale expansion aggressiveness toward neutral ratios for sparse locality.
         config["upward_ratio"] = float(1.0 + (config["upward_ratio"] - 1.0) * _effective_strength)
         config["downward_ratio"] = float(1.0 + (config["downward_ratio"] - 1.0) * _effective_strength)
+
+        # §soft_saturation-Guard: DR-Expansion bei saturiertem Material konservativer.
+        # Upward-Expansion macht Sättigungs-Transienten an Peaks sichtbar/hörbar (Pumpen).
+        # soft_saturation_preserve=True → Expansion auf max. 50 % reduzieren.
+        _p26_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p26_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p26_soft_sat_preserve or _p26_soft_sat_sev > 0.4:
+            _p26_sat_scale = 1.0
+            if _p26_soft_sat_sev > 0.4:
+                _p26_sat_scale = float(np.clip(1.0 - (_p26_soft_sat_sev - 0.4) * 0.8, 0.35, 1.0))
+            if _p26_soft_sat_preserve and _p26_sat_scale > 0.50:
+                _p26_sat_scale = 0.50
+            # Ratios linear Richtung neutral (1.0) skalieren
+            config["upward_ratio"] = float(1.0 + (config["upward_ratio"] - 1.0) * _p26_sat_scale)
+            config["downward_ratio"] = float(1.0 + (config["downward_ratio"] - 1.0) * _p26_sat_scale)
+            logger.debug(
+                "Phase 26 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f "
+                "(up_ratio=%.3f down_ratio=%.3f)",
+                _p26_soft_sat_sev,
+                _p26_soft_sat_preserve,
+                _p26_sat_scale,
+                config["upward_ratio"],
+                config["downward_ratio"],
+            )
 
         # Measure initial dynamic range
         dr_before = self._measure_dynamic_range(audio)

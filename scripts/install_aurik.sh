@@ -128,22 +128,23 @@ success "pip aktuell"
 # SCHRITT 3: PyTorch CPU-only installieren (§13.4)
 # =============================================================================
 info "Schritt 3/5: PyTorch CPU-only installieren (§13.4)..."
-info "Verwende: torch==2.2.2+cpu  torchaudio==2.2.2+cpu"
+info "Verwende: torch==2.7.0+cpu  torchaudio==2.7.0+cpu"
 info "(CPU-only, kein CUDA nötig – funktioniert auf jeder Desktop-Hardware)"
+info "Sicherheitsfix: torch>=2.6.0 behebt CVE-2025-32434 (critical RCE/deserialization)"
 
 TORCH_INSTALLED=$($PYTHON_BIN -c "import torch; print(torch.__version__)" 2>/dev/null || echo "")
-if [[ "$TORCH_INSTALLED" == "2.2.2+cpu" ]]; then
-    success "PyTorch 2.2.2+cpu bereits installiert – überspringe"
+if [[ "$TORCH_INSTALLED" == "2.7.0+cpu" ]]; then
+    success "PyTorch 2.7.0+cpu bereits installiert – überspringe"
 else
     if [[ -n "$TORCH_INSTALLED" ]]; then
-        warn "Andere torch-Version gefunden: $TORCH_INSTALLED → wird auf 2.2.2+cpu aktualisiert"
+        warn "Andere torch-Version gefunden: $TORCH_INSTALLED → wird auf 2.7.0+cpu aktualisiert"
     fi
     $PYTHON_BIN -m pip install \
-        torch==2.2.2+cpu \
-        torchaudio==2.2.2+cpu \
+        torch==2.7.0+cpu \
+        torchaudio==2.7.0+cpu \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         --quiet
-    success "PyTorch 2.2.2+cpu installiert"
+    success "PyTorch 2.7.0+cpu installiert"
 fi
 
 # =============================================================================

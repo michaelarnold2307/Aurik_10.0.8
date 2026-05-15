@@ -69,6 +69,7 @@ _PRECISE_METRICS: dict[str, Any] | None = None
 _PRECISE_OVERRIDE_WARN_MS: float = (
     500.0  # v9.12: ArticulationMetric added MFCC per-onset (16 windows); 3 metrics × ~100ms/metric is normal.
 )
+_VOCAL_GUARD_TRIGGER = 0.45
 
 
 # ---------------------------------------------------------------------------
@@ -1795,8 +1796,146 @@ def _apply_precise_metric_overrides(
     return refined
 
 
+def _measure_vocal_guard_features(
+    audio: np.ndarray,
+    sr: int,
+    reference: np.ndarray | None = None,
+) -> dict[str, float]:
+    """Estimate lightweight vocal-preservation features for PMGG quick scoring."""
+
+    if audio.ndim == 2:
+        mono = audio.mean(axis=0) if audio.shape[0] <= 2 else audio.mean(axis=1)
+    else:
+        mono = audio
+    mono = np.nan_to_num(np.asarray(mono, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+    ref_mono: np.ndarray | None = None
+    if reference is not None:
+        if reference.ndim == 2:
+            ref_mono = reference.mean(axis=0) if reference.shape[0] <= 2 else reference.mean(axis=1)
+        else:
+            ref_mono = reference
+        ref_mono = np.nan_to_num(
+            np.asarray(ref_mono, dtype=np.float32),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).astype(np.float32)
+        match_len = min(len(mono), len(ref_mono))
+        mono = mono[:match_len]
+        ref_mono = ref_mono[:match_len]
+
+    n_fft = 4096
+    win = np.hanning(n_fft).astype(np.float32)
+
+    def _mean_fft(signal_mono: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if len(signal_mono) >= n_fft:
+            hop = n_fft // 2
+            n_frames = min(64, max(1, (len(signal_mono) - n_fft) // hop))
+            frames = np.stack(
+                [np.abs(np.fft.rfft(signal_mono[idx * hop : idx * hop + n_fft] * win)) for idx in range(n_frames)]
+            )
+            mag = frames.mean(axis=0).astype(np.float32)
+        else:
+            mag = np.abs(np.fft.rfft(signal_mono, n=n_fft)).astype(np.float32)
+        return mag, np.fft.rfftfreq(n_fft, d=1.0 / sr).astype(np.float32)
+
+    def _band_energy(mag: np.ndarray, freqs_arr: np.ndarray, lo: float, hi: float) -> float:
+        mask = (freqs_arr >= lo) & (freqs_arr < hi)
+        if not np.any(mask):
+            return 0.0
+        return float(np.mean(mag[mask] ** 2))
+
+    def _band_vector(signal_mono: np.ndarray, lo: float, hi: float, bands: int) -> np.ndarray:
+        if len(signal_mono) < 64:
+            return np.zeros(bands, dtype=np.float32)
+        band_edges = np.exp(np.linspace(np.log(lo), np.log(hi), bands + 1)).astype(np.float32)
+        mag, freqs_arr = _mean_fft(signal_mono)
+        vec = np.zeros(bands, dtype=np.float32)
+        for band_idx in range(bands):
+            mask = (freqs_arr >= band_edges[band_idx]) & (freqs_arr < band_edges[band_idx + 1])
+            if np.any(mask):
+                vec[band_idx] = float(np.mean(mag[mask] ** 2))
+        return vec
+
+    try:
+        fft_mag, freqs = _mean_fft(mono)
+        total_energy = _band_energy(fft_mag, freqs, 80.0, 8000.0) + 1e-12
+        voice_energy = _band_energy(fft_mag, freqs, 250.0, 4000.0)
+        pitch_energy = _band_energy(fft_mag, freqs, 120.0, 1200.0)
+        pitch_mask = (freqs >= 120.0) & (freqs < 1200.0)
+        pitch_bins = fft_mag[pitch_mask]
+        if pitch_bins.size > 8:
+            crest = float(np.percentile(pitch_bins, 95) / (np.percentile(pitch_bins, 50) + 1e-12))
+            harmonic_score = float(np.clip((crest - 1.5) / 8.5, 0.0, 1.0))
+        else:
+            harmonic_score = 0.0
+        voice_ratio_score = float(np.clip((voice_energy / total_energy - 0.18) / 0.42, 0.0, 1.0))
+        pitch_ratio_score = float(np.clip((pitch_energy / (voice_energy + 1e-12) - 0.20) / 0.45, 0.0, 1.0))
+        periodicity_score = 0.0
+        periodicity_window = mono[: min(len(mono), 4096)].astype(np.float64)
+        periodicity_window = periodicity_window - np.mean(periodicity_window)
+        if len(periodicity_window) > int(sr / 320):
+            corr_size = 1 << int(np.ceil(np.log2(max(2, len(periodicity_window) * 2 - 1))))
+            corr = np.fft.irfft(
+                np.abs(np.fft.rfft(periodicity_window, n=corr_size)) ** 2,
+                n=corr_size,
+            )[: len(periodicity_window)]
+            corr /= corr[0] + 1e-12
+            lag_min = max(1, int(sr / 320))
+            lag_max = min(len(corr) - 1, int(sr / 80))
+            if lag_max > lag_min:
+                periodicity_score = float(np.clip((float(np.max(corr[lag_min : lag_max + 1])) - 0.10) / 0.60, 0.0, 1.0))
+        vocal_presence = float(
+            np.clip(
+                0.20 * voice_ratio_score + 0.10 * pitch_ratio_score + 0.20 * harmonic_score + 0.50 * periodicity_score,
+                0.0,
+                1.0,
+            )
+        )
+    except Exception:
+        vocal_presence = 0.0
+
+    formant_stability = 0.5
+    fricative_stability = 0.5
+    transient_integrity = 0.5
+    if ref_mono is not None and len(mono) >= 64:
+        try:
+            proc_formants = np.log1p(_band_vector(mono, 300.0, 3500.0, 10))
+            ref_formants = np.log1p(_band_vector(ref_mono, 300.0, 3500.0, 10))
+            formant_stability = float(np.clip((_safe_pearson(ref_formants, proc_formants) + 1.0) * 0.5, 0.0, 1.0))
+
+            proc_fric = np.log1p(_band_vector(mono, 4000.0, 9000.0, 4))
+            ref_fric = np.log1p(_band_vector(ref_mono, 4000.0, 9000.0, 4))
+            if float(np.sum(proc_fric) + np.sum(ref_fric)) > 1e-6:
+                fricative_stability = float(np.clip((_safe_pearson(ref_fric, proc_fric) + 1.0) * 0.5, 0.0, 1.0))
+
+            proc_env = np.abs(np.diff(mono.astype(np.float64)))
+            ref_env = np.abs(np.diff(ref_mono.astype(np.float64)))
+            if len(proc_env) > 32 and len(ref_env) > 32:
+                proc_env = proc_env / (np.max(proc_env) + 1e-12)
+                ref_env = ref_env / (np.max(ref_env) + 1e-12)
+                transient_integrity = float(np.clip((_safe_pearson(ref_env, proc_env) + 1.0) * 0.5, 0.0, 1.0))
+        except Exception:
+            formant_stability = 0.5
+            fricative_stability = 0.5
+            transient_integrity = 0.5
+
+    return {
+        "vocal_presence_proxy": vocal_presence,
+        "vocal_formant_stability": formant_stability,
+        "vocal_fricative_stability": fricative_stability,
+        "vocal_transient_integrity": transient_integrity,
+    }
+
+
 def _measure_quick(
-    audio: np.ndarray, sr: int, reference: np.ndarray | None = None, *, precise_override: bool = True
+    audio: np.ndarray,
+    sr: int,
+    reference: np.ndarray | None = None,
+    *,
+    precise_override: bool = True,
+    enable_vocal_guard: bool = True,
 ) -> dict[str, float]:
     """
     Misst alle 14 Musical Goals auf einer 5-s-Stichprobe in ≤ 200 ms.
@@ -1870,6 +2009,12 @@ def _measure_quick(
     # Computed once; used by all reference-aware goal branches below.
     _ref_fft: np.ndarray | None = None
     _ref_mono: np.ndarray | None = None
+    _vocal_guard: dict[str, float] = {
+        "vocal_presence_proxy": 0.0,
+        "vocal_formant_stability": 0.5,
+        "vocal_fricative_stability": 0.5,
+        "vocal_transient_integrity": 0.5,
+    }
     if reference is not None:
         try:
             # §2.54 Shape-robuste Referenz-Downmix — gleiche Logik wie mono-Input
@@ -1898,6 +2043,13 @@ def _measure_quick(
         except Exception:
             _ref_fft = None
             _ref_mono = None
+
+    if reference is not None:
+        _vocal_guard = _measure_vocal_guard_features(
+            mono,
+            sr,
+            reference=_ref_mono if _ref_mono is not None else reference,
+        )
 
     # ── Brillanz (§9.7.12 HF Spectral Crest Factor, 2–16 kHz) ────────
     # Root-cause of prior false regressions: the old HF-energy-ratio proxy was
@@ -2695,6 +2847,36 @@ def _measure_quick(
         if k not in scores or not math.isfinite(scores[k]):
             scores[k] = 0.5
 
+    _vocal_presence = float(_vocal_guard.get("vocal_presence_proxy", 0.0))
+    if enable_vocal_guard and reference is not None and _vocal_presence >= _VOCAL_GUARD_TRIGGER:
+        _activation = float(
+            np.clip(
+                (_vocal_presence - _VOCAL_GUARD_TRIGGER) / (1.0 - _VOCAL_GUARD_TRIGGER),
+                0.0,
+                1.0,
+            )
+        )
+
+        def _bonus_scale(feature_name: str) -> float:
+            return float(np.clip((float(_vocal_guard.get(feature_name, 0.5)) - 0.55) / 0.45, 0.0, 1.0))
+
+        _formant_bonus = _bonus_scale("vocal_formant_stability")
+        _fricative_bonus = _bonus_scale("vocal_fricative_stability")
+        _transient_bonus = _bonus_scale("vocal_transient_integrity")
+        scores["natuerlichkeit"] = min(1.0, scores["natuerlichkeit"] + 0.08 * _activation * _formant_bonus)
+        scores["timbre_authentizitaet"] = min(
+            1.0,
+            scores["timbre_authentizitaet"] + 0.08 * _activation * (0.70 * _formant_bonus + 0.30 * _fricative_bonus),
+        )
+        scores["artikulation"] = min(
+            1.0,
+            scores["artikulation"] + 0.08 * _activation * (0.70 * _transient_bonus + 0.30 * _fricative_bonus),
+        )
+        scores["emotionalitaet"] = min(
+            1.0,
+            scores["emotionalitaet"] + 0.05 * _activation * (0.60 * _formant_bonus + 0.40 * _transient_bonus),
+        )
+
     if precise_override:
         scores = _apply_precise_metric_overrides(scores, audio, sr, reference=reference)
 
@@ -2828,6 +3010,154 @@ def _content_integrity_penalty(
         return 0.0, {"rms_drop_db": 0.0, "corr": 1.0}
 
 
+def _targeted_defect_keys_for_phase(phase_id: str) -> tuple[str, ...]:
+    """Return defect-location keys used for sparse-defect sample targeting."""
+    _phase_defect_keys = {
+        "phase_24": ("DROPOUTS", "DROPOUT", "dropouts"),
+        "phase_27": ("DROPOUTS", "DROPOUT", "dropouts"),
+        "phase_55": ("DROPOUTS", "DROPOUT", "dropouts", "SPECTRAL_HOLES", "spectral_holes"),
+        "phase_09": ("CRACKLE", "crackle", "CLICKS", "clicks"),
+        "phase_01": ("CLICKS", "clicks", "CLICK", "click"),
+    }
+    for _prefix, _keys in _phase_defect_keys.items():
+        if phase_id.startswith(_prefix):
+            return _keys
+    return ()
+
+
+def _get_sample_window_bounds(
+    audio_len: int,
+    sr: int,
+    duration_s: float = SAMPLE_DURATION_S,
+    defect_locations: dict[str, list[tuple[float, float]]] | None = None,
+    phase_id: str = "",
+) -> tuple[int, int]:
+    """Return the PMGG sample-window bounds for the given phase."""
+    sample_len = min(int(duration_s * sr), audio_len)
+    if audio_len <= sample_len:
+        return 0, audio_len
+
+    _sparse_defect_phases = frozenset(
+        {
+            "phase_24",
+            "phase_27",
+            "phase_55",
+            "phase_09",
+            "phase_01",
+        }
+    )
+    if defect_locations and any(phase_id.startswith(p) for p in _sparse_defect_phases):
+        _best_start_s = None
+        for _dk in _targeted_defect_keys_for_phase(phase_id):
+            locs = defect_locations.get(_dk, [])
+            if locs and isinstance(locs[0], (tuple, list)) and len(locs[0]) >= 1:
+                _best_start_s = float(locs[0][0])
+                break
+        if _best_start_s is not None:
+            _defect_sample = int(_best_start_s * sr)
+            start = max(0, min(_defect_sample - sample_len // 2, audio_len - sample_len))
+            return start, start + sample_len
+
+    start = (audio_len - sample_len) // 2
+    return start, start + sample_len
+
+
+def _estimate_targeted_defect_coverage_ratio(
+    audio_len: int,
+    sr: int,
+    duration_s: float,
+    defect_locations: dict[str, list[tuple[float, float]]] | None,
+    phase_id: str,
+) -> float | None:
+    """Estimate targeted-defect coverage inside the PMGG sample window."""
+    if not defect_locations:
+        return None
+
+    _keys = _targeted_defect_keys_for_phase(phase_id)
+    if not _keys:
+        return None
+
+    start, end = _get_sample_window_bounds(audio_len, sr, duration_s, defect_locations, phase_id)
+    _intervals: list[tuple[int, int]] = []
+    for _dk in _keys:
+        for _loc in defect_locations.get(_dk, []) or []:
+            if not isinstance(_loc, (tuple, list)) or len(_loc) < 2:
+                continue
+            try:
+                _s = int(float(_loc[0]) * sr)
+                _e = int(float(_loc[1]) * sr)
+            except (TypeError, ValueError):
+                continue
+            if _e <= _s:
+                continue
+            _ov_s = max(start, _s)
+            _ov_e = min(end, _e)
+            if _ov_e > _ov_s:
+                _intervals.append((_ov_s, _ov_e))
+
+    if not _intervals:
+        return None
+
+    _intervals.sort()
+    _merged: list[tuple[int, int]] = []
+    for _s, _e in _intervals:
+        if _merged and _s <= _merged[-1][1]:
+            _merged[-1] = (_merged[-1][0], max(_merged[-1][1], _e))
+        else:
+            _merged.append((_s, _e))
+
+    _covered = sum(_e - _s for _s, _e in _merged)
+    _window = max(1, end - start)
+    return float(np.clip(_covered / _window, 0.0, 1.0))
+
+
+def _reconstruction_goal_recheck_allowlist(  # pylint: disable=too-many-positional-arguments
+    phase_id: str,
+    phase_kwargs: dict[str, Any] | None,
+    defect_locations: dict[str, list[tuple[float, float]]] | None,
+    audio_len: int,
+    sr: int,
+    sample_duration_s: float,
+) -> set[str]:
+    """Re-enable critical P1 checks for sparse vocal inpainting windows."""
+    if not phase_id.startswith(("phase_24", "phase_55")):
+        return set()
+    if not isinstance(phase_kwargs, dict):
+        return set()
+
+    try:
+        _vocal_probability = float(phase_kwargs.get("vocal_probability", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        _vocal_probability = 0.0
+    _has_lyrics_guidance = bool(phase_kwargs.get("phoneme_timeline")) or bool(phase_kwargs.get("pre_transcription"))
+    if _vocal_probability < 0.15 and not _has_lyrics_guidance:
+        return set()
+
+    _coverage = _estimate_targeted_defect_coverage_ratio(
+        audio_len,
+        sr,
+        sample_duration_s,
+        defect_locations,
+        phase_id,
+    )
+    if _coverage is None:
+        return set()
+
+    _coverage_limit = 0.18 if phase_id.startswith("phase_24") else 0.22
+    if _coverage > _coverage_limit:
+        return set()
+
+    logger.info(
+        "PMGG reconstruction recheck: %s re-enabling P1 guards "
+        "(vocal_probability=%.2f, lyrics_guidance=%s, defect_coverage=%.3f)",
+        phase_id,
+        _vocal_probability,
+        _has_lyrics_guidance,
+        _coverage,
+    )
+    return {"natuerlichkeit", "authentizitaet"}
+
+
 def _extract_sample(
     audio: np.ndarray,
     sr: int,
@@ -2848,41 +3178,7 @@ def _extract_sample(
     if n <= sample_len:
         return audio
 
-    # §9.1a Non-stationary defect targeting: centre the sample on the first
-    # defect location for phases that repair sparse, localised defects.
-    _SPARSE_DEFECT_PHASES = frozenset(
-        {
-            "phase_24",
-            "phase_27",
-            "phase_55",  # dropout_repair, diffusion_inpainting
-            "phase_09",  # crackle_removal (event-based)
-            "phase_01",  # click_removal (event-based)
-        }
-    )
-    if defect_locations and any(phase_id.startswith(p) for p in _SPARSE_DEFECT_PHASES):
-        # Find the first defect location relevant to this phase
-        _PHASE_DEFECT_KEYS = {
-            "phase_24": ("DROPOUTS", "DROPOUT", "dropouts"),
-            "phase_27": ("DROPOUTS", "DROPOUT", "dropouts"),
-            "phase_55": ("DROPOUTS", "DROPOUT", "dropouts", "SPECTRAL_HOLES", "spectral_holes"),
-            "phase_09": ("CRACKLE", "crackle", "CLICKS", "clicks"),
-            "phase_01": ("CLICKS", "clicks", "CLICK", "click"),
-        }
-        _keys = _PHASE_DEFECT_KEYS.get(next((p for p in _SPARSE_DEFECT_PHASES if phase_id.startswith(p)), ""), ())
-        _best_start_s = None
-        for _dk in _keys:
-            locs = defect_locations.get(_dk, [])
-            if locs and isinstance(locs[0], (tuple, list)) and len(locs[0]) >= 1:
-                _best_start_s = float(locs[0][0])  # first defect location start time
-                break
-        if _best_start_s is not None:
-            # Centre the sample window on the defect location
-            _defect_sample = int(_best_start_s * sr)
-            start = max(0, min(_defect_sample - sample_len // 2, n - sample_len))
-            return audio[start : start + sample_len]
-
-    # Default: centre-crop
-    start = (n - sample_len) // 2
+    start, _end = _get_sample_window_bounds(n, sr, duration_s, defect_locations, phase_id)
     return audio[start : start + sample_len]
 
 
@@ -2902,11 +3198,45 @@ class PerPhaseMusicalGoalsGate:
         """Initialize PMGG with zeroed rollback counters."""
         self._rollback_count: int = 0  # Pro Restaurierungsaufruf
         self._user_warned: bool = False  # Nutzer-Warnung einmalig
+        self._last_retry_budget_policy: dict[str, Any] = {}
 
     def reset(self) -> None:
         """Setzt Zähler für neuen Restaurierungsaufruf zurück."""
         self._rollback_count = 0
         self._user_warned = False
+        self._last_retry_budget_policy = {}
+
+    @staticmethod
+    def _resolve_retry_budget_policy(
+        phase_kwargs: dict[str, Any] | None,
+        *,
+        max_retries: int,
+        retry_budget_s: float,
+    ) -> tuple[int, float, dict[str, Any]]:
+        """Return capped retry policy when UV3 signals wall-budget pressure."""
+        hint = (phase_kwargs or {}).get("retry_budget_hint")
+        if not isinstance(hint, dict) or not hint:
+            return max_retries, retry_budget_s, {}
+
+        reason = str(hint.get("reason", "") or "")
+        retry_budget_scale = float(np.clip(float(hint.get("retry_budget_scale", 1.0) or 1.0), 0.05, 1.0))
+        max_retries_cap = int(np.clip(int(hint.get("max_retries_cap", max_retries) or max_retries), 0, max_retries))
+        new_max_retries = min(max_retries, max_retries_cap)
+        new_retry_budget_s = min(retry_budget_s, max(10.0, retry_budget_s * retry_budget_scale))
+        metadata = {
+            "active": True,
+            "reason": reason,
+            "max_retries_cap": new_max_retries,
+            "retry_budget_scale": round(retry_budget_scale, 3),
+            "retry_budget_seconds": round(float(new_retry_budget_s), 3),
+        }
+        if "future_priority_phases" in hint:
+            metadata["future_priority_phases"] = list(hint.get("future_priority_phases", []))
+        if "history_samples" in hint:
+            metadata["history_samples"] = int(hint.get("history_samples", 0) or 0)
+        if "history_mean_net_gain" in hint:
+            metadata["history_mean_net_gain"] = float(hint.get("history_mean_net_gain", 0.0) or 0.0)
+        return new_max_retries, new_retry_budget_s, metadata
 
     def check_phase(
         self,
@@ -2937,7 +3267,7 @@ class PerPhaseMusicalGoalsGate:
             applicable_goals=set(effective_goals) if effective_goals else None,
         )
 
-    def wrap_phase(
+    def wrap_phase(  # pylint: disable=too-many-positional-arguments
         self,
         phase: Any,  # PhaseInterface-Instanz
         audio: np.ndarray,
@@ -3071,6 +3401,17 @@ class PerPhaseMusicalGoalsGate:
         if isinstance(_team_goal_exclusions, set) and _team_goal_exclusions:
             _excluded_goals |= _team_goal_exclusions
 
+        _recheck_goals = _reconstruction_goal_recheck_allowlist(
+            phase_id,
+            phase_kwargs,
+            _defect_locs,
+            len(audio),
+            sr,
+            _sample_dur,
+        )
+        if _recheck_goals:
+            _excluded_goals -= _recheck_goals
+
         if _excluded_goals:
             effective_goals = [g for g in effective_goals if g not in _excluded_goals]
             if not effective_goals:
@@ -3095,6 +3436,7 @@ class PerPhaseMusicalGoalsGate:
             )
 
         # Phase ausführen + Regression prüfen (§2.29: initial_strength statt immer 1.0)
+        self._last_retry_budget_policy = {}
         audio_out, scores_after, action, strength = self._run_with_retry(
             phase,
             audio,
@@ -3137,11 +3479,54 @@ class PerPhaseMusicalGoalsGate:
         log_entry.scores_before = dict(scores_before) if scores_before else {}
         log_entry.scores_after = dict(scores_after) if scores_after else {}
 
+        _vocal_meta = _measure_vocal_guard_features(
+            _extract_sample(
+                audio_out,
+                sr,
+                duration_s=_sample_dur,
+                defect_locations=_defect_locs,
+                phase_id=phase_id,
+            ),
+            sr,
+            reference=_extract_sample(
+                audio,
+                sr,
+                duration_s=_sample_dur,
+                defect_locations=_defect_locs,
+                phase_id=phase_id,
+            ),
+        )
+        log_entry.metadata["vocal_presence_proxy"] = round(float(_vocal_meta["vocal_presence_proxy"]), 4)
+        log_entry.metadata["vocal_formant_stability"] = round(float(_vocal_meta["vocal_formant_stability"]), 4)
+        log_entry.metadata["vocal_fricative_stability"] = round(float(_vocal_meta["vocal_fricative_stability"]), 4)
+        log_entry.metadata["vocal_transient_integrity"] = round(float(_vocal_meta["vocal_transient_integrity"]), 4)
+        log_entry.metadata["vocal_guard_active"] = bool(
+            float(_vocal_meta["vocal_presence_proxy"]) >= _VOCAL_GUARD_TRIGGER
+        )
+
         # §0c Recovery-Lite Transparency: best_effort actions mark recovery metadata
         # so downstream (UV3, bridge, export_workflow) can detect recovery status.
         if action.startswith("best_effort"):
             log_entry.metadata["recovery_attempted"] = True
             log_entry.metadata["best_possible_reached"] = True  # PMGG always returns best found
+
+        if self._last_retry_budget_policy:
+            log_entry.metadata["retry_budget_policy_active"] = bool(self._last_retry_budget_policy.get("active", False))
+            log_entry.metadata["retry_budget_reason"] = str(self._last_retry_budget_policy.get("reason", "") or "")
+            log_entry.metadata["retry_budget_max_retries"] = int(
+                self._last_retry_budget_policy.get("max_retries_cap", 0) or 0
+            )
+            log_entry.metadata["retry_budget_seconds"] = float(
+                self._last_retry_budget_policy.get("retry_budget_seconds", 0.0) or 0.0
+            )
+            if "future_priority_phases" in self._last_retry_budget_policy:
+                log_entry.metadata["retry_budget_future_priority_phases"] = list(
+                    self._last_retry_budget_policy.get("future_priority_phases", [])
+                )
+            if "history_samples" in self._last_retry_budget_policy:
+                log_entry.metadata["retry_budget_history_samples"] = int(
+                    self._last_retry_budget_policy.get("history_samples", 0) or 0
+                )
 
         # §2.29e Team-Telemetrie: Policyinformationen in log_entry.metadata schreiben
         # damit UV3 nach der Pipeline team_coordination_events extrahieren kann.
@@ -3151,7 +3536,10 @@ class PerPhaseMusicalGoalsGate:
             log_entry.metadata["team_excluded_goals"] = sorted(
                 _team_goal_exclusions if isinstance(_team_goal_exclusions, set) else set()
             )
-            log_entry.metadata["team_threshold_mult"] = round(float(_team_policy.get("threshold_multiplier", 1.0)), 3)
+            log_entry.metadata["team_threshold_mult"] = round(
+                float(_team_policy.get("threshold_multiplier", 1.0)),
+                3,
+            )
             log_entry.metadata["team_strength_cap"] = round(float(_team_policy.get("strength_cap", 1.0)), 3)
 
         # §TFS: Temporal Fine Structure coherence check for spectral-modification phases.
@@ -3205,20 +3593,15 @@ class PerPhaseMusicalGoalsGate:
         if "waerme" in effective_goals:
             _w_before = scores_before.get("waerme", float("nan"))
             _w_after = scores_after.get("waerme", float("nan"))
-            _w_delta = (
-                _w_after - _w_before
-                if (
-                    not (isinstance(_w_before, float) and _w_before != _w_before)
-                    and not (isinstance(_w_after, float) and _w_after != _w_after)
-                )
-                else float("nan")
-            )
+            _w_before_nan = isinstance(_w_before, float) and math.isnan(_w_before)
+            _w_after_nan = isinstance(_w_after, float) and math.isnan(_w_after)
+            _w_delta = _w_after - _w_before if not (_w_before_nan or _w_after_nan) else float("nan")
             logger.info(
                 "PMGG waerme §9.7.14  phase=%s  before=%.4f  after=%.4f  delta=%+.4f  action=%s  strength=%.2f",
                 phase_id,
                 _w_before,
                 _w_after,
-                _w_delta if not (isinstance(_w_delta, float) and _w_delta != _w_delta) else 0.0,
+                _w_delta if not (isinstance(_w_delta, float) and math.isnan(_w_delta)) else 0.0,
                 action,
                 strength,
             )
@@ -3233,7 +3616,7 @@ class PerPhaseMusicalGoalsGate:
     # Interne Methoden
     # ------------------------------------------------------------------
 
-    def _run_with_retry(
+    def _run_with_retry(  # pylint: disable=too-many-positional-arguments
         self,
         phase: Any,
         audio: np.ndarray,
@@ -3592,6 +3975,12 @@ class PerPhaseMusicalGoalsGate:
             _retry_anchors = [0.80, 0.65, 0.50, 0.35, 0.20]
         else:
             _retry_anchors = list(_RETRY_STRENGTHS)
+        _RETRY_BUDGET_S = 300.0  # Max 5 min für alle Retries einer Phase
+        _max_retries_for_prio, _RETRY_BUDGET_S, self._last_retry_budget_policy = self._resolve_retry_budget_policy(
+            phase_kwargs,
+            max_retries=_max_retries_for_prio,
+            retry_budget_s=_RETRY_BUDGET_S,
+        )
         retry_strengths = [s * initial_strength for s in _retry_anchors[:_max_retries_for_prio]]
 
         # §2.29 Best-Effort-Tracking: Speichere den Versuch mit geringster Regression.
@@ -3630,7 +4019,6 @@ class PerPhaseMusicalGoalsGate:
         #   (nichtlineare DSP-Operationen: wet/dry ≠ Neuberechnung)
         _prev_regression = regression
         _retry_t0 = time.time()
-        _RETRY_BUDGET_S = 300.0  # Max 5 min für alle Retries einer Phase
         for attempt, strength in enumerate(retry_strengths):
             _retry_elapsed = time.time() - _retry_t0
             if _retry_elapsed > _RETRY_BUDGET_S:
@@ -3733,7 +4121,7 @@ class PerPhaseMusicalGoalsGate:
             _CATASTROPHIC_THRESHOLD = min(0.25, _CATASTROPHIC_THRESHOLD * float(_team_thr_mult))
 
         _EMERGENCY_STRENGTHS = [0.15 * initial_strength, 0.10 * initial_strength]
-        if _allow_emergency_retries(
+        if (not self._last_retry_budget_policy) and _allow_emergency_retries(
             phase_id,
             _worst_prio,
             best_regression,
@@ -4172,8 +4560,7 @@ class PerPhaseMusicalGoalsGate:
                 prio = gpp.priority_of(g)
                 prio_threshold = threshold * _PRIORITY_THRESHOLD_FACTOR.get(prio, 1.0)
                 if weighted_reg > prio_threshold:
-                    if prio < worst_prio:
-                        worst_prio = prio
+                    worst_prio = min(worst_prio, prio)
                     max_reg = max(max_reg, weighted_reg)
         return max_reg, worst_prio
 
@@ -4192,7 +4579,7 @@ class PerPhaseMusicalGoalsGate:
 # ---------------------------------------------------------------------------
 
 
-def wrap_phase(
+def wrap_phase(  # pylint: disable=too-many-positional-arguments
     phase: Any,
     audio: np.ndarray,
     sr: int,

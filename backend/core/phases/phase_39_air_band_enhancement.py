@@ -47,6 +47,11 @@ from backend.core.defect_scanner import MaterialType
 from .output_guard import evaluate_output_guard
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
+try:
+    from backend.core.hallucination_guard import apply_hallucination_guard as _apply_hg39_fn
+except Exception:
+    _apply_hg39_fn = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # §2.46b Spectral-Tilt-Preservation: material-adaptive tolerance in dB/octave
@@ -164,7 +169,8 @@ class AirBandEnhancement(PhaseInterface):
             description="High-frequency shimmer and air enhancement (12-20 kHz)",
         )
 
-    def process(
+    # pylint: disable-next=arguments-renamed
+    def process(  # type: ignore[override]
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
         """
@@ -213,8 +219,14 @@ class AirBandEnhancement(PhaseInterface):
         # die im Original nicht vorhanden war.
         _proc_mode_39 = str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower()
         _ANALOG_RESTORATION_SKIP = {
-            "vinyl", "shellac", "wax_cylinder", "wire_recording",
-            "tape", "reel_tape", "cassette", "lacquer_disc",
+            "vinyl",
+            "shellac",
+            "wax_cylinder",
+            "wire_recording",
+            "tape",
+            "reel_tape",
+            "cassette",
+            "lacquer_disc",
         }
         _mat_name_39 = str(getattr(material, "name", str(material))).lower().replace(" ", "_").replace("-", "_")
         if _proc_mode_39 == "restoration" and _mat_name_39 in _ANALOG_RESTORATION_SKIP:
@@ -328,7 +340,29 @@ class AirBandEnhancement(PhaseInterface):
                     config["exciter_mix"],
                     _loss_scale,
                 )
-
+        # §soft_saturation-Guard: Air-Band-Enhancement bei saturiertem Material begrenzen.
+        # Soft_saturation erzeugt HF-Obertöne im Presence/Air-Band (4–16 kHz).
+        # Zusätzlicher Shelf-Boost auf diesem Oberton-Profil → harsch/kratzig.
+        # soft_saturation_preserve=True → max. 40 % Stärke; drive maximal 50 %.
+        _p39_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p39_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p39_soft_sat_preserve or _p39_soft_sat_sev > 0.3:
+            _p39_sat_scale = 1.0
+            if _p39_soft_sat_sev > 0.3:
+                _p39_sat_scale = float(np.clip(1.0 - (_p39_soft_sat_sev - 0.3) * 1.1, 0.18, 1.0))
+            if _p39_soft_sat_preserve and _p39_sat_scale > 0.40:
+                _p39_sat_scale = 0.40
+            config["shelf_gain_db"] = float(config["shelf_gain_db"] * _p39_sat_scale)
+            config["exciter_mix"] = float(config["exciter_mix"] * _p39_sat_scale)
+            config["saturation_drive"] = float(config["saturation_drive"] * max(_p39_sat_scale, 0.5))
+            logger.debug(
+                "Phase 39 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (shelf=%.2f dB exciter=%.3f)",
+                _p39_soft_sat_sev,
+                _p39_soft_sat_preserve,
+                _p39_sat_scale,
+                config["shelf_gain_db"],
+                config["exciter_mix"],
+            )
         # Measure initial HF energy
         hf_energy_before = self._measure_hf_energy(audio, sample_rate)
 
@@ -426,40 +460,37 @@ class AirBandEnhancement(PhaseInterface):
             "cassette": 15000.0,
         }
         _mat_key_39 = str(getattr(material, "name", str(material))).lower().replace(" ", "_").replace("-", "_")
-        _bw_cap_39 = _BW_CEILING_39.get(_mat_key_39, None)
+        _bw_cap_39 = _BW_CEILING_39.get(_mat_key_39)
         if _bw_cap_39 is not None and sample_rate > 0:
             try:
-                from scipy.signal import butter as _butter39, sosfiltfilt as _sosfiltfilt39
-
                 _nyq39 = float(sample_rate) / 2.0
                 _ratio39 = float(np.clip(_bw_cap_39 / _nyq39, 0.01, 0.99))
-                _sos_lp39 = _butter39(8, _ratio39, btype="low", output="sos")
+                _sos_lp39 = signal.butter(8, _ratio39, btype="low", output="sos")
                 if enhanced_audio.ndim == 2:
                     if enhanced_audio.shape[0] == 2 and enhanced_audio.shape[1] > 2:
                         enhanced_audio = np.stack(
-                            [_sosfiltfilt39(_sos_lp39, enhanced_audio[c]) for c in range(2)], axis=0
+                            [signal.sosfiltfilt(_sos_lp39, enhanced_audio[c]) for c in range(2)], axis=0
                         ).astype(np.float32)
                     else:
                         _nc39 = enhanced_audio.shape[1]
                         enhanced_audio = np.stack(
-                            [_sosfiltfilt39(_sos_lp39, enhanced_audio[:, c]) for c in range(_nc39)], axis=1
+                            [signal.sosfiltfilt(_sos_lp39, enhanced_audio[:, c]) for c in range(_nc39)], axis=1
                         ).astype(np.float32)
                 else:
-                    enhanced_audio = _sosfiltfilt39(_sos_lp39, enhanced_audio).astype(np.float32)
+                    enhanced_audio = signal.sosfiltfilt(_sos_lp39, enhanced_audio).astype(np.float32)
                 enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
             except Exception as _bw39_exc:
-                import logging as _log39bw
-                _log39bw.getLogger(__name__).debug("§6.2c phase_39 BW-Ceiling (non-blocking): %s", _bw39_exc)
+                logger.debug("§6.2c phase_39 BW-Ceiling (non-blocking): %s", _bw39_exc)
 
         # §2.46e Hallucination-Guard: prueft ob Air-Band-Enhancement HF halluziniert hat
         _hg_mode_39 = str(kwargs.get("mode", kwargs.get("processing_mode", "restoration"))).lower()
         _bw_cap_hg_39 = _bw_cap_39  # already computed above
         if _bw_cap_hg_39 is not None:
             try:
-                from backend.core.hallucination_guard import apply_hallucination_guard as _apply_hg39
-
-                enhanced_audio, _hg_meta39 = _apply_hg39(
-                    audio, enhanced_audio, sr=sample_rate,
+                enhanced_audio, _hg_meta39 = _apply_hg39_fn(  # type: ignore[misc]
+                    audio,
+                    enhanced_audio,
+                    sr=sample_rate,
                     material_bw_ceiling_hz=_bw_cap_hg_39,
                     mode=_hg_mode_39,
                 )

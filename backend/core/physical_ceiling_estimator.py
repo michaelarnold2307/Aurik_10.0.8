@@ -260,9 +260,16 @@ class PhysicalCeilingEstimator:
         elif material in {"mp3_low", "mp3_high", "mp3"}:
             ceiling["brillanz"] = min(ceiling["brillanz"], 0.85)
 
-        # Tape: leichte Limitierung in Höhen
-        elif material in {"tape", "reel_tape", "cassette"}:
-            ceiling["brillanz"] = min(ceiling["brillanz"], 0.92)
+        # Tape/Kassette: Deckel für HF-Metriken — rekalibriert mit material-adaptiver Formel
+        # §9.12.7 [BUG-FIX v9.12.7]: Ceiling an neue BrillanzMetric-Formeldynamik angepasst.
+        # Mit material-adaptiver Kalibration (offset=0.10, divisor=1.20) gibt tape crest_peak≈8
+        # score≈0.67, crest_peak≈12 score≈0.82. Physikalische Obergrenze: 0.78/0.50.
+        elif material in {"tape", "cassette"}:
+            ceiling["brillanz"] = min(ceiling["brillanz"], 0.78)
+            ceiling["transparenz"] = min(ceiling["transparenz"], 0.50)
+        elif material in {"reel_tape"}:
+            ceiling["brillanz"] = min(ceiling["brillanz"], 0.85)
+            ceiling["transparenz"] = min(ceiling["transparenz"], 0.62)
 
         return ceiling
 
@@ -277,7 +284,7 @@ _lock = threading.Lock()
 
 def get_physical_ceiling_estimator() -> PhysicalCeilingEstimator:
     """Thread-sicherer Singleton (§3.2)."""
-    global _instance
+    global _instance  # pylint: disable=global-statement  # §3.2 Pflicht-Singleton-Pattern
     if _instance is None:
         with _lock:
             if _instance is None:

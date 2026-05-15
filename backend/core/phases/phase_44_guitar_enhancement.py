@@ -178,6 +178,25 @@ class GuitarEnhancementPhase(PhaseInterface):
                 metrics={"spectral_centroid": 0.0},
             )
 
+        # §2.46g soft_saturation-Guard: Guitar-Exciter und Transient-Boost auf gesättigtem
+        # Material addieren Harmonics in bereits übersteuerten Regionen. Hard-Cap: 35 %.
+        _p44_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p44_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p44_soft_sat_preserve or _p44_soft_sat_sev > 0.30:
+            _p44_sat_scale = 1.0
+            if _p44_soft_sat_sev > 0.30:
+                _p44_sat_scale = float(np.clip(1.0 - (_p44_soft_sat_sev - 0.30) * 1.0, 0.20, 1.0))
+            if _p44_soft_sat_preserve and _p44_sat_scale > 0.35:
+                _p44_sat_scale = 0.35
+            _effective_strength = float(_effective_strength * _p44_sat_scale)
+            logger.debug(
+                "Phase 44 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (strength=%.3f)",
+                _p44_soft_sat_sev,
+                _p44_soft_sat_preserve,
+                _p44_sat_scale,
+                _effective_strength,
+            )
+
         transient_gain: float = float(kwargs.get("transient_gain", 0.15))
         exciter_gain: float = float(kwargs.get("exciter_gain", 1.0))
         transient_gain = float(transient_gain * _effective_strength)

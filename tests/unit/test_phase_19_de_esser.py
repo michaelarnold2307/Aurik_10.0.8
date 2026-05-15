@@ -43,7 +43,7 @@ def _noise_band(lo_hz: float, hi_hz: float, duration_s: float = 2.0, sr: int = S
 def _make_phase():
     from backend.core.phases.phase_19_de_esser import DeEsserPhase
 
-    return DeEsserPhase(gender="male")
+    return DeEsserPhase(gender_type="male")
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +184,8 @@ class TestBreahinessGuardInProcess:
     def _run(self, audio, sr=SR):
         from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
 
-        p = DeEsserPhase(gender="female")
-        return p.process(audio, sr, material=MaterialType.TAPE)
+        p = DeEsserPhase(gender_type="female")
+        return p.process(audio, sr, material_type=MaterialType.TAPE)
 
     def test_clean_vocal_succeeds(self, clean_vocal_mono):
         result = self._run(clean_vocal_mono)
@@ -199,8 +199,8 @@ class TestBreahinessGuardInProcess:
         """After process(), stats must contain 'breathiness_ratio' key."""
         from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
 
-        p = DeEsserPhase(gender="male")
-        result = p.process(breathy_vocal_mono, SR, material=MaterialType.TAPE)
+        p = DeEsserPhase(gender_type="male")
+        result = p.process(breathy_vocal_mono, SR, material_type=MaterialType.TAPE)
         assert result.success
         assert "breathiness_ratio" in p.stats, "stats must contain breathiness_ratio"
         assert 0.0 <= p.stats["breathiness_ratio"] <= 1.0
@@ -208,8 +208,8 @@ class TestBreahinessGuardInProcess:
     def test_clean_vocal_breathiness_ratio_low(self, clean_vocal_mono):
         from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
 
-        p = DeEsserPhase(gender="female")
-        p.process(clean_vocal_mono, SR, material=MaterialType.TAPE)
+        p = DeEsserPhase(gender_type="female")
+        p.process(clean_vocal_mono, SR, material_type=MaterialType.TAPE)
         ratio = p.stats.get("breathiness_ratio", -1.0)
         assert ratio < 0.5, f"Clean vocal should have low breathiness, got {ratio:.3f}"
 
@@ -245,12 +245,12 @@ class TestBreahinessGuardInProcess:
         """
         from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
 
-        p_clean = DeEsserPhase(gender="male")
-        p_clean.process(clean_vocal_mono, SR, material=MaterialType.TAPE)
+        p_clean = DeEsserPhase(gender_type="male")
+        p_clean.process(clean_vocal_mono, SR, material_type=MaterialType.TAPE)
         clean_ratio = p_clean.stats.get("breathiness_ratio", 0.0)
 
-        p_breathy = DeEsserPhase(gender="male")
-        p_breathy.process(breathy_vocal_mono, SR, material=MaterialType.TAPE)
+        p_breathy = DeEsserPhase(gender_type="male")
+        p_breathy.process(breathy_vocal_mono, SR, material_type=MaterialType.TAPE)
         breathy_ratio = p_breathy.stats.get("breathiness_ratio", 0.0)
 
         assert breathy_ratio > clean_ratio, (
@@ -338,7 +338,7 @@ class TestStereoMSCoherence:
     def test_stereo_uses_ms_domain_not_independent_lr(self, monkeypatch):
         from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
 
-        phase = DeEsserPhase(gender="female")
+        phase = DeEsserPhase(gender_type="female")
         calls: list[np.ndarray] = []
 
         def _spy_channel(
@@ -359,7 +359,7 @@ class TestStereoMSCoherence:
         base = (0.25 * _sine(300, 1.0) + 0.85 * _noise_band(6000, 9500, 1.0, amp=0.8)).astype(np.float32)
         stereo = np.stack([base, (0.98 * base).astype(np.float32)], axis=1)
 
-        result = phase.process(stereo, SR, material=MaterialType.TAPE)
+        result = phase.process(stereo, SR, material_type=MaterialType.TAPE)
         assert result.success is True
         assert result.audio.shape == stereo.shape
         assert len(calls) == 2, "Stereo-Pfad muss genau zwei Kanalaufrufe ausführen (Mid + Side)."
@@ -369,4 +369,90 @@ class TestStereoMSCoherence:
         assert rms_second < rms_first * 0.25, (
             "Bei Near-Mono muss Side deutlich kleiner als Mid sein; "
             f"gefunden: mid={rms_first:.6f}, side={rms_second:.6f}"
+        )
+
+
+class TestIntelligibilityGuard:
+    def test_air_loss_counts_less_than_presence_articulation_loss(self):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase
+
+        phase = DeEsserPhase(gender_type="female")
+        original = (0.35 * _sine(3000.0, 1.0) + 0.30 * _sine(6500.0, 1.0) + 0.25 * _sine(10000.0, 1.0)).astype(
+            np.float32
+        )
+        air_only_loss = (0.35 * _sine(3000.0, 1.0) + 0.30 * _sine(6500.0, 1.0) + 0.05 * _sine(10000.0, 1.0)).astype(
+            np.float32
+        )
+        presence_and_articulation_loss = (
+            0.20 * _sine(3000.0, 1.0) + 0.16 * _sine(6500.0, 1.0) + 0.25 * _sine(10000.0, 1.0)
+        ).astype(np.float32)
+
+        air_loss = phase._check_intelligibility_loss(original, air_only_loss, SR)
+        speech_loss = phase._check_intelligibility_loss(original, presence_and_articulation_loss, SR)
+
+        assert air_loss < 0.15
+        assert speech_loss > air_loss + 0.15
+
+
+class TestPhase19MusicalGoalMetrics:
+    def test_metrics_contain_musical_goal_keys(self, clean_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(clean_vocal_mono, SR, material_type=MaterialType.TAPE, gender="female")
+
+        assert "musical_goal_brillanz" in result.metrics
+        assert "musical_goal_artikulation" in result.metrics
+        assert "musical_goal_authentizitaet" in result.metrics
+        assert "musical_goal_transparenz" in result.metrics
+
+    def test_metrics_are_bounded(self, breathy_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(breathy_vocal_mono, SR, material_type=MaterialType.TAPE, gender="female")
+
+        assert 0.0 <= float(result.metrics["musical_goal_brillanz"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_artikulation"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_authentizitaet"]) <= 1.0
+        assert 0.0 <= float(result.metrics["musical_goal_transparenz"]) <= 1.0
+
+    def test_transparency_metric_tracks_intelligibility_score(self, clean_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(clean_vocal_mono, SR, material_type=MaterialType.VINYL, gender="female")
+
+        assert result.metrics["musical_goal_transparenz"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_score"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_authentizitaet_metric_tracks_presence_ratio(self, clean_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(clean_vocal_mono, SR, material_type=MaterialType.VINYL, gender="female")
+
+        assert result.metrics["musical_goal_authentizitaet"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_presence_ratio"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_brillanz_metric_tracks_air_ratio(self, clean_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(clean_vocal_mono, SR, material_type=MaterialType.VINYL, gender="female")
+
+        assert result.metrics["musical_goal_brillanz"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_air_ratio"], 0.0, 1.0)), abs=1e-6
+        )
+
+    def test_artikulation_metric_tracks_articulation_ratio(self, clean_vocal_mono):
+        from backend.core.phases.phase_19_de_esser import DeEsserPhase, MaterialType
+
+        phase = DeEsserPhase(gender_type="female")
+        result = phase.process(clean_vocal_mono, SR, material_type=MaterialType.VINYL, gender="female")
+
+        assert result.metrics["musical_goal_artikulation"] == pytest.approx(
+            float(np.clip(result.metrics["intelligibility_articulation_ratio"], 0.0, 1.0)), abs=1e-6
         )

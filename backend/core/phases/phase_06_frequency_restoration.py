@@ -506,6 +506,27 @@ class FrequencyRestorationPhase(PhaseInterface):
             params["max_boost_db"] = max(0.0, params["max_boost_db"])
             logger.debug("§0j energy_bias -6 dB: phase_06 Vokal (panns_singing=%.2f)", _panns_singing_06)
 
+        # §2.46g soft_saturation-Guard: Frequenz-Restaurierung bei gesättigtem Material begrenzen.
+        # Soft_saturation erzeugt HF-Artefakte im Oberton-Profil — zusätzlicher Spektral-Boost
+        # addiert auf diesen Regionen → "kratzig" im HF. Konservativer als Enhancement-Phasen:
+        # genuiner HF-Verlust (Tape-Rolloff) soll noch repariert werden → Hard-Cap 55 %.
+        _p06_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p06_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p06_soft_sat_preserve or _p06_soft_sat_sev > 0.35:
+            _p06_sat_scale = 1.0
+            if _p06_soft_sat_sev > 0.35:
+                _p06_sat_scale = float(np.clip(1.0 - (_p06_soft_sat_sev - 0.35) * 0.8, 0.40, 1.0))
+            if _p06_soft_sat_preserve and _p06_sat_scale > 0.55:
+                _p06_sat_scale = 0.55
+            params["max_boost_db"] = float(params.get("max_boost_db", 8.0)) * _p06_sat_scale
+            logger.debug(
+                "Phase 06 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (max_boost_db=%.2f dB)",
+                _p06_soft_sat_sev,
+                _p06_soft_sat_preserve,
+                _p06_sat_scale,
+                params["max_boost_db"],
+            )
+
         quality_mode = kwargs.get("quality_mode", "balanced")
         use_ml_hybrid = (
             ML_HYBRID_AVAILABLE

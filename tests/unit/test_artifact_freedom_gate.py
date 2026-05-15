@@ -359,6 +359,23 @@ def test_27_veto_threshold_is_095():
     assert result.artifact_freedom >= 0.95
 
 
+def test_28_evaluate_survives_scalar_guard_configuration(monkeypatch):
+    import backend.core.artifact_freedom_gate as afg_module
+
+    gate = afg_module.ArtifactFreedomGate()
+    audio = _audio(1.0)
+
+    monkeypatch.setattr(afg_module, "PRE_ECHO_VALID_TYPES", 1.0)
+    monkeypatch.setattr(afg_module, "NOISE_TEXTURE_VALID_TYPES", 1.0)
+    monkeypatch.setattr(afg_module, "_ROUGHNESS_APPLICABLE_TYPES", 1.0)
+    monkeypatch.setattr(afg_module.ArtifactFreedomGate, "_RESTORATIVE_PHASE_IDS", 1.0)
+
+    result = gate.evaluate(audio, audio, SR, phase_id="phase_40")
+
+    assert np.isfinite(result.artifact_freedom)
+    assert result.artifact_freedom >= 0.95
+
+
 def test_28_per_phase_mode_disables_musical_noise_and_ringing():
     """§2.49 per-phase mode: residual-based detectors (musical_noise, metallic_ringing)
     must be disabled when phase_id is supplied.  Adding harmonics/EQ to clean audio
@@ -377,7 +394,7 @@ def test_28_per_phase_mode_disables_musical_noise_and_ringing():
     result_pipeline = gate.evaluate(original, restored, SR, material_type="digital", phase_id="")
     # With phase_id → residual-based detectors disabled → must not penalise musical content
     result_per_phase = gate.evaluate(
-        original, restored, SR, material_type="digital", phase_id="phase_07_harmonic_enhancement"
+        original, restored, SR, material_type="digital", phase_id="phase_07_harmonic_restoration"
     )
     # Per-phase mode must produce higher (or equal) artifact_freedom — sustained harmonics
     # are musical content, not artefacts.

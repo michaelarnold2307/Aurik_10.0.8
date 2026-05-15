@@ -46,6 +46,11 @@ from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
+try:
+    from backend.core.dsp.hallucination_guard import check_hallucination as _check_hg_38_fn
+except Exception:
+    _check_hg_38_fn = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +130,7 @@ class PresenceBoost(PhaseInterface):
             description="Mid-range clarity and vocal/instrument presence enhancement",
         )
 
+    # pylint: disable-next=arguments-renamed
     def process(
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
@@ -211,6 +217,22 @@ class PresenceBoost(PhaseInterface):
             config["lower_gain_db"] *= 0.75
             config["upper_gain_db"] *= 0.80
 
+        # §vocal_presence: PANNs-Singing ≥ 0.35 → Presence-Boost zurückhalten.
+        # Vokalzone (200–4000 Hz) wird von der Stimme dominiert; starker Boost klingt grell.
+        # Injiziert via _restoration_context["vocal_presence_active"] → kwargs (UV3).
+        _vp_active_38 = bool(kwargs.get("vocal_presence_active", False))
+        if _vp_active_38:
+            _vp_strength_38 = float(np.clip(kwargs.get("vocal_presence_strength", 0.0), 0.0, 1.0))
+            # Lineare Skalierung: strength=0 → kein Eingriff; strength=1.0 → 60 % Reduktion
+            _vp_scale_38 = float(np.clip(1.0 - 0.60 * _vp_strength_38, 0.40, 1.0))
+            config["lower_gain_db"] *= _vp_scale_38
+            config["upper_gain_db"] *= _vp_scale_38
+            logger.debug(
+                "Phase 38: vocal_presence_active → presence_scale=%.2f (vp_strength=%.2f)",
+                _vp_scale_38,
+                _vp_strength_38,
+            )
+
         # §2.41 (v9.10.116) SOTA: Ära-bewusste Presence-Center aus SourceFidelityTarget.
         # Verschiedene Mikrofon-Ären haben unterschiedliche Hotspot-Frequenzen:
         #   Acoustic/Carbon (1920s): 2000–4000 Hz (Horn-Resonanz + Carbon-Peak)
@@ -236,6 +258,31 @@ class PresenceBoost(PhaseInterface):
             config["lower_gain_db"] = float(np.clip(config["lower_gain_db"] * _hd_boost, 0.0, 10.0))
             config["upper_gain_db"] = float(np.clip(config["upper_gain_db"] * _hd_boost, 0.0, 10.0))
             logger.debug("Phase 38: harm_density=%.2f → presence_boost×%.2f", _harm_density, _hd_boost)
+
+        # §soft_saturation-Guard: Presence-Boost bei gesättigtem Material begrenzen.
+        # Soft_saturation erzeugt bereits geradzahlige Obertöne im Presence-Band (2–6 kHz).
+        # Weiterer Boost auf diesem Band macht Gesang "übersteuert/kratzig" (§0h, §0i).
+        # soft_saturation_preserve=True (z.B. Schlager-Profil) → max. 45 % des Boosts.
+        # soft_saturation_severity > 0.3 → proportionale Reduzierung bis 28 % bei severity=1.0.
+        _soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _soft_sat_preserve or _soft_sat_sev > 0.3:
+            _sat_scale = 1.0
+            if _soft_sat_sev > 0.3:
+                # Lineare Reduzierung: severity 0.3 → scale 1.0, severity 1.0 → scale 0.16
+                _sat_scale = float(np.clip(1.0 - (_soft_sat_sev - 0.3) * 1.2, 0.16, 1.0))
+            if _soft_sat_preserve and _sat_scale > 0.45:
+                _sat_scale = 0.45  # Hard-Cap bei preserve=True: max. 45 % des Boosts
+            config["lower_gain_db"] = float(config["lower_gain_db"] * _sat_scale)
+            config["upper_gain_db"] = float(config["upper_gain_db"] * _sat_scale)
+            logger.debug(
+                "Phase 38 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (lower=%.2f dB upper=%.2f dB)",
+                _soft_sat_sev,
+                _soft_sat_preserve,
+                _sat_scale,
+                config["lower_gain_db"],
+                config["upper_gain_db"],
+            )
 
         # §2.51 M/S-Domain: Presence EQ auf Mid voll, Side konservativ (\u00d72 Threshold)
         if is_stereo:
@@ -264,12 +311,8 @@ class PresenceBoost(PhaseInterface):
         enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
         # §2.46e Hallucination-Guard (Pflicht für additive Phasen)
         try:
-            from backend.core.dsp.hallucination_guard import (
-                check_hallucination as _check_hg_38,  # pylint: disable=import-outside-toplevel
-            )
-
             _mode_38 = str(kwargs.get("mode", "restoration"))
-            _hg_38 = _check_hg_38(audio, enhanced_audio, sr=sample_rate, mode=_mode_38)
+            _hg_38 = _check_hg_38_fn(audio, enhanced_audio, sr=sample_rate, mode=_mode_38)  # type: ignore[misc]
             if _hg_38.requires_rollback:
                 logger.warning(
                     "phase_38: hallucination_guard rollback (spectral_novelty=%.3f)", _hg_38.spectral_novelty

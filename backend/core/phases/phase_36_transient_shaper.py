@@ -140,6 +140,7 @@ class TransientShaper(PhaseInterface):
             description="Multi-band transient enhancement and sustain control",
         )
 
+    # pylint: disable-next=arguments-renamed
     def process(
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
@@ -180,6 +181,26 @@ class TransientShaper(PhaseInterface):
                     "loudness_makeup_db": 0.0,
                 },
                 warnings=[],
+            )
+
+        # §2.46g soft_saturation-Guard: Transient-Shaping auf gesättigtem Material
+        # verstärkt die Hörbarkeit von Sättigungsverzerrungen auf Transienten.
+        # Hard-Cap bei preserve=True: 50 %.
+        _p36_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p36_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p36_soft_sat_preserve or _p36_soft_sat_sev > 0.35:
+            _p36_sat_scale = 1.0
+            if _p36_soft_sat_sev > 0.35:
+                _p36_sat_scale = float(np.clip(1.0 - (_p36_soft_sat_sev - 0.35) * 0.8, 0.30, 1.0))
+            if _p36_soft_sat_preserve and _p36_sat_scale > 0.50:
+                _p36_sat_scale = 0.50
+            _effective_strength = float(_effective_strength * _p36_sat_scale)
+            logger.debug(
+                "Phase 36 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (strength=%.3f)",
+                _p36_soft_sat_sev,
+                _p36_soft_sat_preserve,
+                _p36_sat_scale,
+                _effective_strength,
             )
 
         is_stereo = audio.ndim == 2
@@ -259,7 +280,7 @@ class TransientShaper(PhaseInterface):
         # **GUARD: Short-Audio-Buffer (§2.47, §0 Primum non nocere)**
         MIN_AUDIO_SAMPLES = 512  # 10 ms @ 48 kHz
         if len(audio) < MIN_AUDIO_SAMPLES:
-            logger.debug(f"phase_36: audio too short ({len(audio)} < {MIN_AUDIO_SAMPLES}), passthrough")
+            logger.debug("phase_36: audio too short (%d < %d), passthrough", len(audio), MIN_AUDIO_SAMPLES)
             return np.asarray(audio, dtype=np.float32).copy()
 
         # Split into bands

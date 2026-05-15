@@ -140,6 +140,54 @@ class TestRestorationResult:
 
 
 class TestPreventFirstQuietEdges:
+    def test_40d_extract_transfer_chain_accepts_direct_string_and_list_inputs(self):
+        assert UnifiedRestorerV3._extract_transfer_chain_from_forensics("vinyl -> tape -> mp3_low") == [
+            "vinyl",
+            "tape",
+            "mp3_low",
+        ]
+        assert UnifiedRestorerV3._extract_transfer_chain_from_forensics(["vinyl", " tape ", "mp3_low"]) == [
+            "vinyl",
+            "tape",
+            "mp3_low",
+        ]
+
+    def test_40e_extract_transfer_chain_rejects_scalar_input_without_iteration(self):
+        assert UnifiedRestorerV3._extract_transfer_chain_from_forensics(0.62) is None
+
+    def test_40ea_noise_texture_threshold_uses_primary_material_without_chain(self):
+        assert _uv3_mod._resolve_noise_texture_rollback_threshold("vinyl", None) == pytest.approx(8.0)
+
+    def test_40eb_noise_texture_threshold_uses_most_permissive_chain_stage(self):
+        assert _uv3_mod._resolve_noise_texture_rollback_threshold("vinyl", ["tape", "mp3_low"]) == pytest.approx(15.0)
+
+    def test_40ec_final_quiet_edge_clamp_reduces_intro_and_outro_boost(self):
+        intro = _sine(secs=1.0, freq=220.0) * 0.015
+        middle = _sine(secs=2.0, freq=440.0) * 0.18
+        outro = _sine(secs=1.0, freq=220.0) * 0.015
+        reference = np.concatenate([intro, middle, outro]).astype(np.float32)
+        candidate = reference.copy()
+        candidate[:SR] *= 6.0
+        candidate[-SR:] *= 5.0
+
+        clamped = UnifiedRestorerV3._apply_final_quiet_edge_clamp(reference, candidate, SR, material_key="vinyl")
+
+        ref_edge_peak = float(np.percentile(np.abs(reference[:SR]), 99.9))
+        out_intro_peak = float(np.percentile(np.abs(clamped[:SR]), 99.9))
+        out_outro_peak = float(np.percentile(np.abs(clamped[-SR:]), 99.9))
+        ref_mid_peak = float(np.percentile(np.abs(reference[SR:-SR]), 99.9))
+        out_mid_peak = float(np.percentile(np.abs(clamped[SR:-SR]), 99.9))
+
+        assert out_intro_peak <= (ref_edge_peak * (10.0 ** (2.05 / 20.0)))
+        assert out_outro_peak <= (ref_edge_peak * (10.0 ** (2.05 / 20.0)))
+        assert out_mid_peak >= ref_mid_peak * 0.98
+
+    def test_40ed_final_quiet_edge_clamp_passthrough_without_reference(self):
+        candidate = (_sine(secs=2.0) * 0.2).astype(np.float32)
+        clamped = UnifiedRestorerV3._apply_final_quiet_edge_clamp(None, candidate, SR, material_key="vinyl")
+
+        assert np.allclose(clamped, candidate)
+
     def test_40f_quiet_edge_prevention_profile_detects_intro_outro(self):
         audio = _sine(secs=8.0) * 0.18
         audio[: int(1.0 * SR)] *= 0.10
@@ -180,6 +228,64 @@ class TestPreventFirstQuietEdges:
         assert float(caps["phase_40_loudness_normalization"]) <= 0.3001
         assert float(caps["phase_10_compression"]) <= 0.39
         assert out["strict_conflict_policy"]["quiet_edge_prevention"]["has_quiet_edges"] is True
+
+    def test_40i_execute_pipeline_prevents_cumulative_quiet_edge_ratcheting(self):
+        class _PhaseStub:
+            def __init__(self, phase_id: str):
+                self._phase_id = phase_id
+
+            def get_metadata(self):
+                return types.SimpleNamespace(
+                    estimated_time_factor=0.1,
+                    phase_id=self._phase_id,
+                    name=self._phase_id,
+                )
+
+        restorer = UnifiedRestorerV3(RestorationConfig())
+        restorer.phase_metadata = {
+            "phase_99_gain_a": {"name": "Gain A", "dependencies": [], "category": "mastering"},
+            "phase_99_gain_b": {"name": "Gain B", "dependencies": [], "category": "mastering"},
+        }
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+
+        def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
+            boosted = np.clip(np.asarray(_audio, dtype=np.float32) * 1.18, -1.0, 1.0)
+            return types.SimpleNamespace(
+                success=True,
+                audio=boosted,
+                execution_time_seconds=0.001,
+                warnings=[],
+            )
+
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+
+        intro = _sine(secs=1.0, freq=220.0) * 0.015
+        middle = _sine(secs=2.0, freq=440.0) * 0.18
+        outro = _sine(secs=1.0, freq=220.0) * 0.015
+        audio_in = np.concatenate([intro, middle, outro]).astype(np.float32)
+        quiet_profile = UnifiedRestorerV3._compute_quiet_edge_prevention_profile(audio_in, SR, material_key="vinyl")
+
+        out, executed, _sk, _def = restorer._execute_pipeline(
+            audio=audio_in,
+            sample_rate=SR,
+            material_type=MaterialType.VINYL,
+            defect_result=types.SimpleNamespace(scores={}),
+            selected_phases=["phase_99_gain_a", "phase_99_gain_b"],
+            no_rt_limit=True,
+            original_audio_reference=audio_in.copy(),
+            quiet_edge_profile=quiet_profile,
+        )
+
+        ref_edge_peak = float(np.percentile(np.abs(audio_in[:SR]), 99.9))
+        out_intro_peak = float(np.percentile(np.abs(out[:SR]), 99.9))
+        out_outro_peak = float(np.percentile(np.abs(out[-SR:]), 99.9))
+        ref_mid_peak = float(np.percentile(np.abs(audio_in[SR:-SR]), 99.9))
+        out_mid_peak = float(np.percentile(np.abs(out[SR:-SR]), 99.9))
+
+        assert executed == ["phase_99_gain_a", "phase_99_gain_b"]
+        assert out_intro_peak <= (ref_edge_peak * (10.0 ** (2.05 / 20.0)))
+        assert out_outro_peak <= (ref_edge_peak * (10.0 ** (2.05 / 20.0)))
+        assert out_mid_peak >= ref_mid_peak * 1.15
 
     def test_40h_build_song_calibration_profile_persists_vocal_presence(self):
         profile = UnifiedRestorerV3._build_song_calibration_profile(

@@ -297,6 +297,45 @@ Erkennung via: FCPE F0-Tracking + spektrale Flachheit (scipy.signal) im Vokal-Se
 > Implementierung: `backend/core/musical_goals/vocal_quality_index.py`
 > Aufruf: `MusicalGoalsChecker.measure_all()` nach Phase-Pipeline, wenn Vocal erkannt
 
+## §2.35d [RELEASE_MUST] Gesangsexzellenz-Contract — Maximale Vokalqualität ohne Artefaktrisiko
+
+Dieser Contract verdichtet die für Gesang relevanten Invarianten aus §2.35b, §2.35c,
+§2.36 und §0a zu einem einzigen CI-prüfbaren Satz von Pflichten. Ziel ist nicht
+aggressiveres Vocal-Processing, sondern maximale Gesangsqualität unter striktem
+`Primum non nocere`.
+
+**Vier Pflicht-Invarianten**:
+
+1. **Frühe und konservative Aktivierung**:
+    `panns_singing_confidence >= 0.35` aktiviert Gesangsmetriken und §2.36.
+    Voller Vocal-Chain-Einsatz bleibt an die harte Gesangs-Evidenz `>= 0.40` gebunden;
+    der Bereich `0.35–0.40` bleibt Soft-Zone mit reduzierter Stärke.
+2. **Gesangsidentität vor Bearbeitungsgewinn**:
+    `singer_identity_cosine >= 0.92` bleibt Pflichtziel; `VQI < 0.72` löst Recovery aus.
+    Diese Gates dürfen Gesang verbessern, aber niemals die Sängeridentität oder
+    Natürlichkeit opfern.
+3. **Phonem-bewusste Kettenreihenfolge**:
+    Die kanonische Vocal-Kette lautet
+    `phase_19_de_esser -> phase_42_vocal_enhancement -> phase_43_ml_deesser -> phase_58_lyrics_guided_enhancement`.
+    LyricsGuidedEnhancement kommt zuletzt, damit phonem-klassenbewusste Salienz-Steuerung
+    auf einer bereits gesäuberten, aber noch nicht verfremdeten Vokalbasis arbeitet.
+4. **Modus-Trennung ohne Gesangsverlust**:
+    `phase_42_vocal_enhancement` bleibt in `restoration` verboten (§0a),
+    `phase_58_lyrics_guided_enhancement` bleibt bei erkannter Stimme dennoch Pflicht,
+    weil es keine Stem-Verfremdung ist, sondern phonem-bewusste Defektsteuerung.
+5. **Export-Metadaten ohne Verlust**:
+    Wenn das VQI-Gate aktiv war, MUSS `RestorationResult.metadata` die Felder
+    `vqi`, `singer_identity_cosine`, `singer_id_dsp_fallback` und `vqi_tier`
+    aus dem finalen UV3-Pfad enthalten. Ein bloß internes Logging oder eine nur
+    phasenlokale Akkumulation genügt nicht.
+
+**Artefaktfreiheits-Klausel**:
+
+- Dieser Contract hebt **keine** P1/P2-Schutzregel auf.
+- Gesangsverbesserung ist nur gültig, wenn Natürlichkeit/Authentizität erhalten bleiben.
+- Kein Vokal-Gate darf eine aggressivere Bearbeitung erzwingen, wenn dadurch hörbare
+  Artefakte, Formant-Verfärbungen oder synthetische Präsenz entstehen.
+
 ---
 
 ## §2.36 Pareto-Tie-Break nach Hoerprioritaet

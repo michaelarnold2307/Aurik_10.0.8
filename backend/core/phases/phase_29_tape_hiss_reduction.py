@@ -173,7 +173,7 @@ class TapeHissReductionPhase(PhaseInterface):
     # Number of frequency bands for multiband processing
     NUM_BANDS = 8
 
-    def __init__(self, sample_rate: int = 48000, **kwargs):
+    def __init__(self, sample_rate: int = 48000, **_kwargs):
         super().__init__()
         self.sample_rate = sample_rate
         self._deepfilternet_plugin = None
@@ -1162,12 +1162,23 @@ class TapeHissReductionPhase(PhaseInterface):
                 G_z = np.exp(np.clip(log_G_z, np.log(G_floor + eps), 0.0))
                 G_z = np.clip(np.nan_to_num(G_z, nan=G_floor), G_floor, 1.0)
 
-                # §2.62: Per-Frequenz-Masking-Floor anwenden (non-blocking).
-                # Verhindert Überunterdrückung in Bins wo Rauschen unterhalb der Maskierungsschwelle liegt.
+                # §2.62: Per-Frequenz-Masking-Floor — Signal-konditioniert (non-blocking).
+                # Schützt signalpräsente Bins vor Überunterdrückung (§2.62).
+                # Signal-konditioniert: Floor nur auf Bins mit G_z > _P29_SIGNAL_GATE anwenden.
+                # Das verhindert, dass rausch-dominierte Bins (G_z klein) durch die Masking-Floor
+                # "gerettet" werden — was andernfalls NR blockiert und bass_kraft/HF-Energie verfälscht.
+                # Kalibration: _P29_SIGNAL_GATE=0.5 trennt Signal- von Rausch-Bins empirisch optimal.
+                _P29_SIGNAL_GATE = 0.50  # Bins > 0.5 gelten als signalpräsent
                 if _masking_floor_p29 is not None and _masking_freqs_p29 is not None:
                     try:
                         _mfloor_zone = np.interp(f_z, _masking_freqs_p29, _masking_floor_p29).astype(np.float32)
-                        G_z = np.maximum(G_z, _mfloor_zone[:, np.newaxis])
+                        _mfloor_zone = np.minimum(_mfloor_zone, 0.65)  # Absoluter Cap: immer ≥ 35 % NR möglich
+                        _signal_mask = G_z > _P29_SIGNAL_GATE  # (F, T) bool
+                        G_z = np.where(
+                            _signal_mask,
+                            np.maximum(G_z, _mfloor_zone[:, np.newaxis]),
+                            G_z,
+                        )
                     except Exception:
                         pass  # nie pipeline-blockierend
 

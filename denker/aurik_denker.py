@@ -23,12 +23,15 @@ Spec §2.1, §2.2, §9.5 — v9.10.45
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib import import_module
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -112,6 +115,81 @@ _HEAVY_DEFECT_HINTS: frozenset[str] = frozenset(
         "print_through",
     }
 )
+
+
+def _load_symbol(module_name: str, symbol_name: str) -> Any:
+    """Load a symbol lazily to avoid module-level circular imports."""
+    return getattr(import_module(module_name), symbol_name)
+
+
+def _normalize_goal_scores(raw_goals: Any) -> dict[str, float]:
+    """Coerce heterogeneous goal mappings to the canonical dict[str, float] shape."""
+    if not isinstance(raw_goals, dict):
+        return {}
+
+    normalized: dict[str, float] = {}
+    for raw_key, raw_value in raw_goals.items():
+        if not isinstance(raw_value, (int, float)):
+            continue
+        key = raw_key.decode("utf-8", errors="ignore") if isinstance(raw_key, bytes) else str(raw_key)
+        normalized[key] = float(raw_value)
+    return normalized
+
+
+def _get_canonical_thresholds_for_mode(is_studio_2026: bool) -> dict[str, float]:
+    """Load PMGG goal thresholds lazily for the current mode."""
+    threshold_fn = cast(
+        Callable[..., dict[str, float]],
+        _load_symbol("backend.core.per_phase_musical_goals_gate", "_get_canonical_thresholds"),
+    )
+    return threshold_fn(is_studio_2026=is_studio_2026)
+
+
+def _score_versa_mos(audio: np.ndarray, sr: int) -> Any:
+    """Run VERSA MOS via lazy import to keep optional plugin loading local."""
+    score_mos_fn = cast(Callable[[np.ndarray, int], Any], _load_symbol("plugins.versa_plugin", "score_mos"))
+    return score_mos_fn(audio, sr)
+
+
+def _set_pipeline_active(active: bool) -> None:
+    """Inform the plugin lifecycle manager that the heavy pipeline is active."""
+    set_active_fn = cast(
+        Callable[[bool], None],
+        _load_symbol("backend.core.plugin_lifecycle_manager", "set_pipeline_active"),
+    )
+    set_active_fn(active)
+
+
+def _evict_stale_plugins(required_mb: float | None = None) -> int:
+    """Evict inactive plugins through the lifecycle manager."""
+    evict_fn = cast(
+        Callable[..., int],
+        _load_symbol("backend.core.plugin_lifecycle_manager", "evict_stale_plugins"),
+    )
+    if required_mb is None:
+        return int(evict_fn())
+    return int(evict_fn(required_mb=required_mb))
+
+
+def _probe_benign_digital_source(
+    audio: np.ndarray,
+    sr: int,
+    resolved_material: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Call UV3's clean-digital probe without hard importing the full backend at module import time."""
+    material_type = _load_symbol("backend.core.defect_scanner", "MaterialType")
+    uv3_cls = _load_symbol("backend.core.unified_restorer_v3", "UnifiedRestorerV3")
+    _probe_name = "_is_benign_digital_source"
+    benign_probe = cast(
+        Callable[[np.ndarray, int, Any], tuple[bool, dict[str, Any]]],
+        getattr(uv3_cls, _probe_name),
+    )
+    material_enum = next(
+        (member for member in material_type if getattr(member, "value", None) == resolved_material),
+        None,
+    )
+    benign, metrics = benign_probe(audio, sr, material_enum)
+    return bool(benign), dict(metrics)
 
 
 # ─── Ergebnis-Datenklasse ────────────────────────────────────────────────────
@@ -247,7 +325,8 @@ class AurikDenker:
 
         _dur_s = len(audio) / max(sr, 1) if audio.ndim == 1 else audio.shape[0] / max(sr, 1)
         logger.info(
-            "AurikDenker.denke() gestartet: mode=%s, sr=%d, duration=%.1fs, shape=%s, caches=[era=%s, genre=%s, defect=%s, medium=%s, rest=%s]",
+            "AurikDenker.denke() gestartet: mode=%s, sr=%d, duration=%.1fs, shape=%s, "
+            "caches=[era=%s, genre=%s, defect=%s, medium=%s, rest=%s]",
             mode,
             sr,
             _dur_s,
@@ -297,9 +376,7 @@ class AurikDenker:
             elapsed = time.perf_counter() - t_start
             rt = elapsed / max(audio_duration_s, 1e-6)
             try:
-                from backend.core.plugin_lifecycle_manager import evict_stale_plugins
-
-                evict_stale_plugins(required_mb=4096.0)
+                _evict_stale_plugins(required_mb=4096.0)
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
             logger.error("AurikDenker: Speicherfehler in Pipeline: %s", exc)
@@ -455,14 +532,7 @@ class AurikDenker:
                 }
 
         try:
-            from backend.core.defect_scanner import MaterialType
-            from backend.core.unified_restorer_v3 import UnifiedRestorerV3
-
-            material_enum = next(
-                (member for member in MaterialType if getattr(member, "value", None) == resolved_material),
-                None,
-            )
-            benign, metrics = UnifiedRestorerV3._is_benign_digital_source(audio, sr, material_enum)
+            benign, metrics = _probe_benign_digital_source(audio, sr, resolved_material)
             metrics = dict(metrics)
             metrics.setdefault("material", resolved_material)
             return benign, metrics
@@ -760,7 +830,7 @@ class AurikDenker:
 
         # ── Stufe 3: Defekt-Analyse ───────────────────────────────────────────
         _emit(6, "Defekte werden analysiert …")
-        defekt_primär = "unbekannt"
+        defekt_primaer = "unbekannt"
         defekt = None  # Guard: DefektDenker kann fehlschlagen
         _defekt_hint: dict[str, Any] | None = None
 
@@ -777,8 +847,8 @@ class AurikDenker:
                 cached_defect_result=cached_defect_result,
                 file_ext=os.path.splitext(input_path)[1].lower() if input_path else "",
             )
-            defekt_primär = getattr(defekt, "primary_defect", None) or getattr(defekt, "primary_cause", "unknown")
-            stage_notes["defekt"] = f"Hauptdefekt: {defekt_primär} (Schwere: {defekt.overall_severity:.2f})"
+            defekt_primaer = getattr(defekt, "primary_defect", None) or getattr(defekt, "primary_cause", "unknown")
+            stage_notes["defekt"] = f"Hauptdefekt: {defekt_primaer} (Schwere: {defekt.overall_severity:.2f})"
             phases_executed.append("defekt_analyse")
             _defekt_hint = {
                 "recommended_phases": list(getattr(defekt, "recommended_phases", [])),
@@ -797,7 +867,7 @@ class AurikDenker:
                     )
             logger.info(
                 "AurikDenker [3/10] Defekt: %s (Schwere: %.2f)",
-                defekt_primär,
+                defekt_primaer,
                 defekt.overall_severity,
             )
         except Exception as exc:
@@ -808,8 +878,6 @@ class AurikDenker:
         _emit(8, "Musikalischer Restaurierungsplan erstellt …")
         _globalplan: Any = None
         try:
-            from backend.core.musikalischer_globalplan import erstelle_globalplan as _erstelle_gp
-
             # use_ml_classifiers=False: EraClassifier/GermanSchlagerClassifier laufen
             # bereits parallel in UnifiedRestorerV3 (§P-3). Doppelaufruf vermeiden
             # (Anti-Parallelwelten-Pflicht). Nur DSP-Heuristik in Stufe 4.
@@ -831,7 +899,7 @@ class AurikDenker:
                     )
                     if _gl and str(_gl).lower() not in ("unbekannt", "unknown", ""):
                         _hint_genre = str(_gl).lower()
-            _globalplan = _erstelle_gp(
+            _globalplan = erstelle_globalplan(
                 aktuelles_audio,
                 sr,
                 material=material,
@@ -923,8 +991,6 @@ class AurikDenker:
         _pid_plan = None
         _pid_phase_plan: list[str] | None = None
         try:
-            from denker.phase_interaction_denker import get_phase_interaction_denker
-
             _pid_defect_result = cached_defect_result or (
                 getattr(defekt, "raw_scan_result", None) if defekt is not None else None
             )
@@ -938,9 +1004,7 @@ class AurikDenker:
                 # aktivieren statt P1/P2-Verletzungen erst nach der Pipeline zu heilen (§2.45a).
                 _goal_risk_map: dict[str, float] = {}
                 try:
-                    from denker.exzellenz_denker import get_exzellenz_denker as _pid_exz_factory
-
-                    _goal_risk_map = _pid_exz_factory().prognostiziere(
+                    _goal_risk_map = get_exzellenz_denker().prognostiziere(
                         aktuelles_audio,
                         sr,
                         defect_result=_pid_defect_result,
@@ -1067,9 +1131,7 @@ class AurikDenker:
                     # RekonstruktionsDenker nutzen ONNX-Modelle. Refcount-basiert,
                     # sodass UV3-interner Guard additiv funktioniert.
                     try:
-                        from backend.core.plugin_lifecycle_manager import set_pipeline_active
-
-                        set_pipeline_active(True)
+                        _set_pipeline_active(True)
                     except Exception as _exc:
                         logger.debug("Operation failed (non-critical): %s", _exc)
                     try:
@@ -1261,9 +1323,7 @@ class AurikDenker:
                         _err_box.append(_e)
                     finally:
                         try:
-                            from backend.core.plugin_lifecycle_manager import set_pipeline_active
-
-                            set_pipeline_active(False)
+                            _set_pipeline_active(False)
                         except Exception as _exc:
                             logger.debug("Operation failed (non-critical): %s", _exc)
 
@@ -1275,7 +1335,8 @@ class AurikDenker:
                     _t.join(timeout=_remaining)
                     if _t.is_alive():
                         raise RuntimeError(
-                            f"RestaurierDenker überschritt RT-Budget ({_remaining:.1f}s für {audio_duration_s:.1f}s Audio)"
+                            "RestaurierDenker überschritt RT-Budget "
+                            f"({_remaining:.1f}s für {audio_duration_s:.1f}s Audio)"
                         )
                 if _err_box:
                     raise _err_box[0]  # type: ignore[misc]
@@ -1449,7 +1510,8 @@ class AurikDenker:
 
                 _repair_fn = getattr(exd, "messe_und_repariere", None)
                 if callable(_repair_fn):
-                    _mr = _repair_fn(
+                    _repair_call = cast(Callable[..., Any], _repair_fn)
+                    _mr = _repair_call(
                         aktuelles_audio,
                         sr,
                         mode=effective_mode,
@@ -1458,41 +1520,40 @@ class AurikDenker:
                         inapplicable_goals=_inapplicable_goals if _inapplicable_goals else None,
                     )
                     if isinstance(_mr, tuple) and len(_mr) == 2:
-                        aktuelles_audio, goals = _mr
+                        aktuelles_audio = _mr[0]
+                        goals = _normalize_goal_scores(_mr[1])
                         _used_repair_path = True
 
                 if not _used_repair_path:
                     _legacy_fn = getattr(exd, "messe_ziele", None)
                     if not callable(_legacy_fn):
                         raise RuntimeError("ExzellenzDenker liefert weder messe_und_repariere() noch messe_ziele()")
-                    _legacy_out = _legacy_fn(aktuelles_audio, sr, material=_exz_material)
+                    _legacy_call = cast(Callable[..., Any], _legacy_fn)
+                    _legacy_out = _legacy_call(aktuelles_audio, sr, material=_exz_material)
                     if isinstance(_legacy_out, tuple) and len(_legacy_out) == 2:
-                        aktuelles_audio, goals = _legacy_out
+                        aktuelles_audio = _legacy_out[0]
+                        goals = _normalize_goal_scores(_legacy_out[1])
                     else:
-                        goals = _legacy_out or {}
+                        goals = _normalize_goal_scores(_legacy_out)
                 if goals:
-                    import math as _math_exz
-
                     try:
-                        from backend.core.per_phase_musical_goals_gate import _get_canonical_thresholds as _gct_exz
-
-                        _exz_thresholds = _gct_exz(is_studio_2026=(effective_mode == "studio2026"))
+                        _exz_thresholds = _get_canonical_thresholds_for_mode(
+                            is_studio_2026=effective_mode == "studio2026"
+                        )
                     except Exception:
                         _exz_thresholds = {}
                     _FALLBACK_GOAL_MIN = 0.75
 
-                    finite_vals = [v for v in goals.values() if _math_exz.isfinite(v)]
+                    finite_vals = [v for v in goals.values() if math.isfinite(v)]
                     excellence_score = float(np.mean(finite_vals)) if finite_vals else 0.0
                     goals_passed = sum(
                         1
                         for k, v in goals.items()
-                        if _math_exz.isfinite(v) and v >= _exz_thresholds.get(k, _FALLBACK_GOAL_MIN)
+                        if math.isfinite(v) and v >= _exz_thresholds.get(k, _FALLBACK_GOAL_MIN)
                     )
-                    musical_goals = dict(goals)
+                    musical_goals = _normalize_goal_scores(goals)
                 # VERSA MOS für Qualitätsentscheidung
                 try:
-                    from plugins.versa_plugin import score_mos as _exz_score_mos
-
                     if aktuelles_audio.ndim == 1:
                         _mono_exz = aktuelles_audio
                     elif aktuelles_audio.ndim == 2:
@@ -1500,13 +1561,13 @@ class AurikDenker:
                         # (channels, samples) -> axis=0, (samples, channels) -> axis=1.
                         _mono_exz = (
                             aktuelles_audio.mean(axis=0)
-                            if aktuelles_audio.shape[0] <= 2 and aktuelles_audio.shape[1] > 2
+                            if aktuelles_audio.shape[0] <= 2 < aktuelles_audio.shape[1]
                             else aktuelles_audio.mean(axis=1)
                         )
                     else:
                         _mono_exz = np.ravel(aktuelles_audio)
                     _mono_exz = np.nan_to_num(_mono_exz.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-                    _vr_exz = _exz_score_mos(_mono_exz, sr)
+                    _vr_exz = _score_versa_mos(_mono_exz, sr)
                     _exz_versa_mos = float(_vr_exz.mos)
                 except Exception as _ve_exz:
                     logger.debug("ExzellenzDenker VERSA nicht verfügbar: %s", _ve_exz)
@@ -1541,15 +1602,16 @@ class AurikDenker:
             # Musical Goals + VERSA trotzdem messen (~7 s) — essentiell für UI-Anzeige
             # und Qualitätsurteil, auch wenn Optimierung übersprungen wird.
             try:
-                from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker
+                MusicalGoalsChecker = _load_symbol(
+                    "backend.core.musical_goals.musical_goals_metrics",
+                    "MusicalGoalsChecker",
+                )
 
                 _mg_budget = MusicalGoalsChecker(mode=effective_mode)
                 _budget_goals = _mg_budget.measure_all(aktuelles_audio, sr)
                 if _budget_goals:
-                    import math as _math_budget
-
-                    musical_goals = dict(_budget_goals)
-                    _finite_bg = [v for v in _budget_goals.values() if _math_budget.isfinite(v)]
+                    musical_goals = _normalize_goal_scores(_budget_goals)
+                    _finite_bg = [v for v in musical_goals.values() if math.isfinite(v)]
                     goals_passed = sum(1 for v in _finite_bg if v >= 0.75)
                     excellence_score = float(np.mean(_finite_bg)) if _finite_bg else 0.0
                     logger.info(
@@ -1582,8 +1644,8 @@ class AurikDenker:
 
                         for _alpha in (0.92, 0.88, 0.84):
                             _candidate = np.clip(_alpha * aktuelles_audio + (1.0 - _alpha) * audio, -1.0, 1.0)
-                            _cand_goals = _mg_budget.measure_all(_candidate, sr)
-                            _cand_finite = [v for v in _cand_goals.values() if _math_budget.isfinite(v)]
+                            _cand_goals = _normalize_goal_scores(_mg_budget.measure_all(_candidate, sr))
+                            _cand_finite = [v for v in _cand_goals.values() if math.isfinite(v)]
                             _cand_pass = sum(1 for v in _cand_finite if v >= 0.75)
                             _cand_score = float(np.mean(_cand_finite)) if _cand_finite else 0.0
                             _cand_crit = sum(
@@ -1613,7 +1675,8 @@ class AurikDenker:
                                 f"{_best_crit}/{_crit_total}, gesamt {goals_passed}/{len(_best_goals)})"
                             )
                             logger.info(
-                                "AurikDenker [9/10] Goal-Recovery-Blend aktiv: kritische Goals %d/%d → %d/%d, gesamt=%d/%d",
+                                "AurikDenker [9/10] Goal-Recovery-Blend aktiv: "
+                                "kritische Goals %d/%d → %d/%d, gesamt=%d/%d",
                                 _crit_pass_before,
                                 _crit_total,
                                 _best_crit,
@@ -1624,20 +1687,18 @@ class AurikDenker:
             except Exception as _mg_exc:
                 logger.debug("Musical Goals Messung nach Budget-Limit: %s", _mg_exc)
             try:
-                from plugins.versa_plugin import score_mos as _budget_score_mos
-
                 if aktuelles_audio.ndim == 1:
                     _mono_budget = aktuelles_audio
                 elif aktuelles_audio.ndim == 2:
                     _mono_budget = (
                         aktuelles_audio.mean(axis=0)
-                        if aktuelles_audio.shape[0] <= 2 and aktuelles_audio.shape[1] > 2
+                        if aktuelles_audio.shape[0] <= 2 < aktuelles_audio.shape[1]
                         else aktuelles_audio.mean(axis=1)
                     )
                 else:
                     _mono_budget = np.ravel(aktuelles_audio)
                 _mono_budget = np.nan_to_num(_mono_budget.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-                _vr_budget = _budget_score_mos(_mono_budget, sr)
+                _vr_budget = _score_versa_mos(_mono_budget, sr)
                 _exz_versa_mos = float(_vr_budget.mos)
                 logger.info(
                     "AurikDenker [9/10] VERSA MOS gemessen trotz Budget-Limit: %.3f",
@@ -1668,20 +1729,18 @@ class AurikDenker:
                 warnings.append(f"VERSA MOS={_versa_mos:.2f} < 3.5 — Klangqualität unter Mindestniveau")
         elif _budget_ok():
             try:
-                from plugins.versa_plugin import score_mos
-
                 if aktuelles_audio.ndim == 1:
                     _mono_final = aktuelles_audio
                 elif aktuelles_audio.ndim == 2:
                     _mono_final = (
                         aktuelles_audio.mean(axis=0)
-                        if aktuelles_audio.shape[0] <= 2 and aktuelles_audio.shape[1] > 2
+                        if aktuelles_audio.shape[0] <= 2 < aktuelles_audio.shape[1]
                         else aktuelles_audio.mean(axis=1)
                     )
                 else:
                     _mono_final = np.ravel(aktuelles_audio)
                 _mono_final = np.nan_to_num(_mono_final.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-                _vr = score_mos(_mono_final, sr)
+                _vr = _score_versa_mos(_mono_final, sr)
                 _versa_mos = float(_vr.mos)
                 stage_notes["versa_mos"] = f"MOS={_versa_mos:.3f} ({_vr.model_used})"
                 phases_executed.append("versa_qualitaetsbewertung")
@@ -1712,7 +1771,7 @@ class AurikDenker:
             "shellac": 3.8,
         }
         _mos_gate_target = _MATERIAL_MOS_GATE.get(_exz_material, 4.0)
-        if _versa_mos > 0.0 and _versa_mos < _mos_gate_target:
+        if 0.0 < _versa_mos < _mos_gate_target:
             # v9.10.58: 2. ExzellenzDenker-Aufruf entfernt — wissenschaftlich nicht gerechtfertigt.
             # Der ExzellenzDenker (Stufe 7) hat bereits 1× ExcellenceOptimizer + 1× Re-Pass
             # ausgeführt. Ein erneuter identischer Durchlauf auf demselben Audio erzeugt
@@ -1736,9 +1795,7 @@ class AurikDenker:
         # cleanup_after_file()), nur druckbasiertes Evict.
         _emit(98, "RAM-Management …")
         try:
-            from backend.core.plugin_lifecycle_manager import evict_stale_plugins
-
-            _n_evicted = evict_stale_plugins()
+            _n_evicted = _evict_stale_plugins()
             if _n_evicted > 0:
                 stage_notes["ram_cleanup"] = f"{_n_evicted} Plugin(s) aus RAM entladen"
         except Exception as _plm_err:
@@ -1835,7 +1892,7 @@ class AurikDenker:
         # quality_estimate < 0.55, sodass Export-Gates konsistent blockieren.
         _mos_material, _mos_target = self._material_mos_target(material, chain_info)
         stage_notes["material_mos_gate"] = f"{_mos_material}: MOS-Ziel≥{_mos_target:.2f}"
-        if _versa_mos > 0.0 and _versa_mos < _mos_target:
+        if 0.0 < _versa_mos < _mos_target:
             _msg = (
                 f"Material-MOS-Gate nicht bestanden: {_mos_material} "
                 f"(VERSA MOS={_versa_mos:.2f} < Ziel {_mos_target:.2f}). "
@@ -1944,18 +2001,17 @@ class AurikDenker:
 
 # ─── Modul-Level-Singleton (Double-Checked Locking — Spec §3.2) ─────────────
 
-_instance: AurikDenker | None = None
+_singleton_state = SimpleNamespace(instance=None)
 _lock = threading.Lock()
 
 
 def get_aurik_denker() -> AurikDenker:
     """Thread-sicherer Singleton-Accessor für den AurikDenker-Orchestrator."""
-    global _instance
-    if _instance is None:
+    if _singleton_state.instance is None:
         with _lock:
-            if _instance is None:
-                _instance = AurikDenker()
-    return _instance
+            if _singleton_state.instance is None:
+                _singleton_state.instance = AurikDenker()
+    return cast(AurikDenker, _singleton_state.instance)
 
 
 def restauriere(audio: np.ndarray, sr: int = 48_000) -> AurikErgebnis:
@@ -1990,9 +2046,7 @@ def get_tontraeger_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.tontraeger_denker import get_tontraeger_denker as _get
-
-    return _get()
+    return _load_symbol("denker.tontraeger_denker", "get_tontraeger_denker")()
 
 
 def get_defekt_denker() -> Any:
@@ -2000,9 +2054,7 @@ def get_defekt_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.defekt_denker import get_defekt_denker as _get
-
-    return _get()
+    return _load_symbol("denker.defekt_denker", "get_defekt_denker")()
 
 
 def get_tontraegerkette_denker() -> Any:
@@ -2010,9 +2062,7 @@ def get_tontraegerkette_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.tontraegerkette_denker import get_tontraegerkette_denker as _get
-
-    return _get()
+    return _load_symbol("denker.tontraegerkette_denker", "get_tontraegerkette_denker")()
 
 
 def get_strategie_denker() -> Any:
@@ -2020,9 +2070,7 @@ def get_strategie_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.strategie_denker import get_strategie_denker as _get
-
-    return _get()
+    return _load_symbol("denker.strategie_denker", "get_strategie_denker")()
 
 
 def get_restaurier_denker() -> Any:
@@ -2030,9 +2078,7 @@ def get_restaurier_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.restaurier_denker import get_restaurier_denker as _get
-
-    return _get()
+    return _load_symbol("denker.restaurier_denker", "get_restaurier_denker")()
 
 
 def get_reparatur_denker() -> Any:
@@ -2040,9 +2086,7 @@ def get_reparatur_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.reparatur_denker import get_reparatur_denker as _get
-
-    return _get()
+    return _load_symbol("denker.reparatur_denker", "get_reparatur_denker")()
 
 
 def get_rekonstruktions_denker() -> Any:
@@ -2050,9 +2094,7 @@ def get_rekonstruktions_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.rekonstruktions_denker import get_rekonstruktions_denker as _get
-
-    return _get()
+    return _load_symbol("denker.rekonstruktions_denker", "get_rekonstruktions_denker")()
 
 
 def get_exzellenz_denker() -> Any:
@@ -2060,6 +2102,14 @@ def get_exzellenz_denker() -> Any:
 
     Lazy-Import: wird erst beim ersten Aufruf importiert.
     """
-    from denker.exzellenz_denker import get_exzellenz_denker as _get
+    return _load_symbol("denker.exzellenz_denker", "get_exzellenz_denker")()
 
-    return _get()
+
+def get_phase_interaction_denker() -> Any:
+    """Modul-Level-Accessor für PhaseInteractionDenker (patchbar in Tests)."""
+    return _load_symbol("denker.phase_interaction_denker", "get_phase_interaction_denker")()
+
+
+def erstelle_globalplan(*args: Any, **kwargs: Any) -> Any:
+    """Lazy wrapper for the MusikalischerGlobalplan entry point."""
+    return _load_symbol("backend.core.musikalischer_globalplan", "erstelle_globalplan")(*args, **kwargs)

@@ -128,8 +128,8 @@ def test_phase_XX_no_regression(synthetic_audio, sr=48000):
     phase = PhaseXX()
     audio_out = phase.process(synthetic_audio, sr, material_type="vinyl", strength=0.8)
 
-    # Längen-Invariante §2.61:
-    assert abs(len(audio_out) - len(synthetic_audio)) <= 64
+    # Längen-Invariante §2.61 (shape[-1] statt len() — len() auf 2D-Stereo gibt 2, nicht N!):
+    assert abs(audio_out.shape[-1] - synthetic_audio.shape[-1]) <= 64
 
     # Clip-Invariante:
     assert np.max(np.abs(audio_out)) <= 1.0

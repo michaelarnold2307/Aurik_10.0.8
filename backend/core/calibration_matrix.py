@@ -254,11 +254,8 @@ _MATERIAL_BIAS: dict[str, dict[str, float]] = {
         "separation_fidelity": -0.24,  # Mono oder Mono-kompatibles Narrow-Stereo → keine Stem-Sep möglich
         "raumtiefe": -0.15,  # Mono-Quelle: kein echtes Stereo-Feld → Raumtiefe inherent limitiert
     },
-    # Normal-analog (Vinyl, Tape, Cassette)
-    # Weniger limitiert als ultra_analog, aber P3/P4 physikalisch leicht eingeschränkt:
+    # Normal-analog Vinyl (LP, Vinyl)
     # Vinyl: Schneidebeschränkungen <80 Hz (bass_kraft), leichtes Wow/Flutter (groove)
-    # Tape: Bias-Sättigung reduziert bass_kraft; Dropout/Flutter reduziert groove leicht
-    # Cassette: stärker limitiert (wow_flutter 0.06–0.10 WRMS, schmaler Frequenzgang)
     "analog": {
         "waerme": +0.10,
         "brillanz": -0.06,
@@ -267,9 +264,30 @@ _MATERIAL_BIAS: dict[str, dict[str, float]] = {
         # Formula: floor = canonical(0.90) + kappa_min(0.27) * bias → bias = (0.82-0.90)/0.27 = -0.296
         "natuerlichkeit": -0.30,
         # P3/P4: milde Biases — physikalische Einschränkungen des Carriers ohne Extremwerte
-        "groove": -0.04,  # Leichtes Wow/Flutter; stärker für Kassette (via cassette-Klasse)
-        "bass_kraft": -0.06,  # Vinyl-Schneidebeschränkung LF; Tape-Bias-Sättigung
+        "groove": -0.04,  # Leichtes Wow/Flutter
+        "bass_kraft": -0.06,  # Vinyl-Schneidebeschränkung LF
         "separation_fidelity": -0.06,  # Narrow-Stereo, Early-Stereo-Artefakte
+    },
+    # Tape (Reel-Tape, Kassette) — physikalisch stärker limitiert als Vinyl
+    # §09.2 (v9.12.5): Separatklasse tape_analog, da Tape-spezifische Einschränkungen
+    # sich grundlegend von Vinyl unterscheiden:
+    # - Tape-Hiss-NR reduziert HF stärker als Vinyl-Rausch-NR → brillanz Ceiling tiefer
+    # - Wow/Flutter bei Tape stärker → groove/artikulation eingeschränkter
+    # - Tape-Sättigung (H2/H4) ist authentic, aber ISO-226-gewichtetes Wärme-Verhältnis
+    #   bleibt niedrig (Waerme-Bias 0.0, nicht +0.10 wie bei Vinyl) — Metrik-Divisor
+    #   übernimmt die Anpassung (§9.12.8 WaermeMetric material_type)
+    # - Narrow/Mono-Stereo → SepFidelity stark eingeschränkt
+    "tape_analog": {
+        "waerme": +0.00,  # Kein Bias: Metrik-Divisor (§9.12.8) übernimmt Anpassung
+        "brillanz": -0.22,  # Tape-Hiss-NR reduziert HF: floor ~0.72 bei kappa_min
+        "authentizitaet": +0.06,  # Tape-Sättigung ist authentisch
+        "natuerlichkeit": -0.30,  # Gleich wie Vinyl (SNR~40-50 dB nach NR)
+        "groove": -0.08,  # Stärkeres Wow/Flutter als Vinyl
+        "bass_kraft": -0.06,  # Tape-Bias-Sättigung LF
+        "separation_fidelity": -0.22,  # Tape Narrow/Mono: SDR<3dB triggert ref-free path
+        "artikulation": -0.15,  # Dropout+Hiss maskiert Transienten
+        "timbre_authentizitaet": -0.04,
+        "spatial_depth": -0.04,
     },
     # Digital (CD, DAT, Streaming) — near-lossless; natuerlichkeit at full canonical floor 0.90
     "digital": {
@@ -295,10 +313,10 @@ _MATERIAL_CLASS: dict[str, str] = {
     "lacquer_disc": "ultra_analog",
     "vinyl": "analog",
     "lp": "analog",
-    "tape": "analog",
-    "reel_tape": "analog",
-    "cassette": "analog",
-    "kassette": "analog",
+    "tape": "tape_analog",  # §09.2 (v9.12.5): eigene Klasse, nicht mit Vinyl zusammen
+    "reel_tape": "tape_analog",  # §09.2 (v9.12.5): tape_analog mit korrekten HF/Sep-Böden
+    "cassette": "tape_analog",  # §09.2 (v9.12.5): Kassette physikalisch näher an Tape als Vinyl
+    "kassette": "tape_analog",  # Alias
     "cd_digital": "digital",
     "cd": "digital",
     "dat": "digital",

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from backend.core.audio_utils import compute_gated_rms_linear as _grl_eapc
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,9 +109,17 @@ class EraAuthenticPerceptualCompletion:
         sr: int,
         era: int | None = None,
         anchor: np.ndarray | None = None,
+        material_ceiling: float = 1.0,
     ) -> EraCompletionResult:
-        """Spec §2.35: Erzeugt era-authentisch ergaenztes Audio. NaN/Inf-sicher."""
+        """Spec §2.35: Erzeugt era-authentisch ergänztes Audio. NaN/Inf-sicher.
+
+        material_ceiling: §9.12.7 — max. Brillanz-Ceiling aus dem Trägermaterial
+        (z.B. 0.78 für Tape). Wird mit dem era-basierten Ceiling kombiniert
+        (min), sodass EAPC nie mehr HF synthetisiert als das Trägermaterial
+        physikalisch erlaubt (§2.46e Hallucination-Guard).
+        """
         # inf-sicher: erst nan_to_num, dann clip — verhindert Overflow in FFT
+        _ = anchor  # reserved: guided HF-synthesis reference — §2.35 TODO
         arr = np.clip(
             np.nan_to_num(np.asarray(audio, dtype=np.float32)),
             -1.0,
@@ -125,7 +135,11 @@ class EraAuthenticPerceptualCompletion:
             is_stereo = False
 
         src_bw = self._estimate_bandwidth(mono, sr)
-        ceiling = _get_era_ceiling(era)
+        # §9.12.7 §2.46e: era-ceiling wird durch material_ceiling nach unten begrenzt.
+        # Ohne diesen Clamp würde EAPC für ein 1970s-Kassetten-Recording HF-Energie
+        # auf ERA-Niveau (0.90) synthetisieren — Trägermaterial erlaubt physikalisch
+        # maximal 0.78. Das ist ein Hallucination-Guard-Verstotz (§2.46e).
+        ceiling = min(_get_era_ceiling(era), float(material_ceiling))
 
         if src_bw >= self.SOURCE_BW_THRESHOLD_HZ:
             msg = "Keine Bandbreiten-Ergaenzung noetig (BW >= 10 kHz)."
@@ -237,8 +251,6 @@ class EraAuthenticPerceptualCompletion:
         result = np.fft.irfft(new_spec, n=n).astype(np.float32)
 
         # §2.45a-I: Normalisierung mit Gated-RMS (nur Frames > -50 dBFS — kein Stille-inflationierter RMS)
-        from backend.core.audio_utils import compute_gated_rms_linear as _grl_eapc
-
         orig_rms = max(1e-8, float(_grl_eapc(mono.astype(np.float32), gate_dbfs=-50.0)))
         result_rms = max(1e-8, float(_grl_eapc(result, gate_dbfs=-50.0)))
         result *= orig_rms / result_rms
@@ -256,7 +268,7 @@ _lock = threading.Lock()
 
 def get_era_completion() -> EraAuthenticPerceptualCompletion:
     """Thread-sicherer Singleton (§3.2)."""
-    global _instance
+    global _instance  # pylint: disable=global-statement  # §3.2 Pflicht-Singleton-Pattern
     if _instance is None:
         with _lock:
             if _instance is None:

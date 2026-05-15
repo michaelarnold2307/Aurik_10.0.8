@@ -1288,13 +1288,16 @@ def compute_masking_threshold_iso11172(
         # ATH als untere Schranke
         masking_db[:, t] = np.maximum(masking_db[:, t], ath_db)
 
-    # --- Normierung auf [0, 1] ---
-    # Verhältnis Maskierungsschwelle / Signal-Power-Schätzung → [0, 1]
-    # G_floor = max(0.10, masking_threshold / noise_estimate)
-    # Ausgabe: masking_threshold_ratio (dimensionslos) für direkten Einsatz als G_floor-Untergrenze
-    signal_db = np.mean(power_db, axis=1, keepdims=True) + 3.0  # konservative Signal-Schätzung
-    ratio = np.power(10.0, (masking_db - signal_db) / 20.0)  # Amplitudenratio
-    ratio = np.clip(ratio, 0.0, 1.0)
+    # --- Normierung auf [0, 0.70] ---
+    # §2.62: G_floor = max(0.10, masking_threshold / noise_estimate)
+    # Rauschboden-Schätzung via Minimum-Statistics (10th Percentile über Zeit pro Bin +
+    # Bias-Korrektur +1.5 dB). Bewusste Deckelung bei 0.70: Die Masking-Guard soll
+    # klinische Stille-Artefakte verhindern, NICHT NR vollständig blockieren.
+    # Selbst für voll maskiertes Rauschen sind 30 % NR psychoakustisch transparent.
+    noise_db = np.percentile(power_db, 10.0, axis=1, keepdims=True).astype(np.float64) + 1.5
+    ratio = np.power(10.0, (masking_db - noise_db) / 20.0)  # Amplitudenratio
+    # Cap bei 0.70: NR kann immer mindestens 30 % reduzieren (kein vollständiger NR-Block).
+    ratio = np.clip(ratio, 0.0, 0.70)
 
     return np.asarray(ratio, dtype=np.float32)
 

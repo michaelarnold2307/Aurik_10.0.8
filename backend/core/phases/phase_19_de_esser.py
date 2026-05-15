@@ -82,6 +82,7 @@ from scipy import signal
 
 from backend.core.audio_utils import to_channels_last
 from backend.core.defect_scanner import MaterialType
+from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -763,14 +764,35 @@ class DeEsserPhase(PhaseInterface):
         # STAGE 8: PRESERVATION & QUALITY GATES
         # ==============================================================
 
-        # Intelligibility Protection (HF-Energy-Ratio-Guard) - Transparenz-Ziel
-        hf_loss_ratio = self._check_intelligibility_loss(enhanced_audio, deessed_audio, sample_rate)
-        logger.debug("HF Loss Ratio = %.3f (threshold: 0.20)", hf_loss_ratio)
+        # Intelligibility Protection (presence/articulation-first) - Transparenz-Ziel
+        _intelligibility_gender = str(self.stats.get("gender_profile", VocalGender.AUTO))
+        intelligibility_report = assess_deesser_intelligibility_preservation(
+            enhanced_audio,
+            deessed_audio,
+            sample_rate,
+            voice_gender=_intelligibility_gender,
+        )
+        hf_loss_ratio = intelligibility_report.intelligibility_loss
+        self.stats["intelligibility_score"] = intelligibility_report.intelligibility_score
+        self.stats["intelligibility_presence_ratio"] = intelligibility_report.presence_ratio
+        self.stats["intelligibility_articulation_ratio"] = intelligibility_report.articulation_ratio
+        self.stats["intelligibility_air_ratio"] = intelligibility_report.air_ratio
+        self.stats["intelligibility_fricative_snr_delta_db"] = intelligibility_report.fricative_snr_delta_db
+        logger.debug(
+            "Intelligibility score = %.3f (presence=%.3f articulation=%.3f air=%.3f)",
+            intelligibility_report.intelligibility_score,
+            intelligibility_report.presence_ratio,
+            intelligibility_report.articulation_ratio,
+            intelligibility_report.air_ratio,
+        )
 
-        if hf_loss_ratio > 0.20:  # >20% HF-Verlust → Blend-Back
-            logger.info("Stage 8: Intelligibility protection (HF loss: %.1f%%)", hf_loss_ratio * 100)
-            logger.debug("Applying intelligibility protection blend (50/50 with original)")
-            blend_factor = 0.5  # 50% Original, 50% Processed
+        if intelligibility_report.should_protect:
+            logger.info(
+                "Stage 8: Intelligibility protection (score=%.2f, loss=%.1f%%)",
+                intelligibility_report.intelligibility_score,
+                intelligibility_report.intelligibility_loss * 100.0,
+            )
+            blend_factor = float(np.clip(0.35 + intelligibility_report.intelligibility_loss, 0.35, 0.70))
             deessed_audio = blend_factor * enhanced_audio + (1.0 - blend_factor) * deessed_audio
             self.stats["intelligibility_protected"] = True
 
@@ -1027,6 +1049,15 @@ class DeEsserPhase(PhaseInterface):
                 "threshold_ratio": threshold_ratio,
                 # Stage 8: Preservation
                 "intelligibility_protected": self.stats["intelligibility_protected"],
+                "intelligibility_score": round(self.stats.get("intelligibility_score", 1.0), 4),
+                "intelligibility_presence_ratio": round(self.stats.get("intelligibility_presence_ratio", 1.0), 4),
+                "intelligibility_articulation_ratio": round(
+                    self.stats.get("intelligibility_articulation_ratio", 1.0), 4
+                ),
+                "intelligibility_air_ratio": round(self.stats.get("intelligibility_air_ratio", 1.0), 4),
+                "intelligibility_fricative_snr_delta_db": round(
+                    self.stats.get("intelligibility_fricative_snr_delta_db", 0.0), 2
+                ),
                 "formant_preservation": self.stats["formant_preservation"],
                 "brilliance_preservation": self.stats["brilliance_preservation"],
                 # Stage 8c: §2.8 Feedback-Invariante
@@ -1044,10 +1075,22 @@ class DeEsserPhase(PhaseInterface):
                 "sibilance_energy_after": float(sibilance_energy_after),
                 "max_gain_reduction_db": float(self.stats["max_gain_reduction_db"]),
                 "hf_loss_ratio": float(hf_loss_ratio),
+                "intelligibility_score": float(self.stats.get("intelligibility_score", 1.0)),
+                "intelligibility_presence_ratio": float(self.stats.get("intelligibility_presence_ratio", 1.0)),
+                "intelligibility_articulation_ratio": float(self.stats.get("intelligibility_articulation_ratio", 1.0)),
+                "intelligibility_air_ratio": float(self.stats.get("intelligibility_air_ratio", 1.0)),
+                "intelligibility_fricative_snr_delta_db": float(
+                    self.stats.get("intelligibility_fricative_snr_delta_db", 0.0)
+                ),
                 # Musical Goals Compliance
-                "musical_goal_brillanz": self.stats["brilliance_preservation"],
-                "musical_goal_authentizitaet": self.stats["formant_preservation"],
-                "musical_goal_transparenz": 1.0 - hf_loss_ratio,
+                "musical_goal_brillanz": float(np.clip(self.stats.get("intelligibility_air_ratio", 1.0), 0.0, 1.0)),
+                "musical_goal_authentizitaet": float(
+                    np.clip(self.stats.get("intelligibility_presence_ratio", 1.0), 0.0, 1.0)
+                ),
+                "musical_goal_transparenz": float(np.clip(self.stats.get("intelligibility_score", 1.0), 0.0, 1.0)),
+                "musical_goal_artikulation": float(
+                    np.clip(self.stats.get("intelligibility_articulation_ratio", 1.0), 0.0, 1.0)
+                ),
                 # ConsonantEnhancement (Stage 8b)
                 "consonant_fricative_segments": (consonant_result.fricative_segments if consonant_result else 0),
                 "consonant_snr_improvement_db": (consonant_result.snr_improvement_db if consonant_result else 0.0),
@@ -1517,30 +1560,17 @@ class DeEsserPhase(PhaseInterface):
 
     def _check_intelligibility_loss(self, original: np.ndarray, processed: np.ndarray, sample_rate: int) -> float:
         """
-        Intelligibility-Protection: Misst HF-Energy-Verlust.
-
-        Wenn >20% HF-Energie verloren geht → Blend-Back triggern.
+        Intelligibility-Protection: weighted presence/articulation loss instead of blunt HF loss.
         """
-        if original.ndim == 2:
-            original = np.mean(original, axis=1)
-        if processed.ndim == 2:
-            processed = np.mean(processed, axis=1)
-
-        # HF-Band (4-12 kHz) - Wichtig für Konsonanten-Klarheit
-        nyquist = sample_rate / 2.0
-        hf_low = 4000 / nyquist
-        hf_high = min(12000, nyquist * 0.95) / nyquist
-
         try:
-            sos = signal.butter(4, [hf_low, hf_high], btype="band", output="sos")
-            hf_original = signal.sosfilt(sos, original)
-            hf_processed = signal.sosfilt(sos, processed)
-
-            energy_original = np.sqrt(np.mean(hf_original**2))
-            energy_processed = np.sqrt(np.mean(hf_processed**2))
-
-            loss_ratio = 1.0 - energy_processed / energy_original if energy_original > 1e-09 else 0.0
-
+            _gender = str(self.stats.get("gender_profile", VocalGender.AUTO))
+            report = assess_deesser_intelligibility_preservation(
+                original,
+                processed,
+                sample_rate,
+                voice_gender=_gender,
+            )
+            loss_ratio = report.intelligibility_loss
         except Exception as e:
             logger.warning("Intelligibility check failed: %s", e)
             loss_ratio = 0.0

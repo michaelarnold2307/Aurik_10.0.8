@@ -11,10 +11,16 @@ or RestorationResult. Only phoneme-class labels (fricative/plosive/…) are kept
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
 import numpy as np
+
+from backend.core.lyrics_guided_enhancement import (
+    get_content_aware_processor,
+    get_lyrics_guided_enhancement,
+)
 
 from .phase_interface import (
     PhaseCategory,
@@ -132,23 +138,14 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
         retry_attempted = False
         lge = None
         load_error: Exception | None = None
-        try:
-            from backend.core.lyrics_guided_enhancement import (
-                get_lyrics_guided_enhancement,
-            )
-        except Exception as exc:
-            get_lyrics_guided_enhancement = None  # type: ignore[assignment]
-            load_error = exc
-
-        if get_lyrics_guided_enhancement is not None:
-            for attempt in range(2):
-                load_attempts = attempt + 1
-                retry_attempted = retry_attempted or attempt > 0
-                try:
-                    lge = get_lyrics_guided_enhancement()
-                    break
-                except Exception as exc:
-                    load_error = exc
+        for attempt in range(2):
+            load_attempts = attempt + 1
+            retry_attempted = retry_attempted or attempt > 0
+            try:
+                lge = get_lyrics_guided_enhancement()
+                break
+            except Exception as exc:
+                load_error = exc
 
         if lge is None:
             exc = load_error if load_error is not None else RuntimeError("lge unavailable")
@@ -176,8 +173,6 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
         try:
             if pre_transcription is not None and not getattr(pre_transcription, "fallback_used", True):
                 # Fast path: use pre-computed transcription from original audio (§2.36 Phase-Gate).
-                from backend.core.lyrics_guided_enhancement import get_content_aware_processor
-
                 cap = get_content_aware_processor()
                 n_smp = audio.shape[-1] if audio.ndim == 2 else len(audio)
                 base_sal = np.ones(n_smp, dtype=np.float32)
@@ -289,17 +284,17 @@ class Phase58LyricsGuidedEnhancement(PhaseInterface):
 
 
 # ── Singleton convenience accessor ───────────────────────────────────────────
-import threading as _threading
-
-_instance: Phase58LyricsGuidedEnhancement | None = None
-_lock = _threading.Lock()
+_PHASE_58_SINGLETON: dict[str, Phase58LyricsGuidedEnhancement | None] = {"instance": None}
+_PHASE_58_LOCK = threading.Lock()
 
 
 def get_phase_58_lge() -> Phase58LyricsGuidedEnhancement:
     """Return the singleton Phase58LyricsGuidedEnhancement instance (thread-safe)."""
-    global _instance
-    if _instance is None:
-        with _lock:
-            if _instance is None:
-                _instance = Phase58LyricsGuidedEnhancement()
-    return _instance
+    instance = _PHASE_58_SINGLETON["instance"]
+    if instance is None:
+        with _PHASE_58_LOCK:
+            instance = _PHASE_58_SINGLETON["instance"]
+            if instance is None:
+                instance = Phase58LyricsGuidedEnhancement()
+                _PHASE_58_SINGLETON["instance"] = instance
+    return instance

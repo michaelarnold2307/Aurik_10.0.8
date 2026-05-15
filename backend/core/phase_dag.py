@@ -120,7 +120,7 @@ CONFLICT_PAIRS: list[ConflictPair] = [
     ),
     ConflictPair(
         "phase_21_exciter",
-        "phase_07_harmonic_enhancement",
+        "phase_07_harmonic_restoration",
         "§0a: phase_21 (Exciter) ist in Restoration VERBOTEN — nie gleichzeitig mit phase_07",
     ),
 ]
@@ -181,7 +181,7 @@ def validate_phase_order(phase_list: list[str]) -> list[str]:
 
     Returns:
         Liste von Constraint-Verletzungen (leer = korrekt).
-        Format: "phase_07_harmonic_enhancement kommt vor phase_03_denoise (NR vor Harmonik)"
+        Format: "phase_07_harmonic_restoration kommt vor phase_03_denoise (NR vor Harmonik)"
     """
     normalized = [_normalize_phase_id(p) for p in phase_list]
     violations = []

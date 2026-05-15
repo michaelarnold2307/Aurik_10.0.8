@@ -81,11 +81,11 @@ class TestOutputInvariants:
     """NaN, Clipping, Shape, PhaseResult.success."""
 
     def test_01_mono_no_nan(self, phase, mono):
-        result = phase.process(mono, SR)
+        result = phase.process(mono, SR, enable_ml_refine=True)
         assert np.isfinite(result.audio).all(), "NaN/Inf im Ausgang (Mono)"
 
     def test_02_mono_no_clipping(self, phase, mono):
-        result = phase.process(mono, SR)
+        result = phase.process(mono, SR, enable_ml_refine=True)
         assert np.max(np.abs(result.audio)) <= 1.0 + 1e-6, "Clipping überschritten"
 
     def test_03_mono_shape_preserved(self, phase, mono):
@@ -298,6 +298,15 @@ class TestSampleRateAndConsistency:
             "freq_low_hz",
             "freq_high_hz",
             "strength_cap",
+            "intelligibility_protected",
+            "intelligibility_score",
+            "intelligibility_presence_ratio",
+            "intelligibility_articulation_ratio",
+            "intelligibility_air_ratio",
+            "intelligibility_fricative_snr_delta_db",
+            "fricative_snr_invariant_met",
+            "fricative_snr_before_deessing_db",
+            "fricative_snr_after_chain_db",
         }
         assert required_keys.issubset(result.metadata.keys()), (
             f"Fehlende Metadata-Schlüssel: {required_keys - set(result.metadata.keys())}"
@@ -324,8 +333,140 @@ class TestSampleRateAndConsistency:
             lambda audio, sr: (np.asarray(audio, dtype=np.float32).copy(), "omlsa_dsp_fallback"),
         )
 
-        result = phase.process(mono, SR)
+        result = phase.process(mono, SR, enable_ml_refine=True)
 
         assert result.metadata["ml_refine_applied"] is False
         assert result.metadata["ml_refine_bypassed"] is True
         assert result.metadata["ml_refine_bypass_reason"] == "omlsa_dsp_fallback"
+
+    def test_32_intelligibility_guard_blends_back_mid_band_loss(self, phase, monkeypatch):
+        import scipy.signal as ss
+
+        def _overdull(ch, sr, threshold_db, ratio, attack_ms, release_ms, freq_low, freq_high, strength_cap=1.0):
+            sos = ss.butter(4, [2000.0, 8000.0], btype="band", fs=sr, output="sos")
+            mid = ss.sosfiltfilt(sos, ch)
+            processed = ch - mid + mid * 0.35
+            return processed.astype(ch.dtype), -8.0
+
+        monkeypatch.setattr("backend.core.phases.phase_43_ml_deesser._deess_channel", _overdull)
+
+        audio = (
+            0.25 * _sibilant_signal(freq_hz=3000.0)
+            + 0.25 * _sibilant_signal(freq_hz=6500.0)
+            + 0.25 * _sibilant_signal(freq_hz=10000.0)
+        ).astype(np.float32)
+        result = phase.process(audio, SR, gender="female", threshold_db=-35.0)
+
+        assert result.metadata["intelligibility_protected"] is True
+        assert result.metadata["intelligibility_score"] >= 0.80
+
+    def test_33_ml_refine_rejects_articulation_loss_even_when_core_is_unchanged(self, phase, monkeypatch):
+        import scipy.signal as ss
+
+        def _candidate(audio, sr):
+            sos = ss.butter(4, [4000.0, 8000.0], btype="band", fs=sr, output="sos")
+            articulation = ss.sosfiltfilt(sos, audio)
+            ml_candidate = audio - articulation + articulation * 0.30
+            return ml_candidate.astype(np.float32), "mp_senet_onnx"
+
+        monkeypatch.setattr("backend.core.phases.phase_43_ml_deesser._try_mp_senet_refine", _candidate)
+
+        audio = (
+            0.28 * _sibilant_signal(freq_hz=1000.0)
+            + 0.20 * _sibilant_signal(freq_hz=5500.0)
+            + 0.22 * _sibilant_signal(freq_hz=9000.0)
+        ).astype(np.float32)
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0, enable_ml_refine=True)
+
+        assert result.metadata["ml_refine_applied"] is False
+        assert result.metadata["ml_refine_bypass_reason"] == "safety_gate"
+
+    def test_34_phase43_intelligibility_metadata_present(self, phase):
+        audio = (
+            0.25 * _sibilant_signal(freq_hz=3000.0)
+            + 0.25 * _sibilant_signal(freq_hz=6500.0)
+            + 0.25 * _sibilant_signal(freq_hz=10000.0)
+        ).astype(np.float32)
+
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0)
+
+        assert "intelligibility_protected" in result.metadata
+        assert "intelligibility_score" in result.metadata
+        assert "intelligibility_presence_ratio" in result.metadata
+        assert "intelligibility_articulation_ratio" in result.metadata
+        assert "intelligibility_air_ratio" in result.metadata
+        assert "intelligibility_fricative_snr_delta_db" in result.metadata
+        assert "intelligibility_score" in result.metrics
+        assert "intelligibility_presence_ratio" in result.metrics
+        assert "intelligibility_articulation_ratio" in result.metrics
+        assert "intelligibility_air_ratio" in result.metrics
+        assert "intelligibility_fricative_snr_delta_db" in result.metrics
+
+    def test_35_phase43_intelligibility_metadata_bounded(self, phase):
+        audio = np.column_stack(
+            [
+                _sibilant_signal(freq_hz=5500.0),
+                _sibilant_signal(freq_hz=9000.0),
+            ]
+        ).astype(np.float32)
+
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0)
+        meta = result.metadata
+        metrics = result.metrics
+
+        assert isinstance(meta["intelligibility_protected"], bool)
+        assert 0.0 <= meta["intelligibility_score"] <= 1.0
+        assert 0.0 <= meta["intelligibility_presence_ratio"] <= 1.25
+        assert 0.0 <= meta["intelligibility_articulation_ratio"] <= 1.25
+        assert 0.0 <= meta["intelligibility_air_ratio"] <= 1.25
+        assert np.isfinite(meta["intelligibility_fricative_snr_delta_db"])
+        assert 0.0 <= metrics["intelligibility_score"] <= 1.0
+        assert 0.0 <= metrics["intelligibility_presence_ratio"] <= 1.25
+        assert 0.0 <= metrics["intelligibility_articulation_ratio"] <= 1.25
+        assert 0.0 <= metrics["intelligibility_air_ratio"] <= 1.25
+        assert np.isfinite(metrics["intelligibility_fricative_snr_delta_db"])
+
+    def test_36_metrics_contains_musical_goal_keys(self, phase):
+        audio = (
+            0.25 * _sibilant_signal(freq_hz=3000.0)
+            + 0.25 * _sibilant_signal(freq_hz=6500.0)
+            + 0.25 * _sibilant_signal(freq_hz=10000.0)
+        ).astype(np.float32)
+
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0)
+        metrics = result.metrics
+
+        assert "musical_goal_brillanz" in metrics
+        assert "musical_goal_artikulation" in metrics
+        assert "musical_goal_authentizitaet" in metrics
+        assert "musical_goal_transparenz" in metrics
+        assert 0.0 <= metrics["musical_goal_brillanz"] <= 1.0
+        assert 0.0 <= metrics["musical_goal_artikulation"] <= 1.0
+        assert 0.0 <= metrics["musical_goal_authentizitaet"] <= 1.0
+        assert 0.0 <= metrics["musical_goal_transparenz"] <= 1.0
+
+    def test_37_phase43_metadata_contains_fricative_snr_fields(self, phase):
+        audio = (
+            0.25 * _sibilant_signal(freq_hz=3000.0)
+            + 0.25 * _sibilant_signal(freq_hz=6500.0)
+            + 0.25 * _sibilant_signal(freq_hz=10000.0)
+        ).astype(np.float32)
+
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0)
+
+        assert "fricative_snr_invariant_met" in result.metadata
+        assert "fricative_snr_before_deessing_db" in result.metadata
+        assert "fricative_snr_after_chain_db" in result.metadata
+        assert isinstance(result.metadata["fricative_snr_invariant_met"], bool)
+
+    def test_38_phase43_fricative_snr_metadata_is_finite(self, phase):
+        audio = (
+            0.25 * _sibilant_signal(freq_hz=3000.0)
+            + 0.25 * _sibilant_signal(freq_hz=6500.0)
+            + 0.25 * _sibilant_signal(freq_hz=10000.0)
+        ).astype(np.float32)
+
+        result = phase.process(audio, SR, gender="female", threshold_db=-30.0)
+
+        assert np.isfinite(result.metadata["fricative_snr_before_deessing_db"])
+        assert np.isfinite(result.metadata["fricative_snr_after_chain_db"])

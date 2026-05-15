@@ -50,7 +50,9 @@ Autor: Aurik 9.9 — 19. Februar 2026
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -59,6 +61,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import butter, sosfilt  # type: ignore[import]
 
 # Current Aurik version — bump on each release so reports are version-pinned.
 _AURIK_VERSION: str = "9.10.123"
@@ -129,8 +132,6 @@ def _amrb_01_tape(audio: np.ndarray, sr: int) -> np.ndarray:
     EraClassifier a spectral envelope consistent with reel-tape (not 1920s
     wax-cylinder or full-spectrum digital noise).
     """
-    from scipy.signal import butter, sosfilt  # type: ignore[import]
-
     rms = float(np.sqrt(np.mean(audio**2) + 1e-12))
     white = np.random.randn(*audio.shape).astype(np.float32)
     # Tape hiss is bandlimited to ≈ 16 kHz (1/2" 15 ips reel tape)
@@ -147,8 +148,6 @@ def _amrb_01_tape(audio: np.ndarray, sr: int) -> np.ndarray:
 
 def _amrb_02_vinyl(audio: np.ndarray, sr: int) -> np.ndarray:
     """AMRB-02: Vinyl-Crackle + Subsonic Rumble."""
-    from scipy.signal import butter, sosfilt  # type: ignore[import]
-
     degraded = audio.copy()
     # Crackle: zufällige Impulse 0.5/s
     n_clicks = max(1, int(0.5 * len(audio) / sr))
@@ -170,8 +169,6 @@ def _amrb_03_shellac(audio: np.ndarray, sr: int) -> np.ndarray:
     SNR=6 dB (original) was unrealistically harsh and inconsistent with the
     84.0 AMRB baseline target (Aurik 9.9 Restoration Mode).
     """
-    from scipy.signal import butter, sosfilt  # type: ignore[import]
-
     rms = float(np.sqrt(np.mean(audio**2) + 1e-12))
     noise = np.random.randn(*audio.shape).astype(np.float32) * (rms * 0.18)  # ≈ 15 dB SNR
     sos = butter(8, 8000 / (sr / 2), btype="low", output="sos")
@@ -179,7 +176,7 @@ def _amrb_03_shellac(audio: np.ndarray, sr: int) -> np.ndarray:
     return np.clip(audio_lp + noise, -1.0, 1.0)
 
 
-def _amrb_04_digital(audio: np.ndarray, sr: int) -> np.ndarray:
+def _amrb_04_digital(audio: np.ndarray, _sr: int) -> np.ndarray:
     """AMRB-04: Hard-Clipping (2 % Samples) + Quantisierungsrauschen."""
     degraded = audio.copy()
     clip_threshold = 0.85
@@ -211,8 +208,6 @@ def _amrb_05_codec(audio: np.ndarray, sr: int) -> np.ndarray:
         Primary restoration challenge: phase_23 IMCRA spectral inpainting
         and Apollo codec repair.
     """
-    from scipy.signal import butter, sosfilt  # type: ignore[import]
-
     # --- Layer 1: Bandwidth restriction ---
     sos = butter(6, 6_000 / (sr / 2), btype="low", output="sos")
     audio_lp = sosfilt(sos, audio.astype(np.float64)).astype(np.float32)
@@ -330,6 +325,21 @@ _SCENARIOS: dict[str, tuple[str, Callable]] = {
     "AMRB-10-COMPOSITE": ("Kombinierte Degradierung", _amrb_10_composite),
 }
 
+# §9.12.8: Szenario→Material-Typ für material-adaptive Metriken (BrillanzMetric,
+# WaermeMetric; auch ArticulationMetric + SeparationFidelityMetric über reference-Parameter).
+_SCENARIO_MATERIAL_TYPE: dict[str, str] = {
+    "AMRB-01-TAPE": "reel_tape",
+    "AMRB-02-VINYL": "vinyl",
+    "AMRB-03-SHELLAC": "shellac",
+    "AMRB-04-DIGITAL": "cd_digital",
+    "AMRB-05-CODEC": "mp3_low",
+    "AMRB-06-VOCAL": "cd_digital",
+    "AMRB-07-REVERB": "reel_tape",
+    "AMRB-08-HUM": "tape",
+    "AMRB-09-DROPOUT": "tape",
+    "AMRB-10-COMPOSITE": "tape",
+}
+
 
 # ---------------------------------------------------------------------------
 # Konfiguration & Ergebnisklassen
@@ -360,7 +370,7 @@ class BenchmarkConfig:
     duration_s: float = 5.0
     scenarios: list[str] | None = None  # None = alle
     report_path: Path | None = None
-    system_name: str = "Aurik 9.9"
+    system_name: str = "Aurik 9.12.x"
     verbose: bool = True
     # Optional heavy-evaluation toggles for CI/normative audit runs.
     enable_mushra_proxy: bool = True
@@ -545,10 +555,7 @@ class MusicalRestorationBenchmark:
         Returns:
             :class:`BenchmarkReport` mit allen Ergebnissen.
         """
-        from datetime import datetime
-        from datetime import timezone as _tz
-
-        timestamp = datetime.now(_tz.utc).isoformat()
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         scenarios_to_run = self.config.scenarios or list(_SCENARIOS.keys())
         scenario_results: dict[str, ScenarioResult] = {}
@@ -646,14 +653,12 @@ class MusicalRestorationBenchmark:
         # P2-1: seed numpy global RNG so degradation functions (np.random.randn,
         # np.random.randint) produce identical results given the same run_seed.
         # Use MD5 of sid bytes for a stable (non-PYTHONHASHSEED-dependent) offset.
-        import hashlib as _hl
+        _hl = hashlib  # already imported at module level
 
         _sid_offset = int(_hl.md5(sid.encode()).hexdigest()[:8], 16)
         np.random.seed((self.config.run_seed + _sid_offset) % (2**31))
 
-        import inspect as _inspect
-
-        _restoration_sig = _inspect.signature(self.config.restoration_fn)
+        _restoration_sig = inspect.signature(self.config.restoration_fn)
         _restoration_accepts_sid = "sid" in _restoration_sig.parameters
 
         mushra_scores: list[float] = []
@@ -760,8 +765,15 @@ class MusicalRestorationBenchmark:
             pqs_r = self._quick_pqs(ref_t, res_t, sr)
             pqs_scores.append(pqs_r)
 
-            # Musical Goals
-            goals = self._musical_goals(res_t, sr) if self.config.enable_musical_goals else {}
+            # Musical Goals — §9.12.8: ref_t und material_type mitgeben damit
+            # ArticulationMetric + SeparationFidelityMetric reference-based statt
+            # reference-free laufen (reference-free klebt am hard-floor 0.75/0.70).
+            _mg_material = _SCENARIO_MATERIAL_TYPE.get(sid, "unknown")
+            goals = (
+                self._musical_goals(res_t, sr, reference=ref_t, material_type=_mg_material)
+                if self.config.enable_musical_goals
+                else {}
+            )
             for k, v in goals.items():
                 goal_sum[k] = goal_sum.get(k, 0.0) + v
 
@@ -812,7 +824,7 @@ class MusicalRestorationBenchmark:
 
     def _get_mushra(self):
         if self._mushra is None:
-            from backend.core.mushra_evaluator import get_mushra_evaluator
+            from backend.core.mushra_evaluator import get_mushra_evaluator  # pylint: disable=import-outside-toplevel
 
             self._mushra = get_mushra_evaluator()
         return self._mushra
@@ -827,7 +839,7 @@ class MusicalRestorationBenchmark:
             logger.warning("run_formal_session: kein Audio-Cache — zuerst run() aufrufen")
             return None
         try:
-            from backend.core.mushra_session import get_mushra_session
+            from backend.core.mushra_session import get_mushra_session  # pylint: disable=import-outside-toplevel
 
             cache = self._scenario_audio_cache
             first_sid = next(iter(cache))
@@ -861,44 +873,74 @@ class MusicalRestorationBenchmark:
     def _mushra_proxy_score(self, ref: np.ndarray, test: np.ndarray, sr: int):
         """MERT-based MUSHRA proxy evaluation for embedding-level fidelity."""
         try:
-            from backend.core.mert_mushra_proxy import estimate_mushra_proxy
+            from backend.core.mert_mushra_proxy import estimate_mushra_proxy  # pylint: disable=import-outside-toplevel
 
             return estimate_mushra_proxy(ref, test, sr)
         except Exception as exc:
             logger.debug("MUSHRA-Proxy Fehler: %s", exc)
-            from backend.core.mert_mushra_proxy import MushraProxyResult
+            from backend.core.mert_mushra_proxy import MushraProxyResult  # pylint: disable=import-outside-toplevel
 
             return MushraProxyResult(
                 proxy_score=0.0,
                 grade="Bad",
                 confidence=0.0,
                 mert_cosine=float("nan"),
+                visqol_mos=1.0,
                 nsim=0.0,
+                artifact_penalty=0.0,
+                temporal_consistency=0.0,
+                clap_cosine=0.0,
+                mr_stft_loss=999.0,
+                iso226_distance=0.0,
                 mcd_db=999.0,
                 chroma_corr=0.0,
                 lufs_diff_lu=0.0,
             )
 
     def _quick_pqs(self, ref: np.ndarray, test: np.ndarray, sr: int) -> float:
-        """Schnelle PQS-MOS-Schätzung (ohne Gammatone-Filterbank)."""
+        """Schnelle PQS-MOS-Schätzung via normierter MFCC-Distanz (C0-unabhängig).
+
+        Verfahren: MFCC C1–C12 (ohne C0/Energie-Koeffizient), koeffizienten-weise
+        z-score-Normierung (relativ zur Referenz), dann RMSE-zu-MOS-Sigmoid.
+        Kalibrierung (§4.3b): mcd≈0.0 → MOS≈4.7 (identisch),
+        mcd≈0.2 → MOS≈4.3 (gute Restaurierung),
+        mcd≈0.5 → MOS=3.0 (neutral), mcd≈1.0 → MOS≈1.3 (degradiert).
+        """
         try:
-            import librosa
+            import librosa  # pylint: disable=import-outside-toplevel
 
             n_mfcc = 13
             mfcc_r = librosa.feature.mfcc(y=ref, sr=sr, n_mfcc=n_mfcc)
             mfcc_t = librosa.feature.mfcc(y=test, sr=sr, n_mfcc=n_mfcc)
             min_f = min(mfcc_r.shape[1], mfcc_t.shape[1])
-            mcd = float(np.sqrt(np.mean((mfcc_r[:, :min_f] - mfcc_t[:, :min_f]) ** 2)))
-            mos = 1.0 + 4.0 / (1.0 + math.exp((mcd - 30.0) * 0.15))
+            # Exclude C0 (log-energy); spectral shape only (indices 1–12)
+            r_body = mfcc_r[1:, :min_f]
+            t_body = mfcc_t[1:, :min_f]
+            # Per-coefficient z-score normalisation relative to reference
+            sigma = r_body.std(axis=1, keepdims=True) + 1e-8
+            mu = r_body.mean(axis=1, keepdims=True)
+            r_n = (r_body - mu) / sigma
+            t_n = (t_body - mu) / sigma
+            mcd = float(np.sqrt(np.mean((r_n - t_n) ** 2)))
+            # Sigmoid midpoint=0.5, scale=5.0 (calibrated for normalised MFCC RMSE)
+            mos = 1.0 + 4.0 / (1.0 + math.exp((mcd - 0.5) * 5.0))
             return float(np.clip(mos, 1.0, 5.0))
         except Exception:
             return 3.0
 
-    def _musical_goals(self, audio: np.ndarray, sr: int) -> dict[str, float]:
+    def _musical_goals(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        reference: np.ndarray | None = None,
+        material_type: str = "unknown",
+    ) -> dict[str, float]:
         try:
-            from backend.core.musical_goals.musical_goals_metrics import get_checker
+            from backend.core.musical_goals.musical_goals_metrics import (
+                get_checker,  # pylint: disable=import-outside-toplevel
+            )
 
-            return get_checker().measure_all(audio, sr)
+            return get_checker().measure_all(audio, sr, reference=reference, material_type=material_type)
         except Exception:
             return {}
 

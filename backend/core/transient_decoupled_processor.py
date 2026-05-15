@@ -14,6 +14,20 @@ import threading
 
 import numpy as np
 
+try:
+    from scipy.ndimage import median_filter as _median_filter
+except ImportError:
+    _median_filter = None  # type: ignore[assignment]
+
+try:
+    from scipy.signal import find_peaks as _find_peaks
+    from scipy.signal import istft as _istft
+    from scipy.signal import stft as _stft
+except ImportError:
+    _find_peaks = None  # type: ignore[assignment]
+    _istft = None  # type: ignore[assignment]
+    _stft = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,14 +50,15 @@ PERCUSSIVE_ONLY_PHASES: list[str] = [
 
 def _hpss_separate(stft: np.ndarray, h_len: int, p_len: int) -> tuple[np.ndarray, np.ndarray]:
     """Medianfilter-HPSS (Fitzgerald 2010). Gibt (mask_h, mask_p) zurueck."""
-    try:
-        from scipy.ndimage import median_filter
-    except ImportError:
+    if _median_filter is None:
         half = np.ones(stft.shape, dtype=np.float32) * 0.5
         return half, half
     mag = np.abs(stft) + 1e-10
-    H = median_filter(mag, size=(h_len, 1))
-    P = median_filter(mag, size=(1, p_len))
+    # STFT shape from scipy.signal.stft: (n_freqs, n_time_frames)
+    # Harmonic mask: smooth along TIME axis (axis 1) — horizontal stripes = sustained tones
+    # Percussive mask: smooth along FREQUENCY axis (axis 0) — vertical stripes = transients
+    H = _median_filter(mag, size=(1, h_len))  # type: ignore[misc]
+    P = _median_filter(mag, size=(p_len, 1))  # type: ignore[misc]
     H2, P2 = H**2, P**2
     denom = H2 + P2 + 1e-20
     return (H2 / denom).astype(np.float32), (P2 / denom).astype(np.float32)
@@ -69,13 +84,11 @@ class TransientDecoupledProcessing:
                 half = x * 0.5
                 return half.copy(), half.copy()
             try:
-                from scipy.signal import istft as _istft
-                from scipy.signal import stft as _stft
-
-                _, _, Z = _stft(x, fs=sr, nperseg=self._n_fft, noverlap=self._n_fft - self._hop_length)
+                _noverlap = self._n_fft - self._hop_length
+                _, _, Z = _stft(x, fs=sr, nperseg=self._n_fft, noverlap=_noverlap)  # type: ignore[misc]
                 mask_h, mask_p = _hpss_separate(Z, self.HPSS_HARMONIC_KERNEL, self.HPSS_PERCUSSIVE_KERNEL)
-                _, h = _istft(Z * mask_h, fs=sr, nperseg=self._n_fft, noverlap=self._n_fft - self._hop_length)
-                _, p = _istft(Z * mask_p, fs=sr, nperseg=self._n_fft, noverlap=self._n_fft - self._hop_length)
+                _, h = _istft(Z * mask_h, fs=sr, nperseg=self._n_fft, noverlap=_noverlap)  # type: ignore[misc]
+                _, p = _istft(Z * mask_p, fs=sr, nperseg=self._n_fft, noverlap=_noverlap)  # type: ignore[misc]
                 n = len(x)
                 h = np.pad(h, (0, max(0, n - len(h))))[:n]
                 p = np.pad(p, (0, max(0, n - len(p))))[:n]
@@ -181,13 +194,11 @@ class TransientDecoupledProcessing:
     def _grove_violated_ex(self, proc: np.ndarray, orig: np.ndarray, sr: int) -> tuple[bool, float]:
         """Returns (is_violated, dtw_rms_ms)."""
         try:
-            from scipy.signal import find_peaks
-
             hop = self._hop_length
             o_env = np.abs(orig[::hop])
             p_env = np.abs(proc[::hop])
-            o_pk, _ = find_peaks(o_env, height=0.01, distance=4)
-            p_pk, _ = find_peaks(p_env, height=0.01, distance=4)
+            o_pk, _ = _find_peaks(o_env, height=0.01, distance=4)  # type: ignore[misc]
+            p_pk, _ = _find_peaks(p_env, height=0.01, distance=4)  # type: ignore[misc]
             if len(o_pk) == 0 or len(p_pk) == 0:
                 return False, 0.0
             n = min(len(o_pk), len(p_pk))
@@ -204,6 +215,7 @@ _lock = threading.Lock()
 
 def get_transient_decoupled_processor() -> TransientDecoupledProcessing:
     """Thread-sicherer Singleton (§3.2)."""
+    # pylint: disable-next=global-statement
     global _instance
     if _instance is None:
         with _lock:

@@ -167,7 +167,7 @@ _MATERIAL_GATE_DBFS: dict[str, float] = {
 }
 
 
-def compute_signal_relative_gate_dbfs(
+def compute_signal_relative_gate_dbfs(  # pylint: disable=too-many-positional-arguments
     reference_audio: np.ndarray,
     margin_db: float = 9.0,
     percentile: float = 15.0,
@@ -233,6 +233,54 @@ def compute_signal_relative_gate_dbfs(
         return _floor
 
 
+def _edge_channel_views(audio: np.ndarray) -> list[np.ndarray]:
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim == 1:
+        return [arr]
+    try:
+        left, right = stereo_channel_view(arr)
+        return [
+            np.asarray(left, dtype=np.float32),
+            np.asarray(right, dtype=np.float32),
+        ]
+    except ValueError:
+        return [safe_to_mono(arr)]
+
+
+def _match_edge_channel_views(
+    reference_audio: np.ndarray,
+    candidate_audio: np.ndarray,
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    ref_channels = _edge_channel_views(reference_audio)
+    cand_channels = _edge_channel_views(candidate_audio)
+    n_channels = max(len(ref_channels), len(cand_channels))
+    if len(ref_channels) == 1 and n_channels > 1:
+        ref_channels = ref_channels * n_channels
+    if len(cand_channels) == 1 and n_channels > 1:
+        cand_channels = cand_channels * n_channels
+    return ref_channels[:n_channels], cand_channels[:n_channels]
+
+
+def _profile_channel_flags(
+    profile: dict[str, float | int | bool] | None,
+    key: str,
+    fallback: bool,
+    channel_count: int,
+) -> list[bool]:
+    if profile is None:
+        return [fallback] * channel_count
+    raw_flags = profile.get(key)
+    if isinstance(raw_flags, (list, tuple)):
+        flags = [bool(v) for v in raw_flags]
+    else:
+        flags = []
+    if not flags:
+        return [fallback] * channel_count
+    if len(flags) < channel_count:
+        flags.extend([flags[-1]] * (channel_count - len(flags)))
+    return flags[:channel_count]
+
+
 def _quiet_edge_guard_profile(
     reference_audio: np.ndarray,
     sr: int,
@@ -240,7 +288,8 @@ def _quiet_edge_guard_profile(
     material_key: str | None = None,
 ) -> dict[str, float | int | bool] | None:
     """Measure whether original intro/outro should be treated as quiet edges."""
-    ref = safe_to_mono(np.asarray(reference_audio, dtype=np.float32))
+    ref_arr = np.asarray(reference_audio, dtype=np.float32)
+    ref = safe_to_mono(ref_arr)
     n = len(ref)
     if n < max(int(sr * 2.0), 4_800):
         return None
@@ -257,13 +306,28 @@ def _quiet_edge_guard_profile(
 
     intro_ref_db = compute_gated_rms_dbfs(ref[:edge_len], gate_dbfs=gate_dbfs)
     outro_ref_db = compute_gated_rms_dbfs(ref[-edge_len:], gate_dbfs=gate_dbfs)
+    intro_quiet = bool((intro_ref_db <= gate_dbfs + 3.0) or (intro_ref_db <= centre_ref_db - 6.0))
+    outro_quiet = bool((outro_ref_db <= gate_dbfs + 3.0) or (outro_ref_db <= centre_ref_db - 6.0))
+
+    intro_quiet_channels: list[bool] = []
+    outro_quiet_channels: list[bool] = []
+    for channel in _edge_channel_views(ref_arr):
+        channel = channel[:n]
+        centre_ch_db = compute_gated_rms_dbfs(channel[centre_start : centre_start + centre_len], gate_dbfs=gate_dbfs)
+        intro_ch_db = compute_gated_rms_dbfs(channel[:edge_len], gate_dbfs=gate_dbfs)
+        outro_ch_db = compute_gated_rms_dbfs(channel[-edge_len:], gate_dbfs=gate_dbfs)
+        intro_quiet_channels.append(bool((intro_ch_db <= gate_dbfs + 3.0) or (intro_ch_db <= centre_ch_db - 6.0)))
+        outro_quiet_channels.append(bool((outro_ch_db <= gate_dbfs + 3.0) or (outro_ch_db <= centre_ch_db - 6.0)))
 
     return {
         "n": n,
         "edge_len": edge_len,
         "gate_dbfs": gate_dbfs,
-        "intro_quiet": bool((intro_ref_db <= gate_dbfs + 3.0) or (intro_ref_db <= centre_ref_db - 6.0)),
-        "outro_quiet": bool((outro_ref_db <= gate_dbfs + 3.0) or (outro_ref_db <= centre_ref_db - 6.0)),
+        "channel_count": len(intro_quiet_channels),
+        "intro_quiet": bool(intro_quiet or any(intro_quiet_channels)),
+        "outro_quiet": bool(outro_quiet or any(outro_quiet_channels)),
+        "intro_quiet_channels": tuple(intro_quiet_channels),
+        "outro_quiet_channels": tuple(outro_quiet_channels),
     }
 
 
@@ -280,35 +344,53 @@ def quiet_edge_boost_ok(
     if profile is None:
         return True
 
-    ref = safe_to_mono(np.asarray(reference_audio, dtype=np.float32))
-    cand = safe_to_mono(np.asarray(candidate_audio, dtype=np.float32))
-    n = min(int(profile["n"]), len(cand))
+    ref_channels, cand_channels = _match_edge_channel_views(reference_audio, candidate_audio)
+    n = min(
+        int(profile["n"]),
+        *(len(ch) for ch in ref_channels),
+        *(len(ch) for ch in cand_channels),
+    )
     if n < max(int(sr * 2.0), 4_800):
         return True
 
-    ref = ref[:n]
-    cand = cand[:n]
     edge_len = int(profile["edge_len"])
     gate_dbfs = float(profile["gate_dbfs"])
+    intro_flags = _profile_channel_flags(
+        profile,
+        "intro_quiet_channels",
+        bool(profile["intro_quiet"]),
+        len(ref_channels),
+    )
+    outro_flags = _profile_channel_flags(
+        profile,
+        "outro_quiet_channels",
+        bool(profile["outro_quiet"]),
+        len(ref_channels),
+    )
 
     def _p995_dbfs(x: np.ndarray) -> float:
         return float(20.0 * np.log10(float(np.percentile(np.abs(x.astype(np.float64)), 99.5)) + 1e-12))
 
-    for ref_edge, cand_edge, is_quiet in (
-        (ref[:edge_len], cand[:edge_len], bool(profile["intro_quiet"])),
-        (ref[-edge_len:], cand[-edge_len:], bool(profile["outro_quiet"])),
+    for start, end, channel_flags in (
+        (0, edge_len, intro_flags),
+        (n - edge_len, n, outro_flags),
     ):
-        if not is_quiet:
+        if not any(channel_flags):
             continue
-        ref_edge_db = compute_gated_rms_dbfs(ref_edge, gate_dbfs=gate_dbfs)
-        cand_edge_db = compute_gated_rms_dbfs(cand_edge, gate_dbfs=gate_dbfs)
-        if cand_edge_db > ref_edge_db + max_edge_boost_db:
-            return False
+        for channel_index, (ref_channel, cand_channel) in enumerate(zip(ref_channels, cand_channels)):
+            if not channel_flags[channel_index]:
+                continue
+            ref_edge = ref_channel[:n][start:end]
+            cand_edge = cand_channel[:n][start:end]
+            ref_edge_db = compute_gated_rms_dbfs(ref_edge, gate_dbfs=gate_dbfs)
+            cand_edge_db = compute_gated_rms_dbfs(cand_edge, gate_dbfs=gate_dbfs)
+            if cand_edge_db > ref_edge_db + max_edge_boost_db:
+                return False
 
-        ref_edge_peak_db = _p995_dbfs(ref_edge)
-        cand_edge_peak_db = _p995_dbfs(cand_edge)
-        if cand_edge_peak_db > ref_edge_peak_db + max_edge_boost_db + 1.0:
-            return False
+            ref_edge_peak_db = _p995_dbfs(ref_edge)
+            cand_edge_peak_db = _p995_dbfs(cand_edge)
+            if cand_edge_peak_db > ref_edge_peak_db + max_edge_boost_db + 1.0:
+                return False
     return True
 
 
@@ -317,6 +399,7 @@ def _scale_audio_region(
     start: int,
     end: int,
     scale: float,
+    channel_index: int | None = None,
 ) -> np.ndarray:
     if scale >= 0.9999 or end <= start:
         return audio
@@ -326,9 +409,15 @@ def _scale_audio_region(
         return out
     ch_first = out.shape[0] <= 2 and out.shape[1] > out.shape[0]
     if ch_first:
-        out[:, start:end] *= np.float32(scale)
+        if channel_index is None:
+            out[:, start:end] *= np.float32(scale)
+        else:
+            out[channel_index, start:end] *= np.float32(scale)
         return out
-    out[start:end, :] *= np.float32(scale)
+    if channel_index is None:
+        out[start:end, :] *= np.float32(scale)
+    else:
+        out[start:end, channel_index] *= np.float32(scale)
     return out
 
 
@@ -345,47 +434,64 @@ def limit_quiet_edge_boost(
     if profile is None:
         return np.asarray(candidate_audio, dtype=np.float32)
 
-    ref = safe_to_mono(np.asarray(reference_audio, dtype=np.float32))
     out = np.asarray(candidate_audio, dtype=np.float32)
-    cand_mono = safe_to_mono(out)
-    n = min(int(profile["n"]), len(cand_mono))
+    ref_channels, cand_channels = _match_edge_channel_views(reference_audio, out)
+    n = min(
+        int(profile["n"]),
+        *(len(ch) for ch in ref_channels),
+        *(len(ch) for ch in cand_channels),
+    )
     if n < max(int(sr * 2.0), 4_800):
         return out
 
-    ref = ref[:n]
     edge_len = int(profile["edge_len"])
     gate_dbfs = float(profile["gate_dbfs"])
+    intro_flags = _profile_channel_flags(
+        profile,
+        "intro_quiet_channels",
+        bool(profile["intro_quiet"]),
+        len(ref_channels),
+    )
+    outro_flags = _profile_channel_flags(
+        profile,
+        "outro_quiet_channels",
+        bool(profile["outro_quiet"]),
+        len(ref_channels),
+    )
 
     def _p995_dbfs(x: np.ndarray) -> float:
         return float(20.0 * np.log10(float(np.percentile(np.abs(x.astype(np.float64)), 99.5)) + 1e-12))
 
-    for start, end, is_quiet in (
-        (0, edge_len, bool(profile["intro_quiet"])),
-        (n - edge_len, n, bool(profile["outro_quiet"])),
+    for start, end, channel_flags in (
+        (0, edge_len, intro_flags),
+        (n - edge_len, n, outro_flags),
     ):
-        if not is_quiet:
+        if not any(channel_flags):
             continue
-        cand_mono = safe_to_mono(out)[:n]
-        ref_edge = ref[start:end]
-        cand_edge = cand_mono[start:end]
-        ref_edge_db = compute_gated_rms_dbfs(ref_edge, gate_dbfs=gate_dbfs)
-        cand_edge_db = compute_gated_rms_dbfs(cand_edge, gate_dbfs=gate_dbfs)
-        ref_edge_peak_db = _p995_dbfs(ref_edge)
-        cand_edge_peak_db = _p995_dbfs(cand_edge)
+        for channel_index, (ref_channel, cand_channel) in enumerate(zip(ref_channels, cand_channels)):
+            if not channel_flags[channel_index]:
+                continue
+            ref_edge = ref_channel[:n][start:end]
+            cand_edge = cand_channel[:n][start:end]
+            ref_edge_db = compute_gated_rms_dbfs(ref_edge, gate_dbfs=gate_dbfs)
+            cand_edge_db = compute_gated_rms_dbfs(cand_edge, gate_dbfs=gate_dbfs)
+            ref_edge_peak_db = _p995_dbfs(ref_edge)
+            cand_edge_peak_db = _p995_dbfs(cand_edge)
 
-        scale = 1.0
-        if cand_edge_db > ref_edge_db + max_edge_boost_db:
-            scale = min(scale, float(10.0 ** ((ref_edge_db + max_edge_boost_db - cand_edge_db) / 20.0)))
-        if cand_edge_peak_db > ref_edge_peak_db + max_edge_boost_db + 1.0:
-            scale = min(
-                scale,
-                float(10.0 ** ((ref_edge_peak_db + max_edge_boost_db + 1.0 - cand_edge_peak_db) / 20.0)),
-            )
-        out = _scale_audio_region(out, start, end, max(scale, 0.0))
+            scale = 1.0
+            if cand_edge_db > ref_edge_db + max_edge_boost_db:
+                scale = min(scale, float(10.0 ** ((ref_edge_db + max_edge_boost_db - cand_edge_db) / 20.0)))
+            if cand_edge_peak_db > ref_edge_peak_db + max_edge_boost_db + 1.0:
+                scale = min(
+                    scale,
+                    float(10.0 ** ((ref_edge_peak_db + max_edge_boost_db + 1.0 - cand_edge_peak_db) / 20.0)),
+                )
+            out = _scale_audio_region(out, start, end, max(scale, 0.0), channel_index=channel_index)
+            _, cand_channels = _match_edge_channel_views(reference_audio, out)
     return out
 
 
-def apply_musical_gain_envelope(
+def apply_musical_gain_envelope(  # pylint: disable=too-many-positional-arguments
     audio: np.ndarray,
     gain: float,
     gate_dbfs: float = -36.0,

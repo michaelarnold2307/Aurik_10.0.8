@@ -14,16 +14,18 @@
 #   (installiert torch+cpu separat mit korrektem Index, dann diese Datei)
 #
 # HINWEIS §13.4: torch wird via install_aurik.sh mit +cpu-Suffix installiert:
-#   torch==2.2.2+cpu  torchaudio==2.2.2+cpu
+#   torch==2.7.0+cpu  torchaudio==2.7.0+cpu
 #   --extra-index-url https://download.pytorch.org/whl/cpu
 #   → NICHT direkt in dieser Datei, da pip sonst die CUDA-Variante zieht.
+#   Sicherheitsfix: torch>=2.6.0 behebt CVE-2025-32434 (critical RCE/deserialization),
+#   CVE-2024-31580 (heap-based buffer overflow), CVE-2024-31583 (use-after-free).
 # ============================================================================
 
 # --- Build/Packaging-Abhängigkeiten (pkg_resources-Kompatibilität) ---
-# setuptools 80.x emittiert bereits die pkg_resources-Deprecation-Warnung
-# (resampy/librosa Importpfad). Bis der Upstream pkg_resources entfernt,
-# pinnen wir auf den letzten stabilen Bereich ohne diesen Warn-Trigger.
-setuptools>=60,<80
+# setuptools>=70.0 behebt CVE-2024-6345 (arbitrary code execution via präparierte Pakete).
+# Untergrenze 70.3.0 = erster stabiler Patch nach dem Security-Fix.
+# Obergrenze <81: 80.x emittiert pkg_resources-Deprecation (resampy/librosa).
+setuptools>=70.3.0,<81
 
 # --- Backend-Hilfsbibliotheken ---
 requests==2.32.5
@@ -106,7 +108,10 @@ crepe>=0.0.12
 encodec>=0.1.1
 
 # --- Vision / AV ---
-pillow>=10.0.0
+# pillow>=11.0.0 behebt zahlreiche CVEs in 10.x (heap-based buffer overflow,
+# arbitrary code execution, XML-Injection, Windows Device Name Handling,
+# Highly Compressed Data Amplification, Cross-site Scripting via SVG).
+pillow>=11.0.0
 ffmpeg-python>=0.2.0
 matplotlib>=3.8.0
 
@@ -158,15 +163,15 @@ annotated-types>=0.6.0
 # demucs>=4.0.0           # ~200 MB Modellgewichte, nur wenn kein ONNX vorhanden
 
 # --- LAION-CLAP / Transformers (§2.14 EraClassifier + §4.4 Audio-Tagging) ---
-# HINWEIS: transformers==4.43.4 ist die letzte Version die torch 2.2.2 unterstützt.
-# transformers>=5.0 bricht torch 2.2 hart (RobertaModel-Import schlägt fehl).
+# HINWEIS: transformers==4.43.4 ist die letzte Version die torch 2.2.x unterstützte.
+# Ab torch 2.7.0 kann transformers>=5.x verwendet werden.
 # transformers==4.43.4
 # tokenizers>=0.19.0
 # sentencepiece>=0.1.99
 # laion_clap wird als lokale Quelle unter models/clap/src/ geladen (kein PyPI-Paket)
 # Abhängigkeiten von laion_clap (alle auf PyPI verfügbar):
-torchvision==0.17.2+cpu  # --extra-index-url https://download.pytorch.org/whl/cpu
-# torchaudio==2.2.2+cpu    # --extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.22.0+cpu  # --extra-index-url https://download.pytorch.org/whl/cpu (muss torch-Version matchen: 2.7.0)
+# torchaudio==2.7.0+cpu    # --extra-index-url https://download.pytorch.org/whl/cpu
 # torchlibrosa>=0.1.0
 # h5py>=3.8.0
 # ftfy>=6.1.0

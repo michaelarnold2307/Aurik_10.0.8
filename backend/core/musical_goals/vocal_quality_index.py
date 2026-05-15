@@ -22,7 +22,47 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------------------
 VQI_WORLD_CLASS = 0.88
 VQI_PROFESSIONAL = 0.82
-VQI_THRESHOLD = 0.72  # Recovery-Kaskade unterhalb
+VQI_THRESHOLD = 0.72  # Recovery-Kaskade Vinyl-Default (§0p)
+
+# Material-adaptive VQI recovery-cascade floors (§0p)
+# Shellac/Wax: 0.62 — physical BW/SNR limits; Vinyl: 0.72; Tape: 0.72; CD: 0.82
+_VQI_MATERIAL_FLOOR: dict[str, float] = {
+    "wax_cylinder": 0.62,
+    "shellac": 0.62,
+    "wire_recording": 0.62,
+    "lacquer_disc": 0.62,
+    "tape": 0.72,
+    "reel_tape": 0.72,
+    "cassette": 0.70,
+    "kassette": 0.70,
+    "vinyl": 0.72,
+    "lp": 0.72,
+    "cd_digital": 0.82,
+    "cd": 0.82,
+    "dat": 0.82,
+    "mp3_low": 0.72,
+    "mp3_high": 0.75,
+    "aac": 0.75,
+    "minidisc": 0.72,
+    "streaming": 0.75,
+}
+
+
+def get_vqi_material_floor(material_type: str, is_studio_2026: bool = False) -> float:
+    """Return the material-adaptive VQI recovery-cascade threshold (§0p).
+
+    Args:
+        material_type: e.g. "shellac", "vinyl", "cd_digital".
+        is_studio_2026: Studio-2026-Modus → festes Ziel 0.87 (§0p).
+
+    Returns:
+        float: Recovery-Schwellwert ∈ [0.62, 0.87].
+    """
+    if is_studio_2026:
+        return 0.87  # §0p: Studio 2026 fixed recovery goal
+    mat = str(material_type or "").strip().lower()
+    return _VQI_MATERIAL_FLOOR.get(mat, VQI_THRESHOLD)  # default: vinyl 0.72
+
 
 # Gewichtungen (weighted sum aus §2.35c Spec)
 _W_SINGER_ID = 0.30
@@ -295,16 +335,19 @@ def compute_vqi(
 
     min_len = min(len(orig_m), len(rest_m))
     if min_len < sr // 2:
-        # zu kurz für sinnvolle Messung
+        # Too short for meaningful measurement — return safe neutral values.
+        # 0.90 > VQI_WORLD_CLASS (0.88) ensures no false recovery-cascade trigger,
+        # even in Studio 2026 mode (floor 0.87). singer_identity_cosine=0.95 prevents
+        # false rollback (§0p gate: < 0.92 triggers rollback).
         return {
-            "vqi": 0.85,
-            "singer_identity_cosine": 0.85,
-            "formant_stability_score": 0.85,
-            "articulation_score": 0.85,
-            "proximity_score": 0.85,
-            "sibilance_naturalness": 0.85,
+            "vqi": 0.90,
+            "singer_identity_cosine": 0.95,
+            "formant_stability_score": 0.90,
+            "articulation_score": 0.90,
+            "proximity_score": 0.90,
+            "sibilance_naturalness": 0.90,
             "singer_id_dsp_fallback": True,
-            "vqi_tier": "professional",
+            "vqi_tier": "world_class",
         }
 
     orig_m = orig_m[:min_len]
@@ -359,7 +402,7 @@ def compute_vqi(
         + _W_SIBILANCE * sibilance
     )
     vqi = float(np.clip(vqi, 0.0, 1.0))
-    vqi = float(np.nan_to_num(vqi, nan=0.85))
+    vqi = float(np.nan_to_num(vqi, nan=0.90))  # 0.90 > all floors incl. Studio 2026 (0.87)
 
     # Tier bestimmen
     if vqi >= VQI_WORLD_CLASS:

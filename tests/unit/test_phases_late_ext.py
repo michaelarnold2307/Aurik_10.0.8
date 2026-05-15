@@ -227,12 +227,10 @@ class TestPhase44GuitarEnhancement:
         assert result.success
         out_l = result.audio[:, 0]
         out_r = result.audio[:, 1]
-        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
-        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        rms_l = float(np.sqrt(np.mean(out_l**2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r**2))) + 1e-12
         imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
-        assert imbalance_db <= 3.0, (
-            f"Phase 44 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
-        )
+        assert imbalance_db <= 3.0, f"Phase 44 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
 
     def test_stereo_no_quiet_tail_boost(self):
         """§0h: Quiet intro must NOT be amplified by the EQ path."""
@@ -244,13 +242,13 @@ class TestPhase44GuitarEnhancement:
         noise = (rng.standard_normal((n, 2)) * quiet_amp).astype(np.float32)
         result = self.phase.process(noise, sr)
         assert result.success
-        rms_in = float(np.sqrt(np.mean(noise ** 2)))
-        rms_out = float(np.sqrt(np.mean(result.audio ** 2)))
+        rms_in = float(np.sqrt(np.mean(noise**2)))
+        rms_out = float(np.sqrt(np.mean(result.audio**2)))
         # Output must not be louder than input (EQ is presence boost, but on quiet signal
         # the peak normalisation step returns it to original level)
         assert rms_out <= rms_in * 1.5, (
-            f"Phase 44 boosted quiet tail: rms_in={20*np.log10(rms_in+1e-12):.1f} dBFS, "
-            f"rms_out={20*np.log10(rms_out+1e-12):.1f} dBFS"
+            f"Phase 44 boosted quiet tail: rms_in={20 * np.log10(rms_in + 1e-12):.1f} dBFS, "
+            f"rms_out={20 * np.log10(rms_out + 1e-12):.1f} dBFS"
         )
 
 
@@ -264,43 +262,43 @@ class TestPhase45BrassEnhancement:
         self.phase = BrassEnhancementPhase()
 
     def test_mono_returns_phase_result(self, mono):
-        result = self.phase.process(mono, SR)
+        result = self.phase.process(mono, 48000)
         _assert_phase_result(result, mono)
 
     def test_stereo_returns_phase_result(self, stereo):
-        result = self.phase.process(stereo, SR)
+        result = self.phase.process(stereo, 48000)
         _assert_phase_result(result, stereo)
 
     def test_silent_returns_phase_result(self, silent_mono):
-        result = self.phase.process(silent_mono, SR)
+        result = self.phase.process(silent_mono, 48000)
         _assert_phase_result(result, silent_mono)
 
     def test_custom_harmonics_gain(self, mono):
-        result = self.phase.process(mono, SR, gain_h2=0.08)
+        result = self.phase.process(mono, 48000, gain_h2=0.08)
         _assert_phase_result(result, mono)
 
     def test_custom_presence_db(self, mono):
-        result = self.phase.process(mono, SR, presence_db=4.0)
+        result = self.phase.process(mono, 48000, presence_db=4.0)
         _assert_phase_result(result, mono)
 
     def test_custom_air_db(self, mono):
-        result = self.phase.process(mono, SR, air_db=3.0)
+        result = self.phase.process(mono, 48000, air_db=3.0)
         _assert_phase_result(result, mono)
 
     def test_neutral_gains(self, mono):
         """Keine Harmonic-Verstärkung und 0 dB EQ → Signal fast unverändert."""
-        result = self.phase.process(mono, SR, gain_h2=0.0, presence_db=0.0, air_db=0.0)
+        result = self.phase.process(mono, 48000, gain_h2=0.0, presence_db=0.0, air_db=0.0)
         _assert_phase_result(result, mono)
 
     def test_zero_strength_passthrough(self, mono):
-        result = self.phase.process(mono, SR, strength=0.0)
+        result = self.phase.process(mono, 48000, strength=0.0)
         _assert_phase_result(result, mono)
         assert np.allclose(result.audio, mono, atol=1e-7)
         assert result.metadata.get("algorithm") == "skipped_zero_strength"
         assert float(result.metadata.get("effective_strength", 1.0)) == 0.0
 
     def test_locality_reduces_effective_strength(self, mono):
-        result = self.phase.process(mono, SR, strength=1.0, phase_locality_factor=0.4)
+        result = self.phase.process(mono, 48000, strength=1.0, phase_locality_factor=0.4)
         _assert_phase_result(result, mono)
         eff = float(result.metadata.get("effective_strength", 1.0))
         assert 0.0 < eff < 1.0
@@ -319,12 +317,10 @@ class TestPhase45BrassEnhancement:
         assert result.success
         out_l = result.audio[:, 0]
         out_r = result.audio[:, 1]
-        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
-        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        rms_l = float(np.sqrt(np.mean(out_l**2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r**2))) + 1e-12
         imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
-        assert imbalance_db <= 3.0, (
-            f"Phase 45 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
-        )
+        assert imbalance_db <= 3.0, f"Phase 45 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
 
     def test_stereo_no_quiet_tail_boost(self):
         """§0h: Quiet intro must NOT be amplified by the EQ path."""
@@ -335,11 +331,11 @@ class TestPhase45BrassEnhancement:
         noise = (rng.standard_normal((n, 2)) * quiet_amp).astype(np.float32)
         result = self.phase.process(noise, sr)
         assert result.success
-        rms_in = float(np.sqrt(np.mean(noise ** 2)))
-        rms_out = float(np.sqrt(np.mean(result.audio ** 2)))
+        rms_in = float(np.sqrt(np.mean(noise**2)))
+        rms_out = float(np.sqrt(np.mean(result.audio**2)))
         assert rms_out <= rms_in * 1.5, (
-            f"Phase 45 boosted quiet tail: rms_in={20*np.log10(rms_in+1e-12):.1f} dBFS, "
-            f"rms_out={20*np.log10(rms_out+1e-12):.1f} dBFS"
+            f"Phase 45 boosted quiet tail: rms_in={20 * np.log10(rms_in + 1e-12):.1f} dBFS, "
+            f"rms_out={20 * np.log10(rms_out + 1e-12):.1f} dBFS"
         )
 
 
@@ -408,12 +404,10 @@ class TestPhase46SpatialEnhancement:
         assert result.success
         out_l = result.audio[:, 0]
         out_r = result.audio[:, 1]
-        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
-        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        rms_l = float(np.sqrt(np.mean(out_l**2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r**2))) + 1e-12
         imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
-        assert imbalance_db <= 3.0, (
-            f"Phase 46 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
-        )
+        assert imbalance_db <= 3.0, f"Phase 46 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
 
 
 # ===========================================================================
@@ -547,12 +541,10 @@ class TestPhase48StereoWidthEnhancer:
         assert result.success
         out_l = result.audio[:, 0]
         out_r = result.audio[:, 1]
-        rms_l = float(np.sqrt(np.mean(out_l ** 2))) + 1e-12
-        rms_r = float(np.sqrt(np.mean(out_r ** 2))) + 1e-12
+        rms_l = float(np.sqrt(np.mean(out_l**2))) + 1e-12
+        rms_r = float(np.sqrt(np.mean(out_r**2))) + 1e-12
         imbalance_db = abs(20.0 * np.log10(rms_l / rms_r))
-        assert imbalance_db <= 3.0, (
-            f"Phase 48 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
-        )
+        assert imbalance_db <= 3.0, f"Phase 48 introduced L/R imbalance: {imbalance_db:.2f} dB (max 3 dB)"
 
 
 # ===========================================================================

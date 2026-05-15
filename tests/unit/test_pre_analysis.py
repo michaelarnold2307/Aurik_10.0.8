@@ -325,6 +325,39 @@ class TestRunPreAnalysis:
             result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
         assert len(result.errors) >= 4
 
+    def test_hung_substep_times_out_and_returns_partial_result(self):
+        """A stuck sub-analysis must degrade instead of blocking the whole pre-analysis."""
+        with (
+            patch("forensics.medium_detector.get_medium_detector", return_value=_make_mock_md()),
+            patch("backend.core.era_classifier.get_era_classifier", return_value=_make_mock_era_cls()),
+            patch("backend.core.genre_classifier.get_genre_classifier", return_value=_make_mock_genre_cls()),
+            patch("backend.core.defect_scanner.DefectScanner", return_value=_make_mock_defect_scanner()),
+            patch("backend.core.restorability_estimator.estimate_restorability", side_effect=_make_mock_restorability),
+            patch("backend.core.pre_analysis._SUBSTEP_TIMEOUT_S", 0.01),
+        ):
+            from backend.core.pre_analysis import run_pre_analysis
+
+            timed_out_future = MagicMock()
+            timed_out_future.result.side_effect = TimeoutError()
+            timed_out_future.cancel.return_value = False
+
+            ok_future = MagicMock()
+            ok_future.result.return_value = MOCK_GENRE
+
+            pool = MagicMock()
+            pool.submit.side_effect = [ok_future, timed_out_future, ok_future, ok_future]
+
+            with patch("backend.core.pre_analysis._cf.ThreadPoolExecutor", return_value=pool):
+                result = run_pre_analysis(_silence(1.0), 44100, store_in_bridge_cache=False)
+
+        assert result.era is not None
+        assert result.genre is None
+        assert result.defects is not None
+        assert result.restorability is not None
+        assert result.errors["genre"] == "timeout_after=0.0s"
+        timed_out_future.cancel.assert_called_once_with()
+        pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
     def test_bridge_cache_stored(self):
         """store_in_bridge_cache=True must call bridge cache functions."""
         _m_medium = MagicMock()

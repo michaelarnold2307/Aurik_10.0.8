@@ -8,6 +8,7 @@ and 7 release gates (K.O. criteria). Parametrized tests validate each criterion.
 Output is formatted for audit/uat_report_generator.py machine parsing.
 """
 
+import json
 import re
 import subprocess
 import sys
@@ -470,6 +471,173 @@ def _integrated_lufs_or_fallback(audio: np.ndarray, sr: int) -> float:
         return float(20.0 * np.log10(rms))
 
 
+def _estimate_vocal_focus_score(audio: np.ndarray, sr: int) -> float:
+    """Cheap vocal-likelihood proxy for selecting meaningful UAT segments."""
+    mono = _to_mono(audio)
+    if len(mono) < max(512, int(sr * 0.25)):
+        return 0.0
+
+    rms = float(np.sqrt(np.mean(np.square(mono, dtype=np.float64))) + 1e-12)
+    if rms < 1e-5:
+        return 0.0
+
+    n_fft = min(max(2048, 1 << int(np.floor(np.log2(len(mono))))), 8192)
+    win = np.hanning(n_fft).astype(np.float32)
+    window = mono[:n_fft].astype(np.float32)
+    if len(window) < n_fft:
+        window = np.pad(window, (0, n_fft - len(window)))
+    fft_mag = np.abs(np.fft.rfft(window * win)).astype(np.float32)
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr).astype(np.float32)
+
+    total_energy = float(np.mean(fft_mag[(freqs >= 80.0) & (freqs < 8000.0)] ** 2)) + 1e-12
+    voice_energy = float(np.mean(fft_mag[(freqs >= 250.0) & (freqs < 4000.0)] ** 2))
+    pitch_energy = float(np.mean(fft_mag[(freqs >= 120.0) & (freqs < 1200.0)] ** 2))
+    voice_ratio = float(np.clip((voice_energy / total_energy - 0.15) / 0.45, 0.0, 1.0))
+    pitch_ratio = float(np.clip((pitch_energy / (voice_energy + 1e-12) - 0.18) / 0.45, 0.0, 1.0))
+
+    centered = mono.astype(np.float64) - float(np.mean(mono))
+    periodicity = 0.0
+    if len(centered) > int(sr / 320):
+        corr_size = 1 << int(np.ceil(np.log2(max(2, len(centered) * 2 - 1))))
+        corr = np.fft.irfft(np.abs(np.fft.rfft(centered, n=corr_size)) ** 2, n=corr_size)[: len(centered)]
+        corr /= corr[0] + 1e-12
+        lag_min = max(1, int(sr / 320))
+        lag_max = min(len(corr) - 1, int(sr / 80))
+        if lag_max > lag_min:
+            periodicity = float(np.clip((float(np.max(corr[lag_min : lag_max + 1])) - 0.10) / 0.65, 0.0, 1.0))
+
+    return float(np.clip(0.45 * periodicity + 0.35 * voice_ratio + 0.20 * pitch_ratio, 0.0, 1.0))
+
+
+def _select_vocal_focus_segments(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    n_segments: int = 3,
+    segment_seconds: float = 2.5,
+) -> list[dict[str, float | int]]:
+    """Select non-overlapping vocal-relevant segments from a bounded real-audio clip."""
+    arr = _to_samples_first(audio)
+    total_len = int(arr.shape[0]) if arr.ndim >= 1 else 0
+    segment_len = max(1, min(total_len, int(sr * segment_seconds)))
+    if total_len <= segment_len or total_len == 0:
+        return [{"index": 0, "start": 0, "end": total_len, "score": 1.0}]
+
+    mono_full = _to_mono(arr)
+    full_rms = float(np.sqrt(np.mean(np.square(mono_full, dtype=np.float64))) + 1e-12)
+    hop = max(int(sr * 0.75), segment_len // 2)
+    starts = list(range(0, max(1, total_len - segment_len + 1), hop))
+    if starts[-1] != total_len - segment_len:
+        starts.append(total_len - segment_len)
+
+    candidates: list[dict[str, float | int]] = []
+    for idx, start in enumerate(starts):
+        end = min(total_len, start + segment_len)
+        seg = arr[start:end]
+        seg_rms = float(np.sqrt(np.mean(np.square(_to_mono(seg), dtype=np.float64))) + 1e-12)
+        energy_score = float(np.clip(seg_rms / (full_rms * 1.10 + 1e-12), 0.0, 1.0))
+        focus_score = _estimate_vocal_focus_score(seg, sr)
+        candidates.append(
+            {
+                "index": idx,
+                "start": int(start),
+                "end": int(end),
+                "score": float(np.clip(0.75 * focus_score + 0.25 * energy_score, 0.0, 1.0)),
+            }
+        )
+
+    selected: list[dict[str, float | int]] = []
+    for candidate in sorted(candidates, key=lambda item: (float(item["score"]), -int(item["start"])), reverse=True):
+        if any(abs(int(candidate["start"]) - int(existing["start"])) < segment_len for existing in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) >= n_segments:
+            break
+
+    if not selected:
+        center_start = max(0, (total_len - segment_len) // 2)
+        selected = [{"index": 0, "start": center_start, "end": center_start + segment_len, "score": 0.0}]
+
+    return sorted(selected, key=lambda item: int(item["start"]))
+
+
+def _compute_runtime_segments(
+    original: np.ndarray,
+    restored: np.ndarray,
+    sr: int,
+    checker: Any,
+) -> list[dict[str, Any]]:
+    """Measure key runtime metrics on vocal-focused subsegments."""
+    segments: list[dict[str, Any]] = []
+    for segment in _select_vocal_focus_segments(original, sr):
+        start = int(segment["start"])
+        end = int(segment["end"])
+        original_seg = original[start:end]
+        restored_seg = restored[start:end]
+        original_mono = _to_mono(original_seg)
+        restored_mono = _to_mono(restored_seg)
+        segments.append(
+            {
+                "index": int(segment["index"]),
+                "start": start,
+                "end": end,
+                "score": float(segment["score"]),
+                "goals_before": checker.measure_all(original_mono, sr),
+                "goals_after": checker.measure_all(restored_mono, sr, reference=original_mono),
+                "lufs_before": _integrated_lufs_or_fallback(original_seg, sr),
+                "lufs_after": _integrated_lufs_or_fallback(restored_seg, sr),
+                "noise_before_dbfs": _noise_floor_dbfs(original_seg),
+                "noise_after_dbfs": _noise_floor_dbfs(restored_seg),
+                "side_before": _stereo_side_ratio(original_seg),
+                "side_after": _stereo_side_ratio(restored_seg),
+                "corr_before": (
+                    _safe_corr(original_seg[:, 0], original_seg[:, 1])
+                    if original_seg.ndim == 2 and original_seg.shape[1] >= 2
+                    else 1.0
+                ),
+                "corr_after": (
+                    _safe_corr(restored_seg[:, 0], restored_seg[:, 1])
+                    if restored_seg.ndim == 2 and restored_seg.shape[1] >= 2
+                    else 1.0
+                ),
+            }
+        )
+    return segments
+
+
+_UAT_RESULT_MARKER = "UAT_RESULT_JSON:"
+
+
+def _emit_uat_result_marker(kind: str, result: dict[str, Any]) -> None:
+    """Emit a machine-readable UAT result line for the audit parser."""
+    payload = {
+        "kind": str(kind),
+        "criterion_id": str(result.get("criterion_id", "") or result.get("gate_id", "")),
+        "result": str(result.get("result", "UNKNOWN") or "UNKNOWN"),
+        "evidence": str(result.get("evidence", "") or ""),
+        "notes": str(result.get("notes", "") or ""),
+        "timestamp": str(result.get("timestamp", "") or ""),
+    }
+    print(f"{_UAT_RESULT_MARKER}{json.dumps(payload, ensure_ascii=False, sort_keys=True)}")
+
+
+def _worst_segment_goal_summary(
+    segments: list[dict[str, Any]],
+    goals: list[str],
+) -> tuple[int, str, float] | None:
+    """Return worst segment index, goal name and delta across a goal subset."""
+    worst: tuple[int, str, float] | None = None
+    for seg in segments:
+        seg_idx = int(seg.get("index", -1))
+        for goal in goals:
+            before = float(seg.get("goals_before", {}).get(goal, 0.0))
+            after = float(seg.get("goals_after", {}).get(goal, 0.0))
+            delta = after - before
+            if worst is None or delta < worst[2]:
+                worst = (seg_idx, goal, delta)
+    return worst
+
+
 @pytest.fixture(scope="module")
 def real_audio_runtime_case(real_audio_gate_case: dict[str, object]) -> dict[str, Any]:
     """Run one real-audio restoration pass and cache runtime metrics for R5-R12."""
@@ -515,6 +683,7 @@ def real_audio_runtime_case(real_audio_gate_case: dict[str, object]) -> dict[str
     restored_goals_input = _to_mono(restored)
     goals_before = checker.measure_all(original_goals_input, sr)
     goals_after = checker.measure_all(restored_goals_input, sr, reference=original_goals_input)
+    segments = _compute_runtime_segments(original, restored, sr, checker)
 
     return {
         "path": str(real_audio_gate_case["path"]),
@@ -525,6 +694,7 @@ def real_audio_runtime_case(real_audio_gate_case: dict[str, object]) -> dict[str
         "result": restored_result,
         "goals_before": goals_before,
         "goals_after": goals_after,
+        "segments": segments,
         "lufs_before": _integrated_lufs_or_fallback(original, sr),
         "lufs_after": _integrated_lufs_or_fallback(restored, sr),
         "noise_before_dbfs": _noise_floor_dbfs(original),
@@ -548,6 +718,7 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
         "name": criterion["name"],
         "result": "PASS",
         "evidence": "",
+        "notes": "",
         "timestamp": "",
     }
 
@@ -594,6 +765,7 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
         elif criterion["id"] == "R5":
             orig = real_audio_runtime_case["original"]
             rest = real_audio_runtime_case["restored"]
+            segments = list(real_audio_runtime_case.get("segments", []))
             assert orig.ndim == 2 and orig.shape[1] == 2, "Real-Audio-Fixture ist nicht stereo"
             side_before = _stereo_side_ratio(orig)
             if rest.ndim == 1:
@@ -613,20 +785,81 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
             assert after_corr <= min(0.995, before_corr + 0.08), (
                 f"Stereo-Kollaps erkannt: corr before={before_corr:.3f}, after={after_corr:.3f}"
             )
-            result["evidence"] = f"Real-Audio-Stereo validiert ({real_audio_runtime_case['path']})"
+            if segments:
+                worst_segment = max(
+                    segments,
+                    key=lambda item: float(item.get("corr_after", 1.0) - item.get("corr_before", 1.0)),
+                )
+                assert float(worst_segment.get("corr_after", 1.0)) <= min(
+                    0.995,
+                    float(worst_segment.get("corr_before", 1.0)) + 0.10,
+                ), (
+                    "Segmentierter Stereo-Kollaps erkannt: "
+                    f"segment={worst_segment['index']} corr before={float(worst_segment.get('corr_before', 1.0)):.3f}, "
+                    f"after={float(worst_segment.get('corr_after', 1.0)):.3f}"
+                )
+                result["evidence"] = (
+                    f"Real-Audio-Stereo + Segmente validiert ({real_audio_runtime_case['path']}, "
+                    f"worst_segment={worst_segment['index']})"
+                )
+                result["notes"] = (
+                    f"global corr {before_corr:.3f}->{after_corr:.3f}; "
+                    f"worst segment {int(worst_segment['index'])} corr "
+                    f"{float(worst_segment.get('corr_before', 1.0)):.3f}->{float(worst_segment.get('corr_after', 1.0)):.3f}"
+                )
+            else:
+                result["evidence"] = f"Real-Audio-Stereo validiert ({real_audio_runtime_case['path']})"
 
         elif criterion["id"] == "R6":
             before = float(real_audio_runtime_case["goals_before"].get("tonal_center", 0.0))
             after = float(real_audio_runtime_case["goals_after"].get("tonal_center", 0.0))
             # Real-material adaptive: no hard floor here, but no meaningful regression.
             assert after >= before - 0.05, f"Tonales Zentrum regressiv: {before:.3f} -> {after:.3f}"
-            result["evidence"] = f"Real-Audio TonalCenter: {before:.3f} -> {after:.3f}"
+            segments = list(real_audio_runtime_case.get("segments", []))
+            if segments:
+                worst_delta = min(
+                    float(seg["goals_after"].get("tonal_center", 0.0))
+                    - float(seg["goals_before"].get("tonal_center", 0.0))
+                    for seg in segments
+                )
+                assert worst_delta >= -0.07, f"Segmentiertes TonalCenter regressiv: worst delta={worst_delta:.3f}"
+                result["evidence"] = (
+                    f"Real-Audio TonalCenter: {before:.3f} -> {after:.3f}; worst_segment_delta={worst_delta:.3f}"
+                )
+                result["notes"] = (
+                    f"worst tonal-center segment delta={worst_delta:.3f} across {len(segments)} vocal segments"
+                )
+            else:
+                result["evidence"] = f"Real-Audio TonalCenter: {before:.3f} -> {after:.3f}"
 
         elif criterion["id"] == "R7":
             before = float(real_audio_runtime_case["goals_before"].get("micro_dynamics", 0.0))
             after = float(real_audio_runtime_case["goals_after"].get("micro_dynamics", 0.0))
             assert after >= max(0.72, before - 0.15), f"Mikro-Dynamik regressiv: {before:.3f} -> {after:.3f}"
-            result["evidence"] = f"Real-Audio MicroDynamics: {before:.3f} -> {after:.3f}"
+            segments = list(real_audio_runtime_case.get("segments", []))
+            if segments:
+                worst_segment = min(
+                    segments,
+                    key=lambda seg: (
+                        float(seg["goals_after"].get("micro_dynamics", 0.0))
+                        - float(seg["goals_before"].get("micro_dynamics", 0.0))
+                    ),
+                )
+                segment_before = float(worst_segment["goals_before"].get("micro_dynamics", 0.0))
+                segment_after = float(worst_segment["goals_after"].get("micro_dynamics", 0.0))
+                assert segment_after >= max(0.68, segment_before - 0.18), (
+                    f"Segmentierte Mikro-Dynamik regressiv: {segment_before:.3f} -> {segment_after:.3f}"
+                )
+                result["evidence"] = (
+                    f"Real-Audio MicroDynamics: {before:.3f} -> {after:.3f}; "
+                    f"worst_segment={int(worst_segment['index'])}:{segment_before:.3f}->{segment_after:.3f}"
+                )
+                result["notes"] = (
+                    f"worst micro-dynamics segment {int(worst_segment['index'])}: "
+                    f"{segment_before:.3f}->{segment_after:.3f}"
+                )
+            else:
+                result["evidence"] = f"Real-Audio MicroDynamics: {before:.3f} -> {after:.3f}"
 
         elif criterion["id"] == "R8":
             before = float(real_audio_runtime_case["noise_before_dbfs"])
@@ -705,6 +938,7 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
         elif criterion["id"] == "R11":
             goals_after = real_audio_runtime_case["goals_after"]
             goals_before = real_audio_runtime_case["goals_before"]
+            segments = list(real_audio_runtime_case.get("segments", []))
             assert len(goals_after) >= 14, f"Zu wenige gemessene Goals: {len(goals_after)}"
             for key, value in goals_after.items():
                 assert np.isfinite(float(value)), f"Goal {key} ist nicht finite"
@@ -722,7 +956,31 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
                 after = float(goals_after.get(goal, 0.0))
                 floor = float(goal_floors.get(goal, 0.70))
                 assert after >= max(floor, before - 0.30), f"P1/P2-Regression in {goal}: {before:.3f} -> {after:.3f}"
-            result["evidence"] = "Real-Audio Musical Goals vollständig gemessen"
+            if segments:
+                segment_floors = {
+                    "natuerlichkeit": 0.68,
+                    "authentizitaet": 0.68,
+                    "tonal_center": 0.45,
+                    "timbre_authentizitaet": 0.68,
+                    "artikulation": 0.68,
+                }
+                for seg in segments:
+                    for goal in p1p2:
+                        before = float(seg["goals_before"].get(goal, 0.0))
+                        after = float(seg["goals_after"].get(goal, 0.0))
+                        floor = float(segment_floors.get(goal, 0.65))
+                        assert after >= max(floor, before - 0.32), (
+                            f"Segmentierte P1/P2-Regression in {goal} (segment={int(seg['index'])}): "
+                            f"{before:.3f} -> {after:.3f}"
+                        )
+                _worst = _worst_segment_goal_summary(segments, p1p2)
+                result["evidence"] = (
+                    f"Real-Audio Musical Goals vollständig + segmentiert gemessen ({len(segments)} Segmente)"
+                )
+                if _worst is not None:
+                    result["notes"] = f"worst segment {int(_worst[0])} goal={_worst[1]} delta={_worst[2]:+.3f}"
+            else:
+                result["evidence"] = "Real-Audio Musical Goals vollständig gemessen"
 
         elif criterion["id"] == "R12":
             restored = np.asarray(real_audio_runtime_case["restored"], dtype=np.float32)
@@ -772,6 +1030,8 @@ def test_restoration_criteria(criterion: dict[str, Any], real_audio_runtime_case
         result["result"] = "ERROR"
         result["evidence"] = str(e)
         raise
+    finally:
+        _emit_uat_result_marker("restoration", result)
 
 
 # ============================================================================
@@ -788,6 +1048,7 @@ def test_studio_2026_criteria(criterion: dict[str, Any]):
         "name": criterion["name"],
         "result": "PASS",
         "evidence": "",
+        "notes": "",
         "timestamp": "",
     }
 
@@ -949,6 +1210,8 @@ def test_studio_2026_criteria(criterion: dict[str, Any]):
         result["result"] = "ERROR"
         result["evidence"] = str(e)
         raise
+    finally:
+        _emit_uat_result_marker("studio_2026", result)
 
 
 # ============================================================================

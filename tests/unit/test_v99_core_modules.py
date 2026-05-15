@@ -134,6 +134,36 @@ class TestAudioExporter:
         assert out_mid_peak > in_mid_peak
         assert out_edge_peak <= (in_edge_peak * (10.0 ** (2.05 / 20.0)))
 
+    def test_06c_reference_audio_clamps_quiet_edges_without_normalize(self, exporter, tmp_path):
+        intro = _sine(220.0, 1.0, amp=0.015)
+        middle = _sine(440.0, 2.0, amp=0.18)
+        outro = _sine(220.0, 1.0, amp=0.015)
+        reference = np.concatenate([intro, middle, outro]).astype(np.float32)
+        candidate = reference.copy()
+        candidate[:SR] *= 6.0
+        candidate[-SR:] *= 5.0
+
+        out = exporter.export(
+            candidate,
+            SR,
+            tmp_path / "quiet_edges_ref.wav",
+            normalize=False,
+            reference_audio=reference,
+        )
+
+        import soundfile as sf
+
+        audio, _ = sf.read(str(out))
+        in_edge_peak = float(np.percentile(np.abs(reference[:SR]), 99.9))
+        out_intro_peak = float(np.percentile(np.abs(audio[:SR]), 99.9))
+        out_outro_peak = float(np.percentile(np.abs(audio[-SR:]), 99.9))
+        out_mid_peak = float(np.percentile(np.abs(audio[SR:-SR]), 99.9))
+        ref_mid_peak = float(np.percentile(np.abs(reference[SR:-SR]), 99.9))
+
+        assert out_mid_peak >= ref_mid_peak * 0.98
+        assert out_intro_peak <= (in_edge_peak * (10.0 ** (2.05 / 20.0)))
+        assert out_outro_peak <= (in_edge_peak * (10.0 ** (2.05 / 20.0)))
+
     def test_07_stereo_export(self, exporter, tmp_path):
         stereo = _stereo(_sine(440.0, 1.0))
         out = exporter.export(stereo, SR, tmp_path / "stereo.wav")

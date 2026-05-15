@@ -1320,40 +1320,83 @@ class DenoisePhase(PhaseInterface):
         # §2.46f Edge-Taper (defense-in-depth): secondary safety net after context-padding above.
         # Context-padding is the primary fix (root cause); edge-taper catches any residual boundary
         # artefacts from ML plugins that internally resample or chunk and lose the padding offset.
+        # §0h BUG-FIX v9.12.5: Silence-aware taper — wenn originale Randzone stumm/Rauschen-only
+        # ist (RMS < -50 dBFS), wird Stille als Blend-Referenz genutzt statt des originalen
+        # Rauschens. Verhindert "Pegelexplosion" bei Songs mit stiller Hiss-Einleitung/-Ausleitung.
         try:
             _edge_fade_s = 0.5
             _edge_n = int(_edge_fade_s * sample_rate)
             _n_total = result_audio.shape[-1] if result_audio.ndim == 2 else len(result_audio)
             _orig_edge = audio
+            _SILENCE_EDGE_RMS = float(10 ** (-50.0 / 20.0))  # -50 dBFS ≈ 0.00316
             if _n_total >= _edge_n * 4:  # only if song is long enough
                 _fade = np.linspace(0.0, 1.0, _edge_n, dtype=np.float32)
                 if result_audio.ndim == 2:
                     # channels-last (N, 2) or channels-first (2, N)
                     _ch_first_et = result_audio.shape[0] == 2 and result_audio.shape[1] > 2
                     if _ch_first_et:
-                        result_audio[:, :_edge_n] = (
-                            result_audio[:, :_edge_n] * _fade + _orig_edge[:, :_edge_n] * (1.0 - _fade)
-                        ).astype(result_audio.dtype)
+                        _rms_s = float(np.sqrt(np.mean(_orig_edge[:, :_edge_n].astype(np.float64) ** 2) + 1e-12))
+                        _rms_e = float(np.sqrt(np.mean(_orig_edge[:, -_edge_n:].astype(np.float64) ** 2) + 1e-12))
+                        _ref_s = (
+                            np.zeros((2, _edge_n), dtype=_orig_edge.dtype)
+                            if _rms_s < _SILENCE_EDGE_RMS
+                            else _orig_edge[:, :_edge_n]
+                        )
+                        _ref_e = (
+                            np.zeros((2, _edge_n), dtype=_orig_edge.dtype)
+                            if _rms_e < _SILENCE_EDGE_RMS
+                            else _orig_edge[:, -_edge_n:]
+                        )
+                        result_audio[:, :_edge_n] = (result_audio[:, :_edge_n] * _fade + _ref_s * (1.0 - _fade)).astype(
+                            result_audio.dtype
+                        )
                         result_audio[:, -_edge_n:] = (
-                            result_audio[:, -_edge_n:] * _fade[::-1] + _orig_edge[:, -_edge_n:] * (1.0 - _fade[::-1])
+                            result_audio[:, -_edge_n:] * _fade[::-1] + _ref_e * (1.0 - _fade[::-1])
                         ).astype(result_audio.dtype)
                     else:
+                        _rms_s = float(np.sqrt(np.mean(_orig_edge[:_edge_n, :].astype(np.float64) ** 2) + 1e-12))
+                        _rms_e = float(np.sqrt(np.mean(_orig_edge[-_edge_n:, :].astype(np.float64) ** 2) + 1e-12))
+                        _ref_s = (
+                            np.zeros((_edge_n, _orig_edge.shape[1]), dtype=_orig_edge.dtype)
+                            if _rms_s < _SILENCE_EDGE_RMS
+                            else _orig_edge[:_edge_n, :]
+                        )
+                        _ref_e = (
+                            np.zeros((_edge_n, _orig_edge.shape[1]), dtype=_orig_edge.dtype)
+                            if _rms_e < _SILENCE_EDGE_RMS
+                            else _orig_edge[-_edge_n:, :]
+                        )
                         result_audio[:_edge_n, :] = (
-                            result_audio[:_edge_n, :] * _fade[:, None]
-                            + _orig_edge[:_edge_n, :] * (1.0 - _fade[:, None])
+                            result_audio[:_edge_n, :] * _fade[:, None] + _ref_s * (1.0 - _fade[:, None])
                         ).astype(result_audio.dtype)
                         result_audio[-_edge_n:, :] = (
-                            result_audio[-_edge_n:, :] * _fade[::-1, None]
-                            + _orig_edge[-_edge_n:, :] * (1.0 - _fade[::-1, None])
+                            result_audio[-_edge_n:, :] * _fade[::-1, None] + _ref_e * (1.0 - _fade[::-1, None])
                         ).astype(result_audio.dtype)
                 else:
-                    result_audio[:_edge_n] = (
-                        result_audio[:_edge_n] * _fade + _orig_edge[:_edge_n] * (1.0 - _fade)
-                    ).astype(result_audio.dtype)
+                    _rms_s = float(np.sqrt(np.mean(_orig_edge[:_edge_n].astype(np.float64) ** 2) + 1e-12))
+                    _rms_e = float(np.sqrt(np.mean(_orig_edge[-_edge_n:].astype(np.float64) ** 2) + 1e-12))
+                    _ref_s = (
+                        np.zeros(_edge_n, dtype=_orig_edge.dtype)
+                        if _rms_s < _SILENCE_EDGE_RMS
+                        else _orig_edge[:_edge_n]
+                    )
+                    _ref_e = (
+                        np.zeros(_edge_n, dtype=_orig_edge.dtype)
+                        if _rms_e < _SILENCE_EDGE_RMS
+                        else _orig_edge[-_edge_n:]
+                    )
+                    result_audio[:_edge_n] = (result_audio[:_edge_n] * _fade + _ref_s * (1.0 - _fade)).astype(
+                        result_audio.dtype
+                    )
                     result_audio[-_edge_n:] = (
-                        result_audio[-_edge_n:] * _fade[::-1] + _orig_edge[-_edge_n:] * (1.0 - _fade[::-1])
+                        result_audio[-_edge_n:] * _fade[::-1] + _ref_e * (1.0 - _fade[::-1])
                     ).astype(result_audio.dtype)
-                logger.debug("Phase03 edge-taper: %.0f ms blended at intro+outro", _edge_fade_s * 1000)
+                logger.debug(
+                    "Phase03 edge-taper: %.0f ms; silence_start=%s silence_end=%s",
+                    _edge_fade_s * 1000,
+                    _rms_s < _SILENCE_EDGE_RMS,
+                    _rms_e < _SILENCE_EDGE_RMS,
+                )
         except Exception as _et03_exc:
             logger.debug("Phase03 edge-taper non-blocking: %s", _et03_exc)
 

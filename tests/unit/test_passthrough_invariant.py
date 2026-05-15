@@ -180,12 +180,12 @@ class TestPhase40PassThrough:
 
     def test_07_phase40_nan_free(self):
         audio = _clean_harmonic()
-        result = self.phase.process(audio, sample_rate=SR, material=self._material)
+        result = self.phase.process(audio, sample_rate=SR, material_type=self._material)
         assert np.isfinite(result.audio).all()
 
     def test_08_phase40_no_clipping(self):
         audio = _clean_harmonic()
-        result = self.phase.process(audio, sample_rate=SR, material=self._material)
+        result = self.phase.process(audio, sample_rate=SR, material_type=self._material)
         assert np.max(np.abs(result.audio)) <= 1.0 + 1e-6
 
 

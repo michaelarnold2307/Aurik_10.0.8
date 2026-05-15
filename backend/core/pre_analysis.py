@@ -38,17 +38,26 @@ Usage (UV3 / CLI — no frontend)::
 
 from __future__ import annotations
 
+import ctypes
+import gc
 import logging
 import math
 import os
 import threading
+import time
 from collections.abc import Callable
 from concurrent import futures as _cf
 from dataclasses import dataclass, field
+from importlib import import_module
+from typing import Any, cast
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Observed: DefectScanner needs ~80s for 60s audio (133% overhead on this hardware).
+# 150s = 1.87x buffer. concurrent.futures.TimeoutError != builtins.TimeoutError in Python 3.10.
+_SUBSTEP_TIMEOUT_S = 150.0
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -108,12 +117,17 @@ def _to_mono_native(audio: np.ndarray) -> np.ndarray:
     return np.clip(mono, -1.0, 1.0).astype(np.float32)
 
 
+def _load_symbol(module_name: str, symbol_name: str) -> object:
+    """Load optional or heavy symbols lazily without inline import statements."""
+    return getattr(import_module(module_name), symbol_name)
+
+
 def _resample_for_restorability(audio_native: np.ndarray, sr_native: int) -> tuple[np.ndarray, int]:
     """Resample to 48 kHz if not already there (restorability estimator requires 48 kHz)."""
     if sr_native == 48_000:
         return audio_native, sr_native
     try:
-        from scipy.signal import resample_poly as _rp
+        _rp = cast(Callable[..., np.ndarray], _load_symbol("scipy.signal", "resample_poly"))
 
         gcd = math.gcd(int(sr_native), 48_000)
         audio_48 = _rp(
@@ -170,9 +184,7 @@ def run_pre_analysis(
     Returns:
         PreAnalysisResult with all sub-results populated (or None on failure).
     """
-    import time as _time
-
-    t0 = _time.monotonic()
+    t0 = time.monotonic()
 
     _cb = progress_callback or (lambda pct, msg: None)
     _cb(0, "Voranalyse gestartet…")
@@ -194,7 +206,7 @@ def run_pre_analysis(
     _medium_result = None
     _medium_primary_error: str | None = None
     try:
-        from forensics.medium_detector import get_medium_detector as _get_md
+        _get_md = cast(Callable[[], Any], _load_symbol("forensics.medium_detector", "get_medium_detector"))
 
         _medium_result = _get_md().detect(audio_native, sr_native, file_ext=file_ext)
         result.medium = _medium_result
@@ -231,17 +243,17 @@ def run_pre_analysis(
     # Steps 2–5 — Era, Genre, DefectScan, Restorability in parallel
     # ------------------------------------------------------------------
     def _run_era() -> object:
-        from backend.core.era_classifier import get_era_classifier as _gec
+        _gec = cast(Callable[[], Any], _load_symbol("backend.core.era_classifier", "get_era_classifier"))
 
         return _gec().classify(audio_native, sr_native)
 
     def _run_genre() -> object:
-        from backend.core.genre_classifier import get_genre_classifier as _ggc
+        _ggc = cast(Callable[[], Any], _load_symbol("backend.core.genre_classifier", "get_genre_classifier"))
 
         return _ggc().classify(audio_native, sr_native)
 
     def _run_defects() -> object:
-        from backend.core.defect_scanner import DefectScanner as _DS
+        _DS = cast(Callable[..., Any], _load_symbol("backend.core.defect_scanner", "DefectScanner"))
 
         scanner = _DS(sample_rate=sr_native, material_type=None)
         _kw: dict = {
@@ -258,7 +270,10 @@ def run_pre_analysis(
         return scanner.scan(audio_native, **_kw)
 
     def _run_restorability() -> object:
-        from backend.core.restorability_estimator import estimate_restorability as _er
+        _er = cast(
+            Callable[..., object],
+            _load_symbol("backend.core.restorability_estimator", "estimate_restorability"),
+        )
 
         return _er(audio_48k, 48_000, material=_material_str)
 
@@ -269,17 +284,28 @@ def run_pre_analysis(
         "restorability": _run_restorability,
     }
 
-    with _cf.ThreadPoolExecutor(max_workers=4) as _pool:
+    _pool = _cf.ThreadPoolExecutor(max_workers=4)
+    try:
         _fut = {name: _pool.submit(fn) for name, fn in _step_fns.items()}
 
         for name, fut in _fut.items():
             try:
-                sub = fut.result()
+                sub = fut.result(timeout=_SUBSTEP_TIMEOUT_S)
                 setattr(result, name, sub)
                 logger.debug("pre_analysis: step=%s done", name)
+            except (TimeoutError, _cf.TimeoutError):  # Python 3.10: cf.TimeoutError != builtins.TimeoutError
+                result.errors[name] = f"timeout_after={_SUBSTEP_TIMEOUT_S:.1f}s"
+                fut.cancel()
+                logger.warning(
+                    "pre_analysis: step=%s timed out after %.1fs; degrading without this sub-result",
+                    name,
+                    _SUBSTEP_TIMEOUT_S,
+                )
             except Exception as exc:
                 result.errors[name] = str(exc)
                 logger.warning("pre_analysis: step=%s failed (%s)", name, exc)
+    finally:
+        _pool.shutdown(wait=False, cancel_futures=True)
 
     _cb(90, "Analyse abgeschlossen — Ergebnisse werden gespeichert…")
 
@@ -289,20 +315,16 @@ def run_pre_analysis(
     if store_in_bridge_cache and file_path:
         _store_in_cache(file_path, result)
 
-    result.elapsed_seconds = _time.monotonic() - t0
+    result.elapsed_seconds = time.monotonic() - t0
     logger.info("pre_analysis: complete in %.1fs (errors=%s)", result.elapsed_seconds, list(result.errors))
 
     # Free DefectScanner STFT/spectral intermediate arrays (30 defect types × full audio).
     # These can occupy 10–15 GB of numpy malloc arenas.  Releasing them before the
     # BatchProcessingThread loads the audio again prevents SIGABRT (malloc corruption)
     # caused by glibc reusing bloated free-lists when pedalboard calls malloc.
-    import gc as _gc_pa
-
-    _gc_pa.collect()
+    gc.collect()
     try:
-        import ctypes as _ct_pa
-
-        _ct_pa.CDLL("libc.so.6").malloc_trim(0)
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception as _trim_exc:
         logger.debug("malloc_trim unavailable (non-glibc platform): %s", _trim_exc)
 
@@ -313,11 +335,21 @@ def run_pre_analysis(
 def _store_in_cache(file_path: str, result: PreAnalysisResult) -> None:
     """Store all sub-results in bridge LRU caches."""
     try:
-        from backend.api.bridge import (
-            cache_defect_result,
-            cache_era_genre_result,
-            cache_medium_result,
-            cache_restorability_result,
+        cache_defect_result = cast(
+            Callable[[str, object], None],
+            _load_symbol("backend.api.bridge", "cache_defect_result"),
+        )
+        cache_era_genre_result = cast(
+            Callable[..., None],
+            _load_symbol("backend.api.bridge", "cache_era_genre_result"),
+        )
+        cache_medium_result = cast(
+            Callable[[str, object], None],
+            _load_symbol("backend.api.bridge", "cache_medium_result"),
+        )
+        cache_restorability_result = cast(
+            Callable[[str, object], None],
+            _load_symbol("backend.api.bridge", "cache_restorability_result"),
         )
 
         if result.medium is not None:

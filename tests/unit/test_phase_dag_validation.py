@@ -27,7 +27,7 @@ class TestValidatePhaseOrder:
             "phase_01_click_removal",
             "phase_03_denoise",
             "phase_06_bw_extension",
-            "phase_07_harmonic_enhancement",
+            "phase_07_harmonic_restoration",
         ]
         violations = validate_phase_order(phases)
         assert violations == [], f"Unerwartete Verletzungen: {violations}"
@@ -37,7 +37,7 @@ class TestValidatePhaseOrder:
         from backend.core.phase_dag import validate_phase_order
 
         phases = [
-            "phase_07_harmonic_enhancement",
+            "phase_07_harmonic_restoration",
             "phase_03_denoise",
         ]
         violations = validate_phase_order(phases)
@@ -49,11 +49,11 @@ class TestValidatePhaseOrder:
         from backend.core.phase_dag import validate_phase_order
 
         # Korrekte Reihenfolge
-        correct = ["phase_29_tape_hiss", "phase_07_harmonic_enhancement"]
+        correct = ["phase_29_tape_hiss_reduction", "phase_07_harmonic_restoration"]
         assert validate_phase_order(correct) == []
 
         # Falsche Reihenfolge
-        wrong = ["phase_07_harmonic_enhancement", "phase_29_tape_hiss"]
+        wrong = ["phase_07_harmonic_restoration", "phase_29_tape_hiss_reduction"]
         violations = validate_phase_order(wrong)
         assert len(violations) > 0
 
@@ -61,7 +61,7 @@ class TestValidatePhaseOrder:
         """Einzelne Phase → keine Constraint-Verletzung möglich."""
         from backend.core.phase_dag import validate_phase_order
 
-        violations = validate_phase_order(["phase_07_harmonic_enhancement"])
+        violations = validate_phase_order(["phase_07_harmonic_restoration"])
         assert violations == []
 
     def test_short_form_phase_ids(self):
@@ -76,7 +76,7 @@ class TestValidatePhaseOrder:
     def test_returns_list_of_strings(self):
         from backend.core.phase_dag import validate_phase_order
 
-        result = validate_phase_order(["phase_07_harmonic_enhancement", "phase_03_denoise"])
+        result = validate_phase_order(["phase_07_harmonic_restoration", "phase_03_denoise"])
         assert isinstance(result, list)
         for v in result:
             assert isinstance(v, str)

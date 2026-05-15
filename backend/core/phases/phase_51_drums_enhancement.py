@@ -67,6 +67,25 @@ except Exception:
     _FormantSystemCls = None  # type: ignore[assignment,misc]
     _FORMANT_SYSTEM_DRUMS = None
 
+try:
+    from dsp.instrument_formant_corrector import (
+        correct_instrument_formant_drift as _correct_instrument_formant_drift_fn,
+    )
+except Exception:
+    _correct_instrument_formant_drift_fn = None  # type: ignore[assignment]
+
+try:
+    from backend.core.sub_stem_processor import process_sub_stems as _process_sub_stems_fn
+except Exception:
+    _process_sub_stems_fn = None  # type: ignore[assignment]
+
+try:
+    from backend.core.physics_resonance_enhancer import (
+        enhance_physics_resonance as _enhance_physics_resonance_fn,
+    )
+except Exception:
+    _enhance_physics_resonance_fn = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -156,7 +175,11 @@ class DrumsEnhancementV1(PhaseInterface):
         self.enhancer = None  # Lazy init
 
     def process(
-        self, audio: np.ndarray, material_type: MaterialType = MaterialType.CD_DIGITAL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: MaterialType = MaterialType.CD_DIGITAL,
+        **kwargs,
     ) -> PhaseResult:
         """
         Enhance drums and percussion.
@@ -169,7 +192,6 @@ class DrumsEnhancementV1(PhaseInterface):
         Returns:
             PhaseResult with enhanced audio
         """
-        sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p51_transposed = to_channels_last(audio)
         start_time = time.time()
@@ -196,6 +218,25 @@ class DrumsEnhancementV1(PhaseInterface):
                 },
                 warnings=[],
                 modifications={},
+            )
+
+        # §2.46g soft_saturation-Guard: Kick-Boost auf gesättigtem Material macht
+        # Sättigungsverzerrung auf Transienten hörbarer. Hard-Cap: 45 %.
+        _p51_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p51_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p51_soft_sat_preserve or _p51_soft_sat_sev > 0.35:
+            _p51_sat_scale = 1.0
+            if _p51_soft_sat_sev > 0.35:
+                _p51_sat_scale = float(np.clip(1.0 - (_p51_soft_sat_sev - 0.35) * 0.7, 0.30, 1.0))
+            if _p51_soft_sat_preserve and _p51_sat_scale > 0.45:
+                _p51_sat_scale = 0.45
+            effective_strength = float(effective_strength * _p51_sat_scale)
+            logger.debug(
+                "Phase 51 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f (strength=%.3f)",
+                _p51_soft_sat_sev,
+                _p51_soft_sat_preserve,
+                _p51_sat_scale,
+                effective_strength,
             )
 
         # ── PANNs Drums-Confidence-Check (Spec §2.9: Schwellwert ≥ 0.5) ────
@@ -299,6 +340,7 @@ class DrumsEnhancementV1(PhaseInterface):
             # Instrument-guided formant enhancement (drums resonance targets: Rossing 1992)
             igt_frames = 0
             try:
+                # pylint: disable-next=global-statement
                 global _FORMANT_SYSTEM_DRUMS
                 if _FormantSystemCls is not None:
                     if _FORMANT_SYSTEM_DRUMS is None:
@@ -317,9 +359,9 @@ class DrumsEnhancementV1(PhaseInterface):
 
             # Formant-Drift-Korrektur via DTW (Schritt 3)
             try:
-                from dsp.instrument_formant_corrector import correct_instrument_formant_drift
-
-                drift_result = correct_instrument_formant_drift(enhanced, sample_rate, instrument="drums")
+                drift_result = _correct_instrument_formant_drift_fn(  # type: ignore[misc]
+                    enhanced, sample_rate, instrument="drums"
+                )
                 enhanced = drift_result.audio
                 logger.debug(
                     "Phase 51 drift correction: detected=%s frames=%d/%d drift=%.1fHz",
@@ -333,10 +375,8 @@ class DrumsEnhancementV1(PhaseInterface):
 
             # Sub-Stem-Verarbeitung (Schritt 4)
             try:
-                from backend.core.sub_stem_processor import process_sub_stems
-
                 sub_stem_strength = float(np.clip(0.30 * hq_scale, 0.25, 0.40))
-                ss_result = process_sub_stems(
+                ss_result = _process_sub_stems_fn(  # type: ignore[misc]
                     enhanced, sample_rate, instrument="drums", processing_strength=sub_stem_strength
                 )
                 enhanced = ss_result.audio
@@ -348,10 +388,8 @@ class DrumsEnhancementV1(PhaseInterface):
 
             # Physics-Resonanz (Schritt 5 — Biquad Body Resonance)
             try:
-                from backend.core.physics_resonance_enhancer import enhance_physics_resonance
-
                 physics_strength = float(np.clip(0.35 * hq_scale, 0.30, 0.48))
-                pr_result = enhance_physics_resonance(
+                pr_result = _enhance_physics_resonance_fn(  # type: ignore[misc]
                     enhanced, sample_rate, instrument="drums", enhancement_strength=physics_strength
                 )
                 enhanced = pr_result.audio
@@ -439,7 +477,9 @@ class DrumsEnhancementV1(PhaseInterface):
             is_cpu_intensive=True,
             is_io_intensive=False,
             quality_impact=0.85,  # High impact on percussive content
-            description="Professional drums and percussion enhancement: kick punch, snare crack, hi-hat clarity, cymbal shimmer",
+            description=(
+                "Professional drums and percussion enhancement: kick punch, snare crack, hi-hat clarity, cymbal shimmer"
+            ),
         )
 
     def supports_material(self, material_type: MaterialType) -> bool:

@@ -44,11 +44,17 @@ import time
 
 import numpy as np
 from scipy import signal
+from scipy.signal import hilbert as _hilbert37
 
 from backend.core.audio_utils import audio_sample_count, stereo_channel_view, stereo_like
 from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
+
+try:
+    from backend.core.dsp.hallucination_guard import check_hallucination as _check_hg_37_fn
+except Exception:
+    _check_hg_37_fn = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +145,7 @@ class BassEnhancement(PhaseInterface):
             description="Harmonic bass synthesis and sub-bass generation",
         )
 
+    # pylint: disable-next=arguments-renamed
     def process(
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
@@ -211,7 +218,28 @@ class BassEnhancement(PhaseInterface):
                 # Modern: less harmonic coloring, preserve existing bass
                 config["harmonic_2_gain"] *= 0.80
                 config["harmonic_3_gain"] *= 0.80
-
+        # §soft_saturation-Guard: Bass-Enhancement bei saturiertem Material begrenzen.
+        # Soft_saturation-Verzerrung ist im Bass-Bereich (80–400 Hz) besonders hörbar:
+        # zusätzlicher H2/H3-Bass-Boost auf gesättigtem Signal → Intermodulation/Dröhnen.
+        # soft_saturation_preserve=True → max. 30 % Stärke (§0 Primum non nocere).
+        _p37_soft_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        _p37_soft_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        if _p37_soft_sat_preserve or _p37_soft_sat_sev > 0.3:
+            _p37_sat_scale = 1.0
+            if _p37_soft_sat_sev > 0.3:
+                _p37_sat_scale = float(np.clip(1.0 - (_p37_soft_sat_sev - 0.3) * 1.0, 0.20, 1.0))
+            if _p37_soft_sat_preserve and _p37_sat_scale > 0.30:
+                _p37_sat_scale = 0.30
+            config["harmonic_2_gain"] = float(config["harmonic_2_gain"] * _p37_sat_scale)
+            config["harmonic_3_gain"] = float(config["harmonic_3_gain"] * _p37_sat_scale)
+            config["sub_harmonic_gain"] = float(config["sub_harmonic_gain"] * _p37_sat_scale)
+            config["saturation_drive"] = float(np.clip(config["saturation_drive"] * max(_p37_sat_scale, 0.4), 0.0, 1.0))
+            logger.debug(
+                "Phase 37 soft_saturation guard: severity=%.2f preserve=%s → scale=%.2f",
+                _p37_soft_sat_sev,
+                _p37_soft_sat_preserve,
+                _p37_sat_scale,
+            )
         # Measure initial bass energy
         bass_energy_before = self._measure_bass_energy(audio, sample_rate)
 
@@ -242,12 +270,8 @@ class BassEnhancement(PhaseInterface):
         enhanced_audio = np.clip(enhanced_audio, -1.0, 1.0)
         # §2.46e Hallucination-Guard (Pflicht für additive Phasen)
         try:
-            from backend.core.dsp.hallucination_guard import (
-                check_hallucination as _check_hg_37,  # pylint: disable=import-outside-toplevel
-            )
-
             _mode_37 = str(kwargs.get("mode", "restoration"))
-            _hg_37 = _check_hg_37(audio, enhanced_audio, sr=sample_rate, mode=_mode_37)
+            _hg_37 = _check_hg_37_fn(audio, enhanced_audio, sr=sample_rate, mode=_mode_37)  # type: ignore[misc]
             if _hg_37.requires_rollback:
                 logger.warning(
                     "phase_37: hallucination_guard rollback (spectral_novelty=%.3f)", _hg_37.spectral_novelty
@@ -346,12 +370,11 @@ class BassEnhancement(PhaseInterface):
         """
         if len(bass) < 1024:
             return self._generate_sub_harmonic(bass) * 0.25
-        from scipy import signal as _sig
 
         # Bandpass 120–500 Hz: Zone der Missing-Fundamental-Wahrnehmung
         try:
-            sos_vp = _sig.butter(4, [120.0 / (sr / 2), min(500.0 / (sr / 2), 0.99)], btype="band", output="sos")
-            vp_band = _sig.sosfiltfilt(sos_vp, bass)
+            sos_vp = signal.butter(4, [120.0 / (sr / 2), min(500.0 / (sr / 2), 0.99)], btype="band", output="sos")
+            vp_band = signal.sosfiltfilt(sos_vp, bass)
         except Exception:
             return self._generate_sub_harmonic(bass) * 0.25
 
@@ -362,7 +385,7 @@ class BassEnhancement(PhaseInterface):
         # Moore-style harmonic template matching:
         # estimate virtual fundamental f0 from harmonics (2f0..5f0 in 120–500 Hz).
         _n_fft = int(min(8192, 2 ** np.floor(np.log2(max(1024, len(vp_band))))))
-        _win = _sig.get_window("hann", _n_fft, fftbins=True)
+        _win = signal.get_window("hann", _n_fft, fftbins=True)
         _seg = vp_band[:_n_fft] * _win
         _spec = np.fft.rfft(_seg)
         _mag = np.abs(_spec)
@@ -390,9 +413,9 @@ class BassEnhancement(PhaseInterface):
         # Envelope-followed fundamental synthesis: carries low-band energy while
         # preserving groove/transients from the detected harmonic activity.
         try:
-            _env = np.abs(_sig.hilbert(vp_band))
-            _env_lp = _sig.butter(2, 20.0 / (sr / 2), btype="low", output="sos")
-            _env = _sig.sosfiltfilt(_env_lp, _env)
+            _env = np.abs(_hilbert37(vp_band))
+            _env_lp = signal.butter(2, 20.0 / (sr / 2), btype="low", output="sos")
+            _env = signal.sosfiltfilt(_env_lp, _env)
         except Exception:
             _env = np.abs(vp_band)
         _env = _env / (float(np.percentile(_env, 95)) + 1e-8)
@@ -404,8 +427,8 @@ class BassEnhancement(PhaseInterface):
 
         # Band-limit to 60–120 Hz to avoid uncontrolled low-end bloom.
         try:
-            sos_sub = _sig.butter(4, [60.0 / (sr / 2), 120.0 / (sr / 2)], btype="band", output="sos")
-            sub_result = _sig.sosfiltfilt(sos_sub, _virtual)
+            sos_sub = signal.butter(4, [60.0 / (sr / 2), 120.0 / (sr / 2)], btype="band", output="sos")
+            sub_result = signal.sosfiltfilt(sos_sub, _virtual)
         except Exception:
             sub_result = _virtual * 0.5
 

@@ -226,9 +226,10 @@ class TestNatuerlichkeitMetric:
 
     @pytest.fixture
     def unnatural_audio(self):
-        """Unnatural audio (white noise)."""
+        """Unnatural audio (white noise, deterministic seed per GC convention)."""
         sr = 48000
-        audio = np.random.randn(sr)
+        rng = np.random.default_rng(42)
+        audio = rng.standard_normal(sr)
         return audio, sr
 
     def test_natuerlichkeit_score_range(
@@ -1504,6 +1505,123 @@ class TestMetricAudioCapPerformance:
         elapsed = time.perf_counter() - t0
         assert 0.0 <= score <= 1.0
         assert elapsed < 3.0, f"BassKraftMetric zu langsam: {elapsed:.2f} s (Budget: 3 s) — §perf-v9.11.0 verletzt"
+
+
+class TestVQIMaterialFloor:
+    """Tests für get_vqi_material_floor — §0p material-adaptive VQI threshold."""
+
+    def test_shellac_floor_is_0_62(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("shellac") == 0.62
+
+    def test_wax_cylinder_floor_is_0_62(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("wax_cylinder") == 0.62
+
+    def test_vinyl_floor_is_0_72(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("vinyl") == 0.72
+
+    def test_cd_digital_floor_is_0_82(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("cd_digital") == 0.82
+
+    def test_reel_tape_floor_is_0_72(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("reel_tape") == 0.72
+
+    def test_studio_2026_always_0_87(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        for mat in ("shellac", "vinyl", "cd_digital", "reel_tape", "unknown"):
+            assert get_vqi_material_floor(mat, is_studio_2026=True) == 0.87, f"Studio-2026 floor failed for {mat}"
+
+    def test_unknown_material_defaults_to_vinyl_0_72(self):
+        from backend.core.musical_goals.vocal_quality_index import VQI_THRESHOLD, get_vqi_material_floor
+
+        assert get_vqi_material_floor("unknown") == VQI_THRESHOLD
+        assert get_vqi_material_floor("") == VQI_THRESHOLD
+
+    def test_shellac_floor_below_vinyl_floor(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("shellac") < get_vqi_material_floor("vinyl")
+
+    def test_vinyl_floor_below_cd_floor(self):
+        from backend.core.musical_goals.vocal_quality_index import get_vqi_material_floor
+
+        assert get_vqi_material_floor("vinyl") < get_vqi_material_floor("cd_digital")
+
+    def test_all_floors_below_nan_fallback(self):
+        """nan-Fallback 0.90 muss über allen material_floors liegen (inkl. Studio-2026 0.87)."""
+        from backend.core.musical_goals.vocal_quality_index import (
+            VQI_WORLD_CLASS,
+            get_vqi_material_floor,
+        )
+
+        nan_fallback = 0.90  # Wert aus nan_to_num(nan=0.90)
+        for mat in ("wax_cylinder", "shellac", "tape", "vinyl", "cd_digital", "mp3_low"):
+            assert nan_fallback > get_vqi_material_floor(mat), f"nan-fallback < floor für {mat}"
+        assert nan_fallback > get_vqi_material_floor("shellac", is_studio_2026=True), (
+            "nan-fallback muss über Studio-2026-Floor (0.87) liegen"
+        )
+        assert nan_fallback > VQI_WORLD_CLASS, "nan-fallback muss über VQI_WORLD_CLASS (0.88) liegen"
+
+
+class TestVQIShortSegmentFallback:
+    """Testet compute_vqi bei zu kurzen Segmenten (\u00a70p — kein False-Recovery-Trigger)."""
+
+    def test_short_segment_returns_vqi_above_studio_floor(self):
+        """Zu kurzes Audio (<0.5 s) darf bei Studio 2026 keine Recovery-Kaskade auslösen."""
+        import numpy as np
+
+        from backend.core.musical_goals.vocal_quality_index import (
+            compute_vqi,
+            get_vqi_material_floor,
+        )
+
+        sr = 48000
+        # 0.2 s < sr//2 (0.5 s) → Short-segment-Fallback greift
+        short = np.random.default_rng(7).random(int(sr * 0.2)).astype(np.float32)
+        result = compute_vqi(short, short, sr)
+        studio_floor = get_vqi_material_floor("cd_digital", is_studio_2026=True)
+
+        assert result["vqi"] > studio_floor, (
+            f"Short-segment VQI={result['vqi']:.3f} darf nicht unter Studio-2026-Floor "
+            f"{studio_floor:.2f} liegen — würde fälschlich Recovery-Kaskade auslösen"
+        )
+
+    def test_short_segment_singer_cosine_no_rollback(self):
+        """Zu kurzes Audio darf §0p-Rollback (singer_identity_cosine < 0.92) nicht auslösen."""
+        import numpy as np
+
+        from backend.core.musical_goals.vocal_quality_index import compute_vqi
+
+        sr = 48000
+        short = np.random.default_rng(11).random(int(sr * 0.3)).astype(np.float32)
+        result = compute_vqi(short, short, sr)
+
+        assert result["singer_identity_cosine"] >= 0.92, (
+            f"Short-segment singer_identity_cosine={result['singer_identity_cosine']:.3f} "
+            f"< 0.92 — würde fälschlich §0p-Rollback auslösen"
+        )
+
+    def test_short_segment_vqi_tier_is_world_class(self):
+        """Zu kurzes Audio → vqi_tier 'world_class' (konsistent mit vqi=0.90)."""
+        import numpy as np
+
+        from backend.core.musical_goals.vocal_quality_index import compute_vqi
+
+        sr = 48000
+        short = np.zeros(int(sr * 0.1), dtype=np.float32)
+        result = compute_vqi(short, short, sr)
+
+        assert result["vqi_tier"] == "world_class", f"Short-segment vqi_tier='{result['vqi_tier']}' statt 'world_class'"
 
 
 if __name__ == "__main__":

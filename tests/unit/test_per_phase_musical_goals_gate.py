@@ -568,6 +568,45 @@ class TestPMGGTeamContextPolicy:
         assert "artikulation" in policy["goal_exclusions"]
 
 
+class TestPMGGReconstructionRecheckAllowlist:
+    def test_35h_phase24_recheck_allows_low_but_present_vocal_confidence(self):
+        from backend.core.per_phase_musical_goals_gate import _reconstruction_goal_recheck_allowlist
+
+        defect_locations = {
+            "DROPOUTS": [(0.50, 0.60), (1.10, 1.18)],
+        }
+
+        goals = _reconstruction_goal_recheck_allowlist(
+            "phase_24_dropout_repair",
+            {"vocal_probability": 0.17},
+            defect_locations,
+            audio_len=5 * SR,
+            sr=SR,
+            sample_duration_s=5.0,
+        )
+
+        assert goals == {"natuerlichkeit", "authentizitaet"}
+
+    def test_35i_phase55_recheck_allows_lyrics_guidance_without_vocal_confidence(self):
+        from backend.core.per_phase_musical_goals_gate import _reconstruction_goal_recheck_allowlist
+
+        defect_locations = {
+            "DROPOUTS": [(0.40, 0.55)],
+            "SPECTRAL_HOLES": [(0.90, 1.10)],
+        }
+
+        goals = _reconstruction_goal_recheck_allowlist(
+            "phase_55_diffusion_inpainting",
+            {"vocal_probability": 0.0, "pre_transcription": "du wolltest nur ein abenteuer"},
+            defect_locations,
+            audio_len=5 * SR,
+            sr=SR,
+            sample_duration_s=5.0,
+        )
+
+        assert goals == {"natuerlichkeit", "authentizitaet"}
+
+
 # ----------------------------------------------------------------------
 # Tests §2.29b — PHASE_GOAL_EXCLUSIONS (NatuerlichkeitMetric stable-metric
 # invariante + phase-specific false-positive prevention)
@@ -1158,6 +1197,56 @@ class TestPMGGSongCalIntegration:
         )
 
         assert "timbre_authentizitaet" not in captured.get("effective_goals", [])
+
+    def test_67c_phase24_rechecks_p1_for_sparse_vocal_dropouts(self, gate, audio_5s, monkeypatch):
+        """Sparse vocal dropout repair must re-enable P1 guards in the PMGG window."""
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run_with_retry(*args, **kwargs):
+            captured["effective_goals"] = list(kwargs.get("effective_goals") or [])
+            return args[1], args[3], "passed", 1.0
+
+        monkeypatch.setattr(gate, "_run_with_retry", _fake_run_with_retry)
+
+        gate.wrap_phase(
+            _make_pass_phase("phase_24_dropout_repair"),
+            audio_5s,
+            SR,
+            phase_kwargs={
+                "material_type": "vinyl",
+                "vocal_probability": 0.82,
+                "defect_locations": {"DROPOUTS": [(1.00, 1.12)]},
+            },
+            restorability_score=50.0,
+        )
+
+        assert "natuerlichkeit" in captured.get("effective_goals", [])
+        assert "authentizitaet" in captured.get("effective_goals", [])
+
+    def test_67d_phase24_keeps_p1_excluded_for_dense_dropout_window(self, gate, audio_5s, monkeypatch):
+        """Dense dropout coverage must keep phase_24 P1 exclusions active."""
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run_with_retry(*args, **kwargs):
+            captured["effective_goals"] = list(kwargs.get("effective_goals") or [])
+            return args[1], args[3], "passed", 1.0
+
+        monkeypatch.setattr(gate, "_run_with_retry", _fake_run_with_retry)
+
+        gate.wrap_phase(
+            _make_pass_phase("phase_24_dropout_repair"),
+            audio_5s,
+            SR,
+            phase_kwargs={
+                "material_type": "vinyl",
+                "vocal_probability": 0.82,
+                "defect_locations": {"DROPOUTS": [(0.80, 2.10)]},
+            },
+            restorability_score=50.0,
+        )
+
+        assert "natuerlichkeit" not in captured.get("effective_goals", [])
+        assert "authentizitaet" not in captured.get("effective_goals", [])
 
     def test_68_tape_phase29_gate_runs_cleanly(self, gate, audio_5s):
         """reel_tape + phase_29: full exclusions retained, gate runs (§2.31b-G)."""
@@ -1922,9 +2011,7 @@ class TestKrumhanslSchmucklerTonalCenter:
         score = _measure_quick(silent, sr)["timbre_authentizitaet"]
 
         assert np.isfinite(score), f"timbre_authentizitaet NaN/Inf on silence: {score}"
-        assert abs(score - 0.5) <= 1e-6, (
-            f"timbre_authentizitaet must be neutral on silence, got {score:.4f}"
-        )
+        assert abs(score - 0.5) <= 1e-6, f"timbre_authentizitaet must be neutral on silence, got {score:.4f}"
 
     def test_99c_natuerlichkeit_authentizitaet_silence_are_neutral(self):
         """Near-silence must not map to extreme P1 values for natuerlichkeit/authentizitaet."""
@@ -2007,7 +2094,7 @@ class TestKrumhanslSchmucklerTonalCenter:
         scores_stereo = _measure_quick(silent_stereo, sr)
 
         sd = scores_stereo["spatial_depth"]
-        assert np.isfinite(sd), f"spatial_depth NaN/Inf on stereo silence"
+        assert np.isfinite(sd), "spatial_depth NaN/Inf on stereo silence"
         assert abs(sd - 0.5) <= 1e-6, f"spatial_depth must be neutral on stereo silence, got {sd:.4f}"
 
     def test_100_phase16_tonal_center_excluded(self):
