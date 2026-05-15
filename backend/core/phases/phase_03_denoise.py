@@ -798,8 +798,8 @@ class DenoisePhase(PhaseInterface):
                     _miipher_out = np.clip(_miipher_out, -1.0, 1.0)
                     # §0p HNR-Blend [RELEASE_MUST]
                     try:
-                        from backend.core.dsp.hnr_guard import (
-                            apply_hnr_blend as _hnr_blend_m,  # pylint: disable=import-outside-toplevel
+                        from backend.core.dsp.hnr_guard import (  # pylint: disable=import-outside-toplevel
+                            apply_hnr_blend as _hnr_blend_m,
                         )
 
                         _miipher_out, _miipher_hnr = _hnr_blend_m(_miipher_audio_pre, _miipher_out, sample_rate)
