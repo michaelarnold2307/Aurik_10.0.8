@@ -816,7 +816,9 @@ class DenoisePhase(PhaseInterface):
                             check_hallucination as _check_hall_m,
                         )
 
-                        _miipher_hall = _check_hall_m(_miipher_audio_pre, _miipher_out, sample_rate, mode="restoration")
+                        _miipher_hall = _check_hall_m(
+                            _miipher_audio_pre, _miipher_out, sr=sample_rate, mode="restoration"
+                        )
                         if getattr(_miipher_hall, "requires_rollback", False):
                             logger.warning(
                                 "§2.46e MIIPHER: Hallucination-Guard Rollback "
@@ -1852,6 +1854,7 @@ class DenoisePhase(PhaseInterface):
             # Zeitliche Mittelung → (n_freq,) stabiler Boden; Spitzen könnten artefaktreich sein.
             _masking_floor_ref = np.mean(_mask_ratio_03, axis=1).astype(np.float32)  # (n_freq_2048,)
             _masking_freqs_ref = np.linspace(0.0, sr / 2.0, _mask_ratio_03.shape[0], dtype=np.float32)
+            assert _masking_floor_ref is not None  # assigned above — narrows ndarray|None for Pylance
             logger.debug(
                 "§2.62 phase_03 Masking-Guard: mean_floor=%.3f max_floor=%.3f",
                 float(np.mean(_masking_floor_ref)),
