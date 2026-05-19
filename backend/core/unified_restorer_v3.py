@@ -2612,7 +2612,7 @@ class UnifiedRestorerV3:
         ]
         _top_drops = sorted(
             [{"phase_id": p, "rms_delta_db": float(d)} for p, d in _reg.items() if float(d) < -0.7],
-            key=lambda x: x["rms_delta_db"],
+            key=lambda x: float(x["rms_delta_db"]),  # type: ignore[arg-type]
         )[:12]
         _violations = [k for k, ok in _passed.items() if not bool(ok)]
 
@@ -4521,7 +4521,7 @@ class UnifiedRestorerV3:
             try:
                 phase_instance = meta["class"]()
                 self._phase_cache[phase_id] = phase_instance
-                return phase_instance  # type: ignore[return-value]
+                return phase_instance  # type: ignore[return-value, no-any-return]
             except Exception as exc:
                 self._warnings.append(f"Phase {phase_id} nicht geladen: {type(exc).__name__}: {exc}")
                 logger.warning("Phase %s übersprungen: %s", phase_id, exc)
@@ -6466,8 +6466,12 @@ class UnifiedRestorerV3:
                 from backend.core.musical_structure_analyzer import analyze_musical_structure
 
                 _musical_structure = analyze_musical_structure(_analysis_audio, sample_rate)
-                _n_chorus = sum(1 for s in _musical_structure.segments if s.segment_type == "chorus")  # type: ignore[attr-defined, misc]
-                _n_verse = sum(1 for s in _musical_structure.segments if s.segment_type == "verse")  # type: ignore[attr-defined, misc]
+                _n_chorus = sum(  # type: ignore[attr-defined, misc]
+                    1 for s in _musical_structure.segments if s.segment_type == "chorus"
+                )
+                _n_verse = sum(  # type: ignore[attr-defined, misc]
+                    1 for s in _musical_structure.segments if s.segment_type == "verse"
+                )
                 logger.info(
                     "🎵 MusicalStructure: %d Segmente (Chorus×%d Verse×%d) confidence=%.2f",
                     len(_musical_structure.segments),
@@ -7197,7 +7201,7 @@ class UnifiedRestorerV3:
 
         # §2.45b Hochrestorabilität-Gate — Metadata-Flag für transparentes Reporting
         if _pmgg_restorability_score > 80 and _input_snr_db > 40.0:
-            self._metadata["high_restorability_gate"] = True  # type: ignore[attr-defined] (basierend auf Defekten)
+            self._metadata["high_restorability_gate"] = True  # type: ignore[attr-defined]  # basierend auf Defekten
         _cb(16, "Phasenauswahl…")
         logger.info("Step 2/4: Phase Selection...")
         if _precomputed_phase_plan:
@@ -7382,7 +7386,9 @@ class UnifiedRestorerV3:
                 restorability_score=float(_pmgg_restorability_score),
                 source_material_baseline=_src_baseline,
                 transfer_generation_count=(
-                    int(_sgi_gen_count) if isinstance(locals().get("_sgi_gen_count", None), (int, float)) else None  # type: ignore[arg-type]
+                    int(_sgi_gen_count)  # type: ignore[arg-type]
+                    if isinstance(locals().get("_sgi_gen_count", None), (int, float))
+                    else None
                 ),
                 material_key=str(getattr(material_type, "value", material_type)),
             )
@@ -8554,6 +8560,11 @@ class UnifiedRestorerV3:
                     self, "_song_goal_targets", None
                 )
                 _fc_chain.adaptive_goal_thresholds = dict(_sgt_fc) if isinstance(_sgt_fc, dict) and _sgt_fc else None
+                # §Frisson [RELEASE_MUST]: Frisson-Zone-Kontext für FeedbackChain-Loop-Score injizieren.
+                # _apply_vqi_dual_objective verwendet diese Zonen um Klimax-Passagen im
+                # Loop-Score zu schützen — verhindert dass FC Frisson-Zonen wegoptimiert.
+                _fc_chain.frisson_zones = list(self._restoration_context.get("frisson_zones", []) or [])
+                _fc_chain._frisson_orig_audio = audio  # Original-Referenz für Energie-Vergleich
                 # §2.34 GPP-WIRE: GoalPriorityProtocol als in-loop Phase-Callback verdrahten
                 try:
                     from backend.core.goal_priority_protocol import check_iteration_abort as _check_gpp
@@ -10340,6 +10351,7 @@ class UnifiedRestorerV3:
                     restored_audio,
                     sample_rate,
                     lyrics_saliency=_lge_saliency_for_eap,  # §2.36/§2.44: Lyrics-Salienz
+                    frisson_zones=(self._restoration_context or {}).get("frisson_zones"),  # §2.44: Frisson ×2.0
                 )
                 if _arc_result.skipped:
                     logger.debug("EmotionalArc: übersprungen (Datei zu kurz, < 30 s)")
@@ -14192,7 +14204,8 @@ class UnifiedRestorerV3:
                 "n_exotic_defects": len(_EDF27),  # type: ignore[arg-type]
                 "vinyl_chain": _ems_vinyl_chain,
             }
-            logger.debug("✅ ExoticMediaHandler: %d Medientypen", len(_ems_result["media_types"]))
+            _n_media_types = len(_ems_result["media_types"])  # type: ignore[arg-type]
+            logger.debug("✅ ExoticMediaHandler: %d Medientypen", _n_media_types)
             return _ems_result
         except Exception as _ems_exc:
             logger.debug("ExoticMediaHandler nicht verfügbar: %s", _ems_exc)
@@ -14292,7 +14305,7 @@ class UnifiedRestorerV3:
         try:
             from backend.core.autonomous_restoration_engine import AutonomousRestorationEngine as _ARE29
 
-            _are29 = _ARE29(mode=mode_value, enable_self_learning=False)  # v9.14-D3  # type: ignore[arg-type]
+            _are29 = _ARE29(mode=mode_value, enable_self_learning=False)  # type: ignore[arg-type]  # v9.14-D3
             _are_result = {
                 "mode": str(getattr(_are29, "mode", "restoration")),
                 "self_learning": bool(getattr(_are29, "enable_self_learning", False)),
@@ -14309,7 +14322,7 @@ class UnifiedRestorerV3:
         try:
             from backend.core.pipeline_main import AurikAutonomousPipeline as _PAP29
 
-            _pap29 = _PAP29(mode=mode_value, enable_self_learning=False)  # v9.14-D3  # type: ignore[arg-type]
+            _pap29 = _PAP29(mode=mode_value, enable_self_learning=False)  # type: ignore[arg-type]  # v9.14-D3
             _pmain_result = {
                 "pipeline_mode": str(getattr(_pap29, "mode", "restoration")),
                 "available": True,
@@ -14361,10 +14374,13 @@ class UnifiedRestorerV3:
 
             _mcm29 = _MCM29()
             _mcm_result = {
-                "shellac_eq_curves": list(getattr(_mcm29, "SHELLAC_EQ_CURVES", {}).keys()),  # type: ignore[call-overload]
+                "shellac_eq_curves": list(  # type: ignore[call-overload]
+                    getattr(_mcm29, "SHELLAC_EQ_CURVES", {}).keys()
+                ),
                 "available": True,
             }
-            logger.debug("✅ PhysicalMediumChainModel: %d EQ-Kurven", len(_mcm_result["shellac_eq_curves"]))
+            _n_eq_curves = len(_mcm_result["shellac_eq_curves"])  # type: ignore[arg-type]
+            logger.debug("✅ PhysicalMediumChainModel: %d EQ-Kurven", _n_eq_curves)
             return _mcm_result
         except Exception as _mcm_exc:
             logger.debug("PhysicalMediumChainModel nicht verfügbar: %s", _mcm_exc)
@@ -14459,7 +14475,7 @@ class UnifiedRestorerV3:
                 "supported_formats": list(_aex_fmts) if _aex_fmts else ["flac", "wav"],  # type: ignore[call-overload]
                 "available": True,
             }
-            logger.debug("✅ AudioExporter: %d Formate", len(_aex_result["supported_formats"]))
+            logger.debug("✅ AudioExporter: %d Formate", len(_aex_result["supported_formats"]))  # type: ignore[arg-type]
             return _aex_result
         except Exception as _aex_exc:
             logger.debug("AudioExporter nicht verfügbar: %s", _aex_exc)
@@ -16221,7 +16237,9 @@ class UnifiedRestorerV3:
                 "temporal_smoothness": round(float(_pam.calculate_temporal_smoothness(_pam_audio)), 4),
                 "harmonic_coherence": round(float(_pam.calculate_harmonic_coherence(_pam_audio)), 4),
                 "noise_floor_consistency": round(float(_pam.calculate_noise_floor_consistency(_pam_audio)), 4),
-                "naturalness_score": round(float(_pam.calculate_naturalness_score(_pam_audio)), 4),  # type: ignore[arg-type]
+                "naturalness_score": round(  # type: ignore[arg-type]
+                    float(_pam.calculate_naturalness_score(_pam_audio)), 4
+                ),
             }
             logger.debug("🎵 PsychoAcousticMetrics: %s", _pam_result)
         except Exception as _pam_exc:
@@ -19347,6 +19365,20 @@ class UnifiedRestorerV3:
             kwargs["passaggio_zones"] = self._restoration_context.get("passaggio_zones", [])
         if "vibrato_zones" not in kwargs:
             kwargs["vibrato_zones"] = self._restoration_context.get("vibrato_zones", [])
+        # §2.46f [RELEASE_MUST] Atemgeräusch-Segmente an Phasen propagieren.
+        # Aktiviert den Breath-Schutz in phase_03/20/29 (§G2) — ohne diese Injektion
+        # würde kwargs.get("breath_segments") immer leer zurückliefern (toter Code).
+        if "breath_segments" not in kwargs:
+            kwargs["breath_segments"] = self._restoration_context.get("breath_segments", [])
+        # §2.46g [RELEASE_MUST] soft_saturation_severity in Phase-kwargs propagieren.
+        # SYSTEMIC FIX: severity wird zwar in _restoration_context gespeichert, landet
+        # aber ohne diese Injektion NIE in kwargs → alle per-Phase-Guards (phase_06/07/
+        # 37/38/39/26) laufen mit 0.0 (dead code). Proportional: Vinyl-Kratzer-Schutz
+        # bei gesättigtem Material schützt sowohl Stimm-Obertöne als auch Instrumental.
+        if "soft_saturation_severity" not in kwargs:
+            kwargs["soft_saturation_severity"] = self._restoration_context.get("soft_saturation_severity", 0.0)
+        if "soft_saturation_preserve" not in kwargs:
+            kwargs["soft_saturation_preserve"] = self._restoration_context.get("soft_saturation_preserve", False)
 
         # §0p [RELEASE_MUST] Vibrato-Schutz: Phasen-Strength auf max. 0.20 begrenzen
         # wenn das Audio in einer Vibrato-Zone liegt (4–7 Hz F0-Modulation).
@@ -19831,9 +19863,12 @@ class UnifiedRestorerV3:
 
         # §0p [RELEASE_MUST] Formant-Integrität-Wächter — F1–F4 ±2 dB Rollback.
         # Nur für Vokal-schwere Phasen, nur wenn panns_singing ≥ 0.25 (§0p Invariante).
+        # phase_07_harmonic_restoration hinzugefügt: Harmonik-Rekonstruktion kann durch
+        # spektrale Überlagerung Formant-Energie verschieben — Guard verhindert Timbre-Drift.
         _FORMANT_GUARD_PHASES = frozenset(
             {
                 "phase_03_denoise",
+                "phase_07_harmonic_restoration",  # §0p: Harmonik-Überlagerung kann Formanten verschieben
                 "phase_20_reverb_reduction",
                 "phase_29_tape_hiss_reduction",
                 "phase_42_vocal_enhancement",
@@ -19888,35 +19923,44 @@ class UnifiedRestorerV3:
                     _f1_post = _mean_formant(_post_res, 0)
                     _f2_pre = _mean_formant(_pre_res, 1)
                     _f2_post = _mean_formant(_post_res, 1)
+                    _f3_pre = _mean_formant(_pre_res, 2)
+                    _f3_post = _mean_formant(_post_res, 2)
+                    _f4_pre = _mean_formant(_pre_res, 3)
+                    _f4_post = _mean_formant(_post_res, 3)
 
-                    # ±2 dB-Check: 20*log10(f_post/f_pre) — Formant als Spektral-Energie-Proxy
+                    # §0p ±2 dB-Check für F1–F4: 20*log10(f_post/f_pre) — Spektral-Energie-Proxy
+                    # F3/F4 erweitert: Vokal-Brillanz und Präsenz (3–4 kHz) sind für
+                    # Verständlichkeit und Timbre-Integrität kritisch (§0p v9.12.10).
                     _FORMANT_DB_LIMIT = 2.0
                     _rollback_fg = False
-                    if _f1_pre > 0.0 and _f1_post > 0.0:
-                        _f1_shift_db = abs(20.0 * np.log10(max(_f1_post / _f1_pre, 1e-9)))
-                        if _f1_shift_db > _FORMANT_DB_LIMIT:
-                            _rollback_fg = True
-                            logger.warning(
-                                "§0p Formant-Guard: %s F1-Shift=%.1f dB > ±%.1f dB → Rollback",
-                                phase_metadata.phase_id,
-                                _f1_shift_db,
-                                _FORMANT_DB_LIMIT,
-                            )
-                    if not _rollback_fg and _f2_pre > 0.0 and _f2_post > 0.0:
-                        _f2_shift_db = abs(20.0 * np.log10(max(_f2_post / _f2_pre, 1e-9)))
-                        if _f2_shift_db > _FORMANT_DB_LIMIT:
-                            _rollback_fg = True
-                            logger.warning(
-                                "§0p Formant-Guard: %s F2-Shift=%.1f dB > ±%.1f dB → Rollback",
-                                phase_metadata.phase_id,
-                                _f2_shift_db,
-                                _FORMANT_DB_LIMIT,
-                            )
+                    _rollback_fg_name = ""
+                    for _fn, _fp, _fq in [
+                        ("F1", _f1_pre, _f1_post),
+                        ("F2", _f2_pre, _f2_post),
+                        ("F3", _f3_pre, _f3_post),
+                        ("F4", _f4_pre, _f4_post),
+                    ]:
+                        if _rollback_fg:
+                            break
+                        if _fp > 0.0 and _fq > 0.0:
+                            _shift_db = abs(20.0 * np.log10(max(_fq / _fp, 1e-9)))
+                            if _shift_db > _FORMANT_DB_LIMIT:
+                                _rollback_fg = True
+                                _rollback_fg_name = _fn
+                                logger.warning(
+                                    "§0p Formant-Guard: %s %s-Shift=%.1f dB > ±%.1f dB → Rollback",
+                                    phase_metadata.phase_id,
+                                    _fn,
+                                    _shift_db,
+                                    _FORMANT_DB_LIMIT,
+                                )
                     if _rollback_fg:
                         result.audio = audio.copy()
                         logger.info(
-                            "§0p Formant-Guard: %s rolled back — Formant-Integrität geschützt",
+                            "§0p Formant-Guard: %s rolled back (%s > ±%.1f dB) — Formant-Integrität geschützt",
                             phase_metadata.phase_id,
+                            _rollback_fg_name,
+                            _FORMANT_DB_LIMIT,
                         )
             except Exception as _fg_exc:
                 logger.debug("§0p Formant-Guard non-blocking: %s", _fg_exc)
@@ -20037,7 +20081,8 @@ class UnifiedRestorerV3:
                             _cstc_result.get("coherence_score", 0.0),
                         )
                     if hasattr(result, "metadata") and isinstance(result.metadata, dict):
-                        result.metadata["cstc_coherence"] = round(float(_cstc_result.get("coherence_score", 1.0)), 3)  # type: ignore[arg-type]
+                        _cstc_coh = round(float(_cstc_result.get("coherence_score", 1.0)), 3)
+                        result.metadata["cstc_coherence"] = _cstc_coh  # type: ignore[arg-type]
             except Exception as _cstc_exc:
                 logger.debug("§CSTC post-phase check non-blocking: %s", _cstc_exc)
 
@@ -22245,11 +22290,11 @@ class UnifiedRestorerV3:
                         masking_scalar=_masking_scalar,  # §Psychoacoustic: audibility scalar ∈ [0.4, 1.0]
                         phoneme_timeline=phoneme_timeline,  # §2.36a: PhonemeTimeline for targeted processing
                     )
-                    future_map[future] = (phase_id, phase_start, phase)
-                for future in as_completed(future_map):
-                    phase_id, phase_start, phase_obj = future_map[future]
+                    future_map[future] = (phase_id, phase_start, phase)  # type: ignore[index]
+                for future in as_completed(future_map):  # type: ignore[arg-type]
+                    phase_id, phase_start, phase_obj = future_map[future]  # type: ignore[index]
                     try:
-                        result = future.result()
+                        result: Any = future.result()
                         _collect_guard_payload(phase_obj, phase_id, result)
                         if result.success:
                             results[phase_id] = result.audio
@@ -22421,8 +22466,9 @@ class UnifiedRestorerV3:
             # apply positive makeup only while authority is enabled.
             _allow_positive_makeup_gain: bool = True
             _makeup_authority_reason: str = "initial"
-            _afg_best_clean_phase: str = "__pre_pipeline__"  # type: ignore[no-redef] (replaces final full-pipeline comparison)
-            _min_per_phase_afg_score: float = 1.0  # type: ignore[no-redef]: pre-carrier snapshot + checkpoint
+            _afg_best_clean_phase: str = "__pre_pipeline__"  # type: ignore[no-redef]  # replaces final full-pipeline comparison
+            # pre-carrier snapshot + checkpoint
+            _min_per_phase_afg_score: float = 1.0  # type: ignore[no-redef]
             _pre_carrier_audio: np.ndarray = current_audio.copy()  # type: ignore[no-redef]
             _best_carrier_checkpoint: np.ndarray | None = None  # type: ignore[no-redef]
             _last_carrier_phase_id: str | None = None  # type: ignore[no-redef]

@@ -624,17 +624,18 @@ class CommunicationBusManager:
 
     _instance = None
     _lock = threading.Lock()
+    _initialized: bool = False
 
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False  # pylint: disable=attribute-defined-outside-init
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
+        if self._initialized:  # pylint: disable=access-member-before-definition
             return
 
         self._bus = ModuleCommunicationBus()

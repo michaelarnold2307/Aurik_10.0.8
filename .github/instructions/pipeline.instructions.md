@@ -150,8 +150,9 @@ _CARRIER_REPAIR_PHASE_PREFIXES = {
 ## §2.49 Artefakt-Freiheits-Gate
 
 ```python
-# artifact_freedom = min(per-phase-scores) — KEIN Pipeline-Delta
-# Komponenten-Scores (alle müssen ≥ 0.95 sein für artifact_freedom = 1.0):
+# artifact_freedom = 1.0 - (weighted_sum / _max_tolerance) + penalties — KEIN Pipeline-Delta
+# Gewichtete Summe der Komponenten-Scores (alle müssen < Toleranz bleiben):
+# Implementierung: artifact_freedom_gate.py (NICHT min()-Formel — weighted-sum ist präziser)
 #
 # 1. musical_noise_score: Bins wo restored > orig * 1.05 (5 % Überschuss)
 #    → STFT-Maskenvergleich; Bereich [0,1], 1.0 = kein Musical Noise
@@ -164,9 +165,9 @@ _CARRIER_REPAIR_PHASE_PREFIXES = {
 #    → FFT des Residuals auf Periodizität prüfen (Kamm-Spektrum = Fehler)
 # 5. timbre_distortion_score: spektrales Zentroid-Shift > 15 % oder MFCC-Euklid > 0.2
 #
-# artifact_freedom = min(musical_noise, phase_cancellation, ringing,
-#                        modulation_noise, timbre_distortion)
-# → ein einziger schlechter Wert = Gesamt-Gate-Fail
+# artifact_freedom = 1.0 - (weighted_sum / _max_tolerance) + penalties
+# → Gewichtete Summe aller Komponenten-Beiträge; artifact_freedom < 0.95 = Gate-Fail
+# Jede Komponente trägt nach Gewicht bei — ein schlechter Einzelwert dominiert die Summe
 ```
 
 ## VERSA — Primäre Qualitäts-Metrik (`use_versa_in_loop=True`)

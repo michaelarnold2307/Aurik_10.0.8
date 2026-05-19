@@ -212,14 +212,15 @@ vqi_score = result["vqi"]  # float [0, 1]
 ## Frisson-Schutz (§Frisson)
 
 ```python
-# frisson_zones Format: List[Tuple[float, float]] = [(start_s, end_s), ...]
+# frisson_zones Format: List[FrissonZone] — FrissonZone ist ein Dataclass-Objekt
+# mit den Attributen .start_s: float und .end_s: float (KEIN Tuple)
 # start_s, end_s: Zeitstempel in Sekunden (float), relativ zum Beginn des Tracks
 # Beispiel: [(45.2, 47.8), (118.5, 122.1)]  — zwei Klimax-Passagen
 # VERBOTEN: MDEM ohne frisson_zones
 # RICHTIG:
 from backend.core.frisson_candidate_detector import get_frisson_detector
 frisson_zones = get_frisson_detector().detect(audio_original, sr)
-# frisson_zones: Liste von (start_s, end_s) Klimax-Passagen
+# frisson_zones: Liste von FrissonZone-Objekten (.start_s/.end_s) — Klimax-Passagen
 # MDEM respektiert frisson_zones: wet_mix = 0.0 in diesen Zonen
 # Exception → frisson_zones = [] (non-blocking)
 ```

@@ -67,8 +67,8 @@ def _to_mono_float64(audio: np.ndarray) -> np.ndarray:
     if a.ndim == 2:
         if a.shape[0] <= 2 and a.shape[1] > a.shape[0]:
             # [C, T] Layout (nach to_channels_last)
-            return a.mean(axis=0)
-        return a.mean(axis=1)
+            return a.mean(axis=0)  # type: ignore[no-any-return]
+        return a.mean(axis=1)  # type: ignore[no-any-return]
     return a.flatten()
 
 
@@ -155,12 +155,12 @@ def _apply_shelving_eq(
 
     audio_f64 = np.asarray(audio, dtype=np.float64)
     if audio_f64.ndim == 1:
-        return sps.sosfiltfilt(sos, audio_f64).astype(audio.dtype)
+        return sps.sosfiltfilt(sos, audio_f64).astype(audio.dtype)  # type: ignore[no-any-return]
     if audio_f64.ndim == 2:
         if audio_f64.shape[0] <= 2 and audio_f64.shape[1] > audio_f64.shape[0]:
             # [C, T] — nach to_channels_last
-            return np.stack([sps.sosfiltfilt(sos, audio_f64[c]) for c in range(audio_f64.shape[0])]).astype(audio.dtype)
-        return np.stack([sps.sosfiltfilt(sos, audio_f64[:, c]) for c in range(audio_f64.shape[1])], axis=1).astype(
+            return np.stack([sps.sosfiltfilt(sos, audio_f64[c]) for c in range(audio_f64.shape[0])]).astype(audio.dtype)  # type: ignore[no-any-return]
+        return np.stack([sps.sosfiltfilt(sos, audio_f64[:, c]) for c in range(audio_f64.shape[1])], axis=1).astype(  # type: ignore[no-any-return]
             audio.dtype
         )
     return audio
@@ -201,7 +201,7 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
             ),
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:  # pylint: disable=arguments-differ
+    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:  # pylint: disable=arguments-differ  # type: ignore[override]
         """DSP-Vocal-Naturalness-Restaurierung.
 
         Args:

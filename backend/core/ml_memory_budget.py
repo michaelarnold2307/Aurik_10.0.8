@@ -49,7 +49,7 @@ def _auto_detect_budget() -> float:
     if _psutil is not None:
         total_gb = _psutil.virtual_memory().total / (1024**3)
         budget = max(4.0, min(12.0, total_gb / 3.0))
-        return round(budget, 1)
+        return round(budget, 1)  # type: ignore[no-any-return]
     return 10.0  # conservative default without psutil
 
 

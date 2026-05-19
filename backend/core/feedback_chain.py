@@ -21,6 +21,8 @@ HEADROOM_THRESHOLD: float = 0.03  # §2.33 PhysicalCeilingEstimator: Δ < 3 % �
 
 @dataclass
 class FeedbackChainResult:
+    """Ergebnis-Datenklasse der FeedbackChain nach allen Optimierungsiterationen."""
+
     audio: np.ndarray
     iterations: int
     converged: bool
@@ -80,14 +82,16 @@ class FeedbackChain:
         self._last_analytics_overhead_s: float = 0.0  # §perf: accumulated goal-measurement overhead
         if self.use_pqs_in_loop:
             try:
-                from backend.core.perceptual_quality_scorer import score_audio_absolute
+                from backend.core.perceptual_quality_scorer import (
+                    score_audio_absolute,  # pylint: disable=import-outside-toplevel
+                )
 
                 self._pqs_score_fn = score_audio_absolute
             except Exception as exc:
                 logger.debug("FeedbackChain: PQS scorer unavailable, heuristic fallback active: %s", exc)
         if self.use_versa_in_loop:
             try:
-                from plugins.versa_plugin import get_versa_plugin
+                from plugins.versa_plugin import get_versa_plugin  # pylint: disable=import-outside-toplevel
 
                 _versa_plugin = get_versa_plugin()
                 if _versa_plugin is not None:
@@ -103,6 +107,7 @@ class FeedbackChain:
 
     @staticmethod
     def compute_perceptual_score(audio: np.ndarray) -> float:
+        """Berechnet RMS-basierte Näherung des Wahrnehmungsqualitäts-Scores (1.0–5.0)."""
         arr = np.nan_to_num(np.asarray(audio, dtype=np.float32))
         mono = arr.mean(axis=0) if arr.ndim == 2 else arr
         rms = float(np.sqrt(np.mean(mono.astype(np.float64) ** 2) + 1e-12))
@@ -142,12 +147,16 @@ class FeedbackChain:
 
         Loop-Score = VERSA_MOS × VQI^0.3 — sanfte Gewichtung verhindert VQI-Dominanz,
         aber stellt sicher dass Vokal-Verschlechterungen den Score reduzieren.
+        Zusätzlich: §Frisson-Gewichtung — Energy-Abfall in Frisson-Zonen (Gänsehaut-Passagen)
+        reduziert den Loop-Score, damit FeedbackChain diese Klimax-Momente nicht wegoptimiert.
         Non-blocking: Exception → base_mos unverändert zurückgeben.
         """
         if self.panns_singing < 0.35 or self._vqi_orig_audio is None:
             return base_mos
         try:
-            from backend.core.musical_goals.vocal_quality_index import compute_vqi
+            from backend.core.musical_goals.vocal_quality_index import (
+                compute_vqi,  # pylint: disable=import-outside-toplevel
+            )
 
             vqi_result = compute_vqi(self._vqi_orig_audio, audio, sr)
             vqi_score = float(np.clip(vqi_result.get("vqi", 1.0), 0.01, 1.0))
@@ -159,6 +168,56 @@ class FeedbackChain:
                 vqi_score,
                 loop_score,
             )
+            # §Frisson [RELEASE_MUST]: Energie in Gänsehaut-Zonen überwachen.
+            # Signifikanter Energie-Abfall in Frisson-Passagen → Loop-Score-Penalty.
+            # Motivation: FC darf Klimax-Passagen (Falsett-Einsatz, Vibrato-Höhepunkt,
+            # letzter Akkord) nicht durch Over-Processing komprimieren.
+            _frisson_zones = getattr(self, "frisson_zones", None)
+            _frisson_orig = getattr(self, "_frisson_orig_audio", None)
+            if _frisson_zones and _frisson_orig is not None:
+                try:
+                    _frisson_penalty = 1.0
+                    _n_frisson = int(audio.shape[-1] if audio.ndim == 2 else len(audio))
+                    _n_orig = int(_frisson_orig.shape[-1] if _frisson_orig.ndim == 2 else len(_frisson_orig))
+                    _n_cmp = min(_n_frisson, _n_orig)
+                    _zones_checked = 0
+                    for _fz in _frisson_zones:  # pylint: disable=not-an-iterable
+                        _fz_s = float(getattr(_fz, "start_s", 0.0))
+                        _fz_e = float(getattr(_fz, "end_s", 0.0))
+                        if _fz_e <= _fz_s:
+                            continue
+                        _si = max(0, min(int(round(_fz_s * sr)), _n_cmp))
+                        _ei = max(0, min(int(round(_fz_e * sr)), _n_cmp))
+                        if _si >= _ei:
+                            continue
+                        if audio.ndim == 2:
+                            _rms_out = float(np.sqrt(np.mean(audio[:, _si:_ei] ** 2) + 1e-14))
+                        else:
+                            _rms_out = float(np.sqrt(np.mean(audio[_si:_ei] ** 2) + 1e-14))
+                        if _frisson_orig.ndim == 2:  # pylint: disable=unsubscriptable-object
+                            _rms_ref = float(np.sqrt(np.mean(_frisson_orig[:, _si:_ei] ** 2) + 1e-14))  # pylint: disable=unsubscriptable-object
+                        else:
+                            _rms_ref = float(np.sqrt(np.mean(_frisson_orig[_si:_ei] ** 2) + 1e-14))
+                        if _rms_ref > 1e-10:
+                            _ratio = _rms_out / _rms_ref
+                            # Penalty wenn Energie > 3 dB abgefallen (ratio < 0.708) —
+                            # sanfte Gewichtung damit einzelne Frisson-Zone nicht dominiert
+                            if _ratio < 0.708:  # -3 dB
+                                _frisson_penalty = min(
+                                    _frisson_penalty,
+                                    float(np.clip(0.92 + 0.08 * _ratio / 0.708, 0.88, 1.0)),
+                                )
+                        _zones_checked += 1
+                    if _frisson_penalty < 1.0:
+                        loop_score = float(np.clip(loop_score * _frisson_penalty, 1.0, 5.0))
+                        logger.debug(
+                            "FeedbackChain §Frisson-Penalty: %.4f → loop_score=%.3f (%d Zonen)",
+                            _frisson_penalty,
+                            loop_score,
+                            _zones_checked,
+                        )
+                except Exception as _frisson_exc:
+                    logger.debug("FeedbackChain §Frisson non-blocking: %s", _frisson_exc)
             return loop_score
         except Exception as exc:
             logger.debug("FeedbackChain VQI dual-objective non-blocking: %s", exc)
@@ -468,7 +527,9 @@ class FeedbackChain:
         _gp_advisory_applied = False
         if _phase_list_mode and len(_active_phases) > 0:
             try:
-                from backend.core.gp_parameter_optimizer import get_optimizer as _get_gp_opt
+                from backend.core.gp_parameter_optimizer import (
+                    get_optimizer as _get_gp_opt,  # pylint: disable=import-outside-toplevel
+                )
 
                 _gp_opt = _get_gp_opt()
                 _mat = self.material if self.material != "auto" else "unknown"
@@ -572,7 +633,9 @@ class FeedbackChain:
         # §2.34 GoalPriorityProtocol — Stufe-1/2-Regression löst sofortigen Rollback aus
         _gpp = None
         try:
-            from backend.core.goal_priority_protocol import GoalPriorityProtocol
+            from backend.core.goal_priority_protocol import (
+                GoalPriorityProtocol,  # pylint: disable=import-outside-toplevel
+            )
 
             _gpp = GoalPriorityProtocol()
         except Exception as gpp_exc:
@@ -651,7 +714,9 @@ class FeedbackChain:
                         )
                 # §Perf: import _RESTORATIVE_PHASES once before the per-phase loop (not per-phase)
                 try:
-                    from backend.core.per_phase_musical_goals_gate import _RESTORATIVE_PHASES as _RP_SET
+                    from backend.core.per_phase_musical_goals_gate import (
+                        _RESTORATIVE_PHASES as _RP_SET,  # pylint: disable=import-outside-toplevel
+                    )
                 except Exception:
                     _RP_SET = frozenset(
                         (
@@ -771,7 +836,9 @@ class FeedbackChain:
             # (UV3 provides its own GPP callback that already calls measure_all).
             if _gpp is not None and _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    from backend.core.musical_goals.musical_goals_metrics import get_checker
+                    from backend.core.musical_goals.musical_goals_metrics import (
+                        get_checker,  # pylint: disable=import-outside-toplevel
+                    )
 
                     _checker = get_checker()
                     _t_goals = time.perf_counter()
@@ -801,7 +868,9 @@ class FeedbackChain:
                     logger.debug("GoalPriorityProtocol in FeedbackChain nicht verfügbar: %s", _gpp_exc)
             elif _gpp is not None and not _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    from backend.core.musical_goals.musical_goals_metrics import get_checker
+                    from backend.core.musical_goals.musical_goals_metrics import (
+                        get_checker,  # pylint: disable=import-outside-toplevel
+                    )
 
                     _checker = get_checker()
                     _t_goals = time.perf_counter()
@@ -916,6 +985,7 @@ _lock = threading.Lock()
 
 
 def get_feedback_chain() -> FeedbackChain:
+    """Gibt den globalen FeedbackChain-Singleton zurück (lazy init)."""
     global _instance  # pylint: disable=global-statement
     if _instance is None:
         with _lock:

@@ -27,6 +27,7 @@ Usage:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pyfftw
@@ -64,10 +65,10 @@ class CachedFFT:
         self.wisdom_file = wisdom_file
 
         # Plan caches
-        self._rfft_plans = {}
-        self._irfft_plans = {}
-        self._fft_plans = {}
-        self._ifft_plans = {}
+        self._rfft_plans: dict[Any, Any] = {}
+        self._irfft_plans: dict[Any, Any] = {}
+        self._fft_plans: dict[Any, Any] = {}
+        self._ifft_plans: dict[Any, Any] = {}
 
         # Load wisdom if available
         if enable_wisdom and wisdom_file:
@@ -114,7 +115,7 @@ class CachedFFT:
         self._rfft_plans[plan_key]
 
         # Execute FFT using cached plan
-        return pyfftw.interfaces.numpy_fft.rfft(x, n=n, axis=axis)
+        return pyfftw.interfaces.numpy_fft.rfft(x, n=n, axis=axis)  # type: ignore[no-any-return]
 
     def irfft(self, x: np.ndarray, n: int | None = None, axis: int = -1) -> np.ndarray:
         """
@@ -147,7 +148,7 @@ class CachedFFT:
                 threads=self.num_threads,
             )
 
-        return pyfftw.interfaces.numpy_fft.irfft(x, n=n, axis=axis)
+        return pyfftw.interfaces.numpy_fft.irfft(x, n=n, axis=axis)  # type: ignore[no-any-return]
 
     def fft(self, x: np.ndarray, n: int | None = None, axis: int = -1) -> np.ndarray:
         """
@@ -164,7 +165,7 @@ class CachedFFT:
         if n is None:
             n = x.shape[axis]
 
-        return pyfftw.interfaces.numpy_fft.fft(x, n=n, axis=axis)
+        return pyfftw.interfaces.numpy_fft.fft(x, n=n, axis=axis)  # type: ignore[no-any-return]
 
     def ifft(self, x: np.ndarray, n: int | None = None, axis: int = -1) -> np.ndarray:
         """
@@ -181,7 +182,7 @@ class CachedFFT:
         if n is None:
             n = x.shape[axis]
 
-        return pyfftw.interfaces.numpy_fft.ifft(x, n=n, axis=axis)
+        return pyfftw.interfaces.numpy_fft.ifft(x, n=n, axis=axis)  # type: ignore[no-any-return]
 
     def stft(self, audio: np.ndarray, n_fft: int = 2048, hop_length: int = 512, window: str = "hann") -> np.ndarray:
         """

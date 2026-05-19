@@ -245,13 +245,13 @@ class BatchParallelProcessor:
             sequential_time = sum(r.processing_time for r in results if r.processing_time > 0)
             if total_time > 0:
                 speedup = sequential_time / total_time
-                self._processing_stats["average_speedup"].append(speedup)
+                self._processing_stats["average_speedup"].append(speedup)  # type: ignore[union-attr]
 
         # Update statistics
-        self._processing_stats["total_batches"] += 1
-        self._processing_stats["total_files"] += len(tasks)
-        self._processing_stats["total_successes"] += completed_count
-        self._processing_stats["total_failures"] += failed_count
+        self._processing_stats["total_batches"] += 1  # type: ignore[operator]
+        self._processing_stats["total_files"] += len(tasks)  # type: ignore[operator]
+        self._processing_stats["total_successes"] += completed_count  # type: ignore[operator]
+        self._processing_stats["total_failures"] += failed_count  # type: ignore[operator]
 
         logger.info("Batch complete: %s succeeded, %s failed, %.2fs total", completed_count, failed_count, total_time)
 
@@ -308,7 +308,7 @@ class BatchParallelProcessor:
         speedups = self._processing_stats["average_speedup"]
         if not speedups:
             return 0.0
-        return sum(speedups) / len(speedups)
+        return sum(speedups) / len(speedups)  # type: ignore[no-any-return, call-overload, arg-type]
 
     def get_stats(self) -> dict[str, Any]:
         """
@@ -322,7 +322,7 @@ class BatchParallelProcessor:
             "total_files": self._processing_stats["total_files"],
             "total_successes": self._processing_stats["total_successes"],
             "total_failures": self._processing_stats["total_failures"],
-            "success_rate": (self._processing_stats["total_successes"] / max(1, self._processing_stats["total_files"]))
+            "success_rate": (self._processing_stats["total_successes"] / max(1, self._processing_stats["total_files"]))  # type: ignore[call-overload]
             * 100,
             "average_speedup": self.get_average_speedup(),
             "worker_count": self.n_jobs,
@@ -418,7 +418,7 @@ class BatchProcessingBuilder:
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.pattern = pattern
-        self._tasks = []
+        self._tasks: list[FileTask] = []
 
     def add_file(
         self, input_path: Path, output_path: Path | None = None, metadata: dict[str, Any] | None = None

@@ -143,7 +143,7 @@ def _resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
         lambda x: resample_poly(x, up, down).astype(np.float32),
         axis=-1,
         arr=audio,
-    )
+    )  # type: ignore[no-any-return]
 
 
 def _pad_to_stride(audio: np.ndarray) -> tuple[np.ndarray, int]:

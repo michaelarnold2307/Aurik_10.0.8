@@ -152,6 +152,7 @@ class EmotionalArcPreservationMetric:
         restored: np.ndarray,
         sr: int,
         lyrics_saliency: np.ndarray | None = None,
+        frisson_zones=None,
     ) -> EmotionalArcResult:
         """Misst den Erhalt des emotionalen Bogens.
 
@@ -163,6 +164,9 @@ class EmotionalArcPreservationMetric:
                              Lyrics-Salienzwerten aus §2.36 LyricsGuidedEnhancement.
                              Segment-Gewichte werden 1.5× erhöht für Frames > 0.5.
                              (§2.44: emotional_arc_preservation = Arousal/Valence + Lyrics-Salienz)
+            frisson_zones:   Optionale Liste von FrissonZone-Objekten (.start_s, .end_s).
+                             Frisson-Segmente erhalten Gewicht ×2.0 in der Pearson-Korrelation
+                             (§2.44: Klimax-Passagen prägen Emotionswahrnehmung stärker).
 
         Returns:
             EmotionalArcResult mit Pearson-Korrelationen und Klimax-Analyse.
@@ -260,6 +264,25 @@ class EmotionalArcPreservationMetric:
                     break
                 _seg_sal = float(np.mean(_sal[_start : _start + seg_len]))
                 _seg_weights[_si] = 1.5 if _seg_sal > 0.5 else 1.0
+
+        # §2.44 Frisson-Zonen: Gewicht ×2.0 (Klimax-Passagen prägen Emotionswahrnehmung stärker)
+        # Frisson-Gewichte werden NACH Lyrics-Salienz gesetzt und können sie überschreiben.
+        if frisson_zones:
+            try:
+                _seg_idx = 0
+                for _start in range(0, len(orig_mono) - seg_len + 1, hop_len):
+                    if _seg_idx >= n_segs:
+                        break
+                    _seg_center_s = (_start + seg_len / 2) / sr
+                    for _fz in frisson_zones:
+                        _fz_s = float(getattr(_fz, "start_s", 0.0))
+                        _fz_e = float(getattr(_fz, "end_s", 0.0))
+                        if _fz_s <= _seg_center_s < _fz_e:
+                            _seg_weights[_seg_idx] = 2.0  # §2.44: Frisson = ×2.0
+                            break
+                    _seg_idx += 1
+            except Exception:
+                pass  # non-blocking: frisson_zones Fehler darf Messung nicht blockieren
 
         # ----------------------------------------------------------------
         # Pearson-Korrelationen (salienz-gewichtet wenn lyrics_saliency vorhanden)
@@ -773,6 +796,7 @@ def measure_emotional_arc(
     restored: np.ndarray,
     sr: int,
     lyrics_saliency: np.ndarray | None = None,
+    frisson_zones=None,
 ) -> EmotionalArcResult:
     """Convenience-Wrapper: Erhalt des emotionalen Bogens prüfen.
 
@@ -781,11 +805,20 @@ def measure_emotional_arc(
         restored:        Restauriertes Audio, float32, SR = 48000
         sr:              48000 (Pflicht)
         lyrics_saliency: Optionales Salienz-Array aus §2.36 LGE (§2.44).
+        frisson_zones:   Optionale Liste von FrissonZone-Objekten (.start_s, .end_s).
+                         Frisson-Segmente erhalten Gewicht ×2.0 in der Pearson-Korrelation
+                         (§2.44: Klimax-Passagen prägen Emotionswahrnehmung stärker).
 
     Returns:
         EmotionalArcResult mit Pearson-Korrelationen und Klimax-Analyse.
     """
-    return get_emotional_arc_metric().measure(original, restored, sr, lyrics_saliency=lyrics_saliency)
+    return get_emotional_arc_metric().measure(
+        original,
+        restored,
+        sr,
+        lyrics_saliency=lyrics_saliency,
+        frisson_zones=frisson_zones,
+    )
 
 
 def correct_emotional_arc(

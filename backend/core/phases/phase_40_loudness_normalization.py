@@ -117,7 +117,7 @@ class LoudnessNormalizationPhase(PhaseInterface):
         super().__init__()
         self.name = "Professional Loudness Normalization"
 
-    def process(
+    def process(  # type: ignore[override]
         self,
         audio: np.ndarray,
         sample_rate: int,
@@ -187,11 +187,11 @@ class LoudnessNormalizationPhase(PhaseInterface):
         # Get target (platform overrides material)
         if platform and platform in self.PLATFORM_PRESETS:
             preset = self.PLATFORM_PRESETS[platform]
-            target_lufs = preset["target_lufs"]
-            max_true_peak_db = preset["max_true_peak_db"]
+            target_lufs = float(preset["target_lufs"])  # type: ignore[arg-type]
+            max_true_peak_db = float(preset["max_true_peak_db"])  # type: ignore[arg-type]
             preset_name = preset["name"]
         else:
-            target_lufs = self.MATERIAL_TARGETS.get(material, self.MATERIAL_TARGETS[MaterialType.STREAMING])
+            target_lufs = float(self.MATERIAL_TARGETS.get(material, self.MATERIAL_TARGETS[MaterialType.STREAMING]))
             max_true_peak_db = -1.0
             preset_name = None
 
@@ -463,7 +463,7 @@ class LoudnessNormalizationPhase(PhaseInterface):
         sos_hp = signal.butter(2, 38, "highpass", fs=sample_rate, output="sos")
         audio_weighted = signal.sosfilt(sos_hp, audio_shelf, axis=0)
 
-        return audio_weighted
+        return audio_weighted  # type: ignore[no-any-return]
 
     def _measure_integrated_lufs(self, audio_weighted: np.ndarray, sample_rate: int) -> float:
         """
@@ -503,10 +503,10 @@ class LoudnessNormalizationPhase(PhaseInterface):
             lufs_block = -0.691 + 10 * np.log10(ms + 1e-10)
             block_loudness.append(lufs_block)
 
-        block_loudness = np.array(block_loudness)
+        block_loudness = np.array(block_loudness)  # type: ignore[assignment]
 
         # Absolute gate: Remove blocks < -70 LUFS
-        gated_absolute = block_loudness[block_loudness >= self.ABSOLUTE_GATE_LUFS]
+        gated_absolute = block_loudness[block_loudness >= self.ABSOLUTE_GATE_LUFS]  # type: ignore[operator]
 
         if len(gated_absolute) == 0:
             return -70.0  # Silence
@@ -519,12 +519,12 @@ class LoudnessNormalizationPhase(PhaseInterface):
         gated_relative = gated_absolute[gated_absolute >= relative_threshold]
 
         if len(gated_relative) == 0:
-            return ungated_integrated
+            return ungated_integrated  # type: ignore[no-any-return]
 
         # Final integrated loudness
         integrated_lufs = -0.691 + 10 * np.log10(np.mean(10 ** ((gated_relative + 0.691) / 10)))
 
-        return integrated_lufs
+        return integrated_lufs  # type: ignore[no-any-return]
 
     def _measure_lra(self, audio_weighted: np.ndarray, sample_rate: int) -> float:
         """
@@ -564,14 +564,14 @@ class LoudnessNormalizationPhase(PhaseInterface):
         if len(short_term_loudness) < 2:
             return 0.0  # Not enough data
 
-        short_term_loudness = np.array(short_term_loudness)
+        short_term_loudness = np.array(short_term_loudness)  # type: ignore[assignment]
 
         # LRA = 95th - 10th percentile
         p95 = np.percentile(short_term_loudness, 95)
         p10 = np.percentile(short_term_loudness, 10)
         lra = p95 - p10
 
-        return lra
+        return lra  # type: ignore[no-any-return]
 
     def _measure_momentary_max(self, audio_weighted: np.ndarray, sample_rate: int) -> float:
         """Maximum Momentary Loudness (400ms window)."""
@@ -611,7 +611,7 @@ class LoudnessNormalizationPhase(PhaseInterface):
             lufs = -0.691 + 10 * np.log10(ms + 1e-10)
             max_loudness = max(max_loudness, lufs)
 
-        return max_loudness
+        return max_loudness  # type: ignore[no-any-return]
 
     def _measure_true_peak(self, audio: np.ndarray, _sample_rate: int) -> float:
         """
@@ -628,7 +628,7 @@ class LoudnessNormalizationPhase(PhaseInterface):
             peak = np.abs(audio_up).max()
 
         peak_db = 20 * np.log10(peak + 1e-10)
-        return peak_db
+        return peak_db  # type: ignore[no-any-return]
 
     def _true_peak_limit(self, audio: np.ndarray, sample_rate: int, max_true_peak_db: float) -> np.ndarray:
         """

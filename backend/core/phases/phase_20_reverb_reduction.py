@@ -116,7 +116,7 @@ try:
 
     def _exp1_p20_gain(nu: np.ndarray) -> np.ndarray:
         """MMSE-LSA gain factor exp(0.5 * E1(ν)) per Ephraim-Malah (1985)."""
-        return np.exp(np.clip(0.5 * _scipy_exp1_p20(np.maximum(nu, 1e-10)), 0.0, 5.0))
+        return np.exp(np.clip(0.5 * _scipy_exp1_p20(np.maximum(nu, 1e-10)), 0.0, 5.0))  # type: ignore[no-any-return]
 
 except ImportError:  # pragma: no cover
 
@@ -235,7 +235,7 @@ class ReverbReduction(PhaseInterface):
         _preserve_w = float(np.clip((_w_nat + _w_auth + _w_timbre) / 3.0, 0.30, 2.00))
         _clarity_w = float(np.clip((_w_trans + _w_art + _w_bril) / 3.0, 0.30, 2.00))
 
-        _rest = float(np.clip(float(kwargs.get("restorability_score", 65.0)), 0.0, 100.0))
+        _rest = float(np.clip(float(kwargs.get("restorability_score", 65.0)), 0.0, 100.0))  # type: ignore[arg-type]
         _rest_factor = float(np.clip(1.0 + (50.0 - _rest) / 250.0, 0.85, 1.20))
 
         _ratio = float(np.sqrt(_clarity_w / max(_preserve_w, 1e-6)))
@@ -380,7 +380,7 @@ class ReverbReduction(PhaseInterface):
         _ctx_energy_bias_20 = float(kwargs.get("_restoration_context", {}).get("vocal_energy_bias_db", -6.0))
         # §4.8a-ii + §Gap8: preserve_mask injiziert von UV3, gesetzt auf self für _run_omlsa_mrsa.
         _pm_raw_p20 = kwargs.get("_restoration_context", {}).get("preserve_mask")
-        self._preserve_mask_p20: np.ndarray | None = (
+        self._preserve_mask_p20 = (
             np.asarray(_pm_raw_p20, dtype=np.float32)
             if isinstance(_pm_raw_p20, np.ndarray) and _pm_raw_p20.size > 0
             else None
@@ -1512,7 +1512,7 @@ class ReverbReduction(PhaseInterface):
             n_bins,
             float(np.mean(G_combined)),
         )
-        return audio_out
+        return audio_out  # type: ignore[no-any-return]
 
     def _detect_transients(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:  # pylint: disable=redefined-outer-name
         """

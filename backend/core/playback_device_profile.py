@@ -297,7 +297,7 @@ def apply_translation_eq(
     audio_out = np.clip(audio_out, -1.0, 1.0)
 
     if orig_ndim == 1:
-        return audio_out[0]
+        return audio_out[0]  # type: ignore[no-any-return]
     return audio_out
 
 

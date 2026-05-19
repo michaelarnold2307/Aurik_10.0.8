@@ -110,4 +110,4 @@ class MultibandPhaseCoherenceEnhancer:
         except Exception:
             filtered = x.copy()
 
-        return filtered
+        return filtered  # type: ignore[no-any-return]

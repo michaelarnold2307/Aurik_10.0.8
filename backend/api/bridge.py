@@ -727,20 +727,26 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     if not isinstance(_meta, dict):
         _meta = {}
 
-    _joy: dict[str, Any] = _meta.get("joy_runtime_index") if isinstance(_meta.get("joy_runtime_index"), dict) else {}  # type: ignore[assignment]
+    _joy: dict[str, Any] = (  # type: ignore[assignment]
+        _meta.get("joy_runtime_index") if isinstance(_meta.get("joy_runtime_index"), dict) else {}
+    )
     _auto: dict[str, Any] = (
         _meta.get("auto_improvement_recommendations")  # type: ignore[assignment]
         if isinstance(_meta.get("auto_improvement_recommendations"), dict)
         else {}
     )
-    _song_cal: dict[str, Any] = _meta.get("song_calibration") if isinstance(_meta.get("song_calibration"), dict) else {}  # type: ignore[assignment]
+    _song_cal: dict[str, Any] = (  # type: ignore[assignment]
+        _meta.get("song_calibration") if isinstance(_meta.get("song_calibration"), dict) else {}
+    )
     _cluster: dict[str, Any] = (
         _song_cal.get("cluster_policy") if isinstance(_song_cal.get("cluster_policy"), dict) else {}
     )  # type: ignore[assignment]
     _fqf: dict[str, Any] = (
         _meta.get("fallback_quality_floor") if isinstance(_meta.get("fallback_quality_floor"), dict) else {}
     )  # type: ignore[assignment]
-    _rc: dict[str, Any] = _meta.get("recovery_certainty") if isinstance(_meta.get("recovery_certainty"), dict) else {}  # type: ignore[assignment]
+    _rc: dict[str, Any] = (  # type: ignore[assignment]
+        _meta.get("recovery_certainty") if isinstance(_meta.get("recovery_certainty"), dict) else {}
+    )
     _stage_notes = getattr(result, "stage_notes", None)
     if not isinstance(_stage_notes, dict):
         _stage_notes = {}
@@ -786,7 +792,9 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         _cnt = len(_normalized_recommendations)
     _cnt = max(_cnt, len(_normalized_recommendations), 0)
 
-    _tc: dict[str, Any] = _meta.get("team_coordination") if isinstance(_meta.get("team_coordination"), dict) else {}  # type: ignore[assignment]
+    _tc: dict[str, Any] = (  # type: ignore[assignment]
+        _meta.get("team_coordination") if isinstance(_meta.get("team_coordination"), dict) else {}
+    )
     _tc_events_raw_val = _tc.get("events")
     _tc_events_raw: list[Any] = list(_tc_events_raw_val) if isinstance(_tc_events_raw_val, list) else []
     _tc_events: list[dict[str, Any]] = []
@@ -1211,7 +1219,9 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     if not isinstance(meta, dict):
         meta = {}
 
-    fail_reasons: list[Any] = meta.get("fail_reasons") if isinstance(meta.get("fail_reasons"), list) else []  # type: ignore[assignment]
+    fail_reasons: list[Any] = (  # type: ignore[assignment]
+        meta.get("fail_reasons") if isinstance(meta.get("fail_reasons"), list) else []
+    )
     primary_fail_reason = str(meta.get("fail_reason", "") or "")
     degradation_status = str(meta.get("degradation_status", "") or "")
     fqf: dict[str, Any] = (

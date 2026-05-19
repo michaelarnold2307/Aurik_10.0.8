@@ -1792,7 +1792,7 @@ class MediumDetector:
 
                 _era_decade: int | None = None
                 if hasattr(result, "bayesian_scores") and isinstance(result.bayesian_scores, dict):
-                    _era_decade = result.bayesian_scores.get("era_decade")
+                    _era_decade = result.bayesian_scores.get("era_decade")  # type: ignore[assignment]
                 _riaa_curve, _riaa_conf = _get_riaa_clf().classify_with_confidence(audio, sr, era_decade=_era_decade)
                 result.riaa_curve_type = _riaa_curve
                 result.riaa_curve_confidence = _riaa_conf

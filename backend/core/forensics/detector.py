@@ -328,7 +328,7 @@ class MediaForensicsEngine:
 
     def _analyze_stereo(self, audio, sr):
         """Stereo-Analyse: M/S-Korrelation und Stereobreite."""
-        evidence = []
+        evidence: list[ForensicEvidence] = []
         try:
             if audio.ndim < 2 or audio.shape[0] < 2:
                 return evidence
@@ -452,7 +452,7 @@ class MediaForensicsEngine:
 
     def _detect_transfer_chain(self, hypotheses):
         # Transfer-Kette: analoges Medium -> Digital (typischer Digitalisierungspfad)
-        chain = []
+        chain: list[MediaType] = []
         if not hypotheses:
             return chain
         m = hypotheses[0].media_type
@@ -530,4 +530,4 @@ class MediaForensicsEngine:
         # TRANSFER-DETEKTION
         transfer_chain = self._detect_transfer_chain(hypotheses)
         # REPORT GENERIEREN
-        return self._create_report(hypotheses, transfer_chain)
+        return self._create_report(hypotheses, transfer_chain)  # type: ignore[no-any-return]

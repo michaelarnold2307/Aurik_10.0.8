@@ -141,7 +141,7 @@ class TransientShaper(PhaseInterface):
         )
 
     # pylint: disable-next=arguments-renamed
-    def process(
+    def process(  # type: ignore[override]
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
         """
@@ -206,8 +206,12 @@ class TransientShaper(PhaseInterface):
         is_stereo = audio.ndim == 2
         config_raw = self.SHAPING_CONFIG.get(material, self.SHAPING_CONFIG[MaterialType.CD_DIGITAL])
         config = {
-            "attack_gain_db": [float(v * _effective_strength) for v in config_raw["attack_gain_db"]],
-            "sustain_gain_db": [float(v * _effective_strength) for v in config_raw["sustain_gain_db"]],
+            "attack_gain_db": [  # type: ignore[attr-defined]
+                float(v * _effective_strength) for v in config_raw["attack_gain_db"]
+            ],
+            "sustain_gain_db": [  # type: ignore[attr-defined]
+                float(v * _effective_strength) for v in config_raw["sustain_gain_db"]
+            ],
             "attack_window_ms": config_raw["attack_window_ms"],
             "release_window_ms": config_raw["release_window_ms"],
         }
@@ -389,7 +393,7 @@ class TransientShaper(PhaseInterface):
         gain_linear = 10 ** (gain_db_smooth / 20)
         shaped_band = band * gain_linear
 
-        return shaped_band
+        return shaped_band  # type: ignore[no-any-return]
 
     def _compute_envelope(self, audio: np.ndarray, attack_samples: int, release_samples: int) -> np.ndarray:
         """Compute envelope with asymmetric attack/release in the *log domain*.
@@ -523,7 +527,7 @@ class TransientShaper(PhaseInterface):
     def _combine_bands(self, bands: list) -> np.ndarray:
         """Kombiniert frequency bands."""
         combined = sum(bands)
-        return combined
+        return combined  # type: ignore[no-any-return]
 
     def _measure_transient_energy(self, audio: np.ndarray, sample_rate: int) -> float:
         """Misst transient energy (high-frequency content in first 20ms)."""

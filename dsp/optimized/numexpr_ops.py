@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 def _ne_evaluate(expression: str, local_dict: dict[str, Any] | None = None) -> np.ndarray:
     """Bewertet expression with numexpr when available, else numpy fallback."""
     if _NUMEXPR_AVAILABLE and ne is not None:
-        return ne.evaluate(expression, local_dict=local_dict)
+        return ne.evaluate(expression, local_dict=local_dict)  # type: ignore[no-any-return]
     safe_globals = {"__builtins__": {}, "np": np}
     safe_locals: dict[str, Any] = {}
     if local_dict:
@@ -380,7 +380,7 @@ class OptimizedDSP:
         else:
             smoothed = uniform_filter1d(spectrum, window_size, axis=1)
 
-        return smoothed
+        return smoothed  # type: ignore[no-any-return]
 
     def get_statistics(self) -> dict:
         """

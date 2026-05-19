@@ -245,7 +245,7 @@ def _apply_peak(audio: np.ndarray, sr: int, f0: float, q: float, gain_db: float)
         return audio
     b, a = _peak_eq_coeffs(f0, q, gain_db, sr)
     out = sig.lfilter(b, a, audio.astype(np.float64))
-    return out.astype(np.float32)
+    return out.astype(np.float32)  # type: ignore[no-any-return]
 
 
 # ── Core class ────────────────────────────────────────────────────────────────

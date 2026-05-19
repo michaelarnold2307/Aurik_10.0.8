@@ -1185,7 +1185,7 @@ class HarmonicRestorationPhase(PhaseInterface):
         # Post-gain compensation
         saturated = saturated / drive * strength
 
-        return saturated
+        return saturated  # type: ignore[no-any-return]
 
     @staticmethod
     def _tanh_adaa(x0: np.ndarray, x1: np.ndarray) -> np.ndarray:
@@ -1407,7 +1407,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                     out = out[:n_orig]
                 else:
                     out = np.pad(out, (0, n_orig - len(out)))
-                return out.astype(np.float32)
+                return out.astype(np.float32)  # type: ignore[no-any-return]
 
             if audio.ndim == 1:
                 result = _apply_mono(audio)

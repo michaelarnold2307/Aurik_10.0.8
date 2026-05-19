@@ -26,6 +26,7 @@ import numpy as np
 import scipy.signal as signal
 
 logger = logging.getLogger(__name__)
+# pylint: disable=redefined-outer-name
 
 
 class StereoImagingAnalyzer:
@@ -102,10 +103,10 @@ class StereoImagingAnalyzer:
                 "problematic_frames_ratio": 0.0,
             }
 
-        correlations = np.array(correlations)
+        correlations = np.array(correlations)  # type: ignore[assignment]
 
         # Count problematic frames (correlation < -0.5)
-        problematic_frames = np.sum(correlations < -0.5)
+        problematic_frames = np.sum(correlations < -0.5)  # type: ignore[operator]
         problematic_ratio = problematic_frames / len(correlations)
 
         return {

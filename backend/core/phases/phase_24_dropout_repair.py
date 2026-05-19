@@ -88,7 +88,7 @@ from backend.core.audio_utils import (
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
 
 try:
-    from backend.core.quality_mode import QualityMode, should_use_ml
+    from backend.core.quality_mode import QualityMode, should_use_ml  # type: ignore[attr-defined]
 
     QUALITY_MODE_AVAILABLE = True
 except ImportError:
@@ -857,7 +857,9 @@ class DropoutRepairPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
-        params["repair_strength"] = float(np.clip(params["repair_strength"] * _effective_strength, 0.0, 1.0))
+        params["repair_strength"] = float(  # type: ignore[operator]
+            np.clip(params["repair_strength"] * _effective_strength, 0.0, 1.0)
+        )
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -1007,7 +1009,7 @@ class DropoutRepairPhase(PhaseInterface):
                 )
             _pre_repaired_skipped += _sk
             repaired_audio, ml_repaired_count = self._repair_dropouts_professional(audio, all_dropouts, params, use_ml)
-            _p24_lag_stats: dict[str, int | bool] = {
+            _p24_lag_stats = {
                 "lag_input_samples": 0,
                 "lag_output_samples": 0,
                 "lag_corrected": False,
@@ -1023,7 +1025,7 @@ class DropoutRepairPhase(PhaseInterface):
             max_dropout_ms = np.max(dropout_durations_ms)
             total_dropout_ms = np.sum(dropout_durations_ms)
         else:
-            avg_dropout_ms = 0.0
+            avg_dropout_ms = 0.0  # type: ignore[assignment]
             max_dropout_ms = 0.0
             total_dropout_ms = 0.0
 
@@ -1868,7 +1870,7 @@ class DropoutRepairPhase(PhaseInterface):
             harmonic_energy += spectrum[idx] ** 2
 
         total_energy = np.sum(spectrum**2)
-        return harmonic_energy / (total_energy + 1e-10)
+        return harmonic_energy / (total_energy + 1e-10)  # type: ignore[no-any-return]
 
     def _mrsa_tonal_fill_refine(
         self,
@@ -2076,7 +2078,7 @@ class DropoutRepairPhase(PhaseInterface):
             # MRSA refinement: zone-specific spectral interpolation + PGHI
             audio_fill = self._mrsa_tonal_fill_refine(audio_fill, before, after, self.sample_rate)
 
-            return np.clip(np.nan_to_num(audio_fill), -1.0, 1.0)
+            return np.clip(np.nan_to_num(audio_fill), -1.0, 1.0)  # type: ignore[no-any-return]
 
         except Exception as exc:
             logger.debug("Sinusoidal repair fehlgeschlagen: %s, Fallback Spline", exc)
@@ -2084,7 +2086,7 @@ class DropoutRepairPhase(PhaseInterface):
             x = np.array([0, gap_length + 1], dtype=np.float64)
             y = np.array([before[-1], after[0]], dtype=np.float64)
             cs = CubicSpline(x, y, bc_type="natural")
-            return cs(np.arange(1, gap_length + 1))
+            return cs(np.arange(1, gap_length + 1))  # type: ignore[no-any-return]
 
     def _repair_atonal(self, before: np.ndarray, after: np.ndarray, gap_length: int) -> np.ndarray:
         """NMF-β Textur-Synthese für atonalen Inhalt (Févotte & Idier 2011).
@@ -2183,7 +2185,7 @@ class DropoutRepairPhase(PhaseInterface):
             fill_std = float(np.std(audio_fill)) + EPS
             audio_fill *= ctx_std / fill_std
 
-            return np.clip(np.nan_to_num(audio_fill), -1.0, 1.0)
+            return np.clip(np.nan_to_num(audio_fill), -1.0, 1.0)  # type: ignore[no-any-return]
 
         except Exception as exc:
             logger.debug("NMF-β repair fehlgeschlagen: %s, Fallback Rausch-Synthese", exc)

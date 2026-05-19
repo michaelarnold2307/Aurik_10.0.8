@@ -119,7 +119,7 @@ def _apply_bw_cap(segment: np.ndarray, sample_rate: int, cap_hz: float) -> np.nd
         filtered = _sps.sosfiltfilt(sos, segment)
     else:
         filtered = _sps.sosfilt(sos, segment)
-    return np.clip(filtered.astype(segment.dtype), -1.0, 1.0)
+    return np.clip(filtered.astype(segment.dtype), -1.0, 1.0)  # type: ignore[no-any-return]
 
 
 def _cosine_schedule(t: int, T: int) -> float:
@@ -328,7 +328,7 @@ def _inpaint_gap_dsp(
         rec_rms = np.sqrt(np.mean(x**2)) + 1e-10
         x = x * (ctx_rms / rec_rms)
 
-    return np.clip(x, -1.0, 1.0)
+    return np.clip(x, -1.0, 1.0)  # type: ignore[no-any-return]
 
 
 def _nmf_gap_fallback(
@@ -534,7 +534,7 @@ def _try_flow_matching_plugin(
         if result is not None and result.success:
             repaired_segment = result.audio[start:end]
             if repaired_segment is not None and np.isfinite(repaired_segment).all():
-                return np.clip(repaired_segment.astype(np.float32), -1.0, 1.0)
+                return np.clip(repaired_segment.astype(np.float32), -1.0, 1.0)  # type: ignore[no-any-return]
         return None
     except Exception as _e:
         logger.debug("FlowMatchingPlugin nicht verfügbar: %s", _e)
@@ -566,7 +566,7 @@ def _try_diffwave_plugin(audio: np.ndarray, start: int, end: int, sample_rate: i
         _plm55c = _get_plm55c()
         _plm55c.set_active("DiffWave", True)
         try:
-            return dw.inpaint(audio, start, end, sample_rate)
+            return dw.inpaint(audio, start, end, sample_rate)  # type: ignore[no-any-return]
         finally:
             _plm55c.set_active("DiffWave", False)
     except Exception as e:
@@ -669,7 +669,7 @@ def _try_dac_token_inpainting(channel: np.ndarray, start: int, end: int, sample_
         _plm55e = _get_plm55e()
         _plm55e.set_active("DACInpaint", True)
         try:
-            result = dac.inpaint(ctx_l, ctx_r, gap_len, sample_rate)
+            result = dac.inpaint(ctx_l, ctx_r, gap_len, sample_rate)  # type: ignore[attr-defined]
         finally:
             _plm55e.set_active("DACInpaint", False)
         if result is None or len(result) == 0:
@@ -706,7 +706,7 @@ def _is_ml_thrashing() -> bool:
     with _lock:
         _result, _ts = _is_ml_thrashing._cache  # type: ignore[attr-defined]  # pylint: disable=protected-access
         if now - _ts < 30.0:
-            return _result
+            return _result  # type: ignore[no-any-return]
         try:
             from backend.core.ml_memory_budget import is_system_thrashing  # pylint: disable=import-outside-toplevel
 
@@ -735,7 +735,8 @@ def _conservative_boundary_fill(channel: np.ndarray, start: int, end: int) -> np
     t = np.linspace(0.0, 1.0, gap_len, dtype=np.float32)
     fade = 0.5 - 0.5 * np.cos(np.pi * t)
     seg = (1.0 - fade) * left + fade * right
-    return np.clip(np.nan_to_num(seg, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(np.float32)
+    _seg_clean = np.nan_to_num(seg, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(_seg_clean, -1.0, 1.0).astype(np.float32)  # type: ignore[no-any-return]
 
 
 def _gap_candidate_is_damaging(candidate: np.ndarray, channel: np.ndarray, start: int, end: int) -> bool:
@@ -1163,7 +1164,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         return _repaired_mono.astype(np.float32)
 
-    def process(  # pylint: disable=arguments-renamed
+    def process(  # pylint: disable=arguments-renamed  # type: ignore[override]
         self,
         audio: np.ndarray,
         sample_rate: int,

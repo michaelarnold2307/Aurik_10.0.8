@@ -788,6 +788,71 @@ class AdvancedDereverbPhase(PhaseInterface):
         except Exception as _pbg_exc_49:
             logger.debug("PhraseBoundaryGuard phase_49 (non-blocking): %s", _pbg_exc_49)
 
+        # §2.46f [RELEASE_MUST] Atemgeräusch-Schutz — dereverb-Algorithmen greifen diffuse
+        # Spektralanteile an (Early-Reflections, Raum-Rauschen), die Atemgeräusche
+        # charakterisieren. Originalklang in Atemzonen zurückblenden (§0p Vocal-Supremacy).
+        _breath_segs_p49 = list(kwargs.get("breath_segments", []) or [])
+        if _breath_segs_p49 and _p49_panns >= 0.25:
+            try:
+                _n_samp_p49 = int(processed.shape[-1] if processed.ndim == 2 else len(processed))
+                _n_in_p49 = int(audio.shape[-1] if audio.ndim == 2 else len(audio))
+                _n_blend_p49 = min(_n_samp_p49, _n_in_p49)
+                _result_blend_p49 = np.array(processed, copy=True)
+                _blended_p49 = False
+                for _bs_p49 in _breath_segs_p49:
+                    _bs_start_p49 = float(getattr(_bs_p49, "start_s", 0.0))
+                    _bs_end_p49 = float(getattr(_bs_p49, "end_s", 0.0))
+                    if _bs_end_p49 <= _bs_start_p49:
+                        continue
+                    # Konservativeres Dry-Ratio für Dereverb: 0.70 (mehr Originalerhalt als NR)
+                    # Dereverb entfernt Raumhall, aber Atemgeräusche HABEN keinen störenden Hall.
+                    _g_fl_p49 = float(np.clip(getattr(_bs_p49, "recommended_g_floor", 0.70), 0.50, 0.95))
+                    _si_p49 = max(0, min(int(round(_bs_start_p49 * sample_rate)), _n_blend_p49))
+                    _ei_p49 = max(0, min(int(round(_bs_end_p49 * sample_rate)), _n_blend_p49))
+                    if _si_p49 >= _ei_p49:
+                        continue
+                    if _result_blend_p49.ndim == 2 and audio.ndim == 2:
+                        _result_blend_p49[:, _si_p49:_ei_p49] = (
+                            _g_fl_p49 * audio[:, _si_p49:_ei_p49] + (1.0 - _g_fl_p49) * processed[:, _si_p49:_ei_p49]
+                        )
+                    elif _result_blend_p49.ndim == 1 and audio.ndim == 1:
+                        _result_blend_p49[_si_p49:_ei_p49] = (
+                            _g_fl_p49 * audio[_si_p49:_ei_p49] + (1.0 - _g_fl_p49) * processed[_si_p49:_ei_p49]
+                        )
+                    _blended_p49 = True
+                if _blended_p49:
+                    processed = np.clip(np.nan_to_num(_result_blend_p49.astype(np.float32), nan=0.0), -1.0, 1.0)
+                    logger.debug(
+                        "§2.46f BreathGuard phase_49: %d Atemzonen geschützt (dry_ratio=%.2f)",
+                        len(
+                            [
+                                s
+                                for s in _breath_segs_p49
+                                if float(getattr(s, "end_s", 0.0)) > float(getattr(s, "start_s", 0.0))
+                            ]
+                        ),
+                        _g_fl_p49 if _breath_segs_p49 else 0.0,
+                    )
+            except Exception as _breath_exc_p49:
+                logger.debug("§2.46f BreathGuard phase_49 (non-blocking): %s", _breath_exc_p49)
+
+        # §0p [RELEASE_MUST] VQI per-Phase Gate — vokal-beeinflussende Phasen (phases.instructions.md):
+        # Dereverb verändert diffuse Spektralanteile und kann Stimmqualität degradieren.
+        if _p49_panns >= 0.35:
+            try:
+                from backend.core.musical_goals.vocal_quality_index import compute_vqi
+
+                _vqi_p49 = compute_vqi(audio_orig=audio, audio_restored=processed, sr=sample_rate)["vqi"]
+                if _vqi_p49 < 0.95:
+                    logger.info(
+                        "phase_49: VQI per-phase rollback (vqi=%.3f < 0.95, panns=%.2f) — Dereverb zurückgesetzt",
+                        _vqi_p49,
+                        _p49_panns,
+                    )
+                    processed = audio  # Rollback auf Phase-Input
+            except Exception as _vqi_exc_p49:
+                logger.debug("phase_49 VQI-Gate (non-blocking): %s", _vqi_exc_p49)
+
         return PhaseResult(
             success=True,
             audio=restore_layout(processed, _p49_transposed),

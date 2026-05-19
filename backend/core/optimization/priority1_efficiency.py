@@ -102,7 +102,7 @@ class AlgorithmicEfficiencyOptimizer:
 
         # OLA normalisation
         count = np.where(count > 1e-8, count, 1.0)
-        return out / count
+        return out / count  # type: ignore[no-any-return]
 
     def _process_multicore(self, audio: np.ndarray) -> np.ndarray:
         n_chunks = self.n_cores

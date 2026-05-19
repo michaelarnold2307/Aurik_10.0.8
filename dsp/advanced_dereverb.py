@@ -64,7 +64,7 @@ class WienerDereverb:
         # Average reverb spectrum
         reverb_template = np.mean(stft_mag[:, reverb_start:], axis=1, keepdims=True)
 
-        return reverb_template
+        return reverb_template  # type: ignore[no-any-return]
 
     def process(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
         """
@@ -199,7 +199,7 @@ class LateReflectionCanceller:
 
             reflection_mask[i, :] = decay_mask
 
-        return reflection_mask
+        return reflection_mask  # type: ignore[no-any-return]
 
     def process(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
         """

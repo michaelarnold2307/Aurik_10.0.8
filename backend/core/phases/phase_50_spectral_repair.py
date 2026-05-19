@@ -296,7 +296,7 @@ class SpectralRepairPhase(PhaseInterface):
             "side_multiplier": float(np.clip(side_multiplier, 1.60, 2.40)),
         }
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:  # pylint: disable=arguments-differ
+    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:  # pylint: disable=arguments-differ  # type: ignore[override]
         """
         Repariert spektrale Artefakte via STFT Inpainting.
 
@@ -402,8 +402,8 @@ class SpectralRepairPhase(PhaseInterface):
         _pre_echo_events_50 = list(kwargs.get("pre_echo_events", []))
         if _pre_echo_events_50:
             try:
-                from backend.core.dsp.pre_echo_detector import (
-                    get_pre_echo_detector as _get_ped50,  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.pre_echo_detector import (  # pylint: disable=import-outside-toplevel
+                    get_pre_echo_detector as _get_ped50,
                 )
 
                 _ped50 = _get_ped50()

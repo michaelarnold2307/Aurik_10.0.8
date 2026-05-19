@@ -359,7 +359,7 @@ class PghiReconstructor:
         # Phasen wrapped auf [-π, π]
         phase = np.angle(np.exp(1j * phase))
 
-        return phase.astype(np.float64)
+        return phase.astype(np.float64)  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # Griffin-Lim Fallback
@@ -407,7 +407,7 @@ class PghiReconstructor:
             padded[:rows, :cols] = stft_new_phase
             stft = magnitude * np.exp(1j * padded)
 
-        return np.angle(stft)
+        return np.angle(stft)  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # STFT / iSTFT Hilfsfunktionen
@@ -437,7 +437,7 @@ class PghiReconstructor:
             boundary=None,
             padded=False,
         )
-        return Zxx.astype(np.complex128)  # [n_bins, n_frames]
+        return Zxx.astype(np.complex128)  # [n_bins, n_frames]  # type: ignore[no-any-return]
 
     def _istft(
         self,
@@ -487,7 +487,7 @@ class PghiReconstructor:
                 audio = audio[:n_samples]
             elif len(audio) < n_samples:
                 audio = np.pad(audio, (0, n_samples - len(audio)))
-        return np.nan_to_num(audio, nan=0.0).astype(np.float32)
+        return np.nan_to_num(audio, nan=0.0).astype(np.float32)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------

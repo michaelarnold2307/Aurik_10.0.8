@@ -7,6 +7,7 @@ Funktioniert out-of-the-box, keine Nutzerinteraktion nötig.
 
 from __future__ import annotations
 
+import gc
 import logging
 import multiprocessing as mp
 import threading
@@ -32,7 +33,7 @@ def get_resource_manager() -> AdaptiveResourceManager:
     Returns:
         AdaptiveResourceManager singleton instance
     """
-    global _instance
+    global _instance  # pylint: disable=global-statement
     if _instance is None:
         with _lock_singleton:
             if _instance is None:
@@ -41,6 +42,8 @@ def get_resource_manager() -> AdaptiveResourceManager:
 
 
 class AdaptiveResourceManager:
+    """Überwacht CPU/Speicher-Auslastung und passt Core-Zuteilung dynamisch an."""
+
     # Lock-order: Priority 3 (ARM) — see §3.9.8.
     # evict_stale_plugins() is called OUTSIDE the ARM lock to respect lock hierarchy.
     # Never call back into PLM or MLMemoryBudget while holding self.lock.
@@ -62,6 +65,7 @@ class AdaptiveResourceManager:
         self.running = False
         self.lock = threading.Lock()
         self._monitor_thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
         self.use_lightweight = False  # Fallback-Flag
         logger.info("AdaptiveResourceManager initialized: %s-%s cores", self.min_cores, self.max_cores)
 
@@ -76,18 +80,19 @@ class AdaptiveResourceManager:
     def get_memory_usage(self) -> float:
         """Gibt zurück: current system memory usage percentage."""
         if psutil:
-            return psutil.virtual_memory().percent
+            return psutil.virtual_memory().percent  # type: ignore[no-any-return]
         else:
             return 0  # Fallback: keine Überwachung
 
     def get_available_memory_mb(self) -> float:
         """Gibt zurück: available system memory in MB."""
         if psutil:
-            return psutil.virtual_memory().available / (1024 * 1024)
+            return psutil.virtual_memory().available / (1024 * 1024)  # type: ignore[no-any-return]
         else:
             return float("inf")  # Fallback: assume unlimited
 
     def start_monitoring(self) -> None:
+        """Startet den Hintergrund-Monitor-Thread für Ressourcen-Überwachung."""
         with self.lock:
             if self.running:
                 return
@@ -97,6 +102,7 @@ class AdaptiveResourceManager:
             self._monitor_thread.start()
 
     def stop_monitoring(self) -> None:
+        """Stoppt den Monitor-Thread und gibt Ressourcen frei."""
         self.running = False
         stop_event = getattr(self, "_stop_event", None)
         if stop_event is not None:
@@ -107,8 +113,6 @@ class AdaptiveResourceManager:
         self._monitor_thread = None
 
     def _monitor_loop(self) -> None:
-        import gc as _gc
-
         stop_event = getattr(self, "_stop_event", None)
         while self.running:
             cpu_usage = self.get_cpu_usage()
@@ -128,7 +132,9 @@ class AdaptiveResourceManager:
             # Active eviction when RAM is critically high — outside lock to avoid deadlock
             if memory_usage > self.memory_threshold:
                 try:
-                    from backend.core.plugin_lifecycle_manager import evict_stale_plugins
+                    from backend.core.plugin_lifecycle_manager import (
+                        evict_stale_plugins,  # pylint: disable=import-outside-toplevel
+                    )
 
                     n_evicted = evict_stale_plugins()
                     if n_evicted > 0:
@@ -140,7 +146,7 @@ class AdaptiveResourceManager:
                         )
                 except Exception as evict_exc:
                     logger.debug("ARM: eviction check failed: %s", evict_exc)
-                _gc.collect()
+                gc.collect()
 
             # Interruptible sleep — stoppt sofort bei stop_monitoring()
             if stop_event is not None:
@@ -151,6 +157,7 @@ class AdaptiveResourceManager:
                 time.sleep(self.check_interval)
 
     def get_num_cores(self) -> int:
+        """Gibt die aktuell verfügbare Core-Anzahl für ML-Verarbeitung zurück."""
         with self.lock:
             return self.current_cores
 

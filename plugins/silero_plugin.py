@@ -51,7 +51,7 @@ class SileroPlugin:
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
 
-                _reg_plm("SileroVAD", size_gb=0.11, unload_fn=lambda s=self: setattr(s, "_session", None))
+                _reg_plm("SileroVAD", size_gb=0.11, unload_fn=lambda s=self: setattr(s, "_session", None))  # type: ignore[misc]
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
         except Exception as exc:
@@ -106,8 +106,8 @@ class SileroPlugin:
         if sr != _SR and len(mono) != n16:
             indices = np.arange(len(mono))
             src_idx = np.clip((indices * n16 / len(mono)).astype(int), 0, n16 - 1)
-            return mask16[src_idx]
-        return mask16[: len(mono)]
+            return mask16[src_idx]  # type: ignore[no-any-return]
+        return mask16[: len(mono)]  # type: ignore[no-any-return]
 
     def _vad_mask_single_call(self, mono16: np.ndarray) -> np.ndarray:
         """Führt aus: ONNX model once on entire audio and derive per-sample bool mask."""
@@ -138,7 +138,7 @@ class SileroPlugin:
             # Map each sample to its frame
             sample_indices = np.arange(n_samples)
             frame_indices = np.clip((sample_indices * n_frames / n_samples).astype(int), 0, n_frames - 1)
-            return frame_probs[frame_indices] >= self._threshold
+            return frame_probs[frame_indices] >= self._threshold  # type: ignore[no-any-return]
         finally:
             if _plm is not None:
                 try:
@@ -198,7 +198,7 @@ def _resamp(x: np.ndarray, src: int, dst: int) -> np.ndarray:
     from scipy.signal import resample_poly
 
     g = gcd(src, dst)
-    return resample_poly(x, dst // g, src // g).astype(np.float32)
+    return resample_poly(x, dst // g, src // g).astype(np.float32)  # type: ignore[no-any-return]
 
 
 def get_silero_plugin() -> SileroPlugin:
@@ -224,7 +224,7 @@ def _silero_synthesize(self, text: str, speaker: str = "default", sr: int = 4800
     return samples.tobytes()
 
 
-SileroPlugin.synthesize = _silero_synthesize
+SileroPlugin.synthesize = _silero_synthesize  # type: ignore[attr-defined]
 
 
 # Backward-compat alias (Spec §11.3)

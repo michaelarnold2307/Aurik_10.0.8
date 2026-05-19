@@ -146,7 +146,7 @@ def _visqol_calculate(self, audio, sr=48000, mode="audio", ref_wav=None, **kwarg
     return self.score_absolute(audio, sr)
 
 
-VisqolPlugin.calculate = _visqol_calculate
+VisqolPlugin.calculate = _visqol_calculate  # type: ignore[attr-defined]
 
 # Alias für Rückwärtskompatibilität
 ViSQOLPlugin = VisqolPlugin

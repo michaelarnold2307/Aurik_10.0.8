@@ -429,7 +429,9 @@ _CARRIER_REPAIR_PHASE_PREFIXES: tuple[str, ...] = (
     "phase_01",  # click removal
     "phase_02",  # hum removal
     "phase_03",  # broadband denoise
+    "phase_04",  # RIAA-EQ (Stufe 2 §2.46) — Carrier-Chain-Inversion, nie consecutive_rollbacks inkrementieren
     "phase_09",  # crackle removal
+    "phase_12",  # wow/flutter (Stufe 2 §2.46) — Carrier-Chain-Inversion
     "phase_18",  # noise gate
     "phase_20",  # reverb reduction
     "phase_24",  # dropout repair
@@ -437,6 +439,9 @@ _CARRIER_REPAIR_PHASE_PREFIXES: tuple[str, ...] = (
     "phase_27",  # click/pop removal
     "phase_28",  # surface noise profiling
     "phase_29",  # tape hiss reduction
+    "phase_30",  # DC-Offset (Stufe 1 §2.46) — Carrier-Chain-Inversion
+    "phase_31",  # quantisation noise (Stufe 1 §2.46) — Carrier-Chain-Inversion
+    "phase_40",  # amplitude drift correction (Stufe 4.5 §2.46)
     "phase_49",  # advanced dereverb
     "phase_55",  # diffusion inpainting
 )

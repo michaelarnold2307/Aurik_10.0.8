@@ -42,7 +42,7 @@ def _load_mdx23c_model_class() -> type[Any]:
     model_class = getattr(inference_module, "EnsembleDemucsMDXMusicSeparationModel", None)
     if model_class is None:
         raise ImportError("EnsembleDemucsMDXMusicSeparationModel not found in MDX23C inference module")
-    return model_class
+    return model_class  # type: ignore[no-any-return]
 
 
 class SotaMDX23CSeparator:

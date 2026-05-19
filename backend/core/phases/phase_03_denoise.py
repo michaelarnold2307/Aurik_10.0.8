@@ -2690,7 +2690,8 @@ class DenoisePhase(PhaseInterface):
         mag_out = G_combined.astype(np.float64) * np.abs(Zxx_ref)
         phase_out = np.angle(Zxx_ref) + delta_phi
         Zxx_corrected = mag_out * np.exp(1j * phase_out)
-        return np.nan_to_num(Zxx_corrected, nan=0.0, posinf=0.0, neginf=0.0).astype(np.complex64)  # type: ignore[no-any-return]
+        _result = np.nan_to_num(Zxx_corrected, nan=0.0, posinf=0.0, neginf=0.0)
+        return _result.astype(np.complex64)  # type: ignore[no-any-return]
 
     @staticmethod
     def _compute_erb_bands(n_bins: int, sr: int) -> np.ndarray:

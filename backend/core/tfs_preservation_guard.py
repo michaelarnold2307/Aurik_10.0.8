@@ -66,7 +66,7 @@ def _erb_centre_frequencies(
     n_high = 21.4 * np.log10(0.00437 * f_high + 1.0)
     n_vals = np.linspace(n_low, n_high, n_bands)
     # Inverse: f = (10^(N/21.4) - 1) / 0.00437
-    return (10.0 ** (n_vals / 21.4) - 1.0) / 0.00437
+    return (10.0 ** (n_vals / 21.4) - 1.0) / 0.00437  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------

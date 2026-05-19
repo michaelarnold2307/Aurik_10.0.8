@@ -207,9 +207,9 @@ def _to_mono(audio: np.ndarray) -> np.ndarray:
         return arr
     if arr.ndim == 2:
         if arr.shape[0] <= 8 and arr.shape[1] > arr.shape[0]:
-            return arr.mean(axis=0)
+            return arr.mean(axis=0)  # type: ignore[no-any-return]
         if arr.shape[1] <= 8 and arr.shape[0] > arr.shape[1]:
-            return arr.mean(axis=1)
+            return arr.mean(axis=1)  # type: ignore[no-any-return]
     return arr.flatten()
 
 

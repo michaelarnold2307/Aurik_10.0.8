@@ -292,7 +292,7 @@ class VocalEnhancement(PhaseInterface):
             description="Comprehensive vocal processing chain for clarity and polish",
         )
 
-    def process(  # pylint: disable=arguments-renamed
+    def process(  # pylint: disable=arguments-renamed  # type: ignore[override]
         self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
     ) -> PhaseResult:
         """
@@ -361,6 +361,28 @@ class VocalEnhancement(PhaseInterface):
         config["chest_gain_db"] = float(config["chest_gain_db"] * _effective_strength)
         config["breath_reduction_db"] = float(config["breath_reduction_db"] * _effective_strength)
         config["compression_ratio"] = float(1.0 + (config["compression_ratio"] - 1.0) * _effective_strength)
+
+        # §2.46g soft_saturation_severity-Guard (phase_42 hard-cap 0.35):
+        # Vocal-Enhancement bei gesättigtem Material reduzieren, damit additive
+        # Gain-Stufen (presence/formant) keine Übersteuerungsartefakte verstärken.
+        _p42_sat_sev = float(np.clip(kwargs.get("soft_saturation_severity", 0.0), 0.0, 1.0))
+        _p42_sat_preserve = bool(kwargs.get("soft_saturation_preserve", False))
+        if _p42_sat_preserve and _effective_strength > 0.35:
+            _sat_scale_p42 = 0.35 / max(_effective_strength, 1e-6)
+            config["presence_gain_db"] = float(config["presence_gain_db"] * _sat_scale_p42)
+            config["formant_gain_db"] = float(config["formant_gain_db"] * _sat_scale_p42)
+            config["chest_gain_db"] = float(config["chest_gain_db"] * _sat_scale_p42)
+            logger.debug("Phase42 §2.46g soft_saturation_preserve hard-cap 0.35: scale=%.3f", _sat_scale_p42)
+        elif _p42_sat_sev > 0.3:
+            _sat_scale_p42 = float(np.clip(1.0 - (_p42_sat_sev - 0.3) * 1.2, 0.16, 1.0))
+            config["presence_gain_db"] = float(config["presence_gain_db"] * _sat_scale_p42)
+            config["formant_gain_db"] = float(config["formant_gain_db"] * _sat_scale_p42)
+            config["chest_gain_db"] = float(config["chest_gain_db"] * _sat_scale_p42)
+            logger.debug(
+                "Phase42 §2.46g soft_saturation_severity=%.3f → scale=%.3f (presence/formant/chest geschützt)",
+                _p42_sat_sev,
+                _sat_scale_p42,
+            )
 
         # §9.10.118 Era-Adaptive De-Esser Thresholds:
         # Vintage microphones (pre-1960) have inherently softer sibilants due
@@ -1182,7 +1204,7 @@ class VocalEnhancement(PhaseInterface):
                 roformer = get_bs_roformer()
                 if _plm42_rof is not None:
                     try:
-                        _plm42_rof.touch_plugin("MelBandRoformer")
+                        _plm42_rof.touch_plugin("MelBandRoformer")  # type: ignore[attr-defined]
                     except Exception:
                         pass
                 sep = roformer.separate(audio_mono, sr, stems=["vocals"])
@@ -1239,15 +1261,15 @@ class VocalEnhancement(PhaseInterface):
             mdx = get_mdx23c_plugin()
             if _plm42_mdx is not None:
                 try:
-                    _plm42_mdx.touch_plugin("MDX23C_vocals")
-                    _plm42_mdx.touch_plugin("MDX23C_inst")
+                    _plm42_mdx.touch_plugin("MDX23C_vocals")  # type: ignore[attr-defined]
+                    _plm42_mdx.touch_plugin("MDX23C_inst")  # type: ignore[attr-defined]
                 except Exception:
                     pass
             voc_mono = mdx.process(audio_mono, sr, stem="vocals")
             if _plm42_mdx is not None:
                 try:
-                    _plm42_mdx.touch_plugin("MDX23C_vocals")
-                    _plm42_mdx.touch_plugin("MDX23C_inst")
+                    _plm42_mdx.touch_plugin("MDX23C_vocals")  # type: ignore[attr-defined]
+                    _plm42_mdx.touch_plugin("MDX23C_inst")  # type: ignore[attr-defined]
                 except Exception:
                     pass
             inst_mono = mdx.process(audio_mono, sr, stem="inst")
@@ -1361,7 +1383,7 @@ class VocalEnhancement(PhaseInterface):
         # If formant region has >20% of total energy, likely contains vocals
         if total_energy > 1e-10:
             formant_ratio = formant_energy / total_energy
-            return formant_ratio > 0.20
+            return formant_ratio > 0.20  # type: ignore[no-any-return]
         else:
             return False
 
@@ -1543,7 +1565,7 @@ class VocalEnhancement(PhaseInterface):
                 a2 = 1.0 - alpha / A
                 b = np.array([b0, b1, b2]) / a0
                 a = np.array([1.0, a1 / a0, a2 / a0])
-                return signal.filtfilt(b, a, sig)
+                return signal.filtfilt(b, a, sig)  # type: ignore[no-any-return]
 
             # Apply per-formant correction
             result = audio.copy().astype(np.float32)
@@ -1760,7 +1782,7 @@ class VocalEnhancement(PhaseInterface):
             actual_reduction,
         )
 
-        return result
+        return result  # type: ignore[no-any-return]
 
     def _apply_deessing(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
         """Wendet De-Essing auf das Sibilanz-Band an."""
@@ -1790,7 +1812,7 @@ class VocalEnhancement(PhaseInterface):
         sibilance_reduced = sibilance * gain_linear
         deessed = audio + (sibilance_reduced - sibilance) * 0.7
 
-        return deessed
+        return deessed  # type: ignore[no-any-return]
 
     def _enhance_formants(
         self,
@@ -2067,7 +2089,7 @@ class VocalEnhancement(PhaseInterface):
             enhanced = signal.filtfilt(b, a, audio)
         else:
             enhanced = signal.lfilter(b, a, audio)
-        return enhanced
+        return enhanced  # type: ignore[no-any-return]
 
     def _enhance_chest(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
         """Enhance chest resonance."""
@@ -2093,7 +2115,7 @@ class VocalEnhancement(PhaseInterface):
             enhanced = signal.filtfilt(b, a, audio)
         else:
             enhanced = signal.lfilter(b, a, audio)
-        return enhanced
+        return enhanced  # type: ignore[no-any-return]
 
     def _control_breath(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
         """Reduce breath noise — segment-aware via BreathDetector (§2.8).
@@ -2162,7 +2184,7 @@ class VocalEnhancement(PhaseInterface):
         reduction_linear = 10 ** (-config["breath_reduction_db"] / 20)
         breath_reduced = breath * reduction_linear
         controlled = audio + (breath_reduced - breath) * 0.6
-        return controlled
+        return controlled  # type: ignore[no-any-return]
 
     def _apply_compression(self, audio: np.ndarray, sample_rate: int, config: dict[str, Any]) -> np.ndarray:
         """Wendet an: psychoacoustically-optimized vocal micro-compression.
@@ -2239,7 +2261,7 @@ class VocalEnhancement(PhaseInterface):
         else:
             compressed = compressed * makeup_linear
 
-        return compressed
+        return compressed  # type: ignore[no-any-return]
 
     def _apply_vocal_stem_mdem(
         self,

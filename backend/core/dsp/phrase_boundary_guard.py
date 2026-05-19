@@ -180,6 +180,6 @@ def _to_mono(audio: np.ndarray) -> np.ndarray:
         return audio.astype(np.float32)
     if audio.ndim == 2:
         if audio.shape[0] == 2 and audio.shape[1] > 2:
-            return audio.mean(axis=0).astype(np.float32)
-        return audio.mean(axis=-1).astype(np.float32)
+            return audio.mean(axis=0).astype(np.float32)  # type: ignore[no-any-return]
+        return audio.mean(axis=-1).astype(np.float32)  # type: ignore[no-any-return]
     return audio.flatten().astype(np.float32)

@@ -508,7 +508,7 @@ class TestISO226WeightingAndVirtualPitch:
     def _band_energy_signal(self, freq_hz: float, duration: float = 1.5) -> np.ndarray:
         """Sinuston bei freq_hz als float32-Mono."""
         t = np.linspace(0, duration, int(self.SR * duration), endpoint=False)
-        return (0.5 * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)
+        return (0.5 * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)  # type: ignore[no-any-return]
 
     def _harmonic_bass_signal(self, f0_hz: float = 55.0, duration: float = 2.0) -> np.ndarray:
         """Sinussumme: schwacher F0 + starke Obertöne 2F0, 3F0, 4F0 (Missing Fundamental)."""
@@ -519,7 +519,7 @@ class TestISO226WeightingAndVirtualPitch:
             + 0.35 * np.sin(2 * np.pi * 3 * f0_hz * t)  # strong 3rd harmonic
             + 0.25 * np.sin(2 * np.pi * 4 * f0_hz * t)  # strong 4th harmonic
         )
-        return audio.astype(np.float32)
+        return audio.astype(np.float32)  # type: ignore[no-any-return]
 
     # --- ISO 226 helper --------------------------------------------------
 
@@ -680,7 +680,7 @@ class TestTonalCenterMetricKeyShift:
             + 0.3 * np.sin(2 * np.pi * root_hz * 1.2599 * t)  # major third
             + 0.3 * np.sin(2 * np.pi * root_hz * 1.4983 * t)  # perfect fifth
         )
-        return audio.astype(np.float32)
+        return audio.astype(np.float32)  # type: ignore[no-any-return]
 
     @pytest.fixture
     def metric(self):
@@ -831,7 +831,7 @@ class TestH2H4WarmthOvertone:
             + 0.15 * np.sin(2 * np.pi * 800 * t)  # H4 = 0.15
             + 0.005 * np.sin(2 * np.pi * 1000 * t)  # H5 = 0.005
         )
-        return (sig / (np.max(np.abs(sig)) + 1e-10)).astype(np.float32)
+        return (sig / (np.max(np.abs(sig)) + 1e-10)).astype(np.float32)  # type: ignore[no-any-return]
 
     def test_method_exists(self):
         """WaermeMetric._h2h4_warmth ist als statische Methode vorhanden."""
@@ -900,7 +900,7 @@ class TestSeparationFidelitySIRProxy:
     def _sine(self, freq: float, dur: float = 10.0) -> np.ndarray:
         # 10 s: SeparationFidelityMetric short-form blend needs ≥ 8 s for _rel = 1.0
         t = np.linspace(0, dur, int(self.SR * dur), endpoint=False)
-        return np.sin(2 * np.pi * freq * t).astype(np.float32)
+        return np.sin(2 * np.pi * freq * t).astype(np.float32)  # type: ignore[no-any-return]
 
     def test_perfect_restoration_score_near_1(self):
         """Identische restored/reference → Score ≥ 0.95."""
@@ -1159,7 +1159,7 @@ class TestEmotionalitaetMetricV913Calibration:
             if idx + 3600 < n:
                 beats[idx : idx + 3600] += 0.9 * np.exp(-np.arange(3600) / 350).astype(np.float32)
         sig = env * (0.4 * np.sin(2 * np.pi * 80 * t) + 0.3 * np.sin(2 * np.pi * 500 * t)) + beats
-        return np.clip(sig / np.max(np.abs(sig)), -1.0, 1.0).astype(np.float32)
+        return np.clip(sig / np.max(np.abs(sig)), -1.0, 1.0).astype(np.float32)  # type: ignore[no-any-return]
 
     def test_dynamic_audio_meets_threshold(self):
         """Audio mit Transients und Dynamik erzielt ≥ 0.87.
@@ -1222,7 +1222,7 @@ class TestEmotionalitaetMetricMERTBlend:
         t = np.linspace(0, 4, n, endpoint=False)
         env = 0.5 + 0.5 * np.sin(2 * np.pi * 0.5 * t)
         sig = env * np.sin(2 * np.pi * 440 * t)
-        return (sig / (np.max(np.abs(sig)) + 1e-10)).astype(np.float32)
+        return (sig / (np.max(np.abs(sig)) + 1e-10)).astype(np.float32)  # type: ignore[no-any-return]
 
     def _mock_mert(self, model_type: str, naturalness: float):
         """Returns (mock_mert, mock_analysis) pair with configured attributes.
@@ -1376,7 +1376,7 @@ class TestTransparenzMetricV913Calibration:
             + 0.15 * np.sin(2 * np.pi * 6500 * t)
         ) + beats
         sig += rng.standard_normal(n).astype(np.float32) * 0.03
-        return np.clip(sig / np.max(np.abs(sig)), -1.0, 1.0).astype(np.float32)
+        return np.clip(sig / np.max(np.abs(sig)), -1.0, 1.0).astype(np.float32)  # type: ignore[no-any-return]
 
     def test_contrast_22db_gets_full_score(self):
         """22 dB mean_contrast → contrast_score = 1.0 mit Nenner 14.
@@ -1451,7 +1451,7 @@ class TestMetricAudioCapPerformance:
             + 0.3 * np.sin(2 * np.pi * 880 * t)
             + 0.02 * np.random.default_rng(42).standard_normal(len(t))
         ).astype(np.float32)
-        return sig
+        return sig  # type: ignore[no-any-return]
 
     def test_natuerlichkeit_audio_cap_is_5s(self):
         """_MAX_NAT_SAMPLES = sr*5 — §perf-v9.11.0 konstantenprüfung."""
