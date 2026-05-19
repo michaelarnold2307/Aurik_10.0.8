@@ -71,6 +71,8 @@ class FeedbackChain:
         self.use_versa_in_loop = bool(use_versa_in_loop)
         self.panns_singing: float = float(np.clip(panns_singing, 0.0, 1.0))  # §0p VQI-Gate
         self._vqi_orig_audio: np.ndarray | None = None  # gesetzt in run() — §0p Dual-Objective
+        self.frisson_zones: list | None = None  # §Frisson: gesetzt von UV3 vor FC-Loop
+        self.frisson_orig_audio: np.ndarray | None = None  # §Frisson: Original-Audio-Referenz
         self.goal_priority_callback: Callable[[np.ndarray, np.ndarray], tuple[bool, str]] | None = None
         self.goal_weights: dict[str, float] | None = None  # §2.56 Song-Goal-Importance
         self.adaptive_goal_thresholds: dict[str, float] | None = None  # §09.2 per-song adaptive targets
@@ -82,8 +84,8 @@ class FeedbackChain:
         self._last_analytics_overhead_s: float = 0.0  # §perf: accumulated goal-measurement overhead
         if self.use_pqs_in_loop:
             try:
-                from backend.core.perceptual_quality_scorer import (
-                    score_audio_absolute,  # pylint: disable=import-outside-toplevel
+                from backend.core.perceptual_quality_scorer import (  # pylint: disable=import-outside-toplevel
+                    score_audio_absolute,
                 )
 
                 self._pqs_score_fn = score_audio_absolute
@@ -154,8 +156,8 @@ class FeedbackChain:
         if self.panns_singing < 0.35 or self._vqi_orig_audio is None:
             return base_mos
         try:
-            from backend.core.musical_goals.vocal_quality_index import (
-                compute_vqi,  # pylint: disable=import-outside-toplevel
+            from backend.core.musical_goals.vocal_quality_index import (  # pylint: disable=import-outside-toplevel
+                compute_vqi,
             )
 
             vqi_result = compute_vqi(self._vqi_orig_audio, audio, sr)
@@ -173,12 +175,13 @@ class FeedbackChain:
             # Motivation: FC darf Klimax-Passagen (Falsett-Einsatz, Vibrato-Höhepunkt,
             # letzter Akkord) nicht durch Over-Processing komprimieren.
             _frisson_zones = getattr(self, "frisson_zones", None)
-            _frisson_orig = getattr(self, "_frisson_orig_audio", None)
+            _frisson_orig: np.ndarray | None = getattr(self, "frisson_orig_audio", None)
             if _frisson_zones and _frisson_orig is not None:
+                _fo: np.ndarray = _frisson_orig  # narrowed: is not None guard oben  # type: ignore[assignment]
                 try:
                     _frisson_penalty = 1.0
                     _n_frisson = int(audio.shape[-1] if audio.ndim == 2 else len(audio))
-                    _n_orig = int(_frisson_orig.shape[-1] if _frisson_orig.ndim == 2 else len(_frisson_orig))
+                    _n_orig = int(_fo.shape[-1] if _fo.ndim == 2 else len(_fo))
                     _n_cmp = min(_n_frisson, _n_orig)
                     _zones_checked = 0
                     for _fz in _frisson_zones:  # pylint: disable=not-an-iterable
@@ -194,10 +197,10 @@ class FeedbackChain:
                             _rms_out = float(np.sqrt(np.mean(audio[:, _si:_ei] ** 2) + 1e-14))
                         else:
                             _rms_out = float(np.sqrt(np.mean(audio[_si:_ei] ** 2) + 1e-14))
-                        if _frisson_orig.ndim == 2:  # pylint: disable=unsubscriptable-object
-                            _rms_ref = float(np.sqrt(np.mean(_frisson_orig[:, _si:_ei] ** 2) + 1e-14))  # pylint: disable=unsubscriptable-object
+                        if _fo.ndim == 2:
+                            _rms_ref = float(np.sqrt(np.mean(_fo[:, _si:_ei] ** 2) + 1e-14))  # type: ignore[index]  # pylint: disable=unsubscriptable-object
                         else:
-                            _rms_ref = float(np.sqrt(np.mean(_frisson_orig[_si:_ei] ** 2) + 1e-14))
+                            _rms_ref = float(np.sqrt(np.mean(_fo[_si:_ei] ** 2) + 1e-14))  # type: ignore[index]  # pylint: disable=unsubscriptable-object
                         if _rms_ref > 1e-10:
                             _ratio = _rms_out / _rms_ref
                             # Penalty wenn Energie > 3 dB abgefallen (ratio < 0.708) —
@@ -527,8 +530,8 @@ class FeedbackChain:
         _gp_advisory_applied = False
         if _phase_list_mode and len(_active_phases) > 0:
             try:
-                from backend.core.gp_parameter_optimizer import (
-                    get_optimizer as _get_gp_opt,  # pylint: disable=import-outside-toplevel
+                from backend.core.gp_parameter_optimizer import (  # pylint: disable=import-outside-toplevel
+                    get_optimizer as _get_gp_opt,
                 )
 
                 _gp_opt = _get_gp_opt()
@@ -633,8 +636,8 @@ class FeedbackChain:
         # §2.34 GoalPriorityProtocol — Stufe-1/2-Regression löst sofortigen Rollback aus
         _gpp = None
         try:
-            from backend.core.goal_priority_protocol import (
-                GoalPriorityProtocol,  # pylint: disable=import-outside-toplevel
+            from backend.core.goal_priority_protocol import (  # pylint: disable=import-outside-toplevel
+                GoalPriorityProtocol,
             )
 
             _gpp = GoalPriorityProtocol()
@@ -714,8 +717,8 @@ class FeedbackChain:
                         )
                 # §Perf: import _RESTORATIVE_PHASES once before the per-phase loop (not per-phase)
                 try:
-                    from backend.core.per_phase_musical_goals_gate import (
-                        _RESTORATIVE_PHASES as _RP_SET,  # pylint: disable=import-outside-toplevel
+                    from backend.core.per_phase_musical_goals_gate import (  # pylint: disable=import-outside-toplevel
+                        _RESTORATIVE_PHASES as _RP_SET,
                     )
                 except Exception:
                     _RP_SET = frozenset(
@@ -836,8 +839,8 @@ class FeedbackChain:
             # (UV3 provides its own GPP callback that already calls measure_all).
             if _gpp is not None and _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    from backend.core.musical_goals.musical_goals_metrics import (
-                        get_checker,  # pylint: disable=import-outside-toplevel
+                    from backend.core.musical_goals.musical_goals_metrics import (  # pylint: disable=import-outside-toplevel
+                        get_checker,
                     )
 
                     _checker = get_checker()
@@ -868,8 +871,8 @@ class FeedbackChain:
                     logger.debug("GoalPriorityProtocol in FeedbackChain nicht verfügbar: %s", _gpp_exc)
             elif _gpp is not None and not _prev_goals and not callable(self.goal_priority_callback):
                 try:
-                    from backend.core.musical_goals.musical_goals_metrics import (
-                        get_checker,  # pylint: disable=import-outside-toplevel
+                    from backend.core.musical_goals.musical_goals_metrics import (  # pylint: disable=import-outside-toplevel
+                        get_checker,
                     )
 
                     _checker = get_checker()

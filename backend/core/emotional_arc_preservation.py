@@ -100,6 +100,7 @@ class EmotionalArcResult:
         return float(0.50 * ar + 0.30 * val + 0.20 * klimax)
 
     def as_dict(self) -> dict:
+        """Gibt die Metriken als Dictionary zurück."""
         return {
             "arousal_pearson": self.arousal_pearson,
             "valence_pearson": self.valence_pearson,
@@ -652,7 +653,7 @@ class EmotionalArcPreservationMetric:
         # Savitzky-Golay smooth (boxcar fallback)
         if len(gain_db) >= 7:
             try:
-                from scipy.signal import savgol_filter
+                from scipy.signal import savgol_filter  # pylint: disable=import-outside-toplevel
 
                 gain_db = savgol_filter(gain_db, window_length=7, polyorder=2)
             except Exception:
@@ -783,7 +784,7 @@ _lock = threading.Lock()
 
 def get_emotional_arc_metric() -> EmotionalArcPreservationMetric:
     """Thread-sicherer Singleton-Accessor."""
-    global _instance
+    global _instance  # pylint: disable=global-statement
     if _instance is None:
         with _lock:
             if _instance is None:
@@ -1141,10 +1142,10 @@ class WaveformPlausibilityGuard:
         if a.ndim == 2:
             # Canonical Aurik format: (channels, samples) — channels dim is always ≤ 2
             if a.shape[0] <= 2:
-                return np.mean(a, axis=0)
+                return np.mean(a, axis=0)  # type: ignore
             else:
                 # Unexpected orientation: (samples, channels)
-                return np.mean(a, axis=1)
+                return np.mean(a, axis=1)  # type: ignore
         return a
 
     def _apply_gain(self, audio: np.ndarray, gain_db_interp: np.ndarray) -> np.ndarray:
@@ -1229,8 +1230,8 @@ _wpg_lock = threading.Lock()
 
 
 def get_waveform_plausibility_guard() -> WaveformPlausibilityGuard:
-    """Thread-safe singleton accessor for WaveformPlausibilityGuard."""
-    global _wpg_instance
+    """Thread-sicherer Singleton-Accessor für WaveformPlausibilityGuard."""
+    global _wpg_instance  # pylint: disable=global-statement
     if _wpg_instance is None:
         with _wpg_lock:
             if _wpg_instance is None:

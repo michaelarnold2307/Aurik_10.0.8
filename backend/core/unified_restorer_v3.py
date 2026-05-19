@@ -772,7 +772,7 @@ class UnifiedRestorerV3:
         self._phase_plan_intelligence: object = None
         self._phase_regression_log: dict[str, float] = {}
         self._active_intervention_log: list[dict[str, Any]] = []
-        self._pmgg_log_entries: list = []
+        self._pmgg_log_entries: list[Any] = []
         self._active_pipeline_cb_for_sub: object = None
         self._active_phase_pct_for_sub: tuple[float, float] | None = None
         self._conductor_strength_hints: dict = {}
@@ -6466,12 +6466,8 @@ class UnifiedRestorerV3:
                 from backend.core.musical_structure_analyzer import analyze_musical_structure
 
                 _musical_structure = analyze_musical_structure(_analysis_audio, sample_rate)
-                _n_chorus = sum(  # type: ignore[attr-defined, misc]
-                    1 for s in _musical_structure.segments if s.segment_type == "chorus"
-                )
-                _n_verse = sum(  # type: ignore[attr-defined, misc]
-                    1 for s in _musical_structure.segments if s.segment_type == "verse"
-                )
+                _n_chorus = sum(1 for s in _musical_structure.segments if s.label == "chorus")
+                _n_verse = sum(1 for s in _musical_structure.segments if s.label == "verse")
                 logger.info(
                     "🎵 MusicalStructure: %d Segmente (Chorus×%d Verse×%d) confidence=%.2f",
                     len(_musical_structure.segments),
@@ -8564,7 +8560,8 @@ class UnifiedRestorerV3:
                 # _apply_vqi_dual_objective verwendet diese Zonen um Klimax-Passagen im
                 # Loop-Score zu schützen — verhindert dass FC Frisson-Zonen wegoptimiert.
                 _fc_chain.frisson_zones = list(self._restoration_context.get("frisson_zones", []) or [])
-                _fc_chain._frisson_orig_audio = audio  # Original-Referenz für Energie-Vergleich
+                # Original-Referenz für Energie-Vergleich
+                _fc_chain.frisson_orig_audio = audio  # Original-Referenz für Energie-Vergleich
                 # §2.34 GPP-WIRE: GoalPriorityProtocol als in-loop Phase-Callback verdrahten
                 try:
                     from backend.core.goal_priority_protocol import check_iteration_abort as _check_gpp
@@ -14079,7 +14076,7 @@ class UnifiedRestorerV3:
                 restored_audio if restored_audio.ndim == 1 else np.mean(restored_audio, axis=0).astype(np.float32)
             )
             _spd_decision_raw = _SPD26().decide(_spd_audio, sample_rate)
-            _spd_decision = _spd_decision_raw if isinstance(_spd_decision_raw, dict) else {}
+            _spd_decision: dict[str, Any] = _spd_decision_raw if isinstance(_spd_decision_raw, dict) else {}
             _spd_feats_raw = _spd_decision.get("features", {})
             _spd_feats = _spd_feats_raw if isinstance(_spd_feats_raw, dict) else {}
             _spd_result = {
@@ -16237,8 +16234,8 @@ class UnifiedRestorerV3:
                 "temporal_smoothness": round(float(_pam.calculate_temporal_smoothness(_pam_audio)), 4),
                 "harmonic_coherence": round(float(_pam.calculate_harmonic_coherence(_pam_audio)), 4),
                 "noise_floor_consistency": round(float(_pam.calculate_noise_floor_consistency(_pam_audio)), 4),
-                "naturalness_score": round(  # type: ignore[arg-type]
-                    float(_pam.calculate_naturalness_score(_pam_audio)), 4
+                "naturalness_score": round(
+                    float(_pam.calculate_naturalness_score(_pam_audio).get("naturalness_overall", 0.0)), 4
                 ),
             }
             logger.debug("🎵 PsychoAcousticMetrics: %s", _pam_result)
@@ -20081,7 +20078,8 @@ class UnifiedRestorerV3:
                             _cstc_result.get("coherence_score", 0.0),
                         )
                     if hasattr(result, "metadata") and isinstance(result.metadata, dict):
-                        _cstc_coh = round(float(_cstc_result.get("coherence_score", 1.0)), 3)
+                        _cstc_coh_raw = _cstc_result.get("coherence_score", 1.0)
+                        _cstc_coh = round(float(_cstc_coh_raw if isinstance(_cstc_coh_raw, (int, float)) else 1.0), 3)
                         result.metadata["cstc_coherence"] = _cstc_coh  # type: ignore[arg-type]
             except Exception as _cstc_exc:
                 logger.debug("§CSTC post-phase check non-blocking: %s", _cstc_exc)
@@ -21980,7 +21978,7 @@ class UnifiedRestorerV3:
             restorability_score  # §2.29 normativ: aus RestorabilityEstimator (kein Hard-Code)
         )
         _pmgg_scores_curr: dict[str, float] | None = None
-        _pmgg_log_entries: list = []
+        _pmgg_log_entries: list[Any] = []
         _pmgg_enabled = getattr(self.config, "enable_phase_gate", True)
         if _pmgg_enabled:
             try:
@@ -22466,7 +22464,8 @@ class UnifiedRestorerV3:
             # apply positive makeup only while authority is enabled.
             _allow_positive_makeup_gain: bool = True
             _makeup_authority_reason: str = "initial"
-            _afg_best_clean_phase: str = "__pre_pipeline__"  # type: ignore[no-redef]  # replaces final full-pipeline comparison
+            # §2.49: best_clean_phase ersetzt finalen Full-Pipeline-Vergleich (AFG)
+            _afg_best_clean_phase: str = "__pre_pipeline__"  # type: ignore[no-redef]
             # pre-carrier snapshot + checkpoint
             _min_per_phase_afg_score: float = 1.0  # type: ignore[no-redef]
             _pre_carrier_audio: np.ndarray = current_audio.copy()  # type: ignore[no-redef]
