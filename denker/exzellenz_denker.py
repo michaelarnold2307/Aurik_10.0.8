@@ -16,6 +16,7 @@ import logging
 import math
 import threading
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -29,7 +30,7 @@ try:
         UnifiedVocalAIEnhancer,
     )
 except Exception:  # ImportError, AttributeError, etc.
-    UnifiedVocalAIEnhancer = None  # type: ignore[assignment,misc]
+    UnifiedVocalAIEnhancer = None  # type: ignore[assignment]
     EmotionPreservationMode = None  # type: ignore[assignment]
 
 _3X_RT_LIMIT: float = 32.0  # Maximaler RT-Faktor (Spec §9.5)
@@ -105,9 +106,9 @@ class ExzellenzDenker:
     """
 
     def __init__(self) -> None:
-        self._optimizer: object | None = None
+        self._optimizer: Any = None
         self._opt_lock = threading.Lock()
-        self._checker: object | None = None
+        self._checker: Any = None
         self._checker_lock = threading.Lock()
 
     # ── Öffentliche API ──────────────────────────────────────────────────────
@@ -768,7 +769,7 @@ class ExzellenzDenker:
 
     # ── Interne Hilfsmethoden ────────────────────────────────────────────────
 
-    def _get_optimizer(self, sr: int = 48_000, material: str = "auto") -> object:
+    def _get_optimizer(self, sr: int = 48_000, material: str = "auto") -> Any:
         """Double-Checked Locking — lazy ExcellenceOptimizer-Init.
 
         Der Optimizer wird je sr+material neu erstellt wenn sr/material sich ändern.
@@ -793,7 +794,7 @@ class ExzellenzDenker:
         return self._optimizer
 
     @staticmethod
-    def _build_optimizer(sr: int, material: str) -> object:
+    def _build_optimizer(sr: int, material: str) -> Any:
         """Erstellt einen neuen ExcellenceOptimizer."""
         from backend.core.excellence_optimizer import ExcellenceOptimizer  # lazy import
 
@@ -815,7 +816,7 @@ class ExzellenzDenker:
             },
         )
 
-    def _get_checker(self) -> object:
+    def _get_checker(self) -> Any:
         """Double-Checked Locking — lazy MusicalGoalsChecker-Init."""
         if self._checker is None:
             with self._checker_lock:
@@ -824,7 +825,7 @@ class ExzellenzDenker:
         return self._checker
 
     @staticmethod
-    def _build_checker() -> object:
+    def _build_checker() -> Any:
         """Erstellt MusicalGoalsChecker."""
         from backend.core.musical_goals.musical_goals_metrics import (  # lazy import
             MusicalGoalsChecker,

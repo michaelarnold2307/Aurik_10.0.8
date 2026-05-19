@@ -465,7 +465,6 @@ def test_full_pipeline_with_safety(sample_audio):
     # Safety should pass or have only warnings
     if not post_result.passed:
         print(f"Post-check issues: {post_result.issues}")
-        print(f"Post-check warnings: {post_result.warnings}")
 
 
 # ============================================================================
