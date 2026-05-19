@@ -586,7 +586,9 @@ class ExzellenzDenker:
                     material=material,
                 )
                 # Konservative Stärke: §0 Minimal-Intervention
-                _opt_td._modulation_strength = getattr(_opt_td, "_modulation_strength", 0.3) * 0.55
+                _opt_td._modulation_strength = (  # pylint: disable=protected-access
+                    getattr(_opt_td, "_modulation_strength", 0.3) * 0.55
+                )
                 _td_out, _ = _opt_td.optimize(_best_audio)
                 _td_out = np.clip(
                     np.nan_to_num(_td_out.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0),

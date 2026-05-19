@@ -625,6 +625,13 @@ class GPParameterOptimizer:
         """
         it = self._iterations.get(material, 0)
 
+        # Embedding-Vektor als Kontextmerkmal loggen (zukünftige GP-Input-Warping-Erweiterung)
+        if embedding_vec is not None:
+            logger.debug(
+                "propose: embedding_vec shape=%s (Input-Warping reserviert, nicht im GP-Raum)",
+                getattr(embedding_vec, "shape", type(embedding_vec)),
+            )
+
         # Gedächtnis laden
         memory = _load_memory(material)
         all_X: list[np.ndarray] = []
