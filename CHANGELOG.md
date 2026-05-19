@@ -244,11 +244,14 @@ führte zu brillanz=0.423 für reales NR-restauriertes Audio (crest_peak≈36 �
 Dieser Wert lag 0.040 unter dem Niveau, das für mg_score=0.857 und damit MUSHRA=84.0 benötigt wird.
 
 **Fix (v9.12.4):** Offset von `0.5` auf `0.4` reduziert:
+
 ```python
+
 # Vorher: (log10(crest_peak) - 0.5) / 2.5
 # Nachher: (log10(crest_peak) - 0.4) / 2.5
 
 ```
+
 Neue Kalibrierung: ratio 10 → 0.24; ratio 36 → 0.46; ratio 100 → 0.64; ratio 500 → 0.92; ratio 1000 → 1.0.
 Reine Sinuston-Signale (crest_peak >> 1000) werden unverändert auf 1.0 geclipt (kein Regressionsrisiko).
 
@@ -278,11 +281,15 @@ Testsignale mit nur 5/598 besetzten HF-Bins (air peaks bei 9/11/13 kHz) fiel p95
 crest≈1.0 → score≈0.03 (brillanz=0.029 statt >0.5).
 
 **Fix:** Sekundäre Metrik `max/p20` (log-skaliert, Divisor 2.5, Offset 0.5):
+
 ```python
+
 _crest_peak = hf_peak / hf_p20
 _score_peak = clip((log10(_crest_peak) - 0.5) / 2.5, 0.0, 1.0)
 score = max(score, _score_peak)
+
 ```
+
 **Auswirkung:** brillanz 0.029 → 0.42+ für sparse-harmonische Signale.
 
 ### fix §Harmonic-Concentration-Metric: TransparenzMetric secondary metric + per-band content guard
@@ -310,10 +317,14 @@ Per-band RMS-Guard fehlte → leere Bänder (BW-Ceiling) flossen in Mittelung ei
 
 **Root Cause (kritisch, AMRB-01-TAPE LUFS-Δ = -20.8 LU):**
 `_hpss_separate` in `transient_decoupled_processor.py` verwendete falsch orientierte Median-Filter:
+
 ```
+
 FALSCH: H = median_filter(mag, size=(h_len, 1))  # axis0 = Frequenz → perkussiver Charakter
         P = median_filter(mag, size=(1, p_len))   # axis1 = Zeit    → harmonischer Charakter
+
 ```
+
 `scipy.signal.stft` gibt `Z.shape = (n_freqs, n_time_frames)` zurück — axis0=Frequenz, axis1=Zeit.
 Harmonische Maske muss entlang der **Zeitachse** (axis1) glätten (horizontale Streifen = persistente Töne).
 Perkussive Maske muss entlang der **Frequenzachse** (axis0) glätten (vertikale Streifen = Transienten).
@@ -321,10 +332,14 @@ Resultat mit vertauschten Kernen: `harm_rms = -31.5 dBFS` (nur Rauschen), `perc_
 **Die gesamte UV3-Pipeline verarbeitete Rauschen bei -30.5 dBFS statt das tonale Signal bei -11 dBFS.**
 
 **Fix:**
+
 ```python
+
 H = median_filter(mag, size=(1, h_len))   # axis1=Zeit → harmonische Maske ✓
 P = median_filter(mag, size=(p_len, 1))   # axis0=Frequenz → perkussive Maske ✓
+
 ```
+
 Nach Fix: `harm_rms = -11.0 dBFS` ✓, `perc_rms = -27.6 dBFS` ✓
 
 **Auswirkung:** LUFS-Δ war -20.8 LU → erwartet: ≈ 0 LU nach Fix. MUSHRA-Impact: +10 Punkte (lufs_score 0.0 → ≈1.0) + NSIM-Verbesserung (Pipeline arbeitet auf korrektem Signal). AMRB-01-TAPE Ziel: MUSHRA ≥ 80.
@@ -3068,9 +3083,11 @@ Docstring-Fehler in `phase_24_dropout_repair.py` korrigiert: Die NMF-IS-Update-R
 `process_in_adaptive_chunks` verwendete lineare Rampen (`np.linspace`) als Fade-Fenster statt Hanning-Halffenstern. Ersetzt durch:
 
 ```python
+
 _t = np.arange(fade_samples) / fade_samples
 fade_in  = 0.5 * (1 - cos(π · t))   # steigende Hanning-Hälfte
 fade_out = 1 - fade_in              # COLA: fade_in + fade_out = 1
+
 ```
 
 Kein Amplitudeneinbruch mehr an Chunk-Grenzen; C¹-stetige Übergänge schützen Transient-Shape.
@@ -3284,9 +3301,11 @@ Problem: `EmotionalitaetMetric` nutzte ausschließlich den DSP-basierten Dynamik
 Lösung: Optionaler eingerichtiger MERT-Blend nach Abschluss des DSP-Scores:
 
 ```python
+
 mert_emotion = float(np.clip(analysis.naturalness_score, 0.0, 1.0))
 blended = 0.85 * score + 0.15 * mert_emotion
 score = max(score, blended)  # one-directional: MERT kann Score nur heben, nie senken
+
 ```
 
 - Gewicht MERT: 15 %; DSP-Anker: 85 %
@@ -3529,11 +3548,13 @@ Gesamt PMGG-Tests: **117**.
 **Neuer Algorithmus** (ersetzt `hf_energy / tot_energy / 0.3 + 0.4`):
 
 ```python
+
 _hf_mask_b = (freqs >= 2000) & (freqs <= 16000)
 _hf_bins_b = fft_mag[_hf_mask_b]
 _p95_b = float(np.percentile(_hf_bins_b, 95))
 _p50_b = float(np.median(_hf_bins_b)) + 1e-9
 scores["brillanz"] = float(np.clip((_p95_b / _p50_b - 1.5) / 13.5, 0.0, 1.0))
+
 ```
 
 Wissenschaftliche Basis: Fastl & Zwicker 2007 §8.3 (Spectral Brightness).
@@ -3544,10 +3565,12 @@ Rauschen hebt p50 (Median); musikalische Peaks dominieren p95 → Crest nach Den
 **Neuer Algorithmus** (ersetzt 75%-Rolloff + 3-Band-Balance):
 
 ```python
+
 _oct_bands_t = [(250, 500), (500, 1000), (1000, 2000), (2000, 4000), (4000, 8000)]
 # per-band p95/p50 crest, mean over 5 bands
 
 scores["transparenz"] = float(np.clip(np.mean(band_crests), 0.0, 1.0))
+
 ```
 
 Wissenschaftliche Basis: Moore & Glasberg 1983 (Auditory Filters); ITU-T P.862.
@@ -3559,9 +3582,11 @@ verschluckt → Precise-Override funktionierte nie korrekt.
 **Neuer Algorithmus** (ersetzt ISO-226 mid/total-Energie-Ratio):
 
 ```python
+
 _e_low_mid = float(np.mean(fft_mag[(freqs >= 200) & (freqs < 800)] ** 2)) + 1e-9
 _e_upper_mid = float(np.mean(fft_mag[(freqs >= 800) & (freqs < 3000)] ** 2)) + 1e-9
 scores["waerme"] = float(np.clip(_e_low_mid / _e_upper_mid / 1.5, 0.0, 1.0))
+
 ```
 
 Wissenschaftliche Basis: Fletcher & Rossing; Moore & Glasberg 1983 Auditory Filters.
@@ -4144,7 +4169,9 @@ Mehrere qualitätskritische Stellen wurden auf höhere Mess- und Verarbeitungspr
 implementiert die bindende §8.3 Gänsehaut-Formel als gewichtetes geometrisches Mittel:
 
 ```text
+
 score = T^0.40 × M^0.25 × K^0.20 × A^0.15 − Artefakte × scale
+
 ```
 
 Fünf Dimensionen: Transient Integrity (40%), Micro-Dynamics (25%), Clarity (20%),
@@ -4385,19 +4412,23 @@ davon wie lange die Verarbeitung dauert. Stufe 2 läuft vollständig im Hintergr
 ### Neue Pflicht-Signals (`MLRefinementThread`)
 
 ```python
+
 refinement_started(str, int)      # output_path, n_deferred_phases
 refinement_phase_done(str, float) # phase_id, quality_improvement_delta
 refinement_progress(int, str)     # pct 0–100, phase_name
 refinement_complete(str, object)  # output_path, final_RestorationResult
 refinement_cancelled(str)         # output_path → Stufe-1-Export bleibt
+
 ```
 
 ### Neue RestorationResult-Felder
 
 ```python
+
 deferred_phases:         list[str] = field(default_factory=list)  # §2.38 KMV
 refinement_complete:     bool = False
 stufe2_quality_estimate: Optional[float] = None
+
 ```
 
 ---
@@ -4660,6 +4691,7 @@ Drei Analyse-Module enthielten `assert sr == 48000`, was der Spec-Pflicht **VERB
 ### Git-Commit Empfehlung
 
 ```text
+
 Fix: Short-Clip-Gate RMS-Threshold (ML-Modelle für Rausch-Audio)
 
 - RMS-Schwelle von 0.0001 (-80 dBFS) zu 0.001 (-60 dBFS)
@@ -4921,6 +4953,7 @@ koordiniert. EraClassifier + GermanSchlagerClassifier + CLAP — vollständig mi
 ### Architektonischer Kern: Cross-Phase-Reasoning
 
 ```text
+
 AurikDenker.Stufe 4
   → erstelle_globalplan(audio, sr, use_ml_classifiers=False)   # DSP-only
     → 13 Ära-Profile × Genre-Modifikatoren → stilbewusste Zielwerte
@@ -4930,6 +4963,7 @@ AurikDenker.Stufe 4
   → UnifiedRestorerV3.restore(global_plan=plan)
     → _profiled_phase_call: plan.get_phase_params(phase_id) → jede Phase
   → Enrichment: rest.era_decade → plan.portrait.decade (ML-Ergebnis aus UV3)
+
 ```
 
 **Beispiel-Koordination** (1930er Schellackplatte mit Schlager):
@@ -5421,7 +5455,9 @@ Die vollständige Testsuite erreicht damit **1861 Tests** (vorher 1685, +176, 1 
 ### Teststand
 
 ```text
+
 1861 passed, 1 skipped (2:29 min)
+
 ```
 
 ---
@@ -5433,8 +5469,10 @@ Die vollständige Testsuite erreicht damit **1861 Tests** (vorher 1685, +176, 1 
 Drei weitere Kernmodule — die alle vollständig implementiert, aber nie in der Produktionspipeline aufgerufen wurden — sind jetzt aktiv verdrahtet. Die post-Pipeline-Sequenz in `restore()` lautet damit:
 
 ```text
+
 [Phasen-Pipeline] → TQC → StereoInvariant → ExcellenceOptimizer → HarmonicLattice
 → MusicalGoalsChecker → GP-Lernzyklus → Performance-Report → RestorationResult
+
 ```
 
 ### Änderungen — `core/unified_restorer_v3.py`
@@ -7857,6 +7895,7 @@ Zwei neue wissenschaftlich begründete kausale Kanten:
 #### End-to-End Test Suite: 6/6 Passing ✅
 
 ```text
+
 ✅ test_01: Vinyl Full Pipeline (BALANCED mode)
 ✅ test_02: Tape Full Pipeline (BALANCED mode)
 ✅ test_03: Fast Mode Fallback (DSP-only, RT <1.0×)
@@ -7865,6 +7904,7 @@ Zwei neue wissenschaftlich begründete kausale Kanten:
 ✅ test_06: Performance Comparison (RT <3.0×)
 
 ======================== 6 passed, 1 warning in 40.59s =========================
+
 ```
 
 **Test Coverage:** 85%+ (core, dsp, enhancement modules)
