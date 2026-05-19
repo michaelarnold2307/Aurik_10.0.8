@@ -1,15 +1,15 @@
-# 🎵 Aurik 9.10.77c — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
+# 🎵 Aurik 9.12.8 — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
 
-**Version:** 9.10.77c | **Status:** ✅ Produktionsbereit | **Stand:** März 2026
+**Version:** 9.12.8 | **Status:** ✅ Produktionsbereit | **Stand:** Mai 2026
 
 > Normativer Ist-Stand: `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md`.
 
-![Tests](https://img.shields.io/badge/tests-6571%2B%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-11598%2B%20passing-brightgreen)
 ![Musical Goals](https://img.shields.io/badge/Musical%20Goals-14%2F14-brightgreen)
 ![Quality MOS](https://img.shields.io/badge/MOS-%E2%89%A54.5%20internes%20Spitzenziel-brightgreen)
 ![Materials](https://img.shields.io/badge/Materialien-17%20Typen-blue)
-![Phases](https://img.shields.io/badge/Phasen-56-blue)
-![DefectTypes](https://img.shields.io/badge/DefectTypes-32-blue)
+![Phases](https://img.shields.io/badge/Phasen-64-blue)
+![DefectTypes](https://img.shields.io/badge/DefectTypes-46-blue)
 ![CPU-only](https://img.shields.io/badge/Hardware-CPU--only-orange)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
@@ -25,10 +25,10 @@ Gaussianische Prozess-Optimierung und perceptuelle Qualitätsbewertung zu einer
 kognitiven Restaurierungs-Intelligenz — für Desktop (Linux & Windows 10/11),
 vollständig offline, ohne Cloud- oder Netzwerkabhängigkeiten.
 
-**Aktuelle Ergebnisse (v9.10.77c):**
+**Aktuelle Ergebnisse (v9.12.8):**
 
-- ✅ **6571+ Unit-Tests** — grün (zzgl. weitere Test-Suites)
-- ✅ **56 Phasen** — Defect-First-Pipeline inkl. SpectralBandGapRepair
+- ✅ **~11598 Unit-Tests** — grün (zzgl. weitere Test-Suites)
+- ✅ **64 Phasen** — Defect-First-Pipeline inkl. §0p Vocal-Supremacy, SSIP, GOAL_BASELINE_CHECK
 - ✅ **17 Materialien** — auto-erkannt (tape, vinyl, shellac, wax_cylinder, wire_recording, lacquer_disc, dat, cd_digital, mp3_low, mp3_high, aac, minidisc, streaming, unknown, …)
 - ✅ **14 Musical Goals** — psychoakustisch fundiert, alle Schwellwerte erreicht
 - ✅ **PQS MOS ≥ 4.5** — internes Spitzenziel im aktuellen Bewertungsmodell
@@ -62,16 +62,16 @@ verblindete Hörtests und reproduzierbare Wettbewerbsvergleiche belastbar.
 | `PerceptualQualityScorer` | Gammatone-NSIM + MCD + LUFS + MOS |
 | `MusicalGoalsChecker` | **14 musikalische Qualitätsziele** |
 | `MediumDetector` | File-ext-aware Tonträgerketten-Erkennung, autoritatives Materialsystem |
-| `DefectScanner` | 32 DefectTypes, material-adaptive Material-Priors |
+| `DefectScanner` | 46 DefectTypes, material-adaptive Material-Priors |
 | `TransientDecoupledProcessing` | HPSS-Trennung — Groove-Schutz vor jeder NR |
 | `HarmonicPreservationGuard` | CREPE/pYIN → G_floor 0.85 an Harmonik-Bins |
-| `PerPhaseMusicalGoalsGate` | Rollback bei kumulativer Degradation (56 Phasen) |
+| `PerPhaseMusicalGoalsGate` | Rollback bei kumulativer Degradation (64 Phasen) |
 | `EraClassifier` | Ära-Erkennung 1890–2025, GP-Warmstart pro Dekade |
 | `GermanSchlagerClassifier` | Zero-Shot 6-Schicht-Ensemble (kein Schlager-Training nötig) |
 | `ArtistSignatureStore` | Longitudinaler Klang-Fingerabdruck pro Künstler/Session |
 | `MusicalStructureAnalyzer` | SSM-Novelty, Chorus als Inpainting-Referenz |
 | `MusicalPhraseContextExtractor` | Beat-Tracking → Phrasen-Kontext für Dropout-Inpainting |
-| `UnifiedRestorerV3` | **56-Phasen-Orchestrator** (Defect-First) |
+| `UnifiedRestorerV3` | **64-Phasen-Orchestrator** (Defect-First + Vocal-Supremacy §0p) |
 | `FeedbackChain` | Iterative PQS-Qualitätsschleife, max. 5 Iter. |
 | `ExcellenceOptimizer` | GP-Pareto-Optimierung, `ExcellenceResult` |
 | `EnsembleProcessor` | 3 parallele Ketten (CONSERVATIVE/BALANCED/AGGRESSIVE) |

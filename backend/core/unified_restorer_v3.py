@@ -1,27 +1,23 @@
 """
-Unified Restorer V3 for Aurik 9.0 - Defect-First Architecture
-==============================================================
+Unified Restorer V3 for Aurik 9.12 - Defect-First Architecture
+===============================================================
 
-Hauptklasse für Audio-Restoration mit revolutionärer Defect-First Architektur.
-
-Ersetzt unified_restorer_v2.py (Medium-First) durch intelligente Defekt-Erkennung
-und material-adaptive Processing.
+Hauptklasse für Audio-Restoration mit Defect-First Architektur und
+Vocal-Supremacy-Doktrin (§0p) — 64 Phasen, 46 DefectTypes, 14 Musical Goals.
 
 Key Features:
-- Defect-First: Erkennt Defekte zuerst, wählt Phasen basierend darauf
-- Material-Adaptive: Shellac, Vinyl, Tape, CD, Streaming
-- Performance-Guaranteed: 3× RT Limit (Balanced Mode)
-- Dual-Mode: Fast (1.5× RT), Balanced (2.4× RT), Quality (9× RT)
-- 4-Core Parallelization: Optimal CPU usage
-- Modular Phases: 41 Phasen, plug-and-play
+- Defect-First + §GOAL_BASELINE_CHECK: Defekte + Goal-Defizite erkannt, bevor Phasen starten
+- Vocal-Supremacy (§0p): VQI-Gate, HNR-Blend, Formant-Guard, Vibrato-Schutz
+- §2.68 SSIP: Strukturelle Stille-Zonen vor generativen Phasen isoliert
+- Material-Adaptive: 17 Materialtypen, ära-adaptive Schwellwerte
+- Performance-Budget: ≤ 240 s / Minute Audio (Phase-Pipeline gesamt)
+- Dual-Mode: Restoration (Minimal-Intervention) / Studio 2026 (Full-Enhancement)
+- Quality-First: Global injiziert in high-end Modi (quality/maximum/studio)
+- 64 Phasen, plug-and-play, alle pre-commit-Hooks grün
 
-Performance Target (Balanced Mode):
-- 3:45 Audio → max 9 min (2.4× RT)
-- Quality: 92% (Technical), 107% (Perceived with Psychoacoustics)
-
-Author: Aurik 9.0 Development Team
-Version: 9.0.0
-Date: 2026-02-15
+Author: Aurik Development Team
+Version: 9.12.8
+Date: 2026-05-19
 """
 # pylint: disable=import-outside-toplevel,reimported
 

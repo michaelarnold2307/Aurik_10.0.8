@@ -7,7 +7,103 @@
 >
 > Historische Versions- und Metrikangaben in dieser Datei sind bewusst als Zeitstände erhalten.
 >
-> Stand: April 2026 — Aurik 9.10.124
+> Stand: Mai 2026 — Aurik 9.12.8
+
+---
+
+## v9.12.8 (14. Mai 2026) — §0p Vocal-Supremacy-Invarianten vollständig implementiert
+
+- **§0p Vibrato-Schutz**: `VFAResult.vibrato_zones` + `VocalFocusAnalyzer._detect_vibrato()` (via
+  `natural_performance_detector`); UV3 propagiert `vibrato_zones` als Phase-kwarg + cappt Strength
+  auf 0.20 in Vibrato-Zonen.
+- **§0p Formant-Integritäts-Wächter**: Post-Phase Formant-Guard für `_FORMANT_GUARD_PHASES`
+  (phase_03/20/29/42/49): LPC F1/F2-Verifikation pre/post; Überschreitung > 2 dB → sofortiger
+  Rollback auf Phase-Input.
+- **phase_55 HNR-Blend (§0p v9.12.6)**: `phase_55_diffusion_inpainting` zu `_NR_PHASES_HNR`
+  hinzugefügt — Diffusions-Inpainting kann Stimmharmonik nicht mehr ohne ΔHNR-Guard halluzinieren.
+
+## v9.12.7 (14. Mai 2026) — Musical-Goals-Metriken: 6 Metadaten-Propagierungslücken + Snyk-Sicherheitsfixes
+
+- **BrillanzMetric**: Material-adaptive HF-Crest-Formel (tape/cassette offset=0.10/divisor=1.20;
+  reel_tape offset=0.05/divisor=1.40); Ceilings rekalibriert (tape 0.42→0.78, reel_tape 0.52→0.85).
+- **HolisticPerceptualGate**: `logger.debug → logger.warning(exc_info=True)` — HPG-Exceptions
+  nicht mehr unsichtbar — §2.44-Gate chronisch aktiv.
+- **ExcellenceOptimizer + §2.48**: `material_type`-Propagation in alle `measure_all()`-Aufrufe.
+- **EraAuthenticPerceptualCompletion**: Material-Ceiling-Grenze für BW-Synthese (§2.46e).
+- **`_fast_goal_snapshot()`**: Material-adaptiver Natürlichkeits-Proxy-Boden (tape/cassette: 0.10).
+- **Snyk-Sicherheitsfixes (OWASP)**: torch 2.2.2→2.7.0 (CVE-2025-32434), setuptools≥70.3.0
+  (CVE-2024-6345), pillow≥11.0.0, sympy≥1.13.1,<1.14.0, recharts ^3.8.0.
+
+## v9.12.6 (Mai 2026) — Musical-Goals-Metriken: Material-adaptive Böden + Tape-Ceiling-Korrektur
+
+- 4 systematische Kalibrierungsfehler in Musical-Goals-Metriken behoben.
+- Material-adaptive Böden für Shellac (~0.62), Vinyl (~0.72), CD (~0.82/0.90).
+- Tape-Ceiling-Korrektur: korrekte Formel + Boden-Kalibrierung für reel_tape und cassette.
+
+## v9.12.5 (Mai 2026) — Perceptual-Quality-Bugfixes: Echo + Kratzig + Pegelexplosion
+
+- 3 perceptual-quality Bugfixes: Echo-Artefakte, Kratzig-Detektor-False-Positives,
+  Pegelexplosion in leisen Zonen behoben.
+
+## v9.12.4 (Mai 2026) — BrillanzMetric-Offset-Rekalibrierung + Noise-Floor-Test-Fix
+
+- BrillanzMetric-Offset-Rekalibrierung für konsistente Scores über Materialtypen.
+- Noise-Floor-Test-Fix für deterministisches Testergebnis.
+
+## v9.12.3 (Mai 2026) — BrillanzMetric + TransparenzMetric Sparse-Signal-Fixes
+
+- Sparse-Signal-Fixes: verhindern Score-Kollaps bei armütigem Spektrum.
+
+## v9.12.2 (Mai 2026) — HPSS-Kernel-Swap-Fix + AMRB-LUFS-Root-Cause
+
+- HPSS-Kernel-Swap rückkorrigiert; AMRB LUFS Root Cause identifiziert und behoben.
+
+## v9.12.1 (Mai 2026) — Vocal-Supremacy + VocalFocusAnalyzer + §0p
+
+- **Neues Kernmodul `VocalFocusAnalyzer`**: `VocalRegisterDetector`, `FrissonCandidateDetector`,
+  LPC-FormantTracker, Passaggio-Detektion — injiziert `vfa_result` in `_restoration_context`.
+- **§0p Vocal-Supremacy-Doktrin** in copilot-instructions.md: 4-stufige Hierarchie,
+  VQI-Gate als zweiter Recovery-Trigger, Vocal-DSP-Invarianten, HPI-4-Varianten.
+- **phase_29 Stereo-Lag-Fix**: channels-last-Normalisierung + Loudness-Rescue-Gate +
+  inter-channel Lag-Korrekturteiemetrie.
+- **Spec-Updates**: pipeline.instructions.md, dsp.instructions.md, phases.instructions.md,
+  musical_goals.instructions.md — alle §0p-Regeln normativ ergänzt.
+
+## v9.11.56 (Apr 2026) — §2.51a Stereo-Hörsicherheitsprofil
+
+- Dreistufiges Stereo-Guardrail-Profil: Hard-Fail (Delay > 1.0 ms, Imbalance > 6 dB,
+  True-Peak > -1.0 dBTP), Warnstufe, Zielwerte.
+
+## v9.11.55 (Apr 2026) — §2.45a Cumulative-Guard Decoupling + §2.30b ADMM Wall-Time
+
+- `_cum_rms_reference_audio` immer initialisiert (unabhängig von AFG-Singleton) —
+  verhindert unsichtbar deaktivierten Pegelschutz bei AFG-Init-Fehler.
+- ADMM Wall-Time Fixes in phase_23.
+
+## v9.11.52 (Apr 2026) — §09.2 Adaptive Goal Thresholds → PMGG Propagation
+
+- Ära-adaptive Schwellwerte aus `calibration_matrix` propagieren korrekt in PMGG.
+
+## v9.11.25 (Apr 2026) — AMD GPU: RDNA4 + vollständige APU-Abdeckung
+
+- AMD GPU Mixed-Mode: RDNA4-Support, APU-Tier-Erkennung, DirectML (Windows) + ROCm (Linux).
+
+## v9.11.20 (Apr 2026) — Globaler Quality-First-Schalter + 64-Phasen-Audit
+
+- `UV3._profiled_phase_call()` injiziert `quality_first_unleashed=True` global in
+  `quality`/`maximum`/studio-Modi — alle 64 Phasen konsistent auf Quality-First-Policy.
+- Neuer 64-Phasen-Policy-Test: `test_quality_first_policy_64_phase_audit.py`.
+
+## v9.11.1–19 (Apr 2026) — Quality-First, PLM-Guards, Peak-Guard, Stereo-Fixes
+
+- v9.11.19: Quality-First Zeitgates über phase_06/12/19/42/49 gehärtet.
+- v9.11.18: AudioSR-Watchdog in phase_06.
+- v9.11.22–24: Peak-Guard Conformity + Wide-Stereo-Guard phase_13/14 (R11 UAT Fix).
+- v9.11.27–39: PLM set_active Guards für alle schweren ML-Plugins (CREPE, SGMSE+, AudioSR,
+  DiffWave, MIIPHER, FCPE, Vocos, BigVGAN, ResembleEnhance, HiFiGAN, BanquetVinyl u.a.).
+- v9.11.28: Stereo-Slicing-Bug + Ketten-Pflichtphasen + corrcoef NaN-Guard.
+
+> Vollständige Details zu v9.11.1–19 und allen Patch-Releases: `CHANGELOG.md`
 
 ---
 

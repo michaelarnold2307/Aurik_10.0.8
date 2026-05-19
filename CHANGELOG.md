@@ -9,14 +9,17 @@
 ### fix §0p: Vibrato-Schutz, Formant-Wächter, HNR-Blend phase_55, vibrato_zones-Propagation
 
 #### phase_55 HNR-Blend (§0p v9.12.6)
+
 **Root Cause:** `phase_55_diffusion_inpainting` fehlte in `_NR_PHASES_HNR` → Diffusions-Inpainting konnte Stimmharmonik halluzinieren ohne ΔHNR-Guard.
 **Fix:** `phase_55_diffusion_inpainting` zu UV3 `_NR_PHASES_HNR` frozenset hinzugefügt.
 
 #### vibrato_zones Propagation + Strength-Cap (§0p Vibrato-Schutz)
+
 **Root Cause:** §0p-Invariante „Vibrato-Passagen (4–7 Hz F0) → strength ≤ 0.20" existierte nur in der Spec, nicht im Code.
 **Fix:** `VFAResult.vibrato_zones` + `VocalFocusAnalyzer._detect_vibrato()` (via `natural_performance_detector`); UV3 propagiert `vibrato_zones` als Phase-kwarg + cappt implizite Strength auf 0.20 in Vibrato-Zonen.
 
 #### Formant-Integrität-Wächter (§0p F1–F4 ±2 dB Rollback)
+
 **Root Cause:** §0p-Invariante „F1–F4 dürfen durch keine Phase um mehr als ±2 dB verschoben werden" war nicht in UV3 implementiert.
 **Fix:** Post-Phase Formant-Guard in UV3 für `_FORMANT_GUARD_PHASES` (phase_03/20/29/42/49): LPC F1/F2-Verifikation pre/post; Überschreitung > 2 dB → sofortiger Rollback auf Phase-Input (non-blocking, nur bei `panns_singing ≥ 0.25`).
 
@@ -29,6 +32,7 @@
 ---
 
 #### Gap 1 — BrillanzMetric: Material-adaptive HF-Crest-Formel (§9.12.7)
+
 **Root Cause:** v9.12.6 setzte tape/cassette-Ceiling auf 0.42, aber die alte CD-kalibrierte
 Formel `(log10(crest_peak) − 0.4) / 2.5` lieferte für typische Kassette (crest_peak≈7.9)
 nur Score≈0.20 — Goal erreichte selbst mit korrektem Ceiling nie den Boden.
@@ -39,12 +43,14 @@ Ceilings rekalibriert: tape 0.42→0.78, reel_tape 0.52→0.85 (neue Formel erre
 Kassette mit crest_peak=12).
 
 #### Gap 2 — HolisticPerceptualGate: Exceptions unsichtbar in debug-Log (§2.44)
+
 **Root Cause:** `except Exception as _hpi_exc: logger.debug(...)` verbarg alle HPG-Exceptions
 → `_hpi_result = None` → `final_hpi: null` in Analysis-JSON → §2.44-Gate chronisch inaktiv.
 **Fix:** `logger.debug → logger.warning(..., exc_info=True)` — HPG-Fehler jetzt sichtbar
 in Produktions-Logs.
 
 #### Gap 4 — ExcellenceOptimizer + §2.48 InteractionGuard ohne material_type (§2.44)
+
 **Root Cause:** Drei `measure_all()`-Aufrufe im ExcellenceOptimizer-Regression-Check und
 §2.48-InteractionGuard-Baseline verwendeten Default material_type="unknown" →
 NatuerlichkeitMetric nutzte CD-Boden (5.0) statt Tape-Boden (2.0) → falsche Regressions-
@@ -54,6 +60,7 @@ Erkennung → ExcellenceOptimizer blockierte unnötig.
 InteractionGuard-`measure_all()`-Aufruf verschoben (UV3 L20072).
 
 #### Gap 5 — EraAuthenticPerceptualCompletion überschreitet Material-Ceiling (§2.46e)
+
 **Root Cause:** `ERA_BRILLANZ_CEILING[1970]=0.90` — eine 1970er Kassette hat aber nur
 Material-Ceiling 0.78. EAPC synthetisierte HF-Inhalt bis 0.90 → §2.46e Hallucination-Guard
 potenziell verletzt.
@@ -62,6 +69,7 @@ potenziell verletzt.
 UV3 bezieht Brillanz-Material-Ceiling via `PhysicalCeilingEstimator` und übergibt sie.
 
 #### Gap 6 — `_fast_goal_snapshot()` nutzt fixen Natürlichkeits-Proxy-Boden (§2.64)
+
 **Root Cause:** Natürlichkeit-Proxy verwendete fixen Boden 0.15; Tape-Hiss verteilt
 Spektralenergie → niedrigere Konzentration → Proxy über-pessimistisch für Tape →
 per-Phase-Deltas zeigten falsches Negativ.
@@ -123,6 +131,7 @@ Fehler in Metrik-Formeln und physikalischen Deckelwerten, die dazu führten, das
 Restaurierungsqualität als unzureichend gemeldet wurde (systematische Untererfassung).
 
 #### Bug A — Authentizität kollabiert nach Dropout-Reparatur (§9.12.6, `musical_goals_metrics.py`)
+
 **Root Cause:** `AuthentizitaetMetric` hatte einen Chroma-Catastrophe-Guard mit Threshold
 `versa_similarity > 0.25`. Für Kassetten-Testaudio nach `phase_24` (Dropout-Reparatur) liefert
 VERSA typisch MOS ≈ 1.7–1.9 → versa_sim = (MOS–1)/4 ≈ 0.17–0.22. Da 0.22 < 0.25, feuerte der
@@ -131,6 +140,7 @@ Score = 0.065 statt erwarteter ≈ 0.70.
 **Fix:** Threshold angepasst von `0.25 → 0.18`, sodass alle VERSA MOS ≥ 1.72 abgedeckt sind.
 
 #### Bug B — Natürlichkeit strukturell zu niedrig für Tape-Material (§9.12.6, `musical_goals_metrics.py`)
+
 **Root Cause:** Polyphoner Spektral-Kontrast-Score verwendete fixen Boden 5.0 dB:
 `_contrast_poly = (mean_contrast - 5.0) / 12.0`. Tape-Material mit G_floor=0.22
 (intentionaler Rauscherhalt) hat mean_contrast ≈ 5.5–6.0 dB → _contrast_poly ≈ 0.04–0.08 →
@@ -142,6 +152,7 @@ vinyl: 3.5, mp3: 4.0). `NatuerlichkeitMetric.measure()` erhält `material_type`-
 `material_type=_ccr_mat_val` bei den drei kritischen `measure_all()`-Callsites (L8763, L8857, L8946).
 
 #### Bug C — Brillanz/Transparenz-Ceiling für Tape strukturell zu hoch (§9.12.6, `physical_ceiling_estimator.py` + `studio_goal_targets.py`)
+
 **Root Cause:** Physikalischer Deckel für Tape-Brillanz war 0.92 (CD-Qualität). Mit
 G_floor=0.22 Rauscherhalt ist das HF-Spektral-Crest-Maximum physikalisch auf ≈0.40 begrenzt
 (abgeleitet: Hiss-Boden bei −47 dBFS → crest_peak = 10^(27/20) ≈ 22 → log10(22) ≈ 1.35
@@ -163,6 +174,7 @@ reel_tape → brillanz 0.52, transparenz 0.50; cassette als eigener Eintrag 0.42
 Drei hörbare Defekte im restaurierten Output behoben (Elke Best Testaudio validiert):
 
 #### Bug 1 — Echo-Artefakte: Doppel-Dereverb Mutual Exclusion (`unified_restorer_v3.py`)
+
 **Root Cause:** `_select_phases()` aktivierte bei `REVERB_EXCESS > 0.45` sowohl `phase_20_reverb_reduction`
 als auch `phase_49_advanced_dereverb` gleichzeitig. Zwei aufeinanderfolgende Dereverb-Durchgänge
 erzeugen Pre-Ringing / Echo-Artefakte (§0h Music-Death-Shield).
@@ -170,6 +182,7 @@ erzeugen Pre-Ringing / Echo-Artefakte (§0h Music-Death-Shield).
 bei `0.25 < REVERB_EXCESS ≤ 0.45` nur `phase_20`. Kein Doppel-Durchgang mehr möglich.
 
 #### Bug 2 — Kratziger Gesang (HNR-Hook tot): `panns_singing` nie in `_restoration_context` (`unified_restorer_v3.py`)
+
 **Root Cause:** Der UV3-HNR-Hook nach NR-Phasen prüft `kwargs.get("panns_singing")`. Da
 `self._panns_singing` nie in `_restoration_context` geschrieben wurde, injizierte
 `_profiled_phase_call()` den Key nicht in phase-kwargs → `apply_hnr_blend()` feuerte
@@ -180,6 +193,7 @@ gesetzt: in der SongCalibration-PANNs-Propagation (primär) und in `_select_phas
 nach Advanced Dereverb auf Vokal-Material wird jetzt ebenfalls `apply_hnr_blend()` angewendet (§0p).
 
 #### Bug 3 — Pegelexplosion bei stiller Hiss-Einleitung/-Ausleitung: Silence-aware Edge-Taper (`phase_03_denoise.py`)
+
 **Root Cause:** Der Edge-Taper (0,5 s Randbereich) blendete das denoisierte Signal blind
 zurück zum originalen Rauschsignal — auch wenn das Original in diesen Bereichen nur stilles
 Tape-Hiss enthielt. Ergebnis: Nach der Denoise-Phase war die Mitte des Songs sauber,
@@ -213,6 +227,7 @@ Dieser Wert lag 0.040 unter dem Niveau, das für mg_score=0.857 und damit MUSHRA
 ```python
 # Vorher: (log10(crest_peak) - 0.5) / 2.5
 # Nachher: (log10(crest_peak) - 0.4) / 2.5
+
 ```
 Neue Kalibrierung: ratio 10 → 0.24; ratio 36 → 0.46; ratio 100 → 0.64; ratio 500 → 0.92; ratio 1000 → 1.0.
 Reine Sinuston-Signale (crest_peak >> 1000) werden unverändert auf 1.0 geclipt (kein Regressionsrisiko).
@@ -3404,6 +3419,7 @@ Rauschen hebt p50 (Median); musikalische Peaks dominieren p95 → Crest nach Den
 ```python
 _oct_bands_t = [(250, 500), (500, 1000), (1000, 2000), (2000, 4000), (4000, 8000)]
 # per-band p95/p50 crest, mean over 5 bands
+
 scores["transparenz"] = float(np.clip(np.mean(band_crests), 0.0, 1.0))
 ```
 
