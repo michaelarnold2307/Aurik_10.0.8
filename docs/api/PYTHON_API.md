@@ -1,6 +1,6 @@
 # Aurik 9.x.x — Python API Reference
 
-**Version:** 9.10.102  
+**Version:** 9.12.8  
 **Datum:** 13. Februar 2026  
 **Status:** ✅ Production Ready
 

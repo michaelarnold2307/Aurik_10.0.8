@@ -1,7 +1,7 @@
 # DefectScanner Specification - Aurik 9.x.x
 
-**Version:** 9.10.102  
-**Stand:** April 2026  
+**Version:** 9.12.8  
+**Stand:** Mai 2026  
 **Status:** ✅ Production-Ready  
 **Location:** `core/defect_scanner.py` (~2500 lines)
 
@@ -13,7 +13,7 @@
 
 The **DefectScanner** is the entry point for Aurik 9’s **Defect-First** restoration workflow. It analyzes audio to:
 
-- Detect **32 defect types** with severity scores (0.0–1.0) and temporal locations
+- Detect **47 defect types** with severity scores (0.0–1.0) and temporal locations
 - Automatically identify material context (material-adaptive detection/thresholding)
 - Provide **material-adaptive** thresholds for each defect
 - Execute in **<10% of audio duration** (performance guarantee)
@@ -32,7 +32,7 @@ The **DefectScanner** is the entry point for Aurik 9’s **Defect-First** restor
 │                  │                                           │
 │                  v                                           │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │  32 Defect Detectors (parallel analysis)              │  │
+│  │  47 Defect Detectors (parallel analysis)              │  │
 │  │  - clicks                - rumble                      │  │
 │  │  - crackle               - high_freq_noise             │  │
 │  │  - hum                   - compression_artifacts       │  │
@@ -57,7 +57,7 @@ The **DefectScanner** is the entry point for Aurik 9’s **Defect-First** restor
 
 ## 3. Defect Types
 
-### 3.1 Enum Definition (32 DefectTypes, Stand v9.10.102)
+### 3.1 Enum Definition (47 DefectTypes, Stand v9.12.8)
 
 ```python
 class DefectType(Enum):

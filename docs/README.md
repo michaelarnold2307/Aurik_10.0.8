@@ -1,8 +1,8 @@
 # Aurik 9 — Intelligentes Musik-Restaurierungssystem
 
-**Version:** 9.11.53 | **Status:** ✅ Produktionsbereit — auf Spitzenqualität ausgerichtet
+**Version:** 9.12.8 | **Status:** ✅ Produktionsbereit — auf Spitzenqualität ausgerichtet
 
-**Datum:** April 2026
+**Datum:** Mai 2026
 
 > Hinweis: Verbindliche Detailstände liegen in `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md`.
 
@@ -47,9 +47,9 @@
 
 ---
 
-## 🎯 Aurik 9.11.53 — Highlights
+## 🎯 Aurik 9.12.8 — Highlights
 
-### ✅ Produktionsbereit (April 2026)
+### ✅ Produktionsbereit (Mai 2026)
 
 **Kennzahlen:**
 
@@ -61,7 +61,7 @@
 - ✅ **CPU/GPU (AMD ROCm/DirectML)** — Mixed-Mode, GPU optional
 - ✅ **100 % offline** nach Installation (keine Cloud)
 
-**Schlüssel-Module (v9.11.53):**
+**Schlüssel-Module (v9.12.8):**
 
 1. **14 Musical Goals** — Brillanz, Wärme, Natürlichkeit, Authentizität, Emotionalität, Transparenz, Bass-Kraft, Groove, Raumtiefe, Timbre-Authentizität, Tonales Zentrum, Mikro-Dynamik, Separation-Treue, Artikulation
 2. **Transient Decoupled Processing (TDP)** — Transienten separat durch Pipeline führen; GrooveMetric +0.03–0.06

@@ -1,7 +1,7 @@
 # Aurik 9.x.x — Pipeline Flow Analysis
 
-**Stand:** April 2026  
-**Version:** 9.10.102  
+**Stand:** Mai 2026  
+**Version:** 9.12.8  
 **Status:** 64-Phasen-Defect-First-Pipeline, vollständig implementiert
 
 > Hinweis: Verbindlicher Ist-Stand liegt in `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md`.
@@ -27,7 +27,7 @@ CausalReasoner), dann optimiert intervenieren (GP-Optimizer), dann verifizieren
 [Restorability 0-100] + [Ära 1890-2025] + [Genre: Schlager?]
     |
     v
-[Material: material-adaptiv] + [32 DefectTypes] + [34 Kausal-Ursachen]
+[Material: material-adaptiv] + [47 DefectTypes] + [34 Kausal-Ursachen]
     |
     v
 [GP-Optimizer: 10 Parameter, MOO-Pareto über 14 Ziele]
@@ -109,4 +109,4 @@ CausalReasoner), dann optimiert intervenieren (GP-Optimizer), dann verifizieren
 
 ---
 
-_Aurik 9.10.102 — April 2026_
+_Aurik 9.12.8 — Mai 2026_

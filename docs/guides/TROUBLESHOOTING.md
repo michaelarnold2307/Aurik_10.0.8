@@ -1,7 +1,7 @@
 # Aurik 9.x.x — Troubleshooting Guide
 
-**Version:** 9.10.102  
-**Datum:** April 2026  
+**Version:** 9.12.8  
+**Datum:** Mai 2026  
 **Status:** ✅ Production Ready
 
 ---

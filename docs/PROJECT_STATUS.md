@@ -1,7 +1,7 @@
 # 📊 Aurik 9 — Project Status Report (Snapshot)
 
-**Datum:** April 2026  
-**Version:** 9.10.102  
+**Datum:** Mai 2026  
+**Version:** 9.12.8  
 **Status:** ✅ Produktionsbereit — auf Spitzenqualität ausgelegtes Musik-Restaurierungssystem
 
 > Hinweis: Diese Datei enthält einen historischen Snapshot. Verbindlicher Ist-Stand ist in `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md` dokumentiert.
@@ -14,7 +14,7 @@
 
 | Kennzahl | Wert |
 | --- | --- |
-| Tests | **≈11.023** pytest-IDs (April 2026) |
+| Tests | **~13.662** pytest-IDs (Mai 2026) |
 | Phasen | **64** (Phase 01–64, Defect-First) |
 | Materialien | **15** auto-erkannte Typen (inkl. wax_cylinder, wire_recording, lacquer_disc) |
 | Musical Goals | **14** psychoakustisch fundierte Ziele |
@@ -24,7 +24,7 @@
 > Wettbewerbsführung oder formaler Hörtest-Nähe sind intern als Ziel- und Steuerungsrahmen
 > zu verstehen und werden erst durch externe Blindtests und reproduzierbare Vergleichsstudien
 > belastbar.
-| DefectTypes | **32** erkennbare Defektarten |
+| DefectTypes | **47** erkennbare Defektarten |
 | Hardware | CPU-only, Desktop (Linux AppImage & Windows 10/11) |
 | Netzwerk | Keine Cloud, keine Serverabhängigkeiten — 100 % offline |
 
@@ -40,7 +40,7 @@
 | `PerceptualQualityScorer` | `core/perceptual_quality_scorer.py` | ✅ |
 | `MusicalGoalsChecker` (14 Ziele) | `backend/core/musical_goals/musical_goals_metrics.py` | ✅ |
 | `MediumDetector` | `forensics/medium_detector.py` | ✅ |
-| `DefectScanner` (32 DefectTypes) | `core/defect_scanner.py` | ✅ |
+| `DefectScanner` (47 DefectTypes) | `core/defect_scanner.py` | ✅ |
 | `VocalAIEnhancement` | `core/vocal_ai_enhancement.py` | ✅ |
 | `ExcellenceOptimizer` | `core/excellence_optimizer.py` | ✅ |
 | `FeedbackChain` | `core/feedback_chain.py` | ✅ |
@@ -111,7 +111,7 @@ DCOffset-Removal
 -> RestorabilityEstimator -> SongCalibrationProfile
 -> EraClassifier + GermanSchlagerClassifier + MediumDetector (parallel)
 -> GoalApplicabilityFilter -> AdaptiveGoalThresholds
--> DefectScanner (32 Defekte) -> CausalDefectReasoner
+-> DefectScanner (47 Defekte) -> CausalDefectReasoner
 -> GPParameterOptimizer -> HarmonicPreservationGuard
 -> PerPhaseMusicalGoalsGate (umhüllt jede Phase)
 -> Phasen-Ausführung (01–64)
@@ -193,7 +193,7 @@ ConsonantEnhancement: Frikative-SNR >= +3 dB · HF-Anhebung <= +6 dB · Crossfad
 | v9.10.74–83 | KMV Stufe-2, ML-Headroom-Guard, OOM-Checkpoint, Denker-Differenzierung, Song-Kalibrierung | 7.500+ Tests |
 | v9.10.84–91 | Dual-SR-Vertrag, PMGG SNR-Proxy-Fixes (§9.7.11–14), Stab.-Invarianten | 8.500+ Tests |
 | v9.10.92–99 | PMGG SNR-Proxies brillanz/transparenz/waerme, Codec-Repair, AMRB-Kalibrierung | 9.500+ Tests |
-| v9.10.100–102 | Lyrics-Produktivpfad, Phasen 59–64, Genre-Phase-1 (Family+Top-k+Open-Set) | ≈11.023 Tests |
+| v9.10.100–102 | Lyrics-Produktivpfad, Phasen 59–64, Genre-Phase-1 (Family+Top-k+Open-Set) | ~13.662 Tests |
 
 ### 🔜 Geplant
 
@@ -261,4 +261,4 @@ Dithering: POW-r Typ 3 bei 24->16-bit; Fallback: TPDF
 
 ---
 
-_Aurik 9.10.102 — April 2026 (Stand: 03.04.2026)_
+_Aurik 9.12.8 — Mai 2026 (Stand: 03.04.2026)_

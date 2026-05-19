@@ -1,7 +1,7 @@
 # KI-Agent Integration Guide — AURIK 9.x.x
 
-**Erstellt:** 15. Februar 2026 | **Aktualisiert:** 7. April 2026  
-**Version:** 9.10.124  
+**Erstellt:** 15. Februar 2026 | **Aktualisiert:** 19. Mai 2026  
+**Version:** 9.12.8  
 **Zielgruppe:** KI-Agenten (GitHub Copilot, Claude, GPT) die an AURIK arbeiten  
 **Status:** 🟢 AKTIV — Verbindlich für alle KI-Agenten
 
@@ -35,7 +35,7 @@ Dieses Dokument liefert **praktische Ergänzungen** zu den Richtlinien.
 | `GPParameterOptimizer` | `core/gp_parameter_optimizer.py` | RBF-GP + UCB, lernt dauerhaft pro Material |
 | `PerceptualQualityScorer` | `core/perceptual_quality_scorer.py` | Gammatone-NSIM + MCD + LUFS + MOS |
 | `MusicalGoalsChecker` | `backend/core/musical_goals/musical_goals_metrics.py` | 14 Ziele, `measure_all(audio, sr)` |
-| `DefectScanner` | `core/defect_scanner.py` | 32 DefectTypes, material-adaptive Klassifikation |
+| `DefectScanner` | `core/defect_scanner.py` | 47 DefectTypes, material-adaptive Klassifikation |
 | `UnifiedRestorerV3` | `core/unified_restorer_v3.py` | 64-Phasen-Pipeline-Orchestrator |
 | `VocalAIEnhancement` | `core/vocal_ai_enhancement.py` | `VoiceGender` (MALE/FEMALE/CHILD/ANDROGYNOUS) |
 | `ExcellenceOptimizer` | `core/excellence_optimizer.py` | `optimize_for_excellence()` |
@@ -48,7 +48,7 @@ Eingang (beliebige SR, mono/stereo)
     │
     ▼ auf 48 kHz resampeln (Lanczos-4)
     │
-    ▼ [DefectScanner.scan()] → DefectAnalysisResult (32 DefectTypes, material-adaptiv)
+    ▼ [DefectScanner.scan()] → DefectAnalysisResult (47 DefectTypes, material-adaptiv)
     │
     ▼ [CausalDefectReasoner.reason_about_defects()] → RestorationPlan
     │   .primary_cause, .recommended_phases, .phase_parameters, .reasoning
@@ -174,7 +174,7 @@ tape · reel_tape · vinyl · shellac · wax_cylinder · wire_recording · lacqu
 dat · cd_digital · mp3_low · mp3_high · aac · minidisc · streaming · unknown
 ```
 
-**32 DefectTypes (vollständig, Stand v9.10.124):**
+**47 DefectTypes (vollständig, Stand v9.12.8):**
 
 ```
 CLICKS · CRACKLE · HUM · WOW · FLUTTER · LOW_FREQ_RUMBLE · DROPOUTS
@@ -458,5 +458,5 @@ Jede neue DSP-Funktion MUSS auf mindestens einem dieser Prinzipien basieren:
 
 ---
 
-**KI-Agent Integration Guide — Aurik 9.10.124 — April 2026**
+**KI-Agent Integration Guide — Aurik 9.12.8 — Mai 2026**
 **Bindend für: GitHub Copilot, Claude, GPT-Instanzen**

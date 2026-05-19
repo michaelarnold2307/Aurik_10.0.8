@@ -1,7 +1,7 @@
 # Aurik 9.x.x — Implementierte Architektur
 
-**Stand:** April 2026  
-**Version:** 9.10.102  
+**Stand:** Mai 2026  
+**Version:** 9.12.8  
 **Status:** ✅ Produktionsbereit
 
 > Hinweis: Diese Seite ist eine Architekturübersicht. Normative Details stehen in `.github/specs/01-08`.
@@ -22,7 +22,7 @@ TransientDecoupledProcessing (TDP)           ← Schritt 0: Trennung
   -> EraClassifier (1890–2025)                ← Dekaden-Prior
   -> GermanSchlagerClassifier                 ← Zero-Shot Genre
     -> MediumDetector (transfer-chain-aware)    ← Träger-Erkennung
-    -> DefectScanner (32 DefectTypes)           ← Defekt-Erkennung
+    -> DefectScanner (47 DefectTypes)           ← Defekt-Erkennung
     -> CausalDefectReasoner (34 Kausal-Ursachen)← Ursachen-Inferenz
   -> UncertaintyQuantifier                    ← Konfidenz
   -> GPParameterOptimizer (MOO-Pareto)        ← Parameter-Vorschlag
@@ -84,7 +84,7 @@ assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
 
 ---
 
-## Wichtige neue Module (v9.9–v9.10.102)
+## Wichtige neue Module (v9.9–v9.12.8)
 
 | Modul | Zweck | Position in Pipeline |
 | --- | --- | --- |
@@ -142,4 +142,4 @@ Frontend kommuniziert ausschließlich über API-Schicht oder Qt-Signals/Slots.
 
 ---
 
-**Aurik 9.10.102 — April 2026**
+**Aurik 9.12.8 — Mai 2026**

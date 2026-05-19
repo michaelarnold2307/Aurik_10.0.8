@@ -1,6 +1,6 @@
 # Aurik 9.x.x — Testing Best Practices
 
-**Version:** 9.10.102  
+**Version:** 9.12.8  
 **Datum:** März 2026  
 **Status:** ✅ Production Ready
 

@@ -1,6 +1,6 @@
 # 14 Musikalische Ziele — Kampagne 2026
 
-**Stand**: 26. April 2026  
+**Stand**: 19. Mai 2026  
 **Baseline**: 5/14 Ziele erfüllt (opera_sibilance.wav, Restoration-Mode)  
 **Ziel**: Alle 14 Ziele konsistent erfüllen bei echter Musik+Gesang  
 
