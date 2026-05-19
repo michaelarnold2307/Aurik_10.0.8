@@ -126,7 +126,7 @@ def _swap_io_rate_mb_per_s(swap_obj: object) -> float:
     swap sin/sout counters to distinguish stale high swap occupancy from ongoing
     paging pressure that can trigger freezes and OOM-kills.
     """
-    global _last_swap_poll_ts, _last_swap_sin, _last_swap_sout
+    global _last_swap_poll_ts, _last_swap_sin, _last_swap_sout  # pylint: disable=global-statement
     if _psutil is None:
         return 0.0
     try:
@@ -190,7 +190,7 @@ def is_system_thrashing() -> bool:
 
         thrashing = swap_critical_active or swap_critical_emergency or combined_pressure or ram_emergency
         if thrashing:
-            global _last_thrash_warn_time
+            global _last_thrash_warn_time  # pylint: disable=global-statement
             _now = time.monotonic()
             with _last_thrash_warn_lock:
                 _emit = (_now - _last_thrash_warn_time) >= _THRASH_WARN_COOLDOWN_S
@@ -354,7 +354,7 @@ def _preflight_system_memory(required_mb: float) -> bool:
         return True
 
     try:
-        from backend.core.plugin_lifecycle_manager import evict_stale_plugins
+        from backend.core.plugin_lifecycle_manager import evict_stale_plugins  # pylint: disable=import-outside-toplevel
 
         evict_stale_plugins(required_mb=required_with_margin)
     except Exception as _exc:
@@ -372,7 +372,7 @@ def _preflight_system_memory(required_mb: float) -> bool:
     )
     # §DEBUG: Stack-Trace für suspekt große Requests (> 10000 MB) automatisch loggen
     if required_with_margin > 10_000:
-        import traceback as _tb
+        import traceback as _tb  # pylint: disable=import-outside-toplevel
 
         logger.warning(
             "ml_memory_budget §DEBUG: suspekt große Anfrage (%.0f MB) — Stack-Trace:\n%s",
@@ -399,7 +399,9 @@ def _attempt_quality_preserving_pressure_recovery(model_name: str, size_gb: floa
 
     for attempt in range(1, attempts + 1):
         try:
-            from backend.core.plugin_lifecycle_manager import evict_stale_plugins
+            from backend.core.plugin_lifecycle_manager import (
+                evict_stale_plugins,  # pylint: disable=import-outside-toplevel
+            )
 
             evicted = int(evict_stale_plugins(required_mb=required_mb))
         except Exception as _exc:
@@ -447,7 +449,7 @@ def try_allocate(model_name: str, size_gb: float) -> bool:
     Returns False if the budget would be exceeded (use DSP fallback instead).
     Idempotent: if ``model_name`` is already allocated, returns True immediately.
     """
-    global _total_gb
+    global _total_gb  # pylint: disable=global-statement
     with _lock:
         if model_name in _allocated:
             # Already loaded — no additional budget consumed.
@@ -512,7 +514,7 @@ def release(model_name: str) -> None:
 
     Safe to call even if the model was never allocated.
     """
-    global _total_gb
+    global _total_gb  # pylint: disable=global-statement
     with _lock:
         freed = _allocated.pop(model_name, 0.0)
         _total_gb = max(0.0, _total_gb - freed)
@@ -539,7 +541,7 @@ def get_status() -> dict:
 
 def set_budget(max_gb: float) -> None:
     """Override the default 16 GB budget (e.g. on systems with less RAM)."""
-    global ML_MAX_GB
+    global ML_MAX_GB  # pylint: disable=global-statement
     with _lock:
         ML_MAX_GB = float(max_gb)
         logger.info("ml_memory_budget: max budget set to %.1f GB.", ML_MAX_GB)
@@ -558,7 +560,7 @@ def _reconcile_on_startup() -> None:
     when it actually loads its model. No stale allocation persists across
     process boundaries.  Called once at module import time.
     """
-    global _total_gb
+    global _total_gb  # pylint: disable=global-statement
     with _lock:
         _allocated.clear()
         _total_gb = 0.0
@@ -582,12 +584,15 @@ class _MLMemoryBudgetProxy:
 
     # Lock-order: Priority 1 (MLMemoryBudget) — see §3.9.8
     def try_allocate(self, model_name: str, size_gb: float) -> bool:
+        """Delegiert an das modulare try_allocate."""
         return try_allocate(model_name, size_gb)
 
     def release(self, model_name: str) -> None:
+        """Delegiert an das modulare release."""
         release(model_name)
 
     def get_status(self) -> dict:
+        """Delegiert an das modulare get_status."""
         return get_status()
 
 

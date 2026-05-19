@@ -1,23 +1,23 @@
-"""AURIK Splash Screen — Premium Startup Experience.
+"""AURIK Splash Screen — Premium Startup-Erfahrung.
 
-Frameless animated splash window with:
-  - App icon (vinyl record before/after metaphor) with ambient glow
-  - "AURIK" title — aurora gradient typography (gold → white → electric blue)
-  - Tagline + gradient separator line
-  - Animated equalizer bars: left half gold, right half blue (mirrors icon)
-    driven by multi-frequency sine oscillators for organic movement
-  - Pulsing dot loader and loading status text
-  - Version + "PROFESSIONAL" badge
+Randloser animierter Splash-Screen mit:
+  - App-Icon (Vinyl-Schallplatte Vorher/Nachher-Metapher) mit Ambient-Glow
+  - »AURIK«-Titel — Aurora-Gradient-Typografie (Gold → Weiß → Elektrisch-Blau)
+  - Tagline + Gradient-Trennlinie
+  - Animierte Equalizer-Balken: linke Hälfte Gold, rechte Hälfte Blau
+    (spiegelt Icon), angetrieben durch Mehrfrequenz-Sinus-Oszillatoren
+  - Pulsierender Dot-Loader und Ladestatus-Text
+  - Versions- und »PROFESSIONAL«-Badge
 
-Opacity transitions are managed from main() via setWindowOpacity()
-with short processEvents() loops — no QPropertyAnimation needed.
+Opazitäts-Übergänge werden von main() via setWindowOpacity()
+mit kurzen processEvents()-Schleifen gesteuert — kein QPropertyAnimation nötig.
 """
 
 import math
 from pathlib import Path
 
-from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
-from PyQt5.QtGui import (
+from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer  # pylint: disable=no-name-in-module
+from PyQt5.QtGui import (  # pylint: disable=no-name-in-module
     QBrush,
     QColor,
     QFont,
@@ -29,7 +29,7 @@ from PyQt5.QtGui import (
     QPixmap,
     QRadialGradient,
 )
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QApplication, QWidget  # pylint: disable=no-name-in-module
 
 _RES = Path(__file__).parent.parent / "resources"
 
@@ -40,16 +40,16 @@ except Exception:
 
 
 class AurikSplashScreen(QWidget):
-    """Premium animated splash screen for AURIK Professional.
+    """Premium animierter Splash-Screen für AURIK Professional.
 
     Layout (760 × 420 px):
-      y=  22: App icon 88×88 (centered)
-      y= 172: "AURIK" title baseline (font 56 pt bold)
+      y=  22: App-Icon 88×88 (zentriert)
+      y= 172: »AURIK«-Titel-Baseline (Schrift 56 pt fett)
       y= 191: Tagline
-      y= 204: Gradient separator line
-      y= 330: Equalizer bars baseline  (max_h=90, bars from y=240)
-      y= 375: Pulsing dot loader
-      y= 402: Status text (centered) + version badge (right)
+      y= 204: Gradient-Trennlinie
+      y= 330: Equalizer-Balken-Baseline  (max_h=90, Balken ab y=240)
+      y= 375: Pulsierender Dot-Loader
+      y= 402: Statustext (zentriert) + Versions-Badge (rechts)
     """
 
     _W = 760
@@ -96,17 +96,18 @@ class AurikSplashScreen(QWidget):
     # ── Public API ────────────────────────────────────────────────────────────
 
     def set_status(self, text: str) -> None:
-        """Aktualisiert the loading status line and repaint immediately."""
+        """Aktualisiert die Ladestatus-Zeile und löst sofortigen Repaint aus."""
         self._status = text
         self.repaint()
 
     def stop_animation(self) -> None:
-        """Stop equalizer animation (call before fade-out loop)."""
+        """Stoppt die Equalizer-Animation (vor Fade-out aufrufen)."""
         self._timer.stop()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _tick(self) -> None:
+        """Inkrementiert die Animationsphase und fordert ein Repaint an."""
         self._phase += 0.09
         self.update()
 
@@ -122,6 +123,7 @@ class AurikSplashScreen(QWidget):
     # ── Paint ─────────────────────────────────────────────────────────────────
 
     def paintEvent(self, _ev) -> None:
+        """Zeichnet den Splash-Screen mit Hintergrund, Icon, Titel und Equalizer."""
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)  # type: ignore[attr-defined]
         p.setRenderHint(QPainter.TextAntialiasing)  # type: ignore[attr-defined]
@@ -183,7 +185,7 @@ class AurikSplashScreen(QWidget):
 
     # ── Icon ──────────────────────────────────────────────────────────────────
 
-    def _draw_icon(self, p: QPainter, w: int, h: int) -> None:
+    def _draw_icon(self, p: QPainter, w: int, _h: int) -> None:
         if self._icon is None:
             return
         iw = self._icon.width()
@@ -202,7 +204,7 @@ class AurikSplashScreen(QWidget):
 
     # ── Title ─────────────────────────────────────────────────────────────────
 
-    def _draw_title(self, p: QPainter, w: int, h: int) -> None:
+    def _draw_title(self, p: QPainter, w: int, _h: int) -> None:
         text = "AURIK"
 
         # Pick best available bold font
@@ -250,7 +252,7 @@ class AurikSplashScreen(QWidget):
 
     # ── Tagline ───────────────────────────────────────────────────────────────
 
-    def _draw_tagline(self, p: QPainter, w: int, h: int) -> None:
+    def _draw_tagline(self, p: QPainter, w: int, _h: int) -> None:
         text = "AUDIO RESTAURIERUNG UND INTELLIGENTE KORREKTUR"
 
         font = QFont("Arial", 9)
@@ -277,12 +279,12 @@ class AurikSplashScreen(QWidget):
 
     # ── Equalizer bars ────────────────────────────────────────────────────────
 
-    def _draw_equalizer(self, p: QPainter, w: int, h: int) -> None:
-        """Animated music equalizer bars driven by multi-frequency sine oscillators.
+    def _draw_equalizer(self, p: QPainter, w: int, _h: int) -> None:
+        """Animierte Equalizer-Balken, angetrieben durch Mehrfrequenz-Sinus-Oszillatoren.
 
-        Left half: gold tones ("before/vintage source").
-        Right half: blue tones ("after/restored").
-        Bars use compound sine waves for organic, non-robotic movement.
+        Linke Hälfte: Gold-Töne (»Vorher/Vintage-Quelle«).
+        Rechte Hälfte: Blau-Töne (»Nachher/Restauriert«).
+        Balken verwenden zusammengesetzte Sinuswellen für organische Bewegung.
         """
         n = self._N_BARS
         bar_w = 10

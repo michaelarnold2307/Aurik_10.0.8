@@ -92,6 +92,7 @@ class ProvenanceEntry:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialisiert diesen Audit-Eintrag als Dictionary."""
         return {
             "step": self.step,
             "timestamp_iso": self.timestamp_iso,
@@ -312,7 +313,7 @@ class ProvenanceAudit:
         """
         failed: list[str] = []
         for e in self._entries:
-            expected = e._compute_entry_hash()
+            expected = e._compute_entry_hash()  # pylint: disable=protected-access
             if e.entry_hash != expected:
                 failed.append(f"{e.step} ({e.timestamp_iso})")
 

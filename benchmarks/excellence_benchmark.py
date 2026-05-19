@@ -41,6 +41,7 @@ Version: 1.0.0
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import time
@@ -65,7 +66,7 @@ def _sine_sum(freqs: list[float], amps: list[float] | None = None, n: int = _N, 
         amps = [1.0 / len(freqs)] * len(freqs)
     signal = sum(a * np.sin(2 * np.pi * f * t) for f, a in zip(freqs, amps))
     peak = np.max(np.abs(signal)) + 1e-10
-    return (signal / peak * 0.7).astype(np.float32)
+    return (signal / peak * 0.7).astype(np.float32)  # type: ignore[no-any-return]
 
 
 def _make_test_signals() -> dict[str, np.ndarray]:
@@ -212,7 +213,7 @@ class ExcellenceBenchmark:
 
     def __init__(self, sample_rate: int = _SR) -> None:
         self.sample_rate = sample_rate
-        from backend.core.music_quality_scorer import score_music_mos
+        from backend.core.music_quality_scorer import score_music_mos  # pylint: disable=import-outside-toplevel
 
         self._score_mos = score_music_mos
 
@@ -233,7 +234,7 @@ class ExcellenceBenchmark:
         material: str,
     ) -> SignalBenchmarkResult:
         """Benchmark für ein einzelnes (Signal, Material)-Paar."""
-        from core.excellence_optimizer import ExcellenceOptimizer
+        from backend.core.excellence_optimizer import ExcellenceOptimizer  # pylint: disable=import-outside-toplevel
 
         # Scores vor Pipeline
         ovr_b, nat_b, sig_b, bak_b = self._score(audio)
@@ -277,8 +278,6 @@ class ExcellenceBenchmark:
         Returns:
             ExcellenceBenchmarkReport mit allen Ergebnissen.
         """
-        import datetime
-
         materials_to_run = materials or self.MATERIALS
         signals = _make_test_signals()
 
@@ -328,9 +327,8 @@ class ExcellenceBenchmark:
         """Gibt den Report als formatierte Tabelle auf stdout aus."""
         print(f"\n{'=' * 75}")
         print(f"  Aurik Excellence Benchmark v{report.aurik_version}  |  {report.timestamp[:19]}")
-        print(
-            f"  SR={report.sample_rate} Hz  |  Dauer={report.duration_s}s  |  N={report.summary.get('n_results', '?')} Tests"
-        )
+        n_tests = report.summary.get("n_results", "?")
+        print(f"  SR={report.sample_rate} Hz  |  Dauer={report.duration_s}s  |  N={n_tests} Tests")
         print(f"{'=' * 75}")
 
         # Header
@@ -389,11 +387,11 @@ class ExcellenceBenchmark:
             actual = s.get(key, None)
             if actual is None:
                 continue
-            ok = actual >= target if op == "ge" else actual <= target
+            _ok = actual >= target if op == "ge" else actual <= target
             cmp_str = "≥" if op == "ge" else "≤"
-            status = "✓" if ok else "✗"
+            status = "✓" if _ok else "✗"
             print(f"    {status} {key}: {actual:.4f} {cmp_str} {target} (Ziel)")
-            if not ok:
+            if not _ok:
                 all_ok = False
         return all_ok
 
