@@ -1,5 +1,5 @@
-#!/bin/bash
-# Aurik 9 — Startskript mit venv-Python (.venv_aurik, Python 3.10.12)
+#!/usr/bin/env bash
+# Aurik 9.12.9-hotfix.1 — Startskript mit venv-Python (.venv_aurik, Python 3.10.12)
 # GPU-Modus: ROCm-venv auf ext4 (~/.local/share/aurik/venv_rocm) + /dev/kfd vorhanden
 # Verwendung: ./run_aurik.sh [Argumente]
 #   AURIK_FORCE_CPU=1  ./run_aurik.sh  — erzwingt CPU-only (deaktiviert ROCm)
@@ -7,7 +7,7 @@
 # Hinweis: Das ROCm-venv liegt absichtlich auf ext4 (~/.local/share/aurik/venv_rocm),
 # da ROCm GPU Code Objects per mmap() aus ELF-Sektionen geladen werden und
 # FUSE/fuseblk (NTFS) dieses mmap nicht unterstützt → hipErrorInvalidDeviceFunction.
-set -e
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_CPU="$SCRIPT_DIR/.venv_aurik/bin/python"
 # ROCm-venv liegt auf ext4 (Home), nicht auf dem FUSE/NTFS-Workspace-Laufwerk
@@ -34,22 +34,23 @@ fi
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
     echo "FEHLER: venv-Python nicht gefunden: $VENV_PYTHON" >&2
-    echo "Bitte zuerst: python3 -m venv .venv_aurik && .venv_aurik/bin/pip install -r requirements/requirements.txt" >&2
+    echo "Bitte zuerst: bash scripts/install_aurik.sh" >&2
+    echo "Alternativ: python3 -m venv .venv_aurik && .venv_aurik/bin/pip install -r requirements/requirements_aurik.txt" >&2
     exit 1
 fi
 
 mkdir -p "$SCRIPT_DIR/temp_repro" "$SCRIPT_DIR/logs"
 cd "$SCRIPT_DIR"
 
-echo "Aurik GPU-Modus: ${_GPU_MODE} (Python: ${VENV_PYTHON##*/../../})"
+echo "Aurik GPU-Modus: ${_GPU_MODE} (Python: ${VENV_PYTHON})"
 
 # Numba-JIT deaktivieren: verhindert Circular-Import-Crash in ROCm-venv-Threads
 # (numba >= 0.57 entfernt is_nonelike aus numba.core.cgutils; librosa triggert numba)
 export NUMBA_DISABLE_JIT=1
 
 # Kein Doppelstart: verhindert UI-Konflikte und wiederholte Force-Quit-Dialoge.
-if pgrep -f "$VENV_PYTHON Aurik910/main.py" >/dev/null 2>&1; then
-    _pid="$(pgrep -f "$VENV_PYTHON Aurik910/main.py" | head -n 1)"
+if pgrep -f "[A]urik910/main.py" >/dev/null 2>&1; then
+    _pid="$(pgrep -f "[A]urik910/main.py" | head -n 1)"
     echo "Aurik läuft bereits (PID ${_pid})."
     exit 0
 fi

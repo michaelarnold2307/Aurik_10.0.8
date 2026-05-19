@@ -1,8 +1,19 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # run_performance_benchmarks.sh
 # Führt Performance-Benchmarks aus und generiert Reports
 
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PYTHON="$PROJECT_ROOT/.venv_aurik/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+    echo "FEHLER: venv-Python nicht gefunden: $PYTHON" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
 
 echo "=== Aurik Performance Benchmarks ==="
 echo ""
@@ -11,7 +22,7 @@ echo ""
 mkdir -p benchmarks/results
 
 echo "🚀 Starte DSP Performance Benchmarks..."
-../../.venv_aurik/bin/python -m pytest benchmarks/test_dsp_performance.py \
+"$PYTHON" -m pytest benchmarks/test_dsp_performance.py \
     --benchmark-only \
     --benchmark-autosave \
     --benchmark-save-data \
@@ -21,7 +32,7 @@ echo "🚀 Starte DSP Performance Benchmarks..."
 
 echo ""
 echo "🚀 Starte Pipeline Performance Benchmarks..."
-../../.venv_aurik/bin/python -m pytest benchmarks/test_pipeline_performance.py \
+"$PYTHON" -m pytest benchmarks/test_pipeline_performance.py \
     --benchmark-only \
     --benchmark-autosave \
     --benchmark-save-data \

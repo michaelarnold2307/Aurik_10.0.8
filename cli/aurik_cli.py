@@ -1,3 +1,4 @@
+import importlib
 import logging
 import os
 import sys
@@ -6,12 +7,29 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+try:
+    import scipy.signal as _sig
+except ImportError:
+    _sig = None
+
+try:
+    import soxr as _soxr_rs
+except ImportError:
+    _soxr_rs = None
+
 # Ensure repository root is on sys.path when CLI is executed as a script.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from backend.api.bridge import get_aurik_denker_instance, get_load_audio_fn, run_pre_analysis
+_bridge = importlib.import_module("backend.api.bridge")
+build_export_quality_gate_payload = _bridge.build_export_quality_gate_payload
+export_guard = _bridge.export_guard
+get_audio_exporter_class = _bridge.get_audio_exporter_class
+get_aurik_denker_instance = _bridge.get_aurik_denker_instance
+get_load_audio_fn = _bridge.get_load_audio_fn
+run_pre_analysis = _bridge.run_pre_analysis
+validate_export_quality = _bridge.validate_export_quality
 
 _TARGET_SR = 48_000
 _VALID_MODES = {"Restoration", "Studio 2026"}
@@ -98,29 +116,107 @@ def _resample_to_48k(audio: np.ndarray, sr: int) -> np.ndarray:
     """Resample to 48 kHz with frontend-parity path (soxr HQ, fallback scipy)."""
     if sr == _TARGET_SR:
         return audio
-    try:
-        import soxr as _soxr_rs
-
-        # Frontend parity: soxr HQ for deterministic quality alignment.
-        if audio.ndim == 2:
-            out = _soxr_rs.resample(audio, sr, _TARGET_SR, quality="HQ")
-        else:
-            out = _soxr_rs.resample(audio, sr, _TARGET_SR, quality="HQ")
-        return np.asarray(out, dtype=np.float32)
-    except Exception:
+    if _soxr_rs is not None:
         try:
-            import scipy.signal as _sig
-
+            # Frontend parity: soxr HQ for deterministic quality alignment.
+            out = _soxr_rs.resample(audio, sr, _TARGET_SR, quality="HQ")
+            return np.asarray(out, dtype=np.float32)
+        except Exception:
+            pass
+    if _sig is not None:
+        try:
             int(round(audio.shape[0] * _TARGET_SR / sr))
-            return _sig.resample_poly(audio, _TARGET_SR, sr, axis=0).astype(np.float32)
+            out = _sig.resample_poly(audio, _TARGET_SR, sr, axis=0)
+            return np.asarray(out, dtype=np.float32)
         except Exception as exc2:
             raise RuntimeError(
                 "Interne 48-kHz-Normierung fehlgeschlagen. Ursache: Resampling konnte nicht ausgefuehrt werden. "
                 "Loesung: soxr/scipy im Bundle sicherstellen oder Eingabedatei vorab auf 48 kHz konvertieren."
             ) from exc2
+    raise RuntimeError(
+        "Interne 48-kHz-Normierung fehlgeschlagen. Ursache: kein Resampler im Bundle. "
+        "Loesung: soxr/scipy im Bundle sicherstellen oder Eingabedatei vorab auf 48 kHz konvertieren."
+    )
+
+
+def _as_samples_channels(audio: np.ndarray) -> np.ndarray:
+    """Normalisiert Aurik-Audio auf soundfile-/Exporter-Layout ``(samples, channels)``."""
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim == 2 and arr.shape[0] <= 2 and arr.shape[1] > 2:
+        arr = arr.T
+    return np.ascontiguousarray(arr)
+
+
+def _export_audio_frontend_parity(
+    result: object,
+    output_path: str,
+    restored_audio: np.ndarray,
+    reference_audio: np.ndarray,
+    logger: logging.Logger,
+) -> tuple[bool, list[str], dict[str, object]]:
+    """Exportiert mit demselben Guard-/Gate-Vertrag wie das Frontend."""
+    write_audio = export_guard(_as_samples_channels(restored_audio))
+    reference_for_export = export_guard(_as_samples_channels(reference_audio))
+
+    eq_passed, eq_warnings = validate_export_quality(result)
+    eq_payload = build_export_quality_gate_payload(result)
+    if eq_warnings:
+        for warning in eq_warnings:
+            logger.warning("Export-Quality: %s", warning)
+    if not eq_passed:
+        metadata = getattr(result, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata["export_quality_gate_failed"] = True
+            metadata["export_quality_gate_warnings"] = list(eq_warnings)
+
+    export_metadata = {
+        "quality_gate_passed": str(bool(eq_payload.get("passed", eq_passed))),
+        "quality_gate_degradation_status": str(eq_payload.get("degradation_status", "ok")),
+        "quality_gate_fail_reason": str(eq_payload.get("fail_reason", "")),
+        "quality_gate_recovery_attempted": str(bool(eq_payload.get("recovery_attempted", False))),
+        "quality_gate_best_possible_reached": str(bool(eq_payload.get("best_possible_reached", False))),
+        "fallback_quality_floor_status": str(
+            (eq_payload.get("fallback_quality_floor", {}) or {}).get("status", "passed")
+        ),
+    }
+
+    out_path = Path(output_path)
+    if out_path.suffix == "":
+        out_path = out_path.with_suffix(".wav")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audio_exporter_cls = get_audio_exporter_class()
+    if audio_exporter_cls is not None and out_path.suffix.lower() in audio_exporter_cls.FORMATS:
+        exporter = audio_exporter_cls()
+        exporter.export(
+            write_audio,
+            _TARGET_SR,
+            out_path,
+            bit_depth=24,
+            quality="veryhigh",
+            metadata=export_metadata,
+            normalize=False,
+            reference_audio=reference_for_export,
+        )
+    else:
+        tmp_path = str(out_path) + ".wav.tmp"
+        try:
+            sf.write(tmp_path, write_audio, _TARGET_SR, format="WAV", subtype="PCM_24")
+            os.replace(tmp_path, out_path)
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    logger.debug("Temporäre Exportdatei konnte nicht entfernt werden: %s", tmp_path)
+
+    if str(out_path) != output_path:
+        logger.info("Ausgabepfad ohne Dateiendung wurde als WAV geschrieben: %s", out_path)
+    return bool(eq_payload.get("passed", eq_passed)), [str(w) for w in eq_warnings], eq_payload
 
 
 def process_audio(input_path: str, output_path: str, verbose: bool = True, mode: str = "Restoration") -> object:
+    """Verarbeitet eine Audiodatei über denselben Denker-/Exportpfad wie das Frontend."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s: %(message)s")
     logger = logging.getLogger("aurik_cli")
 
@@ -212,7 +308,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
     # Material-Klasse — multi-generationale mp3_low-Ketten können strukturell keine CD-Qualität
     # erreichen. Hardcoded 0.55 erzeugt für legitime Restaurierungen immer 'degraded'-Export.
     _mat_str = str(getattr(result, "material", "") or "").lower()
-    _mat_str = _mat_str.split(".")[-1]  # Enum-Value (.mp3_low → mp3_low)
+    _mat_str = _mat_str.rsplit(".", maxsplit=1)[-1]  # Enum-Value (.mp3_low → mp3_low)
     _QE_THRESHOLD: dict[str, float] = {
         "mp3_low": 0.33,
         "mp3_high": 0.40,
@@ -262,14 +358,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         )
 
     # ── 5. Ergebnis speichern ─────────────────────────────────────────────────
-    # Aurik-internes Format: (channels, samples) = (2, N). soundfile und
-    # _rms_dbfs erwarten (samples, channels) = (N, 2). Hier normalisieren.
-    restored = result.audio
-    if isinstance(restored, np.ndarray):
-        if restored.ndim == 2 and restored.shape[0] < restored.shape[1]:
-            # (ch, N) → (N, ch) — Transport-Bump-Bug: falsche axis in mean/sf.write
-            restored = np.ascontiguousarray(restored.T)
-        restored = np.asarray(restored, dtype=np.float32)
+    restored = _as_samples_channels(result.audio)
     _in_db = _rms_dbfs(audio_48k)
     _out_db = _rms_dbfs(restored)
     _drop_db = _in_db - _out_db
@@ -306,19 +395,24 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         )
 
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        # §0h NaN/Inf-Guard + Clipping — Frontend-Parität (export_guard); verhindert
-        # korrupte Audiodateien bei numerischen Fehlern in ML-Plugins.
-        restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
-        restored = np.clip(restored, -1.0, 1.0)
-        sf.write(output_path, restored, _TARGET_SR, subtype="PCM_24")
+        _eq_passed, _eq_warnings, _eq_payload = _export_audio_frontend_parity(
+            result,
+            output_path,
+            restored,
+            audio_48k,
+            logger,
+        )
     except Exception as exc:
         logger.error("Fehler beim Speichern der Audiodatei: %s", exc)
         sys.exit(5)
 
     if verbose:
         logger.info("📈 Pegel-Drift: in=%.2f dBFS out=%.2f dBFS delta=%.2f dB", _in_db, _out_db, -_drop_db)
-        if _export_degraded:
+        if _export_degraded or not _eq_passed:
+            if not _export_degraded_reasons and _eq_warnings:
+                _export_degraded_reasons.extend(_eq_warnings)
+            elif not _export_degraded_reasons and isinstance(_eq_payload, dict):
+                _export_degraded_reasons.append(str(_eq_payload.get("fail_reason", "Export-Quality-Gate")))
             logger.warning(
                 "🟡 Export abgeschlossen (DEGRADED): %s — Grund: %s",
                 output_path,
@@ -332,6 +426,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
 
 
 def print_usage():
+    """Gibt die CLI-Hilfe aus."""
     print("\nVerwendung: aurik_cli [--input PATH] [--output PATH] [--mode MODUS] [-q] [-h]")
     print("\nOptionen:")
     print("  --input, --input_audio PATH  Eingabe-Audiodatei")
@@ -343,6 +438,7 @@ def print_usage():
 
 
 def main():
+    """Parst CLI-Argumente und startet die Aurik-Verarbeitung."""
     args = sys.argv[1:]
     verbose = True
     if "-q" in args or "--quiet" in args:

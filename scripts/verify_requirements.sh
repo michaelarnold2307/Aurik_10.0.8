@@ -4,7 +4,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON="${SCRIPT_DIR}/../.venv_aurik/bin/python"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PYTHON="$PROJECT_ROOT/.venv_aurik/bin/python"
 
 # Fallback auf System-Python wenn kein venv vorhanden
 if [[ ! -f "$PYTHON" ]]; then

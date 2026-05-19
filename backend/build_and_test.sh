@@ -1,41 +1,34 @@
-#!/bin/bash
-# SOTA-Build-&-Test-Skript für Aurik (ohne CI-Server)
-set -e
+#!/usr/bin/env bash
+# Aurik Desktop Build-&-Test-Helfer — kein Server, kein Docker.
+set -euo pipefail
 
-# 1. Linting
-if command -v flake8 &> /dev/null; then
-  echo "[SOTA] Linting mit flake8..."
-  flake8 .
-else
-  echo "[SOTA] flake8 nicht gefunden, überspringe Linting."
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PYTHON="$PROJECT_ROOT/.venv_aurik/bin/python"
 
-# 2. Unit- und Integrationstests
-if command -v pytest &> /dev/null; then
-  echo "[SOTA] Starte Tests mit pytest..."
-  pytest --maxfail=1 --disable-warnings --tb=short
-else
-  echo "[SOTA] pytest nicht gefunden, überspringe Tests."
-fi
-
-# 3. Docker-Builds
-if command -v docker &> /dev/null; then
-  echo "[SOTA] Baue alle Docker-Images..."
-  docker compose build
-else
-  echo "[SOTA] Docker nicht gefunden, überspringe Docker-Builds."
-fi
-
-# 4. Healthchecks (optional)
-echo "[SOTA] Starte Healthchecks..."
-docker compose up -d
-sleep 10
-HEALTH_URL="http://localhost:8000/api/health"
-if curl -sf "$HEALTH_URL" | grep '"status": "ok"'; then
-  echo "[SOTA] Healthcheck erfolgreich."
-else
-  echo "[SOTA] Healthcheck FEHLGESCHLAGEN!"
+if [[ ! -x "$PYTHON" ]]; then
+  echo "[Aurik] venv-Python nicht gefunden: $PYTHON" >&2
+  echo "[Aurik] Bitte zuerst: bash scripts/install_aurik.sh" >&2
   exit 1
 fi
 
-echo "[SOTA] Build-&-Test-Skript erfolgreich abgeschlossen."
+cd "$PROJECT_ROOT"
+
+echo "[Aurik] Syntaxprüfung Kernmodule..."
+"$PYTHON" -m py_compile \
+  backend/core/unified_restorer_v3.py \
+  backend/core/defect_scanner.py \
+  backend/core/gp_parameter_optimizer.py
+
+echo "[Aurik] Unit-Smoke-Tests..."
+"$PYTHON" -m pytest tests/unit \
+  -p no:xdist \
+  --override-ini="addopts=--strict-markers --import-mode=importlib" \
+  --timeout=30 \
+  --tb=short \
+  -q \
+  --disable-warnings \
+  --no-header \
+  --maxfail=3
+
+echo "[Aurik] Desktop Build-&-Test-Helfer erfolgreich abgeschlossen."

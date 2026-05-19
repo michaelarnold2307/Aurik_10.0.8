@@ -193,13 +193,14 @@ info "Aurik starten:"
 if ! $USE_EXISTING_VENV; then
     echo "  source $VENV_DIR/bin/activate"
 fi
-echo "  python start_aurik_90.py"
+echo "  ./run_aurik.sh"
+echo "  # Legacy-Kompatibilität: python start_aurik_90.py"
 echo ""
 info "Tests ausführen:"
 if ! $USE_EXISTING_VENV; then
     echo "  source $VENV_DIR/bin/activate"
 fi
-echo "  pytest --maxfail=5 --disable-warnings --tb=short"
+echo "  ./run_tests_safe.sh tests/unit --maxfail=5 --tb=short"
 echo ""
 warn "Optionale Groß-Pakete (für SOTA-Upgrades, §13.3):"
 echo "  pip install madmom>=0.16.0       # Beat-Tracking (GrooveMetric)"

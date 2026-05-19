@@ -115,13 +115,13 @@ class RestorationResult:
     config: RestorationConfig
     material_type: MaterialType
     defect_scores: dict[DefectType, float]
-    phases_executed: list[str]
-    phases_skipped: list[str]
-    total_time_seconds: float
-    rt_factor: float
-    quality_estimate: float  # 0-1
-    warnings: list[str]
-    metadata: dict[str, Any]
+    phases_executed: list[str] = field(default_factory=list)
+    phases_skipped: list[str] = field(default_factory=list)
+    total_time_seconds: float = 0.0
+    rt_factor: float = 0.0
+    quality_estimate: float = 0.0  # 0-1
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # --- Spec-Pflichtfelder (optional, mit sicherem Default) ---
     pqs_result: Any | None = None  # PQS-MOS-Objekt (§2.6)
     musical_goals: dict[str, float] | None = None  # 15 Musical Goals (§1.2)
@@ -6625,7 +6625,7 @@ class UnifiedRestorerV3:
             import hashlib as _hashlib_rm  # pylint: disable=import-outside-toplevel
 
             from backend.core.restoration_memory import (
-                get_restoration_memory as _get_rm,  # pylint: disable=import-outside-toplevel
+                get_restoration_memory as _get_rm,
             )
 
             _rm_era_key = int(self._restoration_context.get("decade", 1970) or 1970)

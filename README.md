@@ -185,38 +185,21 @@ PYTHONPATH=. ./.venv_aurik/bin/python cli/aurik_cli.py \
 
 **Exit-Codes (CLI):**
 0 = Erfolg · 1 = Argumentfehler · 2 = Input fehlt · 3 = Importfehler · 4 = Pipelinefehler ·
-5 = Exportfehler · 6 = Resamplingfehler · 7 = Quality-Gate · 8 = P1/P2-Gate ·
-9 = Pegelabfall > 2.5 dB · 10 = Pre-Analysis-Fehler
+5 = Exportfehler · 6 = Resamplingfehler · 10 = Pre-Analysis-Fehler. Quality-Gate-,
+P1/P2- und Pegelabweichungen werden spec-konform als `degraded` exportiert, nicht hart abgebrochen.
 
 ### Python API
 
 ```python
-from core.unified_restorer_v3 import UnifiedRestorerV3
-from core.restoration_config import RestorationConfig, QualityMode, MaterialType
-import soundfile as sf
+from cli.aurik_cli import process_audio
 
-# Load Audio
-audio, sr = sf.read('input.wav')
-
-# Configure Processing
-config = RestorationConfig(
-    quality_mode=QualityMode.BALANCED,
-    material_type=MaterialType.VINYL,  # or None for auto-detection
-    ml_enabled=True  # Enable ML-Hybrid phases
+result = process_audio(
+  "input.wav",
+  "output.wav",
+  mode="Restoration",  # oder "Studio 2026"
 )
 
-# Initialize Restorer
-restorer = UnifiedRestorerV3()
-
-# Process Audio
-result = restorer.process(audio, sr, config)
-
-# Save Result
-sf.write('output.wav', result.audio, sr)
-
-# Check Quality Metrics
-print(f"Quality: {result.quality_score:.2f}")
-print(f"Processing Time: {result.processing_time_seconds:.1f}s")
+print(f"Quality: {result.quality_estimate:.2f}")
 print(f"RT Factor: {result.rt_factor:.2f}×")
 ```
 
@@ -397,8 +380,7 @@ inkl. NaN/Inf-Tests, Bounds-Tests, Mono+Stereo, Edge-Cases, Thread-Safety.
 ### Ära-Klassifikation & AMRB-Benchmark
 
 ```bash
-# Vor-Assessment (< 5 s)
-python aurik_cli.py --input aufnahme.wav --pre-assess
+# Voranalyse läuft automatisch vor jedem CLI- und GUI-Lauf über die Bridge.
 
 # AMRB v1.0 (10 Szenarien, interne Führungs-Schwelle ≥ 84.0)
 python benchmarks/musical_restoration_benchmark.py
