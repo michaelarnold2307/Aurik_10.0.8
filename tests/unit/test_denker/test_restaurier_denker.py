@@ -234,3 +234,48 @@ class TestRestaurierDenkerCheckpointResume:
         assert fake_restorer.received_checkpoint is checkpoint_obj
         assert isinstance(result.audio, np.ndarray)
         assert result.phases_executed == ["phase_01_click_removal"]
+
+
+class TestRestaurierDenkerOracleRolloutForwarding:
+    def test_22_forwards_phase_strength_oracle_rollout_to_uv3_restore(self):
+        from denker.restaurier_denker import RestaurierDenker
+
+        class _Material:
+            value = "vinyl"
+
+        class _Raw:
+            def __init__(self):
+                self.audio = _sine(0.5)
+                self.rt_factor = 1.0
+                self.quality_estimate = 0.8
+                self.phases_executed = []
+                self.phases_skipped = []
+                self.musical_goals = {}
+                self.warnings = []
+                self.confidence = 0.9
+                self.winning_variant = None
+                self.rollback_triggered = False
+                self.total_time_seconds = 0.5
+                self.material_type = _Material()
+
+        class _FakeRestorer:
+            def __init__(self):
+                self.restore_kwargs: dict[str, object] = {}
+
+            def restore(self, _audio, **kwargs):
+                self.restore_kwargs = dict(kwargs)
+                return _Raw()
+
+        denker = RestaurierDenker()
+        fake_restorer = _FakeRestorer()
+
+        with patch.object(RestaurierDenker, "_get_restorer", return_value=fake_restorer):
+            result = denker.restauriere(
+                _sine(),
+                SR,
+                cached_defect_result=object(),  # direkt in den UV3-Pfad
+                phase_strength_oracle_rollout="pilot",
+            )
+
+        assert isinstance(result.audio, np.ndarray)
+        assert fake_restorer.restore_kwargs.get("phase_strength_oracle_rollout") == "pilot"

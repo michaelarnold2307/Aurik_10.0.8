@@ -195,6 +195,66 @@ class TapeHissReductionPhase(PhaseInterface):
         "unknown": 1.5,
     }
 
+    @staticmethod
+    def _limit_quiet_zone_boost(
+        reference_audio: np.ndarray,
+        candidate_audio: np.ndarray,
+        sample_rate: int,
+        material_key: str,
+        max_quiet_boost_db: float = 2.0,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        """Limit energy added by hiss reduction in quiet structural regions."""
+        ref = np.asarray(reference_audio, dtype=np.float32)
+        cand = np.asarray(candidate_audio, dtype=np.float32).copy()
+        if ref.shape != cand.shape or ref.size == 0:
+            return cand, {"quiet_zone_limited_frames": 0.0, "quiet_zone_max_delta_db": 0.0}
+
+        if ref.ndim == 2:
+            ref_mono = ref.mean(axis=1) if ref.shape[1] <= 8 else ref.mean(axis=0)
+            cand_mono = cand.mean(axis=1) if ref.shape[1] <= 8 else cand.mean(axis=0)
+        else:
+            ref_mono = ref
+            cand_mono = cand
+
+        n_samples = int(min(ref_mono.size, cand_mono.size))
+        frame = max(256, int(sample_rate * 0.05))
+        hop = frame
+        if n_samples < frame:
+            return cand, {"quiet_zone_limited_frames": 0.0, "quiet_zone_max_delta_db": 0.0}
+
+        gate_dbfs = compute_signal_relative_gate_dbfs(ref, material_key=str(material_key).lower())
+        gate_dbfs = min(float(gate_dbfs), -30.0)
+        limited_frames = 0
+        max_delta_db = 0.0
+
+        for start in range(0, n_samples - frame + 1, hop):
+            end = start + frame
+            ref_seg = ref_mono[start:end].astype(np.float64)
+            cand_seg = cand_mono[start:end].astype(np.float64)
+            ref_rms = float(np.sqrt(np.mean(ref_seg * ref_seg)) + 1e-12)
+            cand_rms = float(np.sqrt(np.mean(cand_seg * cand_seg)) + 1e-12)
+            ref_db = float(20.0 * np.log10(ref_rms))
+            cand_db = float(20.0 * np.log10(cand_rms))
+            if ref_db > gate_dbfs:
+                continue
+            delta_db = cand_db - ref_db
+            max_delta_db = max(max_delta_db, float(delta_db))
+            if delta_db <= max_quiet_boost_db:
+                continue
+            scale = float(10.0 ** ((max_quiet_boost_db - delta_db) / 20.0))
+            if cand.ndim == 2 and cand.shape[0] == n_samples:
+                cand[start:end, :] *= scale
+            elif cand.ndim == 2:
+                cand[:, start:end] *= scale
+            else:
+                cand[start:end] *= scale
+            limited_frames += 1
+
+        return np.clip(np.nan_to_num(cand, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0), {
+            "quiet_zone_limited_frames": float(limited_frames),
+            "quiet_zone_max_delta_db": round(float(max_delta_db), 3),
+        }
+
     # Number of frequency bands for multiband processing
     NUM_BANDS = 8
 
@@ -890,6 +950,19 @@ class TapeHissReductionPhase(PhaseInterface):
         except Exception as _pbg_exc_29:
             logger.debug("PhraseBoundaryGuard phase_29 (non-blocking): %s", _pbg_exc_29)
 
+        audio_processed, _quiet_zone_stats_p29 = self._limit_quiet_zone_boost(
+            audio,
+            audio_processed,
+            sample_rate,
+            material_key,
+        )
+        if _quiet_zone_stats_p29["quiet_zone_limited_frames"] > 0:
+            logger.warning(
+                "§0h phase_29 Quiet-Zone-Guard: limited %.0f frame(s), maxΔ=%.2f dB",
+                _quiet_zone_stats_p29["quiet_zone_limited_frames"],
+                _quiet_zone_stats_p29["quiet_zone_max_delta_db"],
+            )
+
         return PhaseResult(
             success=True,
             audio=restore_layout(audio_processed, _p29_transposed),
@@ -917,6 +990,8 @@ class TapeHissReductionPhase(PhaseInterface):
                 "lag_output_samples": int(_stereo_lag_stats["lag_output_samples"]),
                 "lag_corrected": bool(_stereo_lag_stats["lag_corrected"]),
                 "lag_output_corrected_samples": int(_stereo_lag_stats["lag_output_corrected_samples"]),
+                "quiet_zone_limited_frames": int(_quiet_zone_stats_p29["quiet_zone_limited_frames"]),
+                "quiet_zone_max_delta_db": float(_quiet_zone_stats_p29["quiet_zone_max_delta_db"]),
             },
             warnings=[] if rt_factor < 0.12 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )
@@ -1630,8 +1705,8 @@ class TapeHissReductionPhase(PhaseInterface):
 
     def _estimate_noise_floor(self, band_signal: np.ndarray) -> float:
         """
-        Legacy-Methode (10th-Percentile RMS) \u2014 nur als R\u00fcckw\u00e4rtskompatibilit\u00e4ts-Alias.
-        Primitivere Sch\u00e4tzung; STFT-OMLSA via _process_channel_omlsa ist prim\u00e4r.
+        Legacy-Methode (10th-Percentile RMS) \u2014 nur als R\u00fcckwärtskompatibilitäts-Alias.
+        Primitivere Schätzung; STFT-OMLSA via _process_channel_omlsa ist primär.
         """
         # Compute short-term RMS (10ms windows)
         window_samples = int(0.01 * self.sample_rate)

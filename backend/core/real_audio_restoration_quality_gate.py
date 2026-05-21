@@ -26,18 +26,19 @@ _VQI = "VQI_BELOW_THRESHOLD"
 class RestorationQualityThresholds:
     """Thresholds for the final real-audio restoration quality gate."""
 
-    min_non_degraded_export_rate: float = 0.50
-    min_unblocked_export_rate: float = 0.50
-    min_musical_goal_case_pass_rate: float = 0.85
-    min_noise_texture_case_pass_rate: float = 0.90
-    min_goosebumps_case_pass_rate: float = 0.85
+    min_non_degraded_export_rate: float = 0.85
+    min_unblocked_export_rate: float = 0.90
+    min_musical_goal_case_pass_rate: float = 0.90
+    min_noise_texture_case_pass_rate: float = 0.94
+    min_goosebumps_case_pass_rate: float = 0.90
+    min_final_quality_case_pass_rate: float = 0.85
     min_vocal_floor_pass_rate: float = 1.0
-    min_hpi_average: float = 0.72
-    min_quality_estimate_average: float = 0.80
-    max_runtime_factor: float = 12.0
-    min_real_audio_cases: int = 50
-    min_vocal_cases: int = 20
-    min_external_benchmark_cases: int = 10
+    min_hpi_average: float = 0.78
+    min_quality_estimate_average: float = 0.84
+    max_runtime_factor: float = 8.0
+    min_real_audio_cases: int = 80
+    min_vocal_cases: int = 30
+    min_external_benchmark_cases: int = 20
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class RestorationQualityGateResult:
     musical_goal_case_pass_rate: float
     noise_texture_case_pass_rate: float
     goosebumps_case_pass_rate: float
+    final_quality_case_pass_rate: float
     vocal_floor_pass_rate: float
     hpi_average: float | None
     quality_estimate_average: float | None
@@ -108,18 +110,19 @@ def _thresholds_from_manifest(payload: dict[str, Any] | None) -> RestorationQual
     if not isinstance(raw, dict):
         raw = {}
     return RestorationQualityThresholds(
-        min_non_degraded_export_rate=float(raw.get("min_non_degraded_export_rate", 0.50)),
-        min_unblocked_export_rate=float(raw.get("min_unblocked_export_rate", 0.50)),
-        min_musical_goal_case_pass_rate=float(raw.get("min_musical_goal_case_pass_rate", 0.85)),
-        min_noise_texture_case_pass_rate=float(raw.get("min_noise_texture_case_pass_rate", 0.90)),
-        min_goosebumps_case_pass_rate=float(raw.get("min_goosebumps_case_pass_rate", 0.85)),
+        min_non_degraded_export_rate=float(raw.get("min_non_degraded_export_rate", 0.85)),
+        min_unblocked_export_rate=float(raw.get("min_unblocked_export_rate", 0.90)),
+        min_musical_goal_case_pass_rate=float(raw.get("min_musical_goal_case_pass_rate", 0.90)),
+        min_noise_texture_case_pass_rate=float(raw.get("min_noise_texture_case_pass_rate", 0.94)),
+        min_goosebumps_case_pass_rate=float(raw.get("min_goosebumps_case_pass_rate", 0.90)),
+        min_final_quality_case_pass_rate=float(raw.get("min_final_quality_case_pass_rate", 0.85)),
         min_vocal_floor_pass_rate=float(raw.get("min_vocal_floor_pass_rate", 1.0)),
-        min_hpi_average=float(raw.get("min_hpi_average", 0.72)),
-        min_quality_estimate_average=float(raw.get("min_quality_estimate_average", 0.80)),
-        max_runtime_factor=float(raw.get("max_runtime_factor", 12.0)),
-        min_real_audio_cases=int(raw.get("min_real_audio_cases", 50)),
-        min_vocal_cases=int(raw.get("min_vocal_cases", 20)),
-        min_external_benchmark_cases=int(raw.get("min_external_benchmark_cases", 10)),
+        min_hpi_average=float(raw.get("min_hpi_average", 0.78)),
+        min_quality_estimate_average=float(raw.get("min_quality_estimate_average", 0.84)),
+        max_runtime_factor=float(raw.get("max_runtime_factor", 8.0)),
+        min_real_audio_cases=int(raw.get("min_real_audio_cases", 80)),
+        min_vocal_cases=int(raw.get("min_vocal_cases", 30)),
+        min_external_benchmark_cases=int(raw.get("min_external_benchmark_cases", 20)),
     )
 
 
@@ -252,6 +255,7 @@ def evaluate_restoration_quality_gate(
     musical_rate = _rate(cases, "musical_goals_passed")
     noise_rate = _rate(cases, "noise_texture_passed")
     goosebumps_rate = _rate(cases, "goosebumps_passed")
+    final_quality_rate = _rate(cases, "final_quality_passed")
     vocal_rate = (
         1.0 if not vocal_cases else sum(1 for case in vocal_cases if case.vocal_floor_passed) / len(vocal_cases)
     )
@@ -277,6 +281,10 @@ def evaluate_restoration_quality_gate(
     if goosebumps_rate < thresholds.min_goosebumps_case_pass_rate:
         fail_reasons.append(
             f"goosebumps_case_pass_rate {goosebumps_rate:.3f} < {thresholds.min_goosebumps_case_pass_rate:.3f}"
+        )
+    if final_quality_rate < thresholds.min_final_quality_case_pass_rate:
+        fail_reasons.append(
+            f"final_quality_case_pass_rate {final_quality_rate:.3f} < {thresholds.min_final_quality_case_pass_rate:.3f}"
         )
     if vocal_rate < thresholds.min_vocal_floor_pass_rate:
         fail_reasons.append(f"vocal_floor_pass_rate {vocal_rate:.3f} < {thresholds.min_vocal_floor_pass_rate:.3f}")
@@ -308,6 +316,7 @@ def evaluate_restoration_quality_gate(
         musical_goal_case_pass_rate=float(musical_rate),
         noise_texture_case_pass_rate=float(noise_rate),
         goosebumps_case_pass_rate=float(goosebumps_rate),
+        final_quality_case_pass_rate=float(final_quality_rate),
         vocal_floor_pass_rate=float(vocal_rate),
         hpi_average=hpi_avg,
         quality_estimate_average=quality_avg,

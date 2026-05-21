@@ -181,6 +181,21 @@ class TestBridgeExperienceInsights:
         assert qg["primary_error_code"] == "HPI_FAIL"
         assert qg["recovery_attempted"] is True
         assert qg["best_possible_reached"] is False
+        assert qg["profile"] == "neutral"
+        assert qg["preserve_signal"] == 0.0
+
+    def test_get_experience_insights_derives_fragile_profile_from_stage_notes(self):
+        """Wenn preserve_signal hoch ist, muss quality_gate Profil als fragil markiert werden."""
+        from backend.api.bridge import get_experience_insights
+
+        class MockResult:
+            metadata = {"degradation_status": "ok"}
+            stage_notes = {"exzellenz_recovery_profile": {"preserve_signal": 0.8}}
+
+        result = get_experience_insights(MockResult())
+        qg = result["quality_gate"]
+        assert qg["profile"] == "fragile_or_transient_risk"
+        assert qg["preserve_signal"] == 0.8
 
     def test_get_experience_insights_quality_gate_maps_recovered_floor(self):
         """Fallback-quality-floor recovered status must be reflected as recovered gate status."""
@@ -203,6 +218,33 @@ class TestBridgeExperienceInsights:
         assert qg["degradation_status"] == "recovered"
         assert qg["best_possible_reached"] is True
         assert qg["fallback_quality_floor_status"] == "recovered"
+
+    def test_get_experience_insights_propagates_worldclass_and_threshold_evidence(self):
+        """Bridge insights must carry WCS gate and threshold evidence fields."""
+        from backend.api.bridge import get_experience_insights
+
+        class MockResult:
+            metadata = {
+                "worldclass_composite_gate": {
+                    "wcs": 0.89,
+                    "threshold": 0.88,
+                    "profile": "vocal",
+                    "artifact_veto": False,
+                    "passed": True,
+                },
+                "threshold_evidence": {
+                    "worldclass_composite_gate": {
+                        "source_class": "C",
+                        "source_ref": "Spec §8.6b WCS initial calibration",
+                    }
+                },
+            }
+
+        result = get_experience_insights(MockResult())
+        assert "threshold_evidence" in result
+        assert result["quality_gate"]["worldclass_composite_gate"]["passed"] is True
+        assert result["quality_gate"]["worldclass_composite_gate"]["profile"] == "vocal"
+        assert result["threshold_evidence"]["worldclass_composite_gate"]["source_class"] == "C"
 
     def test_build_export_quality_gate_payload_includes_fqf_flags(self):
         """Bridge must emit export_workflow-compatible quality_gate payload."""
@@ -239,6 +281,107 @@ class TestBridgeExperienceInsights:
         assert "passed" in payload
         assert "required_gates" in payload
         assert payload["recovery_attempted"] is False
+        assert "musiclover" in payload
+        assert payload["musiclover"]["musical_goals"]["remaining_count"] == 0
+
+    def test_build_export_quality_gate_payload_carries_profile_details(self):
+        """Export payload muss adaptives Gate-Profil für Reports bereitstellen."""
+        from backend.api.bridge import build_export_quality_gate_payload
+
+        class MockResult:
+            quality_estimate = 0.7
+            metadata = {
+                "degradation_status": "ok",
+                "export_gate_profile": "modern_stable",
+                "export_gate_material": "cd_digital",
+                "export_gate_preserve_signal": 0.15,
+                "export_gate_thresholds": {
+                    "quality_estimate": 0.57,
+                    "level_drop_db": 2.1,
+                },
+                "export_gate_signal_signature": {
+                    "crest_db": 11.2,
+                    "hf_ratio": 0.09,
+                    "transient_ratio": 0.002,
+                    "micro_dynamic_db": 7.8,
+                },
+            }
+
+        payload = build_export_quality_gate_payload(MockResult())
+        assert payload["profile"] == "modern_stable"
+        assert payload["material"] == "cd_digital"
+        assert payload["preserve_signal"] == 0.15
+        assert payload["thresholds"]["quality_estimate"] == 0.57
+        assert payload["thresholds"]["level_drop_db"] == 2.1
+        assert payload["signal_signature"]["crest_db"] == 11.2
+
+    def test_build_export_quality_gate_payload_musiclover_sections(self):
+        """Music-Lover Payload enthält vokale/stereo/zeitliche Qualitätsindikatoren."""
+        from backend.api.bridge import build_export_quality_gate_payload
+
+        class MockResult:
+            quality_estimate = 0.81
+            chroma_correlation = 0.93
+            lufs_delta = 1.7
+            metadata = {
+                "degradation_status": "ok",
+                "vqi": 0.84,
+                "vqi_tier": "good",
+                "singer_identity_cosine": 0.95,
+                "mono_compatibility_warning": True,
+                "vocal_restoration_capability_status": "sota_fallback",
+                "model_capability_report": {
+                    "summary": {
+                        "all_sota_real": False,
+                        "degraded_capabilities": ["miipher"],
+                    }
+                },
+                "musical_goals": {
+                    "scores": {"natuerlichkeit": 0.80, "authentizitaet": 0.77},
+                    "thresholds": {"natuerlichkeit": 0.88, "authentizitaet": 0.84},
+                },
+                "temporal_continuity": {
+                    "phase_19_de_esser": {"gain_step_db": 1.8, "variance_ratio": 1.4},
+                },
+            }
+
+        payload = build_export_quality_gate_payload(MockResult())
+        ml = payload["musiclover"]
+        assert ml["vocal_integrity"]["vqi"] == 0.84
+        assert ml["stereo_integrity"]["mono_compatibility_warning"] is True
+        assert ml["temporal_risk"]["hotspot_count"] == 1
+        assert ml["musical_goals"]["remaining_count"] >= 1
+        assert ml["mastering"]["chroma_correlation"] == 0.93
+        assert ml["decision_trace"]["all_sota_real"] is False
+        assert ml["decision_trace"]["vocal_restoration_capability_status"] == "sota_fallback"
+
+    def test_build_export_quality_gate_payload_propagates_worldclass_and_threshold_evidence(self):
+        """Export payload must include WCS gate and threshold evidence from metadata."""
+        from backend.api.bridge import build_export_quality_gate_payload
+
+        class MockResult:
+            quality_estimate = 0.88
+            metadata = {
+                "degradation_status": "ok",
+                "worldclass_composite_gate": {
+                    "wcs": 0.87,
+                    "threshold": 0.85,
+                    "profile": "instrumental",
+                    "artifact_veto": False,
+                    "passed": True,
+                },
+                "threshold_evidence": {
+                    "hpi_gate": {
+                        "source_class": "B",
+                        "source_ref": "Spec §2.44 holistic perceptual index",
+                    }
+                },
+            }
+
+        payload = build_export_quality_gate_payload(MockResult())
+        assert payload["worldclass_composite_gate"]["passed"] is True
+        assert payload["worldclass_composite_gate"]["profile"] == "instrumental"
+        assert payload["threshold_evidence"]["hpi_gate"]["source_class"] == "B"
 
 
 # ---------------------------------------------------------------------------

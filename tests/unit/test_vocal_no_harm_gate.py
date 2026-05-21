@@ -180,6 +180,55 @@ def test_vocal_no_harm_gate_uses_studio_vqi_floor(monkeypatch: pytest.MonkeyPatc
     assert "vqi" in result.reason
 
 
+def test_vocal_no_harm_gate_rolls_back_when_below_maximum_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.core.vocal_no_harm_gate import get_vocal_no_harm_gate
+
+    _patch_measurements(monkeypatch, vqi=0.80)
+    audio = _synthetic_vocal()
+
+    result = get_vocal_no_harm_gate().evaluate(
+        audio,
+        audio.copy(),
+        SR,
+        panns_singing=0.90,
+        material_type="vinyl",
+        restorability_score=100.0,
+    )
+
+    assert result.requires_rollback is True
+    assert "vocal_max_alignment" in result.reason
+    assert result.scores["vocal_max_target"] == pytest.approx(0.88)
+    assert result.scores["vocal_max_alignment_percent"] == pytest.approx(90.91, abs=0.01)
+    assert result.scores["vocal_max_alignment_floor_percent"] == pytest.approx(94.0)
+    assert result.checks["vocal_max_alignment_ok"] is False
+
+
+def test_vocal_no_harm_gate_relaxes_maximum_alignment_for_low_restorability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.core.vocal_no_harm_gate import get_vocal_no_harm_gate
+
+    _patch_measurements(monkeypatch, vqi=0.80)
+    audio = _synthetic_vocal()
+
+    result = get_vocal_no_harm_gate().evaluate(
+        audio,
+        audio.copy(),
+        SR,
+        panns_singing=0.90,
+        material_type="vinyl",
+        restorability_score=0.0,
+    )
+
+    assert result.requires_rollback is False
+    assert result.scores["vocal_max_target"] == pytest.approx(0.86)
+    assert result.scores["vocal_max_alignment_percent"] == pytest.approx(93.02, abs=0.01)
+    assert result.scores["vocal_max_alignment_floor_percent"] == pytest.approx(90.0)
+    assert result.checks["vocal_max_alignment_ok"] is True
+
+
 def test_vocal_no_harm_gate_requests_rollback_when_protected_breath_is_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

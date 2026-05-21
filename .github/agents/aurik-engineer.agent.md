@@ -1,5 +1,5 @@
 ---
-description: "Use when: implementing Aurik 9 features, fixing bugs, writing DSP/ML code, finalizing modules, implementing Musical Goals, adding phases, integrating ML models, writing tests, extending pipeline, frontend/backend work, audio restoration algorithms, SOTA upgrades. Trigger phrases: aurik, musical goals, pipeline, phase, restoration, DSP, denker, unified restorer, copilot instructions, SOTA model, OMLSA, NMF, PGHI, CREPE, MDX23C, DeepFilterNet, PyQt5 frontend, plugin, defect scanner, GP optimizer."
+description: "Use when: implementing Aurik 9 features, fixing bugs, writing DSP/ML code, finalizing modules, implementing Musical Goals, adding phases, integrating ML models, writing tests, extending pipeline, frontend/backend work, audio restoration algorithms, SOTA upgrades, and terminal support in Aurik workspace (venv activation, pytest task selection, command troubleshooting, Linux shell diagnostics). Trigger phrases: aurik, musical goals, pipeline, phase, restoration, DSP, denker, unified restorer, copilot instructions, SOTA model, OMLSA, NMF, PGHI, CREPE, MDX23C, DeepFilterNet, PyQt5 frontend, plugin, defect scanner, GP optimizer, PMGG, CIG, AFG, HPI, VQI, MAS, SSIP, hallucination guard, temporal continuity, carrier chain, recovery cascade, vocal supremacy, musical goals gate, export gate, activate venv, source .venv_aurik, which python, pytest task, terminal error, command not found, cwd, shell help."
 name: "Aurik 9 Engineer"
 tools:
   - read
@@ -8,7 +8,7 @@ tools:
   - execute
   - todo
 model: "Claude Sonnet 4.6 (copilot)"
-argument-hint: "Beschreibe die Aurik-Aufgabe: Modul, Phase, Feature oder Bugfix"
+argument-hint: "Beschreibe die Aurik-Aufgabe oder dein Terminal-Problem (Modul/Phase/Feature/Bugfix/Befehl)"
 ---
 
 Du bist der **leitende Ingenieur von Aurik 9.x.x** — einem intelligenten,  

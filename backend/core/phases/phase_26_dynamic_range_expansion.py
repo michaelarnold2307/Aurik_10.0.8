@@ -48,6 +48,7 @@ from scipy import signal
 
 from backend.core.audio_utils import audio_sample_count, stereo_channel_view, stereo_like
 from backend.core.defect_scanner import MaterialType
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -192,9 +193,12 @@ class DynamicRangeExpansion(PhaseInterface):
             description="Multi-band upward/downward expansion for dynamic restoration",
         )
 
-    # pylint: disable-next=arguments-renamed
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
     ) -> PhaseResult:
         """
         Wendet an: dynamic range expansion to audio.
@@ -202,7 +206,7 @@ class DynamicRangeExpansion(PhaseInterface):
         Args:
             audio: Input audio (mono or stereo)
             sample_rate: Sample rate in Hz
-            material: Material type for adaptive processing
+            material_type: Material type for adaptive processing
 
         Returns:
             PhaseResult with expanded audio
@@ -211,11 +215,16 @@ class DynamicRangeExpansion(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         self.validate_input(audio)
+        material = kwargs.get("material", material_type)
+        if not isinstance(material, MaterialType):
+            try:
+                material = MaterialType(str(material))
+            except Exception:
+                material = MaterialType.CD_DIGITAL
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
 
         quality_mode = kwargs.get("quality_mode")
         restorability_score = kwargs.get("restorability_score", 50.0)

@@ -22,6 +22,15 @@ applyTo: "backend/core/phases/phase_*.py"
 11. Alle Instanzattribute MÜSSEN in __init__ deklariert werden (W0201)
     → Attribute die erst in process() gesetzt werden: in __init__ mit Sentinel initialisieren
     → Beispiel: self._omlsa_panns_singing: float = 0.0  # gesetzt in process()
+12. [V33] Jede Phase mit material-indizierten Dicts (dict[MaterialType, ...]) MUSS bei Einführung
+    eines neuen MaterialType-Members vollständig aktualisiert werden:
+    → DETECTION_THRESHOLD, CORRECTION_STRENGTH und alle weiteren dict[MaterialType, ...]-Variablen
+    → Wert aus IEC-/RIAA-Standard ableiten — kein Kopieren aus physikalisch anderem Träger
+    → Fallback auf dict.get(material_type, default_from_other_carrier) ist VERBOTEN für physikalisch
+      relevante Parameter (lautloser Defekt — kein RuntimeError, aber falsche Verarbeitung)
+    → Beispiel: CASSETTE braucht eigene DETECTION_THRESHOLD-Schwelle basierend auf IEC 60094-1
+      (≤ 0,2 % WRMS Capstan/Pinch-Roller); Vinyl-Default 0.5 % übersieht Kassetten-Transport-Bumps
+    → Pflicht-Test: test_phase_XX_all_material_types_in_DICT() für jede Phase mit material-indizierten Dicts
 ```
 
 ## §2.46 Carrier-Chain-Inversion — Stufenreihenfolge (HARD)
@@ -103,13 +112,28 @@ _RESTORATION_FORBIDDEN = {
 from backend.core.dsp.physical_ceiling import _MATERIAL_BW_CEILING_HZ, _MATERIAL_DR_CEILING_DB
 
 # BW-Erweiterung (phase_06/07/23):
-max_freq = _MATERIAL_BW_CEILING_HZ[material]  # Shellac ≤ 8kHz, Vinyl ≤ 16kHz
+max_freq = _MATERIAL_BW_CEILING_HZ[material]  # Shellac ≤ 8kHz, Vinyl ≤ 16kHz, Cassette ≤ 12kHz, Tape ≤ 15kHz
 # Keine Harmonik/Energie über max_freq hinzufügen
 
 # DR-Expansion (phase_26):
-max_dr = _MATERIAL_DR_CEILING_DB[material]  # Vinyl ≤ 70dB, Shellac ≤ 45dB
+max_dr = _MATERIAL_DR_CEILING_DB[material]  # Vinyl ≤ 70dB, Shellac ≤ 45dB, Cassette ≤ 62dB
 # Expansion über Ceiling = Artefakt → sofortiger Rollback
 ```
+
+## Phase 23 — BW-Ceiling-First-Invariante (v9.12.9)
+
+Generative/Inpainting-Phasen (phase_23) MÜSSEN `_apply_material_bw_ceiling()` **VOR** dem HallucinationGuard aufrufen:
+
+```python
+# RICHTIG: Ceiling zuerst, dann Guard
+audio_out, ceiling_applied, ceiling_hz = cls._apply_material_bw_ceiling(audio_out, sr, material_type, mode)
+halluc_result = check_hallucination(pre_audio, audio_out, sr, mode,
+                                    material_bw_ceiling_hz=ceiling_hz)
+# VERBOTEN: Ceiling nur innerhalb des Guards — Output wurde bereits über Ceiling synthetisiert
+```
+
+Cassette-spezifisch: `_material_bw_ceiling_hz("cassette") == 12000.0` (IEC 60094-1 Type I).
+Kanonischer Wert ist konsistent in `tonal_reference_profile.py`, `goal_applicability_filter.py` und `phase_23._material_bw_ceiling_hz()`.
 
 ## §2.63 Boundary-Mechanismus (STFT/ML-Phasen)
 
@@ -250,4 +274,89 @@ from backend.core.dsp.vocal_register_detector import detect_vocal_register_tempo
 register_sequence = detect_vocal_register_temporal(audio, sr)
 # glättet Brust→Kopf-Übergänge ±5 Frames linear
 # verhindert Timbre-Knick bei Passaggio-Sprüngen
+```
+
+## §2.8b De-Esser-Aktivierungsinvariante (phase_43)
+
+```python
+# RELEASE_MUST für phase_43_ml_deesser:
+# Bei hoher Sibilance/Vocal-Harshness darf PMGG den zweiten De-Esser-Pass
+# nicht auf nahezu wirkungslos reduzieren.
+
+defect_scores = kwargs.get("defect_scores", {})
+sib_pressure = max(
+    severity(defect_scores, "sibilance"),
+    severity(defect_scores, "sibilance_excess"),
+    severity(defect_scores, "vocal_harshness"),
+)
+
+effective_strength = clip(strength * phase_locality_factor, 0.0, 1.0)
+
+if sib_pressure >= 0.55:
+    control_floor = clip(0.30 + 0.40 * ((sib_pressure - 0.55) / 0.45), 0.30, 0.70)
+else:
+    control_floor = 0.0
+
+control_strength = max(effective_strength, control_floor)
+
+# control_strength steuert nur De-Esser-Kontrollparameter (ratio/threshold),
+# nicht den globalen Wet/Dry-Pfad (effective_strength bleibt PMGG-Wert).
+ratio = 1.0 + (ratio - 1.0) * control_strength
+if sib_pressure >= 0.55:
+    threshold_db = clip(threshold_db - clip(4.0 + 8.0 * ((sib_pressure - 0.55) / 0.45), 4.0, 12.0), -40.0, -6.0)
+
+# Pflicht-Metadata für Diagnose/Audit:
+metadata["sibilance_pressure"] = sib_pressure
+metadata["control_strength"] = control_strength
+metadata["effective_strength"] = effective_strength
+```
+
+```python
+# §2.36 Fallback-Gate in phase_43:
+# Kein phoneme_timeline + geringe Vocal-Wahrscheinlichkeit => Phonem-Fallback deaktivieren.
+# Sonst droht ungewolltes Voll-Restore (Pass-Through) in nicht-vokalen/synthetischen Fällen.
+
+if phoneme_timeline is None and float(kwargs.get("vocal_probability", 0.0)) < 0.25:
+    skip_phoneme_fallback = True
+```
+
+## §2.8c Kompressionsdefekt-Hardintervention (phase_54)
+
+```python
+# RELEASE_MUST für phase_54_transparent_dynamics:
+# Bei hohen Kompressionsdefekten darf PMGG/Locality die Dynamik-Reparatur
+# nicht praktisch deaktivieren.
+
+defect_scores = kwargs.get("defect_scores", {})
+compression_pressure = max(
+    severity(defect_scores, "compression_artifacts"),
+    0.85 * severity(defect_scores, "dynamic_compression_excess"),
+    0.35 * severity(defect_scores, "digital_artifacts"),
+)
+
+effective_strength = clip(strength * phase_locality_factor, 0.0, 1.0)
+
+if compression_pressure >= 0.25:
+    control_floor = clip(0.25 + 0.65 * ((compression_pressure - 0.25) / 0.75), 0.25, 0.90)
+else:
+    control_floor = 0.0
+
+control_strength = max(effective_strength, control_floor)
+
+# Hard-Intervention aktivieren ab hoher Defektlast:
+if compression_pressure >= 0.45:
+    hard_norm = clip((compression_pressure - 0.45) / 0.55, 0.0, 1.0)
+    threshold_db = clip(threshold_db - (2.0 + 6.0 * hard_norm), -36.0, -6.0)
+    ratio = clip(ratio + (0.4 + 1.2 * hard_norm), 1.5, 5.0)
+    attack_ms = clip(attack_ms * (1.05 + 0.30 * hard_norm), 3.0, 120.0)
+    release_ms = clip(release_ms * (1.15 + 0.55 * hard_norm), 40.0, 1400.0)
+
+# Pflicht: zusätzliche Gain-Envelope-Glättung gegen Pumpen,
+# aber transient_mask + masking_curve müssen weiter gelten.
+
+# Pflicht-Metadata für Diagnose/Audit:
+metadata["compression_pressure"] = compression_pressure
+metadata["control_floor"] = control_floor
+metadata["control_strength"] = control_strength
+metadata["hard_intervention_active"] = compression_pressure >= 0.45
 ```

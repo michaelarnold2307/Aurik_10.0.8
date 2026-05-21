@@ -237,6 +237,20 @@ def evaluate_candidate(model_name, candidate_plugin, amrb_subset="all"):
 
 **VERBOTEN**: Manuelle Matrix-Aktualisierung ohne durchlaufenen Evaluations-Check.
 
+## §4.4b [RELEASE_MUST] Phase-Bindung der SOTA-Matrix (v9.12.9)
+
+Die Tabellen in §4.4 definieren die familienweite Modell-Praeferenz. Die **bindende Zuordnung
+zu den einzelnen Phasen 01-64** steht in Spec 06 §7.1d.
+
+**Konfliktregel:**
+
+1. Spec 06 §7.1d ist autoritativ fuer die exakte Phasenbindung.
+2. Spec 04 §4.4 bleibt autoritativ fuer familienweite Modellrangfolgen und Ausschlusslisten.
+3. Bei Konflikt gewinnt die strengere, artefaktaermere Kombination.
+
+**VERBOTEN:** pro Phase eigenmaechtig ein anderes Primaermodell zu setzen, ohne die Bindung in
+Spec 06 §7.1d und das Evaluationsprotokoll §4.4a gemeinsam zu aktualisieren.
+
 ---
 
 ## §4.5 Pflicht-Algorithmus-Spezifikationen

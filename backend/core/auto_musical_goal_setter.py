@@ -126,6 +126,7 @@ class MusicalGoalProfile:
     """Kurze Begründung der Zielwahl (für Audit-Log)."""
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialisiert das Zielprofil als Dictionary für Logging, Audit und Telemetrie."""
         return asdict(self)
 
 
@@ -244,6 +245,16 @@ _MATERIAL_ADJUSTMENTS: dict[MaterialType, dict[str, float]] = {
         "target_warmth": +0.06,
         "denoise_strength": +0.08,
     },
+    MaterialType.CASSETTE: {
+        "target_snr_db": -2.0,
+        "target_authenticity": +0.05,
+        "target_warmth": +0.08,
+        "target_brightness": -0.04,
+        "denoise_strength": +0.10,
+        "declip_strength": +0.05,
+        "click_sensitivity": +0.08,
+        "dereverb_strength": +0.06,
+    },
     MaterialType.DAT: {
         "target_snr_db": +4.0,
         "target_authenticity": -0.02,
@@ -317,6 +328,7 @@ _MATERIAL_PQS_TARGETS: dict[MaterialType, float] = {
     MaterialType.VINYL: 4.0,
     MaterialType.TAPE: 4.2,
     MaterialType.REEL_TAPE: 4.3,
+    MaterialType.CASSETTE: 4.1,
     MaterialType.DAT: 4.5,
     MaterialType.CD_DIGITAL: 4.5,
     MaterialType.MP3_LOW: 3.9,

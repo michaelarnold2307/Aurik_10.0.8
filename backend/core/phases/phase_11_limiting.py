@@ -59,6 +59,7 @@ from scipy import signal
 
 from backend.core.audio_utils import to_channels_last
 from backend.core.defect_scanner import MaterialType
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -167,14 +168,20 @@ class LimitingPhase(PhaseInterface):
         super().__init__()
         self.name = "Professional Multi-Band True Peak Limiting"
 
-    def process(self, audio: np.ndarray, sample_rate: int, material: MaterialType, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         Wendet Multi-Band True Peak Limiting an.
 
         Args:
             audio: Eingabe-Audio (mono oder stereo)
             sample_rate: Sample-Rate
-            material: Material-Typ
+            material_type: Material-Typ
 
         Returns:
             PhaseResult mit limited Audio
@@ -185,11 +192,16 @@ class LimitingPhase(PhaseInterface):
 
         self.validate_input(audio)
         audio, _p11_transposed = to_channels_last(audio)
+        phase_material = kwargs.get("material", material_type)
+        if not isinstance(phase_material, MaterialType):
+            try:
+                phase_material = MaterialType(str(phase_material))
+            except Exception:
+                phase_material = MaterialType.VINYL
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -199,7 +211,7 @@ class LimitingPhase(PhaseInterface):
                 audio=passthrough,
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "limiting_applied": False,
                     "ceiling_db": 0.0,
                     "phase_locality_factor": phase_locality_factor,
@@ -217,18 +229,18 @@ class LimitingPhase(PhaseInterface):
             )
 
         is_stereo = audio.ndim == 2
-        config = self.CEILING_CONFIG.get(material, self.CEILING_CONFIG[MaterialType.VINYL])
+        config = self.CEILING_CONFIG.get(phase_material, self.CEILING_CONFIG[MaterialType.VINYL])
         base_ceiling_db = config["ceiling_db"]
         ceiling_db = float(base_ceiling_db * _effective_strength)
         oversample_factor = config["oversample"]
-        release_ms = self.RELEASE_MS.get(material, self.RELEASE_MS[MaterialType.VINYL])
-        soft_clip_knee_db = self.SOFT_CLIP_KNEE_DB.get(material, 0.3)
+        release_ms = self.RELEASE_MS.get(phase_material, self.RELEASE_MS[MaterialType.VINYL])
+        soft_clip_knee_db = self.SOFT_CLIP_KNEE_DB.get(phase_material, 0.3)
 
         # Ceiling in Linear
         ceiling_linear = 10 ** (ceiling_db / 20)
 
         # True Peak Detection (mit Oversampling)
-        true_peak_db = self._measure_true_peak(audio, sample_rate, oversample_factor)
+        true_peak_db = self._measure_true_peak(audio, oversample_factor)
 
         if true_peak_db <= ceiling_db:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -238,7 +250,7 @@ class LimitingPhase(PhaseInterface):
                 audio=audio.copy(),
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "limiting_applied": False,
                     "true_peak_db": float(true_peak_db),
                     "ceiling_db": ceiling_db,
@@ -253,15 +265,15 @@ class LimitingPhase(PhaseInterface):
         # Multi-Band Limiting anwenden
         if is_stereo:
             limited_audio, band_metrics = self._limit_multiband_stereo(
-                audio, sample_rate, ceiling_linear, release_ms, soft_clip_knee_db, oversample_factor
+                audio, sample_rate, ceiling_linear, release_ms, soft_clip_knee_db
             )
         else:
             limited_audio, band_metrics = self._limit_multiband_mono(
-                audio, sample_rate, ceiling_linear, release_ms, soft_clip_knee_db, oversample_factor
+                audio, sample_rate, ceiling_linear, release_ms, soft_clip_knee_db
             )
 
         # Metriken
-        true_peak_after_db = self._measure_true_peak(limited_audio, sample_rate, oversample_factor)
+        true_peak_after_db = self._measure_true_peak(limited_audio, oversample_factor)
         peak_reduction_db = true_peak_db - true_peak_after_db
 
         # RMS-Analyse
@@ -281,7 +293,7 @@ class LimitingPhase(PhaseInterface):
             audio=limited_audio,
             execution_time_seconds=execution_time,
             metadata={
-                "material": material.name,
+                "material": phase_material.name,
                 "limiting_applied": True,
                 "ceiling_db": ceiling_db,
                 "base_ceiling_db": base_ceiling_db,
@@ -308,13 +320,12 @@ class LimitingPhase(PhaseInterface):
             },
         )
 
-    def _measure_true_peak(self, audio: np.ndarray, sample_rate: int, oversample_factor: int) -> float:
+    def _measure_true_peak(self, audio: np.ndarray, oversample_factor: int) -> float:
         """
         Misst True Peak Level mit Oversampling (ITU-R BS.1770-4).
 
         Args:
             audio: Audio Signal
-            sample_rate: Sample-Rate
             oversample_factor: Oversampling-Faktor (2 oder 4)
 
         Returns:
@@ -501,7 +512,6 @@ class LimitingPhase(PhaseInterface):
         ceiling: float,
         release_ms: list,
         soft_clip_knee_db: float,
-        oversample_factor: int,
     ) -> tuple[np.ndarray, dict]:
         """
         Multi-Band Limiting für Mono.
@@ -538,7 +548,6 @@ class LimitingPhase(PhaseInterface):
         ceiling: float,
         release_ms: list,
         soft_clip_knee_db: float,
-        oversample_factor: int,
     ) -> tuple[np.ndarray, dict]:
         """
         Multi-Band Limiting für Stereo (Linked Mode).
@@ -593,53 +602,44 @@ class LimitingPhase(PhaseInterface):
 # Alias für Rückwärtskompatibilität mit ai_framework.py
 
 
-if __name__ == "__main__":
+def _run_manual_demo() -> None:
     """Test der LimitingPhase."""
-
     logger.debug("=" * 80)
     logger.debug("Phase 11: Professional Multi-Band True Peak Limiter v2.0")
     logger.debug("=" * 80)
 
-    sample_rate = 44100
-    duration = 3.0
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    demo_sample_rate = 44100
+    demo_duration = 3.0
+    t = np.linspace(0, demo_duration, int(demo_sample_rate * demo_duration), endpoint=False)
 
-    # Test-Audio: Sine Waves mit unterschiedlichen Peaks in verschiedenen Frequenzen
-    # - Quiet (0-1s): -15 dB relative to ceiling
-    # - Medium (1-2s): -5 dB relative to ceiling
-    # - Loud (2-3s): +3 dB OVER ceiling (clipping!)
-
-    quiet_segment = np.zeros(int(sample_rate))
+    quiet_segment = np.zeros(int(demo_sample_rate))
     quiet_t = t[: len(quiet_segment)]
-    quiet_segment += 0.18 * np.sin(2 * np.pi * 100 * quiet_t)  # Bass
-    quiet_segment += 0.18 * np.sin(2 * np.pi * 500 * quiet_t)  # Low-Mid
-    quiet_segment += 0.18 * np.sin(2 * np.pi * 2000 * quiet_t)  # Mid-High
+    quiet_segment += 0.18 * np.sin(2 * np.pi * 100 * quiet_t)
+    quiet_segment += 0.18 * np.sin(2 * np.pi * 500 * quiet_t)
+    quiet_segment += 0.18 * np.sin(2 * np.pi * 2000 * quiet_t)
 
-    medium_segment = np.zeros(int(sample_rate))
+    medium_segment = np.zeros(int(demo_sample_rate))
     medium_t = t[: len(medium_segment)]
     medium_segment += 0.56 * np.sin(2 * np.pi * 100 * medium_t)
     medium_segment += 0.56 * np.sin(2 * np.pi * 500 * medium_t)
     medium_segment += 0.56 * np.sin(2 * np.pi * 2000 * medium_t)
 
-    loud_segment = np.zeros(int(sample_rate))
+    loud_segment = np.zeros(int(demo_sample_rate))
     loud_t = t[: len(loud_segment)]
-    loud_segment += 1.4 * np.sin(2 * np.pi * 100 * loud_t)  # Over ceiling!
+    loud_segment += 1.4 * np.sin(2 * np.pi * 100 * loud_t)
     loud_segment += 1.4 * np.sin(2 * np.pi * 500 * loud_t)
     loud_segment += 1.4 * np.sin(2 * np.pi * 2000 * loud_t)
 
     test_audio_mono = np.concatenate([quiet_segment, medium_segment, loud_segment])
     test_audio_stereo = np.column_stack((test_audio_mono, test_audio_mono * 0.95))
-
     true_peak_before = 20 * np.log10(np.abs(test_audio_stereo).max())
 
-    logger.debug("\nGeneriert %ss Test-Audio @ %s Hz", duration, sample_rate)
+    logger.debug("\nGeneriert %ss Test-Audio @ %s Hz", demo_duration, demo_sample_rate)
     logger.debug("3 Segmente: Quiet (-15 dB) / Medium (-5 dB) / Loud (+3 dB OVER ceiling)")
     logger.debug("Multi-Frequenz: 100 Hz (Bass), 500 Hz (Low-Mid), 2000 Hz (Mid-High)")
     logger.debug("True Peak vor Limiting: %.2f dBFS (CLIPPING!)", true_peak_before)
 
     phase = LimitingPhase()
-
-    # Test mit 3 Materialien
     test_materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.CD_DIGITAL]
 
     for material in test_materials:
@@ -647,7 +647,7 @@ if __name__ == "__main__":
         logger.debug("Material: %s", material.name)
         logger.debug("%s", "─" * 80)
 
-        result = phase.process(test_audio_stereo, sample_rate, material)
+        result = phase.process(test_audio_stereo, demo_sample_rate, material)
 
         if result.success and result.metadata.get("limiting_applied"):
             logger.debug("\n✅ Multi-Band True Peak Limiting:")
@@ -660,15 +660,19 @@ if __name__ == "__main__":
             logger.debug("   RMS Change: %.2f dB", result.metrics["rms_change_db"])
 
             logger.debug("\n   Per-Band Limiting:")
-            for band_name, metrics in result.metadata["band_metrics"].items():
+            for band_name, band_metrics in result.metadata["band_metrics"].items():
                 logger.debug(
-                    f"     {band_name:10s}: Max GR {metrics['max_gr_db']:+.1f} dB, "
-                    f"Peak {metrics['peak_before_db']:.1f} → {metrics['peak_after_db']:.1f} dBFS"
+                    "     %10s: Max GR %+.1f dB, Peak %.1f -> %.1f dBFS",
+                    band_name,
+                    band_metrics["max_gr_db"],
+                    band_metrics["peak_before_db"],
+                    band_metrics["peak_after_db"],
                 )
 
             logger.debug(
-                f"\n   Verarbeitungszeit: {result.execution_time_seconds:.3f}s "
-                f"({result.execution_time_seconds / duration:.2f}× realtime)"
+                "\n   Verarbeitungszeit: %.3fs (%.2fx realtime)",
+                result.execution_time_seconds,
+                result.execution_time_seconds / demo_duration,
             )
         else:
             logger.debug("\n⚠️ Limiting übersprungen (unter Ceiling)")
@@ -676,3 +680,7 @@ if __name__ == "__main__":
     logger.debug("\n%s", "=" * 80)
     logger.debug("Test abgeschlossen")
     logger.debug("%s", "=" * 80)
+
+
+if __name__ == "__main__":
+    _run_manual_demo()

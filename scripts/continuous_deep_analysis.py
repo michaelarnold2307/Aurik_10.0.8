@@ -90,6 +90,7 @@ class ContinuousDeepAnalyzer:
         self.pegelexplosion_detector = PegelexplosionDetector() if PegelexplosionDetector else None
         self._last_phase_audio = None
         self._final_musical_goals: dict[str, float] = {}
+        self._final_vocal_metrics: dict[str, float] = {}
         self._last_progress_pct: int = -1
         self._last_progress_phase: str = ""
         self._last_progress_elapsed_s: float = 0.0
@@ -162,6 +163,12 @@ class ContinuousDeepAnalyzer:
         self.logger.info("Mode: %s", mode)
         self.logger.info("SR: %s Hz", sr)
         self.logger.info("=" * 80)
+
+        # Run-lokalen Zustand immer zurücksetzen (Analyzer kann mehrfach verwendet werden).
+        self.checkpoints = []
+        self.anomalies_detected = []
+        self._final_musical_goals = {}
+        self._final_vocal_metrics = {}
 
         pre_transfer_chain: list[str] = []
         pipeline_transfer_chain: list[str] = []
@@ -252,6 +259,7 @@ class ContinuousDeepAnalyzer:
             _meta = getattr(restoration_result, "metadata", {}) or {}
             _hpg = _meta.get("holistic_perceptual_gate", {}) or {}
             _afg = _meta.get("artifact_freedom", {}) or {}
+            self._final_vocal_metrics = self._extract_vocal_metrics_from_metadata(_meta)
             pipeline_transfer_chain = self._extract_transfer_chain_from_obj(_meta)
             if pre_era_decade is None:
                 _meta_era = self._extract_era_decade_from_obj(_meta)
@@ -289,6 +297,7 @@ class ContinuousDeepAnalyzer:
             "era_decade": pre_era_decade,
             "checkpoints": [cp.to_dict() for cp in self.checkpoints],
             "final_musical_goals": dict(self._final_musical_goals),
+            "final_vocal_metrics": dict(self._final_vocal_metrics),
             "anomalies": self.anomalies_detected,
             "summary": self._generate_summary(),
         }
@@ -337,12 +346,34 @@ class ContinuousDeepAnalyzer:
             phase_id = str(entry.get("phase_id") or "unknown_phase")
             scores_before = entry.get("scores_before") if isinstance(entry.get("scores_before"), dict) else {}
             scores_after = entry.get("scores_after") if isinstance(entry.get("scores_after"), dict) else {}
+
+            # If PMGG entry already carries phase-local metrics, prefer those over final run metrics.
+            # Fallback to final values keeps backward compatibility for older traces.
+            phase_hpi = self._extract_phase_metric(
+                entry,
+                direct_keys=("hpi", "hpi_score", "phase_hpi"),
+                nested_paths=(("metadata", "phase_hpi_proxy"), ("holistic_perceptual_gate", "hpi")),
+                fallback=final_hpi,
+                preferred_keys=("hpi", "hpi_score", "score", "value"),
+            )
+            phase_afg = self._extract_phase_metric(
+                entry,
+                direct_keys=("artifact_freedom", "artifact_freedom_score", "afg_score"),
+                nested_paths=(
+                    ("metadata", "phase_artifact_freedom_proxy"),
+                    ("artifact_freedom", "score"),
+                    ("holistic_perceptual_gate", "artifact_freedom"),
+                ),
+                fallback=final_afg,
+                preferred_keys=("artifact_freedom", "artifact_freedom_score", "score", "value"),
+            )
+
             anomalies = self._check_anomalies_from_scores(
                 phase_id,
                 scores_before,
                 scores_after,
-                final_hpi,
-                final_afg,
+                phase_hpi,
+                phase_afg,
                 pre_result,
                 str(entry.get("action") or ""),
             )
@@ -350,14 +381,42 @@ class ContinuousDeepAnalyzer:
                 phase_id=phase_id,
                 wall_time_s=float(entry.get("timestamp") or time.time()),
                 musical_goals={k: float(v) for k, v in scores_after.items() if isinstance(v, (int, float))},
-                hpi_score=final_hpi,
-                artifact_freedom=final_afg,
+                hpi_score=phase_hpi,
+                artifact_freedom=phase_afg,
                 carrier_recovery_ratio=final_ccr,
                 noise_floor_db=None,
                 defects_remaining=None,
                 anomalies=anomalies,
             )
             self.checkpoints.append(cp)
+
+    def _extract_phase_metric(
+        self,
+        entry: dict[str, Any],
+        direct_keys: tuple[str, ...],
+        nested_paths: tuple[tuple[str, ...], ...],
+        fallback: float | None,
+        preferred_keys: tuple[str, ...],
+    ) -> float | None:
+        """Extract a phase-local metric from PMGG log entry with graceful fallback."""
+        for key in direct_keys:
+            value = entry.get(key)
+            scalar = self._metric_to_float(value, preferred_keys)
+            if scalar is not None:
+                return scalar
+
+        for path in nested_paths:
+            cursor: Any = entry
+            for key in path:
+                if not isinstance(cursor, dict):
+                    cursor = None
+                    break
+                cursor = cursor.get(key)
+            scalar = self._metric_to_float(cursor, preferred_keys)
+            if scalar is not None:
+                return scalar
+
+        return fallback
 
     def _check_anomalies_from_scores(
         self,
@@ -409,6 +468,31 @@ class ContinuousDeepAnalyzer:
                 if isinstance(value, (int, float)):
                     return float(value)
         return None
+
+    def _extract_vocal_metrics_from_metadata(self, metadata: dict[str, Any]) -> dict[str, float]:
+        """Extract final vocal metrics (VQI/identity) from restoration metadata."""
+        if not isinstance(metadata, dict):
+            return {}
+
+        out: dict[str, float] = {}
+        _vqi = self._metric_to_float(metadata.get("vqi"), ("vqi", "score", "value"))
+        if _vqi is not None:
+            out["vqi"] = _vqi
+
+        _sid = self._metric_to_float(
+            metadata.get("singer_identity_cosine"),
+            ("singer_identity_cosine", "score", "value"),
+        )
+        if _sid is not None:
+            out["singer_identity_cosine"] = _sid
+
+        _hpg = metadata.get("holistic_perceptual_gate")
+        if isinstance(_hpg, dict):
+            _mert = self._metric_to_float(_hpg.get("mert_similarity"), ("mert_similarity", "score", "value"))
+            if _mert is not None:
+                out["mert_similarity"] = _mert
+
+        return out
 
     @staticmethod
     def _extract_transfer_chain_from_obj(data: Any) -> list[str]:
@@ -553,15 +637,40 @@ class ContinuousDeepAnalyzer:
         _summary_goals = self._final_musical_goals if self._final_musical_goals else last_cp.musical_goals
         p1_scores = [float(_summary_goals.get(g, 0.0)) for g in p1_goals]
         p1_avg = np.mean(p1_scores) if p1_scores else 0.0
+        hpi_value = self._metric_to_float(last_cp.hpi_score, ("hpi", "hpi_score", "score", "value"))
+        afg_value = self._metric_to_float(
+            last_cp.artifact_freedom,
+            ("artifact_freedom", "artifact_freedom_score", "score", "value"),
+        )
+
+        quality_gate_reasons: list[str] = []
+        if hpi_value is not None and hpi_value < 0.60:
+            quality_gate_reasons.append(f"hpi<{0.60:.2f}")
+        if afg_value is not None and afg_value < 0.95:
+            quality_gate_reasons.append(f"artifact_freedom<{0.95:.2f}")
+
+        if quality_gate_reasons:
+            quality_status = "NEEDS_REVIEW"
+        else:
+            quality_status = "EXCELLENT" if p1_avg >= 0.90 else "GOOD" if p1_avg >= 0.80 else "NEEDS_REVIEW"
+
+        final_vqi = self._metric_to_float(self._final_vocal_metrics.get("vqi"), ("vqi", "score", "value"))
+        final_singer_id = self._metric_to_float(
+            self._final_vocal_metrics.get("singer_identity_cosine"),
+            ("singer_identity_cosine", "score", "value"),
+        )
 
         return {
             "total_phases": len(self.checkpoints),
             "total_anomalies": len(self.anomalies_detected),
             "final_hpi": last_cp.hpi_score,
             "final_artifact_freedom": last_cp.artifact_freedom,
+            "final_vqi": final_vqi,
+            "final_singer_identity_cosine": final_singer_id,
             "p1_avg_score": float(p1_avg),
             "p1_source": "final_musical_goals" if self._final_musical_goals else "pmgg_debug_trace",
-            "quality_status": "EXCELLENT" if p1_avg >= 0.90 else "GOOD" if p1_avg >= 0.80 else "NEEDS_REVIEW",
+            "quality_status": quality_status,
+            "quality_gate_reasons": quality_gate_reasons,
         }
 
 

@@ -26,6 +26,10 @@ _BREATH_ATTENUATION_MAX_DB = 6.0
 _BREATH_EMOTIONAL_ATTENUATION_MAX_DB = 3.0
 _BREATH_MIN_RMS_DB = -70.0
 _VOCAL_GATE_PANNS_FLOOR = 0.35
+_VOCAL_MAX_TARGET_RESTORATION = 0.88
+_VOCAL_MAX_TARGET_STUDIO2026 = 0.92
+_VOCAL_MAX_ALIGNMENT_RESTORATION_MIN = 0.90
+_VOCAL_MAX_ALIGNMENT_STUDIO2026_MIN = 0.93
 
 _instance: VocalNoHarmGate | None = None
 _lock = threading.Lock()
@@ -67,6 +71,41 @@ class VocalNoHarmResult:
             "checks": {key: bool(value) for key, value in self.checks.items()},
             "warnings": list(self.warnings),
         }
+
+
+def compute_vocal_max_alignment(
+    vqi: float,
+    vqi_floor: float,
+    material_type: str,
+    mode: str,
+    restorability_score: float | None,
+) -> dict[str, float | bool]:
+    """Berechnet VQI-Erreichung relativ zum material-adaptiven Maximum."""
+    is_studio = str(mode).lower().replace(" ", "") == "studio2026"
+    restorability = 70.0 if restorability_score is None else float(restorability_score)
+    restorability = float(np.clip(restorability, 0.0, 100.0))
+    rest_ratio = restorability / 100.0
+
+    max_target = _VOCAL_MAX_TARGET_STUDIO2026 if is_studio else _VOCAL_MAX_TARGET_RESTORATION
+    material_key = str(material_type or "").strip().lower()
+    if material_key in {"wax_cylinder", "shellac", "wire_recording", "lacquer_disc"}:
+        max_target = min(max_target, 0.78 + 0.06 * rest_ratio)
+    elif material_key in {"mp3_low", "minidisc", "cassette", "kassette"}:
+        max_target = min(max_target, 0.82 + 0.05 * rest_ratio)
+    elif material_key in {"vinyl", "lp", "tape", "reel_tape"}:
+        max_target = min(max_target, 0.86 + 0.04 * rest_ratio)
+
+    vocal_max_target = float(np.clip(max(float(vqi_floor), max_target), float(vqi_floor), 0.95))
+    alignment = float(np.clip(float(vqi) / max(vocal_max_target, 1e-6), 0.0, 1.0))
+    min_alignment = _VOCAL_MAX_ALIGNMENT_STUDIO2026_MIN if is_studio else _VOCAL_MAX_ALIGNMENT_RESTORATION_MIN
+    min_alignment = float(np.clip(min_alignment + 0.04 * rest_ratio, min_alignment, 0.98))
+    return {
+        "vocal_max_target": vocal_max_target,
+        "vocal_max_alignment": alignment,
+        "vocal_max_alignment_percent": alignment * 100.0,
+        "vocal_max_alignment_floor_percent": min_alignment * 100.0,
+        "vocal_max_alignment_ok": alignment >= min_alignment,
+    }
 
 
 class VocalNoHarmGate:
@@ -138,6 +177,7 @@ class VocalNoHarmGate:
             genre,
             reference_audio,
             skip_singer_identity,
+            restorability_score,
             scores,
             checks,
             warnings,
@@ -236,6 +276,7 @@ class VocalNoHarmGate:
         genre: str | None,
         reference_audio: np.ndarray | None,
         skip_singer_identity: bool,
+        restorability_score: float | None,
         scores: dict[str, float],
         checks: dict[str, bool],
         warnings: list[str],
@@ -267,12 +308,42 @@ class VocalNoHarmGate:
             scores["singer_identity_cosine"] = singer_identity
             checks["vqi_ok"] = vqi >= vqi_floor
             checks["singer_identity_ok"] = skip_singer_identity or singer_identity >= _SINGER_IDENTITY_FLOOR
+            VocalNoHarmGate._evaluate_vocal_max_alignment(
+                vqi,
+                vqi_floor,
+                material_type,
+                mode,
+                restorability_score,
+                scores,
+                checks,
+                failures,
+            )
             if vqi < vqi_floor:
                 failures.append("vqi")
             if not skip_singer_identity and singer_identity < _SINGER_IDENTITY_FLOOR:
                 failures.append("singer_identity")
         except Exception as exc:  # pylint: disable=broad-except
             warnings.append(f"vqi_unavailable:{type(exc).__name__}")
+
+    @staticmethod
+    def _evaluate_vocal_max_alignment(
+        vqi: float,
+        vqi_floor: float,
+        material_type: str,
+        mode: str,
+        restorability_score: float | None,
+        scores: dict[str, float],
+        checks: dict[str, bool],
+        failures: list[str],
+    ) -> None:
+        alignment = compute_vocal_max_alignment(vqi, vqi_floor, material_type, mode, restorability_score)
+        scores["vocal_max_target"] = float(alignment["vocal_max_target"])
+        scores["vocal_max_alignment"] = float(alignment["vocal_max_alignment"])
+        scores["vocal_max_alignment_percent"] = float(alignment["vocal_max_alignment_percent"])
+        scores["vocal_max_alignment_floor_percent"] = float(alignment["vocal_max_alignment_floor_percent"])
+        checks["vocal_max_alignment_ok"] = bool(alignment["vocal_max_alignment_ok"])
+        if not checks["vocal_max_alignment_ok"]:
+            failures.append("vocal_max_alignment")
 
     @staticmethod
     def _evaluate_hnr(  # pylint: disable=too-many-positional-arguments
@@ -330,16 +401,20 @@ class VocalNoHarmGate:
     ) -> None:
         try:
             check_formant_shift_db = _load_symbol("backend.core.dsp.lpc_formant_tracker", "check_formant_shift_db")
-            resolve_formant_tolerance_db = _load_symbol(
-                "backend.core.musical_goals.era_vocal_profile", "resolve_formant_tolerance_db"
-            )
-            threshold_db = float(
-                resolve_formant_tolerance_db(
-                    era_decade=era_decade,
-                    era_profile=era_vocal_profile,
-                    fallback_db=_FORMANT_SHIFT_MAX_DB,
+            threshold_db = _FORMANT_SHIFT_MAX_DB
+            try:
+                resolve_formant_tolerance_db = _load_symbol(
+                    "backend.core.musical_goals.era_vocal_profile", "resolve_formant_tolerance_db"
                 )
-            )
+                threshold_db = float(
+                    resolve_formant_tolerance_db(
+                        era_decade=era_decade,
+                        era_profile=era_vocal_profile,
+                        fallback_db=_FORMANT_SHIFT_MAX_DB,
+                    )
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                warnings.append(f"formant_tolerance_unavailable:{type(exc).__name__}")
             rollback_needed, max_shift_db = check_formant_shift_db(
                 pre,
                 post,

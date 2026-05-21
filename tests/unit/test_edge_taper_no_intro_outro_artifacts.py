@@ -48,7 +48,7 @@ def _estimate_lr_delay_samples(audio: np.ndarray, max_lag: int = 256) -> int:
     r = audio[:, 1].astype(np.float64)
     l = l - np.mean(l)
     r = r - np.mean(r)
-    denom = float(np.linalg.norm(l) * np.linalg.norm(r) + 1e-12)
+    float(np.linalg.norm(l) * np.linalg.norm(r) + 1e-12)
     best_lag = 0
     best_corr = -1.0
     for lag in range(-max_lag, max_lag + 1):
@@ -73,6 +73,7 @@ def _estimate_lr_delay_samples(audio: np.ndarray, max_lag: int = 256) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 1: Phase 03 Edge-Taper
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestPhase03EdgeTaper:
     """Phase 03 darf kein Artefakt im Intro/Outro (erste/letzte 0.5 s) einbringen."""
@@ -141,13 +142,13 @@ class TestPhase03EdgeTaper:
         if orig_std < 1e-9 or out_std < 1e-9:
             corr = 1.0
         else:
-            corr = float(np.dot(orig_intro - orig_intro.mean(), out_intro - out_intro.mean())
-                         / (orig_std * out_std * len(orig_intro) + 1e-12))
+            corr = float(
+                np.dot(orig_intro - orig_intro.mean(), out_intro - out_intro.mean())
+                / (orig_std * out_std * len(orig_intro) + 1e-12)
+            )
 
         # Mindest-Korrelation 0.70 — Edge-Taper sorgt dafür, dass Intro ≈ Original
-        assert corr >= 0.70, (
-            f"Phase03 Intro-Korrelation zu gering: corr={corr:.3f} < 0.70 (Edge-Taper fehlt?)"
-        )
+        assert corr >= 0.70, f"Phase03 Intro-Korrelation zu gering: corr={corr:.3f} < 0.70 (Edge-Taper fehlt?)"
 
     def test_no_new_lr_lag(self):
         """Phase 03 darf keine neue L/R-Zeitverschiebung einführen."""
@@ -180,6 +181,7 @@ class TestPhase03EdgeTaper:
 # Test 2: Phase 23 Edge-Taper
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestPhase23EdgeTaper:
     """Phase 23 SpectralRepair darf kein Artefakt im Intro/Outro einbringen."""
 
@@ -205,8 +207,8 @@ class TestPhase23EdgeTaper:
 
     def test_intro_outro_not_louder_than_original(self, monkeypatch):
         """Verarbeitetes Intro/Outro darf max. +2 dB lauter als Original sein."""
-        from backend.core.phases.phase_23_spectral_repair import SpectralRepair
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_23_spectral_repair import SpectralRepair
 
         sr = 48000
         audio = _make_vinyl_audio(sr=sr, duration=5.0)
@@ -238,8 +240,8 @@ class TestPhase23EdgeTaper:
 
     def test_no_new_lr_lag(self, monkeypatch):
         """Phase 23 darf keine neue L/R-Zeitverschiebung einführen."""
-        from backend.core.phases.phase_23_spectral_repair import SpectralRepair
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_23_spectral_repair import SpectralRepair
 
         sr = 48000
         audio = _make_vinyl_audio(sr=sr, duration=5.0)
@@ -330,6 +332,7 @@ class TestPhase23StereoMSInvariant:
 # Test 3: nperseg-Guard PsychoacousticMetrics
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestPsychoacousticMetricsNpersegGuard:
     """Kein UserWarning 'nperseg > input length' bei kurzen Segmenten."""
 
@@ -346,10 +349,7 @@ class TestPsychoacousticMetricsNpersegGuard:
         score = metrics.calculate_sharpness(audio)
         assert 0.0 <= score <= 1.0
 
-        nperseg_warnings = [
-            w for w in recwarn.list
-            if "nperseg" in str(w.message).lower()
-        ]
+        nperseg_warnings = [w for w in recwarn.list if "nperseg" in str(w.message).lower()]
         assert len(nperseg_warnings) == 0, (
             f"nperseg UserWarning bei n={n_samples}: {[str(w.message) for w in nperseg_warnings]}"
         )
@@ -365,13 +365,8 @@ class TestPsychoacousticMetricsNpersegGuard:
         score = metrics.calculate_spectral_flatness(audio)
         assert 0.0 <= score <= 1.0
 
-        nperseg_warnings = [
-            w for w in recwarn.list
-            if "nperseg" in str(w.message).lower()
-        ]
-        assert len(nperseg_warnings) == 0, (
-            f"nperseg UserWarning bei n={n_samples}"
-        )
+        nperseg_warnings = [w for w in recwarn.list if "nperseg" in str(w.message).lower()]
+        assert len(nperseg_warnings) == 0, f"nperseg UserWarning bei n={n_samples}"
 
     @pytest.mark.parametrize("n_samples", [2, 16, 64])
     def test_harmonic_coherence_short_segment_no_warning(self, n_samples, recwarn):
@@ -385,10 +380,5 @@ class TestPsychoacousticMetricsNpersegGuard:
         score = metrics.calculate_harmonic_coherence(audio)
         assert 0.0 <= score <= 1.0
 
-        nperseg_warnings = [
-            w for w in recwarn.list
-            if "nperseg" in str(w.message).lower()
-        ]
-        assert len(nperseg_warnings) == 0, (
-            f"nperseg UserWarning bei n={n_samples}"
-        )
+        nperseg_warnings = [w for w in recwarn.list if "nperseg" in str(w.message).lower()]
+        assert len(nperseg_warnings) == 0, f"nperseg UserWarning bei n={n_samples}"

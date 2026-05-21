@@ -110,11 +110,22 @@ _TILT_TOLERANCE_P07: dict[str, float] = {
     "streaming": 1.5,
     "tape": 1.875,
     "reel_tape": 1.875,
+    "cassette": 1.5,  # §6.2c BW-Ceiling 12 kHz — tighter tilt tolerance for cassette
     "vinyl": 2.25,
     "minidisc": 2.25,
     "shellac": 3.0,
     "wax_cylinder": 3.0,
     "wire_recording": 3.0,
+}
+
+# §6.2c Cassette-specific minimum cap floor — prevents 50% floor from applying
+# extreme harmonic synthesis when tilt deviation is catastrophic (dev > 5× tol).
+_TILT_CAP_FLOOR_P07: dict[str, float] = {
+    "cassette": 0.10,
+    "tape": 0.15,
+    "reel_tape": 0.15,
+    "shellac": 0.05,
+    "wax_cylinder": 0.05,
 }
 
 
@@ -617,7 +628,8 @@ class HarmonicRestorationPhase(PhaseInterface):
             _ta07 = _est_tilt_p07(restored, sample_rate)
             _dev07 = abs(_ta07 - _tb07)
             if _dev07 > _tol07:
-                _cap07 = float(np.clip(1.0 - (_dev07 - _tol07) / (_tol07 * 2.0), 0.5, 1.0))
+                _cap07_floor = _TILT_CAP_FLOOR_P07.get(_mat_k07, 0.5)
+                _cap07 = float(np.clip(1.0 - (_dev07 - _tol07) / (_tol07 * 2.0), _cap07_floor, 1.0))
                 restored = _cap07 * restored + (1.0 - _cap07) * audio
                 restored = np.clip(restored, -1.0, 1.0)
                 _tilt_capped_p07 = True
@@ -667,8 +679,8 @@ class HarmonicRestorationPhase(PhaseInterface):
             "shellac": 8000.0,
             "wax_cylinder": 3000.0,  # §ERA 1900-1925 Sekundär-Guard (v9.12.9)
             "vinyl": 16000.0,
-            "reel_tape": 18000.0,
-            "cassette": 15000.0,
+            "reel_tape": 15000.0,  # §6.2c Tape = 15 kHz (IEC)
+            "cassette": 12000.0,  # §6.2c Cassette = 12 kHz (IEC 60094-1 Type I)
         }
         _mat_key_07 = str(material_type).lower().replace(" ", "_").replace("-", "_")
         _bw_cap_07 = _BW_CEILING_07.get(_mat_key_07)
@@ -716,8 +728,8 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "shellac": 8000.0,
                 "wax_cylinder": 3000.0,  # §ERA 1900-1925 Sekundär-Guard (v9.12.9)
                 "vinyl": 16000.0,
-                "reel_tape": 18000.0,
-                "cassette": 15000.0,
+                "reel_tape": 15000.0,  # §6.2c Tape = 15 kHz (IEC)
+                "cassette": 12000.0,  # §6.2c Cassette = 12 kHz (IEC 60094-1 Type I)
             }
             _bw_ceiling_07 = _BW_CEILINGS_07.get(str(material_type).lower().replace(" ", "_"))
             _hg_result07 = _check_hg07(

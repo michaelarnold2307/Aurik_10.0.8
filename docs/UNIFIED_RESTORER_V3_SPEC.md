@@ -1,8 +1,28 @@
-# UnifiedRestorerV3 Specification - Aurik 9.0
+# UnifiedRestorerV3 Specification - Aurik 9.12.9
 
-**Version:** 1.0.0  
-**Status:** ✅ Production-Ready (End-to-End Tested)  
-**Location:** `core/unified_restorer_v3.py` (450+ lines)
+**Version:** 1.0.1  
+**Status:** ✅ Production-Ready (laufend aktualisiert, Delta-Stand 20. Mai 2026)  
+**Location:** `backend/core/unified_restorer_v3.py`
+
+---
+
+## 0. Delta-Stand 2026-05-20 (normativ)
+
+Dieser Delta-Abschnitt ist verbindlich und beschreibt den aktuellen Stand gegenueber aelteren Teilen
+dieses Dokuments.
+
+- **PDV Goal-Awareness aktiv:** Der Phase Defect Verifier verarbeitet song-spezifische `goal_before`,
+    `goal_after`, `goal_targets` und `goal_weights` pro Phase.
+- **Natuerlichkeits-Schutz aktiv:** `NATURALNESS_PRESERVE_GUARD` erzwingt Rollback, wenn
+    `natuerlichkeit` gegenueber der Vorphase ueber den Guard-Delta sinkt.
+- **Adaptive Defect-Thresholds:** Proxy-Schwellwerte werden goal- und material-adaptiv skaliert
+    (insbesondere fuer HF-Rauschkontext bei Legacy-Material).
+- **UV3-Integration:** PDV-Aufruf in der Pipeline nutzt Song-Ziele statt statischer Einheitsgrenzen.
+
+Referenz-Implementierungen:
+
+- `backend/core/unified_restorer_v3.py`
+- `backend/core/phase_defect_verifier.py`
 
 ---
 
@@ -617,17 +637,19 @@ result = restorer.restore(audio, sr)
 
 ## 12. Change Log
 
-| Version | Date       | Changes                                      |
-|---------|------------|----------------------------------------------|
-| 1.0.0   | 2026-02-15 | Production release (E2E tested)              |
-| 0.9.0   | 2026-02-14 | Beta: All components integrated              |
-| 0.8.0   | 2026-02-13 | Alpha: Basic Defect-First workflow           |
+- 1.0.1 (2026-05-20): Delta-Update: PDV goal-aware, UV3 goal handover
+- 1.0.0 (2026-02-15): Production release (E2E tested)
+- 0.9.0 (2026-02-14): Beta: All components integrated
+- 0.8.0 (2026-02-13): Alpha: Basic Defect-First workflow
+| 0.9.0   | 2026-02-14 | Beta: All components integrated                  |
+| 0.8.0   | 2026-02-13 | Alpha: Basic Defect-First workflow               |
 
 ---
 
 ## 13. References
 
-- **Implementation:** [core/unified_restorer_v3.py](../core/unified_restorer_v3.py)
+- **Implementation:** [backend/core/unified_restorer_v3.py](../backend/core/unified_restorer_v3.py)
+- **PDV:** [backend/core/phase_defect_verifier.py](../backend/core/phase_defect_verifier.py)
 - **DefectScanner:** [DEFECT_SCANNER_SPEC.md](DEFECT_SCANNER_SPEC.md)
 - **Phase API:** [MODULAR_PHASES_API.md](MODULAR_PHASES_API.md)
 - **Performance:** [PERFORMANCE_GUARD_SPEC.md](PERFORMANCE_GUARD_SPEC.md)

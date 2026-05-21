@@ -185,7 +185,34 @@ class SpatialEnhancementPhase(PhaseInterface):
 
         # §0 Primum non nocere: Frühe Reflexionen (cross-feed) rücken Gesang nach hinten.
         # Restoration-Mode darf nur konservative Raumtiefe hinzufügen.
-        _is_studio_mode = bool(kwargs.get("is_studio_mode", False))
+        _quality_mode = str(kwargs.get("quality_mode", kwargs.get("mode", "restoration"))).strip().lower()
+        _is_studio_mode = bool(kwargs.get("is_studio_mode", False)) or ("studio" in _quality_mode)
+        _p46_panns = float(
+            kwargs.get(
+                "panns_singing",
+                kwargs.get("panns_singing_confidence", kwargs.get("vocal_confidence", 0.0)),
+            )
+        )
+        _panns_tags = kwargs.get("panns_tags", {})
+        if isinstance(_panns_tags, dict):
+            try:
+                _tag_vocal = float(_panns_tags.get("vocals", 0.0))
+                _tag_singing = float(_panns_tags.get("singing", 0.0))
+                _p46_panns = max(_p46_panns, _tag_vocal, _tag_singing)
+            except Exception:
+                pass
+
+        _vocal_echo_guard = (not _is_studio_mode) and _p46_panns >= 0.25
+        _side_width_gain = 1.0
+        if _vocal_echo_guard:
+            # §0p/§2.46e: keine delay-basierten Raumanteile auf Gesang.
+            # Phase bleibt dennoch sinnvoll: minimale, IACC-gesicherte Stereo-Balance.
+            _side_width_gain = 1.03
+            logger.warning(
+                "Phase 46 VocalEcho-Guard: restoration-safe mode (panns_singing=%.2f)",
+                _p46_panns,
+            )
+
         if not _is_studio_mode:
             effective_strength = float(np.clip(effective_strength, 0.0, 0.20))
             logger.debug(
@@ -195,6 +222,9 @@ class SpatialEnhancementPhase(PhaseInterface):
         dry_wet: float = float(kwargs.get("dry_wet", 0.18 if _is_studio_mode else 0.05))
         diffuse: bool = bool(kwargs.get("diffuse", True))
         iacc_guard: bool = bool(kwargs.get("iacc_guard", True))
+        if _vocal_echo_guard:
+            dry_wet = 0.0
+            diffuse = False
         dry_wet = float(np.clip(dry_wet, 0.0, 1.0)) * effective_strength
 
         if audio.ndim == 1:
@@ -219,12 +249,17 @@ class SpatialEnhancementPhase(PhaseInterface):
         peak_in = float(np.percentile(np.abs(audio), 99.9))  # §2.49 Peak-Guard
 
         # 1. Early reflections (psychoacoustic lateral energy)
-        L_ref, R_ref = _early_reflection_mix(L, R, sample_rate, dry_wet)
+        if dry_wet > 0.0:
+            L_ref, R_ref = _early_reflection_mix(L, R, sample_rate, dry_wet)
+        else:
+            L_ref, R_ref = L.copy(), R.copy()
 
         # 2. M/S encoding of the reflected signal
         inv_sqrt2 = 1.0 / np.sqrt(2.0)
         M = (L_ref + R_ref) * inv_sqrt2
         S = (L_ref - R_ref) * inv_sqrt2
+        if _side_width_gain != 1.0:
+            S *= _side_width_gain
 
         # 3. Allpass diffusion on Side channel
         if diffuse:
@@ -276,10 +311,14 @@ class SpatialEnhancementPhase(PhaseInterface):
             audio=processed,
             execution_time_seconds=time.time() - t0,
             metadata={
+                "algorithm": "vocal_echo_guard_safe" if _vocal_echo_guard else "phase_46_default",
+                "panns_singing": _p46_panns,
+                "quality_mode": _quality_mode,
                 "dry_wet": dry_wet,
                 "diffuse": diffuse,
                 "iacc": iacc_val,
                 "side_reduction": side_reduction,
+                "side_width_gain": _side_width_gain,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": effective_strength,
                 "rms_drop_db": 0.0,

@@ -70,3 +70,58 @@ def test_run_uses_authoritative_medium_transfer_chain(monkeypatch):
         "detected_medium": {"type": "vinyl", "confidence": 0.82},
         "user_profile": None,
     }
+
+
+def test_separate_vocals_v8_forces_safety_wrapper_even_when_disabled() -> None:
+    pipeline = AdaptiveProcessingPipeline()
+
+    audio = np.zeros(2048, dtype=np.float32)
+    sr = 44100
+
+    class _DummySeparator:
+        def __init__(self):
+            self.direct_calls = 0
+
+        def separate(self, _audio, _sr, return_individual=False):
+            self.direct_calls += 1
+            return {"vocals": _audio, "instrumental": _audio}
+
+        def get_metrics(self):
+            return {"total_separations": 1, "fusion_strategy": "dummy"}
+
+    class _DummySafety:
+        def __init__(self):
+            self.calls = 0
+
+        def safe_separate(self, _audio, _sr, return_individual=False):
+            self.calls += 1
+            return {"vocals": _audio, "instrumental": _audio}
+
+    sep = _DummySeparator()
+    safety = _DummySafety()
+    pipeline.vocal_separator_v8 = sep
+    pipeline.vocal_safety_wrapper = safety
+    pipeline.audio_monitor = SimpleNamespace(track_operation=lambda *args, **kwargs: None)
+
+    stems = pipeline.separate_vocals_v8(audio, sr, use_safety_wrapper=False)
+
+    assert safety.calls == 1
+    assert sep.direct_calls == 0
+    assert isinstance(stems, dict)
+    assert "vocals" in stems
+    assert "instrumental" in stems
+
+
+def test_correct_pitch_v8_fails_closed_without_safety_wrapper() -> None:
+    pipeline = AdaptiveProcessingPipeline()
+
+    audio = np.zeros(1024, dtype=np.float32)
+    pipeline.pitch_corrector_v8 = object()
+    pipeline.pitch_corrector_safety = None
+
+    corrected, metadata = pipeline.correct_pitch_v8(audio, 44100, use_safety_wrapper=False)
+
+    assert np.array_equal(corrected, audio)
+    assert metadata.get("corrected") is False
+    assert metadata.get("reason") == "safety_wrapper_unavailable"
+    assert metadata.get("error") == "unsafe_direct_processing_disabled"

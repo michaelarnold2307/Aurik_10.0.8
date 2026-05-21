@@ -201,3 +201,51 @@ def test_shape_preserved_stereo():
     audio[:, :200] = 0.3
     result = phase.process(audio.copy(), sr, quality_mode="restoration", panns_singing=0.5)
     assert result.audio.shape == audio.shape
+
+
+def test_phase_locality_factor_scales_effective_strength(monkeypatch):
+    """phase_locality_factor MUSS die Eingriffsstaerke in Phase 65 reduzieren."""
+    import backend.core.phases.phase_65_vocal_naturalness_restoration as p65
+
+    phase = _make_phase()
+    sr = 48000
+    audio = _make_vocal_audio(sr)
+    pre_nr = (audio * 0.1).astype(np.float32)
+
+    def _fake_tilt(arr: np.ndarray, _sr: int) -> float:
+        return 0.0 if float(np.mean(np.abs(arr))) < 0.08 else 4.0
+
+    def _fake_shelf(arr: np.ndarray, _sr: int, _hz: float, boost_db: float, _stype: str = "low") -> np.ndarray:
+        return (arr * (1.0 + 0.05 * float(boost_db))).astype(arr.dtype)
+
+    monkeypatch.setattr(p65, "_estimate_spectral_tilt_db", _fake_tilt)
+    monkeypatch.setattr(p65, "_apply_shelving_eq", _fake_shelf)
+
+    res_full = phase.process(
+        audio.copy(),
+        sr,
+        quality_mode="restoration",
+        panns_singing=0.9,
+        pre_nr_audio=pre_nr,
+        strength=1.0,
+        phase_locality_factor=1.0,
+    )
+    res_local = phase.process(
+        audio.copy(),
+        sr,
+        quality_mode="restoration",
+        panns_singing=0.9,
+        pre_nr_audio=pre_nr,
+        strength=1.0,
+        phase_locality_factor=0.35,
+    )
+
+    d_full = float(np.mean(np.abs(res_full.audio - audio)))
+    d_local = float(np.mean(np.abs(res_local.audio - audio)))
+
+    assert d_local <= d_full + 1e-8
+    assert float(res_full.metadata.get("phase_locality_factor", 0.0)) == 1.0
+    assert float(res_local.metadata.get("phase_locality_factor", 0.0)) <= 0.35 + 1e-6
+    assert float(res_local.metadata.get("effective_strength", 0.0)) < float(
+        res_full.metadata.get("effective_strength", 1.0)
+    )

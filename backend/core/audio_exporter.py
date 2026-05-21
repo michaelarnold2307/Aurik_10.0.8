@@ -119,6 +119,98 @@ def _apply_dither_16bit(audio: np.ndarray) -> np.ndarray:
         return cast(np.ndarray, out)
 
 
+def _meta_bool(metadata: dict[str, str] | None, key: str, default: bool = False) -> bool:
+    if not isinstance(metadata, dict):
+        return default
+    raw = str(metadata.get(key, "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _meta_float(metadata: dict[str, str] | None, key: str, default: float = 0.0) -> float:
+    if not isinstance(metadata, dict):
+        return default
+    try:
+        return float(metadata.get(key, default) or default)
+    except Exception:
+        return default
+
+
+def _meta_int(metadata: dict[str, str] | None, key: str, default: int = 0) -> int:
+    if not isinstance(metadata, dict):
+        return default
+    try:
+        return int(float(metadata.get(key, default) or default))
+    except Exception:
+        return default
+
+
+def _apply_musiclover_export_optimizations(
+    audio: np.ndarray,
+    metadata: dict[str, str] | None,
+    reference_audio: np.ndarray | None,
+) -> np.ndarray:
+    """Wendet zentrale musiclover-basierte Exportfeinkorrekturen an.
+
+    Ziel: Defekte minimieren (Mono-Auslöschung, zeitliche Fragilität) ohne
+    hörbare Verfremdung. Nicht-blockierend und konservativ.
+    """
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] < 2:
+        return arr
+
+    mono_warn = _meta_bool(metadata, "quality_gate_musiclover_mono_warning", False)
+    already_softened = _meta_bool(metadata, "quality_gate_musiclover_mono_softened", False)
+    vqi = float(np.clip(_meta_float(metadata, "quality_gate_musiclover_vqi", 1.0), 0.0, 1.0))
+    hotspots = max(0, _meta_int(metadata, "quality_gate_musiclover_temporal_hotspots", 0))
+    remaining_goals = max(0, _meta_int(metadata, "quality_gate_musiclover_remaining_goals", 0))
+
+    if mono_warn and not already_softened:
+        left = arr[:, 0].astype(np.float32)
+        right = arr[:, 1].astype(np.float32)
+        mid = 0.5 * (left + right)
+        side = 0.5 * (left - right)
+        side_scale = float(np.clip(0.92 - 0.01 * min(hotspots, 4) - 0.04 * max(0.0, 0.85 - vqi), 0.80, 0.92))
+        side *= side_scale
+        arr[:, 0] = np.clip(mid + side, -1.0, 1.0)
+        arr[:, 1] = np.clip(mid - side, -1.0, 1.0)
+        logger.info(
+            "§MusicLover Export-MonoGuard: side_scale=%.3f (vqi=%.3f hotspots=%d)",
+            side_scale,
+            vqi,
+            hotspots,
+        )
+
+    # Risiko-adaptiver Minimal-Blend mit Referenzsignal zur Defektberuhigung.
+    # Nur bei klarer Fragilität und vorhandenem Referenzsignal.
+    risk = 0.0
+    if mono_warn:
+        risk += 0.20
+    risk += float(np.clip((0.88 - vqi) * 1.2, 0.0, 0.35))
+    risk += float(min(hotspots * 0.05, 0.25))
+    risk += float(min(remaining_goals * 0.04, 0.20))
+
+    if risk > 0.30 and reference_audio is not None:
+        ref = np.asarray(reference_audio, dtype=np.float32)
+        if ref.ndim == 2 and ref.shape[1] >= 2:
+            n = min(arr.shape[0], ref.shape[0])
+            mix = float(np.clip(0.04 + risk * 0.18, 0.04, 0.18))
+            arr[:n, :] = np.clip((1.0 - mix) * arr[:n, :] + mix * ref[:n, :2], -1.0, 1.0)
+            logger.info(
+                "§MusicLover Export-RefBlend: mix=%.3f (risk=%.2f vqi=%.3f hotspots=%d goals=%d)",
+                mix,
+                risk,
+                vqi,
+                hotspots,
+                remaining_goals,
+            )
+
+    return arr
+
+
 _lock = threading.Lock()
 _INSTANCE_HOLDER: dict[str, AudioExporter | None] = {"instance": None}
 
@@ -304,6 +396,13 @@ class AudioExporter:
                 audio_export = _limit_quiet_edge_boost(reference_export, audio_export, sr=sr, max_edge_boost_db=0.5)
             except Exception as _quiet_edge_exc:
                 logger.debug("Final quiet-edge export clamp skipped: %s", _quiet_edge_exc)
+
+        # Zentraler musiclover-Finalizer (alle Exportpfade):
+        # nutzt Export-Metadaten für konservative Defekt-Minimierung.
+        try:
+            audio_export = _apply_musiclover_export_optimizations(audio_export, metadata, reference_export)
+        except Exception as _ml_exc:
+            logger.debug("MusicLover export optimizations skipped (non-blocking): %s", _ml_exc)
 
         # §PDV-1 Translation-EQ: sanfte Anpassung an Ziel-Abspielgerät.
         # Non-blocking: Fehler überspringen Translation-EQ, Export läuft weiter.

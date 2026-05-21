@@ -182,8 +182,14 @@ _PHASE_SPECIFIC_DRIFT_EXCLUSIONS: dict[str, frozenset[str]] = {
     # natuerlichkeit: same Reference Paradox as phase_28 — noise floor artificially inflates natuerlichkeit proxy.
     # tonal_center: broadband tape hiss adds uniform chroma-bin energy → K-S correlation vs. hissy checkpoint elevated;
     #   after hiss reduction K-S converges to clean key estimate (same mechanism as phase_03).
+    # transparenz (§0d/§2.44 v9.12.9): tape hiss is broadband HF noise — it inflates the HF crest-factor
+    #   proxy (transparenz) artificially. After hiss removal the true (lower) HF crest is revealed.
+    #   This is always a Reference Paradox false positive on analog/cassette material:
+    #   the CRITICAL_PAIRS (phase_29 + phase_03) + transparenz check fires even when hiss removal
+    #   is the correct carrier-chain inversion (§2.46 §0d). PMGG already guards transparenz per-phase;
+    #   CIG pair-check exclusion prevents the redundant false-positive rollback.
     "phase_29": frozenset(
-        {"authentizitaet", "timbre_authentizitaet", "artikulation", "natuerlichkeit", "tonal_center"}
+        {"authentizitaet", "timbre_authentizitaet", "artikulation", "natuerlichkeit", "tonal_center", "transparenz"}
     ),
     # Denoise (broadband) — same reference-paradoxon as tape hiss:
     # artikulation: silence regions become quieter after noise removal → onset gap detectability changes.
@@ -437,24 +443,28 @@ def _resolve_phase_specific_drift_exclusions(phase_id: str) -> frozenset[str]:
 # would stop multi-tier restoration (e.g. vinyl→tape→mp3 chain) long before all
 # carrier defects are removed.
 _CARRIER_REPAIR_PHASE_PREFIXES: tuple[str, ...] = (
-    "phase_01",  # click removal
-    "phase_02",  # hum removal
-    "phase_03",  # broadband denoise
-    "phase_04",  # RIAA-EQ (Stufe 2 §2.46) — Carrier-Chain-Inversion, nie consecutive_rollbacks inkrementieren
-    "phase_09",  # crackle removal
-    "phase_12",  # wow/flutter (Stufe 2 §2.46) — Carrier-Chain-Inversion
-    "phase_18",  # noise gate
-    "phase_20",  # reverb reduction
-    "phase_24",  # dropout repair
-    "phase_25",  # azimuth correction
-    "phase_27",  # click/pop removal
-    "phase_28",  # surface noise profiling
-    "phase_29",  # tape hiss reduction
+    "phase_01",  # Knackser-Entfernung
+    "phase_02",  # Brummton-Entfernung
+    "phase_03",  # Breitband-Denoise (Stufe 4 §2.46) — Carrier-Chain-Inversion
+    "phase_04",  # RIAA-EQ (Stufe 2 §2.46) — Carrier-Chain-Inversion
+    "phase_05",  # Rumble-Filter — Carrier-Tiefenrauschen (V31: ROOM_MODE_RESONANCE-Tertiär, §4.11)
+    "phase_09",  # Crackle-Entfernung (Stufe 3 §2.46)
+    "phase_12",  # Wow/Flutter (Stufe 2 §2.46) — Carrier-Chain-Inversion
+    "phase_14",  # Phase-Korrektur — D/A-Jitter-Phasenfehler (V27: JITTER_ARTIFACTS, §4.11)
+    "phase_18",  # Noise Gate
+    "phase_20",  # Reverb-Reduktion
+    "phase_23",  # Spektral-Repair — Jitter-IM-Produkte + Alias-Chirurgie (V27/V30: §4.11)
+    "phase_24",  # Dropout-Repair (Stufe 3 §2.46)
+    "phase_25",  # Azimuth-Korrektur (Stufe 2 §2.46)
+    "phase_27",  # Klick-/Pop-Entfernung
+    "phase_28",  # Surface-Noise-Profiling (Stufe 4 §2.46)
+    "phase_29",  # Bandrauschen-Reduktion / Tape-NR (Stufe 4 §2.46)
     "phase_30",  # DC-Offset (Stufe 1 §2.46) — Carrier-Chain-Inversion
-    "phase_31",  # quantisation noise (Stufe 1 §2.46) — Carrier-Chain-Inversion
-    "phase_40",  # amplitude drift correction (Stufe 4.5 §2.46)
-    "phase_49",  # advanced dereverb
-    "phase_55",  # diffusion inpainting
+    "phase_31",  # Quantisierungsrauschen (Stufe 1 §2.46) — Carrier-Chain-Inversion
+    "phase_40",  # Amplituden-Drift-Korrektur (Stufe 4.5 §2.46)
+    "phase_49",  # Erweitertes Dereverb
+    "phase_50",  # Spektral-Repair v2 — Alias-Spiegelfrequenzen (V30: ALIASING, §4.11)
+    "phase_55",  # Diffusions-Inpainting
 )
 
 

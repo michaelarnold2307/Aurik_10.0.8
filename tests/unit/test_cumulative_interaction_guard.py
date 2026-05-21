@@ -218,6 +218,54 @@ def test_08b_critical_pair_non_excluded_goal_still_fires():
     assert rolled_back, "Critical pair {phase_35, phase_40} auf micro_dynamics soll rollback auslösen"
 
 
+def test_08c_critical_pair_phase29_transparenz_excluded_no_rollback():
+    """§2.55 + §2.44: {phase_29, phase_03} + transparenz darf keinen Rollback auslösen,
+    wenn transparenz in _PHASE_SPECIFIC_DRIFT_EXCLUSIONS['phase_29'] liegt.
+
+    Wissenschaftliche Begründung:
+    Bandrauschen (cassette/tape) ist breitbandige HF-Energie und inflationiert
+    transparenz-Proxies (HF-Crest/centroid-nahe Merkmale). Nach Hiss-Reduktion
+    fällt der Proxy intentional auf den physikalisch realen Wert (Reference Paradox),
+    ohne dass eine echte Klangverschlechterung vorliegt.
+    """
+    from backend.core.cumulative_interaction_guard import get_interaction_guard
+
+    guard = get_interaction_guard()
+    state = guard.reset()
+    state.material_type = "cassette"
+    state.restorability_score = 55.0
+
+    audio = _audio()
+    baseline = _goals(nat=0.92)
+    baseline["transparenz"] = 0.88
+    guard.set_pre_pipeline_baseline(
+        state,
+        audio,
+        baseline,
+        material_type="cassette",
+        restorability_score=55.0,
+    )
+
+    # pair counterpart bereits ausgeführt
+    state.executed_phases.add("phase_03_denoise")
+
+    # transparenz fällt stark (typisch nach Hiss-Entfernung), darf aber
+    # wegen Phase-Exclusion keinen Critical-Pair-Rollback triggern.
+    degraded = dict(baseline)
+    degraded["transparenz"] = 0.52
+    _, rolled_back = guard.check_after_phase(
+        state,
+        "phase_29_tape_hiss_reduction",
+        audio * 0.9,
+        degraded,
+        SR,
+    )
+    assert not rolled_back, (
+        "§2.55 Verletzung: transparenz ist in _PHASE_SPECIFIC_DRIFT_EXCLUSIONS['phase_29'] "
+        "und darf im Critical-Pair-Check {phase_29, phase_03} keinen Rollback auslösen"
+    )
+
+
 def test_09_critical_pair_no_trigger_if_good():
     from backend.core.cumulative_interaction_guard import get_interaction_guard
 

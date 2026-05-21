@@ -39,6 +39,7 @@ import numpy as np
 import scipy.signal as sig
 
 from backend.core.audio_utils import to_channels_last
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -86,13 +87,20 @@ class TruePeakLimiterPhase(PhaseInterface):
             description=self.description,
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         Limitiert True-Peak auf ceiling.
 
         Args:
             audio:       Mono oder Stereo (float32/64, ±1 normiert)
             sample_rate: Abtastrate in Hz
+            material_type: Unbenutzt, nur fuer kanonische PhaseInterface-Signatur.
             **kwargs:    ceiling_dbfs (float, Default −0.5 dBFS)
         """
         sample_rate = kwargs.get("sample_rate", 48000)
@@ -101,10 +109,9 @@ class TruePeakLimiterPhase(PhaseInterface):
         audio, _p47_transposed = to_channels_last(audio)
         t0 = time.time()
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        effective_strength = float(kwargs.get("strength", 1.0)) * phase_locality_factor
-        effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        effective_strength = float(_strength_ctx["effective_strength"])
 
         if effective_strength <= 1e-6:
             dry = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -259,7 +266,7 @@ class TruePeakLimiterPhase(PhaseInterface):
         gain = self._compute_gain_curve(audio, sample_rate, ceiling)
         return audio * gain
 
-    def _true_peak_dbfs(self, audio: np.ndarray, sample_rate: int) -> float:
+    def _true_peak_dbfs(self, audio: np.ndarray, _sample_rate: int) -> float:
         """Misst True-Peak in dBFS durch 4× Oversampling."""
         mono = np.mean(audio, axis=1) if audio.ndim == 2 else audio
         if len(mono) < 4:

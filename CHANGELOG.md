@@ -4,7 +4,318 @@
 > Historische Qualitäts- und Marketingformulierungen bleiben zur Nachvollziehbarkeit erhalten
 > und sind nicht automatisch als aktueller, normativ bindender Außenclaim zu verstehen.
 
-## Version 9.12.9-hotfix.2 — Canonical Contract Drift Gate (19. Mai 2026)
+## Version 9.12.9-hotfix.7 — Proxy-Fixes: primary_material Enum + spatial_depth M/S (20. Mai 2026)
+
+## Version 9.12.9-hotfix.11 — Weltklasse: Transfer-Chain-aware Per-Phase-Oracle + Regelwerk-Sync (20. Mai 2026)
+
+### Code
+
+- `phase_strength_oracle.py` um deterministischen `chain_factor` erweitert:
+  - Inputs: `material_key`, `transfer_chain`, `chain_confidence`
+  - Wirkung: direkte Skalierung von Driver und Hard-Caps (`max_strength`)
+  - Telemetrie: `hard_caps.chain_factor`, `chain_depth`, `chain_confidence`
+- `unified_restorer_v3.py` uebergibt `transfer_chain` + Confidence direkt an das Oracle
+  (UV3 Runtime-Hook, non-blocking bleibt erhalten).
+
+### Tests
+
+- Neue/erweiterte Absicherung in `tests/unit/test_phase_strength_oracle.py`:
+  - Kettenfaktor reduziert Strength bei Mehrstufenkette.
+  - O8/O10 Runtime-Hook prueft chain-aware Caps.
+  - Explizite Strength-Werte bleiben im Hook unangetastet, Oracle-Telemetrie wird dennoch gesetzt.
+
+### Vorgaben/Specs/Audit/Push-Regeln
+
+- Spec 02: Transfer-Chain-Weltklasse-Invariante in §2.56b ergaenzt.
+- Spec 09: normative `chain_factor`-Formel + Wirkregeln in §09.3c ergaenzt.
+- Pipeline-Instructions: §2.56c Transfer-Chain-aware Oracle-Handover hinzugefuegt.
+- Copilot-Instructions: §0l um Pflicht zur direkten Kettenkonditionierung erweitert.
+- Push-Regelwerk: `policy/dsp_policy_contracts_overview.yaml` um `push_rulebook.worldclass_chain_aware_oracle` erweitert.
+- Audit: `audit/CHAIN_AWARE_ORACLE_WORLDCLASS_AUDIT_2026-05-20.md` neu hinzugefuegt.
+
+## Version 9.12.9-hotfix.10 — Spec-Systemik: Per-Phase-Strength-Oracles + 64-Phasen-SOTA-Matrix (20. Mai 2026)
+
+### docs/spec: phasenspezifische Staerkeoptimierung fuer alle profitierenden Phasen normiert
+
+- **Spec 02 erweitert** um §2.56b `Per-Phase Strength Oracle und 15-Goal-Teamsteuerung`.
+  - Normativer Hook: `UnifiedRestorerV3._profiled_phase_call`.
+  - Jede profitierende Phase muss vor Ausfuehrung einen phasenspezifischen Control-Profile-Resolver konsultieren.
+- **Spec 09 erweitert** um §09.3c `Phase-Strength-Oracles`.
+  - Weighted-Gap-Closure ueber alle 15 Goals als verbindliches Optimierungsziel.
+  - Kanonische Oracle-Klassen O1-O10 fuer Impuls, Subtraktiv, Spektral, Timing, Stereo, Dynamics, Vocal, Generativ, Periodisch, Output.
+- **Spec 06 erweitert** um §7.1d `64-Phasen-SOTA-Bindung und Strength-Oracle-Matrix`.
+  - Fuer Phase 01-64 sind Primaeralgorithmus, Fallback, Oracle-Klasse und Teamwork-Beitrag nun bindend dokumentiert.
+- **Spec 04 erweitert** um §4.4b `Phase-Bindung der SOTA-Matrix`.
+  - Konfliktregel geklaert: familienweite SOTA-Rangfolge bleibt in Spec 04, phasengenaue Bindung in Spec 06.
+- **Vorgaben aktualisiert**: `.github/copilot-instructions.md` ergaenzt um §0l `Per-Phase-Strength-Orakel und 15-Ziele-Teamarbeit`.
+
+### Wirkung
+
+- De-Esser-Logik ist damit kein Einzelfall mehr, sondern die normative Vorlage fuer alle profitierenden Phasen.
+- Das Systemziel ist explizit: nicht lokale Dominanz, sondern garantierte oder uebertroffene effektive Zielwerte ueber den gesamten 15er-Zielvektor.
+
+## Version 9.12.9-hotfix.9 — Kompressionsdefekt-Hardintervention + Spec-Abgleich (20. Mai 2026)
+
+### fix: Kompressionsdefekte wurden selektiert, aber psychoakustisch teils weiter hörbar
+
+- **Symptom im Laufbetrieb**: Trotz aktiver Defektklasse `compression_artifacts` blieb in kritischen
+  Passagen hörbares Pumpen/Flattening bestehen.
+- **Root Cause**: PMGG/Locality konnte `phase_54_transparent_dynamics` so weit dämpfen,
+  dass bei hoher Defektlast die Dynamik-Reparatur praktisch zu schwach wurde.
+
+### Implementierte Korrektur
+
+- **Severity-gekoppelter Kontroll-Floor in `phase_54_transparent_dynamics.py`**:
+  - Neues `compression_pressure` aus `defect_scores`
+    (`compression_artifacts`, `dynamic_compression_excess`, `digital_artifacts` gewichtet).
+  - Neues `control_strength = max(effective_strength, control_floor)` mit Floor ab `compression_pressure >= 0.25`.
+- **Hard-Intervention ab hoher Defektlast (`compression_pressure >= 0.45`)**:
+  - aggressiveres `threshold_db`/`ratio`,
+  - verlängerte Zeitkonstanten zur Artefaktdämpfung,
+  - Mindest-Mix-Anhebung,
+  - zusätzliche Envelope-Glättung gegen Pumpen (unter Erhalt von Masking/Transient-Logik).
+- **Diagnose verbessert**: Metadata ergänzt um
+  `compression_pressure`, `control_floor`, `control_strength`, `hard_intervention_active`.
+
+### Spec-/Vorgaben-Update
+
+- **`phases.instructions.md` erweitert** um §2.8c Kompressionsdefekt-Hardintervention (Phase 54).
+- **`pipeline.instructions.md` erweitert** um §2.53c Kompressionsdefekt-Routing in `_select_phases`
+  (`phase_23_spectral_repair` + `phase_54_transparent_dynamics`).
+
+### Verifikation
+
+- **`tests/unit/test_phase54_transparent_dynamics_profile.py`**: 16 passed
+  (inkl. neuer Pressure-/Hard-Intervention-Tests).
+- **`tests/unit/test_unified_restorer_v3.py -k "33e or 33f"`**: 2 passed
+  (Selektion für `COMPRESSION_ARTIFACTS` auf Phase 23 + 54).
+
+## Version 9.12.9-hotfix.8 — De-Esser-Nachschärfung: s/z-Kontrolle unter PMGG-Dämpfung (20. Mai 2026)
+
+### fix: Phase 43 blieb bei hoher Sibilance oft praktisch inaktiv
+
+- **Symptom im Laufbetrieb**: `phase_43_ml_deesser` wurde ausgeführt, zeigte aber wiederholt
+  `avg_GR=0.00 dB` bei gleichzeitig hoher Defektlast (Sibilance/Vocal-Harshness).
+- **Root Cause**: PMGG-/Policy-Kombination reduzierte `effective_strength` häufig auf ~0.06–0.10,
+  wodurch `ratio` nahe 1.2 blieb und der zweite De-Esser-Pass akustisch kaum wirkte.
+
+### Implementierte Korrektur
+
+- **Severity-gekoppelter Kontroll-Floor in `phase_43_ml_deesser.py`**:
+  - Neues `sibilance_pressure` aus `defect_scores` (`sibilance`, `sibilance_excess`, `vocal_harshness`).
+  - Neues `control_strength = max(effective_strength, control_floor)` mit Floor nur bei
+    `sibilance_pressure >= 0.55`.
+  - `control_strength` wirkt ausschließlich auf **Kontrollparameter** (`ratio`, `threshold_db`),
+    nicht auf den globalen Wet/Dry-Blend (`effective_strength` bleibt PMGG-Wert).
+- **Pathology-Interaktion angepasst**: NATURAL-Hardcap wird bei hoher Sibilance-Last nicht
+  blind erzwungen; MASKED_HISS bleibt konservativ, aber nicht mehr übermäßig blockierend.
+- **Diagnose verbessert**: Log/Metadata ergänzt um `sibilance_pressure`, `control_strength`,
+  `effective_strength`.
+
+### Stabilitätsfix §2.36-Fallback (Phase 43)
+
+- **Problem**: Der Phonem-Fallback ohne `phoneme_timeline` konnte in bestimmten
+  nicht-vokalen/synthetischen Reihenfolgen den De-Esser-Effekt vollständig zurücksetzen.
+- **Fix**: Fallback wird in Phase 43 nur noch genutzt, wenn `vocal_probability >= 0.25`.
+
+### Spec-/Vorgaben-Update
+
+- **`phases.instructions.md` erweitert** um:
+  - §2.8b De-Esser-Aktivierungsinvariante (severity-gekoppelter Kontroll-Floor)
+  - §2.36-Fallback-Gate mit Vocal-Probability-Schwelle
+
+### Verifikation
+
+- **`tests/unit/test_v9_phase_43_ml_deesser.py`**:
+  - Neue Tests: `TestSeverityCoupledActivation`
+  - Gesamtstatus: **43 passed**
+
+---
+
+### fix: _fast_goal_snapshot — zwei systemische Proxy-Bugs (§2.64 v9.12.9)
+
+#### Bugfix 1: primary_material Enum→String-Normalisierung
+
+- **`unified_restorer_v3.py` Zeile ~5744**: `_restoration_context["primary_material"]` wurde
+  aus `_mc_result.primary_material` ohne Enum-Auflösung gesetzt.
+  Python 3.12: `str(MaterialType.CASSETTE)` = `"MaterialType.CASSETTE"` (nicht `"cassette"`).
+  Folge: `_groove_noisy_mat`-Set-Check schlug fehl → groove-Proxy = 0.499 (LF-Fallback)
+  statt des tatsächlichen ~0.94 → falscher §GOAL_BASELINE_CHECK-Trigger.
+- **Fix**: `_rc_pm_raw.value if hasattr(_rc_pm_raw, "value") else str(_rc_pm_raw)` + `.lower()`
+  vor Speicherung in `_restoration_context`.
+
+#### Bugfix 2: spatial_depth-Proxy — M/S-Stereobreite statt HF-Energieanteil
+
+- **`unified_restorer_v3.py` Zeile ~3542**: Voriger Proxy maß HF-Energie (4–16 kHz / gesamt).
+  Bei Cassette/MP3-Low (BW-Ceiling 12 kHz) und bass-dominantem Material: Proxy ≈ 0.02–0.11
+  trotz realer Stereobreite 0.82 → §GOAL_BASELINE_CHECK triggerte `phase_46_spatial_enhancement`
+  unnötig → Over-Processing (§0h §2.45 Verletzung).
+- **Fix**: M/S-Energieverhältnis `side_e / (mid_e + side_e) × 4.0` — misst tatsächliche
+  Stereobreite unabhängig vom Frequenzinhalt. Mono-Fallback: 0.75.
+
+#### Verifikation
+
+- 215 bestehende Unit-Tests (test_fast_goal_snapshot_proxies + test_groove_proxy_lf +
+  test_goal_baseline_check_optimizations + test_goal_recovery_gap_utils +
+  test_per_phase_musical_goals_gate) — alle grün.
+- Regressionstests `TestSpatialDepthProxyMSRatio` und `test_groove_proxy_noisy_mat_set_*`
+  bereits in `test_fast_goal_snapshot_proxies.py` vorhanden — bestätigen beide Fixes.
+
+---
+
+## Version 9.12.9-hotfix.6 — Signal-Flow-Tracer §SFT (20. Mai 2026)
+
+### feat: Lückenlose Per-Phase-Audioverfolgung für Diagnose und Bugfixing
+
+#### Neue Module
+
+- **`backend/core/signal_flow_tracer.py`** (§SFT): Vollständiger Signal-Flow-Tracer.
+  Verfolgt jede Phase von Pre zu Post und detektiert automatisch:
+  - `PEGELEXPLOSION_WARN/CRIT` (>+6/+12 dB Peak-Ratio)
+  - `NOVELTY_WARN/CRIT` (Spektraler Inhalt nicht im Original: >0.08/0.15, §2.46e)
+  - `HNR_DROP_WARN/CRIT` (HNR-Abfall >3/6 dB bei Vokal-Material, §0p)
+  - `ECHO_ARTIFACT` (ACF Diff-Signal >0.35 bei Lag >20ms)
+  - `SILENCE_CONTAMINATION` (Energie in Stille-Zonen hinzugefügt, §2.68)
+  - `LEVEL_COLLAPSE` (Post-RMS <−60 dBFS)
+  Schreibt `~/.aurik/traces/sft_<session_id>.json` + `~/.aurik/sft_latest.json`.
+  Singleton, thread-sicher, non-blocking (Exceptions werden intern gefangen).
+
+- **`scripts/show_signal_trace.py`**: CLI zum Anzeigen des neuesten Trace-Reports.
+
+  ```
+  python scripts/show_signal_trace.py        # formatierter Report
+  python scripts/show_signal_trace.py --json  # raw JSON
+  python scripts/show_signal_trace.py --wav   # nur WAV-Pfad
+  ```
+
+#### UV3-Integration (§SFT-Hooks)
+
+- **`backend/core/unified_restorer_v3.py`**: 4 nicht-blockierende Hooks eingebaut:
+  1. `begin_session` — nach SSIP, vor Phase-Execution (Pegel + PSD-Fingerabdruck des Originals)
+  2. `capture_pre_phase` — nach `_phase_pre_snapshot`, vor `phase.process()`
+  3. `record_phase` — nach TemporalContinuityGuard, vor `return result`
+  4. `finalize` — nach `RestorationMemory.save_result`, nach HPG
+
+#### Tests
+
+- **`tests/unit/test_signal_flow_tracer.py`**: 37 neue Tests (alle grün).
+  Deckt ab: Singleton, begin_session, capture_pre_phase, record_phase (alle Flags),
+  finalize (JSON-Output), report, DSP-Hilfsfunktionen (to_db_peak, to_db_rms,
+  to_mono, hnr_fast, detect_echo, compute_spectral_novelty_fast, PSD-Fingerabdruck).
+
+#### Verwendung (Copilot-Diagnose)
+
+```python
+from backend.core.signal_flow_tracer import get_signal_flow_tracer
+tracer = get_signal_flow_tracer()
+print(tracer.report_latest())       # Neuester Trace
+print(tracer.latest_output_wav())   # Pfad zur neuesten WAV
+```
+
+---
+
+## Version 9.12.9-hotfix.5 — Kalibrierungsfix: tape_analog/emotionalitaet + RestorationMemory GP-Warmstart (20. Mai 2026)
+
+### fix: emotionalitaet-Floor für tape_analog-Materialien (Kassette/Tape) zu hoch
+
+#### Bugfixes
+
+- **`calibration_matrix.py`: `tape_analog["emotionalitaet"] = -0.22`** (§09.2):
+  `tape_analog` hatte keinen `emotionalitaet`-Bias → Floor = Canon = 0.840.
+  Echtmessung Original-Kassette (Elke Best, 1970er Schlager, panns=0.7): emotionalitaet = 0.782.
+  Physikalische Ursache: Kassetten-AGC-Kompressionsschaltkreis reduziert dynamische Modulation;
+  BW-Ceiling 12 kHz (IEC 60094-1 Type I) begrenzt Arousal-Bandbreite.
+  Ceiling ≈ 0.781 → `bias = (0.781 − 0.840) / 0.27 = −0.22`.
+  Neuer Floor = `0.84 + 0.27 × (−0.22) = 0.781`. Original (0.782) nun korrekt über Floor.
+  Betrifft alle Kassetten- und Band-Restaurierungen: kein falscher §GOAL_BASELINE_CHECK-Trigger
+  mehr für emotionalitaet.
+
+- **`unified_restorer_v3.py`: RestorationMemory GPOptimizer-Warmstart repariert** (§2.70):
+  `save_result()` speicherte immer `phase_params={}` (Kommentar „nicht verfügbar" war falsch).
+  Konsequenz: `flat_prior={}` → `prior_weight=0.0` → GPOptimizer erhielt nie Warmstart-Priors,
+  obwohl `_pareto_proposals` im selben Scope verfügbar war.
+  Fix: `_pareto_proposals[0].parameters` wird extrahiert (numerische Werte als Float) und als
+  `phase_params` an `save_result()` übergeben. Bei HPI > 0 AND artifact_freedom ≥ 0.95 berechnet
+  GPOptimizer beim nächsten Lauf `prior_weight = 0.15 + 0.20 × hpi_prev > 0`.
+
+- **`tests/unit/test_calibration_matrix.py`: 4 neue Regressionstests**:
+  `test_cassette_emotionalitaet_floor_below_canonical`,
+  `test_cassette_emotionalitaet_floor_compatible_with_real_measurement`,
+  `test_tape_emotionalitaet_floor_below_canonical`,
+  `test_cassette_emotionalitaet_floor_range` — sichern den Echtmessungs-basierten Bias dauerhaft.
+
+---
+
+## Version 9.12.9-hotfix.4 — Global: Groove-Proxy Noisy-Floor + carrier_recovery NR-aware (19. Mai 2026)
+
+### fix: Drei globale Optimierungen aus Real-Audio-Tiefenanalyse (Cassette/MP3/Tape)
+
+#### Bugfixes
+
+- **Groove-Proxy material-adaptive neutral floor** (`unified_restorer_v3.py`, `_fast_goal_snapshot`):
+  ACF des RMS-Envelopes lieferte für rausch-dominiertes Material (cassette/tape/mp3) ACF-Peak ≈ 0
+  → Proxy-Groove 0.499. Da cassette-Groove-Floor = 0.8084, löste `§GOAL_BASELINE_CHECK` fälschlich
+  `phase_12_wow_flutter_fix` für jeden cassette/mp3/tape-Song aus — auch wenn tatsächlicher
+  Groove = 0.940 (DTW-Referenz). Fix: Wenn `_groove_peak < 0.05` UND Material in
+  `{cassette, tape, reel_tape, mp3_low, mp3_high}` → neutraler Proxy-Wert 0.83 statt 0.499.
+  Betrifft alle Import-Songs mit diesen Materialtypen. Gilt auch für Fallback-Pfad (< 8 RMS-Frames).
+
+- **NR-aware Carrier-Recovery-Ratio** (`carrier_transfer_characteristics.py`, `unified_restorer_v3.py`):
+  `spectral_correlation` nutzt log-PSD Kosinus-Ähnlichkeit — Musikinhalt dominiert absolut
+  (Hiss-Leistungsanteil ≈ 10⁻⁶). Cassette/Tape-Hiss-Entfernung durch phase_03/29 war damit für
+  §0d unsichtbar: `carrier_chain_recovery_ratio = 0.003` statt korrekter 0.15+. Neue Funktion
+  `compute_carrier_recovery_ratio()` ergänzt Spektral-Shape-Delta um **Noise-Floor-Delta**:
+  5. Perzentil der Welch-PSD als Rauschbodenabschätzung; NR-Verbesserung ≥ 12 dB → ratio ≥ 0.15
+  → §0d aktiviert. UV3 ruft nun `compute_carrier_recovery_ratio()` statt `1 - spectral_correlation()`.
+  Betrifft alle NR-schwere Restaurierungen (cassette, tape, reel_tape, mp3_low).
+
+#### Erkannte Nicht-Probleme (keine Fixes nötig)
+
+- `SeparationFidelity = 0.786` für cassette: cassette-Floor = 0.7406 → kein Gate-Fehler.
+  Die scheinbare Regression vs. Original (0.842 ref-free → 0.786 referenz-basiert) ist ein
+  Messpfad-Artefakt: Original ohne Referenz gemessen, Restored mit degradiertem Input als Referenz.
+
+---
+
+## Version 9.12.9-hotfix.3 — Cassette BW-Ceiling + Transfer-Chain Material Factors (19. Mai 2026)
+
+### fix: Cassette-Halluzination, Transfer-Chain-Stärken, UI-Timer
+
+#### Bugfixes
+
+- **Phase 23 BW-Ceiling vor HallucinationGuard** (`phase_23_spectral_repair.py`): `_apply_material_bw_ceiling()` wird jetzt **vor** `check_hallucination()` aufgerufen. Bisher wurde Inhalt über dem Material-Ceiling synthetisiert und erst beim Guard nachgemessen. Cassette-Halluzination (Echo-Artefakt über 12 kHz) damit behoben. Neue Metadata-Felder: `material_bw_ceiling_applied`, `material_bw_ceiling_hz`.
+- **`_MATERIAL_PHASE_FACTORS["cassette"]` ergänzt** (`defect_phase_mapper.py`): Cassette-Material hatte keinen eigenen Key und fiel auf Vinyl-Defaults zurück. Neuer Key mit konservativen Stärken (phase_06/07/39: ≤ 0.35; phase_18: 0.15).
+- **§2.31 Transfer-Chain-Aware** (`unified_restorer_v3.py`): Material-Phase-Initialstärken werden jetzt für **alle Kettenstufen** berechnet (`min()` über Kette). Vorher wurde nur das primäre Material berücksichtigt.
+- **UI Inpainting-Zoom-Timer idempotent** (`modern_window.py`): `hasattr`-Guard gegen `None`-Timer ersetzt durch `getattr(...) is None`.
+
+#### Spec-/Normen-Updates
+
+- **Cassette-BW-Ceiling harmonisiert auf 12 kHz** (IEC 60094-1 Type I) in: `tonal_reference_profile.py` (war 15 kHz), `goal_applicability_filter.py` (fehlte), `phase_23._material_bw_ceiling_hz()` (neu).
+- **`copilot-instructions.md` VERBOTEN-Tabelle**: 4 neue Einträge (cassette BW-Ceiling, `_MATERIAL_PHASE_FACTORS["cassette"]`, §2.31 Transfer-Chain, Phase-23-Ceiling-First).
+- **`pipeline.instructions.md`**: neuer Abschnitt §2.31 mit kanonischem Transfer-Chain-Pattern.
+- **`phases.instructions.md`**: Cassette-BW-Wert ergänzt; Phase-23-Ceiling-First-Invariante dokumentiert.
+- **`VERBOTEN.md`**: BW-Ceiling-Zeile (cassette 12 kHz, tape 15 kHz, reel_tape 18 kHz); DR-Ceiling cassette 62 dB; 2 neue Systemregeln.
+- **Äratabelle** (`copilot-instructions.md`): 1975–1990-Zeile um `BW-Ceiling 12 kHz` und `_MATERIAL_PHASE_FACTORS["cassette"]` ergänzt.
+
+### release: Bridge-/Denker-/Exporter-Vertrag als Release-Gate verankert
+
+### fix: Cassette-Halluzination, Transfer-Chain-Stärken, UI-Timer
+
+#### Bugfixes
+
+- **Phase 23 BW-Ceiling vor HallucinationGuard** (`phase_23_spectral_repair.py`): `_apply_material_bw_ceiling()` wird jetzt **vor** `check_hallucination()` aufgerufen. Bisher wurde Inhalt über dem Material-Ceiling synthetisiert und erst beim Guard nachgemessen. Cassette-Halluzination (Echo-Artefakt über 12 kHz) damit behoben. Neue Metadata-Felder: `material_bw_ceiling_applied`, `material_bw_ceiling_hz`.
+- **`_MATERIAL_PHASE_FACTORS["cassette"]` ergänzt** (`defect_phase_mapper.py`): Cassette-Material hatte keinen eigenen Key und fiel auf Vinyl-Defaults zurück. Neuer Key mit konservativen Stärken (phase_06/07/39: ≤ 0.35; phase_18: 0.15).
+- **§2.31 Transfer-Chain-Aware** (`unified_restorer_v3.py`): Material-Phase-Initialstärken werden jetzt für **alle Kettenstufen** berechnet (`min()` über Kette). Vorher wurde nur das primäre Material berücksichtigt.
+- **UI Inpainting-Zoom-Timer idempotent** (`modern_window.py`): `hasattr`-Guard gegen `None`-Timer ersetzt durch `getattr(...) is None`.
+
+#### Spec-/Normen-Updates
+
+- **Cassette-BW-Ceiling harmonisiert auf 12 kHz** (IEC 60094-1 Type I) in: `tonal_reference_profile.py` (war 15 kHz), `goal_applicability_filter.py` (fehlte), `phase_23._material_bw_ceiling_hz()` (neu).
+- **`copilot-instructions.md` VERBOTEN-Tabelle**: 4 neue Einträge (cassette BW-Ceiling, `_MATERIAL_PHASE_FACTORS["cassette"]`, §2.31 Transfer-Chain, Phase-23-Ceiling-First).
+- **`pipeline.instructions.md`**: neuer Abschnitt §2.31 mit kanonischem Transfer-Chain-Pattern.
+- **`phases.instructions.md`**: Cassette-BW-Wert ergänzt; Phase-23-Ceiling-First-Invariante dokumentiert.
+- **`VERBOTEN.md`**: BW-Ceiling-Zeile (cassette 12 kHz, tape 15 kHz, reel_tape 18 kHz); DR-Ceiling cassette 62 dB; 2 neue Systemregeln.
+- **Äratabelle** (`copilot-instructions.md`): 1975–1990-Zeile um `BW-Ceiling 12 kHz` und `_MATERIAL_PHASE_FACTORS["cassette"]` ergänzt.
 
 ### release: Bridge-/Denker-/Exporter-Vertrag als Release-Gate verankert
 

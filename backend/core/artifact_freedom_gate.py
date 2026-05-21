@@ -316,6 +316,15 @@ class ArtifactFreedomGate:
         }
     )
 
+    # Crackle detector exclusion for dedicated impulse-removal phases.
+    # Their corrective delta is dominated by removed impulses and tends to
+    # look high-kurtosis by construction, which can cause false positives.
+    _CRACKLE_IMPULSE_EXCLUDE_PREFIXES: tuple[str, ...] = (
+        "phase_01",
+        "phase_09",
+        "phase_27",
+    )
+
     def evaluate(
         self,
         original: np.ndarray,
@@ -442,7 +451,11 @@ class ArtifactFreedomGate:
             PhaseOperationType.CORRECTIVE,
             PhaseOperationType.ML_GENERATIVE,
         )
-        if _per_phase_mode and _phase_type in _crackle_check_types:
+        if (
+            _per_phase_mode
+            and _phase_type in _crackle_check_types
+            and not _safe_startswith_any(self._CRACKLE_IMPULSE_EXCLUDE_PREFIXES, phase_id)
+        ):
             # §0d Phase-type-adaptive crackle thresholds: CORRECTIVE phases
             # (click-pop-removal, dropout-repair) remove impulses by design — the delta
             # signal IS the removed impulse content, which trivially exceeds kurtosis=10.
@@ -562,6 +575,12 @@ class ArtifactFreedomGate:
         artifact_freedom = artifact_freedom + _rs_penalty  # §2.49c roughness/sharpness penalty
         artifact_freedom = float(np.clip(artifact_freedom, 0.0, 1.0))
 
+        # Per-phase rollback should be driven by concrete artifact detections.
+        # Soft penalties (noise texture / roughness-sharpness) are useful for
+        # ranking and telemetry, but can over-penalize isolated phases.
+        if _per_phase_mode and not all_artifacts and artifact_freedom < 0.95:
+            artifact_freedom = 0.95
+
         detail: dict[str, object] = {}
         detail["n_musical_noise"] = sum(1 for a in all_artifacts if a.artifact_type == "musical_noise")
         detail["n_pre_echo"] = sum(1 for a in all_artifacts if a.artifact_type == "pre_echo")
@@ -577,6 +596,8 @@ class ArtifactFreedomGate:
                 detail["roughness_flag"] = {"delta_asper": round(_roughness_delta, 4)}
             if _sharpness_delta > _SHARPNESS_FLAG_ACUM:
                 detail["sharpness_flag"] = {"delta_acum": round(_sharpness_delta, 4)}
+        if _per_phase_mode and not all_artifacts and (noise_penalty < 0.0 or _rs_penalty < 0.0):
+            detail["soft_penalty_only"] = True
 
         # §1.4a FailReason when artifact_freedom < 0.95
         _afg_fr = None

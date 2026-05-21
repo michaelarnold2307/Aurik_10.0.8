@@ -62,10 +62,31 @@ from typing import Any
 
 import numpy as np
 from scipy.interpolate import CubicSpline
+from scipy.ndimage import median_filter
+from scipy.signal import lfilter
 
-from backend.core.audio_utils import safe_to_mono
+from backend.core.audio_utils import limit_quiet_edge_boost, safe_to_mono
+from backend.core.dsp.silence_mask import apply_silence_preservation
+from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
+from backend.file_import import load_audio_file
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
+
+try:
+    import librosa as _librosa_lpc
+
+    LIBROSA_AVAILABLE = True
+except ImportError:
+    _librosa_lpc = None
+    LIBROSA_AVAILABLE = False
+
+try:
+    from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3IIPlugin
+
+    DEEPFILTERNET_PLUGIN_AVAILABLE = True
+except ImportError:
+    DeepFilterNetV3IIPlugin = None
+    DEEPFILTERNET_PLUGIN_AVAILABLE = False
 
 # ML-Hybrid Support
 try:
@@ -137,6 +158,7 @@ class ClickRemovalPhase(PhaseInterface):
 
     def __init__(self):
         """Initialisiert Phase 1 Click Removal."""
+        super().__init__()
         self._deepfilternet_plugin = None
 
     def _get_deepfilternet_plugin(self):
@@ -150,8 +172,8 @@ class ClickRemovalPhase(PhaseInterface):
             return self._deepfilternet_plugin
 
         try:
-            from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3IIPlugin
-
+            if not DEEPFILTERNET_PLUGIN_AVAILABLE or DeepFilterNetV3IIPlugin is None:
+                raise ImportError("DeepFilterNet v3 II plugin unavailable")
             self._deepfilternet_plugin = DeepFilterNetV3IIPlugin()
             logger.info("✅ DeepFilterNet v3 II Plugin loaded for Click Removal")
             return self._deepfilternet_plugin
@@ -173,7 +195,9 @@ class ClickRemovalPhase(PhaseInterface):
             is_cpu_intensive=True,
             is_io_intensive=False,
             quality_impact=0.95,  # Professional (was 0.90)
-            description="Professional multi-scale click removal with adaptive interpolation (comparable to iZotope RX De-click)",
+            description=(
+                "Professional multi-scale click removal with adaptive interpolation (comparable to iZotope RX De-click)"
+            ),
         )
 
     @staticmethod
@@ -250,6 +274,102 @@ class ClickRemovalPhase(PhaseInterface):
             "spectral_ctx": spectral_ctx,
         }
 
+    @staticmethod
+    def _sample_count(input_audio: np.ndarray) -> int:
+        """Return sample count for mono, channels-first, or channels-last audio."""
+        if input_audio.ndim == 2 and input_audio.shape[0] <= 2 and input_audio.shape[1] > input_audio.shape[0]:
+            return int(input_audio.shape[1])
+        return int(input_audio.shape[0])
+
+    @staticmethod
+    def _resolve_silence_mask(kwargs: dict[str, Any], input_audio: np.ndarray) -> np.ndarray | None:
+        """Resolve sample-level silence protection mask from kwargs/restoration context."""
+        mask = kwargs.get("silence_mask")
+        if mask is None:
+            ctx = kwargs.get("restoration_context")
+            if isinstance(ctx, dict):
+                mask = ctx.get("silence_mask")
+        n_samples = ClickRemovalPhase._sample_count(input_audio)
+        if isinstance(mask, np.ndarray) and mask.size > 1:
+            resolved = np.asarray(mask, dtype=np.float32).ravel()
+            if resolved.size < n_samples:
+                resolved = np.pad(resolved, (0, n_samples - resolved.size), mode="edge")
+            return resolved[:n_samples]
+
+        zones = kwargs.get("structural_silence_zones")
+        if zones is None:
+            ctx = kwargs.get("restoration_context")
+            if isinstance(ctx, dict):
+                zones = ctx.get("structural_silence_zones")
+        if isinstance(zones, list) and zones:
+            resolved = np.ones(n_samples, dtype=np.float32)
+            for zone in zones:
+                try:
+                    start, end = int(zone[0]), int(zone[1])
+                except Exception:
+                    continue
+                start = max(0, min(n_samples, start))
+                end = max(start, min(n_samples, end))
+                resolved[start:end] = 0.0
+            return resolved
+        return None
+
+    @staticmethod
+    def _click_overlaps_protected_silence(
+        start: int,
+        end: int,
+        silence_mask: np.ndarray | None,
+        sample_rate: int,
+    ) -> bool:
+        """True if a click candidate touches structural silence/fade protection."""
+        if silence_mask is None or silence_mask.size <= 1:
+            return False
+        guard = max(1, int(sample_rate * 0.02))
+        left = max(0, int(start) - guard)
+        right = min(int(silence_mask.size), int(end) + guard + 1)
+        return bool(np.any(silence_mask[left:right] < 0.5))
+
+    @staticmethod
+    def _apply_silence_and_edge_guards(
+        original: np.ndarray,
+        processed: np.ndarray,
+        silence_mask: np.ndarray | None,
+        sample_rate: int,
+        material_type: str,
+    ) -> np.ndarray:
+        """Restore protected silence and prevent boosted quiet song edges."""
+        guarded = np.asarray(processed, dtype=np.float32)
+        if silence_mask is not None and silence_mask.size > 1:
+            try:
+                guarded = apply_silence_preservation(original, guarded, silence_mask)
+            except Exception as exc:
+                logger.debug("§silence-guarantee phase_01: restore skipped: %s", exc)
+        try:
+            guarded = limit_quiet_edge_boost(
+                original,
+                guarded,
+                sr=sample_rate,
+                material_key=str(material_type).lower(),
+                max_edge_boost_db=0.5,
+            )
+        except Exception as exc:
+            logger.debug("§0h quiet-edge guard phase_01 skipped: %s", exc)
+        return np.clip(np.nan_to_num(guarded, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def _emit_progress(progress_callback: Any, pct: float, label: str, elapsed_s: float) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(float(pct), label, float(elapsed_s))
+        except TypeError:
+            try:
+                progress_callback(float(pct), label)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def process(
         self,
         audio: np.ndarray,
@@ -276,6 +396,9 @@ class ClickRemovalPhase(PhaseInterface):
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
+        progress_sub_callback = kwargs.get("progress_sub_callback")
+        silence_mask = self._resolve_silence_mask(kwargs, audio)
+        self._emit_progress(progress_sub_callback, 3.0, "Knackser-Schutzbereiche werden geprüft", 0.0)
 
         # Determine if ML should be used
         use_ml = False
@@ -311,7 +434,14 @@ class ClickRemovalPhase(PhaseInterface):
             # Detect clicks on mono downmix for coherent L+R repair
             mono_mix = safe_to_mono(audio)
             _mono_repaired, stats_mono = self._remove_clicks_professional(
-                mono_mix, sample_rate, thresholds, preserve_transients, use_ml
+                mono_mix,
+                sample_rate,
+                thresholds,
+                preserve_transients,
+                use_ml,
+                progress_callback=progress_sub_callback,
+                silence_mask=silence_mask,
+                start_time=start_time,
             )
             # Compute gain envelope from mono repair
             _eps_click = 1e-10
@@ -343,7 +473,14 @@ class ClickRemovalPhase(PhaseInterface):
             }
         else:
             result_audio, stats = self._remove_clicks_professional(
-                audio, sample_rate, thresholds, preserve_transients, use_ml
+                audio,
+                sample_rate,
+                thresholds,
+                preserve_transients,
+                use_ml,
+                progress_callback=progress_sub_callback,
+                silence_mask=silence_mask,
+                start_time=start_time,
             )
             total_clicks = stats["total"]
             ml_repaired_count = stats.get("ml_repaired", 0)
@@ -408,6 +545,15 @@ class ClickRemovalPhase(PhaseInterface):
             result_audio = (audio + _effective_strength * (result_audio - audio)).astype(audio.dtype)
             result_audio = np.clip(result_audio, -1.0, 1.0)
 
+        result_audio = self._apply_silence_and_edge_guards(
+            audio,
+            result_audio,
+            silence_mask,
+            sample_rate,
+            material_type,
+        )
+        self._emit_progress(progress_sub_callback, 98.0, "Knackser-Reparatur gesichert", time.time() - start_time)
+
         return create_phase_result(
             audio=result_audio,
             modifications={
@@ -440,7 +586,15 @@ class ClickRemovalPhase(PhaseInterface):
         )
 
     def _remove_clicks_professional(
-        self, audio: np.ndarray, sample_rate: int, thresholds: dict[str, float], preserve_transients: bool, use_ml: bool
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        thresholds: dict[str, float],
+        preserve_transients: bool,
+        use_ml: bool,
+        progress_callback: Any = None,
+        silence_mask: np.ndarray | None = None,
+        start_time: float | None = None,
     ) -> tuple[np.ndarray, dict[str, int]]:
         """
         Professional click removal with multi-scale detection and ML-Hybrid support.
@@ -455,15 +609,30 @@ class ClickRemovalPhase(PhaseInterface):
 
         # Step 1: Detect click candidates (multi-scale)
         click_candidates = self._detect_clicks_multiscale(audio, thresholds)
+        self._emit_progress(
+            progress_callback,
+            18.0,
+            "Knackser werden lokalisiert",
+            time.time() - (start_time or time.time()),
+        )
 
         # Step 2: Classify click types and calculate severity
         classified_clicks = self._classify_clicks(audio, click_candidates, preserve_transients, thresholds)
+        self._emit_progress(
+            progress_callback,
+            32.0,
+            "Knackser werden klassifiziert",
+            time.time() - (start_time or time.time()),
+        )
 
         # Step 3: Separate clicks by severity for ML routing
         severe_clicks = []  # severity >0.6, use ML if available
         normal_clicks = []  # severity <=0.6, use DSP
 
         for click in classified_clicks:
+            if self._click_overlaps_protected_silence(click["start"], click["end"], silence_mask, sample_rate):
+                stats["transients_preserved"] += 1
+                continue
             if click["type"] == "transient":
                 stats["transients_preserved"] += 1
                 continue  # Skip musical transients
@@ -477,6 +646,12 @@ class ClickRemovalPhase(PhaseInterface):
 
         # Step 4: Process severe clicks with ML (if available and enabled)
         if severe_clicks and use_ml:
+            self._emit_progress(
+                progress_callback,
+                45.0,
+                "Starke Knackser werden repariert",
+                time.time() - (start_time or time.time()),
+            )
             ml_success = self._repair_clicks_ml(audio_cleaned, sample_rate, severe_clicks)
             if ml_success:
                 stats["ml_repaired"] = len(severe_clicks)
@@ -499,14 +674,25 @@ class ClickRemovalPhase(PhaseInterface):
             normal_clicks.extend(severe_clicks)
 
         # Step 5: Process normal clicks with DSP interpolation
-        for click in normal_clicks:
+        total_normal = max(1, len(normal_clicks))
+        for idx, click in enumerate(normal_clicks):
             if click["type"] == "transient":
                 stats["transients_preserved"] += 1
                 continue  # Skip musical transients
+            if self._click_overlaps_protected_silence(click["start"], click["end"], silence_mask, sample_rate):
+                stats["transients_preserved"] += 1
+                continue
+
+            if idx == 0 or idx == total_normal - 1 or idx % max(1, total_normal // 20) == 0:
+                self._emit_progress(
+                    progress_callback,
+                    45.0 + 45.0 * (idx / total_normal),
+                    "Knackser werden repariert",
+                    time.time() - (start_time or time.time()),
+                )
 
             start_idx = click["start"]
             end_idx = click["end"]
-            click["type"]
             duration = end_idx - start_idx + 1
 
             # Choose interpolation method based on click characteristics
@@ -566,9 +752,7 @@ class ClickRemovalPhase(PhaseInterface):
         # §4.6b: PLM active-guard — prevents emergency-eviction during DeepFilterNet inference
         _plm01_dfn = None
         try:
-            from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm01
-
-            _plm01_dfn = _get_plm01()
+            _plm01_dfn = get_plugin_lifecycle_manager()
             _plm01_dfn.set_active("DeepFilterNetV3", True)
         except Exception:
             pass
@@ -593,10 +777,11 @@ class ClickRemovalPhase(PhaseInterface):
 
             if returncode == 0 and os.path.exists(output_path):
                 # Read repaired audio
-                from backend.file_import import load_audio_file
-
                 _res = load_audio_file(output_path, do_carrier_analysis=False)
-                repaired = np.asarray(_res["audio"], dtype=np.float32)
+                if not isinstance(_res, dict) or _res.get("audio") is None:
+                    logger.warning("DeepFilterNet output could not be loaded")
+                    return False
+                repaired = np.asarray(_res.get("audio"), dtype=np.float32)
 
                 # Update audio in-place
                 if len(repaired) == len(audio):
@@ -660,8 +845,6 @@ class ClickRemovalPhase(PhaseInterface):
         Returns:
             List of (start_idx, end_idx) tuples
         """
-        from scipy.ndimage import median_filter
-
         diff = np.abs(np.diff(audio))
 
         # Sliding-window size: ~100 ms @ 48 kHz (must be odd for median_filter)
@@ -732,11 +915,6 @@ class ClickRemovalPhase(PhaseInterface):
 
         for start, end in click_candidates:
             duration = end - start + 1
-
-            # Extract click region (with context)
-            ctx_start = max(0, start - 50)
-            ctx_end = min(len(audio), end + 50)
-            audio[ctx_start:ctx_end]
 
             # Feature extraction
             click_region = audio[start : end + 1]
@@ -870,8 +1048,8 @@ class ClickRemovalPhase(PhaseInterface):
         # High-Order AR via librosa.lpc (Levinson-Durbin, Ordnung ≥ 20)
         # Pflicht: scipy.signal hat kein lpc ab 1.15 — librosa.lpc ist die
         # normkonforme Lösung (Aurik-Standard: AR-Ordnung ≥ 20).
-        import librosa as _librosa_lpc
-        from scipy.signal import lfilter
+        if not LIBROSA_AVAILABLE or _librosa_lpc is None:
+            raise ImportError("librosa is required for spectral click interpolation")
 
         ctx_size = 128
         ctx_start = max(0, start - ctx_size)
@@ -1057,83 +1235,9 @@ class ClickRemovalPhase(PhaseInterface):
         result = np.clip(result, -1.0, 1.0)
         return result
 
-    def supports_material(self, material_type: str) -> bool:
+    def supports_material(self, _material_type: str) -> bool:
         """All materials supported."""
         return True
 
 
-if __name__ == "__main__":
-    """Test Professional Click Removal Phase."""
-
-    logger.debug("=" * 80)
-    logger.debug("Professional Click Removal Phase v2.0 - Test")
-    logger.debug("=" * 80)
-
-    # Generate test audio
-    sr = 44100
-    duration = 3
-    t = np.linspace(0, duration, sr * duration)
-
-    # Complex signal: sine + harmonics
-    audio = 0.3 * np.sin(2 * np.pi * 440 * t)  # Fundamental
-    audio += 0.15 * np.sin(2 * np.pi * 880 * t)  # 2nd harmonic
-    audio += 0.08 * np.sin(2 * np.pi * 1320 * t)  # 3rd harmonic
-
-    # Add different types of clicks
-    # 1. Short digital clicks (1-3 samples)
-    for i in range(10):
-        pos = int(np.random.rand() * len(audio))
-        audio[pos : pos + 2] += 0.6 * np.random.randn(2)
-
-    # 2. Medium analog clicks (4-10 samples)
-    for i in range(5):
-        pos = int(np.random.rand() * len(audio))
-        duration_click = np.random.randint(4, 11)
-        audio[pos : pos + duration_click] += 0.4 * np.random.randn(duration_click)
-
-    # 3. Long scratches (11-50 samples)
-    for i in range(2):
-        pos = int(np.random.rand() * len(audio))
-        duration_click = np.random.randint(15, 40)
-        audio[pos : pos + duration_click] += 0.3 * np.random.randn(duration_click)
-
-    # 4. Musical transient (should be preserved)
-    transient_pos = int(len(audio) * 0.5)
-    audio[transient_pos : transient_pos + 5] *= 2.0  # Legitimate attack
-
-    logger.debug("\nTest Audio: %ss @ %s Hz", duration, sr)
-    logger.debug("Injected: 10 short + 5 medium + 2 long clicks + 1 transient")
-
-    # Test with different materials
-    materials = ["shellac", "vinyl", "tape", "cd_digital"]
-
-    for material in materials:
-        logger.debug("\n%s", "-" * 80)
-        logger.debug("Testing with material: %s", material.upper())
-        logger.debug("%s", "-" * 80)
-
-        phase = ClickRemovalPhase()
-        result = phase.process(audio.copy(), material_type=material, preserve_transients=True)
-
-        if result.success:
-            logger.debug("✅ Processing Complete!")
-            logger.debug(
-                f"   Execution Time: {result.metadata['execution_time_seconds']:.3f}s ({result.metadata['execution_time_seconds'] / duration:.2f}× realtime)"
-            )
-            logger.debug("   Total Clicks Removed: %s", result.modifications["total_clicks_removed"])
-            logger.debug("   - Short: %s", result.modifications["short_clicks"])
-            logger.debug("   - Medium: %s", result.modifications["medium_clicks"])
-            logger.debug("   - Long: %s", result.modifications["long_clicks"])
-            logger.debug("   Transients Preserved: %s", result.modifications["transients_preserved"])
-            logger.debug("   Preservation Ratio: %s", format(result.modifications["preservation_ratio"], ".2%"))
-            logger.debug("   Warnings: %s", result.warnings if result.warnings else "None")
-        else:
-            logger.debug("❌ Processing Failed!")
-
-    logger.debug("\n%s", "=" * 80)
-    logger.debug("✅ Professional Click Removal v2.0 Test Complete!")
-    logger.debug("%s", "=" * 80)
-    logger.debug("Algorithm: %s", result.metadata["algorithm"])
-    logger.debug("Scientific Reference: %s", result.metadata["scientific_ref"])
-    logger.debug("Benchmark: %s", result.metadata["benchmark"])
-    logger.debug("Quality Impact: 0.95 (Professional-Grade)")
+__all__ = ["ClickRemovalPhase"]

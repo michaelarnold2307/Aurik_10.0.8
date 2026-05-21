@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 import threading
+import types
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,11 +138,35 @@ def _warm_up_librosa() -> None:
     # Guard with a separate try/except so numba failures are isolated to this warm-up only.
     try:
         _bt_fn = librosa.beat.beat_track  # lazy import → numba compile happens here
+        # Compatibility guard: some numba/librosa combinations expose beat_track as a
+        # plain function path whose dispatcher is missing get_call_template.
+        # In that case skip beat warm-up silently to avoid noisy startup diagnostics.
+        _skip_bt_warmup = False
+        try:
+            _dispatcher = getattr(_bt_fn, "dispatcher", None)
+            if _dispatcher is not None and not hasattr(_dispatcher, "get_call_template"):
+                _skip_bt_warmup = True
+            if isinstance(_bt_fn, types.FunctionType) and "numba" in str(type(_dispatcher)).lower():
+                if _dispatcher is not None and not hasattr(_dispatcher, "get_call_template"):
+                    _skip_bt_warmup = True
+        except Exception:
+            _skip_bt_warmup = False
+        if _skip_bt_warmup:
+            logger.debug(
+                "librosa warm-up beat_track: kompatibilitaets-pfad aktiv (numba dispatcher ohne get_call_template)"
+            )
+            _bt_fn = None
+        if _bt_fn is None:
+            raise RuntimeError("beat_track warm-up uebersprungen (kompatibilitaets-pfad)")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             _bt_fn(y=_dummy_short, sr=_sr_low)
     except Exception as exc:
-        logger.debug("librosa warm-up beat_track: %s", exc)
+        _msg = str(exc)
+        if "get_call_template" in _msg:
+            logger.debug("librosa warm-up beat_track: kompatibilitaets-fallback aktiv")
+        elif "uebersprungen" not in _msg:
+            logger.debug("librosa warm-up beat_track: %s", exc)
 
     # util-Attribute explizit auflösen (alle lazy-loader-Ziele)
     for _attr in ("MAX_MEM_BLOCK", "pad_center", "frame", "expand_to", "normalize", "valid_audio", "fix_length"):

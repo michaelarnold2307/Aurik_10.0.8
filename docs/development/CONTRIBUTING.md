@@ -78,6 +78,7 @@ Warum ist die Funktion nützlich?
 ### 3. Code Contributions
 
 **Workflow:**
+
 1. Fork das Repository
 2. Erstelle einen Feature-Branch (`git checkout -b feature/amazing-feature`)
 3. Implementiere deine Änderungen
@@ -130,6 +131,7 @@ pytest tests/ -v
 **Format:** `<type>/<short-description>`
 
 **Types:**
+
 - `feature/` - Neue Funktionen
 - `bugfix/` - Bug-Fixes
 - `docs/` - Dokumentation
@@ -137,6 +139,7 @@ pytest tests/ -v
 - `test/` - Tests hinzufügen/verbessern
 
 **Beispiele:**
+
 ```bash
 git checkout -b feature/add-neural-codec
 git checkout -b bugfix/fix-vinyl-crackle-detection
@@ -148,6 +151,7 @@ git checkout -b docs/update-api-reference
 ### 2. Commit Messages
 
 **Format:**
+
 ```
 <type>: <subject> (max 50 chars)
 
@@ -157,6 +161,7 @@ git checkout -b docs/update-api-reference
 ```
 
 **Types:**
+
 - `feat:` - Neue Funktion
 - `fix:` - Bug-Fix
 - `docs:` - Dokumentation
@@ -166,6 +171,7 @@ git checkout -b docs/update-api-reference
 - `chore:` - Build/Tooling
 
 **Beispiele:**
+
 ```bash
 git commit -m "feat: Add binaural processing (Phase 11)"
 
@@ -215,6 +221,30 @@ Kurze Beschreibung der Änderungen.
 
 **Timeline:** Erwarte Feedback innerhalb von 1-3 Tagen.
 
+### 5. Push-Regeln (Release-Must)
+
+Ein Push ist nur zulaessig, wenn der lokale Qualitaets-Gate gruen ist.
+
+Pflicht vor jedem Push:
+
+1. Geaenderte Unit-Tests und betroffene Integrations-Tests ausfuehren.
+2. Keine neuen Lint-/Type-Fehler in geaenderten Dateien.
+3. Bei normativen Verhaltensaenderungen Changelog/Spec/Audit aktualisieren.
+4. Keine Sidepaths am kanonischen Bridge/Denker/Export-Vertrag vorbei.
+
+Mindestkommando-Set:
+
+```bash
+"${workspaceFolder}/.venv_aurik/bin/python" -m pytest tests/unit -p no:xdist --override-ini="addopts=--strict-markers --import-mode=importlib" --timeout=30 --tb=short -q --disable-warnings --no-header
+"${workspaceFolder}/.venv_aurik/bin/python" -m pytest tests -m "not e2e and not ml" -p no:xdist --override-ini="addopts=--strict-markers --import-mode=importlib" --timeout=30 --tb=short -q --disable-warnings --no-header --maxfail=20 --ignore=tests/unit
+```
+
+Push-Blocker:
+
+- fehlgeschlagene Pflicht-Tests
+- neue Lint-/Type-Findings in geaenderten Dateien
+- normative Code-Aenderung ohne Delta in Changelog/Spec/Audit
+
 ---
 
 ## Coding Guidelines
@@ -236,6 +266,7 @@ black --check .
 ```
 
 **Config** (`.pyproject.toml`):
+
 ```toml
 [tool.black]
 line-length = 120
@@ -257,11 +288,13 @@ isort --check .
 ```
 
 **Order:**
+
 1. Standard Library
 2. Third-Party
 3. Local Imports
 
 **Beispiel:**
+
 ```python
 # Standard Library
 import os
@@ -367,6 +400,7 @@ logger.debug(f"Audio shape: {audio.shape}, SR: {sr}")
 ```
 
 **Levels:**
+
 - `DEBUG`: Detailed information (nur Development)
 - `INFO`: Normal processing steps (default)
 - `WARNING`: Potential issues
@@ -469,6 +503,7 @@ def test_restore_invalid_input():
 ```
 
 **Best Practices:**
+
 - ✅ Test one thing per test function
 - ✅ Use descriptive test names (`test_feature_scenario`)
 - ✅ Follow Arrange-Act-Assert pattern
@@ -497,6 +532,7 @@ xdg-open htmlcov/index.html  # Linux
 ### Wann Dokumentation aktualisieren?
 
 **Ja, wenn:**
+
 - ✅ Neue Public API hinzugefügt
 - ✅ API-Signatur geändert
 - ✅ Neue Features implementiert
@@ -504,6 +540,7 @@ xdg-open htmlcov/index.html  # Linux
 - ✅ Neue Dependencies hinzugefügt
 
 **Nein, wenn:**
+
 - ❌ Nur interne Refactorings
 - ❌ Private Functions geändert
 - ❌ Comments hinzugefügt
@@ -537,6 +574,7 @@ docs/
 **Syntax:** GitHub Flavored Markdown
 
 **Best Practices:**
+
 - ✅ Use headings (`##`, `###`) für Struktur
 - ✅ Use code blocks (` ```python `) für Code
 - ✅ Use tables für Daten
@@ -544,6 +582,7 @@ docs/
 - ✅ Link zu anderen Docs (`[Text](path/to/doc.md)`)
 
 **Beispiel:**
+
 ```markdown
 ## Feature Name
 

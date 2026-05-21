@@ -13,6 +13,12 @@
 PYTHON := .venv_aurik/bin/python
 PYMODULE := $(PYTHON) -m
 
+# Robuste Terminal-Capability-Defaults (wichtig fuer Snap/VS-Code-Subprozesse)
+TERM ?= xterm-256color
+TERMINFO ?= /usr/share/terminfo
+TERMINFO_DIRS ?= /usr/share/terminfo:/lib/terminfo:/etc/terminfo
+export TERM TERMINFO TERMINFO_DIRS
+
 # Verzeichnisse für Code-Qualität
 SRC_DIRS := core dsp plugins backend denker Aurik910 aurik_cli.py
 EXCLUDE_DIRS := models .venv_aurik build dist output_audio sessions logs __pycache__

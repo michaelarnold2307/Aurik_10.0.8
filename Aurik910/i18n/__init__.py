@@ -10,6 +10,8 @@ Verwendung:
     print(t("restoration.started"))  # → "Restaurierung gestartet…"
 """
 
+# pylint: disable=line-too-long
+
 from __future__ import annotations
 
 import contextlib
@@ -17,7 +19,7 @@ import threading
 from typing import Any
 
 _lock = threading.Lock()
-_language: str = "de"
+_language_state: dict[str, str] = {"value": "de"}
 
 
 def set_language(lang: str) -> None:
@@ -26,14 +28,13 @@ def set_language(lang: str) -> None:
     Args:
         lang: ISO-639-1-Sprachcode. Unbekannte Codes → Fallback 'de'.
     """
-    global _language
     with _lock:
-        _language = lang if lang in _TRANSLATIONS else "de"
+        _language_state["value"] = lang if lang in _TRANSLATIONS else "de"
 
 
 def get_language() -> str:
     """Gibt den aktuellen Sprachcode zurück."""
-    return _language
+    return _language_state["value"]
 
 
 def t(key: str, **kwargs: Any) -> str:
@@ -49,7 +50,7 @@ def t(key: str, **kwargs: Any) -> str:
     Returns:
         Übersetzte Zeichenkette, ggf. mit eingesetzten Variablen.
     """
-    lang_dict = _TRANSLATIONS.get(_language, _TRANSLATIONS["de"])
+    lang_dict = _TRANSLATIONS.get(_language_state["value"], _TRANSLATIONS["de"])
     text = lang_dict.get(key) or _TRANSLATIONS["de"].get(key, key)
     if kwargs:
         with contextlib.suppress(KeyError, ValueError):
@@ -162,7 +163,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.tab_waveform": "Wellenform",
         "ui.tab_spectrogram": "Spektrogramm",
         "ui.ab_compare": "🎧  Vor / Nachher Vergleich",
-        "ui.app_title": "Aurik 9.10.120 für meinen lieben Freund Dieter Schönemann",
+        "ui.app_title": "Aurik 9.12.9-hotfix.2 für meinen lieben Freund Dieter Schönemann",
         "ui.no_file_loaded": "Keine Datei geladen",
         "ui.no_analysis": "Noch keine Analyse",
         "ui.resource_header": "🔍 Qualitäts-Überwachung",
@@ -652,7 +653,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.tab_waveform": "Waveform",
         "ui.tab_spectrogram": "Spectrogram",
         "ui.ab_compare": "🎧  Before / After Comparison",
-        "ui.app_title": "Aurik 9.10.120 for my dear friend Dieter Schoenemann",
+        "ui.app_title": "Aurik 9.12.9-hotfix.2 for my dear friend Dieter Schoenemann",
         "ui.no_file_loaded": "No file loaded",
         "ui.no_analysis": "No analysis yet",
         "ui.resource_header": "🔍 Quality Monitoring",

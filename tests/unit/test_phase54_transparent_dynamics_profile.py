@@ -7,7 +7,10 @@ Quality-Mode und Restorability berechnet wird.
 import numpy as np
 import pytest
 
-from backend.core.phases.phase_54_transparent_dynamics import TransparentDynamicsV1 as TransparentDynamicsPhase
+from backend.core.phases.phase_54_transparent_dynamics import (
+    TransparentDynamicsV1 as TransparentDynamicsPhase,
+)
+from backend.core.phases.phase_54_transparent_dynamics import _extract_compression_pressure
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktion
@@ -107,3 +110,60 @@ class TestTransparentDynamicsProfileIntegration:
         assert "mix_delta" in result.metadata
         # quality mode → positive mix_delta
         assert result.metadata["mix_delta"] >= 0.0
+
+
+class TestTransparentDynamicsCompressionPressure:
+    def test_extract_compression_pressure_from_numeric_scores(self):
+        pressure = _extract_compression_pressure(
+            {
+                "compression_artifacts": 0.80,
+                "dynamic_compression_excess": 0.30,
+            }
+        )
+        assert pressure == pytest.approx(0.80)
+
+    def test_extract_compression_pressure_from_mixed_objects(self):
+        class _Score:
+            def __init__(self, severity: float):
+                self.severity = severity
+
+        pressure = _extract_compression_pressure(
+            {
+                "DefectType.COMPRESSION_ARTIFACTS": _Score(0.62),
+                "DefectType.DIGITAL_ARTIFACTS": _Score(0.90),
+            }
+        )
+        assert pressure == pytest.approx(0.62)
+
+    def test_high_compression_pressure_enables_hard_intervention(self):
+        phase = TransparentDynamicsPhase(sample_rate=48000)
+        audio = np.random.uniform(-0.2, 0.2, (48000, 2)).astype(np.float32)
+
+        result = phase.process(
+            audio,
+            strength=0.05,
+            defect_scores={"compression_artifacts": 0.90},
+            quality_mode="balanced",
+            restorability_score=45.0,
+        )
+
+        assert result.success
+        assert result.metadata["hard_intervention_active"] is True
+        assert result.metadata["control_strength"] >= 0.75
+        assert result.metadata["mix"] >= 0.70
+
+    def test_low_compression_pressure_keeps_hard_intervention_off(self):
+        phase = TransparentDynamicsPhase(sample_rate=48000)
+        audio = np.random.uniform(-0.2, 0.2, (48000, 2)).astype(np.float32)
+
+        result = phase.process(
+            audio,
+            strength=0.20,
+            defect_scores={"compression_artifacts": 0.20},
+            quality_mode="balanced",
+            restorability_score=45.0,
+        )
+
+        assert result.success
+        assert result.metadata["hard_intervention_active"] is False
+        assert result.metadata["control_floor"] == pytest.approx(0.0)

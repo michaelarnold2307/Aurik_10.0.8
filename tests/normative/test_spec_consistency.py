@@ -19,7 +19,7 @@ CI-Gate das DAUERHAFT und AUTOMATISCH folgende Invarianten prüft:
      Keine §0a-verbotene Phase darf in Spec 06 CAUSE_TO_PHASES stehen.
 
   5. VERBOTEN.md Linter-Code-Präsenz in copilot-instructions.md:
-     Alle Linter-Codes V01–V12 aus VERBOTEN.md müssen in copilot-instructions.md
+      Alle Linter-Codes V01–V33 aus VERBOTEN.md müssen in copilot-instructions.md
      erwähnt sein. Stellt sicher, dass die KI-Agenten-Richtlinie vollständig ist.
 
 Laufzeit: < 5 s (kein Audio, kein ML — pure Text/AST-Analyse).
@@ -30,7 +30,7 @@ Spec-Referenzen:
     §2.59 CAUSE_TO_PHASES/CAUSES Bidirektional-Sync
     §0a Crossfire-Modus-Invariante
     V12 VERBOTEN.md Linter-Code
-    .github/VERBOTEN.md (normative Quelle für V01–V12)
+    .github/VERBOTEN.md (normative Quelle für V01–V33)
     .github/copilot-instructions.md (KI-Agenten-Richtlinie)
     .github/specs/06_phases_system.md (kanonische Phase-/Ursachen-Tabelle)
 """
@@ -285,13 +285,13 @@ class TestPhaseFileExistence:
 
 
 class TestVerbotenLinterCodesInCopilotInstructions:
-    """Alle VERBOTEN.md Linter-Codes V01–V12 müssen in copilot-instructions.md stehen."""
+    """Alle VERBOTEN.md Linter-Codes V01–V33 müssen in copilot-instructions.md stehen."""
 
     def test_linter_codes_present_in_copilot_instructions(self) -> None:
         """Alle in VERBOTEN.md definierten Linter-Codes müssen in copilot-instructions.md stehen.
 
         Die Codes werden aus der Linter-Referenz-Tabelle in VERBOTEN.md geparst —
-        nur definierte Codes werden geprüft (nicht alle V01–V12 sequenziell).
+        nur definierte Codes werden geprüft (nicht alle V01–V33 sequenziell).
         """
         verboten_content = _VERBOTEN_MD_PATH.read_text(encoding="utf-8")
         # Parse Linter-Referenz table: lines matching "| Vxx |"
@@ -319,7 +319,7 @@ class TestVerbotenLinterCodesInCopilotInstructions:
     def test_verboten_md_linter_reference_section_exists(self) -> None:
         """VERBOTEN.md muss einen Linter-Referenz-Abschnitt haben."""
         content = _VERBOTEN_MD_PATH.read_text(encoding="utf-8")
-        assert "V01" in content and "V12" in content, "VERBOTEN.md fehlt Linter-Referenz-Abschnitt mit V01–V12."
+        assert "V01" in content and "V33" in content, "VERBOTEN.md fehlt Linter-Referenz-Abschnitt mit V01–V33."
 
 
 # ---------------------------------------------------------------------------

@@ -46,8 +46,9 @@ import time
 import numpy as np
 from scipy import ndimage, signal
 
-from backend.core.audio_utils import compute_gated_rms_linear, to_channels_last
+from backend.core.audio_utils import apply_musical_gain_envelope, compute_gated_rms_linear, to_channels_last
 from backend.core.defect_scanner import MaterialType
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -227,7 +228,11 @@ class CompressionPhase(PhaseInterface):
         )
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.VINYL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
     ) -> PhaseResult:
         """Verarbeitet audio with professional multi-band parallel compression."""
         sample_rate = kwargs.get("sample_rate", 48000)
@@ -235,10 +240,16 @@ class CompressionPhase(PhaseInterface):
         audio, _p10_transposed = to_channels_last(audio)
         start_time = time.time()
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        phase_material = kwargs.get("material", material_type)
+        if not isinstance(phase_material, MaterialType):
+            try:
+                phase_material = MaterialType(str(phase_material))
+            except Exception:
+                phase_material = MaterialType.VINYL
+
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -249,7 +260,7 @@ class CompressionPhase(PhaseInterface):
                 execution_time_seconds=time.time() - start_time,
                 metadata={
                     "phase": "10_compression_v2_professional",
-                    "material": material.value,
+                    "material": phase_material.value,
                     "sample_rate": sample_rate,
                     "version": "2.0.0",
                     "processing": "skipped_zero_strength",
@@ -266,7 +277,7 @@ class CompressionPhase(PhaseInterface):
 
         metadata = {
             "phase": "10_compression_v2_professional",
-            "material": material.value,
+            "material": phase_material.value,
             "sample_rate": sample_rate,
             "version": "2.0.0",
         }
@@ -275,15 +286,15 @@ class CompressionPhase(PhaseInterface):
         bands = self._split_bands(audio, sample_rate)
 
         # Get material-specific parameters
-        comp_params = self.COMPRESSION_PARAMS[material]
-        parallel_blend = float(self.PARALLEL_BLEND[material] * _effective_strength)
-        detection_mode = self.DETECTION_MODE[material]
+        comp_params = self.COMPRESSION_PARAMS[phase_material]
+        parallel_blend = float(self.PARALLEL_BLEND[phase_material] * _effective_strength)
+        detection_mode = self.DETECTION_MODE[phase_material]
 
         # Process each band
         processed_bands = []
         band_metrics = {}
 
-        for i, (band_name, band_audio) in enumerate(zip(self.band_names, bands)):
+        for band_name, band_audio in zip(self.band_names, bands):
             # Get compression parameters for this band
             threshold_db, ratio, attack_ms, release_ms, knee_db, makeup_db = comp_params[band_name]
 
@@ -329,10 +340,10 @@ class CompressionPhase(PhaseInterface):
         peak_after = float(np.percentile(np.abs(audio_processed), 99.9))
         dr_before = 20 * np.log10(peak_before / (rms_before + 1e-10))
         dr_after = 20 * np.log10(peak_after / (rms_after + 1e-10))
-        dr_reduction_db = dr_before - dr_after  # Positive = reduced dynamic range
+        dr_reduction_db = dr_before - dr_after
 
         elapsed = time.time() - start_time
-        duration = len(audio) / sample_rate
+        duration = float(audio.shape[0]) / sample_rate
         realtime_factor = elapsed / duration if duration > 0 else 0
 
         metadata.update(
@@ -377,18 +388,14 @@ class CompressionPhase(PhaseInterface):
         # Kausale Filterung erzeugt frequenzabhängige Gruppenlatenz pro Band;
         # nach _combine_bands (sum) entsteht L/R-Zeitversatz + Filtereinschalttransiente.
         for freq in self.CROSSOVER_FREQS:
-            # Lowpass for current band
             sos_low = signal.butter(2, freq, "low", fs=sr, output="sos")
             low = signal.sosfiltfilt(sos_low, current, axis=0)
             bands.append(low)
 
-            # Highpass for next iteration
             sos_high = signal.butter(2, freq, "high", fs=sr, output="sos")
             current = signal.sosfiltfilt(sos_high, current, axis=0)
 
-        # Last band (highest)
         bands.append(current)
-
         return bands
 
     def _combine_bands(self, bands: list[np.ndarray]) -> np.ndarray:
@@ -413,10 +420,9 @@ class CompressionPhase(PhaseInterface):
         Returns:
             (compressed_audio, gain_reduction_db_array)
         """
-        # Handle stereo
         is_stereo = audio.ndim == 2
         if is_stereo:
-            audio_mono = np.mean(audio, axis=1)  # Use average for detection
+            audio_mono = np.mean(audio, axis=1)
         else:
             audio_mono = audio
 
@@ -496,8 +502,6 @@ class CompressionPhase(PhaseInterface):
 
         # Step 2: Apply makeup gain via §2.45a-II envelope (music-frames only)
         if makeup_db > 0.001:
-            from backend.core.audio_utils import apply_musical_gain_envelope
-
             makeup_lin = float(10.0 ** (makeup_db / 20.0))
             # §2.45a-II v9.12.2: reference_for_gate=audio (pre-compression) → signal-relative gate
             audio_compressed = apply_musical_gain_envelope(
@@ -515,15 +519,14 @@ class CompressionPhase(PhaseInterface):
 # Alias für Rückwärtskompatibilität mit ai_framework.py
 
 
-# Test harness
-if __name__ == "__main__":
+def _run_manual_demo() -> None:
+    """Lokaler Manuelltest für die Kompressionsphase."""
     logger.debug("=" * 70)
     logger.debug("Phase 10: Professional Multi-Band Parallel Compression v2.0 - Test")
     logger.debug("=" * 70)
     logger.debug("")
 
     processor = CompressionPhase()
-
     materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.CD_DIGITAL]
 
     for material in materials:
@@ -531,16 +534,10 @@ if __name__ == "__main__":
         logger.debug("-" * 70)
 
         sr = 44100
-        duration = 3.0
-        samples = int(sr * duration)
-        t = np.linspace(0, duration, samples)
+        demo_duration = 3.0
+        samples = int(sr * demo_duration)
+        t = np.linspace(0, demo_duration, samples)
 
-        # Create wide dynamic range test signal
-        # Quiet segment (0-1s): -30 dB relative to peak
-        # Medium segment (1-2s): -15 dB relative to peak
-        # Loud segment (2-3s): -3 dB (near peak)
-
-        # Multi-frequency content per segment
         quiet_bass = 0.03 * np.sin(2 * np.pi * 100 * t[: samples // 3])
         quiet_mid = 0.02 * np.sin(2 * np.pi * 500 * t[: samples // 3])
         quiet_high = 0.01 * np.sin(2 * np.pi * 3000 * t[: samples // 3])
@@ -557,45 +554,46 @@ if __name__ == "__main__":
         loud = loud_bass + loud_mid + loud_high
 
         audio_mono = np.concatenate([quiet, medium, loud])
+        demo_audio = np.column_stack([audio_mono, audio_mono * 0.95])
 
-        # Create stereo with slight variation
-        audio = np.column_stack([audio_mono, audio_mono * 0.95])
-
-        # Calculate input dynamic range
-        rms_in = np.sqrt(np.mean(audio**2))
-        peak_in = float(np.percentile(np.abs(audio), 99.9))  # V08: percentile not np.max
+        rms_in = np.sqrt(np.mean(demo_audio**2))
+        peak_in = float(np.percentile(np.abs(demo_audio), 99.9))
         dr_in = 20 * np.log10(peak_in / (rms_in + 1e-10))
 
-        # Process
-        start = time.time()
-        phase_result = processor.process(audio, sr, material)
+        phase_result = processor.process(demo_audio, sr, material)
         processed = phase_result.audio
         meta = phase_result.metadata
-        elapsed = time.time() - start
 
-        # Calculate output dynamic range
         rms_out = np.sqrt(np.mean(processed**2))
-        peak_out = float(np.percentile(np.abs(processed), 99.9))  # V08: percentile not np.max
+        peak_out = float(np.percentile(np.abs(processed), 99.9))
         dr_out = 20 * np.log10(peak_out / (rms_out + 1e-10))
 
         logger.debug("  Multi-band parallel compression:")
         logger.debug("    RMS change: %.2f dB", meta["rms_change_db"])
         logger.debug(
-            f"    Dynamic range: {dr_in:.1f} dB → {dr_out:.1f} dB (reduced {meta['dynamic_range_reduction_db']:.1f} dB)"
+            "    Dynamic range: %.1f dB -> %.1f dB (reduced %.1f dB)",
+            dr_in,
+            dr_out,
+            meta["dynamic_range_reduction_db"],
         )
         logger.debug("    Parallel blend: %.0f%% wet", meta["parallel_blend"] * 100)
         logger.debug("    Detection mode: %s", meta["detection_mode"])
         logger.debug("")
         logger.debug("  Per-Band Compression:")
-        for band_name, metrics in meta["band_metrics"].items():
+        for band_name, band_metrics in meta["band_metrics"].items():
             logger.debug(
-                f"    {band_name.replace('_', '-').title():12s}: "
-                f"Ratio {metrics['ratio']:.1f}:1, "
-                f"Max GR {metrics['max_gain_reduction_db']:+5.1f} dB, "
-                f"RMS {metrics['rms_change_db']:+5.2f} dB"
+                "    %12s: Ratio %.1f:1, Max GR %+5.1f dB, RMS %+5.2f dB",
+                band_name.replace("_", "-").title(),
+                band_metrics["ratio"],
+                band_metrics["max_gain_reduction_db"],
+                band_metrics["rms_change_db"],
             )
         logger.debug("")
-        logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta["processing_time_s"], meta["realtime_factor"])
+        logger.debug("  Processing time: %.3fs (%.2fx realtime)", meta["processing_time_s"], meta["realtime_factor"])
         logger.debug("  Quality impact: %.2f", meta["quality_impact"])
         logger.debug("  ✅")
         logger.debug("")
+
+
+if __name__ == "__main__":
+    _run_manual_demo()

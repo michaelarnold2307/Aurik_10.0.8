@@ -108,6 +108,9 @@ class WowFlutterFix(PhaseInterface):
         #   cassette head-settling wow/flutter requires stronger correction.
         #   Was reduced in v9.10.77 due to tonal_center regression, but K-S proxy
         #   (§9.7.11) now excludes tonal_center from PMGG delta-checks for phase_12.
+        MaterialType.CASSETTE: 0.80,  # v9.12.9: same as TAPE — compact cassette uses identical
+        #   capstan/pinch-roller transport (IEC 60094-1); head-settling wow/flutter same physics.
+        #   Previous fallback to 0.7 (default) was too conservative for cassette transport bumps.
         MaterialType.VINYL: 0.70,  # Moderate (turntable speed variations, belt/motor issues)
         MaterialType.SHELLAC: 0.60,  # Conservative (hand-crank artifacts, worn mechanisms)
         MaterialType.CD_DIGITAL: 0.20,  # Minimal (rare digital artifacts)
@@ -117,6 +120,10 @@ class WowFlutterFix(PhaseInterface):
     # Detection sensitivity (minimum pitch deviation to correct, in %)
     DETECTION_THRESHOLD = {
         MaterialType.TAPE: 0.3,  # 0.3% pitch deviation (high sensitivity)
+        MaterialType.CASSETTE: 0.3,  # v9.12.9: same as TAPE — compact cassette transport bumps
+        #   (Bandhopser) cause local pitch deviations of 0.3-0.8%; the previous 0.5% default
+        #   missed borderline transport bumps. IEC 60094-1 cassette flutter spec: ≤ 0.2% WRMS
+        #   at 4.75 cm/s → any detected deviation ≥ 0.3% is above spec → correct it.
         MaterialType.VINYL: 0.5,  # 0.5% pitch deviation
         MaterialType.SHELLAC: 0.8,  # 0.8% pitch deviation
         MaterialType.CD_DIGITAL: 2.0,  # 2.0% pitch deviation (low sensitivity)
@@ -304,6 +311,22 @@ class WowFlutterFix(PhaseInterface):
             MaterialType.WIRE_RECORDING,
             MaterialType.LACQUER_DISC,
         }
+
+    @staticmethod
+    def _polyphonic_estimate_is_insufficient(pitch_trajectory: np.ndarray, confidence: np.ndarray) -> bool:
+        """Bewertet polyphone Schätzung auf minimale Evidenz.
+
+        Ein einzelner Pitch-Frame (z. B. T=1) oder nahezu keine validen Frames
+        ist für eine stabile Wow/Flutter-Korrektur nicht belastbar.
+        In diesem Fall erzwingen wir Re-Estimate via pYIN statt Komplett-Skip.
+        """
+        if pitch_trajectory.size < 4:
+            return True
+        if confidence.size == 0:
+            return True
+        valid_pitch = int(np.sum(np.asarray(pitch_trajectory) > 0.0))
+        valid_conf = int(np.sum(np.asarray(confidence) > 0.15))
+        return valid_pitch < 4 or valid_conf < 4
 
     def get_metadata(self) -> PhaseMetadata:
         """Gibt zurück: phase metadata."""
@@ -506,6 +529,22 @@ class WowFlutterFix(PhaseInterface):
         if not _poly_applied and not use_ml_hybrid:
             logger.info("Phase 12 pYIN DSP: material=%s", material.value)
             pitch_trajectory, confidence = self._estimate_pitch_yin(mono, sample_rate)
+
+        # Polyphonie-Guard: Wenn der Konsensus nur minimale Evidenz liefert
+        # (typisch T=1 oder fast keine validen Frames), nicht sofort skippen.
+        # Stattdessen robust auf pYIN neu schätzen, damit transportbedingte
+        # Instabilitäten (Bandhopser/Wow) nicht unentdeckt bleiben.
+        if _poly_applied and self._polyphonic_estimate_is_insufficient(pitch_trajectory, confidence):
+            logger.warning(
+                "Phase 12: Polyphoner Konsensus unzureichend (T=%d, valid_pitch=%d, valid_conf=%d) — "
+                "Re-Estimate via pYIN",
+                int(pitch_trajectory.size),
+                int(np.sum(np.asarray(pitch_trajectory) > 0.0)),
+                int(np.sum(np.asarray(confidence) > 0.15)),
+            )
+            pitch_trajectory, confidence = self._estimate_pitch_yin(mono, sample_rate)
+            _poly_applied = False
+            _poly_fallback = True
 
         _report_progress(52.0, "Wow/Flutter: Tonhöhen-Analyse abgeschlossen")
         # Continue with standard wow/flutter correction pipeline
@@ -1180,6 +1219,14 @@ class WowFlutterFix(PhaseInterface):
         Returns:
             (pitch_trajectory, confidence): Pitch Hz and confidence [0,1] per frame
         """
+        # Kurzsignal-Guard: pYIN ist fuer sehr kleine Fenster numerisch instabil und
+        # erzeugt sonst irrefuehrende n_fft-Warnungen aus librosa.
+        _n_samples = int(len(audio))
+        if _n_samples < 256:
+            _hop = max(1, int(self.PITCH_WINDOW_MS * sample_rate / 1000) // self.PITCH_HOP_FACTOR)
+            _frames = max(1, int(np.ceil(_n_samples / max(1, _hop))))
+            return np.zeros(_frames, dtype=np.float64), np.zeros(_frames, dtype=np.float64)
+
         # -----------------------------------------------------------------
         # High-quality path: librosa.pyin (C-accelerated)
         # Env override semantics:
@@ -1201,12 +1248,16 @@ class WowFlutterFix(PhaseInterface):
                 import librosa  # always available in .venv_aurik
 
                 hop_samples = max(1, int(self.PITCH_WINDOW_MS * sample_rate / 1000) // self.PITCH_HOP_FACTOR)
+                _safe_frame_length = 1 << int(np.floor(np.log2(min(2048, _n_samples))))
+                _safe_frame_length = max(256, _safe_frame_length)
+                hop_samples = min(hop_samples, max(1, _safe_frame_length // 4))
                 f0, voiced_flag, voiced_prob = librosa.pyin(
                     audio.astype(np.float32),
                     fmin=float(librosa.note_to_hz("C2")),  # ~65 Hz
                     fmax=float(librosa.note_to_hz("C7")),  # ~2093 Hz
                     sr=sample_rate,
                     hop_length=hop_samples,
+                    frame_length=_safe_frame_length,
                     fill_na=0.0,
                 )
                 # voiced_prob gives per-frame confidence; unvoiced → 0

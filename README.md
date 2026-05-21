@@ -1,16 +1,16 @@
-# 🎵 Aurik 9.12.8 — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
+# 🎵 Aurik 9.12.9 — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
 
-**Version:** 9.12.8 | **Status:** ✅ Produktionsbereit | **Stand:** Mai 2026
+**Version:** 9.12.9 | **Status:** ✅ Produktionsbereit | **Stand:** 20. Mai 2026
 
-> Normativer Ist-Stand: `.github/specs/01-08` und `docs/CHANGELOG_HISTORY.md`.
+> Normativer Ist-Stand: `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `docs/CHANGELOG_HISTORY.md` und `CHANGELOG.md`.
 
-![Tests](https://img.shields.io/badge/tests-11598%2B%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-13662%2B%20passing-brightgreen)
 ![Musical Goals](https://img.shields.io/badge/Musical%20Goals-14%2F14-brightgreen)
 ![Quality MOS](https://img.shields.io/badge/MOS-%E2%89%A54.5%20internes%20Spitzenziel-brightgreen)
-![Materials](https://img.shields.io/badge/Materialien-17%20Typen-blue)
+![Materials](https://img.shields.io/badge/Materialien-15%20Typen-blue)
 ![Phases](https://img.shields.io/badge/Phasen-64-blue)
-![DefectTypes](https://img.shields.io/badge/DefectTypes-46-blue)
-![CPU-only](https://img.shields.io/badge/Hardware-CPU--only-orange)
+![DefectTypes](https://img.shields.io/badge/DefectTypes-54-blue)
+![Hardware](https://img.shields.io/badge/Hardware-CPU%20%2B%20AMD--GPU%20optional-orange)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 ---
@@ -25,14 +25,14 @@ Gaussianische Prozess-Optimierung und perceptuelle Qualitätsbewertung zu einer
 kognitiven Restaurierungs-Intelligenz — für Desktop (Linux & Windows 10/11),
 vollständig offline, ohne Cloud- oder Netzwerkabhängigkeiten.
 
-**Aktuelle Ergebnisse (v9.12.8):**
+**Aktuelle Ergebnisse (v9.12.9):**
 
-- ✅ **~11598 Unit-Tests** — grün (zzgl. weitere Test-Suites)
+- ✅ **~13662 `def test_`-Funktionen** — grün (zzgl. weitere Test-Suites)
 - ✅ **64 Phasen** — Defect-First-Pipeline inkl. §0p Vocal-Supremacy, SSIP, GOAL_BASELINE_CHECK
-- ✅ **17 Materialien** — auto-erkannt (tape, vinyl, shellac, wax_cylinder, wire_recording, lacquer_disc, dat, cd_digital, mp3_low, mp3_high, aac, minidisc, streaming, unknown, …)
+- ✅ **15 Materialien** — auto-erkannt (u. a. tape, vinyl, shellac, wax_cylinder, wire_recording, lacquer_disc, dat, cd_digital, mp3_low, mp3_high, aac, minidisc, streaming, unknown)
 - ✅ **14 Musical Goals** — psychoakustisch fundiert, alle Schwellwerte erreicht
 - ✅ **PQS MOS ≥ 4.5** — internes Spitzenziel im aktuellen Bewertungsmodell
-- ✅ **CPU-only** — keine GPU-Pflicht, läuft auf Standard-Desktop-Hardware
+- ✅ **CPU + optionale AMD-GPU-Beschleunigung** — keine GPU-Pflicht, CPU-Fallback ist verpflichtend
 - ✅ **GP-Lerngedächtnis** — optimiert sich dauerhaft pro Material und Ära
 - ✅ **Zero-Shot-Genre-Erkennung** — Deutscher Schlager ohne vortrainiertes Modell
 
@@ -57,12 +57,12 @@ verblindete Hörtests und reproduzierbare Wettbewerbsvergleiche belastbar.
 | Modul | Zweck |
 | --- | --- |
 | `PerceptualEmbedder` | 256-dim psychoakustischer Einbettungsraum (L2-normalisiert) |
-| `CausalDefectReasoner` | Bayesianische Kausalinferenz, **34 Kausal-Ursachen** |
+| `CausalDefectReasoner` | Bayesianische Kausalinferenz, **62 Kausal-Ursachen** |
 | `GPParameterOptimizer` | RBF-GP + UCB + **MOO Pareto-Front** (14 Objectives) |
 | `PerceptualQualityScorer` | Gammatone-NSIM + MCD + LUFS + MOS |
 | `MusicalGoalsChecker` | **14 musikalische Qualitätsziele** |
 | `MediumDetector` | File-ext-aware Tonträgerketten-Erkennung, autoritatives Materialsystem |
-| `DefectScanner` | 46 DefectTypes, material-adaptive Material-Priors |
+| `DefectScanner` | 54 DefectTypes, material-adaptive Material-Priors |
 | `TransientDecoupledProcessing` | HPSS-Trennung — Groove-Schutz vor jeder NR |
 | `HarmonicPreservationGuard` | CREPE/pYIN → G_floor 0.85 an Harmonik-Bins |
 | `PerPhaseMusicalGoalsGate` | Rollback bei kumulativer Degradation (64 Phasen) |
@@ -207,15 +207,15 @@ print(f"RT Factor: {result.rt_factor:.2f}×")
 
 ## 📋 Features
 
-### 🎼 Restaurierungs-Pipeline (56 Phasen)
+### 🎼 Restaurierungs-Pipeline (64 Phasen)
 
-**Pipeline-Reihenfolge (v9.10.45 — kanonisch):**
+**Pipeline-Reihenfolge (v9.12.9 — kanonisch):**
 
 ```text
 TransientDecoupledProcessing → RestorabilityEstimator → EraClassifier
 → GermanSchlagerClassifier → MediumDetector → DefectScanner
 → CausalDefectReasoner → UncertaintyQuantifier → GPParameterOptimizer
-→ HarmonicPreservationGuard → Phase 01–56 (mit PerPhaseMusicalGoalsGate)
+→ HarmonicPreservationGuard → Phase 01–64 (mit PerPhaseMusicalGoalsGate)
 → IntroducedArtifactDetector → FeedbackChain → TemporalQualityCoherenceMetric
 → PerceptualQualityScorer → ExcellenceOptimizer → MusicalGoalsChecker
 → EmotionalArcPreservationMetric → MicroDynamicsEnvelopeMorphing
@@ -236,9 +236,12 @@ TransientDecoupledProcessing → RestorabilityEstimator → EraClassifier
 - Phase 48: Stereo-Width · Phase 49: Advanced Dereverb (Blind-RIR)
 - Phase 55: DiffWave/Flow-Matching-Inpainting · + Instrumental- und Vocal-Phasen
 
-**Neue Phase 56 (v9.10.45):**
+**Aktuelle Erweiterungen (v9.12.9):**
 
-- Phase 56: SpectralBandGapRepair — HEAD_WEAR-Defekt, Frequenzband-Lücken
+- §2.66 RecordingChainProfiler
+- §2.67 Phase-Koalitions-Evaluation
+- §2.69 TemporalContinuityGuard
+- §2.70 RestorationMemory
 
 **Instrument-adaptive Phasen (PANNs-aktiviert):**
 
@@ -268,12 +271,12 @@ TransientDecoupledProcessing → RestorabilityEstimator → EraClassifier
 | ~~MOS-Schätzung~~ | ~~DNSMOS / NISQA~~ | **⛔ VERBOTEN** für Musik |
 
 **Alle ML-Plugins:** `plugins/` — jedes mit `try/except ImportError` DSP-Fallback.  
-**CPU-only:** `providers=["CPUExecutionProvider"]` · Kein CUDA / kein ROCm.  
+**Hardware-Modus:** CPU verpflichtend, optionale AMD-GPU-Beschleunigung (ROCm/DirectML) fuer Heavy-Modelle mit transparentem CPU-Fallback.  
 **Bundled:** Alle primären Modelle lokal gebündelt — kein Download beim ersten Start.
 
-### 🎯 Material-Adaptive Verarbeitung (17 Typen)
+### 🎯 Material-Adaptive Verarbeitung (15 Typen)
 
-**Auto-Detection** via `MediumDetector` (file-ext-aware, DSP + forensische Kettenlogik) — **17 Material-Typen:**
+**Auto-Detection** via `MediumDetector` (file-ext-aware, DSP + forensische Kettenlogik) — **15 Material-Typen:**
 
 | Material | Hauptdefekte | PQS-Ziel |
 | --- | --- | --- |
@@ -353,7 +356,7 @@ und `GoalApplicabilityFilter`). Regression in einem Ziel macht das Feature ungü
 ### Test-Suite
 
 ```bash
-# Alle 7747+ Tests
+# Alle Tests
 pytest tests/ --disable-warnings --tb=short
 
 # Unit-Tests (4291+ Tests, schnell)
@@ -372,7 +375,7 @@ pytest tests/unit/test_per_phase_musical_goals_gate.py -v
 pytest tests/unit/test_micro_dynamics_envelope_morphing.py -v
 ```
 
-**Test-Status:** **7747+ Tests** — alle grün ✅
+**Test-Status:** **~13662 `def test_`-Funktionen** — alle grün ✅
 
 **Test-Mindestanforderung pro neuem Modul:** ≥ 35 Unit-Tests,
 inkl. NaN/Inf-Tests, Bounds-Tests, Mono+Stereo, Edge-Cases, Thread-Safety.
@@ -435,7 +438,7 @@ Recall ≥ 90 % (mit CLAP) · False-Positive < 5 % · ≤ 20 s/Minute Audio
 | --- | --- |
 | Interne Sample-Rate | **48 000 Hz** (alle DSP/ML/Metriken) |
 | Bit-Tiefe intern | float32, Bereich [−1, 1] |
-| Hardware | CPU-only (kein CUDA / kein ROCm) |
+| Hardware | CPU-first mit optionalem AMD-GPU-Mixed-Mode (ROCm/DirectML), CPU-Fallback verpflichtend |
 | Resampling | Lanczos-4, `scipy.signal.resample_poly`, Kaiser β=14 |
 | GP-Gedächtnis | `~/.aurik/gp_memory/<material>.json` (lokal, persistent) |
 | Artist-Signaturen | `~/.aurik/artist_signatures/<artist_id>.json` |
@@ -489,4 +492,4 @@ Aurik 9 steht unter der **Apache-2.0-Lizenz** — siehe [LICENSE](LICENSE).
 
 ---
 
-Aurik 9.10.77c — März 2026
+Aurik 9.12.9 — Mai 2026

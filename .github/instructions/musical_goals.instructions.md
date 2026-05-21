@@ -16,10 +16,10 @@ applyTo: "backend/core/musical_goals/*.py"
 | **P2** | timbre | ≥ 0.87 | ≥ 0.89 |
 | **P2** | artikulation | ≥ 0.88 | ≥ 0.90 |
 | **P3** | emotionalitaet | ≥ 0.84 | ≥ 0.87 |
-| **P3** | mikrodynamik | ≥ 0.88 | ≥ 0.90 |
+| **P3** | mikrodynamik | ≥ 0.88 (Frame-Energie-Korrelation voiced-Zonen ≥ 0.97; V20 §2.75) | ≥ 0.90 |
 | **P3** | groove | ≥ 0.83 | ≥ 0.85 |
 | **P4** | transparenz | ≥ 0.82 | ≥ 0.85 |
-| **P4** | waerme | ≥ 0.75 | ≥ 0.78 |
+| **P4** | waerme | ≥ 0.77 (war: 0.75; v9.5 Wärmeband-Guard V25: 200–800 Hz kumulativer Verlust ≤ 2.5 dB) | ≥ 0.79 |
 | **P4** | bass_kraft | ≥ 0.78 | ≥ 0.80 |
 | **P4** | sep_fidelity | ≥ 0.80 | ≥ 0.83 |
 | **P5** | brillanz | ≥ 0.78 | ≥ 0.82 |
@@ -78,6 +78,11 @@ tonal_center = compute_tonal_stability(audio, sr)  # [0, 1]
 # Warmth-Proxy: E(100-400 Hz) / E(100-8000 Hz) — psychoakustisch validiert
 # Zusätzlich: Verhältnis H2/H3 zu H1 (zweite/dritte Harmonische zum Grundton)
 # Normierung gegen Referenz-Signal (pre-Phase)
+# V25 / §2.76: Kumulativer Wärmeband-Verlust (200–800 Hz) > 2.5 dB über alle Phasen
+# → `measure_warmth_band_delta()` aus `backend/core/dsp/warmth_guard.py` in jeder Phase
+# → `_restoration_context["warmth_band_loss_db"]` aktuell halten
+# → bei Überschreitung: `warmth_blend = 1 - loss_db / 5.0` als Phase-Blend-Faktor
+# VERBOTEN: Wärme-Score > 0.77 (Restoration) ohne aktiven Wärmeband-Guard in der Pipeline
 from scipy.signal import butter, sosfilt
 # audio_filtered_100_400: Bandpass 100–400 Hz (Butter 4. Ordnung, zero-phase via sosfiltfilt)
 sos_low = butter(4, [100, 400], btype="bandpass", fs=sr, output="sos")
@@ -345,6 +350,7 @@ metadata["singer_identity_cosine"] = result.get("singer_identity_cosine", 0.85)
 # Schwellwert: 0.72 → darunter Recovery-Kaskade (kein harter Veto)
 
 # singer_identity_cosine-Gate (KANONISCH — NACH compute_vqi):
+# cos_sim < 0.92 → Rollback letzter Vokal-Phase; Gate deaktiviert bei multi_singer=True
 # WICHTIG: Dieser Code läuft in UV3 (unified_restorer_v3.py) — NICHT in musical_goals-Modulen!
 # musical_goals/*.py ruft nur compute_vqi() auf und liefert das result-Dict zurück.
 # UV3 liest result["singer_identity_cosine"] und entscheidet über Rollback.

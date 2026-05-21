@@ -69,6 +69,7 @@ class HPIResult:
     studio_quality_gain: float = 1.0
     pqs_improvement: float = 1.0
     is_studio_mode: bool = False
+    reference_mode: str = "degraded_input"
     detail: dict = field(default_factory=dict)
     fail_reason: object | None = None  # §1.4a FailReason when passed=False
 
@@ -99,6 +100,7 @@ class HolisticPerceptualGate:
         era_bin: str = "post-1990",
         vqi: float = 1.0,
         panns_singing: float = 0.0,
+        reference_audio: np.ndarray | None = None,
     ) -> HPIResult:
         """Evaluate HPI for Restoration mode.
 
@@ -117,7 +119,9 @@ class HolisticPerceptualGate:
           Input-Ähnlichkeit dient nur als Content-Integrity-Anteil (klein).
         """
         self._mert_proxy_used = False  # reset per evaluation
-        mert_sim = self._compute_mert_similarity(original, restored, sr)
+        _reference_audio = reference_audio if reference_audio is not None else original
+        _reference_mode = "best_carrier_checkpoint" if reference_audio is not None else "degraded_input"
+        mert_sim = self._compute_mert_similarity(_reference_audio, restored, sr)
         # §2.44 [BUG-FIX v9.12.0]: MERT-Floor verhindert HPI-Kollaps auf 0 bei MERT-Ausfall.
         mert_sim = max(float(mert_sim), 0.5)
 
@@ -132,7 +136,7 @@ class HolisticPerceptualGate:
             timbral_ref = self._compute_directional_restoration_quality(original, restored, sr)
 
         # timbral_input als Content-Integrity-Anteil (für Logging und niedrige Restorability)
-        timbral_input = self._compute_timbral_fidelity(original, restored, sr)
+        timbral_input = self._compute_timbral_fidelity(_reference_audio, restored, sr)
 
         # §2.44 Restorability-dependent weights — Referenz/Direktional dominiert stets
         if restorability_score > 70.0:
@@ -206,11 +210,12 @@ class HolisticPerceptualGate:
             )
 
         logger.info(
-            "§2.44 HPI(Restoration)=%.4f passed=%s "
+            "§2.44 HPI(Restoration)=%.4f passed=%s ref=%s "
             "(mert=%.3f timbral=%.3f[in=%.3f ref=%.3f w=%.1f/%.1f] artifact=%.3f"
             " emotional=%.3f restorability=%.1f vqi=%.3f singing=%.2f)",
             hpi,
             passed,
+            _reference_mode,
             mert_sim,
             timbral,
             timbral_input,
@@ -275,12 +280,14 @@ class HolisticPerceptualGate:
             artifact_freedom=round(artifact_freedom, 4),
             emotional_arc_preservation=round(emotional_arc_score, 4),
             is_studio_mode=False,
+            reference_mode=_reference_mode,
             fail_reason=_fr,
             detail={
                 "restorability_score": restorability_score,
                 "strict_gate": restorability_score > 85.0,
                 "input_weight": input_weight,
                 "ref_weight": ref_weight,
+                "reference_mode": _reference_mode,
                 "timbral_input": timbral_input,
                 "timbral_ref": timbral_ref,
                 "genre": genre,

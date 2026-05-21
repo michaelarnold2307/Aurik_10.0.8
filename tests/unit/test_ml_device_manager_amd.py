@@ -224,31 +224,6 @@ class TestGlobalWrappers:
 
 
 # ---------------------------------------------------------------------------
-# Plugin source code audit: fp16-eligible plugins must use get_ort_providers_fp16
-# ---------------------------------------------------------------------------
-
-
-class TestFp16PluginAudit:
-    """Verify that every fp16-eligible ONNX plugin sources get_ort_providers_fp16, not get_ort_providers.
-
-    This is a static-analysis (source inspection) guard: no actual ONNX sessions are loaded.
-    """
-
-    _PLUGIN_FILE_MAP: dict[str, str] = {
-        "BSRoFormer": "plugins/bs_roformer_plugin.py",
-        "MDXNet": "plugins/uvr_mdxnet_plugin.py",
-        "DemucsV4": "plugins/demucs_v4_plugin.py",
-        "MDX23C": "plugins/mdx23c_plugin.py",
-        "MPSENet": "plugins/mp_senet_plugin.py",
-        "ResembleEnhance": "plugins/resemble_enhance_plugin.py",
-        "PANNs": "plugins/panns_plugin.py",
-        "LaionCLAP_ONNX": "plugins/laion_clap_plugin.py",
-        "BanquetVinyl": "plugins/banquet_vinyl_plugin.py",
-        "DeepFilterNetV3": "plugins/deepfilternet_v3_ii_plugin.py",
-    }
-
-
-# ---------------------------------------------------------------------------
 # Plugin source code audit: fp16-eligible plugins must use get_ort_providers
 # ---------------------------------------------------------------------------
 
@@ -435,7 +410,6 @@ class TestTierBasedExclusion:
 
     def _mgr_rocm_tier(self, arch_name: str, vram_gb: float):
         """Create a simulated ROCm manager with given arch and VRAM."""
-        import threading
         from unittest.mock import patch
 
         from backend.core.ml_device_manager import (

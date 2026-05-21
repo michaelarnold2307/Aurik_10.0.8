@@ -99,6 +99,20 @@ class TestImportAndConstants:
         # Spec §6.3: soft_saturation → BEWAHREN, leere Phasen-Liste
         assert CAUSE_TO_PHASES["soft_saturation"] == []
 
+    def test_07a_jitter_artifacts_never_maps_to_phase_12(self):
+        """Jitter ist nicht mechanisches Wow/Flutter: phase_12 ist hier verboten."""
+        phases = CAUSE_TO_PHASES["jitter_artifacts"]
+        assert "phase_12_wow_flutter_fix" not in phases
+        assert "phase_23_spectral_repair" in phases
+        assert "phase_14_phase_correction" in phases
+
+    def test_07b_aliasing_never_maps_to_phase_03(self):
+        """Aliasing ist kohärent, nicht stationär: kein phase_03_denoise-Mapping."""
+        phases = CAUSE_TO_PHASES["aliasing"]
+        assert "phase_03_denoise" not in phases
+        assert "phase_23_spectral_repair" in phases
+        assert "phase_50_spectral_repair" in phases
+
 
 # ---------------------------------------------------------------------------
 # Klasse 2: SpectralFeatures Dataclass

@@ -25,6 +25,17 @@ from backend.ml.safety_wrappers.safety_wrapper_template import (
     PreCheckResult,
 )
 
+try:
+    from backend.ml.phoneme_aware.phoneme_classifier import PhonemeClassifier
+    from backend.ml.phoneme_aware.phoneme_detector import DetectionConfig, PhonemeDetector
+
+    _PHONEME_STACK_AVAILABLE = True
+except Exception:
+    PhonemeClassifier = None  # type: ignore[assignment]
+    DetectionConfig = None  # type: ignore[assignment]
+    PhonemeDetector = None  # type: ignore[assignment]
+    _PHONEME_STACK_AVAILABLE = False
+
 # Import validation utilities from deesser_safety (which has them inline)
 try:
     from backend.ml.safety_wrappers.deesser_safety import (
@@ -113,9 +124,11 @@ def detect_phoneme_based_sibilance(
 
     # Try phoneme-based detection first
     try:
-        from backend.ml.phoneme_aware.phoneme_classifier import PhonemeClassifier
-        from backend.ml.phoneme_aware.phoneme_detector import DetectionConfig, PhonemeDetector
-
+        if not _PHONEME_STACK_AVAILABLE:
+            raise RuntimeError("phoneme stack not available")
+        assert PhonemeDetector is not None
+        assert DetectionConfig is not None
+        assert PhonemeClassifier is not None
         detector = PhonemeDetector(config=DetectionConfig(min_confidence=0.5, use_gpu=False))
         classifier = PhonemeClassifier()
 
@@ -292,6 +305,10 @@ class ContextAwareDeEsserSafety:
         issues = []
         warnings_list = []
         metrics = {}
+        params = params or {}
+        if params:
+            metrics["requested_mode"] = str(params.get("mode", ""))
+            metrics["requested_device"] = str(params.get("device", ""))
 
         # Basic validation
         validation_result = validate_audio_basic(audio, sr)
@@ -337,11 +354,9 @@ class ContextAwareDeEsserSafety:
             )
 
         # Check phoneme detection availability
-        try:
-            pass
-
+        if _PHONEME_STACK_AVAILABLE:
             metrics["phoneme_detection_available"] = True
-        except ImportError:
+        else:
             metrics["phoneme_detection_available"] = False
             warnings_list.append("Phoneme detection not available. Using frequency-based fallback.")
 
@@ -378,6 +393,10 @@ class ContextAwareDeEsserSafety:
         issues = []
         warnings_list = []
         metrics = {}
+        params = params or {}
+        if params:
+            metrics["requested_mode"] = str(params.get("mode", ""))
+            metrics["requested_device"] = str(params.get("device", ""))
 
         # Ensure mono for analysis
         before_mono = np.mean(audio_before, axis=0) if audio_before.ndim > 1 else audio_before
@@ -387,6 +406,8 @@ class ContextAwareDeEsserSafety:
         baseline_intel = pre_check_result.metadata.get("baseline_intelligibility", 0.0)
         after_intel = measure_intelligibility(after_mono, sr)
         metrics["after_intelligibility"] = after_intel
+        # Backward-compatible contract: key is always present for downstream checks/tests.
+        metrics["intelligibility_preservation"] = 1.0
 
         if baseline_intel > 0:
             intel_preservation = after_intel / baseline_intel

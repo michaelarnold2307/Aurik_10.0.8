@@ -3,7 +3,7 @@
 Unit-Tests für §6.1 [RELEASE_MUST] Material-Key-Normalisierung.
 
 Prüft, dass MediumDetector.detect() ausschließlich SUPPORTED_MATERIALS-konforme
-Keys zurückgibt (cassette → tape, reel_wire → wire_recording, etc.).
+Keys zurückgibt (reel_wire → wire_recording, cassette_digital → dat, etc.).
 
 Spec-Referenz:
   - Spec 05 §6.1: SUPPORTED_MATERIALS + Key-Mapping-Invariante
@@ -23,6 +23,7 @@ SUPPORTED_MATERIALS = frozenset(
     [
         "tape",
         "reel_tape",
+        "cassette",
         "vinyl",
         "shellac",
         "wax_cylinder",
@@ -68,8 +69,8 @@ def _make_audio(duration_s: float = 2.0, sr: int = 48000) -> np.ndarray:
 class TestNormalizeMaterialKey:
     """Unit-Tests für MediumDetector._normalize_material_key (§6.1 Fix X6)."""
 
-    def test_cassette_maps_to_tape(self, detector):
-        assert detector._normalize_material_key("cassette") == "tape"
+    def test_cassette_passthrough(self, detector):
+        assert detector._normalize_material_key("cassette") == "cassette"
 
     def test_reel_wire_maps_to_wire_recording(self, detector):
         assert detector._normalize_material_key("reel_wire") == "wire_recording"

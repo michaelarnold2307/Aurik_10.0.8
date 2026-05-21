@@ -35,6 +35,8 @@ BASELINE = ROOT / "reports" / "spec_drift_baseline.json"
 
 @dataclass(frozen=True)
 class FileDigest:
+    """Speichert Pfad und SHA-256-Hash einer überwachten Datei."""
+
     path: str
     sha256: str
 
@@ -61,7 +63,16 @@ def _collect() -> dict[str, str]:
 def _load_baseline() -> dict[str, str] | None:
     if not BASELINE.exists():
         return None
-    return json.loads(BASELINE.read_text(encoding="utf-8"))
+
+    raw = json.loads(BASELINE.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return None
+
+    baseline: dict[str, str] = {}
+    for k, v in raw.items():
+        if isinstance(k, str) and isinstance(v, str):
+            baseline[k] = v
+    return baseline
 
 
 def _save_baseline(digests: dict[str, str]) -> None:
@@ -70,6 +81,8 @@ def _save_baseline(digests: dict[str, str]) -> None:
 
 
 def main() -> int:
+    """Führt den Drift-Check aus und liefert einen Exit-Code für CI-Gates."""
+
     digests = _collect()
     baseline = _load_baseline()
 

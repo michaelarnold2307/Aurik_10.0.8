@@ -16,6 +16,7 @@ from typing import Any
 
 SCORE_MAX: float = 10.0
 RELEASE_READY_THRESHOLD: float = 9.5
+MIN_REQUIRED_GATES_STRICT: int = 5
 DOC_EXEMPT_PREFIXES: tuple[str, ...] = (
     "quality_gate_passed::",
     "vocal_quality::",
@@ -23,6 +24,18 @@ DOC_EXEMPT_PREFIXES: tuple[str, ...] = (
     "features.quality_gates::",
     "release_result::",
 )
+
+_VOICE_FIRST_BLOCKER_ALIASES: dict[str, tuple[str, ...]] = {
+    "vqi": ("vqi", "vqi_gate", "vocal_quality_index"),
+    "formant": ("formant", "formant_integrity", "vocal_formant_stability"),
+    "vibrato": ("vibrato", "vibrato_depth", "vibrato_depth_preserved"),
+    "micro_dynamics": (
+        "micro_dynamics",
+        "mikrodynamik",
+        "micro_dynamic_correlation",
+        "mikrodynamik_korrelation",
+    ),
+}
 
 
 def load_audit_log(audit_path: str = "audit/audit_trail.json") -> list[dict[str, Any]]:
@@ -47,7 +60,7 @@ def check_compliance(
     audit_data: list[dict[str, Any]],
     doc_gates_path: str = "docs/audit/QUALITY_GATES.md",
     doc_policy_path: str = "policy/policy_engine.py",
-    include_diagnostic_gates: bool = False,
+    include_diagnostic_gates: bool = True,
 ) -> tuple[bool, list[str]]:
     """Verify gate documentation and failing gates against audit entries."""
     compliance_ok = True
@@ -72,6 +85,20 @@ def check_compliance(
         if value is False:
             compliance_ok = False
             change_set.add(f"Quality-Gate '{gate}' nicht bestanden.")
+
+    if include_diagnostic_gates:
+        voice_first_issues = _check_voice_first_blockers(audit_data)
+        if voice_first_issues:
+            compliance_ok = False
+            change_set.update(voice_first_issues)
+
+    total_gates, _ = _gate_stats(audit_data, include_diagnostic_gates=include_diagnostic_gates)
+    if include_diagnostic_gates and total_gates < MIN_REQUIRED_GATES_STRICT:
+        compliance_ok = False
+        change_set.add(
+            f"Audit-Abdeckung zu gering: {total_gates} Gates < Mindestabdeckung {MIN_REQUIRED_GATES_STRICT} "
+            "(diagnostic_gates aktiv)."
+        )
 
     return compliance_ok, sorted(change_set)
 
@@ -140,6 +167,66 @@ def _iter_gates(audit_data: list[dict[str, Any]], include_diagnostic_gates: bool
                     normalized = status.strip().lower()
                     if normalized in negative_release_states:
                         yield "release_result::status", False
+
+
+def _is_vocal_entry(entry: dict[str, Any]) -> bool:
+    """Erkennt, ob ein Audit-Eintrag als vokalrelevant behandelt werden muss."""
+    scores = entry.get("scores", {})
+    if isinstance(scores, dict):
+        media = scores.get("media_characteristics", {})
+        if isinstance(media, dict) and bool(media.get("vocal", False)):
+            return True
+        for key in ("Singing voice", "Vocals", "panns_singing"):
+            value = scores.get(key)
+            if isinstance(value, (int, float)) and float(value) >= 0.25:
+                return True
+
+    vocal_check = entry.get("vocal_quality_check", {})
+    return isinstance(vocal_check, dict) and bool(vocal_check)
+
+
+def _resolve_blocker_status(vocal_check: dict[str, Any], aliases: tuple[str, ...]) -> bool | None:
+    """Liefert den ersten booleschen Wert für einen Blocker oder None wenn nicht vorhanden."""
+    for alias in aliases:
+        value = vocal_check.get(alias)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _check_voice_first_blockers(audit_data: list[dict[str, Any]]) -> set[str]:
+    """Prüft [RELEASE_MUST] Voice-First-Blocker in vokalrelevanten Audit-Einträgen."""
+    issues: set[str] = set()
+    missing: set[str] = set()
+    failed: set[str] = set()
+    vocal_entries = 0
+
+    for entry in audit_data:
+        if not _is_vocal_entry(entry):
+            continue
+        vocal_entries += 1
+        vocal_check = entry.get("vocal_quality_check", {})
+        if not isinstance(vocal_check, dict):
+            vocal_check = {}
+
+        for blocker, aliases in _VOICE_FIRST_BLOCKER_ALIASES.items():
+            status = _resolve_blocker_status(vocal_check, aliases)
+            if status is None:
+                missing.add(blocker)
+            elif status is False:
+                failed.add(blocker)
+
+    if vocal_entries == 0:
+        return issues
+    if missing:
+        issues.add(
+            "Voice-First-Blocker fehlen fuer vokalrelevante Runs: "
+            + ", ".join(sorted(missing))
+            + f" (runs={vocal_entries})."
+        )
+    if failed:
+        issues.add("Voice-First-Blocker nicht bestanden: " + ", ".join(sorted(failed)) + f" (runs={vocal_entries}).")
+    return issues
 
 
 def calculate_release_score(
@@ -222,7 +309,7 @@ def check_release(
     audit_path: str = "audit/audit_trail.json",
     gates_doc: str = "docs/audit/QUALITY_GATES.md",
     policy_path: str = "policy/policy_engine.py",
-    include_diagnostic_gates: bool = False,
+    include_diagnostic_gates: bool = True,
     output_path: str = "audit/release_report.json",
 ) -> dict[str, Any]:
     """Return release status dict for callers inside the production pipeline."""
@@ -256,14 +343,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gates-doc", default="docs/audit/QUALITY_GATES.md")
     parser.add_argument("--policy-path", default="policy/policy_engine.py")
     parser.add_argument("--output", default="audit/release_report.json")
-    parser.add_argument("--include-diagnostic-gates", action="store_true")
+    parser.add_argument(
+        "--exclude-diagnostic-gates",
+        action="store_true",
+        help="Nur kanonische Results-Gates auswerten (weniger strikt).",
+    )
     args = parser.parse_args(argv)
 
     report = check_release(
         audit_path=args.audit_path,
         gates_doc=args.gates_doc,
         policy_path=args.policy_path,
-        include_diagnostic_gates=args.include_diagnostic_gates,
+        include_diagnostic_gates=not args.exclude_diagnostic_gates,
         output_path=args.output,
     )
     return 0 if report.get("release_ready") else 1

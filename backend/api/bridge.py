@@ -106,6 +106,7 @@ __all__ = [
     "get_adaptive_goals_fn",
     # Audio-Verarbeitung (Hilfsmittel)
     "get_audio_exporter_class",
+    "get_audio_exporter_status",
     "get_audio_file_validator",
     "get_aurik_denker_class",
     "get_aurik_denker_instance",
@@ -121,8 +122,10 @@ __all__ = [
     "get_lyrics_guided_enhancement_fn",
     "get_medium_classifier_fn",
     "get_medium_detector",  # §6.1 MediumDetector forensic chain
+    "get_medium_detector_stub_status",
     "get_medium_type_enum",
     "get_ml_memory_budget_status",
+    "get_ml_memory_budget_import_status",
     "get_mushra_evaluator",
     # Qualitätsbewertung (§8.1)
     "get_musical_goals_checker",
@@ -162,11 +165,14 @@ __all__ = [
     "get_perceptual_salience_estimator",
     # Startup-/Self-Heal
     "get_startup_check_result",
+    "get_startup_check_status",
     # Content-Addressed LRU Cache — Utility
     "content_cache_key",
     # Pre-Analysis — single authoritative entry point (§pre_analysis)
     "run_pre_analysis",
     "PreAnalysisResult",
+    "get_pre_analysis_result_type",
+    "get_pre_analysis_result_status",
     # Audio-Import — canonical cascade (§11 VERBOTEN: sf.read / librosa.load direkt)
     "get_load_audio_fn",
 ]
@@ -184,6 +190,75 @@ __all__ = [
 _ANALYSIS_CACHE_MAX = 64
 _CONTENT_CHUNK = 4096  # Bytes vom Anfang + Ende für SHA-256 Content-Key
 _CONTENT_KEY_CACHE_MAX = 512
+
+
+_medium_detector_stub_lock = threading.Lock()
+_medium_detector_stub_state: dict[str, Any] = {
+    "active": False,
+    "activations": 0,
+    "last_error": "",
+}
+
+_startup_check_status_lock = threading.Lock()
+_startup_check_status: dict[str, Any] = {
+    "available": True,
+    "failures": 0,
+    "last_error": "",
+}
+
+_pre_analysis_result_status_lock = threading.Lock()
+_pre_analysis_result_status: dict[str, Any] = {
+    "available": True,
+    "failures": 0,
+    "last_error": "",
+}
+
+_audio_exporter_status_lock = threading.Lock()
+_audio_exporter_status: dict[str, Any] = {
+    "available": True,
+    "failures": 0,
+    "last_error": "",
+}
+
+_ml_memory_budget_status_lock = threading.Lock()
+_ml_memory_budget_import_status: dict[str, Any] = {
+    "available": True,
+    "failures": 0,
+    "last_error": "",
+}
+
+
+class _MediumDetectorImportStub:
+    """Expliziter Fail-Closed-Stub wenn MediumDetector nicht importierbar ist."""
+
+    is_stub = True
+
+    def __init__(self, reason: str) -> None:
+        self.reason = str(reason or "medium_detector_import_failed")
+
+    def detect(self, audio, sr: int, file_ext: str = ""):
+        """Wirft fail-closed, weil MediumDetector im aktuellen Lauf nicht importierbar war."""
+        raise RuntimeError(
+            "MediumDetector nicht verfügbar; legacy fallback ist deaktiviert "
+            f"(sr={int(sr)}, file_ext='{str(file_ext)}', reason='{self.reason}')"
+        )
+
+
+def _record_medium_detector_stub_activation(exc: Exception) -> _MediumDetectorImportStub:
+    """Erfasst Stub-Aktivierungen zentral und liefert einen expliziten Import-Stub."""
+    _err = f"{type(exc).__name__}: {exc}"
+    with _medium_detector_stub_lock:
+        _medium_detector_stub_state["active"] = True
+        _medium_detector_stub_state["activations"] = int(_medium_detector_stub_state.get("activations", 0)) + 1
+        _medium_detector_stub_state["last_error"] = _err
+    logger.warning("bridge: MediumDetector nicht importierbar — fail-closed stub aktiv (%s)", _err)
+    return _MediumDetectorImportStub(reason=_err)
+
+
+def get_medium_detector_stub_status() -> dict[str, Any]:
+    """Liefert Status des MediumDetector-Importstubs für Runtime-/Audit-Telemetrie."""
+    with _medium_detector_stub_lock:
+        return dict(_medium_detector_stub_state)
 
 
 # Fast path for repeated cache lookups: (path, size, mtime_ns) -> content-key
@@ -626,9 +701,8 @@ def get_medium_detector():
         from forensics.medium_detector import get_medium_detector as _get  # type: ignore[import]
 
         return _get()
-    except ImportError:
-        logger.debug("bridge: MediumDetector nicht importierbar — stub aktiv")
-        return None
+    except ImportError as exc:
+        return _record_medium_detector_stub_activation(exc)
 
 
 def get_carrier_forensics_fn():
@@ -658,10 +732,25 @@ def get_audio_exporter_class() -> type | None:
     try:
         from backend.core.audio_exporter import AudioExporter  # type: ignore[import]
 
+        with _audio_exporter_status_lock:
+            _audio_exporter_status["available"] = True
+            _audio_exporter_status["last_error"] = ""
+
         return AudioExporter
-    except ImportError:
-        logger.debug("bridge: AudioExporter nicht verfügbar — sf.write als Fallback")
+    except ImportError as exc:
+        _err = f"{type(exc).__name__}: {exc}"
+        with _audio_exporter_status_lock:
+            _audio_exporter_status["available"] = False
+            _audio_exporter_status["failures"] = int(_audio_exporter_status.get("failures", 0)) + 1
+            _audio_exporter_status["last_error"] = _err
+        logger.warning("bridge: AudioExporter nicht verfügbar — sf.write als Fallback (%s)", _err)
         return None
+
+
+def get_audio_exporter_status() -> dict[str, Any]:
+    """Liefert Bridge-Telemetrie für AudioExporter-Importstatus."""
+    with _audio_exporter_status_lock:
+        return dict(_audio_exporter_status)
 
 
 def get_lyrics_guided_enhancement_fn():
@@ -849,6 +938,25 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     _fqf_triggered = bool(_fqf.get("triggered", False))
     _fqf_status = str(_fqf.get("status", "") or "").strip().lower()
     _fqf_attempts = int(_fqf.get("attempts", 0)) if isinstance(_fqf.get("attempts", 0), (int, float)) else 0
+    _exp_profile = str(_meta.get("export_gate_profile", "") or "").strip()
+    _exp_material = str(_meta.get("export_gate_material", "") or "").strip()
+    _exp_thresholds = (
+        _meta.get("export_gate_thresholds") if isinstance(_meta.get("export_gate_thresholds"), dict) else {}
+    )
+    _exp_signature = (
+        _meta.get("export_gate_signal_signature") if isinstance(_meta.get("export_gate_signal_signature"), dict) else {}
+    )
+    _exp_preserve_signal = _safe01(_meta.get("export_gate_preserve_signal", 0.0))
+    _xp_stage_profile = _stage_notes.get("exzellenz_recovery_profile") if isinstance(_stage_notes, dict) else {}
+    if isinstance(_xp_stage_profile, dict):
+        _exp_preserve_signal = max(_exp_preserve_signal, _safe01(_xp_stage_profile.get("preserve_signal", 0.0)))
+    if not _exp_profile:
+        if _exp_preserve_signal >= 0.55:
+            _exp_profile = "fragile_or_transient_risk"
+        elif _exp_preserve_signal <= 0.20 and _degradation_status == "ok":
+            _exp_profile = "modern_stable"
+        else:
+            _exp_profile = "neutral"
 
     # Keep bridge and export-workflow semantics aligned for recovered/degraded fallback-floor runs.
     if _fqf_triggered and _fqf_status in {"recovered", "degraded", "failed", "fail"}:
@@ -860,6 +968,40 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     _primary_error_code = ""
     if _fail_reasons and isinstance(_fail_reasons[0], dict):
         _primary_error_code = str(_fail_reasons[0].get("error_code", "") or "")
+    _wcs_gate = (
+        _meta.get("worldclass_composite_gate") if isinstance(_meta.get("worldclass_composite_gate"), dict) else {}
+    )
+    _threshold_evidence = _meta.get("threshold_evidence") if isinstance(_meta.get("threshold_evidence"), dict) else {}
+
+    _tone = "focus"
+    if _degradation_status in {"blocked", "critical_degraded", "degraded"}:
+        _tone = "caution"
+    elif _safe01(_joy.get("joy_index", 0.0)) >= 0.72 and _safe01(_joy.get("fatigue_index", 0.0)) <= 0.30:
+        _tone = "confidence"
+
+    _headline = "Verarbeitung stabil"
+    if _tone == "caution":
+        _headline = "Ergebnis mit Schutzpriorität"
+    elif _tone == "confidence":
+        _headline = "Klangbild auf Kurs"
+
+    _next_actions: list[str] = []
+    if _degradation_status in {"blocked", "critical_degraded", "degraded"}:
+        _next_actions.append("Konservative Recovery-Kaskade bevorzugen")
+    if _safe01(_joy.get("fatigue_index", 0.0)) >= 0.45:
+        _next_actions.append("Ermüdung senken: Dynamik-/HF-Eingriffe reduzieren")
+    if _safe01(_joy.get("frisson_index", 0.0)) <= 0.35:
+        _next_actions.append("Emotionale Akzente in Frisson-Zonen schonen")
+    if not _next_actions:
+        _next_actions.append("Aktuellen Kurs beibehalten")
+
+    _quality_band = "mittel"
+    _joy_idx = _safe01(_joy.get("joy_index", 0.0))
+    _fat_idx = _safe01(_joy.get("fatigue_index", 0.0))
+    if _joy_idx >= 0.75 and _fat_idx <= 0.30:
+        _quality_band = "hoch"
+    elif _joy_idx <= 0.45 or _fat_idx >= 0.55:
+        _quality_band = "kritisch"
 
     return {
         "joy_index": _safe01(_joy.get("joy_index", 0.0)),
@@ -899,6 +1041,39 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
             "recovery_attempted": bool(_fqf_attempts > 0),
             "best_possible_reached": bool(_fqf_status == "recovered"),
             "fallback_quality_floor_status": str(_fqf.get("status", "passed") or "passed"),
+            "profile": str(_exp_profile),
+            "material": str(_exp_material),
+            "preserve_signal": float(_exp_preserve_signal),
+            "thresholds": {
+                "quality_estimate": _safe_float(_exp_thresholds.get("quality_estimate", 0.0), 0.0),
+                "level_drop_db": _safe_float(_exp_thresholds.get("level_drop_db", 0.0), 0.0),
+            },
+            "signal_signature": {
+                "crest_db": _safe_float(_exp_signature.get("crest_db", 0.0), 0.0),
+                "hf_ratio": _safe01(_exp_signature.get("hf_ratio", 0.0)),
+                "transient_ratio": _safe01(_exp_signature.get("transient_ratio", 0.0)),
+                "micro_dynamic_db": _safe_float(_exp_signature.get("micro_dynamic_db", 0.0), 0.0),
+            },
+            "worldclass_composite_gate": {
+                "wcs": _safe01(_wcs_gate.get("wcs", 0.0)),
+                "threshold": _safe01(_wcs_gate.get("threshold", 0.0)),
+                "profile": str(_wcs_gate.get("profile", "") or ""),
+                "artifact_veto": bool(_wcs_gate.get("artifact_veto", False)),
+                "passed": bool(_wcs_gate.get("passed", False)),
+            },
+        },
+        "threshold_evidence": dict(_threshold_evidence) if _threshold_evidence else {},
+        "user_guidance": {
+            "tone": _tone,
+            "headline": _headline,
+            "next_actions": _next_actions,
+            "degradation_status": str(_degradation_status),
+        },
+        "quality_scale": {
+            "band": _quality_band,
+            "joy_index": _joy_idx,
+            "fatigue_index": _fat_idx,
+            "frisson_index": _safe01(_joy.get("frisson_index", 0.0)),
         },
         "recovery_certainty": {
             "recoverability_ceiling": _safe01(_rc.get("recoverability_ceiling", 0.0)),
@@ -1163,10 +1338,25 @@ def get_ml_memory_budget_status() -> dict:
     try:
         from backend.core.ml_memory_budget import get_status  # type: ignore[import]
 
-        return get_status()
+        _status = get_status()
+        with _ml_memory_budget_status_lock:
+            _ml_memory_budget_import_status["available"] = True
+            _ml_memory_budget_import_status["last_error"] = ""
+        return _status
     except Exception as _e:
-        logger.debug("bridge: ml_memory_budget.get_status() nicht verfügbar: %s", _e)
+        _err = f"{type(_e).__name__}: {_e}"
+        with _ml_memory_budget_status_lock:
+            _ml_memory_budget_import_status["available"] = False
+            _ml_memory_budget_import_status["failures"] = int(_ml_memory_budget_import_status.get("failures", 0)) + 1
+            _ml_memory_budget_import_status["last_error"] = _err
+        logger.warning("bridge: ml_memory_budget.get_status() nicht verfügbar: %s", _err)
         return {"max_gb": 0.0, "allocated_gb": 0.0, "free_gb": 0.0, "models": {}}
+
+
+def get_ml_memory_budget_import_status() -> dict[str, Any]:
+    """Liefert Bridge-Telemetrie für ml_memory_budget-Importstatus."""
+    with _ml_memory_budget_status_lock:
+        return dict(_ml_memory_budget_import_status)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,8 +1394,8 @@ def validate_export_quality(result: object) -> tuple[bool, list[str]]:
 
         return _veq(result)
     except Exception as exc:
-        logger.debug("validate_export_quality unavailable: %s", exc)
-        return True, []
+        logger.warning("validate_export_quality unavailable -> fail-closed: %s", exc)
+        return False, ["Bridge-Export-Gate nicht verfügbar (fail-closed)"]
 
 
 def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
@@ -1227,6 +1417,17 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     fqf: dict[str, Any] = (
         meta.get("fallback_quality_floor") if isinstance(meta.get("fallback_quality_floor"), dict) else {}
     )  # type: ignore[assignment]
+    export_gate_profile = str(meta.get("export_gate_profile", "") or "")
+    export_gate_material = str(meta.get("export_gate_material", "") or "")
+    _export_gate_thresholds_raw = meta.get("export_gate_thresholds")
+    export_gate_thresholds: dict[str, Any] = (
+        _export_gate_thresholds_raw if isinstance(_export_gate_thresholds_raw, dict) else {}
+    )
+    _export_gate_signal_signature_raw = meta.get("export_gate_signal_signature")
+    export_gate_signal_signature: dict[str, Any] = (
+        _export_gate_signal_signature_raw if isinstance(_export_gate_signal_signature_raw, dict) else {}
+    )
+    export_gate_preserve_signal = float(np.clip(float(meta.get("export_gate_preserve_signal", 0.0) or 0.0), 0.0, 1.0))
 
     _degradation_norm = degradation_status.strip().lower()
     _has_structured_gate_issue = _degradation_norm not in {"", "ok"} or bool(fail_reasons)
@@ -1259,6 +1460,62 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     if not degradation_status:
         degradation_status = "ok" if passed else "degraded"
 
+    # Music-Lover Telemetrie: liefert musikalisch relevante Exportindikatoren
+    # für UI/Reporter, ohne bestehende Gate-Semantik zu verändern.
+    _goals_meta = meta.get("musical_goals") if isinstance(meta.get("musical_goals"), dict) else {}
+    _goal_scores = _goals_meta.get("scores") if isinstance(_goals_meta.get("scores"), dict) else {}
+    _goal_thresholds = _goals_meta.get("thresholds") if isinstance(_goals_meta.get("thresholds"), dict) else {}
+    _goal_gaps: list[dict[str, Any]] = []
+    for _goal_name, _thr_val in _goal_thresholds.items():
+        try:
+            _gap = max(0.0, float(_thr_val) - float(_goal_scores.get(_goal_name, 0.0)))
+        except Exception:
+            _gap = 0.0
+        if _gap > 0.0:
+            _goal_gaps.append({"goal": str(_goal_name), "gap": round(float(_gap), 4)})
+    _goal_gaps.sort(key=lambda e: float(e.get("gap", 0.0)), reverse=True)
+
+    _temporal_cont = meta.get("temporal_continuity") if isinstance(meta.get("temporal_continuity"), dict) else {}
+    _temporal_hotspots: list[dict[str, Any]] = []
+    for _phase_id, _entry in _temporal_cont.items():
+        if not isinstance(_entry, dict):
+            continue
+        try:
+            _gain_step = float(_entry.get("gain_step_db", 0.0) or 0.0)
+            _variance_ratio = float(_entry.get("variance_ratio", 1.0) or 1.0)
+        except Exception:
+            _gain_step = 0.0
+            _variance_ratio = 1.0
+        _hot = (abs(_gain_step) > 1.5) or (_variance_ratio > 2.5)
+        if _hot:
+            _temporal_hotspots.append(
+                {
+                    "phase": str(_phase_id),
+                    "gain_step_db": round(_gain_step, 3),
+                    "variance_ratio": round(_variance_ratio, 3),
+                }
+            )
+    _temporal_hotspots = _temporal_hotspots[:5]
+
+    _vqi_val = float(meta.get("vqi", getattr(result, "vqi", 0.0)) or 0.0)
+    _sid_val = float(meta.get("singer_identity_cosine", 0.0) or 0.0)
+    _qe_val = float(getattr(result, "quality_estimate", 0.0) or 0.0)
+    _chroma_val = float(getattr(result, "chroma_correlation", 0.0) or 0.0)
+    _lufs_delta_val = float(getattr(result, "lufs_delta", 0.0) or 0.0)
+
+    _mcg = meta.get("model_capability_report") if isinstance(meta.get("model_capability_report"), dict) else {}
+    _mcg_summary = _mcg.get("summary") if isinstance(_mcg, dict) else {}
+    _all_sota_raw = _mcg_summary.get("all_sota_real") if isinstance(_mcg_summary, dict) else None
+    _vocal_cap_status = str(meta.get("vocal_restoration_capability_status", "") or "")
+    _all_sota_real = True
+    if isinstance(_all_sota_raw, bool):
+        _all_sota_real = bool(_all_sota_raw)
+    if _vocal_cap_status and _vocal_cap_status != "sota_real":
+        _all_sota_real = False
+    _degraded_caps = _mcg_summary.get("degraded_capabilities") if isinstance(_mcg_summary, dict) else []
+    _wcs_gate = meta.get("worldclass_composite_gate") if isinstance(meta.get("worldclass_composite_gate"), dict) else {}
+    _threshold_evidence = meta.get("threshold_evidence") if isinstance(meta.get("threshold_evidence"), dict) else {}
+
     return {
         "passed": bool(passed),
         "fail_reason": primary_fail_reason,
@@ -1268,6 +1525,60 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
         "best_possible_reached": bool(fqf_status == "recovered"),
         "degradation_status": degradation_status,
         "fallback_quality_floor": dict(fqf) if fqf else {},
+        "profile": export_gate_profile,
+        "material": export_gate_material,
+        "preserve_signal": export_gate_preserve_signal,
+        "thresholds": {
+            "quality_estimate": float(export_gate_thresholds.get("quality_estimate", 0.0) or 0.0),
+            "level_drop_db": float(export_gate_thresholds.get("level_drop_db", 0.0) or 0.0),
+        },
+        "signal_signature": {
+            "crest_db": float(export_gate_signal_signature.get("crest_db", 0.0) or 0.0),
+            "hf_ratio": float(export_gate_signal_signature.get("hf_ratio", 0.0) or 0.0),
+            "transient_ratio": float(export_gate_signal_signature.get("transient_ratio", 0.0) or 0.0),
+            "micro_dynamic_db": float(export_gate_signal_signature.get("micro_dynamic_db", 0.0) or 0.0),
+        },
+        "worldclass_composite_gate": {
+            "wcs": float(np.clip(float(_wcs_gate.get("wcs", 0.0) or 0.0), 0.0, 1.0)),
+            "threshold": float(np.clip(float(_wcs_gate.get("threshold", 0.0) or 0.0), 0.0, 1.0)),
+            "profile": str(_wcs_gate.get("profile", "") or ""),
+            "artifact_veto": bool(_wcs_gate.get("artifact_veto", False)),
+            "passed": bool(_wcs_gate.get("passed", False)),
+        },
+        "threshold_evidence": dict(_threshold_evidence) if _threshold_evidence else {},
+        "musiclover": {
+            "vocal_integrity": {
+                "vqi": _vqi_val,
+                "singer_identity_cosine": _sid_val,
+                "vqi_tier": str(meta.get("vqi_tier", "") or ""),
+                "vocal_no_harm_rollback": bool(meta.get("vocal_no_harm_rollback", False)),
+            },
+            "musical_goals": {
+                "remaining_count": int(len(_goal_gaps)),
+                "top_remaining_goals": list(_goal_gaps[:3]),
+            },
+            "stereo_integrity": {
+                "mono_compatibility_warning": bool(meta.get("mono_compatibility_warning", False)),
+            },
+            "temporal_risk": {
+                "hotspot_count": int(len(_temporal_hotspots)),
+                "phase_hotspots": list(_temporal_hotspots),
+            },
+            "mastering": {
+                "quality_estimate": _qe_val,
+                "chroma_correlation": _chroma_val,
+                "lufs_delta": _lufs_delta_val,
+            },
+            "decision_trace": {
+                "degradation_status": str(degradation_status),
+                "fail_reason": str(primary_fail_reason),
+                "fail_reason_count": int(len(fail_reasons)),
+                "recovery_attempted": bool(fqf_attempts > 0),
+                "all_sota_real": bool(_all_sota_real),
+                "vocal_restoration_capability_status": _vocal_cap_status,
+                "degraded_capabilities": list(_degraded_caps) if isinstance(_degraded_caps, list) else [],
+            },
+        },
         "warnings": [str(w) for w in warnings],
     }
 
@@ -1664,9 +1975,25 @@ def get_startup_check_result():
             get_startup_check_result as _fn,
         )
 
-        return _fn()
-    except Exception:
+        _result = _fn()
+        with _startup_check_status_lock:
+            _startup_check_status["available"] = True
+            _startup_check_status["last_error"] = ""
+        return _result
+    except Exception as exc:
+        _err = f"{type(exc).__name__}: {exc}"
+        with _startup_check_status_lock:
+            _startup_check_status["available"] = False
+            _startup_check_status["failures"] = int(_startup_check_status.get("failures", 0)) + 1
+            _startup_check_status["last_error"] = _err
+        logger.warning("bridge: startup_model_check nicht verfügbar (%s)", _err)
         return None
+
+
+def get_startup_check_status() -> dict[str, Any]:
+    """Liefert Bridge-Telemetrie für Startup-Check-Verfügbarkeit."""
+    with _startup_check_status_lock:
+        return dict(_startup_check_status)
 
 
 # ---------------------------------------------------------------------------
@@ -1708,10 +2035,37 @@ def run_pre_analysis(
 # PreAnalysisResult is imported lazily; expose as a module-level name via
 # a try-block so bridge consumers can do:
 #   from backend.api.bridge import PreAnalysisResult
-try:
-    from backend.core.pre_analysis import PreAnalysisResult
-except Exception:  # pragma: no cover
-    PreAnalysisResult = None  # type: ignore[assignment,misc]
+def _resolve_pre_analysis_result_type():
+    """Lädt PreAnalysisResult mit expliziter Fehler-Telemetrie (kein stilles Fallback)."""
+    try:
+        from backend.core.pre_analysis import PreAnalysisResult as _PreAnalysisResult
+
+        with _pre_analysis_result_status_lock:
+            _pre_analysis_result_status["available"] = True
+            _pre_analysis_result_status["last_error"] = ""
+        return _PreAnalysisResult
+    except Exception as exc:  # pragma: no cover
+        _err = f"{type(exc).__name__}: {exc}"
+        with _pre_analysis_result_status_lock:
+            _pre_analysis_result_status["available"] = False
+            _pre_analysis_result_status["failures"] = int(_pre_analysis_result_status.get("failures", 0)) + 1
+            _pre_analysis_result_status["last_error"] = _err
+        logger.warning("bridge: PreAnalysisResult nicht importierbar (%s)", _err)
+        return None
+
+
+def get_pre_analysis_result_type():
+    """Gibt den PreAnalysisResult-Typ zurück oder ``None`` bei Importfehlern."""
+    return _resolve_pre_analysis_result_type()
+
+
+def get_pre_analysis_result_status() -> dict[str, Any]:
+    """Liefert Bridge-Telemetrie für PreAnalysisResult-Importstatus."""
+    with _pre_analysis_result_status_lock:
+        return dict(_pre_analysis_result_status)
+
+
+PreAnalysisResult = _resolve_pre_analysis_result_type()  # type: ignore[assignment,misc]
 
 
 # ---------------------------------------------------------------------------

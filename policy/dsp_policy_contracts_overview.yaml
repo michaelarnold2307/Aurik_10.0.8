@@ -2,6 +2,23 @@
 version: 1.1
 last_update: 2026-02-02
 
+push_rulebook:
+  version: 1
+  worldclass_chain_aware_oracle:
+    required: true
+    description: "Per-Phase-Oracle muss transfer_chain + material_confidence direkt verarbeiten."
+    required_tests:
+      - tests/unit/test_phase_strength_oracle.py::test_oracle_chain_factor_reduces_strength_for_multistage_chain
+      - tests/unit/test_phase_strength_oracle.py::test_uv3_runtime_context_applies_o8_cap_for_spectral_family
+      - tests/unit/test_phase_strength_oracle.py::test_uv3_runtime_context_applies_o10_cap_for_output_family
+      - tests/unit/test_phase_strength_oracle.py::test_uv3_runtime_context_keeps_explicit_strength_for_o10_output_phase
+    required_code_paths:
+      - backend/core/dsp/phase_strength_oracle.py
+      - backend/core/unified_restorer_v3.py
+    release_gate:
+      fail_on_missing_chain_factor: true
+      fail_on_missing_chain_handover: true
+
 policies:
   - name: MP3 Restoration
     media: mp3

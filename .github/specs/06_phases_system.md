@@ -107,6 +107,139 @@ phase_65_vocal_naturalness_restoration.py  DSP-Vocal-Naturalness-Restaurierung
 
 ---
 
+## §7.1d [RELEASE_MUST] 64-Phasen-SOTA-Bindung und Strength-Oracle-Matrix (v9.12.9)
+
+Die folgende Matrix ist die bindende Vorgabe fuer Phase 01-64. Sie definiert pro Phase:
+
+1. den primaeren SOTA-Algorithmus im produktiven Zusammenspiel,
+2. den zulaessigen Fallback,
+3. die verpflichtende Oracle-Klasse fuer die optimale Interventionsstaerke,
+4. den primaren Teamwork-Beitrag zum 15er-Zielvektor.
+
+**Wichtig:** Die Matrix ersetzt keine Safety-Gates. Sie bestimmt nur den besten lokalen
+Werkzeug- und Staerkepfad im Gesamtsystem.
+
+### §7.1d.1 Rollout-Contract fuer Strength-Oracles (off/pilot/all)
+
+Zur sicheren Produktivierung ist der Rollout-Modus kanonisch als `phase_strength_oracle_rollout`
+zu fuehren. Gueltige Werte sind:
+
+- `off`: Strength-Oracles deaktiviert, Phasen laufen mit klassischer Parametrik.
+- `pilot`: Strength-Oracles nur fuer `_PHASE_STRENGTH_ORACLE_PILOT_PHASES`.
+- `all`: Strength-Oracles fuer alle in `_PHASE_INTERVENTION_CLASS` gebundenen Phasen.
+
+Normative Anforderungen:
+
+1. Der Modus MUSS entlang des kanonischen Pfads durchgereicht werden:
+    CLI/Bridge -> `AurikDenker.denke(...)` -> `RestaurierDenker.restauriere(...)` -> `UnifiedRestorerV3.restore(...)`.
+2. Prioritaet bei der Aufloesung: explizite Runtime-kwargs vor Context/Config-Default.
+3. Pro Phase MUSS Telemetrie gesetzt werden:
+    `phase_strength_oracle_rollout_mode` und `phase_strength_oracle_enabled_for_phase`.
+4. Ungueltige Werte duerfen keinen Abbruch erzeugen; sie fallen auf den sicheren Default (`all`) zurueck.
+
+### Phasen 01-16
+
+| Phase | Primär-SOTA | Fallback | Oracle | Hauptbeitrag im 15er-Team |
+| --- | --- | --- | --- | --- |
+| `phase_01_click_removal` | RBME-Net + sparse outlier surgery + lokales Patch-Matching | median+LPC repair | `O1_impulse` | Natürlichkeit, Authentizität, Artikulation |
+| `phase_02_hum_removal` | harmonische Kalman-Notch-Kette mit Netzfrequenz-Tracking | adaptive comb + notch bank | `O9_periodic_cancellation` | Transparenz, Wärme, BassKraft |
+| `phase_03_denoise` | DeepFilterNet v3.II + OMLSA/IMCRA, vokal-lastig MIIPHER only as last-resort stem rescue | OMLSA/MMSE-LSA | `O2_subtractive` | Natürlichkeit, Transparenz, VocalQuality |
+| `phase_04_eq_correction` | optimal-transport spectral matching + parametrische Minimum-Phase-EQ | parametric target EQ | `O3_spectral_balance` | Timbre, TonalCenter, Wärme |
+| `phase_05_rumble_filter` | psychoakustisch begrenzter linear-phase HPF + subharmonic rumble estimator | Butterworth HPF | `O2_subtractive` | BassKraft, Natürlichkeit, Transparenz |
+| `phase_06_frequency_restoration` | AudioSR + SourceFidelityEQ + BW-ceiling aware shelving | sinusoidal+stochastic bandwidth restoration | `O3_spectral_balance` | Brillanz, Transparenz, Timbre |
+| `phase_07_harmonic_restoration` | harmonic lattice + DDSP partial reconstruction | sinusoidal+stochastic harmonic fill | `O3_spectral_balance` | Timbre, BassKraft, Brillanz |
+| `phase_08_transient_preservation` | onset-protection mask + HPSS-rescue + transient re-injection | linked transient shaper | `O1_impulse` | Artikulation, Groove, MikroDynamik |
+| `phase_09_crackle_removal` | BANQUET/RBME hybrid + LPC/AR micro-gap interpolation | iterative sparse Bayes decrackle | `O1_impulse` | Natürlichkeit, Transparenz, Authentizität |
+| `phase_10_compression` | crest-aware broadband compressor with loudness-sidechain | transparent VCA-style compressor | `O6_dynamics` | MikroDynamik, Emotionalität, Transparenz |
+| `phase_11_limiting` | 8x oversampled ISP limiter | 4x true-peak limiter | `O10_output` | ArtifactFreedom, Transparenz, Export-Sicherheit |
+| `phase_12_wow_flutter_fix` | FCPE/RMVPE-guided wow/flutter solver + PSOLA/phase correction + head-level stabilizer | pYIN + WSOLA | `O4_time_pitch` | TonalCenter, Groove, Authentizität |
+| `phase_13_stereo_enhancement` | correlation-bounded M/S ambience lift | linked stereo shelf widening | `O5_stereo_field` | Raumtiefe, Transparenz, Mono-Kompatibilität |
+| `phase_14_phase_correction` | GCC-PHAT + complex all-pass azimuth solver | phase rotator + coherence maximization | `O4_time_pitch` | TonalCenter, Raumtiefe, Authentizität |
+| `phase_15_stereo_balance` | loudness-matched linked L/R rebalancer | RMS-energy rebalance | `O5_stereo_field` | Raumtiefe, Transparenz, Authentizität |
+| `phase_16_final_eq` | Pareto-constrained linear-phase finishing EQ | minimum-phase trim EQ | `O3_spectral_balance` | Timbre, Wärme, Brillanz |
+
+### Phasen 17-32
+
+| Phase | Primär-SOTA | Fallback | Oracle | Hauptbeitrag im 15er-Team |
+| --- | --- | --- | --- | --- |
+| `phase_17_mastering_polish` | source-fidelity contour polish + micro-tilt trim | gentle mastering EQ chain | `O3_spectral_balance` | Authentizität, Brillanz, Wärme |
+| `phase_18_noise_gate` | vocal-/phoneme-aware soft expander with linked stereo | adaptive noise gate | `O2_subtractive` | Natürlichkeit, Artikulation, MikroDynamik |
+| `phase_19_de_esser` | multiband phoneme-aware de-esser with shared intensity oracle | dynamic EQ de-esser | `O7_vocal_articulation` | Artikulation, VocalQuality, Natürlichkeit |
+| `phase_20_reverb_reduction` | SGMSE+ + WPE hybrid dereverb | WPE + OMLSA tail trim | `O2_subtractive` | Transparenz, Raumtiefe, Natürlichkeit |
+| `phase_21_exciter` | hallucination-guarded harmonic exciter with material ceiling | harmonic shelf + soft saturation | `O3_spectral_balance` | Brillanz, Präsenz, Separation |
+| `phase_22_tape_saturation` | hysteresis/Volterra tape curve with era profile | soft saturation model | `O6_dynamics` | Wärme, Authentizität, MikroDynamik |
+| `phase_23_spectral_repair` | Apollo v2 + AudioSR + PGHI | consistent Wiener + NMF repair | `O8_generative_repair` | Transparenz, Brillanz, Authentizität |
+| `phase_24_dropout_repair` | boundary-aware AudioSR/CQTdiff with SSIP | sinusoidal-stochastic/LPC fill | `O8_generative_repair` | Artikulation, Authentizität, Natürlichkeit |
+| `phase_25_azimuth_correction` | coherence-maximizing tape azimuth solver | sample-delay + phase rotator | `O4_time_pitch` | Raumtiefe, Authentizität, Timbre |
+| `phase_26_dynamic_range_expansion` | masking-aware upward/downward expansion | broadband expander | `O6_dynamics` | MikroDynamik, Emotionalität, Transparenz |
+| `phase_27_click_pop_removal` | second-pass sparse impulse classifier + waveform patching | adaptive median + interpolation | `O1_impulse` | Natürlichkeit, Transparenz, Authentizität |
+| `phase_28_surface_noise_profiling` | noise-texture fingerprint estimation with carrier prior | spectral noise profile estimator | `O2_subtractive` | Authentizität, Wärme, Transparenz |
+| `phase_29_tape_hiss_reduction` | DeepFilterNet v3.II HF + OMLSA low band + harmonic mask | OMLSA/IMCRA fullband | `O2_subtractive` | Transparenz, VocalQuality, Natürlichkeit |
+| `phase_30_dc_offset_removal` | robust DC servo with percentile anchor | 5 Hz HPF | `O10_output` | Authentizität, Headroom, Export-Sicherheit |
+| `phase_31_speed_pitch_correction` | RMVPE/FCPE + DTW/phase-locked correction | pYIN + phase vocoder | `O4_time_pitch` | TonalCenter, Groove, Artikulation |
+| `phase_32_mono_to_stereo` | decorrelated ambience synthesis with mono guard | Haas/filtered pseudo-stereo | `O5_stereo_field` | Raumtiefe, Separation, Transparenz |
+
+### Phasen 33-48
+
+| Phase | Primär-SOTA | Fallback | Oracle | Hauptbeitrag im 15er-Team |
+| --- | --- | --- | --- | --- |
+| `phase_33_stereo_width_limiter` | mono-compatible M/S width clamp | linked width reduction | `O5_stereo_field` | Mono-Kompatibilität, Raumtiefe, Authentizität |
+| `phase_34_mid_side_processing` | goal-aware M/S energy reweighting | static M/S processing | `O5_stereo_field` | Separation, Raumtiefe, Wärme |
+| `phase_35_multiband_compression` | linked multiband compression with psychoacoustic sidechains | transparent multiband comp | `O6_dynamics` | Transparenz, MikroDynamik, BassKraft |
+| `phase_36_transient_shaper` | onset-masked transient shaping | linked attack/sustain shaper | `O6_dynamics` | Artikulation, Groove, MikroDynamik |
+| `phase_37_bass_enhancement` | virtual-pitch bass reconstruction + harmonic bass fill | low-band saturation + shelving | `O3_spectral_balance` | BassKraft, Wärme, Groove |
+| `phase_38_presence_boost` | SourceFidelity mic-center presence sculpting | constrained bell/shelf EQ | `O3_spectral_balance` | Artikulation, Transparenz, VocalQuality |
+| `phase_39_air_band_enhancement` | ceiling-aware SBR/NVSR air restoration | constrained air shelf | `O3_spectral_balance` | Brillanz, Raumtiefe, Transparenz |
+| `phase_40_loudness_normalization` | ITU-R BS.1770-5 + quiet-zone clamp + true-peak aware gain | LUFS-only normalization | `O10_output` | Export-Kohärenz, Transparenz, MikroDynamik |
+| `phase_41_output_format_optimization` | high-order noise-shaped dither + sinc resample + codec-safe export prep | TPDF dither + standard resample | `O10_output` | Export-Sicherheit, Authentizität, Transparenz |
+| `phase_42_vocal_enhancement` | stem-aware vocal enhancement with formant/vibrato guards | MIIPHER-lite DSP-assisted vocal polish | `O7_vocal_articulation` | VocalQuality, Artikulation, Emotionalität |
+| `phase_43_ml_deesser` | phoneme-aware second-pass ML/DSP de-esser | dynamic EQ de-esser | `O7_vocal_articulation` | VocalQuality, Artikulation, Natürlichkeit |
+| `phase_44_guitar_enhancement` | DDSP string-resonance refinement + pick-articulation contour | source-specific EQ/transient contour | `O3_spectral_balance` | Artikulation, Transparenz, Separation |
+| `phase_45_brass_enhancement` | formant-/resonance-preserving brass contouring | dynamic EQ + harmonic tilt | `O3_spectral_balance` | Brillanz, Authentizität, Artikulation |
+| `phase_46_spatial_enhancement` | binaural-cue-consistent spatial enhancement | M/S ambience widening | `O5_stereo_field` | Raumtiefe, Separation, Emotionalität |
+| `phase_47_truepeak_limiter` | oversampled EBU true-peak limiter | ISP-safe limiter | `O10_output` | Export-Sicherheit, Transparenz, ArtifactFreedom |
+| `phase_48_stereo_width_enhancer` | mono-guarded Blumlein/MS width enhancer | correlation-limited width enhancer | `O5_stereo_field` | Raumtiefe, Separation, Transparenz |
+
+### Phasen 49-64
+
+| Phase | Primär-SOTA | Fallback | Oracle | Hauptbeitrag im 15er-Team |
+| --- | --- | --- | --- | --- |
+| `phase_49_advanced_dereverb` | blind-RIR estimation + WPE + late-tail suppression | deterministic WPE | `O2_subtractive` | Transparenz, Raumtiefe, Natürlichkeit |
+| `phase_50_spectral_repair` | consistency Wiener + anomaly detector + PGHI | NMF + spectral interpolation | `O8_generative_repair` | Transparenz, Authentizität, Brillanz |
+| `phase_51_drums_enhancement` | drum-transient model + punch-preserving contour | transient shaper + EQ | `O6_dynamics` | Groove, Artikulation, MikroDynamik |
+| `phase_52_piano_restoration` | inharmonic partial tracker + pedal-resonance aware reconstruction | harmonic EQ + transient rescue | `O3_spectral_balance` | Authentizität, TonalCenter, Raumtiefe |
+| `phase_53_semantic_audio` | BEATs iter3 + CLAP + semantic scene fusion | PANNs + spectral fingerprint ensemble | `O10_output` | Kontextautorität fuer alle 15 Ziele, keine Dominanz |
+| `phase_54_transparent_dynamics` | program-dependent transparent dynamics repair with envelope smoothing | broadband transparent comp/exp | `O6_dynamics` | MikroDynamik, Emotionalität, Transparenz |
+| `phase_55_diffusion_inpainting` | Flow Matching primary + CQTdiff+ secondary with SSIP | DiffWave + NMF-beta | `O8_generative_repair` | Natürlichkeit, Authentizität, Artikulation |
+| `phase_56_spectral_band_gap_repair` | harmonic continuation + FCPE-guided band-gap synthesis | LPC + spectral interpolation | `O8_generative_repair` | Brillanz, Timbre, Authentizität |
+| `phase_57_print_through_reduction` | bidirectional predictive echo suppression + periodic template cancel | LMS pre/post-echo subtraction | `O9_periodic_cancellation` | Transparenz, Authentizität, Natürlichkeit |
+| `phase_58_lyrics_guided_enhancement` | Whisper-Tiny + wav2vec2 alignment + ContentAwareProcessor | phoneme-boundary DSP only | `O7_vocal_articulation` | Artikulation, VocalQuality, Emotionalität |
+| `phase_59_modulation_noise_reduction` | modulation-spectrogram suppression + cyclostationary tracking | adaptive modulation filter | `O9_periodic_cancellation` | Natürlichkeit, Transparenz, Wärme |
+| `phase_60_inner_groove_distortion_repair` | position-aware Volterra THD inversion | asymmetric harmonic de-warping | `O9_periodic_cancellation` | Authentizität, Artikulation, Brillanz |
+| `phase_61_groove_echo_cancellation` | one-revolution template subtraction + OT alignment | periodic pre-echo suppressor | `O9_periodic_cancellation` | Transparenz, Authentizität, Groove |
+| `phase_62_crosstalk_cancellation` | constrained BSS/de-mixing with mono guard | least-squares crosstalk inversion | `O5_stereo_field` | Separation, Raumtiefe, Mono-Kompatibilität |
+| `phase_63_intermodulation_reduction` | Volterra-kernel inverse + sideband suppressor | IMD notch/spectral surgery | `O9_periodic_cancellation` | Transparenz, Authentizität, Brillanz |
+| `phase_64_tape_splice_repair` | discontinuity classifier + phase-/level-matched spline patch | local click patch + gain/phase crossfade | `O1_impulse` | Authentizität, Natürlichkeit, MikroDynamik |
+
+**Appendix:** `phase_65_vocal_naturalness_restoration` bleibt eine Restoration-only Sonderphase und
+folgt `O7_vocal_articulation`; sie ist nicht Teil der 64er-Release-Matrix, aber unterliegt
+denselben Teamwork- und Oracle-Invarianten.
+
+**Transfer-Chain-Invariante [RELEASE_MUST]:** Oracle-Klasse und Phase bestimmen das lokale
+Parameterprofil, die finale Interventionsstaerke MUSS zusaetzlich durch den
+`transfer_chain`-konformen `chain_factor` konditioniert werden. Gleiche Defektlast bei
+`vinyl -> cassette -> mp3_low` darf nie staerker eingreifen als bei reinem `vinyl`. `[SRC:S03,S04]`
+
+**Bindende Interaktionsregeln:**
+
+- SUBTRAKTIVE Phasen muessen zuerst auf Weighted-Gap-Closure ohne P1/P2-Schaden optimieren.
+- ADDITIVE/ENHANCEMENT-Phasen duerren nur Headroom bis zum Material-/DR-/Hallucination-Ceiling nutzen.
+- DYNAMICS-/STEREO-/OUTPUT-Phasen sind Team-Glue: sie stabilisieren die bereits erarbeiteten Goal-Gewinne,
+  nicht ueberschreiben sie.
+- `phase_53_semantic_audio` liefert Kontextautoritaet und darf nie selbst ein Einzelziel priorisieren.
+
+---
+
 ## §7.1b [RELEASE_MUST] Phase 12 — Tape-Head-Level-Stabilizer v2 (v9.11.2)
 
 `phase_12_wow_flutter_fix` enthält neben Wow/Flutter-Korrektur einen dedizierten
@@ -297,7 +430,7 @@ CAUSE_TO_PHASES = {
                                   "phase_54_transparent_dynamics"],
     "quantization_noise":        ["phase_23_spectral_repair", "phase_03_denoise",
                                   "phase_06_frequency_restoration"],
-    "jitter_artifacts":          ["phase_23_spectral_repair", "phase_12_wow_flutter_fix"],
+    "jitter_artifacts":          ["phase_23_spectral_repair", "phase_14_phase_correction"],
     "dynamic_compression_excess":["phase_26_dynamic_range_expansion", "phase_54_transparent_dynamics"],
                                   # phase_35_multiband_compression ENTFERNT (BUG-FIX v9.12.0 §0a): Stem-Enhancement VERBOTEN in Restoration
     "head_wear":                 ["phase_56_spectral_band_gap_repair", "phase_14_phase_correction",
@@ -317,7 +450,7 @@ CAUSE_TO_PHASES = {
     # Neu v9.10.46:
     "riaa_curve_error":          ["phase_04_eq_correction", "phase_06_frequency_restoration",
                                   "phase_07_harmonic_restoration"],
-    "aliasing":                  ["phase_03_denoise", "phase_23_spectral_repair",
+    "aliasing":                  ["phase_23_spectral_repair",
                                   "phase_50_spectral_repair"],
     "bias_error":                ["phase_04_eq_correction", "phase_03_denoise",
                                   "phase_06_frequency_restoration", "phase_29_tape_hiss_reduction"],
@@ -369,6 +502,22 @@ CAUSE_TO_PHASES = {
                                   "phase_03_denoise"],
     "tape_head_level_dip":       ["phase_12_wow_flutter_fix", "phase_24_dropout_repair",
                                   "phase_40_loudness_normalization"],
+    # ── v9.12.9: Erweiterte Kausal-Ursachen ───────────────────────────────────
+    "proximity_effect_excess":   ["phase_04_eq_correction", "phase_05_rumble_filter"],
+    "room_mode_resonance":       ["phase_04_eq_correction", "phase_16_final_eq",
+                                  "phase_05_rumble_filter"],
+    "nr_breathing_artifact":     ["phase_54_transparent_dynamics", "phase_08_transient_preservation"],
+    "flutter_spectral_sidebands": ["phase_12_wow_flutter_fix", "phase_23_spectral_repair",
+                                   "phase_08_transient_preservation"],
+    "speed_calibration_error":   ["phase_12_wow_flutter_fix", "phase_31_speed_pitch_correction"],
+    "overload_distortion":       ["phase_09_crackle_removal", "phase_23_spectral_repair",
+                                  "phase_14_phase_correction"],
+    "lacquer_disc_degradation":  ["phase_03_denoise", "phase_09_crackle_removal",
+                                  "phase_01_click_removal", "phase_06_frequency_restoration"],
+    "cassette_azimuth_tolerance": ["phase_14_phase_correction", "phase_25_azimuth_correction",
+                                   "phase_06_frequency_restoration"],
+    "wire_recording_specific":   ["phase_12_wow_flutter_fix", "phase_24_dropout_repair",
+                                  "phase_03_denoise", "phase_01_click_removal"],
 }
 # PFLICHT: Jede neue Ursache → Eintrag hier UND in allen Material-Prior-Tabellen des DefectScanners.
 

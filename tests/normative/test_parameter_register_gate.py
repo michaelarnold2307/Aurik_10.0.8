@@ -184,7 +184,7 @@ class TestR03NoiseTextureThreshold:
 class TestR04MaterialPriorityPhases:
     """Prüft, ob _MATERIAL_PRIORITY_PHASES die normativen Pflichtphasen enthält."""
 
-    def _get_priority_dict(self) -> dict:
+    def _get_priority_dict(self) -> str:
         src = _uv3_source()
         # Extrahiere den MATERIAL_PRIORITY_PHASES Block als approx. Text
         return src  # pass through source for search

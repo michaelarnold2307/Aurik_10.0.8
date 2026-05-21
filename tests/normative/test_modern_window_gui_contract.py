@@ -144,12 +144,12 @@ def test_preventive_metadata_visibility_contract_in_quality_banner() -> None:
 
     # Frontend must keep phase-local prevention telemetry visible in post-run UI.
     assert '"preventive_actions": []' in src
-    assert 'phase31_damage_shield_applied' in src
-    assert 'phase31_stereo_delay_corrected' in src
-    assert 'loudness_makeup_db' in src
-    assert 'def _build_quality_banner_sections(' in src
-    assert 'preventive_actions: list[str]' in src
-    assert '🛡️  Präventionsschutz:' in src
+    assert "phase31_damage_shield_applied" in src
+    assert "phase31_stereo_delay_corrected" in src
+    assert "loudness_makeup_db" in src
+    assert "def _build_quality_banner_sections(" in src
+    assert "preventive_actions: list[str]" in src
+    assert "🛡️  Präventionsschutz:" in src
 
 
 @pytest.mark.normative
@@ -158,5 +158,99 @@ def test_preventive_actions_callsite_contract_in_quality_pipeline() -> None:
 
     # Separate contract: extraction + callsite forwarding must stay intact.
     assert 'preventive_actions: list[str] = _ctx["preventive_actions"]' in src
-    assert 'self.prognose_widget.set_preventive_actions(preventive_actions)' in src
-    assert 'preventive_actions=preventive_actions' in src
+    assert "self.prognose_widget.set_preventive_actions(preventive_actions)" in src
+    assert "preventive_actions=preventive_actions" in src
+
+
+@pytest.mark.normative
+def test_bridge_unavailable_warning_is_one_shot_and_sets_runtime_health_state() -> None:
+    src = _read_gui_source()
+    assert 'if bool(getattr(self, "_bridge_unavailable_warning_shown", False)):' in src
+    assert "self._bridge_unavailable_warning_shown = True" in src
+    assert 'self._runtime_health_state = "bridge_unavailable"' in src
+
+
+@pytest.mark.normative
+def test_runtime_original_fallback_detection_uses_structured_metadata_signals() -> None:
+    src = _read_gui_source()
+    assert "def _detect_runtime_original_fallback_reason(restoration_result) -> str:" in src
+    assert 'metadata = getattr(restoration_result, "metadata", {}) or {}' in src
+    assert 'stage_notes = getattr(restoration_result, "stage_notes", {}) or {}' in src
+    assert "export_quality_gate_failed" in src
+    assert "export_blocked_by_quality_gate" in src
+    assert "RUNTIME_ORIGINAL_FALLBACK" in src
+
+
+@pytest.mark.normative
+def test_warnings_are_gated_by_non_sota_status_in_quality_ui() -> None:
+    src = _read_gui_source()
+    assert '"is_sota_run": True' in src
+    assert '"sota_warning_reason": ""' in src
+    assert "if not is_sota_run:" in src
+    assert "Nicht-SOTA-Ausführung" in src
+    assert (
+        'has_problem = (not is_sota_run) and (degradation_status in {"blocked", "critical_degraded", "degraded"})'
+        in src
+    )
+
+
+@pytest.mark.normative
+def test_musiclover_sota_metadata_forwarding_in_export_path() -> None:
+    src = _read_gui_source()
+    assert "quality_gate_musiclover_all_sota_real" in src
+    assert "quality_gate_musiclover_sota_reason" in src
+
+
+@pytest.mark.normative
+def test_worldclass_gate_and_threshold_evidence_are_visible_in_quality_banner() -> None:
+    src = _read_gui_source()
+    assert '"_xp_threshold_evidence": {}' in src
+    assert 'ctx["_xp_threshold_evidence"] = dict(_te_raw)' in src
+    assert "xp_threshold_evidence: dict" in src
+    assert 'qg_wcs = xp_quality_gate.get("worldclass_composite_gate", {})' in src
+    assert "🏁  Worldclass-Gate:" in src
+    assert "📚  Gate-Evidenz:" in src
+
+
+@pytest.mark.normative
+def test_worldclass_and_evidence_are_forwarded_in_export_metadata() -> None:
+    src = _read_gui_source()
+    assert "quality_gate_worldclass_score" in src
+    assert "quality_gate_worldclass_threshold" in src
+    assert "quality_gate_worldclass_passed" in src
+    assert "quality_gate_worldclass_profile" in src
+    assert "quality_gate_worldclass_artifact_veto" in src
+    assert "quality_gate_evidence_worldclass_source_class" in src
+    assert "quality_gate_evidence_worldclass_revalidate_by" in src
+
+
+@pytest.mark.normative
+def test_waveform_phase_animation_has_generic_fallback_and_progress_binding() -> None:
+    src = _read_gui_source()
+    assert "generic fallback" in src.lower()
+    assert '_generic_key = f"generic:phase_' in src
+    assert (
+        "self.batch_thread.phase_progress.connect(lambda v: self.waveform_widget.set_stage_progress(v / 10000.0))"
+        in src
+    )
+    assert "self.batch_thread.phase_progress.connect(" in src
+    assert "self.waveform_widget_rest_ab.set_stage_progress(v / 10000.0)" in src
+
+
+@pytest.mark.normative
+def test_phase_step_label_has_no_audio_callback_fallback() -> None:
+    src = _read_gui_source()
+    assert "if _cur_pct >= 20:" in src
+    assert "self._pending_step_info = label" in src
+    assert "Fallback: some phases do not emit an audio snapshot callback." in src
+    assert "self._phase_step_label.setText(label)" in src
+    assert "self._phase_step_label.setVisible(True)" in src
+
+
+@pytest.mark.normative
+def test_waveform_stage_and_scan_are_mirrored_to_rest_ab_widget() -> None:
+    src = _read_gui_source()
+    assert "self.waveform_widget_rest_ab.set_scan_pos(frac)" in src
+    assert "self.waveform_widget_rest_ab.set_active_stage(phase_text)" in src
+    assert "self.waveform_widget_rest_ab.set_scan_pos(-1.0)" in src
+    assert "self.waveform_widget_rest_ab.clear_stage()" in src

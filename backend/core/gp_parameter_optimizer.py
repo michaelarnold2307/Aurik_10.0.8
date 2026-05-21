@@ -236,7 +236,10 @@ def _apply_context_priors(
         prior_params = memory_prior.get("phase_params", {})
         hpi_prev = float(memory_prior.get("hpi_achieved", 0.0) or 0.0)
         flat_prior: dict[str, float] = {}
+        causal_conf = 0.0
         if isinstance(prior_params, dict):
+            with contextlib.suppress(Exception):
+                causal_conf = float(prior_params.get("_causal_credit_confidence", 0.0) or 0.0)
             for key, value in prior_params.items():
                 if key in space:
                     with contextlib.suppress(Exception):
@@ -247,6 +250,8 @@ def _apply_context_priors(
                             with contextlib.suppress(Exception):
                                 flat_prior[nested_key] = float(nested_value)
         prior_weight = float(np.clip(0.15 + 0.20 * hpi_prev, 0.15, 0.35)) if flat_prior else 0.0
+        if prior_weight > 0.0 and causal_conf > 0.0:
+            prior_weight = float(np.clip(prior_weight * (1.0 + 0.50 * np.clip(causal_conf, 0.0, 1.0)), 0.15, 0.50))
         for key, prior_value in flat_prior.items():
             lo, hi, mode = space[key]
             base_value = float(adjusted.get(key, prior_value))

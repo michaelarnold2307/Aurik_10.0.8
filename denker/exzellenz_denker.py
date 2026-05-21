@@ -659,7 +659,7 @@ class ExzellenzDenker:
         sr: int,
         *,
         defect_result: object | None = None,
-        _material: str = "auto",
+        material: str = "auto",
     ) -> dict[str, float]:
         """Schätzt Goal-Risikowahrscheinlichkeiten VOR der Restaurierung.
 
@@ -758,7 +758,8 @@ class ExzellenzDenker:
                 pass
 
             logger.debug(
-                "ExzellenzDenker.prognostiziere(): %d Risikofelder: %s",
+                "ExzellenzDenker.prognostiziere(): material=%s %d Risikofelder: %s",
+                material,
                 len(risk),
                 {k: f"{v:.2f}" for k, v in risk.items()},
             )

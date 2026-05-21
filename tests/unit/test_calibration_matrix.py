@@ -481,6 +481,59 @@ def test_material_floor_ordering_ultra_analog_to_digital():
         )
 
 
+def test_cassette_emotionalitaet_floor_below_canonical():
+    """Kassetten-emotionalitaet-Floor muss unter dem kanonischen Wert liegen.
+
+    Physikalische Begründung: Kassetten-AGC-Kompressionsschaltkreise reduzieren
+    dynamische Modulation; 12-kHz-BW-Ceiling begrenzt tonale Bandbreite für
+    Arousal-Messungen. Echtmessung 2026-05-20: Original-Kassette = 0.782 < Canon 0.84.
+    """
+    canonical = CANONICAL_THRESHOLDS_RESTORATION["emotionalitaet"]
+    cassette_floor = get_material_floor("cassette", "emotionalitaet")
+    assert cassette_floor < canonical, (
+        f"cassette emotionalitaet floor {cassette_floor:.3f} must be < canonical {canonical:.3f} "
+        "(Kassetten-AGC + BW-Ceiling 12 kHz — §09.2 v9.12.9)"
+    )
+
+
+def test_cassette_emotionalitaet_floor_compatible_with_real_measurement():
+    """Floor muss mit Echtmessung kompatibel sein: Original-Kassette 0.782 >= Floor.
+
+    Ohne diesen Bias löst §GOAL_BASELINE_CHECK fälschlicherweise Recovery-Phasen aus,
+    da das Kassetten-Original den Floor physikalisch nicht erreichen kann.
+    Echtmessung: Elke Best, Kassette, 1970er, Schlager, measure_all(panns=0.7) = 0.782.
+    """
+    cassette_floor = get_material_floor("cassette", "emotionalitaet")
+    real_original_score = 0.782  # measure_all() Echtmessung 2026-05-20
+    assert real_original_score >= cassette_floor, (
+        f"Original-Kassette ({real_original_score:.3f}) liegt unter Floor ({cassette_floor:.3f}) — "
+        "§GOAL_BASELINE_CHECK würde fälschlicherweise Recovery triggern (§09.2 v9.12.9)"
+    )
+
+
+def test_tape_emotionalitaet_floor_below_canonical():
+    """Tape-emotionalitaet-Floor muss ebenfalls unter Canon liegen (gleiche Bias-Klasse tape_analog)."""
+    canonical = CANONICAL_THRESHOLDS_RESTORATION["emotionalitaet"]
+    tape_floor = get_material_floor("tape", "emotionalitaet")
+    assert tape_floor < canonical, (
+        f"tape emotionalitaet floor {tape_floor:.3f} must be < canonical {canonical:.3f} "
+        "(tape_analog class — gleiche Bias-Struktur wie cassette)"
+    )
+
+
+def test_cassette_emotionalitaet_floor_range():
+    """Floor muss im sinnvollen Bereich [0.77, 0.82] liegen.
+
+    Zu niedrig (< 0.77) würde Restaurierungs-Gate zu permissiv machen;
+    zu hoch (>= Canon 0.84) würde §GOAL_BASELINE_CHECK triggern trotz physikalischer Grenze.
+    """
+    floor = get_material_floor("cassette", "emotionalitaet")
+    assert 0.77 <= floor < 0.84, (
+        f"cassette emotionalitaet floor {floor:.3f} must be in [0.77, 0.84) "
+        "(physikalisches Ceiling Kassette-AGC + BW 12 kHz — §09.2 v9.12.9)"
+    )
+
+
 def test_pmgg_canonical_thresholds_match_calibration_matrix():
     """PMGG's internal threshold copy must stay in sync with calibration_matrix (§2.55).
 

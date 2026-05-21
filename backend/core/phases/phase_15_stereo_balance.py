@@ -90,6 +90,7 @@ class StereoBalancePhaseV2(PhaseInterface):
     # Material-adaptive correction strength per band [Bass, Mid, High]
     CORRECTION_STRENGTH = {
         MaterialType.TAPE: [0.95, 0.90, 0.85],  # Aggressive (azimuth errors)
+        MaterialType.CASSETTE: [0.95, 0.90, 0.85],  # Cassette shares tape transport + head-balance mechanics.
         MaterialType.VINYL: [0.90, 0.80, 0.70],  # Moderate-High (cartridge imbalance)
         MaterialType.SHELLAC: [0.60, 0.50, 0.40],  # Gentle (often mono/pseudo-stereo)
         MaterialType.CD_DIGITAL: [0.85, 0.70, 0.60],  # Moderate (recording/mastering errors)
@@ -99,6 +100,12 @@ class StereoBalancePhaseV2(PhaseInterface):
     # Imbalance detection threshold (dB) per band
     DETECTION_THRESHOLD = {
         MaterialType.TAPE: [0.8, 1.0, 1.5],  # Bass most critical
+        MaterialType.CASSETTE: [
+            0.8,
+            1.0,
+            1.5,
+        ],
+        # Same transport/head-balance class as tape; explicit threshold avoids silent fallback.
         MaterialType.VINYL: [1.0, 1.5, 2.0],
         MaterialType.SHELLAC: [2.5, 3.0, 4.0],  # More tolerant
         MaterialType.CD_DIGITAL: [0.3, 0.5, 1.0],  # Digital should be precise
@@ -113,7 +120,11 @@ class StereoBalancePhaseV2(PhaseInterface):
         self.name = "Stereo Balance v2.0 (Professional)"
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.VINYL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: MaterialType | str = MaterialType.VINYL,
+        **kwargs,
     ) -> PhaseResult:
         """
         Wendet an: professional-grade stereo balance correction.
@@ -121,16 +132,24 @@ class StereoBalancePhaseV2(PhaseInterface):
         Args:
             audio: Stereo audio [samples, 2]
             sample_rate: Sample rate in Hz
-            material: Material type for adaptive parameters
+            material_type: Material type for adaptive parameters
 
         Returns:
             PhaseResult with balanced stereo audio
         """
-        sample_rate = kwargs.get("sample_rate", 48000)
+        sample_rate = kwargs.get("sample_rate", sample_rate)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         self.validate_input(audio)
         start_time = time.time()
         audio, _p15_transposed = to_channels_last(audio)
+
+        if isinstance(material_type, MaterialType):
+            material_enum = material_type
+        else:
+            try:
+                material_enum = MaterialType(str(material_type).lower())
+            except Exception:
+                material_enum = MaterialType.VINYL
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -147,7 +166,7 @@ class StereoBalancePhaseV2(PhaseInterface):
                 execution_time_seconds=time.time() - start_time,
                 metadata={
                     "stereo": False,
-                    "material": material.name,
+                    "material": material_enum.name,
                     "correction_applied": False,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
@@ -165,7 +184,7 @@ class StereoBalancePhaseV2(PhaseInterface):
                 audio=passthrough,
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": material_enum.name,
                     "correction_applied": False,
                     "algorithm": "skipped_zero_strength",
                     "phase_locality_factor": phase_locality_factor,
@@ -182,9 +201,14 @@ class StereoBalancePhaseV2(PhaseInterface):
             )
 
         # Get material-specific parameters
-        strength_per_band = list(self.CORRECTION_STRENGTH.get(material, self.CORRECTION_STRENGTH[MaterialType.VINYL]))
+        strength_per_band = list(
+            self.CORRECTION_STRENGTH.get(material_enum, self.CORRECTION_STRENGTH[MaterialType.VINYL])
+        )
         strength_per_band = [float(s * _effective_strength) for s in strength_per_band]
-        threshold_per_band = self.DETECTION_THRESHOLD.get(material, self.DETECTION_THRESHOLD[MaterialType.VINYL])
+        threshold_per_band = self.DETECTION_THRESHOLD.get(
+            material_enum,
+            self.DETECTION_THRESHOLD[MaterialType.VINYL],
+        )
 
         # Step 1: Multi-band split
         bands = self._split_multiband(audio, sample_rate)
@@ -232,7 +256,7 @@ class StereoBalancePhaseV2(PhaseInterface):
             audio=corrected_audio,
             execution_time_seconds=execution_time,
             metadata={
-                "material": material.name,
+                "material": material_enum.name,
                 "correction_applied": correction_applied,
                 "algorithm": "multiband_spectral_balance_v2",
                 "num_bands": 3,
@@ -444,34 +468,34 @@ if __name__ == "__main__":
 
     # Generate test stereo audio with imbalance
     duration = 5.0  # seconds
-    sample_rate = 44100
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    test_sample_rate = 44100
+    t = np.linspace(0, duration, int(test_sample_rate * duration), endpoint=False)
 
     # Multi-frequency content
     # Left channel: Normal amplitude
-    left = 0.4 * np.sin(2 * np.pi * 100 * t)  # Bass: 100 Hz
-    left += 0.3 * np.sin(2 * np.pi * 440 * t)  # Mid: 440 Hz (A4)
-    left += 0.2 * np.sin(2 * np.pi * 1760 * t)  # Mid: 1760 Hz (A6)
-    left += 0.15 * np.sin(2 * np.pi * 8000 * t)  # High: 8 kHz
+    test_left = 0.4 * np.sin(2 * np.pi * 100 * t)  # Bass: 100 Hz
+    test_left += 0.3 * np.sin(2 * np.pi * 440 * t)  # Mid: 440 Hz (A4)
+    test_left += 0.2 * np.sin(2 * np.pi * 1760 * t)  # Mid: 1760 Hz (A6)
+    test_left += 0.15 * np.sin(2 * np.pi * 8000 * t)  # High: 8 kHz
 
     # Right channel: Reduced amplitude (imbalance)
     # Bass: -3 dB (half amplitude for 6 dB imbalance)
     # Mid: -6 dB (quarter amplitude for 12 dB imbalance)
     # High: -1.5 dB (slight imbalance)
-    right = 0.28 * np.sin(2 * np.pi * 100 * t)  # Bass: -3 dB
-    right += 0.15 * np.sin(2 * np.pi * 440 * t)  # Mid: -6 dB
-    right += 0.1 * np.sin(2 * np.pi * 1760 * t)  # Mid: -6 dB
-    right += 0.13 * np.sin(2 * np.pi * 8000 * t)  # High: -1.5 dB
+    test_right = 0.28 * np.sin(2 * np.pi * 100 * t)  # Bass: -3 dB
+    test_right += 0.15 * np.sin(2 * np.pi * 440 * t)  # Mid: -6 dB
+    test_right += 0.1 * np.sin(2 * np.pi * 1760 * t)  # Mid: -6 dB
+    test_right += 0.13 * np.sin(2 * np.pi * 8000 * t)  # High: -1.5 dB
 
     # Create stereo audio
-    audio = np.column_stack([left, right])
+    test_audio = np.column_stack([test_left, test_right])
 
     # Calculate expected imbalances
-    left_rms = np.sqrt(np.mean(left**2))
-    right_rms = np.sqrt(np.mean(right**2))
-    expected_imbalance = 20 * np.log10(left_rms / right_rms)
+    test_left_rms = np.sqrt(np.mean(test_left**2))
+    test_right_rms = np.sqrt(np.mean(test_right**2))
+    expected_imbalance = 20 * np.log10(test_left_rms / test_right_rms)
 
-    logger.debug("\nTest Audio: %ss @ %s Hz (stereo)", duration, sample_rate)
+    logger.debug("\nTest Audio: %ss @ %s Hz (stereo)", duration, test_sample_rate)
     logger.debug("Multi-frequency content with frequency-dependent imbalance:")
     logger.debug("  Bass (100 Hz): Left ~0.4, Right ~0.28 (-3 dB imbalance)")
     logger.debug("  Mid (440/1760 Hz): Left ~0.3/0.2, Right ~0.15/0.1 (-6 dB imbalance)")
@@ -483,17 +507,19 @@ if __name__ == "__main__":
 
     phase = StereoBalancePhaseV2()
 
-    for material in materials:
+    for test_material in materials:
         logger.debug("\n%s", "─" * 80)
-        logger.debug("Testing with material: %s", material.name)
+        logger.debug("Testing with material: %s", test_material.name)
         logger.debug("%s", "─" * 80)
 
-        result = phase.process(audio, sample_rate, material)
+        result = phase.process(test_audio, test_sample_rate, test_material)
 
         if result.success:
             logger.debug("✅ Processing Complete!")
             logger.debug(
-                f"   Execution Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
+                "   Execution Time: %.3fs (%.2fx realtime)",
+                result.execution_time_seconds,
+                result.execution_time_seconds / duration,
             )
             logger.debug("   Correction Applied: %s", result.metadata["correction_applied"])
             if result.metadata["correction_applied"]:

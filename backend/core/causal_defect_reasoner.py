@@ -1294,7 +1294,8 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
         "phase_54_transparent_dynamics",
     ],
     "quantization_noise": ["phase_23_spectral_repair", "phase_03_denoise", "phase_06_frequency_restoration"],
-    "jitter_artifacts": ["phase_23_spectral_repair", "phase_12_wow_flutter_fix"],
+    # Jitter ist kein mechanisches Wow/Flutter-Problem: keine PSOLA-Phase_12-Zuordnung.
+    "jitter_artifacts": ["phase_23_spectral_repair", "phase_14_phase_correction"],
     "dynamic_compression_excess": [
         "phase_26_dynamic_range_expansion",
         "phase_54_transparent_dynamics",
@@ -1331,7 +1332,7 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
         "phase_07_harmonic_restoration",
     ],
     "aliasing": [
-        "phase_03_denoise",  # AA-Filter-Artefakte aus Digitalisierung
+        # Aliasing ist kohärente Spiegelfrequenz-Struktur, kein stationäres Rauschen.
         "phase_23_spectral_repair",
         "phase_50_spectral_repair",
     ],
@@ -1473,13 +1474,14 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
         "phase_05_rumble_filter",  # Sekundär: Sub-Bass-Begleiterscheinung ausfiltern
     ],
     "room_mode_resonance": [
-        "phase_05_rumble_filter",  # Primary: adaptive Notch-Filter auf schmalbandige 40–200 Hz Peaks
-        "phase_04_eq_correction",  # Sekundär: parametrischer EQ für verbleibende Resonanzspitzen
-        "phase_03_denoise",  # Tertiär: Rauschboden-Bereinigung nach Notch-Eingriff
+        "phase_04_eq_correction",  # Primary: parametrischer Notch-EQ 40–200 Hz (Q=12, −8 dB)
+        "phase_16_final_eq",  # Sekundär: Feinkorrektur verbleibender Resonanzspitzen
+        "phase_05_rumble_filter",  # Tertiär: Sub-Bass-Begleitenergie (Rolloff)
     ],
     "nr_breathing_artifact": [
-        "phase_03_denoise",  # Primary: zeitlich adaptives Gain-Smoothing an NR-Übergangszonen (OMLSA)
-        "phase_29_tape_hiss_reduction",  # Sekundär: stationärer Rauschboden-Rest nach Breathing-Korrektur
+        "phase_54_transparent_dynamics",  # Primary: Envelope-Re-Smoothing der NR-Modulationszonen
+        "phase_08_transient_preservation",  # Sekundär: Transienten-Integrität an Pumping-Grenzen
+        # KEIN phase_03/phase_29 — weiteres NR auf NR-Artefakt verstärkt das Pumpen (§4.11, V28)
     ],
     "flutter_spectral_sidebands": [
         "phase_12_wow_flutter_fix",  # Primary: PSOLA-Korrektur eliminiert Seitenband-Quelle (Pitch-Instabilität)
@@ -1491,9 +1493,10 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
         "phase_31_speed_pitch_correction",  # Sekundär: Feinabstimmung nach Grob-Korrektur
     ],
     "overload_distortion": [
-        "phase_63_intermodulation_reduction",  # Primary: Volterra-basierte IMD-Entfernung (H3/H5)
-        "phase_23_spectral_repair",  # Sekundär: Spektral-Inpainting der Klirr-Produkte
-        "phase_09_crackle_removal",  # Tertiär: asymmetrische Wellenform-Reparatur
+        "phase_09_crackle_removal",  # Primary: asymmetrische Wellenform + transiente Peakrekonstruktion
+        "phase_23_spectral_repair",  # Sekundär: Spektral-Inpainting harmonischer Klirr-Produkte (H2/H3)
+        "phase_14_phase_correction",  # Tertiär: Phasenverzerrung durch nichtlineares Overload
+        # KEIN phase_63 (IMD-Reduktion) — Harmonische ≠ Intermodulationsprodukte (§4.11, V29)
     ],
     "lacquer_disc_degradation": [
         "phase_03_denoise",  # Primary: Substrat-Rauschen + Breitband-HF-Verlust

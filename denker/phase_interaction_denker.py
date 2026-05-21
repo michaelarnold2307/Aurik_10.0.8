@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
+from importlib import import_module
 from typing import Any
 
 import numpy as np
@@ -52,17 +53,48 @@ logger = logging.getLogger(__name__)
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: PhaseInteractionDenker | None = None
+_SINGLETON: dict[str, PhaseInteractionDenker | None] = {"instance": None}
 _lock = threading.Lock()
 
 
+def _load_symbol(module_name: str, symbol_name: str) -> Any:
+    """Lädt Symbole lazy, um schwere/zyklische Imports zu vermeiden."""
+    return getattr(import_module(module_name), symbol_name)
+
+
 def get_phase_interaction_denker() -> PhaseInteractionDenker:
-    global _instance
+    """Gibt die thread-sichere Singleton-Instanz des PhaseInteractionDenker zurück."""
+    _instance = _SINGLETON["instance"]
     if _instance is None:
         with _lock:
+            _instance = _SINGLETON["instance"]
             if _instance is None:
                 _instance = PhaseInteractionDenker()
+                _SINGLETON["instance"] = _instance
     return _instance
+
+
+def _goal_risk_threshold_from_signal(
+    signal_signature: dict[str, float] | None,
+    restorability_score: float,
+) -> float:
+    """Leitet eine signal-/restorability-adaptive Goal-Risk-Schwelle ab."""
+    threshold = float(_GOAL_RISK_THRESHOLD)
+    if signal_signature:
+        transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+        crest_db = float(signal_signature.get("crest_db", 0.0))
+        hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+        if transient_ratio >= 0.01:
+            threshold -= 0.05
+        if crest_db >= 18.0:
+            threshold -= 0.03
+        if hf_ratio >= 0.12:
+            threshold -= 0.02
+    if restorability_score >= 80.0:
+        threshold += 0.03
+    elif restorability_score <= 40.0:
+        threshold -= 0.03
+    return float(np.clip(threshold, 0.45, 0.75))
 
 
 # ---------------------------------------------------------------------------
@@ -175,23 +207,6 @@ _GOAL_RISK_PROTECTIVE_PHASES: dict[str, str] = {
     "artikulation": "phase_24_dropout_repair",  # Dropout → Artikulation
 }
 
-# ---------------------------------------------------------------------------
-# Goal-Risiko-Schwelle + schützende Phasen (§GoalRisk, ExzellenzDenker-Integration)
-# ---------------------------------------------------------------------------
-# Prophylaktische Phasen-Injektion wenn ExzellenzDenker.prognostiziere() Risiko meldet.
-_GOAL_RISK_THRESHOLD: float = 0.60
-"""Risikoschwelle ∈ [0, 1] ab der eine schützende Phase injiziert wird."""
-
-_GOAL_RISK_PROTECTIVE_PHASES: dict[str, str] = {
-    "natuerlichkeit": "phase_03_denoise",  # Rauschen → Natürlichkeit
-    "authentizitaet": "phase_03_denoise",  # Rauschen → Authentizität
-    "brillanz": "phase_06_frequency_restoration",  # HF-Verlust → Brillanz
-    "timbre": "phase_07_harmonic_restoration",  # HF-Verlust → Timbre
-    "groove": "phase_09_crackle_removal",  # Transient-Armut → Groove
-    "micro_dynamics": "phase_29_tape_hiss_reduction",  # Rausch-Maskierung → MikroDynamik
-    "artikulation": "phase_24_dropout_repair",  # Dropout → Artikulation
-}
-
 
 # ---------------------------------------------------------------------------
 # Ergebnis-Datenklasse
@@ -266,6 +281,7 @@ class PhaseInteractionDenker:
         pipeline_confidence: Any | None = None,
         goal_risk_map: dict[str, float] | None = None,
         strategie_plan: Any | None = None,
+        signal_signature: dict[str, float] | None = None,
     ) -> PhasePlan:
         """Erstellt einen konfliktfreien, semantisch geordneten Phasenplan.
 
@@ -308,6 +324,7 @@ class PhaseInteractionDenker:
                 pipeline_confidence=pipeline_confidence,
                 goal_risk_map=goal_risk_map,
                 strategie_plan=strategie_plan,
+                signal_signature=signal_signature,
             )
         except Exception as exc:
             logger.warning(
@@ -325,6 +342,7 @@ class PhaseInteractionDenker:
 
     def _plan_internal(
         self,
+        *,
         defect_result: Any,
         material: str,
         mode: str,
@@ -338,6 +356,7 @@ class PhaseInteractionDenker:
         pipeline_confidence: Any | None,
         goal_risk_map: dict[str, float] | None,
         strategie_plan: Any | None,
+        signal_signature: dict[str, float] | None,
     ) -> PhasePlan:
         # 1. Phase-Selektion via UV3 (UV3 = Werkzeug, nicht Orchestrator)
         uv3_phases = self._select_via_uv3(
@@ -368,9 +387,10 @@ class PhaseInteractionDenker:
         # unabhängig vom DefectScanner-Score (§6.2a Komplement).
         if chain_result is not None:
             try:
-                from denker.tontraegerkette_denker import get_tontraegerkette_denker
-
-                _chain_plan = get_tontraegerkette_denker().leite_phasen_ab(chain_result)
+                _get_tontraegerkette_denker = _load_symbol(
+                    "denker.tontraegerkette_denker", "get_tontraegerkette_denker"
+                )
+                _chain_plan = _get_tontraegerkette_denker().leite_phasen_ab(chain_result)
                 for must in _chain_plan.must_have_phases:
                     if must not in merged_phases:
                         merged_phases.append(must)
@@ -383,14 +403,31 @@ class PhaseInteractionDenker:
         # 3. Goal-Risk-Injektion (§GoalRisk Feature 2: ExzellenzDenker.prognostiziere())
         # Injiziert schützende Phasen wenn ein Musical Goal mit Risiko >= Schwelle bedroht ist.
         if goal_risk_map:
+            _goal_threshold = _goal_risk_threshold_from_signal(signal_signature, restorability_score)
             for goal, risk in goal_risk_map.items():
-                if risk >= _GOAL_RISK_THRESHOLD:
+                if risk >= _goal_threshold:
                     protective = _GOAL_RISK_PROTECTIVE_PHASES.get(goal)
                     if protective and protective not in merged_phases:
                         merged_phases.append(protective)
-                        note = f"§GoalRisk-Injektion [{goal}={risk:.2f}]: {protective}"
+                        note = f"§GoalRisk-Injektion [{goal}={risk:.2f}, thr={_goal_threshold:.2f}]: {protective}"
                         injected_notes.append(note)
                         logger.info("PhaseInteractionDenker %s", note)
+
+        # 3b. Wissenschaftsbasierte Signal-Injektion (advisory, no-harm):
+        # schützt Transienten/Artikulation und Sibilanz bei risikoreichem Material.
+        if signal_signature:
+            transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+            hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+            if transient_ratio >= 0.01 and "phase_08_transient_preservation" not in merged_phases:
+                merged_phases.append("phase_08_transient_preservation")
+                note = f"§Signal-Injektion [transient_ratio={transient_ratio:.4f}]: phase_08_transient_preservation"
+                injected_notes.append(note)
+                logger.info("PhaseInteractionDenker %s", note)
+            if hf_ratio >= 0.12 and "phase_19_de_esser" not in merged_phases:
+                merged_phases.append("phase_19_de_esser")
+                note = f"§Signal-Injektion [hf_ratio={hf_ratio:.3f}]: phase_19_de_esser"
+                injected_notes.append(note)
+                logger.info("PhaseInteractionDenker %s", note)
 
         # 4. Semantische Annotation
         annotations = self._annotate(merged_phases)
@@ -406,9 +443,8 @@ class PhaseInteractionDenker:
         phase_quality_tiers: dict[str, str] = {}
         if strategie_plan is not None:
             try:
-                from denker.strategie_denker import get_strategie_denker
-
-                phase_quality_tiers = get_strategie_denker().schaetze_phasen_tier(
+                _get_strategie_denker = _load_symbol("denker.strategie_denker", "get_strategie_denker")
+                phase_quality_tiers = _get_strategie_denker().schaetze_phasen_tier(
                     strategie_plan,
                     ordered,
                     restorability_score=restorability_score,
@@ -452,6 +488,7 @@ class PhaseInteractionDenker:
 
     def _select_via_uv3(
         self,
+        *,
         defect_result: Any,
         mode: str,
         chain_info: Any | None,
@@ -468,16 +505,14 @@ class PhaseInteractionDenker:
         Der PhaseInteractionDenker verfeinert das Ergebnis anschließend semantisch.
         """
         try:
-            from backend.core.unified_restorer_v3 import (
-                QualityMode,
-                RestorationConfig,
-                UnifiedRestorerV3,
-            )
+            _quality_mode_cls = _load_symbol("backend.core.unified_restorer_v3", "QualityMode")
+            _restoration_config_cls = _load_symbol("backend.core.unified_restorer_v3", "RestorationConfig")
+            _unified_restorer_v3_cls = _load_symbol("backend.core.unified_restorer_v3", "UnifiedRestorerV3")
 
             # Leicht-Instanz nur für Selektion (kein ML, kein Lazy-Load)
             _is_studio = mode in ("studio2026", "studio_2026", "maximum")
-            _qmode = QualityMode.MAXIMUM if _is_studio else QualityMode.QUALITY
-            _cfg = RestorationConfig(
+            _qmode = _quality_mode_cls.MAXIMUM if _is_studio else _quality_mode_cls.QUALITY
+            _cfg = _restoration_config_cls(
                 mode=_qmode,
                 studio_2026=_is_studio,
                 enforce_3x_rt=False,
@@ -485,9 +520,11 @@ class PhaseInteractionDenker:
                 enable_adaptive_skipping=False,
                 enable_phase_gate=False,
             )
-            _uv3 = UnifiedRestorerV3(config=_cfg)
+            _uv3 = _unified_restorer_v3_cls(config=_cfg)
+            _select_fn = object.__getattribute__(_uv3, "_select_phases")
+            _optimize_fn = object.__getattribute__(_uv3, "_optimize_phase_plan_intelligence")
 
-            raw = _uv3._select_phases(
+            raw = _select_fn(
                 defect_result,
                 causal_plan=causal_plan,
                 chain_info=chain_info,
@@ -495,7 +532,7 @@ class PhaseInteractionDenker:
                 audio=audio,
                 sr=sr,
             )
-            optimized = _uv3._optimize_phase_plan_intelligence(
+            optimized = _optimize_fn(
                 raw,
                 causal_plan=causal_plan,
                 pipeline_confidence=pipeline_confidence,

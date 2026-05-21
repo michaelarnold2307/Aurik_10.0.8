@@ -78,6 +78,8 @@ import numpy as np
 from scipy import signal
 
 from backend.core.defect_scanner import MaterialType
+from backend.core.dsp.hallucination_guard import check_hallucination
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -179,14 +181,20 @@ class MonoToStereoPhaseV2(PhaseInterface):
         mono_correlation_threshold = float(np.clip(base + mode_adj + rest_adj, 0.80, 0.97))
         return {"mono_correlation_threshold": mono_correlation_threshold}
 
-    def process(self, audio: np.ndarray, sample_rate: int, material: MaterialType, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str | MaterialType = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         Wendet an: professional-grade mono-to-stereo enhancement.
 
         Args:
             audio: Stereo audio [samples, 2]
             sample_rate: Sample rate in Hz
-            material: Material type
+            material_type: Material type
 
         Returns:
             PhaseResult with pseudo-stereo audio
@@ -196,15 +204,20 @@ class MonoToStereoPhaseV2(PhaseInterface):
         start_time = time.time()
 
         self.validate_input(audio)
+        phase_material = kwargs.get("material", material_type)
+        if not isinstance(phase_material, MaterialType):
+            try:
+                phase_material = MaterialType(str(phase_material))
+            except Exception:
+                phase_material = MaterialType.VINYL
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
 
         quality_mode = kwargs.get("quality_mode")
         restorability_score = kwargs.get("restorability_score", 50.0)
-        material_key = str(getattr(material, "value", material) or "unknown")
+        material_key = str(getattr(phase_material, "value", phase_material) or "unknown")
         mono_to_stereo_profile = self._compute_mono_to_stereo_profile(material_key, quality_mode, restorability_score)
 
         if _effective_strength <= 0.0:
@@ -215,7 +228,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
                 audio=audio.copy(),
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "algorithm": "skipped_zero_strength",
                     "mono_to_stereo_applied": False,
                     "mono_to_stereo_profile": mono_to_stereo_profile,
@@ -228,7 +241,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
             )
 
         # Skip for digital sources (already stereo)
-        if material in [MaterialType.CD_DIGITAL, MaterialType.STREAMING]:
+        if phase_material in [MaterialType.CD_DIGITAL, MaterialType.STREAMING]:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
             return PhaseResult(
@@ -236,7 +249,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
                 audio=audio.copy(),
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "mono_to_stereo_applied": False,
                     "reason": "digital_source",
                     "mono_to_stereo_profile": mono_to_stereo_profile,
@@ -245,7 +258,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
                     "rms_drop_db": 0.0,
                     "loudness_makeup_db": 0.0,
                 },
-                warnings=[f"Mono-to-Stereo not applicable for {material.name}"],
+                warnings=[f"Mono-to-Stereo not applicable for {phase_material.name}"],
             )
 
         # Check if stereo
@@ -257,7 +270,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
                 audio=audio,
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "mono_to_stereo_applied": False,
                     "reason": "already_mono",
                     "mono_to_stereo_profile": mono_to_stereo_profile,
@@ -276,7 +289,9 @@ class MonoToStereoPhaseV2(PhaseInterface):
 
         if not is_mono:
             logger.debug(
-                f"Input already stereo (L/R correlation = {correlation:.3f} < {mono_correlation_threshold:.3f})"
+                "Input already stereo (L/R correlation = %.3f < %.3f)",
+                correlation,
+                mono_correlation_threshold,
             )
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
@@ -285,7 +300,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
                 audio=audio.copy(),
                 execution_time_seconds=time.time() - start_time,
                 metadata={
-                    "material": material.name,
+                    "material": phase_material.name,
                     "mono_to_stereo_applied": False,
                     "reason": "already_stereo",
                     "mono_to_stereo_profile": mono_to_stereo_profile,
@@ -308,8 +323,8 @@ class MonoToStereoPhaseV2(PhaseInterface):
         bands = self._split_multiband(mono, sample_rate)
 
         # Step 3: Per-band pseudo-stereo generation
-        width_factors = [float(w * _effective_strength) for w in self.WIDTH_FACTORS[material]]
-        haas_delays = [int(round(d * _effective_strength)) for d in self.HAAS_DELAYS_MS[material]]
+        width_factors = [float(w * _effective_strength) for w in self.WIDTH_FACTORS[phase_material]]
+        haas_delays = [int(round(d * _effective_strength)) for d in self.HAAS_DELAYS_MS[phase_material]]
 
         stereo_bands = []
         for i, band_mono in enumerate(bands):
@@ -325,7 +340,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
         pseudo_stereo = self._preserve_transients(mono, pseudo_stereo, sample_rate)
 
         # Step 6: HF enhancement (optional)
-        hf_boost_db = float(self.HF_ENHANCEMENT_DB[material] * _effective_strength)
+        hf_boost_db = float(self.HF_ENHANCEMENT_DB[phase_material] * _effective_strength)
         if hf_boost_db > 0:
             pseudo_stereo = self._enhance_hf_content(pseudo_stereo, sample_rate, hf_boost_db)
 
@@ -342,20 +357,19 @@ class MonoToStereoPhaseV2(PhaseInterface):
         execution_time = time.time() - start_time
 
         logger.info(
-            f"Pseudo-stereo: L/R correlation {correlation:.3f} → {correlation_after:.3f}, "
-            f"width {width_achieved:.2f}, mono-compatible: {mono_compatible}"
+            "Pseudo-stereo: L/R correlation %.3f -> %.3f, width %.2f, mono-compatible: %s",
+            correlation,
+            correlation_after,
+            width_achieved,
+            mono_compatible,
         )
 
         pseudo_stereo = np.nan_to_num(pseudo_stereo, nan=0.0, posinf=0.0, neginf=0.0)
         pseudo_stereo = np.clip(pseudo_stereo, -1.0, 1.0)
         # §2.46e Hallucination-Guard (Pflicht für additive Phasen)
         try:
-            from backend.core.dsp.hallucination_guard import (
-                check_hallucination as _check_hg_32,  # pylint: disable=import-outside-toplevel
-            )
-
             _mode_32 = str(kwargs.get("mode", "restoration"))
-            _hg_32 = _check_hg_32(audio, pseudo_stereo, sr=sample_rate, mode=_mode_32)
+            _hg_32 = check_hallucination(audio, pseudo_stereo, sr=sample_rate, mode=_mode_32)
             if _hg_32.requires_rollback:
                 logger.warning(
                     "phase_32: hallucination_guard rollback (spectral_novelty=%.3f)", _hg_32.spectral_novelty
@@ -374,7 +388,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
             audio=pseudo_stereo,
             execution_time_seconds=execution_time,
             metadata={
-                "material": material.name,
+                "material": phase_material.name,
                 "mono_to_stereo_applied": True,
                 "algorithm": "lauridsen_pseudo_stereo_v2",
                 "mono_to_stereo_profile": mono_to_stereo_profile,
@@ -502,7 +516,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
 
         return np.column_stack([left_out, right_out])
 
-    def _apply_cascaded_allpass(self, signal_in: np.ndarray, sample_rate: int, order: int, seed: int) -> np.ndarray:
+    def _apply_cascaded_allpass(self, signal_in: np.ndarray, _sample_rate: int, order: int, seed: int) -> np.ndarray:
         """
         Wendet kaskadierte Allpass-Filter zur Phasen-Dekorrelation an.
 
@@ -513,7 +527,7 @@ class MonoToStereoPhaseV2(PhaseInterface):
         output = signal_in.copy()
 
         # Cascade multiple 1st-order all-pass filters
-        for i in range(order):
+        for _ in range(order):
             # Random coefficient (0.3-0.7 for stability)
             a = np.random.uniform(0.3, 0.7)
 
@@ -654,93 +668,3 @@ class MonoToStereoPhaseV2(PhaseInterface):
             quality_impact=0.86,  # Professional-grade
             description="Lauridsen-algorithm pseudo-stereo with advanced decorrelation",
         )
-
-
-# Standalone test
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-    logger.debug("=" * 80)
-    logger.debug("Professional Mono-to-Stereo Enhancement v2.0 - Test")
-    logger.debug("=" * 80)
-
-    sample_rate = 44100
-    duration = 3.0
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-
-    # Generate mono test audio (multi-frequency content)
-    mono = 0.3 * np.sin(2 * np.pi * 100 * t)  # Bass: 100 Hz
-    mono += 0.4 * np.sin(2 * np.pi * 440 * t)  # Mid: 440 Hz (A4)
-    mono += 0.3 * np.sin(2 * np.pi * 1760 * t)  # High: 1760 Hz
-    mono += 0.2 * np.sin(2 * np.pi * 8000 * t)  # HF: 8 kHz
-    mono += 0.1 * np.random.randn(len(t))  # Noise
-
-    # Create mono stereo (L = R)
-    audio = np.column_stack([mono, mono])
-
-    logger.debug("\nTest Audio: %ss @ %s Hz (mono stereo)", duration, sample_rate)
-    logger.debug("Multi-frequency content: 100Hz + 440Hz + 1760Hz + 8kHz + noise")
-    logger.debug("L = R (perfect correlation, simulates mono recording)")
-
-    # Test with different materials
-    test_materials = [
-        MaterialType.SHELLAC,
-        MaterialType.VINYL,
-        MaterialType.TAPE,
-    ]
-
-    phase = MonoToStereoPhaseV2()
-
-    for material in test_materials:
-        logger.debug("\n%s", "─" * 80)
-        logger.debug("Testing with material: %s", material.name)
-        logger.debug("%s", "─" * 80)
-
-        result = phase.process(audio, sample_rate, material)
-
-        if result.success:
-            logger.debug("✅ Processing Complete!")
-            logger.debug(
-                f"   Execution Time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
-            )
-            logger.debug("   Pseudo-Stereo Applied: %s", result.metadata["mono_to_stereo_applied"])
-            if result.metadata.get("mono_to_stereo_applied"):
-                logger.debug("   L/R Correlation Before: %.3f", result.metrics["lr_correlation_before"])
-                logger.debug("   L/R Correlation After: %.3f", result.metrics["lr_correlation_after"])
-                logger.debug("   Stereo Width Achieved: %.2f", result.metrics["stereo_width_achieved"])
-                logger.debug("   Mono Compatible: %s", result.metrics["mono_compatible"])
-                logger.debug("   HF Enhancement: %.1f dB", result.metrics["hf_enhancement_db"])
-                logger.debug("\n   Width Factors (Bass→Ultra-High): %s", result.modifications["width_factors"])
-                logger.debug("   Haas Delays (ms): %s", result.modifications["haas_delays_ms"])
-            else:
-                logger.debug("   Reason: %s", result.metadata.get("reason", "unknown"))
-
-    # Test with already-stereo input (should skip)
-    logger.debug("\n%s", "─" * 80)
-    logger.debug("Testing with already-stereo input (should skip)")
-    logger.debug("%s", "─" * 80)
-
-    # Create true stereo (L ≠ R, low correlation)
-    left_stereo = 0.5 * np.sin(2 * np.pi * 440 * t)
-    right_stereo = 0.5 * np.sin(2 * np.pi * 440 * t + np.pi * 0.5)  # 90° phase shift
-    audio_stereo = np.column_stack([left_stereo, right_stereo])
-
-    result_stereo = phase.process(audio_stereo, sample_rate, MaterialType.VINYL)
-
-    if result_stereo.success:
-        logger.debug("✅ As expected: Pseudo-Stereo skipped for already-stereo input")
-        logger.debug("   Applied: %s", result_stereo.metadata["mono_to_stereo_applied"])
-        logger.debug("   Reason: %s", result_stereo.metadata.get("reason", "unknown"))
-        if "lr_correlation" in result_stereo.metadata:
-            logger.debug("   L/R Correlation: %.3f (below threshold)", result_stereo.metadata["lr_correlation"])
-        logger.debug("   Execution Time: %.3fs", result_stereo.execution_time_seconds)
-
-    logger.debug("\n%s", "=" * 80)
-    logger.debug("✅ Professional Mono-to-Stereo Enhancement v2.0 Test Complete!")
-    logger.debug("=" * 80)
-    logger.debug("Algorithm: lauridsen_pseudo_stereo_v2")
-    logger.debug("Scientific Reference: Lauridsen (1954), Bauer (1961), Schroeder (1962),")
-    logger.debug("                     Gerzon (1985, 1992), ITU-R BS.775, EBU R128")
-    logger.debug("Benchmark: iZotope Ozone Imager, Waves S1, Brainworx bx_solo,")
-    logger.debug("           TC Electronic Finalizer, Junger Audio b41/b42, Stereo Tool")
-    logger.debug("Quality Impact: 0.86 (Professional-Grade)")

@@ -8,6 +8,11 @@ import sys
 
 sys.path.insert(0, ".")
 
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("Mini-R11-Skript ist nur fuer manuelle Ausfuehrung gedacht.", allow_module_level=True)
+
 from pathlib import Path
 
 import numpy as np

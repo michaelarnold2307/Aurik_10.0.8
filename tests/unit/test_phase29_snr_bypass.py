@@ -113,3 +113,24 @@ class TestPhase29SnrBypass:
         processing = meta.get("processing", "")
         assert processing == "skipped", f"CD_DIGITAL should use 'skipped' path, got: {processing}"
         assert not meta.get("snr_bypass", False), "CD_DIGITAL skip ≠ SNR bypass path"
+
+    def test_quiet_zone_guard_limits_makeup_explosion(self) -> None:
+        """§0h: Tape hiss reduction must not add large energy in quiet regions."""
+        from backend.core.phases.phase_29_tape_hiss_reduction import TapeHissReductionPhase
+
+        ref = np.zeros(SR, dtype=np.float32)
+        ref[SR // 3 : 2 * SR // 3] = 0.05 * np.sin(2 * np.pi * 440.0 * np.arange(SR // 3, dtype=np.float32) / SR)
+        candidate = ref.copy()
+        candidate[: SR // 4] = 0.8
+        candidate[-SR // 4 :] = -0.8
+
+        guarded, stats = TapeHissReductionPhase._limit_quiet_zone_boost(
+            ref,
+            candidate,
+            SR,
+            "tape",
+        )
+
+        assert stats["quiet_zone_limited_frames"] > 0
+        assert np.percentile(np.abs(guarded[: SR // 4]), 95) < 1e-3
+        assert np.percentile(np.abs(guarded[-SR // 4 :]), 95) < 1e-3

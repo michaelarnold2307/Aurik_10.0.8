@@ -153,8 +153,8 @@ repos:
           - --disable-error-code=union-attr
           - --disable-error-code=return
           - --disable-error-code=dict-item
-        # Nur Kern-Module prüfen (schnell genug für pre-commit)
-        files: ^(core|dsp|plugins|denker)/
+        # Nur Kern-Module prüfen (backend/ + plugins/ + denker/ — deckt backend/core/ korrekt ab)
+        files: ^(backend|plugins|denker)/.*\.py$
 
   # ---------------------------------------------------------------------------
   # 9. Bandit — Sicherheits-Scan (OWASP Top 10)
@@ -233,11 +233,18 @@ repos:
         files: ^(backend|core|dsp|plugins|denker|Aurik910)/.*\.py$
 
       - id: aurik-verboten-linter
-        name: "🔍 Aurik AST VERBOTEN-Linter (V01–V12)"
+        name: "🔍 Aurik AST VERBOTEN-Linter (V01–V33)"
         entry: .venv_aurik/bin/python scripts/aurik_verboten_linter.py backend/ plugins/
         language: system
         pass_filenames: false
         files: ^(backend|plugins)/.*\.py$
+
+      - id: aurik-crossfire-guard
+        name: "🛋 §0a Crossfire-Guard (phase_21/35/42 nie in CAUSE_TO_PHASES)"
+        entry: .venv_aurik/bin/python scripts/check_crossfire_phases.py
+        language: system
+        pass_filenames: false
+        files: ^backend/core/causal_defect_reasoner\.py$
 
       - id: aurik-stash-drift-guard
         name: "📦 Aurik Stash-Drift-Guard (verhindert Snapshot-Akkumulation)"

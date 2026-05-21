@@ -64,10 +64,44 @@ from scipy import signal
 
 from backend.core.audio_utils import to_channels_last
 from backend.core.defect_scanner import MaterialType
+from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+from backend.core.natural_performance_detector import get_natural_performance_detector
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_compression_pressure(defect_scores: object) -> float:
+    """Liest Compression-Defektstärke robust aus heterogenen defect_scores."""
+    if not isinstance(defect_scores, dict) or not defect_scores:
+        return 0.0
+
+    key_weights = {
+        "COMPRESSION_ARTIFACTS": 1.0,
+        "DYNAMIC_COMPRESSION_EXCESS": 0.85,
+        "DIGITAL_ARTIFACTS": 0.35,
+    }
+
+    pressure = 0.0
+    for key, val in defect_scores.items():
+        key_s = str(key)
+        key_norm = key_s.rsplit(".", maxsplit=1)[-1].upper()
+        if key_norm not in key_weights:
+            continue
+
+        sev_val = None
+        if isinstance(val, (int, float)):
+            sev_val = float(val)
+        elif hasattr(val, "severity"):
+            sev_val = float(getattr(val, "severity", 0.0) or 0.0)
+
+        if sev_val is None:
+            continue
+
+        pressure = max(pressure, float(np.clip(sev_val * key_weights[key_norm], 0.0, 1.0)))
+
+    return float(np.clip(pressure, 0.0, 1.0))
 
 
 class TransparentDynamicsV1(PhaseInterface):
@@ -170,6 +204,17 @@ class TransparentDynamicsV1(PhaseInterface):
         "mix": 0.60,
     }
 
+    _MATERIAL_KEY_MAP: dict[str, MaterialType] = {
+        "shellac": MaterialType.SHELLAC,
+        "vinyl": MaterialType.VINYL,
+        "tape": MaterialType.TAPE,
+        "cassette": MaterialType.TAPE,
+        "cd": MaterialType.CD_DIGITAL,
+        "cd_digital": MaterialType.CD_DIGITAL,
+        "digital": MaterialType.CD_DIGITAL,
+        "streaming": MaterialType.STREAMING,
+    }
+
     def __init__(self, sample_rate: int = 48000, genre: str = "default", **kwargs):
         """
         Initialisiert Transparent Dynamics Processor.
@@ -184,7 +229,7 @@ class TransparentDynamicsV1(PhaseInterface):
 
     @staticmethod
     def _compute_transparent_dynamics_profile(
-        material_key: str,
+        _material_key: str,
         quality_mode: str | None,
         restorability_score: float,
     ) -> dict[str, float]:
@@ -209,8 +254,8 @@ class TransparentDynamicsV1(PhaseInterface):
     def process(
         self,
         audio: np.ndarray,
-        material_type: MaterialType = MaterialType.CD_DIGITAL,
-        genre: str | None = None,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
         **kwargs,
     ) -> PhaseResult:
         """
@@ -218,24 +263,35 @@ class TransparentDynamicsV1(PhaseInterface):
 
         Args:
             audio: Input audio (mono or stereo)
+            sample_rate: Input-SR (intern 48000 Hz)
             material_type: Source material type
-            genre: Override genre preset
             **kwargs: Additional parameters
 
         Returns:
             PhaseResult with transparently compressed audio
         """
-        sample_rate = kwargs.get("sample_rate", 48000)
+        sample_rate = int(kwargs.get("sample_rate", sample_rate))
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p54_transposed = to_channels_last(audio)
         start_time = time.time()
+
+        _material_raw = kwargs.get("material_type", material_type)
+        if isinstance(_material_raw, MaterialType):
+            material_enum = _material_raw
+        else:
+            material_enum = self._MATERIAL_KEY_MAP.get(str(_material_raw).strip().lower(), MaterialType.CD_DIGITAL)
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         effective_strength = float(kwargs.get("strength", 1.0)) * phase_locality_factor
         effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
+        compression_pressure = _extract_compression_pressure(kwargs.get("defect_scores"))
+        control_floor = 0.0
+        if compression_pressure >= 0.25:
+            control_floor = float(np.clip(0.25 + 0.65 * ((compression_pressure - 0.25) / 0.75), 0.25, 0.90))
+        control_strength = float(max(effective_strength, control_floor))
 
-        if effective_strength <= 1e-6:
+        if control_strength <= 1e-6:
             dry = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             dry = np.clip(dry, -1.0, 1.0)
             return PhaseResult(
@@ -244,6 +300,9 @@ class TransparentDynamicsV1(PhaseInterface):
                 execution_time_seconds=time.time() - start_time,
                 metadata={
                     "algorithm": "skipped_zero_strength",
+                    "compression_pressure": compression_pressure,
+                    "control_floor": control_floor,
+                    "control_strength": control_strength,
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": 0.0,
                     "rms_drop_db": 0.0,
@@ -252,12 +311,12 @@ class TransparentDynamicsV1(PhaseInterface):
             )
 
         # Determine genre preset
-        genre_key = genre or self.genre
+        genre_key = str(kwargs.get("genre") or self.genre)
         genre_config = self.GENRE_PRESETS.get(genre_key, self.GENRE_PRESETS["default"])
 
         # Get material-specific config
-        material_config = self.MATERIAL_CEILING.get(material_type, self.DEFAULT_MATERIAL_CONFIG)
-        _material_key_54 = material_type.value if isinstance(material_type, MaterialType) else str(material_type)
+        material_config = self.MATERIAL_CEILING.get(material_enum, self.DEFAULT_MATERIAL_CONFIG)
+        _material_key_54 = material_enum.value
         _td_profile = self._compute_transparent_dynamics_profile(
             _material_key_54,
             kwargs.get("quality_mode"),
@@ -270,16 +329,33 @@ class TransparentDynamicsV1(PhaseInterface):
         ratio = material_config["ratio"]
         threshold_db = material_config["threshold_db"]
         knee_db = material_config["knee_db"]
-        mix = float(np.clip(material_config["mix"] + _td_profile["mix_delta"], 0.0, 1.0)) * effective_strength
+        mix = float(np.clip(material_config["mix"] + _td_profile["mix_delta"], 0.0, 1.0)) * control_strength
+
+        hard_intervention_active = compression_pressure >= 0.45
+        if hard_intervention_active:
+            hard_norm = float(np.clip((compression_pressure - 0.45) / 0.55, 0.0, 1.0))
+            threshold_db = float(np.clip(threshold_db - (2.0 + 6.0 * hard_norm), -36.0, -6.0))
+            ratio = float(np.clip(ratio + (0.4 + 1.2 * hard_norm), 1.5, 5.0))
+            attack_ms = float(np.clip(attack_ms * (1.05 + 0.30 * hard_norm), 3.0, 120.0))
+            release_ms = float(np.clip(release_ms * (1.15 + 0.55 * hard_norm), 40.0, 1400.0))
+            min_mix = float(np.clip(0.45 + 0.40 * hard_norm, 0.45, 0.90))
+            mix = float(max(mix, min_mix))
 
         # §2.51 Linked-Stereo: Gain-Envelope aus Mono-Downmix, identisch auf L+R
         is_stereo = audio.ndim == 2
         audio_mono = np.mean(audio, axis=1) if is_stereo else audio.copy()
 
         logger.info(
-            f"Transparent Dynamics: {material_type.value}, genre={genre_key}, "
-            f"ratio={ratio:.1f}:1, threshold={threshold_db}dB, "
-            f"attack={attack_ms}ms, release={release_ms}ms"
+            "Transparent Dynamics: %s, genre=%s, ratio=%.1f:1, threshold=%sdB, "
+            "attack=%sms, release=%sms, comp_pressure=%.2f, control=%.2f",
+            material_enum.value,
+            genre_key,
+            ratio,
+            threshold_db,
+            attack_ms,
+            release_ms,
+            compression_pressure,
+            control_strength,
         )
 
         # Stage 1: Psychoacoustic Masking Detection
@@ -298,6 +374,7 @@ class TransparentDynamicsV1(PhaseInterface):
             release_ms=release_ms,
             masking_curve=masking_curve,
             transient_mask=transient_mask,
+            compression_pressure=compression_pressure,
         )
 
         # §2.51 Linked: Compute gain envelope from mono, apply identically to L+R
@@ -330,8 +407,6 @@ class TransparentDynamicsV1(PhaseInterface):
 
         # §4.5 Psychoacoustic Masking Clamp — preserve masked dynamics regions
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
-
             audio_out = apply_psychoacoustic_masking_clamp(
                 audio,
                 audio_out,
@@ -345,8 +420,6 @@ class TransparentDynamicsV1(PhaseInterface):
         # §2.46f Natural-Performance-Artifacts-Guard — Dynamik-Kompression darf
         # Atemgeräusche zwischen Phrasen nicht gaten und Vibrato nicht glätten.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector
-
             _npa_a54 = audio
             if _npa_a54.ndim == 2 and _npa_a54.shape[0] == 2 and _npa_a54.shape[1] > _npa_a54.shape[0]:
                 _npa_a54 = _npa_a54.T
@@ -373,13 +446,17 @@ class TransparentDynamicsV1(PhaseInterface):
             audio=audio_out,
             execution_time_seconds=time.time() - start_time,
             metadata={
-                "material_type": material_type.value,
+                "material_type": material_enum.value,
                 "genre": genre_key,
                 "ratio": ratio,
                 "threshold_db": threshold_db,
                 "attack_ms": attack_ms,
                 "release_ms": release_ms,
                 "mix": mix,
+                "compression_pressure": compression_pressure,
+                "control_floor": control_floor,
+                "control_strength": control_strength,
+                "hard_intervention_active": hard_intervention_active,
                 "transparent_dynamics_profile": dict(_td_profile),
                 "mix_delta": float(_td_profile["mix_delta"]),
                 "phase_locality_factor": phase_locality_factor,
@@ -470,13 +547,14 @@ class TransparentDynamicsV1(PhaseInterface):
         release_ms: float,
         masking_curve: np.ndarray,
         transient_mask: np.ndarray,
+        compression_pressure: float = 0.0,
     ) -> np.ndarray:
         """
         Wendet an: genre-adaptive soft-knee compression with psychoacoustic awareness.
         """
         # Convert attack/release to samples
-        attack_samples = int(attack_ms * self.sample_rate / 1000)
-        release_samples = int(release_ms * self.sample_rate / 1000)
+        attack_samples = max(1, int(attack_ms * self.sample_rate / 1000))
+        release_samples = max(1, int(release_ms * self.sample_rate / 1000))
 
         # Convert threshold to linear
         threshold_linear = 10 ** (threshold_db / 20)
@@ -531,6 +609,15 @@ class TransparentDynamicsV1(PhaseInterface):
 
         # Preserve transients (bypass compression at transient locations)
         gain_smooth = transient_mask + (1.0 - transient_mask) * gain_smooth
+
+        # Harte Kompressions-Artefakte: zusätzliche Envelope-Glättung gegen Pumpen.
+        if compression_pressure >= 0.45:
+            nyquist = self.sample_rate / 2.0
+            hard_norm = float(np.clip((compression_pressure - 0.45) / 0.55, 0.0, 1.0))
+            smooth_hz = float(np.clip(6.0 - 3.5 * hard_norm, 2.5, 6.0))
+            sos_smooth = signal.butter(2, smooth_hz / nyquist, output="sos")
+            gain_smooth = signal.sosfiltfilt(sos_smooth, gain_smooth)
+            gain_smooth = np.clip(gain_smooth, 0.0, 1.25)
 
         # Apply gain reduction
         audio_compressed = audio * gain_smooth
@@ -587,25 +674,25 @@ if __name__ == "__main__":
     t = np.linspace(0, duration, int(sr * duration))
 
     # Base signal with dynamics
-    audio = 0.3 * np.sin(2 * np.pi * 200 * t)  # Base tone
+    test_audio = 0.3 * np.sin(2 * np.pi * 200 * t)  # Base tone
 
     # Add loud passage (0.5-1.0s)
     loud_mask = (t >= 0.5) & (t < 1.0)
-    audio[loud_mask] *= 3.0
+    test_audio[loud_mask] *= 3.0
 
     # Add transients (drum hits)
     transient_times = [0.3, 0.7, 1.3, 1.7]
     for tt in transient_times:
         idx = int(tt * sr)
-        if idx < len(audio):
+        if idx < len(test_audio):
             transient_len = int(0.01 * sr)
             transient_env = np.exp(-200 * (t - tt))[idx : idx + transient_len]
-            audio[idx : idx + len(transient_env)] += (
+            test_audio[idx : idx + len(transient_env)] += (
                 0.5 * transient_env * np.sin(2 * np.pi * 1000 * (t - tt)[idx : idx + len(transient_env)])
             )
 
     # Normalize
-    audio = audio / np.percentile(np.abs(audio), 99.9) * 0.7
+    test_audio = test_audio / np.percentile(np.abs(test_audio), 99.9) * 0.7
 
     logger.debug("\n🎵 Test Audio Generated:")
     logger.debug("   Duration: %ss", duration)
@@ -614,7 +701,7 @@ if __name__ == "__main__":
 
     # Test first genre/material combination
     phase = TransparentDynamicsV1(sample_rate=sr, genre=genres[0])
-    result = phase.process(audio, material_type=materials[0])
+    result = phase.process(test_audio, material_type=materials[0])
 
     metadata = phase.get_metadata()
 
@@ -627,21 +714,24 @@ if __name__ == "__main__":
 
     logger.debug("\n🎛️ Testing %s genres × %s materials:", len(genres), len(materials))
 
-    for genre in genres:
+    for genre_name in genres:
         for material in materials:
-            phase = TransparentDynamicsV1(sample_rate=sr, genre=genre)
-            result = phase.process(audio, material_type=material)
+            phase = TransparentDynamicsV1(sample_rate=sr, genre=genre_name)
+            result = phase.process(test_audio, material_type=material)
 
             rt_factor = result.execution_time_seconds / duration
 
             logger.debug(
-                f"\n   {genre:12} × {material.value:15}: "
-                f"time={result.execution_time_seconds:.3f}s ({rt_factor:.3f}× RT), "
-                f"max={np.max(np.abs(result.audio)):.3f}, "
-                f"ratio={result.metadata['ratio']:.1f}:1"
+                "\n   %-12s × %-15s: time=%.3fs (%.3f× RT), max=%.3f, ratio=%.1f:1",
+                genre_name,
+                material.value,
+                result.execution_time_seconds,
+                rt_factor,
+                np.max(np.abs(result.audio)),
+                result.metadata["ratio"],
             )
 
-    logger.debug("\n" + "=" * 70)
+    logger.debug("\n%s", "=" * 70)
     logger.debug("✅ TRANSPARENT DYNAMICS TEST COMPLETE")
     logger.debug("=" * 70)
     logger.debug("\n🎯 Next Steps:")

@@ -218,6 +218,58 @@ phase_39, phase_41, phase_43, phase_45, phase_51
 
 ---
 
+## Delta-Audit (20. Mai 2026) — PDV/UV3 Goal-Awareness und Push-Gate
+
+### Zweck
+
+Aktualisierung des Audit-Stands fuer den aktuellen normativen Delta-Fix in der
+Phase-Defect-Verifikation (PDV) und den zugehoerigen Entwicklungsprozess.
+
+### Gepruefter Scope
+
+- `backend/core/phase_defect_verifier.py`
+- `backend/core/unified_restorer_v3.py`
+- `tests/unit/test_phase_defect_verifier.py`
+- `tests/unit/test_artifact_freedom_gate.py`
+
+### Ergebnis
+
+- **Lint/Type-Status im Scope:** PASS
+  - C0415 (import-outside-toplevel): behoben
+  - W0603 (global-statement): behoben
+- **Funktionsstatus:** PASS
+  - PDV arbeitet goal-aware mit song-spezifischen Zielwerten (`goal_before`, `goal_after`,
+    `goal_targets`, `goal_weights`)
+  - Naturalness-Preserve-Guard ist aktiv
+- **Teststatus:** PASS (85/85)
+
+### Governance-Update
+
+- Push-Regeln auf Release-Must-Gate aktualisiert
+- Pflicht: Tests + Lint/Type + Changelog/Spec/Audit-Delta vor Push
+
+---
+
+## Delta-Audit (20. Mai 2026) — Umgewichtung vor Rollback
+
+### Ziel
+
+Verhindern, dass eine Phase bei grenzwertiger Defekt-Verschlechterung sofort verworfen wird.
+Policy: erst Umgewichtung, dann Rollback.
+
+### Umsetzung
+
+- `backend/core/phase_defect_verifier.py`:
+  - Vor Rollback werden konservative Blend-Kandidaten getestet (`alpha`: 0.92, 0.85, 0.78).
+  - Wenn ein Kandidat alle PDV-Proxy-Schwellen einhaelt, wird Rollback vermieden.
+  - Hard-Exception bleibt aktiv: Natuerlichkeits-Hard-Guard verletzt => sofortiger Rollback.
+  - Telemetrie erweitert um `reweight_applied` und `reweight_alpha`.
+
+- `.github/instructions/pipeline.instructions.md`:
+  - Neuer normativer Abschnitt `§2.48b Umgewichtung vor Rollback [RELEASE_MUST]`.
+
+---
+
 ## 🔎 Zusatz-Audit: Direkte Fallback-Pfade (verifiziert)
 
 Ziel dieses Zusatz-Audits: Prüfen, ob Phasen bei Primärfehlern sofort auf DSP/Bypass/Passthrough springen, ohne ausreichende Guarded-Retry-Strategie.

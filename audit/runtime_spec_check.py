@@ -114,6 +114,13 @@ def _extract_float(lines: list[str], pattern: str) -> float | None:
     return None
 
 
+def _has_material_downgrade_cassette_to_tape(lines: list[str]) -> bool:
+    """Erkennt, ob ein erkannter Kassette-Typ im selben Lauf auf generisches Tape fällt."""
+    saw_mc_cassette = any("🔍 MediumDetector: Material=cassette" in line for line in lines)
+    saw_songcal_tape = any("🎛️ SongCalibration: material=tape" in line for line in lines)
+    return bool(saw_mc_cassette and saw_songcal_tape)
+
+
 def run_check(backend_log: Path, frontend_log: Path, output: Path) -> dict[str, Any]:
     backend_lines = _read_lines(backend_log)
     frontend_lines = _read_lines(frontend_log)
@@ -134,6 +141,21 @@ def run_check(backend_log: Path, frontend_log: Path, output: Path) -> dict[str, 
     )
 
     if run_lines:
+        run_completed = _contains(run_lines, "AurikDenker.denke() abgeschlossen")
+        checks.append(
+            CheckResult(
+                id="run_completed",
+                title="AurikDenker Lauf vollständig abgeschlossen",
+                passed=run_completed,
+                required=True,
+                evidence=(
+                    "AurikDenker.denke() abgeschlossen gefunden"
+                    if run_completed
+                    else "Kein AurikDenker-Abschluss im Run-Window"
+                ),
+            )
+        )
+
         mode_ok = _has_allowed_mode(run_lines)
         checks.append(
             CheckResult(
@@ -231,6 +253,63 @@ def run_check(backend_log: Path, frontend_log: Path, output: Path) -> dict[str, 
                 passed=cluster_present,
                 required=True,
                 evidence="cluster_policy gefunden" if cluster_present else "Kein cluster_policy-Signal im Log",
+            )
+        )
+
+        dag_final_logged = _contains(run_lines, "§7.5a Phase-DAG FINAL:")
+        dag_final_has_violation = any(
+            "§7.5a Phase-DAG FINAL:" in line and "HARD_BEFORE-Verletzung" in line for line in run_lines
+        )
+        checks.append(
+            CheckResult(
+                id="dag_final_clean",
+                title="§7.5a Finale DAG-Validierung ohne Verletzung",
+                passed=dag_final_logged and not dag_final_has_violation,
+                required=True,
+                evidence=(
+                    "Finale DAG-Validierung vorhanden, keine HARD_BEFORE-Verletzung"
+                    if dag_final_logged and not dag_final_has_violation
+                    else (
+                        "Finale DAG-Validierung fehlt"
+                        if not dag_final_logged
+                        else "Finale DAG-Validierung meldet HARD_BEFORE-Verletzung"
+                    )
+                ),
+            )
+        )
+
+        phase12_started = _contains(run_lines, "phase_12_wow_flutter_fix startet")
+        phase12_low_conf_skip = _contains(run_lines, "Phase 12: Pitch-Konfidenz zu niedrig")
+        checks.append(
+            CheckResult(
+                id="phase12_effective_when_started",
+                title="Phase 12 wirkt bei Ausführung (kein low-confidence Komplett-Skip)",
+                passed=(not phase12_started) or (not phase12_low_conf_skip),
+                required=True,
+                evidence=(
+                    "Phase 12 nicht im Laufplan"
+                    if not phase12_started
+                    else (
+                        "Phase 12 ohne low-confidence Skip ausgeführt"
+                        if not phase12_low_conf_skip
+                        else "Phase 12 gestartet, aber low-confidence Skip erkannt"
+                    )
+                ),
+            )
+        )
+
+        material_downgrade = _has_material_downgrade_cassette_to_tape(run_lines)
+        checks.append(
+            CheckResult(
+                id="material_specificity_guard",
+                title="Material-Spezifität erhalten (kein cassette→tape Downcast)",
+                passed=not material_downgrade,
+                required=True,
+                evidence=(
+                    "Kein cassette→tape Downcast im Lauf"
+                    if not material_downgrade
+                    else "MediumDetector meldet cassette, SongCalibration nutzt tape"
+                ),
             )
         )
 

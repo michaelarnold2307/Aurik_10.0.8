@@ -394,6 +394,30 @@ git push origin feature/your-feature-name
 3. **Feedback:** Address review comments
 4. **Approval:** Once approved, PR is merged
 
+### 6. Push Rules (Release-Must)
+
+Before every push, the local gate must be green.
+
+Mandatory checks:
+
+1. Run changed-scope unit tests and affected integration tests.
+2. Ensure no new lint/type diagnostics in touched files.
+3. Update changelog/spec/audit docs for normative behavior changes.
+4. Verify no contract bypass around bridge/denker/export path.
+
+Minimum commands (project standard):
+
+```bash
+"${workspaceFolder}/.venv_aurik/bin/python" -m pytest tests/unit -p no:xdist --override-ini="addopts=--strict-markers --import-mode=importlib" --timeout=30 --tb=short -q --disable-warnings --no-header
+"${workspaceFolder}/.venv_aurik/bin/python" -m pytest tests -m "not e2e and not ml" -p no:xdist --override-ini="addopts=--strict-markers --import-mode=importlib" --timeout=30 --tb=short -q --disable-warnings --no-header --maxfail=20 --ignore=tests/unit
+```
+
+Push is blocked when:
+
+- a mandatory test fails
+- touched files introduce new lint/type findings
+- normative code change has no matching changelog/spec/audit delta
+
 ### PR Template
 
 ```markdown

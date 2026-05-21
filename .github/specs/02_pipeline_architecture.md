@@ -443,6 +443,109 @@ bei unverändert strikten End-Gates (§2.44, §2.48, §2.49).
 
 ---
 
+## §2.56b [RELEASE_MUST] Per-Phase Strength Oracle und 15-Goal-Teamsteuerung (v9.12.9)
+
+Die zentrale All-Phase-Kopplung (§2.56a) bleibt Pflicht, reicht aber allein nicht aus.
+Alle Phasen mit wirksamen Steuerparametern (`strength`, `wet`, `threshold_db`, `ratio`,
+`drive`, `mix`, `gain_db`, `q`, `temperature`, `repair_strength`, `context_mix`,
+`band_strength`, `stereo_amount`) MUESSEN vor ihrer Ausfuehrung ein
+**phasenspezifisches Strength Oracle** konsultieren.
+
+**Normativer Ort:** `UnifiedRestorerV3._profiled_phase_call` direkt nach SongCal-/PMGG-/Team-Policy-
+Vorbelegung, aber vor dem eigentlichen Phasenaufruf.
+
+**Pflichtziel:**
+
+1. Nicht ein Einzelziel maximieren, sondern den gewichtet anwendbaren 15er-Zielvektor.
+2. Pro Phase genau den lokalen Eingriff waehlen, der den groessten Team-Beitrag zum
+     Schliessen der aktuellen Goal-Gaps liefert.
+3. P1/P2-Stabilitaet, Vocal-Supremacy, Carrier-Recovery und AFG/PMGG/CIG-Grenzen
+     haben absoluten Vorrang vor P3-P5-Gewinn.
+
+**Kanonischer Ablauf:**
+
+```python
+goal_snapshot_pre = _fast_goal_snapshot(audio_pre, sr, context)
+goal_gaps = compute_goal_gaps(goal_snapshot_pre, effective_goal_targets, applicable_goals)
+
+oracle_profile = resolve_phase_strength_oracle(
+        phase_id=phase_id,
+        phase_family=phase_family,
+        audio=audio_pre,
+        sample_rate=sr,
+        goal_gaps=goal_gaps,
+        goal_weights=goal_weights,
+        defect_scores=defect_scores,
+        defect_locations=defect_locations,
+        locality_factor=phase_locality_factor,
+        restorability_score=restorability_score,
+        material_key=material_key,
+        transfer_chain=transfer_chain,
+        chain_confidence=material_confidence,
+        vfa_result=vfa_result,
+        song_calibration_profile=song_calibration_profile,
+        gp_proposal=gp_parameter_proposal,
+        phase_history=metadata.get("phase_deltas", {}),
+        wall_time_budget_s=wall_time_remaining_s,
+)
+
+phase_kwargs = merge_oracle_profile_into_phase_kwargs(base_kwargs, oracle_profile)
+audio_post = phase.execute(audio_pre, sr, **phase_kwargs)
+```
+
+**Minimaler Oracle-Output (bindend):**
+
+```python
+{
+        "control_strength": float,       # 0.0-1.0
+        "wet_mix": float,                # 0.0-1.0
+        "threshold_db": float | None,
+        "ratio": float | None,
+        "drive": float | None,
+        "eq_gain_db": float | None,
+        "band_profile": dict[str, float] | None,
+        "team_contribution": dict[str, float],      # erwarteter Beitrag je Goal
+        "dominant_goal_guard": bool,                # nie single-goal-dominant
+                "hard_caps": {
+                        "max_strength": float,
+                        "max_wet_mix": float,
+                        "chain_factor": float,                  # direkte Tontraegerketten-Konditionierung
+                        "chain_depth": float,
+                        "chain_confidence": float,
+                },
+}
+```
+
+**Transfer-Chain-Weltklasse-Invariante [RELEASE_MUST]:**
+
+- Das Oracle MUSS den gesamten `transfer_chain`-Kontext direkt in der Staerkeberechnung nutzen;
+    eine rein indirekte Beruecksichtigung ueber Material-Defaults ist nicht ausreichend. `[SRC:S03,S04]`
+- `chain_factor` MUSS deterministisch aus `material_key`, `transfer_chain` und
+    `chain_confidence` berechnet werden und sowohl `driver` als auch `hard_caps` beeinflussen. `[SRC:S03,S04]`
+- Bei komplexen Mehrfachketten (z. B. `vinyl -> cassette -> mp3_low`) MUSS `chain_factor`
+    strenger sein als bei Einzeltraegern gleicher Defektlast. `[SRC:S03,S04]`
+
+**Invarianten:**
+
+- Das Oracle ist **advisory fuer die lokale Parametrisierung**, nicht fuer Export-Gates.
+- PMGG-/Policy-/Safety-Caps bleiben fuehrend.
+- Explizit uebergebene Hard-Parameter aus Recovery-/Rollback-Pfaden duerfen nur bounds-geklammert,
+    nicht ignoriert werden.
+- Phasen ohne kontinuierliche Staerke (`binary gate`, `passthrough`, `format only`) muessen
+    mindestens `control_strength in {0.0, 1.0}` und `team_contribution` melden.
+- Wenn das Oracle ausfaellt: neutraler Fallback auf bestehende implizite Staerke + `logger.debug`. `[SRC:S03]`
+
+**Verboten:**
+
+- Song-unabhaengige Feststaerken als Primaersteuerung.
+- Single-goal-Maximierung ohne Weighted-Gap-Check ueber alle 15 Ziele.
+- Pro Phase voneinander isolierte Optimierer ohne Zugriff auf `goal_gaps`, `goal_weights`
+    und `effective_goal_targets`.
+
+**Kreuzreferenzen:** Spec 01 §1.2c, Spec 06 §7.1d, Spec 09 §09.3c.
+
+---
+
 ## Kanonische RestorationResult-Definition
 
 ```python
@@ -1422,6 +1525,8 @@ Die GP-Memory-Referenz-Vektoren werden **automatisch** aus dem Verarbeitungsverl
 
 ### HPI-Formeln
 
+Quelle: `[SRC:S06,S07,S08,S09,S10,S11]`
+
 **Restoration**: `HPI = MERT_similarity(input, output) × timbral_fidelity(input, output) × artifact_freedom × emotional_arc_preservation`
 
 - `timbral_fidelity` dominant: strukturelle Klangkohärenz (nicht bloße Input-Ähnlichkeit)
@@ -1438,6 +1543,17 @@ Die GP-Memory-Referenz-Vektoren werden **automatisch** aus dem Verarbeitungsverl
 - MERT-Ähnlichkeit fließt mit reduziertem Gewicht ein (musikalische Identität bewahren, nicht Klangfarbe)
 
 **Beide Modi**: `HPI > 0` → Export | `HPI ≤ 0` → Rollback auf weniger aggressive Variante
+
+### Evidenzklassen fuer Kern-Schwellen (Stand 2026-05-20)
+
+| Regel | Evidenzklasse | Quellenbasis | Governance-Regel |
+| --- | --- | --- | --- |
+| Loudness/TruePeak-Guardrails | A | `[SRC:S06,S07]` | Direkt aus Normen ableitbar, nur normkonforme Updates |
+| `artifact_freedom < 0.95` Veto + Musical-Noise/Pre-Echo-Detektion | B | `[SRC:S14,S15]` + materialadaptive Kalibrierung | Aenderungen nur mit Gate-Regression + Audit |
+| Formant-/Vibrato-Vokalinvarianten | B | `[SRC:S16,S17,S18]` + `[SRC:S08,S09,S10,S11]` | Aenderungen nur mit Vocal-Regression + Hoertest-Delta |
+| MERT-Floor und materialadaptive VQI-Floors | C | Primär kalibriert, theoretisch gestuetzt durch `[SRC:S08,S09,S10,S11]` | Quartalsweise Revalidierung gegen reale Musikfaelle verpflichtend |
+
+**Invariante:** Klasse-C-Schwellen duerfen ohne neue Evidenz nicht als universale Naturkonstanten deklariert werden; sie bleiben kalibrierte Betriebsparameter.
 
 **[BUG-FIX v9.12.0] Material-adaptive `timbral_fidelity` Floor** (Bug 5):
 
@@ -1516,6 +1632,8 @@ Ein Artefakt (`artifact_freedom` = 0.5) killt den HPI härter als eine leichte T
 > Erst wenn nach dem iterativen Zyklus kein positives Delta erreichbar ist, wird geskippt.
 
 ## §2.45a [RELEASE_MUST] Mid-Pipeline-Loudness-Drift-Guard (v9.10.128, erweitert v9.11.5)
+
+Quelle: `[SRC:S06,S07]`
 
 ### Problem
 
@@ -1651,7 +1769,7 @@ nur wenn die Noise-Floor-Evidenz eindeutig genug ist. Der Aufrufer MUSS explizit
 Music-gated Gain allein ist nicht hinreichend, wenn ein Signal bewusst leise Intro-/Outro-Zonen enthält.
 Sobald ein Pfad Programm-Lautheit aktiv anhebt (z. B. LUFS-Normalisierung, Floor-Boost, Export-Normalisierung,
 Mastering-LUFS, späte Dynamics-Polish), MUSS nach dem positiven Gain ein Referenzvergleich gegen das Eingangs-
-signal stattfinden. Die kanonische Umsetzung ist `limit_quiet_edge_boost(reference_audio, candidate_audio, sr)`.
+signal stattfinden. Die kanonische Umsetzung ist `limit_quiet_edge_boost(reference_audio, candidate_audio, sr)`. `[SRC:S06,S07]`
 
 **Zielinvariante:** Der Mittelteil darf angehoben werden, aber intentional leise Intro-/Outro-Zonen dürfen gegenüber
 der Referenz nicht neu explodieren.
@@ -2405,6 +2523,8 @@ if phase_type in GDD_VALID_TYPES:                # nicht ML_GENERATIVE, nicht AD
 > Konsumenten: `artifact_freedom_gate.py`, `cumulative_interaction_guard.py`, `per_phase_musical_goals_gate.py`.
 
 ## §2.49 [RELEASE_MUST] Artefakt-Freiheits-Gate (v9.10.123)
+
+Quelle: `[SRC:S03,S04,S12,S13]`
 
 Dediziertes Gate für **Artefakt-Erkennung** — unabhängig von den 15 Musical Goals. Eine Phase kann alle Goals bestehen und trotzdem hörbare Artefakte erzeugen.
 
@@ -3330,6 +3450,8 @@ PlateauStop aktiv. Fix: `mono = a[:, 0] if a.ndim == 2 else a`.
 ---
 
 ## §2.60 [RELEASE_MUST] Rollback-Hierarchie (v9.12.0)
+
+Quelle: `[SRC:S06,S07,S12,S13]`
 
 **Wenn ein Gate scheitert, MUSS Aurik die nächste Stufe versuchen — nie sofort abbrechen oder exportieren.**
 

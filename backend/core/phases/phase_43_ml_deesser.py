@@ -46,6 +46,7 @@ import scipy.signal as sig
 from backend.core.audio_utils import safe_to_mono
 from backend.core.consonant_enhancement import measure_fricative_snr
 from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
+from backend.core.dsp.deesser_intensity import compute_optimal_deesser_intensity
 
 try:
     from backend.core.ml_memory_budget import release as _release_ml_budget_43
@@ -95,6 +96,39 @@ _DEFAULT_ATTACK_MS = 2.0
 _DEFAULT_RELEASE_MS = 80.0
 _DEFAULT_GENDER = "unknown"
 _DEFAULT_STRENGTH_CAP = 1.0  # kein Cap; §2.19.3 Schlager-Modus: 0.45
+
+
+def _extract_sibilance_pressure(defect_scores: object) -> float:
+    """Liest Sibilance/Harshness severity robust aus heterogenen defect_scores.
+
+    Unterstützt Dicts mit String-Keys ("sibilance"), Enum-Keys (DefectType.SIBILANCE)
+    sowie DefectScore-Objekte mit .severity Attribut.
+    """
+    if not isinstance(defect_scores, dict) or not defect_scores:
+        return 0.0
+
+    target_keys = {
+        "sibilance",
+        "sibilance_excess",
+        "vocal_harshness",
+    }
+    max_pressure = 0.0
+
+    for key, val in defect_scores.items():
+        if hasattr(key, "value"):
+            key_name = str(getattr(key, "value", "") or "").strip().lower()
+        else:
+            key_name = str(key or "").strip().lower()
+        if key_name not in target_keys:
+            continue
+
+        if hasattr(val, "severity"):
+            sev_val = float(getattr(val, "severity", 0.0) or 0.0)
+        else:
+            sev_val = float(val or 0.0)
+        max_pressure = max(max_pressure, sev_val)
+
+    return float(np.clip(max_pressure, 0.0, 1.0))
 
 
 def _rms_envelope(signal: np.ndarray, sr: int, window_ms: float = 5.0) -> np.ndarray:
@@ -361,6 +395,14 @@ class AdaptiveDeEsserPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _sib_pressure = _extract_sibilance_pressure(kwargs.get("defect_scores"))
+
+        # Severity-gekoppelter Kontroll-Floor: PMGG darf den zweiten De-Esser-Pass
+        # dämpfen, aber bei klarer Sibilance/Harshness nicht auf nahezu wirkungslos.
+        _control_floor = 0.0
+        if _sib_pressure >= 0.55:
+            _control_floor = float(np.clip(0.30 + 0.40 * ((_sib_pressure - 0.55) / 0.45), 0.30, 0.70))
+        _control_strength = float(max(_effective_strength, _control_floor))
 
         if _effective_strength <= 0.0:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -382,8 +424,13 @@ class AdaptiveDeEsserPhase(PhaseInterface):
         # Parameter
         gender: str = str(kwargs.get("gender", _DEFAULT_GENDER)).lower()
         threshold_db: float = float(kwargs.get("threshold_db", _DEFAULT_THRESHOLD_DB))
+        _threshold_db_user_set = "threshold_db" in kwargs
         ratio: float = float(kwargs.get("ratio", _DEFAULT_RATIO))
-        ratio = float(1.0 + (ratio - 1.0) * _effective_strength)
+        _ratio_user_set = "ratio" in kwargs
+        ratio = float(1.0 + (ratio - 1.0) * _control_strength)
+        if _sib_pressure >= 0.55:
+            _severity_thr_delta = float(np.clip(4.0 + 8.0 * ((_sib_pressure - 0.55) / 0.45), 4.0, 12.0))
+            threshold_db = float(np.clip(threshold_db - _severity_thr_delta, -40.0, -6.0))
         attack_ms: float = float(kwargs.get("attack_ms", _DEFAULT_ATTACK_MS))
         release_ms: float = float(kwargs.get("release_ms", _DEFAULT_RELEASE_MS))
         strength_cap: float = float(kwargs.get("strength_cap", _DEFAULT_STRENGTH_CAP))
@@ -426,7 +473,11 @@ class AdaptiveDeEsserPhase(PhaseInterface):
 
             _sib_segs = classify_sibilance_pathology(audio, sr=sample_rate, f0_hz=0.0)
             _sib_summary = get_sibilance_pathology_summary(_sib_segs)
-            if _sib_summary.get("dominant_type") == "NATURAL" and _sib_summary.get("natural_fraction", 0.0) > 0.70:
+            if (
+                _sib_summary.get("dominant_type") == "NATURAL"
+                and _sib_summary.get("natural_fraction", 0.0) > 0.70
+                and _sib_pressure < 0.55
+            ):
                 # Überwiegend natürliche Sibilanz → kein De-Essing
                 strength_cap = min(strength_cap, 0.05)
                 logger.debug(
@@ -436,7 +487,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 )
             elif _sib_summary.get("dominant_type") == "MASKED_HISS":
                 # Hiss-überlagerte Sibilanz → sehr konservatives De-Essing
-                strength_cap = min(strength_cap, 0.30)
+                _masked_cap = 0.45 if _sib_pressure >= 0.55 else 0.30
+                strength_cap = min(strength_cap, _masked_cap)
                 logger.debug("Phase 43 §Lücke4: dominant=MASKED_HISS → strength_cap=%.2f", strength_cap)
         except Exception as _sib_exc:
             logger.debug("Phase 43 §Lücke4 Sibilance-Pathology: fallback — %s", _sib_exc)
@@ -455,6 +507,43 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 _breathiness,
                 strength_cap,
             )
+
+        _fricative_snr_seed = measure_fricative_snr(x, sample_rate, gender) if np.size(x) > 0 else 0.0
+        _intensity_profile = compute_optimal_deesser_intensity(
+            x,
+            sample_rate,
+            effective_strength=_effective_strength,
+            defect_scores=kwargs.get("defect_scores"),
+            fricative_snr_db=_fricative_snr_seed,
+            breathiness=_breathiness,
+            freq_low=freq_low,
+            freq_high=freq_high,
+            language_hint=str(kwargs.get("language", getattr(_ptl_43, "language", "")) or ""),
+            phoneme_timeline=_ptl_43,
+        )
+        _sib_pressure = _intensity_profile.sibilance_pressure
+        _control_strength = float(max(_control_strength, _intensity_profile.control_strength))
+        if not _ratio_user_set:
+            ratio = float(
+                np.clip(
+                    max(ratio, float(kwargs.get("ratio", _DEFAULT_RATIO)) * _intensity_profile.ratio_multiplier),
+                    1.0,
+                    12.0,
+                )
+            )
+        if not _threshold_db_user_set:
+            _base_threshold = float(kwargs.get("threshold_db", _DEFAULT_THRESHOLD_DB))
+            threshold_db = float(
+                np.clip(
+                    min(
+                        threshold_db,
+                        _base_threshold - _intensity_profile.threshold_db_delta,
+                    ),
+                    -40.0,
+                    -6.0,
+                )
+            )
+        strength_cap = float(min(strength_cap, _intensity_profile.strength_cap))
 
         gr_dbs: list[float] = []
 
@@ -549,6 +638,9 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             # Schutz von Plosiv-Bursts (/p/,/t/,/k/) die vom De-Esser als HF-Energie
             # fehlgedeutet und breitbandig reduziert werden könnten. Non-blocking.
             try:
+                _vocal_prob_43 = float(np.clip(float(kwargs.get("vocal_probability", 0.0) or 0.0), 0.0, 1.0))
+                if _vocal_prob_43 < 0.25:
+                    raise RuntimeError("phoneme_fallback_skipped_low_vocal_probability")
                 _hop_43 = 512
                 _mono_43: np.ndarray
                 if x.ndim == 2:
@@ -682,7 +774,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
 
         logger.info(
             "Phase 43 DeEsser: gender=%s freq=[%.0f–%.0f Hz] "
-            "threshold=%.1f dB ratio=%.1f strength_cap=%.2f avg_GR=%.2f dB",
+            "threshold=%.1f dB ratio=%.1f strength_cap=%.2f avg_GR=%.2f dB "
+            "(sib_pressure=%.2f ctrl_strength=%.2f eff_strength=%.2f)",
             gender,
             freq_low,
             freq_high,
@@ -690,6 +783,9 @@ class AdaptiveDeEsserPhase(PhaseInterface):
             ratio,
             strength_cap,
             avg_gr,
+            _sib_pressure,
+            _control_strength,
+            _effective_strength,
         )
 
         processed = np.nan_to_num(processed, nan=0.0, posinf=0.0, neginf=0.0)
@@ -725,11 +821,20 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 "ml_refine_blend": ml_blend,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "sibilance_pressure": _sib_pressure,
+                "control_strength": _control_strength,
+                "deesser_intensity": _intensity_profile.intensity,
+                "affricate_drive": _intensity_profile.affricate_drive,
+                "phoneme_drive": _intensity_profile.phoneme_drive,
+                "sibilance_ratio": _intensity_profile.sibilance_ratio,
+                "fricative_drive": _intensity_profile.fricative_drive,
                 "rms_drop_db": 0.0,
                 "loudness_makeup_db": 0.0,
             },
             metrics={
                 "avg_gain_reduction_db": avg_gr,
+                "deesser_intensity": _intensity_profile.intensity,
+                "phoneme_drive": _intensity_profile.phoneme_drive,
                 "intelligibility_score": intelligibility_report.intelligibility_score,
                 "intelligibility_presence_ratio": intelligibility_report.presence_ratio,
                 "intelligibility_articulation_ratio": intelligibility_report.articulation_ratio,

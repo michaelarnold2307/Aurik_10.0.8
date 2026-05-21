@@ -219,6 +219,21 @@ class TestAurikDenkerNoRtLimit:
 
         assert captured.get("no_rt_limit") is True
 
+    def test_13c_denke_forwards_phase_strength_oracle_rollout_to_orchestrator(self):
+        from denker.aurik_denker import AurikDenker
+
+        denker = AurikDenker()
+        captured: dict[str, str] = {}
+
+        def _fake_orchestriere(*args, **kwargs):
+            captured["phase_strength_oracle_rollout"] = str(kwargs.get("phase_strength_oracle_rollout"))
+            return denker._fallback(args[0], rt_factor=0.1, grund="test")
+
+        with patch.object(AurikDenker, "_orchestriere", side_effect=_fake_orchestriere):
+            denker.denke(_sine(), SR, phase_strength_oracle_rollout="pilot")
+
+        assert captured.get("phase_strength_oracle_rollout") == "pilot"
+
 
 # ─── AurikDenker._orchestriere Stage 1b ─────────────────────────────────────
 
@@ -904,6 +919,121 @@ class TestAurikDenkerAutopilotMode:
 
         assert mode == "restoration"
         assert "Restoration empfohlen" in note
+
+
+class TestAurikDenkerOracleRolloutIntelligence:
+    def test_recommend_oracle_rollout_respects_explicit_mode(self):
+        from denker.aurik_denker import AurikDenker
+
+        defekt = MagicMock(overall_severity=0.8, primary_defect="dropout")
+        global_plan = MagicMock()
+        global_plan.portrait = MagicMock(decade=1950, genre="schlager")
+
+        rollout, note = AurikDenker._recommend_phase_strength_oracle_rollout(
+            requested_rollout="pilot",
+            material="tape",
+            chain_info={"chain": ["tape", "mp3_low"], "primary_medium": "mp3_low"},
+            defekt=defekt,
+            global_plan=global_plan,
+            effective_mode="restoration",
+            cached_restorability_result=MagicMock(restorability_score=42.0),
+            signal_signature={"crest_db": 18.0, "hf_ratio": 0.02, "transient_ratio": 0.02, "micro_dynamic_db": 12.0},
+        )
+
+        assert rollout == "pilot"
+        assert "beibehalten" in note
+
+    def test_recommend_oracle_rollout_prefers_off_for_extreme_fragile_case(self):
+        from denker.aurik_denker import AurikDenker
+
+        defekt = MagicMock(overall_severity=0.92, primary_defect="dropout")
+        global_plan = MagicMock()
+        global_plan.portrait = MagicMock(decade=1948, genre="schlager")
+
+        rollout, note = AurikDenker._recommend_phase_strength_oracle_rollout(
+            requested_rollout=None,
+            material="tape",
+            chain_info={"chain": ["tape", "cassette"], "primary_medium": "cassette"},
+            defekt=defekt,
+            global_plan=global_plan,
+            effective_mode="restoration",
+            cached_restorability_result=MagicMock(restorability_score=33.0),
+            signal_signature={"crest_db": 22.0, "hf_ratio": 0.01, "transient_ratio": 0.02, "micro_dynamic_db": 18.0},
+        )
+
+        assert rollout == "off"
+        assert "risk=" in note
+
+    def test_recommend_oracle_rollout_prefers_all_for_stable_modern_digital(self):
+        from denker.aurik_denker import AurikDenker
+
+        defekt = MagicMock(overall_severity=0.18, primary_defect="minor_noise")
+        global_plan = MagicMock()
+        global_plan.portrait = MagicMock(decade=2005, genre="pop")
+
+        rollout, note = AurikDenker._recommend_phase_strength_oracle_rollout(
+            requested_rollout=None,
+            material="cd_digital",
+            chain_info={"chain": ["cd_digital"], "primary_medium": "cd_digital"},
+            defekt=defekt,
+            global_plan=global_plan,
+            effective_mode="studio2026",
+            cached_restorability_result=MagicMock(restorability_score=88.0),
+            signal_signature={"crest_db": 10.0, "hf_ratio": 0.08, "transient_ratio": 0.003, "micro_dynamic_db": 8.0},
+        )
+
+        assert rollout == "all"
+        assert "material=cd_digital" in note
+
+    def test_compute_signal_intelligence_signature_returns_finite_metrics(self):
+        from denker.aurik_denker import AurikDenker
+
+        sig = AurikDenker._compute_signal_intelligence_signature(_sine(1.0), SR)
+        for key in ("rms_dbfs", "crest_db", "hf_ratio", "transient_ratio", "micro_dynamic_db"):
+            assert key in sig
+            assert math.isfinite(float(sig[key]))
+
+
+class TestAurikDenkerExcellenceRecoveryProfile:
+    def test_recovery_profile_is_conservative_for_fragile_transient_rich_signal(self):
+        from denker.aurik_denker import AurikDenker
+
+        profile = AurikDenker._recommend_excellence_recovery_profile(
+            material="tape",
+            chain_info={"chain": ["tape", "mp3_low"]},
+            effective_mode="restoration",
+            signal_signature={
+                "crest_db": 21.0,
+                "transient_ratio": 0.02,
+                "hf_ratio": 0.01,
+                "micro_dynamic_db": 16.0,
+            },
+            versa_mos=3.2,
+        )
+
+        assert float(profile["preserve_signal"]) >= 0.40
+        assert tuple(profile["blend_alphas"]) == (0.95, 0.92, 0.89)
+        assert bool(profile["strict_mos_recovery"]) is True
+
+    def test_recovery_profile_is_more_aggressive_for_stable_modern_studio(self):
+        from denker.aurik_denker import AurikDenker
+
+        profile = AurikDenker._recommend_excellence_recovery_profile(
+            material="cd_digital",
+            chain_info={"chain": ["cd_digital"]},
+            effective_mode="studio2026",
+            signal_signature={
+                "crest_db": 10.0,
+                "transient_ratio": 0.002,
+                "hf_ratio": 0.09,
+                "micro_dynamic_db": 8.0,
+            },
+            versa_mos=4.1,
+        )
+
+        assert float(profile["preserve_signal"]) < 0.20
+        assert tuple(profile["blend_alphas"]) == (0.90, 0.84, 0.78)
+        assert bool(profile["strict_mos_recovery"]) is False
 
     def test_explicit_studio2026_respects_user_choice_on_risk(self):
         audio = _sine()

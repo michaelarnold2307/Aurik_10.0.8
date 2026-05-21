@@ -323,14 +323,15 @@ class TestMediumDetector:
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = detector.detect(audio, sr=48000)
 
-        # §6.1 Fix X6: 'cassette' is normalized to 'tape' by _normalize_material_key()
-        # — only 'tape' and 'reel_tape' are valid SUPPORTED_MATERIALS keys in this family.
+        # §6.1 v9.12.5: 'cassette' is a first-class material (12 kHz BW ceiling);
+        # _normalize_material_key() preserves it as-is (no longer aliases to 'tape').
         assert result.primary_material in (
             "tape",
             "reel_tape",
-        ), f"Expected tape-family (cassette normalised to tape), got {result.primary_material}"
+            "cassette",
+        ), f"Expected tape-family material, got {result.primary_material}"
         assert len(result.transfer_chain) >= 1
-        assert result.transfer_chain[0] in ("tape", "reel_tape")
+        assert result.transfer_chain[0] in ("tape", "reel_tape", "cassette")
 
     def test_25_stereo_shape_2_N_conversion(self):
         """Stereo-Array shape (2, N) → korrekte Mono-Konversion."""
@@ -456,7 +457,9 @@ class TestMediumDetector:
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = detector.detect(audio, sr=48000, file_ext=".mp3")
 
-        assert result.transfer_chain[:4] == ["vinyl", "tape", "cd_digital", "mp3_low"]
+        # §6.1 v9.12.5: cassette is a first-class material; _infer_analog_source_from_fingerprint
+        # mock returns ("cassette", 0.58) → chain reflects cassette (not normalized to tape anymore).
+        assert result.transfer_chain[:4] == ["vinyl", "cassette", "cd_digital", "mp3_low"]
         assert len(result.medium_confidences) == len(result.transfer_chain)
         assert result.is_multi_generation is True
 
@@ -649,7 +652,9 @@ class TestMediumDetector:
         audio = np.random.randn(48000).astype(np.float32) * 0.1
         result = detector.detect(audio, sr=48000, file_ext=".mp3")
 
-        assert result.transfer_chain[:2] == ["vinyl", "tape"]
+        # §6.1 v9.12.5: cassette is a first-class material; mock returns ("cassette", 0.58)
+        # → chain reflects cassette (not normalized to tape anymore).
+        assert result.transfer_chain[:2] == ["vinyl", "cassette"]
         assert result.transfer_chain[-1] == "mp3_low", (
             f"Expected codec stage mp3_low for analog chain with limited bandwidth, got chain={result.transfer_chain}"
         )
@@ -694,5 +699,5 @@ class TestMediumDetector:
         result_without_dot = detector.detect(audio, sr=48000, file_ext="mp3")
 
         assert result_with_dot.transfer_chain == result_without_dot.transfer_chain
-        assert result_without_dot.transfer_chain[:2] == ["vinyl", "tape"]
+        assert result_without_dot.transfer_chain[:2] == ["vinyl", "cassette"]
         assert result_without_dot.transfer_chain[-1] == "mp3_low"

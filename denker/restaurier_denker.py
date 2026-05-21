@@ -294,6 +294,7 @@ class RestaurierDenker:
         output_path: str = "",
         no_rt_limit: bool = False,
         precomputed_phase_plan: list[str] | None = None,
+        phase_strength_oracle_rollout: str | None = None,
     ) -> RestaurierErgebnis:
         """Restauriert Audio vollständig mit UnifiedRestorerV3.
 
@@ -423,6 +424,8 @@ class RestaurierDenker:
                 _uv3_kwargs["output_path"] = output_path
             if no_rt_limit:
                 _uv3_kwargs["no_rt_limit"] = True
+            if phase_strength_oracle_rollout is not None:
+                _uv3_kwargs["phase_strength_oracle_rollout"] = phase_strength_oracle_rollout
             try:
                 raw = restorer.restore(audio, **_uv3_kwargs)
                 return self._konvertiere(raw, material=material)
@@ -488,6 +491,8 @@ class RestaurierDenker:
                         _uv3_kwargs2["output_path"] = output_path
                     if no_rt_limit:
                         _uv3_kwargs2["no_rt_limit"] = True
+                    if phase_strength_oracle_rollout is not None:
+                        _uv3_kwargs2["phase_strength_oracle_rollout"] = phase_strength_oracle_rollout
                     try:
                         raw = restorer.restore(_are_audio, **_uv3_kwargs2)
                         return self._konvertiere(raw, material=material)
@@ -526,6 +531,8 @@ class RestaurierDenker:
                 _restore_kwargs["cached_restorability_result"] = cached_restorability_result
             if no_rt_limit:
                 _restore_kwargs["no_rt_limit"] = True
+            if phase_strength_oracle_rollout is not None:
+                _restore_kwargs["phase_strength_oracle_rollout"] = phase_strength_oracle_rollout
             raw = restorer.restore(audio, **_restore_kwargs)
         except Exception as exc:
             logger.warning("UnifiedRestorerV3.restore() fehlgeschlagen: %s — Fallback auf Original", exc)

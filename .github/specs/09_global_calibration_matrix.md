@@ -373,6 +373,105 @@ for s in linspace(strength_min, strength_max, n_steps=15):
 return best_strength
 ```
 
+### §09.3c [RELEASE_MUST] Phase-Strength-Oracles fuer alle profitierenden Phasen (v9.12.9)
+
+`GlobalPlan.recommend()` liefert nur den globalen Song-Kontext. Die finale lokale
+Interventionsstaerke jeder Phase wird durch ein **Phase-Strength-Oracle** bestimmt.
+
+**Pflicht gilt fuer alle profitierenden Phasen**: Jede Phase, deren Wirkung ueber einen
+kontinuierlichen oder semi-kontinuierlichen Steuerparameter laeuft, MUSS ein eigenes
+Strength-Oracle besitzen. Dazu zaehlen insbesondere `strength`, `wet_mix`, `threshold_db`,
+`ratio`, `drive`, `mix`, `boost_db`, `cut_db`, `repair_strength`, `context_mix`,
+`generation_steps`, `temperature`, `gate_dbfs`, `width_amount`.
+
+**Pflicht-Eingaben pro Oracle:**
+
+1. aktueller 15-Goal-Gap-Vektor gegen `effective_goal_targets`
+2. `goal_weights` nach Teamwork-Prinzip (Spec 01 §1.2c)
+3. Defekt-Schwere + Lokalitaet der Phase
+4. Material, Aera, Genre, Carrier-Chain, Restorability
+5. Vocal-/Phonem-/Frisson-/Passaggio-Kontext wenn vokalrelevant
+6. PMGG/CIG/AFG-Historie der vorangegangenen Phasen
+7. Wall-Time-/ML-Budget-Headroom
+
+**Pflicht-Optimierungsziel:** Weighted-Gap-Closure statt Single-Goal-Maximierung.
+
+```python
+def score_candidate(candidate_audio, goal_snapshot_pre, effective_targets, goal_weights):
+        goal_snapshot_post = fast_goal_snapshot(candidate_audio)
+        weighted_gap_closure = 0.0
+        weighted_penalty = 0.0
+        for goal in applicable_goals:
+                gap_pre = max(0.0, effective_targets[goal] - goal_snapshot_pre[goal])
+                gap_post = max(0.0, effective_targets[goal] - goal_snapshot_post[goal])
+                closure = max(0.0, gap_pre - gap_post)
+                weighted_gap_closure += goal_weights[goal] * closure
+                regression = max(0.0, goal_snapshot_pre[goal] - goal_snapshot_post[goal])
+                weighted_penalty += goal_weights[goal] * regression
+        return weighted_gap_closure - 2.5 * weighted_penalty
+```
+
+**Oracle-Klassen (kanonisch):**
+
+| Oracle-Klasse | Einsatz | Kanonischer Suchmodus |
+| --- | --- | --- |
+| `O1_impulse` | lokale Impuls-/Klick-/Splice-Reparaturen | Window-/Threshold-/Mix-Scan auf Defektinseln |
+| `O2_subtractive` | NR/Dereverb/Gate/subtraktive Reparatur | konservativer Control-Floor + Wet/Dry + Banded Caps |
+| `O3_spectral_balance` | EQ/BW/Harmonik/Praesenz/Air/Bass | bandbegrenzter Pareto-Scan gegen Zielvektor |
+| `O4_time_pitch` | Wow/Flutter/Speed/Pitch/Azimuth/Phase | timing-konsistenter bounded search, kein Wet-only |
+| `O5_stereo_field` | Stereo/MS/Raum/Breite/Crosstalk | M/S-koharenter Width-/Mix-Scan mit Mono-Guard |
+| `O6_dynamics` | Kompression/Expansion/Limiter/Dynamics | envelope-aware Threshold-/Ratio-/Time-Constant-Scan |
+| `O7_vocal_articulation` | DeEsser/Vocal/Lyrics/phonem-/konsonantenbezogen | phonem-/formant-/hnr-aware Steuerprofil |
+| `O8_generative_repair` | Spectral repair / Inpainting / Band-gap | Schrittzahl-/Guidance-/Blend-Oracle mit SSIP |
+| `O9_periodic_cancellation` | Hum/Print-through/Groove-Echo/ModNoise/IMD | periodic-template fit + residue-minimizing gain |
+| `O10_output` | Loudness/Format/TruePeak/Output-Optimierung | exportkonformer Zielwertsolver |
+
+**Transfer-Chain-Faktor [RELEASE_MUST]:**
+
+Die lokale Interventionsstaerke wird zusaetzlich durch einen deterministischen
+`chain_factor` aus `material_key`, `transfer_chain` und `chain_confidence` konditioniert. `[SRC:S03,S04]`
+
+```python
+def compute_chain_factor(material_key: str, transfer_chain: list[str], confidence: float) -> float:
+    mats = unique([material_key] + transfer_chain)
+    strict_factor = min(CHAIN_STAGE_FACTOR.get(m, 0.88) for m in mats)
+    generation_penalty = clip(0.02 * max(0, len(mats) - 1), 0.0, 0.12)
+    strict_factor = clip(strict_factor - generation_penalty, 0.55, 1.0)
+
+    conf_weight = clip((confidence - 0.40) / 0.60, 0.0, 1.0)
+    return clip((1.0 - conf_weight) * 0.95 + conf_weight * strict_factor, 0.55, 1.0)
+```
+
+**Normative Wirkung:**
+
+1. `driver` wird mit `chain_factor` skaliert.
+2. `hard_caps["max_strength"]` wird mit `(0.75 + 0.25 * chain_factor)` skaliert.
+3. `hard_caps` MUSS `chain_factor`, `chain_depth`, `chain_confidence` ausgeben.
+4. Bei `vinyl -> cassette -> mp3_low` MUSS `chain_factor` niedriger sein als bei reinem `vinyl`. `[SRC:S03,S04]`
+
+**Garantieklausel fuer die 15 Ziele:**
+
+- Kein Oracle darf auf ein Ziel optimieren und dabei die uebrigen 14 ignorieren.
+- Wenn ein Goal bereits ueber Ziel liegt, wird Ueberschuss nur genutzt, um andere Goals
+    sicher zu schliessen; Ueberschuss allein rechtfertigt keinen aggressiveren Eingriff.
+- Wenn alle 15 anwendbaren Goals ueber Ziel liegen, muss das Oracle auf Minimalintervention
+    zurueckfallen (`control_strength -> min_safe`).
+
+**Kreuzreferenz:** Die konkrete 64-Phasen-Bindung der Oracle-Klasse steht in Spec 06 §7.1d.
+
+### §09.3d Evidenzklassen fuer P1-Kernschwellen (v9.12.9+)
+
+Zur Vermeidung scheinbarer Praezision ohne Quellenpflicht werden Kern-Schwellen in Evidenzklassen gefuehrt:
+
+| Schwellenfamilie | Evidenzklasse | Mindestanforderung fuer Aenderungen |
+| --- | --- | --- |
+| Loudness/TruePeak (`BS.1770`/`R128`) | A | Nur normkonforme Anpassungen mit Quellenupdate (`[SRC:S06,S07]`) |
+| Artifact-Freedom-Detektion (`musical_noise`, `pre_echo`) | B | Peer-reviewte Belege + Gate-Regression + AFG-Audit (`[SRC:S14,S15]`) |
+| Vocal-Guardrails (Formant/Vibrato) | B | Peer-reviewte Belege + Vocal-Regression + Hoertest-Delta (`[SRC:S16,S17,S18]`) |
+| Materialadaptive VQI-/MERT-Proxy-Floors | C | Reale Musikfall-Revalidierung + Changelog-Nachweis pro Release |
+
+**Release-Regel:** Klasse-C-Werte sind kalibrierte Betriebsparameter, keine naturgesetzlichen Konstanten; sie duerfen nur unter dokumentierter Revalidierung angepasst werden.
+
 ---
 
 ## §09.4 PMGG Gate-Toleranzen (§2.29)

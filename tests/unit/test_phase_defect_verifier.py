@@ -32,11 +32,11 @@ SR = 48_000
 
 def _sine(freq: float = 440.0, dur: float = 2.0, amp: float = 0.3) -> np.ndarray:
     t = np.linspace(0, dur, int(dur * SR), endpoint=False)
-    return (amp * np.sin(2.0 * np.pi * freq * t)).astype(np.float32)
+    return np.asarray(amp * np.sin(2.0 * np.pi * freq * t), dtype=np.float32)
 
 
 def _stereo(mono: np.ndarray) -> np.ndarray:
-    return np.stack([mono, mono * 0.9], axis=0).astype(np.float32)
+    return np.asarray(np.stack([mono, mono * 0.9], axis=0), dtype=np.float32)
 
 
 def _add_hf_noise(audio: np.ndarray, level: float = 0.10) -> np.ndarray:
@@ -60,7 +60,7 @@ def _add_hum(audio: np.ndarray, f0: float = 50.0, amp: float = 0.08) -> np.ndarr
     hum = np.zeros_like(audio)
     for k in range(1, 5):
         hum += np.sin(2.0 * np.pi * f0 * k * t).astype(np.float32)
-    return np.clip(audio + amp * hum / 4, -1.0, 1.0)
+    return np.asarray(np.clip(audio + amp * hum / 4, -1.0, 1.0), dtype=np.float32)
 
 
 def _add_dc(audio: np.ndarray, dc: float = 0.05) -> np.ndarray:
@@ -70,7 +70,7 @@ def _add_dc(audio: np.ndarray, dc: float = 0.05) -> np.ndarray:
 def _add_rumble(audio: np.ndarray, amp: float = 0.15) -> np.ndarray:
     t = np.linspace(0, len(audio) / SR, len(audio), endpoint=False)
     rumble = (amp * np.sin(2.0 * np.pi * 30.0 * t)).astype(np.float32)
-    return np.clip(audio + rumble, -1.0, 1.0)
+    return np.asarray(np.clip(audio + rumble, -1.0, 1.0), dtype=np.float32)
 
 
 def _add_dropouts(audio: np.ndarray, n: int = 10, gap_ms: float = 5.0) -> np.ndarray:
@@ -193,6 +193,75 @@ def test_22_proxy_hf_noise_floor_stereo():
     stereo = _stereo(_add_hf_noise(_sine()))
     val = _proxy_hf_noise_floor(stereo, SR)
     assert val >= 0.0
+
+
+def test_22a_psycho_hf_audibility_noisy_vs_clean():
+    from backend.core.phase_defect_verifier import _compute_hf_noise_audibility
+
+    clean = _sine()
+    noisy = _add_hf_noise(clean, level=0.20)
+    val_clean = _compute_hf_noise_audibility(clean, SR)
+    val_noisy = _compute_hf_noise_audibility(noisy, SR)
+    assert 0.0 <= val_clean <= 1.0
+    assert 0.0 <= val_noisy <= 1.0
+    assert val_noisy >= val_clean
+
+
+def test_22b_psycho_transient_harshness_clicks_vs_clean():
+    from backend.core.phase_defect_verifier import _compute_transient_harshness
+
+    clean = _sine()
+    clicked = _add_clicks(clean, n=180)
+    harsh_clean = _compute_transient_harshness(clean, SR)
+    harsh_clicked = _compute_transient_harshness(clicked, SR)
+    assert 0.0 <= harsh_clean <= 1.0
+    assert 0.0 <= harsh_clicked <= 1.0
+    assert harsh_clicked >= harsh_clean
+
+
+def test_22c_psycho_quasi_peak_burstiness_clicks_vs_clean():
+    from backend.core.phase_defect_verifier import _compute_quasi_peak_burstiness
+
+    clean = _sine()
+    clicked = _add_clicks(clean, n=180)
+    b_clean = _compute_quasi_peak_burstiness(clean, SR)
+    b_clicked = _compute_quasi_peak_burstiness(clicked, SR)
+    assert 0.0 <= b_clean <= 1.0
+    assert 0.0 <= b_clicked <= 1.0
+    assert b_clicked >= b_clean
+
+
+def test_22d_frequency_selective_blend_hum_keeps_low_band_closer_to_before():
+    from backend.core.phase_defect_verifier import _frequency_selective_blend, _proxy_hum_energy
+
+    before = _sine(freq=50.0, amp=0.20)
+    after = before + _sine(freq=50.0, amp=0.10)
+    after = np.clip(after, -1.0, 1.0).astype(np.float32)
+
+    alpha = 0.92
+    global_blend = np.clip(alpha * after + (1.0 - alpha) * before, -1.0, 1.0).astype(np.float32)
+    local_blend = _frequency_selective_blend(before, after, alpha=alpha, worst_defect="HUM", sr=SR)
+
+    hum_before = _proxy_hum_energy(before, SR)
+    hum_global = _proxy_hum_energy(global_blend, SR)
+    hum_local = _proxy_hum_energy(local_blend, SR)
+    assert abs(hum_local - hum_before) <= abs(hum_global - hum_before)
+
+
+def test_22e_frequency_selective_blend_clicks_reduces_impulse_ratio_vs_global():
+    from backend.core.phase_defect_verifier import _frequency_selective_blend, _proxy_impulse_ratio
+
+    before = _sine()
+    after = _add_clicks(before, n=220, amp=0.95)
+    alpha = 0.90
+
+    global_blend = np.clip(alpha * after + (1.0 - alpha) * before, -1.0, 1.0).astype(np.float32)
+    burst_blend = _frequency_selective_blend(before, after, alpha=alpha, worst_defect="CLICKS", sr=SR)
+
+    imp_before = _proxy_impulse_ratio(before)
+    imp_global = _proxy_impulse_ratio(global_blend)
+    imp_burst = _proxy_impulse_ratio(burst_blend)
+    assert abs(imp_burst - imp_before) <= abs(imp_global - imp_before)
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +559,257 @@ def test_96_check_metadata_store_populated():
         for entry in pdv_list:
             assert "phase_id" in entry
             assert "rollback" in entry
+
+
+def test_96a_check_reweight_avoids_rollback_and_sets_metadata(monkeypatch):
+    """Bei Proxy-Worsening wird zuerst reweighted; erfolgreicher Blend vermeidet Rollback."""
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.6
+    meta: dict = {}
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"HIGH_FREQ_NOISE": 1.0}
+        if np.allclose(audio, after):
+            return {"HIGH_FREQ_NOISE": 1.40}  # +40% -> rollback trigger ohne Reweight
+        return {"HIGH_FREQ_NOISE": 1.20}  # +20% -> unter 25%-Schwelle
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+
+    result = pdv.check("phase_03_denoise", before, after, SR, metadata_store=meta)
+
+    expected = np.clip(0.92 * after + 0.08 * before, -1.0, 1.0).astype(np.float32)
+    assert np.allclose(result, expected)
+
+    entries = meta.get("phase_defect_verification", [])
+    assert entries, "PDV-Metadataeintrag fehlt"
+    last = entries[-1]
+    assert last.get("rollback") is False
+    assert last.get("reweight_applied") is True
+    assert np.isclose(float(last.get("reweight_alpha", 0.0)), 0.92)
+
+
+def test_96b_check_naturalness_hard_guard_forces_rollback_without_reweight(monkeypatch):
+    """Bei Naturalness-Hard-Guard bleibt sofortiger Rollback Pflicht."""
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.6
+    meta: dict = {}
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"HIGH_FREQ_NOISE": 1.0}
+        if np.allclose(audio, after):
+            return {"HIGH_FREQ_NOISE": 1.40}
+        return {"HIGH_FREQ_NOISE": 1.20}
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+
+    result = pdv.check(
+        "phase_03_denoise",
+        before,
+        after,
+        SR,
+        metadata_store=meta,
+        goal_before={"natuerlichkeit": 0.90},
+        goal_after={"natuerlichkeit": 0.70},
+    )
+
+    assert np.allclose(result, before)
+
+    entries = meta.get("phase_defect_verification", [])
+    assert entries, "PDV-Metadataeintrag fehlt"
+    last = entries[-1]
+    assert last.get("rollback") is True
+    assert last.get("reweight_applied") is False
+    assert np.isclose(float(last.get("reweight_alpha", 0.0)), 0.0)
+
+
+def test_96c_check_psycho_hf_guard_strictens_threshold_to_rollback(monkeypatch):
+    """Leichter Proxy-Drift kann bei starker Hoerbarkeit trotzdem rollbacken."""
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.1
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"HIGH_FREQ_NOISE": 1.0}
+        return {"HIGH_FREQ_NOISE": 1.20}  # +20% (normalerweise unter 25%-Rollback-Schwelle)
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._compute_hf_noise_audibility",
+        lambda audio, sr: 0.10 if np.allclose(audio, before) else 0.90,
+    )
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_transient_harshness", lambda audio, sr: 0.0)
+
+    result = pdv.check("phase_03_denoise", before, after, SR)
+    assert np.allclose(result, before)
+
+
+def test_96d_check_metadata_contains_psychoacoustic_payload(monkeypatch):
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+    meta: dict = {}
+    before = _sine()
+    after = _add_hf_noise(before, level=0.05)
+
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._compute_hf_noise_audibility",
+        lambda audio, sr: 0.2 if np.allclose(audio, before) else 0.3,
+    )
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._compute_transient_harshness",
+        lambda audio, sr: 0.1 if np.allclose(audio, before) else 0.2,
+    )
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._compute_quasi_peak_burstiness",
+        lambda audio, sr: 0.1 if np.allclose(audio, before) else 0.2,
+    )
+
+    pdv.check("phase_03_denoise", before, after, SR, metadata_store=meta)
+
+    entries = meta.get("phase_defect_verification", [])
+    if entries:
+        last = entries[-1]
+        assert last.get("psychoacoustic_guard") is True
+        assert "psychoacoustic_before" in last
+        assert "psychoacoustic_after" in last
+        assert "quasi_peak_burstiness" in last["psychoacoustic_before"]
+        assert "quasi_peak_burstiness" in last["psychoacoustic_after"]
+
+
+def test_96e_check_defect_specific_reweight_prefers_click_profile(monkeypatch):
+    """CLICKS nutzt eine eigene Reweight-Staffel statt globalem HF-Default."""
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.6
+    meta: dict = {}
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"CLICKS": 1.0}
+        if np.allclose(audio, after):
+            return {"CLICKS": 1.40}
+        mean_amp = float(np.mean(audio))
+        # alpha=0.90 -> mean 0.54 -> noch rollback
+        if mean_amp > 0.50:
+            return {"CLICKS": 1.26}
+        # alpha=0.82 -> mean 0.492 -> kein rollback
+        return {"CLICKS": 1.16}
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_hf_noise_audibility", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_transient_harshness", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_quasi_peak_burstiness", lambda a, s: 0.0)
+
+    result = pdv.check("phase_09_crackle_removal", before, after, SR, metadata_store=meta)
+    assert isinstance(result, np.ndarray)
+    assert result.shape == before.shape
+
+    entries = meta.get("phase_defect_verification", [])
+    assert entries
+    last = entries[-1]
+    assert last.get("reweight_applied") is True
+    assert np.isclose(float(last.get("reweight_alpha", 0.0)), 0.90)
+    assert last.get("reweight_strategy") == "burst_selective"
+
+
+def test_96f_check_hum_uses_frequency_selective_reweight_strategy(monkeypatch):
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.6
+    fs_candidate = np.ones(SR, dtype=np.float32) * 0.2
+    meta: dict = {}
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"HUM": 1.0}
+        if np.allclose(audio, after):
+            return {"HUM": 1.40}
+        if np.allclose(audio, fs_candidate):
+            return {"HUM": 1.12}
+        return {"HUM": 1.30}
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._frequency_selective_blend",
+        lambda audio_before, audio_after, alpha, worst_defect, sr: fs_candidate,
+    )
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_hf_noise_audibility", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_transient_harshness", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_quasi_peak_burstiness", lambda a, s: 0.0)
+
+    result = pdv.check("phase_02_hum_removal", before, after, SR, metadata_store=meta)
+    assert np.allclose(result, fs_candidate)
+
+    entries = meta.get("phase_defect_verification", [])
+    assert entries
+    last = entries[-1]
+    assert last.get("reweight_applied") is True
+    assert last.get("reweight_strategy") == "frequency_selective"
+
+
+def test_96g_check_clicks_uses_burst_selective_reweight_strategy(monkeypatch):
+    from backend.core.phase_defect_verifier import get_phase_defect_verifier
+
+    pdv = get_phase_defect_verifier()
+    pdv.reset_session()
+
+    before = np.zeros(SR, dtype=np.float32)
+    after = np.ones(SR, dtype=np.float32) * 0.6
+    burst_candidate = np.ones(SR, dtype=np.float32) * 0.2
+    meta: dict = {}
+
+    def _fake_measure(phase_id: str, audio: np.ndarray, sr: int) -> dict[str, float]:
+        if np.allclose(audio, before):
+            return {"CLICKS": 1.0}
+        if np.allclose(audio, after):
+            return {"CLICKS": 1.40}
+        if np.allclose(audio, burst_candidate):
+            return {"CLICKS": 1.12}
+        return {"CLICKS": 1.30}
+
+    monkeypatch.setattr(pdv, "measure_proxies", _fake_measure)
+    monkeypatch.setattr(
+        "backend.core.phase_defect_verifier._frequency_selective_blend",
+        lambda audio_before, audio_after, alpha, worst_defect, sr: burst_candidate,
+    )
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_hf_noise_audibility", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_transient_harshness", lambda a, s: 0.0)
+    monkeypatch.setattr("backend.core.phase_defect_verifier._compute_quasi_peak_burstiness", lambda a, s: 0.0)
+
+    result = pdv.check("phase_09_crackle_removal", before, after, SR, metadata_store=meta)
+    assert np.allclose(result, burst_candidate)
+
+    entries = meta.get("phase_defect_verification", [])
+    assert entries
+    last = entries[-1]
+    assert last.get("reweight_applied") is True
+    assert last.get("reweight_strategy") == "burst_selective"
 
 
 def test_97_check_never_raises_on_nan_input():

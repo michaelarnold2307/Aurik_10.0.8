@@ -48,7 +48,6 @@ Version: 3.0.0 (scipy.signal.stft/istft, kein np.fft.rfft mehr)
 
 from __future__ import annotations
 
-# pylint: disable=import-outside-toplevel
 import logging
 import time
 
@@ -255,7 +254,7 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
-            from backend.core.plugin_lifecycle_manager import (
+            from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
                 get_plugin_lifecycle_manager as _get_plm_evict49,
             )
 
@@ -342,11 +341,14 @@ class AdvancedDereverbPhase(PhaseInterface):
         _vocal_conf_49 = float(kwargs.get("vocal_confidence", kwargs.get("panns_singing_confidence", 0.0)))
         _vocal_detected_49 = bool(kwargs.get("vocal_detected", False)) or (_vocal_conf_49 >= 0.35)
 
-        # §0p Formant-Integrity pre-snapshot — §0p: F1–F4 dürfen durch keine Phase um mehr als ±15% verschoben werden
+        # §0p Formant-Integrity pre-snapshot — §0p: F1–F4 dürfen
+        # durch keine Phase um mehr als ±15% verschoben werden
         _f1_pre_49 = None
         if _vocal_conf_49 >= 0.35:
             try:
-                from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc_49  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.lpc_formant_tracker import (  # pylint: disable=import-outside-toplevel
+                    get_lpc_formant_tracker as _get_lfc_49,
+                )
 
                 _ft_in_49 = audio.mean(axis=0) if audio.ndim == 2 else audio
                 _f1_pre_49 = (
@@ -439,15 +441,23 @@ class AdvancedDereverbPhase(PhaseInterface):
         _sgmse_used = False
         _ml_model_name = "WPE-DSP"
         try:
-            from backend.core.ml_memory_budget import release as _release_49  # pylint: disable=import-outside-toplevel # noqa: I001
-            from backend.core.ml_memory_budget import try_allocate as _alloc_49  # pylint: disable=import-outside-toplevel
-            from plugins.sgmse_plugin import get_sgmse_plus_plugin as _sgmse_factory_49  # pylint: disable=import-outside-toplevel
+            from backend.core.ml_memory_budget import (  # pylint: disable=import-outside-toplevel
+                release as _release_49,
+            )
+            from backend.core.ml_memory_budget import (  # pylint: disable=import-outside-toplevel
+                try_allocate as _alloc_49,
+            )
+            from plugins.sgmse_plugin import (  # pylint: disable=import-outside-toplevel
+                get_sgmse_plus_plugin as _sgmse_factory_49,
+            )
 
             if _alloc_49("SGMSE+_phase49", 0.25):
                 try:
                     _plm49 = None
                     try:
-                        from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager as _get_plm49
+                        from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                            get_plugin_lifecycle_manager as _get_plm49,
+                        )
 
                         _plm49 = _get_plm49()
                         _plm49.set_active("SGMSE+", True)
@@ -663,7 +673,9 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # §4.5 Psychoacoustic Masking Clamp — preserve inaudible reverb tail
         try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+            from backend.core.dsp.psychoacoustics import (  # pylint: disable=import-outside-toplevel
+                apply_psychoacoustic_masking_clamp,
+            )
 
             processed = apply_psychoacoustic_masking_clamp(
                 audio,
@@ -678,7 +690,9 @@ class AdvancedDereverbPhase(PhaseInterface):
         # §2.46f Natural-Performance-Artifacts-Guard — Dereverb darf Atemgeräusche
         # zwischen Phrasen und Early-Reflections des Aufnahmestudios nicht tilgen.
         try:
-            from backend.core.natural_performance_detector import get_natural_performance_detector  # pylint: disable=import-outside-toplevel # noqa: I001
+            from backend.core.natural_performance_detector import (  # pylint: disable=import-outside-toplevel
+                get_natural_performance_detector,
+            )
 
             _npa_a49 = processed
             if _npa_a49.ndim == 2 and _npa_a49.shape[0] == 2 and _npa_a49.shape[1] > _npa_a49.shape[0]:
@@ -706,7 +720,9 @@ class AdvancedDereverbPhase(PhaseInterface):
         # glätten wenn Hüllkurven-Schätzer plosive Einsätze als Reverb-Onset klassifiziert.
         # Plosiv-Burst-Frames aus Original restaurieren (sample-level).
         try:
-            from backend.core.lyrics_guided_enhancement import get_phoneme_mask as _get_pmask_49  # pylint: disable=import-outside-toplevel # noqa: I001
+            from backend.core.lyrics_guided_enhancement import (  # pylint: disable=import-outside-toplevel
+                get_phoneme_mask as _get_pmask_49,
+            )
 
             _hop_49 = 512
             _mono_49 = (
@@ -737,7 +753,9 @@ class AdvancedDereverbPhase(PhaseInterface):
         _p49_panns = float(kwargs.get("panns_singing", kwargs.get("panns_singing_confidence", _vocal_conf_49)))
         if _p49_panns >= 0.25:
             try:
-                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_p49  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.hnr_guard import (  # pylint: disable=import-outside-toplevel
+                    apply_hnr_blend as _apply_hnr_p49,
+                )
 
                 _hnr_blended_p49, _hnr_diag_p49 = _apply_hnr_p49(
                     audio.astype(np.float32), processed.astype(np.float32), sample_rate
@@ -750,7 +768,9 @@ class AdvancedDereverbPhase(PhaseInterface):
         # §0p Formant-Integrity post-check — rollback if F1 shifted >±15%
         if _f1_pre_49 is not None:
             try:
-                from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker as _get_lfc_49_post  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.lpc_formant_tracker import (  # pylint: disable=import-outside-toplevel
+                    get_lpc_formant_tracker as _get_lfc_49_post,
+                )
 
                 _ft_out_49 = processed.mean(axis=0) if processed.ndim == 2 else processed
                 _f1_post_49 = float(
@@ -769,9 +789,11 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # §Gap3 PhraseBoundaryGuard — taper artifacts at phrase transitions (§0p Vocal-Supremacy)
         try:
-            from backend.core.dsp.phrase_boundary_guard import (  # pylint: disable=import-outside-toplevel  # noqa: I001
-                detect_phrase_boundaries as _detect_pbg_49,
+            from backend.core.dsp.phrase_boundary_guard import (  # pylint: disable=import-outside-toplevel
                 apply_phrase_boundary_taper as _apply_pbg_49,
+            )
+            from backend.core.dsp.phrase_boundary_guard import (  # pylint: disable=import-outside-toplevel
+                detect_phrase_boundaries as _detect_pbg_49,
             )
 
             _pbg_bounds_49 = _detect_pbg_49(audio, sample_rate)
@@ -838,15 +860,41 @@ class AdvancedDereverbPhase(PhaseInterface):
 
         # §0p [RELEASE_MUST] VQI per-Phase Gate — vokal-beeinflussende Phasen (phases.instructions.md):
         # Dereverb verändert diffuse Spektralanteile und kann Stimmqualität degradieren.
+        # Threshold: material-adaptiv (§0p: Shellac 0.62, Vinyl 0.72, CD 0.82).
+        # FALSCH wäre 0.95 — Dereverb ist Carrier-Repair, kein Enhancement; 0.95 führt
+        # auf historischem Material fast immer zum Rollback (VQI 0.72–0.94 ist akzeptabel).
         if _p49_panns >= 0.35:
             try:
-                from backend.core.musical_goals.vocal_quality_index import compute_vqi
+                from backend.core.musical_goals.era_vocal_profile import (  # pylint: disable=import-outside-toplevel
+                    get_era_vocal_profile,
+                )
+                from backend.core.musical_goals.vocal_quality_index import (  # pylint: disable=import-outside-toplevel
+                    compute_vqi,
+                )
 
-                _vqi_p49 = compute_vqi(audio_orig=audio, audio_restored=processed, sr=sample_rate)["vqi"]
-                if _vqi_p49 < 0.95:
+                _era_profile_49 = get_era_vocal_profile(_era_decade_49) if _era_decade_49 > 0 else None
+                _vqi_result_49 = compute_vqi(
+                    audio_orig=audio,
+                    audio_restored=processed,
+                    sr=sample_rate,
+                    era_profile=_era_profile_49,  # §EraVocalProfile: historisches Material
+                    # braucht angepasste Toleranzen
+                )
+                _vqi_p49 = _vqi_result_49["vqi"]
+                # Material-adaptiver Rollback-Schwellwert (§0p: Shellac 0.62, Vinyl 0.72, CD 0.82)
+                _mat_49 = str(self._current_material).lower()
+                if "shellac" in _mat_49:
+                    _vqi_floor_49 = 0.62
+                elif any(x in _mat_49 for x in ("vinyl", "tape", "cassette")):
+                    _vqi_floor_49 = 0.72
+                else:
+                    _vqi_floor_49 = 0.72  # konservativ für unbekanntes Material
+                if _vqi_p49 < _vqi_floor_49:
                     logger.info(
-                        "phase_49: VQI per-phase rollback (vqi=%.3f < 0.95, panns=%.2f) — Dereverb zurückgesetzt",
+                        "phase_49: VQI per-phase rollback (vqi=%.3f < %.2f [%s], panns=%.2f) — Dereverb zurückgesetzt",
                         _vqi_p49,
+                        _vqi_floor_49,
+                        _mat_49,
                         _p49_panns,
                     )
                     processed = audio  # Rollback auf Phase-Input

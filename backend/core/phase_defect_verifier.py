@@ -41,13 +41,21 @@ Version: 1.0.0 (v9.11.1 — Ursache 7)
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 from dataclasses import dataclass, field
+from types import ModuleType
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+_reverse_phase_map_module: ModuleType | None
+try:
+    _reverse_phase_map_module = importlib.import_module("backend.core.defect_phase_mapper")
+except Exception:
+    _reverse_phase_map_module = None
 
 # ---------------------------------------------------------------------------
 # Rollback threshold: if proxy_after > proxy_before * (1 + threshold), rollback.
@@ -59,6 +67,105 @@ _ROLLBACK_THRESHOLD: float = 0.25
 # (mono_compat: higher = better, so worsening = decrease)
 _ROLLBACK_THRESHOLD_COMPAT: float = 0.20
 
+# Absolute minimum delta to avoid rollback on tiny proxy jitter near floor.
+_MIN_ABS_DELTA_BY_PROXY: dict[str, float] = {
+    "hf_noise_floor": 0.01,
+    "impulse_ratio": 0.10,
+    "hum_energy": 0.01,
+    "low_freq_energy": 0.01,
+    "dc_offset": 0.002,
+    "dropout_ratio": 0.01,
+    "mono_compat": 0.02,
+}
+
+# Goal-aware adaptive threshold scaling (song-specific targets).
+_GOAL_ADAPTIVE_THRESHOLD_CAP_MIN: float = 0.60
+_GOAL_ADAPTIVE_THRESHOLD_CAP_MAX: float = 1.80
+_NATURALNESS_PRESERVE_DELTA: float = 0.01
+_PDV_REWEIGHT_ALPHAS: tuple[float, ...] = (0.92, 0.85, 0.78)
+
+# Psychoakustische Audibility-Guards fuer Defect-Drift-Entscheidungen.
+_PSYCHO_STRICTEN_FACTOR: float = 0.65
+_PSYCHO_RELAX_FACTOR: float = 1.10
+_PSYCHO_AUDIBILITY_DELTA_TRIGGER: float = 0.05
+_PSYCHO_HARSHNESS_DELTA_TRIGGER: float = 0.05
+_PSYCHO_BURSTINESS_DELTA_TRIGGER: float = 0.04
+
+
+def _norm_goal_key(name: str) -> str:
+    n = str(name).strip().lower()
+    aliases = {
+        "naturalness": "natuerlichkeit",
+        "warmth": "waerme",
+        "brightness": "brillanz",
+        "clarity": "transparenz",
+        "spatialdepth": "spatial_depth",
+    }
+    return aliases.get(n, n)
+
+
+def _goal_val(source: dict[str, float] | None, key: str, default: float = 0.0) -> float:
+    if not isinstance(source, dict):
+        return float(default)
+    if key in source:
+        return float(source[key])
+    k_norm = _norm_goal_key(key)
+    for k, v in source.items():
+        if _norm_goal_key(k) == k_norm:
+            return float(v)
+    return float(default)
+
+
+def _is_legacy_material(material_type: str | None) -> bool:
+    mat = str(material_type or "").lower()
+    return any(k in mat for k in ("shellac", "wax", "wire", "vinyl", "tape", "cassette"))
+
+
+def _compute_goal_adaptive_threshold_scale(
+    proxy_name: str,
+    goal_before: dict[str, float] | None,
+    goal_after: dict[str, float] | None,
+    goal_targets: dict[str, float] | None,
+    goal_weights: dict[str, float] | None,
+    material_type: str | None,
+) -> float:
+    """Compute proxy-threshold multiplier from song-specific goal targets.
+
+    > 1.0 => more tolerant, < 1.0 => stricter.
+    """
+    scale = 1.0
+
+    # Weighted clarity-vs-preserve balance from SongGoalImportance.
+    w_clarity = (_goal_val(goal_weights, "transparenz", 1.0) + _goal_val(goal_weights, "brillanz", 1.0)) / 2.0
+    w_preserve = (_goal_val(goal_weights, "natuerlichkeit", 1.0) + _goal_val(goal_weights, "waerme", 1.0)) / 2.0
+    if w_preserve > 1e-6:
+        scale *= float(np.clip(np.sqrt(w_clarity / w_preserve), 0.85, 1.25))
+
+    # Song-target deficits/surplus (dynamic per song, not global fixed).
+    t_trans = _goal_val(goal_targets, "transparenz", 0.0)
+    t_bril = _goal_val(goal_targets, "brillanz", 0.0)
+    t_waer = _goal_val(goal_targets, "waerme", 0.0)
+    b_trans = _goal_val(goal_before, "transparenz", 0.0)
+    b_bril = _goal_val(goal_before, "brillanz", 0.0)
+    a_trans = _goal_val(goal_after, "transparenz", b_trans)
+    a_bril = _goal_val(goal_after, "brillanz", b_bril)
+    b_waer = _goal_val(goal_before, "waerme", 0.0)
+
+    clarity_def_before = max(0.0, t_trans - b_trans) + max(0.0, t_bril - b_bril)
+    clarity_def_after = max(0.0, t_trans - a_trans) + max(0.0, t_bril - a_bril)
+    clarity_improved = clarity_def_after < clarity_def_before - 1e-6
+    warmth_surplus = max(0.0, b_waer - t_waer)
+
+    if proxy_name == "hf_noise_floor":
+        if clarity_def_before > 0.05:
+            scale *= 1.15
+        if clarity_improved:
+            scale *= 1.10
+        if warmth_surplus > 0.05 and _is_legacy_material(material_type):
+            scale *= 1.10
+
+    return float(np.clip(scale, _GOAL_ADAPTIVE_THRESHOLD_CAP_MIN, _GOAL_ADAPTIVE_THRESHOLD_CAP_MAX))
+
 
 # ---------------------------------------------------------------------------
 # Fast proxy implementations (all operate on mono mix if stereo)
@@ -68,7 +175,7 @@ _ROLLBACK_THRESHOLD_COMPAT: float = 0.20
 def _as_mono(audio: np.ndarray) -> np.ndarray:
     arr = np.asarray(audio, dtype=np.float32)
     if arr.ndim == 2:
-        return np.mean(arr, axis=0)
+        return np.asarray(np.mean(arr, axis=0, dtype=np.float32), dtype=np.float32)
     return arr
 
 
@@ -94,17 +201,233 @@ def _proxy_hf_noise_floor(audio: np.ndarray, sr: int) -> float:
         if bin_16k <= bin_4k:
             return 0.0
         frame_energies: list[float] = []
+        frame_rms: list[float] = []
         for i in range(0, max(0, len(mono) - n_fft), hop):
             chunk = mono[i : i + n_fft]
             if len(chunk) < n_fft:
                 break
             mag = np.abs(np.fft.rfft(chunk * np.hanning(n_fft)))
             frame_energies.append(float(np.mean(mag[bin_4k:bin_16k])))
+            frame_rms.append(float(np.sqrt(np.mean(chunk**2) + 1e-12)))
         if frame_energies:
+            # Noise-floor proxy should reflect quiet/near-silence frames, not voiced/music peaks.
+            quiet_threshold = float(np.percentile(frame_rms, 35)) if frame_rms else 0.0
+            quiet_energies = [e for e, r in zip(frame_energies, frame_rms, strict=False) if r <= quiet_threshold]
+            if quiet_energies:
+                return float(np.percentile(quiet_energies, 5))
             return float(np.percentile(frame_energies, 5))
     except Exception:
         pass
     return 0.0
+
+
+def _compute_hf_noise_audibility(audio: np.ndarray, sr: int) -> float:
+    """Psychoakustische Schaetzung der HF-Rausch-Hoerbarkeit (0..1).
+
+    Modell: HF-Energie (4-12 kHz) wird gegen eine einfache simultane
+    Maskierung durch 300-3000 Hz verglichen. Hoher Wert = eher hoerbar.
+    """
+    try:
+        mono = _as_mono(audio)
+        n_fft = 2048
+        hop = 1024
+        if len(mono) < n_fft:
+            return 0.0
+
+        hf_lo = max(1, int(4000 * n_fft / sr))
+        hf_hi = min(int(12000 * n_fft / sr), n_fft // 2 + 1)
+        mask_lo = max(1, int(300 * n_fft / sr))
+        mask_hi = min(int(3000 * n_fft / sr), n_fft // 2 + 1)
+        if hf_hi <= hf_lo or mask_hi <= mask_lo:
+            return 0.0
+
+        audible_scores: list[float] = []
+        win = np.hanning(n_fft).astype(np.float32)
+        eps = 1e-12
+        for i in range(0, len(mono) - n_fft + 1, hop):
+            frame = mono[i : i + n_fft] * win
+            mag = np.abs(np.fft.rfft(frame)).astype(np.float32)
+            hf_e = float(np.mean(mag[hf_lo:hf_hi]) + eps)
+            mask_e = float(np.mean(mag[mask_lo:mask_hi]) + eps)
+            hf_db = 20.0 * np.log10(hf_e)
+            mask_db = 20.0 * np.log10(mask_e)
+            # Vereinfachte simultane Maskierung: Signal wird ab ~18 dB unter
+            # dominanter Midband-Energie zunehmend unhoerbar.
+            audible_db = hf_db - (mask_db - 18.0)
+            audible_scores.append(float(np.clip((audible_db + 18.0) / 36.0, 0.0, 1.0)))
+
+        if not audible_scores:
+            return 0.0
+        return float(np.clip(np.percentile(audible_scores, 80), 0.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def _compute_transient_harshness(audio: np.ndarray, sr: int) -> float:
+    """Schaetzt psychoakustisch harte HF-Transienten (0..1).
+
+    Hohe Werte korrelieren mit klickender/kratziger Wahrnehmung im Praesenzband.
+    """
+    try:
+        mono = _as_mono(audio)
+        n_fft = 1024
+        hop = 256
+        if len(mono) < n_fft:
+            return 0.0
+
+        lo = max(1, int(3000 * n_fft / sr))
+        hi = min(int(10000 * n_fft / sr), n_fft // 2 + 1)
+        if hi <= lo:
+            return 0.0
+
+        win = np.hanning(n_fft).astype(np.float32)
+        hf_env: list[float] = []
+        for i in range(0, len(mono) - n_fft + 1, hop):
+            frame = mono[i : i + n_fft] * win
+            mag = np.abs(np.fft.rfft(frame)).astype(np.float32)
+            hf_env.append(float(np.mean(mag[lo:hi])))
+
+        if len(hf_env) < 3:
+            return 0.0
+        env = np.asarray(hf_env, dtype=np.float32)
+        d = np.diff(env)
+        jumps = d[d > 0.0]
+        if jumps.size == 0:
+            return 0.0
+
+        ref = float(np.percentile(env, 50) + 1e-9)
+        burst = float(np.percentile(jumps, 95))
+        ratio = burst / ref
+        return float(np.clip(ratio / 6.0, 0.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def _compute_quasi_peak_burstiness(audio: np.ndarray, sr: int) -> float:
+    """Approximation eines 468-aehnlichen Quasi-Peak-Burst-Indikators (0..1).
+
+    Ziel: kurze, stoerende Impuls-Bursts staerker gewichten als stationaere Energie.
+    """
+    try:
+        mono = _as_mono(audio)
+        if mono.size < 16:
+            return 0.0
+
+        # Leichtes Praesenzband-Weighting (~4-8 kHz) ueber 1. Ordnung Diffs.
+        hp = np.diff(mono, prepend=mono[0]).astype(np.float32)
+        env = np.abs(hp)
+
+        # Quasi-Peak-Huelle: schneller Attack, langsamer Release.
+        attack = float(np.exp(-1.0 / max(1.0, sr * 0.0015)))
+        release = float(np.exp(-1.0 / max(1.0, sr * 0.0250)))
+        qp = np.empty_like(env, dtype=np.float32)
+        state = 0.0
+        for i, x in enumerate(env):
+            if x > state:
+                state = attack * state + (1.0 - attack) * float(x)
+            else:
+                state = release * state + (1.0 - release) * float(x)
+            qp[i] = state
+
+        p95 = float(np.percentile(qp, 95))
+        med = float(np.percentile(qp, 50) + 1e-9)
+        ratio = p95 / med
+        return float(np.clip((ratio - 1.0) / 8.0, 0.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def _select_reweight_alphas_for_defect(worst_defect: str) -> tuple[float, ...]:
+    """Defektspezifische Reweight-Staffel fuer intelligentere Recovery-Pfade."""
+    d = str(worst_defect or "").upper()
+    if d in {"CLICKS", "CRACKLE"}:
+        return (0.90, 0.82, 0.74)
+    if d in {"HUM", "LOW_FREQ_RUMBLE"}:
+        return (0.95, 0.90, 0.85)
+    if d == "DC_OFFSET":
+        return (0.97, 0.92, 0.88)
+    return _PDV_REWEIGHT_ALPHAS
+
+
+def _frequency_selective_blend(
+    audio_before: np.ndarray,
+    audio_after: np.ndarray,
+    alpha: float,
+    worst_defect: str,
+    sr: int,
+) -> np.ndarray:
+    """Defektspezifisches Reweighting im Frequenzraum.
+
+    Ziel: problematische Defektbaender konservativer aus dem Pre-Phase-Audio
+    uebernehmen, waehrend der Rest des Spektrums vom Post-Phase-Audio profitiert.
+    """
+    d = str(worst_defect or "").upper()
+    if d not in {"HUM", "LOW_FREQ_RUMBLE", "DC_OFFSET", "CLICKS", "CRACKLE"}:
+        return np.clip(alpha * audio_after + (1.0 - alpha) * audio_before, -1.0, 1.0).astype(np.float32)
+
+    arr_b = np.asarray(audio_before, dtype=np.float32)
+    arr_a = np.asarray(audio_after, dtype=np.float32)
+    if arr_b.shape != arr_a.shape:
+        return np.clip(alpha * arr_a + (1.0 - alpha) * arr_b, -1.0, 1.0).astype(np.float32)
+
+    was_mono = arr_b.ndim == 1
+    if was_mono:
+        arr_b = arr_b[np.newaxis, :]
+        arr_a = arr_a[np.newaxis, :]
+
+    n = int(arr_b.shape[-1])
+    if n < 16:
+        out = np.clip(alpha * arr_a + (1.0 - alpha) * arr_b, -1.0, 1.0).astype(np.float32)
+        return out[0] if was_mono else out
+
+    local_alpha = float(np.clip(alpha - 0.28, 0.05, 0.98))
+
+    if d in {"CLICKS", "CRACKLE"}:
+        # Quasi-peak-gefuehrte, zeitlokale Reweight-Maske fuer Impulsartefakte.
+        out_td = np.empty_like(arr_b, dtype=np.float32)
+        for ch in range(arr_b.shape[0]):
+            hp = np.diff(arr_a[ch], prepend=arr_a[ch][0]).astype(np.float32)
+            env = np.abs(hp)
+            thr = float(np.percentile(env, 92))
+            burst_mask = (env >= thr).astype(np.float32)
+            # leichte Ausdehnung in der Zeit, damit kurze Bursts voll erfasst werden
+            k = max(3, int(0.0015 * sr))
+            kernel = np.ones(k, dtype=np.float32) / float(k)
+            burst_mask = np.convolve(burst_mask, kernel, mode="same")
+            burst_mask = np.clip(burst_mask, 0.0, 1.0)
+
+            alpha_curve = (float(alpha) - (float(alpha) - local_alpha) * burst_mask).astype(np.float32)
+            out_td[ch] = alpha_curve * arr_a[ch] + (1.0 - alpha_curve) * arr_b[ch]
+
+        out_td = np.clip(out_td, -1.0, 1.0).astype(np.float32)
+        return out_td[0] if was_mono else out_td
+
+    freqs = np.fft.rfftfreq(n, d=1.0 / float(max(1, sr)))
+    alpha_map = np.full(freqs.shape, float(alpha), dtype=np.float32)
+
+    if d == "DC_OFFSET":
+        band_mask = freqs <= 15.0
+    elif d == "LOW_FREQ_RUMBLE":
+        band_mask = freqs <= 120.0
+    else:
+        # HUM: 50/60 Hz + Harmonische konservativer behandeln.
+        band_mask = np.zeros(freqs.shape, dtype=bool)
+        for f0 in (50.0, 60.0):
+            for k in range(1, 7):
+                fk = f0 * float(k)
+                band_mask |= np.abs(freqs - fk) <= 8.0
+
+    alpha_map[band_mask] = local_alpha
+
+    out = np.empty_like(arr_b, dtype=np.float32)
+    for ch in range(arr_b.shape[0]):
+        spec_b = np.fft.rfft(arr_b[ch])
+        spec_a = np.fft.rfft(arr_a[ch])
+        spec_mix = alpha_map * spec_a + (1.0 - alpha_map) * spec_b
+        out[ch] = np.fft.irfft(spec_mix, n=n).astype(np.float32)
+
+    out = np.clip(out, -1.0, 1.0).astype(np.float32)
+    return out[0] if was_mono else out
 
 
 def _proxy_hum_energy(audio: np.ndarray, sr: int) -> float:
@@ -265,18 +588,19 @@ class DefectVerificationResult:
 # PhaseDefectVerifier singleton
 # ---------------------------------------------------------------------------
 
-_pdv_instance: PhaseDefectVerifier | None = None
+_PDV_INSTANCE_HOLDER: dict[str, PhaseDefectVerifier | None] = {"instance": None}
 _pdv_lock = threading.Lock()
 
 
 def get_phase_defect_verifier() -> PhaseDefectVerifier:
     """Thread-safe singleton accessor."""
-    global _pdv_instance
-    if _pdv_instance is None:
+    if _PDV_INSTANCE_HOLDER["instance"] is None:
         with _pdv_lock:
-            if _pdv_instance is None:
-                _pdv_instance = PhaseDefectVerifier()
-    return _pdv_instance
+            if _PDV_INSTANCE_HOLDER["instance"] is None:
+                _PDV_INSTANCE_HOLDER["instance"] = PhaseDefectVerifier()
+    instance = _PDV_INSTANCE_HOLDER["instance"]
+    assert instance is not None
+    return instance
 
 
 class PhaseDefectVerifier:
@@ -303,9 +627,10 @@ class PhaseDefectVerifier:
             with self._rmap_lock:
                 if self._reverse_map is None:
                     try:
-                        from backend.core.defect_phase_mapper import get_reverse_phase_map
-
-                        raw = get_reverse_phase_map()
+                        module = _reverse_phase_map_module
+                        if module is None:
+                            module = importlib.import_module("backend.core.defect_phase_mapper")
+                        raw = module.get_reverse_phase_map()
                         # Convert DefectType enum values to string names
                         self._reverse_map = {pid: [dt.name for dt in dtypes] for pid, dtypes in raw.items()}
                     except Exception as exc:
@@ -342,6 +667,11 @@ class PhaseDefectVerifier:
         audio_after: np.ndarray,
         sr: int,
         metadata_store: dict | None = None,
+        goal_before: dict[str, float] | None = None,
+        goal_after: dict[str, float] | None = None,
+        goal_targets: dict[str, float] | None = None,
+        goal_weights: dict[str, float] | None = None,
+        material_type: str | None = None,
     ) -> np.ndarray:
         """Prüft whether the phase worsened its targeted defects.
 
@@ -367,37 +697,130 @@ class PhaseDefectVerifier:
             all_defects = reverse_map.get(phase_id, [])
             skipped: list[str] = [d for d in all_defects if d not in proxies_before]
 
-            proxies_after = self.measure_proxies(phase_id, audio_after, sr)
+            # Naturalness is a hard guard: bei Verletzung kein Reweighting.
+            _nat_before = _goal_val(goal_before, "natuerlichkeit", 0.0)
+            _nat_after = _goal_val(goal_after, "natuerlichkeit", _nat_before)
+            _hard_naturalness_violation = _nat_after + _NATURALNESS_PRESERVE_DELTA < _nat_before
 
-            worst_defect = ""
-            worst_change = 0.0
-            rollback = False
+            def _evaluate_candidate(candidate_audio: np.ndarray) -> tuple[dict[str, float], str, float, bool]:
+                _proxies_after = self.measure_proxies(phase_id, candidate_audio, sr)
+                _worst_defect = ""
+                _worst_change = 0.0
+                _rollback = False
+                _hf_aud_before = _compute_hf_noise_audibility(audio_before, sr)
+                _hf_aud_after = _compute_hf_noise_audibility(candidate_audio, sr)
+                _harsh_before = _compute_transient_harshness(audio_before, sr)
+                _harsh_after = _compute_transient_harshness(candidate_audio, sr)
+                _burst_before = _compute_quasi_peak_burstiness(audio_before, sr)
+                _burst_after = _compute_quasi_peak_burstiness(candidate_audio, sr)
 
-            for dname, val_before in proxies_before.items():
-                val_after = proxies_after.get(dname, val_before)
-                pname = _PROXY_DISPATCH.get(dname, "")
+                for dname, val_before in proxies_before.items():
+                    val_after = _proxies_after.get(dname, val_before)
+                    pname = _PROXY_DISPATCH.get(dname, "")
 
-                if pname in _HIGHER_IS_BETTER:
-                    # Worsening = decrease
-                    if val_before > 1e-9:
-                        rel_change = (val_before - val_after) / val_before
+                    if pname in _HIGHER_IS_BETTER:
+                        if val_before > 1e-9:
+                            rel_change = (val_before - val_after) / val_before
+                        else:
+                            rel_change = 0.0
+                        threshold = _ROLLBACK_THRESHOLD_COMPAT
                     else:
-                        rel_change = 0.0
-                    threshold = _ROLLBACK_THRESHOLD_COMPAT
-                else:
-                    # Worsening = increase
-                    if val_before > 1e-9:
-                        rel_change = (val_after - val_before) / val_before
-                    else:
-                        rel_change = 0.0
-                    threshold = _ROLLBACK_THRESHOLD
+                        if val_before > 1e-9:
+                            rel_change = (val_after - val_before) / val_before
+                        else:
+                            rel_change = 0.0
+                        threshold = _ROLLBACK_THRESHOLD
 
-                if rel_change > worst_change:
-                    worst_change = rel_change
-                    worst_defect = dname
+                    _threshold_scale = _compute_goal_adaptive_threshold_scale(
+                        pname,
+                        goal_before=goal_before,
+                        goal_after=goal_after,
+                        goal_targets=goal_targets,
+                        goal_weights=goal_weights,
+                        material_type=material_type,
+                    )
+                    threshold *= _threshold_scale
 
-                if rel_change > threshold:
-                    rollback = True
+                    if pname == "hf_noise_floor":
+                        if (_hf_aud_after - _hf_aud_before) > _PSYCHO_AUDIBILITY_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_STRICTEN_FACTOR
+                        elif (_hf_aud_before - _hf_aud_after) > _PSYCHO_AUDIBILITY_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_RELAX_FACTOR
+
+                    if pname == "impulse_ratio":
+                        if (_harsh_after - _harsh_before) > _PSYCHO_HARSHNESS_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_STRICTEN_FACTOR
+                        elif (_harsh_before - _harsh_after) > _PSYCHO_HARSHNESS_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_RELAX_FACTOR
+                        if (_burst_after - _burst_before) > _PSYCHO_BURSTINESS_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_STRICTEN_FACTOR
+                        elif (_burst_before - _burst_after) > _PSYCHO_BURSTINESS_DELTA_TRIGGER:
+                            threshold *= _PSYCHO_RELAX_FACTOR
+
+                    abs_delta = abs(float(val_after) - float(val_before))
+                    min_abs_delta = _MIN_ABS_DELTA_BY_PROXY.get(pname, 0.0)
+                    if abs_delta < min_abs_delta:
+                        rel_change = 0.0
+
+                    if rel_change > _worst_change:
+                        _worst_change = rel_change
+                        _worst_defect = dname
+
+                    if rel_change > threshold:
+                        _rollback = True
+
+                return _proxies_after, _worst_defect, _worst_change, _rollback
+
+            proxies_after, worst_defect, worst_change, rollback = _evaluate_candidate(audio_after)
+
+            if _hard_naturalness_violation:
+                rollback = True
+                worst_defect = "NATURALNESS_PRESERVE_GUARD"
+                worst_change = max(worst_change, _nat_before - _nat_after)
+
+            _reweight_applied = False
+            _reweight_alpha = 0.0
+            _reweight_strategy = "none"
+            if rollback and not _hard_naturalness_violation:
+                _alphas = _select_reweight_alphas_for_defect(worst_defect)
+                for alpha in _alphas:
+                    try:
+                        _wd_key = str(worst_defect or "").upper()
+                        if _wd_key in {"HUM", "LOW_FREQ_RUMBLE", "DC_OFFSET", "CLICKS", "CRACKLE"}:
+                            blended = _frequency_selective_blend(
+                                audio_before=audio_before,
+                                audio_after=audio_after,
+                                alpha=float(alpha),
+                                worst_defect=worst_defect,
+                                sr=sr,
+                            )
+                            _candidate_strategy = (
+                                "burst_selective" if _wd_key in {"CLICKS", "CRACKLE"} else "frequency_selective"
+                            )
+                        else:
+                            blended = np.clip(alpha * audio_after + (1.0 - alpha) * audio_before, -1.0, 1.0).astype(
+                                np.float32
+                            )
+                            _candidate_strategy = "global"
+                        _pa, _wd, _wc, _rb = _evaluate_candidate(blended)
+                        if not _rb:
+                            audio_after = blended
+                            proxies_after = _pa
+                            worst_defect = _wd
+                            worst_change = _wc
+                            rollback = False
+                            _reweight_applied = True
+                            _reweight_alpha = float(alpha)
+                            _reweight_strategy = _candidate_strategy
+                            logger.info(
+                                "§PDV reweight: %s stabilized with alpha=%.2f (%s) — rollback avoided",
+                                phase_id,
+                                alpha,
+                                _candidate_strategy,
+                            )
+                            break
+                    except Exception as _rw_exc:
+                        logger.debug("PDV reweight alpha=%.2f failed for %s: %s", alpha, phase_id, _rw_exc)
 
             result = DefectVerificationResult(
                 phase_id=phase_id,
@@ -432,6 +855,16 @@ class PhaseDefectVerifier:
             if metadata_store is not None:
                 try:
                     pdv_list = metadata_store.setdefault("phase_defect_verification", [])
+                    psycho_before = {
+                        "hf_noise_audibility": _compute_hf_noise_audibility(audio_before, sr),
+                        "transient_harshness": _compute_transient_harshness(audio_before, sr),
+                        "quasi_peak_burstiness": _compute_quasi_peak_burstiness(audio_before, sr),
+                    }
+                    psycho_after = {
+                        "hf_noise_audibility": _compute_hf_noise_audibility(audio_after, sr),
+                        "transient_harshness": _compute_transient_harshness(audio_after, sr),
+                        "quasi_peak_burstiness": _compute_quasi_peak_burstiness(audio_after, sr),
+                    }
                     pdv_list.append(
                         {
                             "phase_id": phase_id,
@@ -439,6 +872,14 @@ class PhaseDefectVerifier:
                             "worst_defect": result.worst_defect,
                             "worst_relative_change": result.worst_relative_change,
                             "rollback": result.rollback_triggered,
+                            "reweight_applied": _reweight_applied,
+                            "reweight_alpha": _reweight_alpha,
+                            "reweight_strategy": _reweight_strategy,
+                            "goal_aware": True,
+                            "psychoacoustic_guard": True,
+                            "psychoacoustic_before": psycho_before,
+                            "psychoacoustic_after": psycho_after,
+                            "goal_target_keys": sorted(goal_targets.keys()) if isinstance(goal_targets, dict) else [],
                         }
                     )
                 except Exception:

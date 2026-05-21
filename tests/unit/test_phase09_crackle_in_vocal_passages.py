@@ -9,8 +9,13 @@ Fix: removed harmonic_ratio < 0.4 from is_crackle; ZCR > 0.3 + centroid > 3000
 is sufficient to identify impulsive broadband noise even in harmonic contexts.
 """
 
+import sys
+import types
+
 import numpy as np
 import pytest
+
+import backend.core.phases.phase_09_crackle_removal as p09mod
 
 SR = 48_000
 
@@ -187,3 +192,233 @@ def test_vocal_cap_does_not_activate_when_singing_low(phase09):
     )
     eff = result.metadata.get("effective_strength", 0.0)
     assert eff > 0.70, f"§0p Vokal-Cap fälschlicherweise aktiv: effective_strength={eff:.3f} bei panns_singing=0.10"
+
+
+def test_region_selective_blend_is_conservative_outside_crackle_regions(phase09):
+    """Außerhalb Crackle-Regionen muss der Blend konservativer als globales Wet sein."""
+    n = SR
+    dry = np.zeros(n, dtype=np.float32)
+    wet = np.ones(n, dtype=np.float32)
+    regions = [(n // 2 - 200, n // 2 + 200)]
+    eff = 0.8
+
+    out = phase09._apply_region_selective_strength_blend(dry, wet, regions, eff, SR)
+    assert out.shape == dry.shape
+
+    # Außerhalb Region deutlich konservativer als globales alpha=0.8
+    outside = np.r_[out[: n // 2 - 400], out[n // 2 + 400 :]]
+    assert float(np.mean(outside)) < 0.6
+
+
+def test_region_selective_blend_without_regions_returns_dry(phase09):
+    """Wenn keine Crackle-Region erkannt wurde, darf kein globales Wet angewandt werden."""
+    dry = (0.2 * np.sin(2 * np.pi * 440 * (np.arange(SR, dtype=np.float32) / SR))).astype(np.float32)
+    wet = np.clip(dry * 0.1, -1.0, 1.0).astype(np.float32)
+
+    out = phase09._apply_region_selective_strength_blend(dry, wet, [], 0.7, SR)
+    assert np.allclose(out, dry)
+
+
+def test_region_selective_blend_without_regions_can_fallback_to_global(phase09):
+    """ML-Pfad: Bei leeren Regionen darf optional globaler Blend genutzt werden."""
+    dry = np.zeros(SR, dtype=np.float32)
+    wet = np.ones(SR, dtype=np.float32)
+    eff = 0.7
+
+    out = phase09._apply_region_selective_strength_blend(
+        dry,
+        wet,
+        [],
+        eff,
+        SR,
+        fallback_to_global_when_no_regions=True,
+    )
+    assert np.allclose(out, np.full(SR, eff, dtype=np.float32), atol=1e-5)
+
+
+def test_compute_crackle_regions_with_protection_applies_phoneme_mask(phase09, monkeypatch):
+    """Gemeinsame Regionenquelle muss §2.36-Phonemschutz auch fuer ML/DSP erzwingen."""
+    audio = np.zeros(SR, dtype=np.float32)
+    params = {
+        "transient_threshold": 0.1,
+        "min_density": 1,
+        "interpolation": "spectral",
+        "background_model": False,
+        "texture_preserve": 0.0,
+    }
+
+    # Erzwinge eine einzige Crackle-Region ueber den ganzen Track.
+    monkeypatch.setattr(phase09, "_detect_transients_multiscale", lambda a, p: ([10], [20], [30]))
+    monkeypatch.setattr(
+        phase09,
+        "_classify_crackle_regions",
+        lambda a, ts, tm, tl, p: [(0, len(a))],
+    )
+
+    # Fake LGE-Modul mit aktiver Phonemmaske (alle Frames True) -> Region muss entfernt werden.
+    fake_lge = types.SimpleNamespace(get_phoneme_mask=lambda mono, sr, hop_length=512: np.ones(8, dtype=bool))
+    monkeypatch.setitem(sys.modules, "backend.core.lyrics_guided_enhancement", fake_lge)
+
+    _, _, _, regions = phase09._compute_crackle_regions_with_protection(audio, params)
+    assert regions == []
+
+
+def test_ml_localization_with_phoneme_mask_keeps_outside_conservative(phase09, monkeypatch):
+    """Aktive Phonemmaske soll Regionen filtern, verbleibende Regionen aber lokal stark bearbeiten."""
+    n = SR
+    audio = np.zeros(n, dtype=np.float32)
+    params = {
+        "transient_threshold": 0.1,
+        "min_density": 1,
+        "interpolation": "spectral",
+        "background_model": False,
+        "texture_preserve": 0.0,
+    }
+
+    # Zwei Regionen: erste wird durch Phonemmaske entfernt, zweite bleibt erhalten.
+    monkeypatch.setattr(phase09, "_detect_transients_multiscale", lambda a, p: ([10], [20], [30]))
+    monkeypatch.setattr(
+        phase09,
+        "_classify_crackle_regions",
+        lambda a, ts, tm, tl, p: [(200, 1200), (3000, 4200)],
+    )
+
+    def _mask(_mono, _sr, hop_length=512):
+        m = np.zeros(10, dtype=bool)
+        m[0:3] = True  # schützt ca. Samples 0..1536 -> entfernt nur die erste Region
+        return m
+
+    fake_lge = types.SimpleNamespace(get_phoneme_mask=_mask)
+    monkeypatch.setitem(sys.modules, "backend.core.lyrics_guided_enhancement", fake_lge)
+
+    _, _, _, regions = phase09._compute_crackle_regions_with_protection(audio, params)
+    assert regions == [(3000, 4200)]
+
+    dry = np.zeros(n, dtype=np.float32)
+    wet = np.ones(n, dtype=np.float32)
+    out = phase09._apply_region_selective_strength_blend(
+        dry,
+        wet,
+        regions,
+        0.8,
+        SR,
+        fallback_to_global_when_no_regions=True,
+    )
+
+    # In verbleibender Region nahe voller Stärke, außerhalb deutlich konservativer als global 0.8.
+    inside_mean = float(np.mean(out[3200:3800]))
+    outside = np.r_[out[:1500], out[5000:8000]]
+    outside_mean = float(np.mean(outside))
+    assert inside_mean > 0.70
+    assert outside_mean < 0.60
+
+
+def test_process_onnx_branch_uses_region_selective_blend(phase09, monkeypatch):
+    """ONNX-Branch muss lokale Regionsstaerke nutzen (kein globales Wetting)."""
+    n = SR
+    audio = np.zeros(n, dtype=np.float32)
+
+    monkeypatch.setattr(p09mod, "QUALITY_MODE_AVAILABLE", True)
+    monkeypatch.setattr(p09mod, "is_phase_ml_enabled", lambda phase_id: phase_id == 9)
+    monkeypatch.setattr(p09mod, "log_mode_decision", lambda *args, **kwargs: None)
+
+    monkeypatch.setattr(phase09, "_remove_crackle_onnx_direct", lambda a, sr, p: np.ones_like(a, dtype=np.float32))
+    monkeypatch.setattr(phase09, "_measure_crackle_reduction", lambda a, b: 12.0)
+    monkeypatch.setattr(
+        phase09,
+        "_compute_crackle_regions_with_protection",
+        lambda a, p: ([], [], [], [(3000, 4200)]),
+    )
+
+    result = phase09.process(audio, sample_rate=SR, material_type="vinyl", strength=0.8)
+    assert result.success
+    restored = result.audio
+
+    inside_mean = float(np.mean(restored[3200:3800]))
+    outside = np.r_[restored[:1500], restored[5000:8000]]
+    outside_mean = float(np.mean(outside))
+    assert inside_mean > 0.70
+    assert outside_mean < 0.60
+
+
+def test_process_onnx_branch_without_regions_falls_back_global_blend(phase09, monkeypatch):
+    """ONNX-Branch mit leeren Regionen soll globalen Sicherheitsmix verwenden."""
+    n = SR
+    audio = np.zeros(n, dtype=np.float32)
+
+    monkeypatch.setattr(p09mod, "QUALITY_MODE_AVAILABLE", True)
+    monkeypatch.setattr(p09mod, "is_phase_ml_enabled", lambda phase_id: phase_id == 9)
+    monkeypatch.setattr(p09mod, "log_mode_decision", lambda *args, **kwargs: None)
+
+    monkeypatch.setattr(phase09, "_remove_crackle_onnx_direct", lambda a, sr, p: np.ones_like(a, dtype=np.float32))
+    monkeypatch.setattr(phase09, "_measure_crackle_reduction", lambda a, b: 12.0)
+    monkeypatch.setattr(
+        phase09,
+        "_compute_crackle_regions_with_protection",
+        lambda a, p: ([], [], [], []),
+    )
+
+    result = phase09.process(audio, sample_rate=SR, material_type="vinyl", strength=0.8)
+    assert result.success
+    restored = result.audio
+    assert np.allclose(restored, np.full(n, 0.8, dtype=np.float32), atol=1e-5)
+
+
+def test_process_docker_fallback_uses_region_selective_blend(phase09, monkeypatch):
+    """Docker-Fallback muss wie ONNX lokal statt global blenden."""
+    n = SR
+    audio = np.zeros(n, dtype=np.float32)
+
+    monkeypatch.setattr(p09mod, "QUALITY_MODE_AVAILABLE", True)
+    monkeypatch.setattr(p09mod, "is_phase_ml_enabled", lambda phase_id: phase_id == 9)
+    monkeypatch.setattr(p09mod, "log_mode_decision", lambda *args, **kwargs: None)
+
+    # Erzwinge ONNX-Fehler, damit Docker-Fallback genommen wird.
+    monkeypatch.setattr(
+        phase09, "_remove_crackle_onnx_direct", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("onnx_fail"))
+    )
+    monkeypatch.setattr(phase09, "_get_banquet_plugin", lambda: object())
+    monkeypatch.setattr(phase09, "_remove_crackle_ml", lambda a, plugin, p: np.ones_like(a, dtype=np.float32))
+    monkeypatch.setattr(phase09, "_measure_crackle_reduction", lambda a, b: 11.0)
+    monkeypatch.setattr(
+        phase09,
+        "_compute_crackle_regions_with_protection",
+        lambda a, p: ([], [], [], [(3000, 4200)]),
+    )
+
+    result = phase09.process(audio, sample_rate=SR, material_type="vinyl", strength=0.8)
+    assert result.success
+    restored = result.audio
+
+    inside_mean = float(np.mean(restored[3200:3800]))
+    outside = np.r_[restored[:1500], restored[5000:8000]]
+    outside_mean = float(np.mean(outside))
+    assert inside_mean > 0.70
+    assert outside_mean < 0.60
+
+
+def test_process_docker_fallback_without_regions_uses_global_blend(phase09, monkeypatch):
+    """Docker-Fallback mit leeren Regionen soll globalen Sicherheitsmix nutzen."""
+    n = SR
+    audio = np.zeros(n, dtype=np.float32)
+
+    monkeypatch.setattr(p09mod, "QUALITY_MODE_AVAILABLE", True)
+    monkeypatch.setattr(p09mod, "is_phase_ml_enabled", lambda phase_id: phase_id == 9)
+    monkeypatch.setattr(p09mod, "log_mode_decision", lambda *args, **kwargs: None)
+
+    monkeypatch.setattr(
+        phase09, "_remove_crackle_onnx_direct", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("onnx_fail"))
+    )
+    monkeypatch.setattr(phase09, "_get_banquet_plugin", lambda: object())
+    monkeypatch.setattr(phase09, "_remove_crackle_ml", lambda a, plugin, p: np.ones_like(a, dtype=np.float32))
+    monkeypatch.setattr(phase09, "_measure_crackle_reduction", lambda a, b: 11.0)
+    monkeypatch.setattr(
+        phase09,
+        "_compute_crackle_regions_with_protection",
+        lambda a, p: ([], [], [], []),
+    )
+
+    result = phase09.process(audio, sample_rate=SR, material_type="vinyl", strength=0.8)
+    assert result.success
+    restored = result.audio
+    assert np.allclose(restored, np.full(n, 0.8, dtype=np.float32), atol=1e-5)

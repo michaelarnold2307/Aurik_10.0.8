@@ -726,12 +726,14 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
         "groove",
         "timbre_authentizitaet",  # noise gate inserts silence between phrases → spectral centroid/MFCC changes vs. continuous-noise reference — CIG sync §2.54
         "artikulation",  # §2.55-Sync: VAD-Gate schneidet Note-Attacks ab → artikulation-Score bricht catastrophic ein (Δ>0.29). Das IST der Zweck des Gates, kein Bug. CIG sync §2.55.
+        "transient_energie",  # §1.4.6: VAD-Gate zeroes sub-threshold frames including real onsets → onset-amplitude ratio drops → false transient_energie regression; TransientEnergyMetric fallback uses artikulation proxy which also suffers the same gate-induced drop.
     },  # Noise gate (§9.7.11 K-S: tonal_center resolved — K-S key-detection is SNR-invariant; §9.7.12/13: brillanz+transparenz crest proxies SNR-robust → removed)
     "phase_26": {
         "micro_dynamics",
         "artikulation",
         "groove",
         "emotionalitaet",
+        "transient_energie",  # §1.4.6: expander widens transient/sustain ratio → crest-factor shift → onset-amplitude ratio jumps non-linearly; TransientEnergyMetric onset-amplitude proxy registers gain as false regression when measured mid-expansion.
     },  # Dynamic expansion: expander opens transient/decay gap → RMS-env autocorr[lag_05] disrupted + crest-factor shift → false P3 regressions (same mechanisms as phase_18 noise gate)
     "phase_36": {
         "micro_dynamics",
@@ -2826,10 +2828,25 @@ def _measure_quick(
     except Exception:
         scores["artikulation"] = 0.5
 
-    # ── Transient-Energie (§1.4.6): onset-energy preservation proxy ───────
+    # ── Transient-Energie (§1.4.6): onset-amplitude-ratio proxy (independent of artikulation) ──
+    # Identische Formel wie _fast_goal_snapshot() in UV3: p90(positive RMS-Diffs) / p50(RMS).
+    # VERBOTEN: artikulation-Score als Proxy — führt zu falschen Kovarianzen bei VAD-phasen.
     try:
-        if "artikulation" in scores:
-            scores["transient_energie"] = float(scores["artikulation"])
+        _rms_frames_te = []
+        _hop_te = 512
+        _N_te = len(mono)
+        for _i in range(0, _N_te - _hop_te, _hop_te):
+            _rms_frames_te.append(float(np.sqrt(np.mean(mono[_i : _i + _hop_te] ** 2))))
+        if len(_rms_frames_te) >= 4:
+            _arr_te = np.array(_rms_frames_te, dtype=np.float64)
+            _diff_te = np.maximum(np.diff(_arr_te), 0.0)
+            _eps_te = 1e-9
+            if _diff_te.size > 0 and float(np.max(_diff_te)) > _eps_te:
+                _oe = float(np.percentile(_diff_te, 90))
+                _se = float(np.percentile(_arr_te, 50)) + _eps_te
+                scores["transient_energie"] = float(np.clip((_oe / _se) * 2.0, 0.0, 1.0))
+            else:
+                scores["transient_energie"] = 0.5
         else:
             scores["transient_energie"] = 0.5
     except Exception:

@@ -83,6 +83,8 @@ from backend.core.audio_utils import apply_musical_gain_envelope as _amge_09
 from backend.core.audio_utils import compute_gated_rms_dbfs as _gated_rms_dbfs_09
 from backend.core.audio_utils import compute_signal_relative_gate_dbfs as _sig_gate_09
 from backend.core.audio_utils import to_channels_last
+from backend.core.ml_memory_budget import release as _ml_release
+from backend.core.ml_memory_budget import try_allocate as _try_allocate
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
 
@@ -122,13 +124,6 @@ def _get_banquet_onnx_session():
                 try:
                     import onnxruntime as ort  # pylint: disable=import-outside-toplevel
 
-                    from backend.core.ml_memory_budget import (
-                        release as _ml_release,  # pylint: disable=import-outside-toplevel
-                    )
-                    from backend.core.ml_memory_budget import (
-                        try_allocate as _try_allocate,  # pylint: disable=import-outside-toplevel
-                    )
-
                     _BANQUET_SIZE_GB = 0.05  # banquet_vinyl_final.onnx ~ 50 MB
                     if not _try_allocate("BanquetVinyl", size_gb=_BANQUET_SIZE_GB):
                         logger.warning(
@@ -155,8 +150,8 @@ def _get_banquet_onnx_session():
 
                         _BANQUET_ONNX_SESSION = sess
                         try:
-                            from backend.core.plugin_lifecycle_manager import (
-                                get_plugin_lifecycle_manager,  # pylint: disable=import-outside-toplevel
+                            from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                                get_plugin_lifecycle_manager,
                             )
 
                             get_plugin_lifecycle_manager().register(
@@ -363,6 +358,118 @@ class CrackleRemovalPhase(PhaseInterface):
         )
         return float(np.clip(scalar, 0.82, 1.12))
 
+    @staticmethod
+    def _apply_region_selective_strength_blend(
+        dry_audio: np.ndarray,
+        wet_audio: np.ndarray,
+        crackle_regions: list[tuple[int, int]],
+        effective_strength: float,
+        sample_rate: int,
+        fallback_to_global_when_no_regions: bool = False,
+    ) -> np.ndarray:
+        """Region-selektives Dry/Wet-Blending fuer Crackle-Processing.
+
+        Innerhalb erkannter Crackle-Regionen gilt die volle Wirksamkeit,
+        ausserhalb wird konservativer gemischt, um Musiktextur zu schonen.
+        """
+        eff = float(np.clip(effective_strength, 0.0, 1.0))
+        dry = np.asarray(dry_audio, dtype=np.float32)
+        wet = np.asarray(wet_audio, dtype=np.float32)
+
+        if eff <= 0.0:
+            return dry.copy()
+        if eff >= 1.0:
+            return np.clip(wet, -1.0, 1.0).astype(np.float32)
+        if dry.shape != wet.shape:
+            return np.clip(dry + eff * (wet - dry), -1.0, 1.0).astype(np.float32)
+
+        n = int(dry.shape[0])
+        if n <= 0:
+            return dry.copy()
+        if not crackle_regions:
+            if fallback_to_global_when_no_regions:
+                return np.clip(dry + eff * (wet - dry), -1.0, 1.0).astype(np.float32)
+            return dry.copy()
+
+        outside_alpha = float(np.clip(eff * 0.35, 0.05, eff))
+        alpha = np.full(n, outside_alpha, dtype=np.float32)
+        for s, e in crackle_regions:
+            ss = int(np.clip(s, 0, n))
+            ee = int(np.clip(e, 0, n))
+            if ee > ss:
+                alpha[ss:ee] = eff
+
+        # Weiche Uebergaenge vermeiden Kantenartefakte an Regionsgrenzen.
+        pad = max(1, int(0.0008 * sample_rate))
+        if pad > 1:
+            kernel = np.ones(2 * pad + 1, dtype=np.float32) / float(2 * pad + 1)
+            alpha = np.convolve(alpha, kernel, mode="same").astype(np.float32)
+            alpha = np.clip(alpha, outside_alpha, eff)
+
+        if dry.ndim == 1:
+            out = alpha * wet + (1.0 - alpha) * dry
+        else:
+            out = alpha[:, np.newaxis] * wet + (1.0 - alpha)[:, np.newaxis] * dry
+        return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+    def _apply_phoneme_protection_to_regions(
+        self,
+        audio: np.ndarray,
+        crackle_regions: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """Filtert Crackle-Regionen mit §2.36-Phonemschutz (non-blocking)."""
+        if not crackle_regions:
+            return crackle_regions
+
+        try:
+            from backend.core.lyrics_guided_enhancement import (  # pylint: disable=import-outside-toplevel
+                get_phoneme_mask as _get_pmask_09,
+            )
+
+            _hop_09 = 512
+            _mono_09: np.ndarray
+            if audio.ndim == 2:
+                _mono_09 = np.mean(audio, axis=0) if audio.shape[0] == 2 else np.mean(audio, axis=1)
+            else:
+                _mono_09 = audio
+            _pmask_09 = _get_pmask_09(_mono_09.astype(np.float32), self.sample_rate, hop_length=_hop_09)
+            if np.any(_pmask_09):
+                _n09 = len(_mono_09)
+                _smask_09 = np.zeros(_n09, dtype=bool)
+                for _fi09, _fp09 in enumerate(_pmask_09):
+                    if _fp09:
+                        _fs09 = _fi09 * _hop_09
+                        _fe09 = min(_n09, _fs09 + _hop_09)
+                        _smask_09[_fs09:_fe09] = True
+                _before_09 = len(crackle_regions)
+                crackle_regions = [(s, e) for s, e in crackle_regions if not np.any(_smask_09[s:e])]
+                logger.debug(
+                    "§2.36 phase_09 Phonem-Schutz: %d → %d crackle_regions (Plosiv-Bursts entfernt)",
+                    _before_09,
+                    len(crackle_regions),
+                )
+        except Exception as _pmask09_exc:
+            logger.debug("§2.36 phase_09 Phonem-Mask (non-blocking): %s", _pmask09_exc)
+
+        return crackle_regions
+
+    def _compute_crackle_regions_with_protection(
+        self,
+        audio: np.ndarray,
+        params: dict[str, Any],
+    ) -> tuple[list[int], list[int], list[int], list[tuple[int, int]]]:
+        """Berechnet Crackle-Regionen inkl. §2.36-Phonemschutz als gemeinsame Quelle."""
+        transients_short, transients_medium, transients_long = self._detect_transients_multiscale(audio, params)
+        crackle_regions = self._classify_crackle_regions(
+            audio,
+            transients_short,
+            transients_medium,
+            transients_long,
+            params,
+        )
+        crackle_regions = self._apply_phoneme_protection_to_regions(audio, crackle_regions)
+        return transients_short, transients_medium, transients_long, crackle_regions
+
     def _get_banquet_plugin(self):
         """Lazy-load BANQUET Docker plugin (fallback if ONNX direct access fails)."""
         if self._banquet_plugin is None:
@@ -467,8 +574,8 @@ class CrackleRemovalPhase(PhaseInterface):
 
         # PLM Active-Guard: prevents emergency-eviction during active inference (§VERBOTEN)
         try:
-            from backend.core.plugin_lifecycle_manager import (
-                get_plugin_lifecycle_manager,  # pylint: disable=import-outside-toplevel
+            from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                get_plugin_lifecycle_manager,
             )
 
             _plm = get_plugin_lifecycle_manager()
@@ -645,8 +752,8 @@ class CrackleRemovalPhase(PhaseInterface):
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
-            from backend.core.plugin_lifecycle_manager import (
-                get_plugin_lifecycle_manager as _get_plm_evict09,  # pylint: disable=import-outside-toplevel
+            from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                get_plugin_lifecycle_manager as _get_plm_evict09,
             )
 
             _get_plm_evict09().evict_for_phase("phase_09_crackle_removal")
@@ -739,7 +846,15 @@ class CrackleRemovalPhase(PhaseInterface):
                 _sample_rate = int(kwargs.get("sample_rate", 48000))
                 restored = self._remove_crackle_onnx_direct(audio, _sample_rate, params)
                 if 0.0 < _effective_strength < 1.0:
-                    restored = audio + _effective_strength * (restored - audio)
+                    _, _, _, _cr_ml = self._compute_crackle_regions_with_protection(audio, params)
+                    restored = self._apply_region_selective_strength_blend(
+                        dry_audio=audio,
+                        wet_audio=restored,
+                        crackle_regions=_cr_ml,
+                        effective_strength=_effective_strength,
+                        sample_rate=sample_rate,
+                        fallback_to_global_when_no_regions=True,
+                    )
                 _onnx_ok = True
                 execution_time = time.time() - start_time
                 crackle_reduction_db = self._measure_crackle_reduction(audio, restored)
@@ -776,7 +891,15 @@ class CrackleRemovalPhase(PhaseInterface):
                     try:
                         restored = self._remove_crackle_ml(audio, banquet, params)
                         if 0.0 < _effective_strength < 1.0:
-                            restored = audio + _effective_strength * (restored - audio)
+                            _, _, _, _cr_ml = self._compute_crackle_regions_with_protection(audio, params)
+                            restored = self._apply_region_selective_strength_blend(
+                                dry_audio=audio,
+                                wet_audio=restored,
+                                crackle_regions=_cr_ml,
+                                effective_strength=_effective_strength,
+                                sample_rate=sample_rate,
+                                fallback_to_global_when_no_regions=True,
+                            )
                         execution_time = time.time() - start_time
                         crackle_reduction_db = self._measure_crackle_reduction(audio, restored)
                         restored = np.nan_to_num(restored, nan=0.0, posinf=0.0, neginf=0.0)
@@ -813,47 +936,9 @@ class CrackleRemovalPhase(PhaseInterface):
 
         # DSP-based processing (fallback or FAST mode)
 
-        # Step 1: Multi-Scale Transient Detection
-        transients_short, transients_medium, transients_long = self._detect_transients_multiscale(audio, params)
-
-        # Step 2: Classify as Crackle vs. Music
-        crackle_regions = self._classify_crackle_regions(
-            audio, transients_short, transients_medium, transients_long, params
+        transients_short, transients_medium, transients_long, crackle_regions = (
+            self._compute_crackle_regions_with_protection(audio, params)
         )
-
-        # §2.36 Phoneme protection: plosive bursts (/p/,/t/,/k/) generate short broadband
-        # energy spikes that the AR-residual detector classifies as crackle.
-        # Detected crackle_regions that overlap with a consonant burst are
-        # not repaired — articulation is preserved (§2.36 RELEASE_MUST).
-        try:
-            from backend.core.lyrics_guided_enhancement import (
-                get_phoneme_mask as _get_pmask_09,  # pylint: disable=import-outside-toplevel
-            )
-
-            _hop_09 = 512
-            _mono_09: np.ndarray
-            if audio.ndim == 2:
-                _mono_09 = np.mean(audio, axis=0) if audio.shape[0] == 2 else np.mean(audio, axis=1)
-            else:
-                _mono_09 = audio
-            _pmask_09 = _get_pmask_09(_mono_09.astype(np.float32), self.sample_rate, hop_length=_hop_09)
-            if np.any(_pmask_09) and crackle_regions:
-                _n09 = len(_mono_09)
-                _smask_09 = np.zeros(_n09, dtype=bool)
-                for _fi09, _fp09 in enumerate(_pmask_09):
-                    if _fp09:
-                        _fs09 = _fi09 * _hop_09
-                        _fe09 = min(_n09, _fs09 + _hop_09)
-                        _smask_09[_fs09:_fe09] = True
-                _before_09 = len(crackle_regions)
-                crackle_regions = [(s, e) for s, e in crackle_regions if not np.any(_smask_09[s:e])]
-                logger.debug(
-                    "§2.36 phase_09 Phonem-Schutz: %d → %d crackle_regions (Plosiv-Bursts entfernt)",
-                    _before_09,
-                    len(crackle_regions),
-                )
-        except Exception as _pmask09_exc:
-            logger.debug("§2.36 phase_09 Phonem-Mask (non-blocking): %s", _pmask09_exc)
 
         # Step 3: Model Background Texture (if enabled)
         background_model = None
@@ -863,7 +948,13 @@ class CrackleRemovalPhase(PhaseInterface):
         # Step 4: Spectral Interpolation with Texture Preservation
         restored = self._remove_crackle_spectral(audio, crackle_regions, background_model, params)
         if 0.0 < _effective_strength < 1.0:
-            restored = audio + _effective_strength * (restored - audio)
+            restored = self._apply_region_selective_strength_blend(
+                dry_audio=audio,
+                wet_audio=restored,
+                crackle_regions=crackle_regions,
+                effective_strength=_effective_strength,
+                sample_rate=sample_rate,
+            )
 
         execution_time = time.time() - start_time
 

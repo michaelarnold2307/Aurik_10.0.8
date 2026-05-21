@@ -131,6 +131,10 @@ _HEAVY_PLUGIN_MODULES: tuple = (
 )
 
 _VSCODE_SAFE_TEST_LIMIT: int = int(os.environ.get("AURIK_VSCODE_TEST_LIMIT", "250"))
+# Maximale Anzahl Test-Dateien im VS Code Test Explorer (verhindert Import-Kaskade + Pipe-Flood).
+# Nur TEST_RUN_PIPE-Runs betroffen (exklusiv Test Explorer, nicht Terminal-Tasks).
+_VSCODE_FILE_LIMIT: int = int(os.environ.get("AURIK_VSCODE_FILE_LIMIT", "50"))
+_vscode_file_count: int = 0  # Zählt Test-Dateien während Collection in VS Code Test Explorer Runs
 
 
 def _release_heavy_singletons() -> None:
@@ -145,8 +149,14 @@ def _release_heavy_singletons() -> None:
 
 
 def _is_vscode_run() -> bool:
-    """True wenn pytest von VS Code Test Explorer gestartet wurde."""
-    return "TEST_RUN_PIPE" in os.environ or "VSCODE_PID" in os.environ
+    """True wenn pytest vom VS Code Test Explorer (TEST_RUN_PIPE) gestartet wurde.
+
+    VSCODE_PID wird in ALLEN VS Code Terminals gesetzt — auch in tasks.json-Runs, die
+    die Vollsuite ausführen sollen. Nur TEST_RUN_PIPE ist exklusiv für den Test Explorer
+    (vscode_pytest setzt diese Pipe für JSON-RPC-Streaming). Würde VSCODE_PID mitgeprüft,
+    wären auch Terminal-Tasks auf 250 Tests begrenzt → falsches Verhalten.
+    """
+    return "TEST_RUN_PIPE" in os.environ
 
 
 def pytest_collection_finish(session) -> None:
@@ -342,18 +352,33 @@ def pytest_collection_modifyitems(config, items) -> None:
 
 
 def pytest_ignore_collect(collection_path, config):
-    """Prevent collection/import of heavy test modules unless explicitly enabled.
+    """Verhindert Collection/Import schwerer Test-Module und begrenzt Dateianzahl im VS Code Test Explorer.
 
-    This hook is intentionally early to avoid side effects from module-level imports
-    in heavy test files during collection.
+    Dieser Hook läuft VOR dem Import der Testdatei — verhindert daher sowohl die
+    Import-Kaskade (ONNX-Sessions, ~37–250 MB/Plugin) als auch den JSON-RPC-Event-Flood
+    über TEST_RUN_PIPE. Beides kann VS Code bei 13 000+ Tests zum Absturz bringen.
+
+    Datei-Limit gilt NUR wenn TEST_RUN_PIPE gesetzt ist (VS Code Test Explorer).
+    Terminal-Tasks (tasks.json) haben VSCODE_PID aber kein TEST_RUN_PIPE → unbeschränkt.
     """
+    global _vscode_file_count
+
+    # Datei-Limit für VS Code Test Explorer: verhindert Import-Kaskade + Pipe-Flood.
+    # Läuft BEVOR das Modul importiert wird → kein OOM, kein Event-Flood.
+    if "TEST_RUN_PIPE" in os.environ:
+        path_str = str(collection_path)
+        if path_str.endswith(".py") and os.path.basename(path_str).startswith("test_"):
+            _vscode_file_count += 1
+            if _vscode_file_count > _VSCODE_FILE_LIMIT:
+                return True  # Datei komplett überspringen (kein Import, kein Event)
+
     if bool(config.getoption("--run-heavy-tests")):
         return False
 
     path = str(collection_path).replace("\\", "/").lower()
     basename = path.split("/")[-1]
 
-    # Legacy/script-style tests must never be part of default collection.
+    # Legacy-/Script-Style-Tests dürfen nie Teil der Standard-Collection sein.
     if basename in _LEGACY_IGNORE_BASENAMES:
         return True
 

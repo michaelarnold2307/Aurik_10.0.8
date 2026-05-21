@@ -23,6 +23,76 @@ _log = _logging.getLogger(__name__)
 logger = _log
 
 
+def _decode_audio_bytes_canonical(audio_bytes: bytes, *, suffix: str = ".wav") -> tuple[np.ndarray, int]:
+    """Dekodiert Audio-Bytes bevorzugt über den kanonischen Dateiloader."""
+    tmp_path: str | None = None
+    if _load_audio_file is not None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as _tmp:
+                _tmp.write(audio_bytes)
+                tmp_path = _tmp.name
+            _loaded = _load_audio_file(tmp_path)
+            if isinstance(_loaded, dict) and _loaded.get("audio") is not None and _loaded.get("sr") is not None:
+                return np.asarray(_loaded["audio"], dtype=np.float32), int(_loaded["sr"])
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("Kanonischer Byte-Decode fehlgeschlagen, sf.read-Fallback aktiv: %s", exc)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    audio, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
+    return np.asarray(audio, dtype=np.float32), int(sr)
+
+
+def _enforce_canonical_policy_route(task: str, model_name: str, context: dict) -> str:
+    """Normalisiert Legacy-Policy-Ausgaben auf kanonische Aurik-9-Routen."""
+    try:
+        from policy.ml_policy_engine import (  # pylint: disable=import-outside-toplevel
+            CANONICAL_INSTRUMENTAL_NR_ROUTE,
+            CANONICAL_REPAIR_ROUTE,
+            CANONICAL_SEPARATION_ROUTE,
+            CANONICAL_VOCAL_NR_ROUTE,
+        )
+    except Exception:
+        return model_name
+
+    name = str(model_name or "").strip()
+    if not name:
+        return model_name
+
+    if task in {"denoise", "enhancement"}:
+        canonical_set = {CANONICAL_VOCAL_NR_ROUTE, CANONICAL_INSTRUMENTAL_NR_ROUTE}
+        if name in canonical_set:
+            return name
+        fallback = (
+            CANONICAL_VOCAL_NR_ROUTE if bool(context.get("has_vocals", False)) else CANONICAL_INSTRUMENTAL_NR_ROUTE
+        )
+        logger.warning(
+            "Policy-Drift abgefangen (%s): '%s' -> '%s'",
+            task,
+            name,
+            fallback,
+        )
+        return fallback
+
+    if task == "repair":
+        if name == CANONICAL_REPAIR_ROUTE:
+            return name
+        logger.warning("Policy-Drift abgefangen (repair): '%s' -> '%s'", name, CANONICAL_REPAIR_ROUTE)
+        return CANONICAL_REPAIR_ROUTE
+
+    if task == "separation":
+        if name == CANONICAL_SEPARATION_ROUTE:
+            return name
+        logger.warning("Policy-Drift abgefangen (separation): '%s' -> '%s'", name, CANONICAL_SEPARATION_ROUTE)
+        return CANONICAL_SEPARATION_ROUTE
+
+    return name
+
+
 def _canonical_policy_audio_route(model_name: str, audio: np.ndarray, sr: int, context: dict) -> np.ndarray | None:
     """Führt aus: canonical Aurik 9 policy routes; return None for non-canonical legacy names."""
     try:
@@ -674,16 +744,23 @@ class AdaptiveProcessingPipeline:
 
         self.logger.info("Starting v8.1 vocal separation (Hybrid: MDX-Net + Demucs v5)")
 
-        if use_safety_wrapper and self.vocal_safety_wrapper is not None:
-            # HIPS-compliant separation with validation
-            try:
-                stems = self.vocal_safety_wrapper.safe_separate(audio, sr, return_individual=False)
-            except HIPSViolationError as e:
-                logger.error("HIPS violation during vocal separation: %s", e)
-                raise
-        else:
-            # Direct separation (bypass safety checks)
-            stems = self.vocal_separator_v8.separate(audio, sr, return_individual=False)
+        if not use_safety_wrapper:
+            self.logger.warning(
+                "separate_vocals_v8 wurde ohne Safety-Wrapper angefordert; "
+                "aus Sicherheitsgruenden wird trotzdem der HIPS-Wrapper erzwungen"
+            )
+
+        if self.vocal_safety_wrapper is None:
+            raise RuntimeError(
+                "v8.1 Vocal Separation Safety Wrapper unavailable; unsichere Direktverarbeitung ist deaktiviert"
+            )
+
+        # HIPS-compliant separation with validation (fail-closed, kein Direkt-Bypass)
+        try:
+            stems = self.vocal_safety_wrapper.safe_separate(audio, sr, return_individual=False)
+        except HIPSViolationError as e:
+            logger.error("HIPS violation during vocal separation: %s", e)
+            raise
 
         # Log metrics
         metrics = self.vocal_separator_v8.get_metrics()
@@ -749,16 +826,28 @@ class AdaptiveProcessingPipeline:
 
         self.logger.info("Starting v8.2 pitch correction (CREPE + Epistemic Gates)")
 
-        if use_safety_wrapper and self.pitch_corrector_safety is not None:
-            # HIPS-compliant correction with validation
-            try:
-                audio_corrected, metadata = self.pitch_corrector_safety.safe_correct(audio, sr, **kwargs)
-            except HIPSViolationError as e:
-                logger.error("HIPS violation during pitch correction: %s", e)
-                raise
-        else:
-            # Direct correction (bypass safety checks)
-            audio_corrected, metadata = self.pitch_corrector_v8.correct_pitch(audio, **kwargs)
+        if not use_safety_wrapper:
+            self.logger.warning(
+                "correct_pitch_v8 wurde ohne Safety-Wrapper angefordert; "
+                "aus Sicherheitsgruenden wird trotzdem der HIPS-Wrapper erzwungen"
+            )
+
+        if self.pitch_corrector_safety is None:
+            self.logger.error(
+                "v8.2 Pitch Correction Safety Wrapper unavailable; unsichere Direktverarbeitung ist deaktiviert"
+            )
+            return audio, {
+                "corrected": False,
+                "reason": "safety_wrapper_unavailable",
+                "error": "unsafe_direct_processing_disabled",
+            }
+
+        # HIPS-compliant correction with validation (fail-closed, kein Direkt-Bypass)
+        try:
+            audio_corrected, metadata = self.pitch_corrector_safety.safe_correct(audio, sr, **kwargs)
+        except HIPSViolationError as e:
+            logger.error("HIPS violation during pitch correction: %s", e)
+            raise
 
         # Log result
         if metadata.get("corrected", False):
@@ -867,7 +956,7 @@ class AdaptiveProcessingPipeline:
         """Führt aus: the legacy adaptive processing workflow for byte-based callers."""
         del reference_audio
         # 0. Eingangsaudio dekodieren; Tonträgerkette kommt autoritativ aus MediumDetector/PreAnalysis.
-        audio_np, sr_audio = sf.read(io.BytesIO(audio_bytes))
+        audio_np, sr_audio = _decode_audio_bytes_canonical(audio_bytes)
         features = dict(features) if features else {}
         medium_result = features.get("medium_result")
 
@@ -1052,7 +1141,7 @@ class AdaptiveProcessingPipeline:
         # Erzwinge immer mindestens eine DSP-Phase, auch bei PRESERVE/HARD_STOP
         if ethics_report.decision in [EpistemicDecision.HARD_STOP, EpistemicDecision.PRESERVE]:
             logger.warning("Ethics Engine: %s - Erzwinge minimalen DSP-Processing", ethics_report.decision.value)
-            audio_np, sr_audio = sf.read(io.BytesIO(audio_bytes))
+            audio_np, sr_audio = _decode_audio_bytes_canonical(audio_bytes)
             # Minimaler DSP: Loudness-Normalisierung
             from .mastering import mastering_chain
 
@@ -1078,7 +1167,7 @@ class AdaptiveProcessingPipeline:
                 self.progress_callback("restoration", 0.0, phase_count, total_phases)
 
             # Monitor: Start module
-            audio_in, _ = sf.read(io.BytesIO(current_audio))
+            audio_in, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.start_module("restoration")
 
             res = self._restoration(current_audio, features, policy or goal, context)
@@ -1086,7 +1175,7 @@ class AdaptiveProcessingPipeline:
             current_audio = res["audio"]  # Output wird Input für nächste Phase
 
             # Monitor: End module
-            audio_out, _ = sf.read(io.BytesIO(current_audio))
+            audio_out, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.end_module(
                 audio_in,
                 audio_out,
@@ -1107,7 +1196,7 @@ class AdaptiveProcessingPipeline:
                 self.progress_callback("repair", 0.0, phase_count, total_phases)
 
             # Monitor: Start module
-            audio_in, _ = sf.read(io.BytesIO(current_audio))
+            audio_in, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.start_module("repair")
 
             res = self._repair(current_audio, features, policy or goal, context)
@@ -1115,7 +1204,7 @@ class AdaptiveProcessingPipeline:
             current_audio = res["audio"]  # Output wird Input für nächste Phase
 
             # Monitor: End module
-            audio_out, _ = sf.read(io.BytesIO(current_audio))
+            audio_out, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.end_module(
                 audio_in,
                 audio_out,
@@ -1136,7 +1225,7 @@ class AdaptiveProcessingPipeline:
                 self.progress_callback("reconstruction", 0.0, phase_count, total_phases)
 
             # Monitor: Start module
-            audio_in, _ = sf.read(io.BytesIO(current_audio))
+            audio_in, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.start_module("reconstruction")
 
             res = self._reconstruction(current_audio, features, policy or goal, context)
@@ -1144,7 +1233,7 @@ class AdaptiveProcessingPipeline:
             current_audio = res["audio"]  # Output wird Input für nächste Phase
 
             # Monitor: End module
-            audio_out, _ = sf.read(io.BytesIO(current_audio))
+            audio_out, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.end_module(
                 audio_in,
                 audio_out,
@@ -1165,7 +1254,7 @@ class AdaptiveProcessingPipeline:
                 self.progress_callback("remastering", 0.0, phase_count, total_phases)
 
             # Monitor: Start module
-            audio_in, _ = sf.read(io.BytesIO(current_audio))
+            audio_in, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.start_module("remastering")
 
             res = self._remastering(current_audio, features, policy or goal, context)
@@ -1173,7 +1262,7 @@ class AdaptiveProcessingPipeline:
             current_audio = res["audio"]  # Output wird Input für nächste Phase
 
             # Monitor: End module
-            audio_out, _ = sf.read(io.BytesIO(current_audio))
+            audio_out, _ = _decode_audio_bytes_canonical(current_audio)
             self.audio_monitor.end_module(
                 audio_in,
                 audio_out,
@@ -1197,7 +1286,7 @@ class AdaptiveProcessingPipeline:
         if results["steps"]:
             last = results["steps"][-1]
             # Audio-Bytes in numpy-Array
-            audio, sr = sf.read(io.BytesIO(last["audio"]), always_2d=False)
+            audio, sr = _decode_audio_bytes_canonical(last["audio"])
             # Sicherstellen, dass mastering_chain importiert ist
             from .mastering import mastering_chain as imported_mastering_chain
 
@@ -1220,7 +1309,7 @@ class AdaptiveProcessingPipeline:
                 self.log.append({"step": "mastering", "error": "mastering_chain nicht importierbar"})
 
         # 6. Capture Final Metrics & Export Audit
-        final_audio, _ = sf.read(io.BytesIO(current_audio))
+        final_audio, _ = _decode_audio_bytes_canonical(current_audio)
         self.audio_monitor.capture_final(final_audio, sr_audio)
         self.audio_monitor.export_audit_report(output_dir="./audits", formats=["json", "yaml", "csv"])
         # 7. Logging aller Entscheidungen
@@ -1258,8 +1347,8 @@ class AdaptiveProcessingPipeline:
         4. Stereo Widening (Frequency-dependent, genre-adaptive)
         5. Adaptive EQ (Genre-specific curves)
         """
-        # Audio-Bytes in numpy-Array
-        audio_original, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
+        # Audio-Bytes in numpy-Array (kanonischer Loader mit robustem Fallback)
+        audio_original, sr = _decode_audio_bytes_canonical(audio_bytes)
         # Kontext für Policy-Entscheidung (maximaler Informationsumfang)
         if context is None:
             context = {}
@@ -1288,6 +1377,7 @@ class AdaptiveProcessingPipeline:
         )
         # Adaptive Modellwahl via Policy-Engine
         selected_model = self.policy_engine.select_enhancement_model(context, goal)
+        selected_model = _enforce_canonical_policy_route("enhancement", selected_model, context)
         model_obj = self.model_manager.models.get(selected_model, {}).get("obj")
         if model_obj:
             model_obj.process(audio_original, context)
@@ -1298,13 +1388,17 @@ class AdaptiveProcessingPipeline:
 
         # STAGE 1: ML-Denoise (Policy-selected Model)
         model_name = self.policy_engine.select_denoise_model(context, goal)
+        model_name = _enforce_canonical_policy_route("denoise", model_name, context)
         canonical_audio = _canonical_policy_audio_route(model_name, audio_original, sr, context)
         if canonical_audio is not None:
             audio_denoised = canonical_audio
-            plugin = None
             logger.info("Policy-Selektion: %s über kanonischen Aurik-9-Router", model_name)
         else:
-            plugin = getattr(self, model_name, None)
+            logger.error(
+                "Kanonische Denoise-Route nicht verfügbar (%s) — Legacy-Pluginpfad deaktiviert, Dry-Fallback aktiv",
+                model_name,
+            )
+            audio_denoised = np.asarray(audio_original, dtype=np.float32).copy()
 
         # Strukturierte Stage-Ausgabe
         self.logger.info("\n╔%s╗", "═" * 78)
@@ -1331,81 +1425,7 @@ class AdaptiveProcessingPipeline:
         )
         self.logger.info("")
 
-        # ROBUSTES PLUGIN-HANDLING: Wenn ausgewähltes Plugin nicht verfügbar, nutze Fallback-Chain
-        if plugin is None:
-            logger.info("Plugin-Status: ⚠️ %s nicht verfügbar", model_name)
-
-            # Fallback-Chain (Reihenfolge: Universal → Robust → DSP-Only)
-            fallback_chain = ["resemble_enhance", "wpe", "deepfilternet", "dccrn"]
-
-            # Entferne bereits-geprüftes Plugin aus Chain (avoid infinite loop)
-            if model_name in fallback_chain:
-                fallback_chain.remove(model_name)
-
-            self.logger.info("Fallback-Chain: %s", " → ".join(fallback_chain))
-
-            # Durchlaufe Fallback-Chain
-            for fallback_name in fallback_chain:
-                fallback_plugin = getattr(self, fallback_name, None)
-                if fallback_plugin is not None:
-                    logger.info("  ✓ Fallback erfolgreich: %s wird verwendet", fallback_name)
-                    plugin = fallback_plugin
-                    model_name = fallback_name  # Update für Logging
-                    break
-
-            # Wenn immer noch kein Plugin verfügbar → Skip ML-Denoise
-            if plugin is None:
-                self.logger.info("  ⚠️ Keine ML-Plugins verfügbar - ML-Denoise wird übersprungen")
-                self.logger.info("  → Fallback zu DSP-basierter Verarbeitung\n")
-                audio_denoised = audio_original  # Behalte Original
-            else:
-                self.logger.info("")  # Leerzeile vor Processing
-        else:
-            logger.info("Plugin-Status: ✓ %s geladen und bereit\n", model_name)
-
-        # Nur wenn Plugin verfügbar ist, führe ML-Processing durch
-        if plugin is not None:
-            # CRITICAL FIX: Use workspace temp directory instead of /tmp
-            # Docker containers need writable directories with proper permissions
-            workspace_temp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "temp_ml_processing")
-            os.makedirs(workspace_temp, exist_ok=True)
-
-            # Create temp files in workspace temp directory.
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=workspace_temp) as tmp_in:
-                tmp_in_path = tmp_in.name
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=workspace_temp) as tmp_out:
-                tmp_out_path = tmp_out.name
-
-            try:
-                # Write input WAV file (now file handle is closed, so write will work correctly)
-                sf.write(tmp_in_path, audio_original, sr)
-
-                # Process with ML plugin
-                plugin.process(tmp_in_path, tmp_out_path)
-
-                # Read result — §VERBOTEN: sf.read(path) → load_audio_file
-                if _load_audio_file is not None:
-                    _r = _load_audio_file(tmp_out_path)
-                    if not isinstance(_r, dict):
-                        raise RuntimeError("load_audio_file returned no audio mapping")
-                    audio_denoised = _r["audio"]
-                else:
-                    raise RuntimeError("load_audio_file unavailable for ML output decode")
-
-                logger.info("Processing: ✓ ML-Denoise erfolgreich (%s)", model_name)
-
-            except Exception as e:
-                logger.info("Processing: ❌ ML-Plugin %s fehlgeschlagen: %s", model_name, e)
-                self.logger.info("  → Fallback zu Original-Audio\n")
-                # Fallback to original audio
-                audio_denoised = audio_original
-
-            finally:
-                # Clean up temp files
-                if os.path.exists(tmp_in_path):
-                    os.remove(tmp_in_path)
-                if os.path.exists(tmp_out_path):
-                    os.remove(tmp_out_path)
+        self.logger.info("Legacy-Plugin-Execution deaktiviert — Verarbeitung bleibt auf kanonischem Routerpfad")
 
         # STAGE 2: Hybrid Refinement (Phase 8A-1)
         try:
@@ -1580,21 +1600,25 @@ class AdaptiveProcessingPipeline:
         2. Hybrid Refinement (preserve transients)
         """
         del features
-        # Audio-Bytes in numpy-Array
-        audio_original, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
+        # Audio-Bytes in numpy-Array (kanonischer Loader mit robustem Fallback)
+        audio_original, sr = _decode_audio_bytes_canonical(audio_bytes)
 
         # NUTZE CONTEXT AUS PHASE 1
         self.logger.info("Repair Pipeline: detected_medium=%s", context.get("detected_medium", "unknown"))
 
         # STAGE 1: ML-Repair (Policy-selected Model)
         model_name = self.policy_engine.select_repair_model(context, goal)
+        model_name = _enforce_canonical_policy_route("repair", model_name, context)
         canonical_audio = _canonical_policy_audio_route(model_name, audio_original, sr, context)
         if canonical_audio is not None:
             audio_repaired = canonical_audio
-            plugin = None
             logger.info("Policy-Selektion: %s über UV3-Reparaturroute", model_name)
         else:
-            plugin = getattr(self, model_name, None)
+            logger.error(
+                "Kanonische Repair-Route nicht verfügbar (%s) — Legacy-Pluginpfad deaktiviert, Dry-Fallback aktiv",
+                model_name,
+            )
+            audio_repaired = np.asarray(audio_original, dtype=np.float32).copy()
 
         self.logger.info("\n╔%s╗", "═" * 78)
         self.logger.info("║  REPAIR STAGE 1: ML-REPAIR (Clipping/Artifacts)%s║", " " * 30)
@@ -1608,73 +1632,7 @@ class AdaptiveProcessingPipeline:
         self.logger.info("  Vocals: %s", "Ja" if context.get("has_vocals", False) else "Nein")
         self.logger.info("")
 
-        # ROBUSTES PLUGIN-HANDLING für Repair
-        if plugin is None:
-            logger.info("Plugin-Status: ⚠️ %s nicht verfügbar", model_name)
-
-            # Fallback-Chain für Repair (FullSubNet → DCCRN → Skip)
-            fallback_chain = ["fullsubnet", "dccrn"]
-
-            # Entferne bereits-geprüftes Plugin
-            if model_name in fallback_chain:
-                fallback_chain.remove(model_name)
-
-            self.logger.info("Fallback-Chain: %s", " → ".join(fallback_chain))
-
-            # Durchlaufe Fallback-Chain
-            for fallback_name in fallback_chain:
-                fallback_plugin = getattr(self, fallback_name, None)
-                if fallback_plugin is not None:
-                    logger.info("  ✓ Fallback erfolgreich: %s wird verwendet", fallback_name)
-                    plugin = fallback_plugin
-                    model_name = fallback_name
-                    break
-
-            # Wenn immer noch kein Plugin → Skip ML-Repair
-            if plugin is None:
-                self.logger.info("  ⚠️ Keine Repair-Plugins verfügbar - ML-Repair wird übersprungen")
-                self.logger.info("  → Original-Audio wird beibehalten\n")
-                audio_repaired = audio_original
-        else:
-            logger.info("Plugin-Status: ✓ %s geladen und bereit\n", model_name)
-
-        # Nur wenn Plugin verfügbar, führe ML-Repair durch
-        if plugin is not None:
-            # Create temporary files for ML plugin.
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
-                tmp_in_path = tmp_in.name
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
-                tmp_out_path = tmp_out.name
-
-            try:
-                # Write input WAV file
-                sf.write(tmp_in_path, audio_original, sr)
-
-                # Process with ML plugin
-                plugin.process(tmp_in_path, tmp_out_path)
-
-                # Read result — §VERBOTEN: sf.read(path) → load_audio_file
-                if _load_audio_file is not None:
-                    _r = _load_audio_file(tmp_out_path)
-                    if not isinstance(_r, dict):
-                        raise RuntimeError("load_audio_file returned no audio mapping")
-                    audio_repaired = _r["audio"]
-                else:
-                    raise RuntimeError("load_audio_file unavailable for ML output decode")
-
-                logger.info("Processing: ✓ ML-Repair erfolgreich (%s)", model_name)
-
-            except Exception as e:
-                logger.info("Processing: ❌ ML-Plugin %s fehlgeschlagen: %s", model_name, e)
-                self.logger.info("  → Fallback zu Original-Audio\n")
-                audio_repaired = audio_original
-
-            finally:
-                # Clean up temp files
-                if os.path.exists(tmp_in_path):
-                    os.remove(tmp_in_path)
-                if os.path.exists(tmp_out_path):
-                    os.remove(tmp_out_path)
+        self.logger.info("Legacy-Plugin-Execution deaktiviert — Verarbeitung bleibt auf kanonischer Repair-Route")
 
         # STAGE 2: Hybrid Refinement (preserve transients, reduce artifacts)
         try:
@@ -1714,10 +1672,9 @@ class AdaptiveProcessingPipeline:
     def _reconstruction(self, audio_bytes, features, goal, context):
         """SOTA-Maximum: Source-Separation mit Docker-basierten ML-Modellen (Policy-basierte Auswahl)"""
         del features
-        import glob
 
-        # Audio-Bytes in numpy-Array
-        audio, sr = sf.read(io.BytesIO(audio_bytes), always_2d=False)
+        # Audio-Bytes in numpy-Array (kanonischer Loader mit robustem Fallback)
+        audio, sr = _decode_audio_bytes_canonical(audio_bytes)
 
         # NUTZE CONTEXT AUS PHASE 1
         self.logger.info(
@@ -1728,6 +1685,7 @@ class AdaptiveProcessingPipeline:
 
         # Policy-Engine wählt optimales Model
         model_name = self.policy_engine.select_separation_model(context, goal)
+        model_name = _enforce_canonical_policy_route("separation", model_name, context)
         canonical_separated = _canonical_policy_separation_route(model_name, audio, sr, context)
         if canonical_separated is not None:
             self.log.append(
@@ -1742,76 +1700,23 @@ class AdaptiveProcessingPipeline:
                 out_bytes = buf.getvalue()
             return {"name": "reconstruction", "audio": out_bytes, "params": goal}
 
-        self.logger.info("\n%s", "=" * 80)
-        logger.info("🎶 SOURCE-SEPARATION AUSGEWÄHLT: %s", model_name.upper())
-        self.logger.info("%s", "=" * 80)
-        self.logger.info("   Stems: %s", goal.get("stems", 4))
-        self.logger.info("   Genre: %s", context.get("genre", "unknown"))
+        logger.error(
+            "Kanonische Separation-Route nicht verfügbar (%s) — Legacy-Pluginpfad deaktiviert, Dry-Fallback aktiv",
+            model_name,
+        )
+        audio_separated = np.asarray(audio, dtype=np.float32).copy()
 
-        if "mdx23c" in model_name:
-            self.logger.info("   Model: MDX23C (maximal quality)")
-        elif "demucs" in model_name:
-            self.logger.info("   Model: Demucs v4 (4+ stems)")
-        else:
-            self.logger.info("   Model: UVR-MDXNet (2-stem)")
-
-        self.logger.info("%s\n", "=" * 80)
-
-        plugin = getattr(self, model_name)
-
-        # Temporäre Dateien und Verzeichnis für Docker I/O
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
-            output_dir = tempfile.mkdtemp()
-
-            try:
-                # Audio in Temp-Datei schreiben
-                sf.write(tmp_in.name, audio, sr)
-
-                # Docker-Plugin aufrufen
-                # Demucs separiert in output_dir/vocals.wav, output_dir/accompaniment.wav etc.
-                plugin.process(tmp_in.name, output_dir, stems=context["stem_count"])  # type: ignore[call-arg]
-
-                # Lade separierte Vocals (oder andere Stems je nach goal)
-                vocals_path = os.path.join(output_dir, "vocals.wav")
-                if os.path.exists(vocals_path):
-                    # §VERBOTEN: sf.read(path) → load_audio_file
-                    if _load_audio_file is not None:
-                        _r = _load_audio_file(vocals_path)
-                        if not isinstance(_r, dict):
-                            raise RuntimeError("load_audio_file returned no audio mapping")
-                        audio_separated = _r["audio"]
-                    else:
-                        raise RuntimeError("load_audio_file unavailable for stem decode")
-                else:
-                    # Fallback: Nutze Original falls Separation fehlschlägt
-                    self.logger.warning("Vocals nicht gefunden, nutze Original")
-                    audio_separated = audio
-
-                # Audit-Infos
-                self.log.append(
-                    {
-                        "step": "reconstruction",
-                        "info": f"{model_name} (Docker, Policy-selected)",
-                        "params": goal,
-                    }
-                )
-
-                # Zurück in Bytes
-                with io.BytesIO() as buf:
-                    sf.write(buf, audio_separated, sr, format="WAV")
-                    out_bytes = buf.getvalue()
-
-                return {"name": "reconstruction", "audio": out_bytes, "params": goal}
-
-            finally:
-                # Cleanup temporäre Dateien
-                if os.path.exists(tmp_in.name):
-                    os.remove(tmp_in.name)
-                # Cleanup output directory und alle Stems
-                if os.path.exists(output_dir):
-                    for file in glob.glob(os.path.join(output_dir, "*.wav")):
-                        os.remove(file)
-                    os.rmdir(output_dir)
+        self.log.append(
+            {
+                "step": "reconstruction",
+                "info": f"{model_name} (canonical route unavailable, dry fallback)",
+                "params": goal,
+            }
+        )
+        with io.BytesIO() as buf:
+            sf.write(buf, audio_separated, sr, format="WAV")
+            out_bytes = buf.getvalue()
+        return {"name": "reconstruction", "audio": out_bytes, "params": goal}
 
     def _remastering(self, audio_bytes, features, goal, context):
         # SOTA-Remastering via Matchering-API-Client mit Fallback
@@ -2225,7 +2130,7 @@ class AdaptiveProcessingPipelineV2:
             result = {"audio": audio_bytes}
 
         # Convert back to numpy
-        processed_audio, _ = sf.read(io.BytesIO(result["audio"]), always_2d=False)
+        processed_audio, _ = _decode_audio_bytes_canonical(result["audio"])
 
         duration = (datetime.now() - start_time).total_seconds()
 

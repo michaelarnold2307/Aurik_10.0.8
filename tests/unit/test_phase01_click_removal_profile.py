@@ -1,6 +1,10 @@
 """Unit tests for phase_01_click_removal._compute_click_removal_profile (§2.56)."""
 
+import numpy as np
+
 from backend.core.phases.phase_01_click_removal import ClickRemovalPhase
+
+SR = 48000
 
 
 class TestClickRemovalProfile:
@@ -67,3 +71,42 @@ class TestClickRemovalProfile:
     def test_unknown_material(self):
         p = self._p("super_exotic_xyz")
         assert 0.35 <= p["ml_severity_threshold"] <= 0.80
+
+
+class TestClickRemovalSilenceProtection:
+    def test_silence_mask_restores_intro_and_outro_after_repair(self, monkeypatch):
+        phase = ClickRemovalPhase()
+        n_samples = SR * 3
+        audio = np.zeros(n_samples, dtype=np.float32)
+        t = np.arange(SR, dtype=np.float32) / SR
+        audio[SR : SR * 2] = 0.05 * np.sin(2 * np.pi * 440.0 * t)
+        silence_mask = np.ones(n_samples, dtype=np.float32)
+        silence_mask[: SR // 2] = 0.0
+        silence_mask[-SR // 2 :] = 0.0
+
+        def _fake_repair(input_audio, *_args, **_kwargs):
+            repaired = input_audio.copy()
+            repaired[: SR // 2] = 0.95
+            repaired[-SR // 2 :] = -0.95
+            return repaired, {
+                "short": 2,
+                "medium": 0,
+                "long": 0,
+                "transients_preserved": 0,
+                "ml_repaired": 0,
+                "total": 2,
+            }
+
+        monkeypatch.setattr(phase, "_remove_clicks_professional", _fake_repair)
+
+        result = phase.process(
+            audio,
+            sample_rate=SR,
+            material_type="tape",
+            silence_mask=silence_mask,
+        )
+
+        assert np.allclose(result.audio[: SR // 2], audio[: SR // 2], atol=1e-7)
+        assert np.allclose(result.audio[-SR // 2 :], audio[-SR // 2 :], atol=1e-7)
+        assert np.max(np.abs(result.audio[: SR // 2])) < 1e-6
+        assert np.max(np.abs(result.audio[-SR // 2 :])) < 1e-6

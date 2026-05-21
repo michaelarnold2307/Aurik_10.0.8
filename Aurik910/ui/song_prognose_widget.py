@@ -12,9 +12,9 @@ import logging
 from typing import Any
 
 import numpy as np
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen
-from PyQt5.QtWidgets import (
+from PyQt5.QtCore import Qt  # pylint: disable=no-name-in-module
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen  # pylint: disable=no-name-in-module
+from PyQt5.QtWidgets import (  # pylint: disable=no-name-in-module
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -68,11 +68,13 @@ class _ScoreDial(QWidget):
         self.setFixedSize(80, 80)
 
     def set_score(self, score: float, color: str) -> None:
+        """Setzt Score und Farbe des Kreisindikators und triggert Repaint."""
         self._score = float(np.clip(score, 0.0, 100.0))
         self._color = color
         self.update()
 
     def paintEvent(self, _event: Any) -> None:  # type: ignore[override]
+        """Zeichnet den ringförmigen Score-Indikator inklusive Zahlenwert."""
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
@@ -192,6 +194,7 @@ _DEFECT_LABELS: dict[str, str] = {
     "FLUTTER": "Tonhöhenzittern (Flutter)",
     "ALIASING": "Aliasing-Verzerrung",
     "AZIMUTH_ERROR": "Azimuth-Abweichung",
+    "HEAD_MISALIGNMENT": "Bandkopf-Ausrichtungsschaden",
     "BIAS_ERROR": "Vormagnetisierungsfehler",
     "BANDWIDTH_LOSS": "Bandbreitenverlust",
     "PHASE_ISSUES": "Phasenproblem",
@@ -253,6 +256,7 @@ _DEFECT_METRIC_SUFFIX: dict[str, Any] = {
     "soft_saturation": lambda v: f"{v:.2f}\u202f%",
     "head_wear": lambda v: f"{v:.2f}\u202f%",
     "azimuth_error": lambda v: f"{v:.2f}\u202f%",
+    "head_misalignment": lambda v: f"{v:.2f}\u202f%",
     "riaa_curve_error": lambda v: f"{v:.2f}\u202f%",
     "bias_error": lambda v: f"{v:.2f}\u202f%",
     "transport_bump": lambda v: f"{v:.2f}\u202f%",
@@ -342,6 +346,9 @@ class SongPrognoseWidget(QWidget):
         self._decade: int | None = None
         self._genre: str = ""
         self._result_obj: Any = None
+        self._pill_by_key: dict[str, _DefectPill] = {}
+        self._detected_scores: dict[str, float] = {}
+        self._detected_locations: dict[str, list] = {}
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -565,7 +572,7 @@ class SongPrognoseWidget(QWidget):
         self._grade_lbl.setStyleSheet(f"color:{_C_MUTED}; font-size:10pt; font-weight:bold; background:transparent;")
         self._grade_lbl.setText("—")
         self._grade_sub_lbl.setText("— wird analysiert …")
-        self._status_lbl.setText("Analyse läuft …")
+        self.set_runtime_status("analyzing")
 
         for key in ("material", "era", "genre", "snr", "bandwidth"):
             self._meta_rows[key].setText("— wird erkannt …")
@@ -584,9 +591,9 @@ class SongPrognoseWidget(QWidget):
         self._clear_defect_pills()
         self._defect_placeholder.setText("— Scan läuft nach dem Start …")
         self._defect_placeholder.setVisible(True)
-        self._pill_by_key: dict[str, _DefectPill] = {}
-        self._detected_scores: dict[str, float] = {}
-        self._detected_locations: dict[str, list] = {}
+        self._pill_by_key = {}
+        self._detected_scores = {}
+        self._detected_locations = {}
 
     def update_material(self, material_key: str, confidence: float) -> None:
         """Aktualisiert material row. Call from GUI thread after MediumClassifier."""
@@ -634,7 +641,7 @@ class SongPrognoseWidget(QWidget):
         self._grade_lbl.setText(grade_name)
         self._grade_lbl.setStyleSheet(f"color:{color}; font-size:10pt; font-weight:bold; background:transparent;")
         self._grade_sub_lbl.setText(grade_line)
-        self._status_lbl.setText("Analyse abgeschlossen")
+        self.set_runtime_status("ready")
 
         # MOS bar
         self._mos_bar.setValue(int(round(predicted_mos * 100)))
@@ -700,6 +707,7 @@ class SongPrognoseWidget(QWidget):
         _locs: dict = defects.get("_locations", {})
 
         if status == "detected":
+            self.set_runtime_status("detected")
             # Collect significant defects
             significant: list[tuple[str, float]] = []
             for k, v in defects.items():
@@ -739,6 +747,7 @@ class SongPrognoseWidget(QWidget):
                 self._pill_by_key[key] = pill
 
         else:  # status == "correcting"
+            self.set_runtime_status("correcting")
             if not getattr(self, "_pill_by_key", None):
                 return
             # §11.4 Active defect keys from the current pipeline phase
@@ -765,6 +774,24 @@ class SongPrognoseWidget(QWidget):
                     n_current = int(n_initial * ratio) if n_initial > 0 else 0
                     new_label = _pill_label(key, current_val, n_current)
                     pill.update_metric(new_label)
+
+    def set_runtime_status(self, state: str) -> None:
+        """Setzt den Laufzeit-Status der Analysekarte konsistent inkl. Farbcodierung."""
+        _state = str(state or "").strip().lower()
+        _map: dict[str, tuple[str, str]] = {
+            "idle": ("Datei öffnen, um die Analyse zu starten", _C_MUTED),
+            "analyzing": ("Analyse läuft …", _C_MUTED),
+            "ready": ("Analyse abgeschlossen", _C_GREEN),
+            "detected": ("Defekte erkannt — bereit für Restaurierung", _C_AMBER),
+            "correcting": ("Restaurierung läuft — Defekte werden korrigiert", _C_BLUE),
+            "completed": ("Restaurierung abgeschlossen", _C_GREEN),
+            "warning": ("Analyse mit Hinweisen abgeschlossen", _C_AMBER),
+            "error": ("Analysefehler — Datei erneut laden", _C_RED),
+            "cancelled": ("Restaurierung abgebrochen", _C_RED),
+        }
+        _text, _color = _map.get(_state, _map["idle"])
+        self._status_lbl.setText(_text)
+        self._status_lbl.setStyleSheet(f"color:{_color}; font-size:9pt; background:transparent;")
 
     # ------------------------------------------------------------------
     # Internal helpers

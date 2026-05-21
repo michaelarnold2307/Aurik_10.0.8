@@ -42,12 +42,14 @@ Version: 2.0.0 Professional
 
 import logging
 import time
+from typing import Any
 
 import numpy as np
 from scipy import ndimage, signal
 
 from backend.core.audio_utils import audio_sample_count, safe_to_mono, stereo_channel_view, stereo_like
 from backend.core.defect_scanner import MaterialType
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -252,7 +254,7 @@ class MidSideProcessing(PhaseInterface):
     # Transient preservation factor (0-1, how much to reduce dynamics during transients)
     TRANSIENT_PRESERVE = 0.70  # 70% less compression during transients
 
-    def __init__(self, sample_rate: int = 48000, **kwargs):
+    def __init__(self, sample_rate: int = 48000, **_kwargs):
         super().__init__()
         self.sample_rate = sample_rate
         self.band_names = ["bass", "low_mid", "mid_high", "high"]
@@ -316,18 +318,28 @@ class MidSideProcessing(PhaseInterface):
         )
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.VINYL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs: Any,
     ) -> PhaseResult:
         """Verarbeitet audio with professional multi-band M/S dynamics."""
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         self.validate_input(audio)
+        material = kwargs.get("material", material_type)
+        if not isinstance(material, MaterialType):
+            try:
+                material = MaterialType(str(material))
+            except Exception:
+                material = MaterialType.VINYL
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _pmgg_strength = float(_strength_ctx["pmgg_strength"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
         quality_mode = kwargs.get("quality_mode")
         restorability_score = kwargs.get("restorability_score", 50.0)
         material_key = str(getattr(material, "value", material) or "unknown")
@@ -437,7 +449,7 @@ class MidSideProcessing(PhaseInterface):
         processed_bands = []
         band_metrics = {}
 
-        for i, (band_name, band_audio) in enumerate(zip(self.band_names, bands)):
+        for band_name, band_audio in zip(self.band_names, bands):
             # M/S decode
             mid, side = self._ms_decode(band_audio)
 
@@ -682,16 +694,16 @@ if __name__ == "__main__":
 
     processor = MidSideProcessing(sample_rate=44100)
 
-    materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.TAPE]
+    demo_materials = [MaterialType.SHELLAC, MaterialType.VINYL, MaterialType.TAPE]
 
-    for material in materials:
-        logger.debug("Testing %s:", material.value.upper())
+    for demo_material in demo_materials:
+        logger.debug("Testing %s:", demo_material.value.upper())
         logger.debug("-" * 70)
 
-        sr = 44100
-        duration = 3.0
-        samples = int(sr * duration)
-        t = np.linspace(0, duration, samples)
+        demo_sr = 44100
+        demo_duration = 3.0
+        samples = int(demo_sr * demo_duration)
+        t = np.linspace(0, demo_duration, samples)
 
         # Create test signal with strong Mid and Side components (HOT SIGNAL)
         # Mid: Center vocal (strong fundamental) + harmonics - LOUDER to trigger compression
@@ -711,30 +723,29 @@ if __name__ == "__main__":
         )
 
         # Add transients (simulating drums) - LOUDER
-        transient_times = np.arange(0.2, duration, 0.5)
+        transient_times = np.arange(0.2, demo_duration, 0.5)
         for tt in transient_times:
-            idx = int(tt * sr)
+            idx = int(tt * demo_sr)
             if idx < len(mid_signal):
                 mid_signal[idx : idx + 100] += 1.2 * np.exp(-np.arange(100) / 20)
                 side_signal[idx : idx + 100] += 1.0 * np.exp(-np.arange(100) / 15)
 
         # Encode to L/R
-        left = mid_signal + side_signal
-        right = mid_signal - side_signal
-        audio = np.column_stack([left, right])
+        demo_left = mid_signal + side_signal
+        demo_right = mid_signal - side_signal
+        demo_audio = np.column_stack([demo_left, demo_right])
 
         # Normalize input to high level (to trigger compression)
         # §DSP-Invariante: percentile 99.9 statt np.max() — Impuls-Artefakte blockieren nicht
-        _peak_norm = float(np.percentile(np.abs(audio), 99.9))
+        _peak_norm = float(np.percentile(np.abs(demo_audio), 99.9))
         if _peak_norm > 1e-9:
-            audio = audio * 0.9 / _peak_norm
+            demo_audio = demo_audio * 0.9 / _peak_norm
 
         # Process
         start = time.time()
-        result = processor.process(audio, sr, material)
-        processed = result.audio
+        result = processor.process(demo_audio, demo_sr, demo_material)
         meta = result.metadata or {}
-        elapsed = time.time() - start
+        _elapsed_demo = time.time() - start
 
         logger.debug("  Multi-band M/S dynamics:")
         logger.debug("    Overall Mid change: %.2f dB", meta["mid_change_db"])
@@ -742,11 +753,12 @@ if __name__ == "__main__":
         logger.debug("    Mono compatibility: %.3f", meta["mono_compatibility"])
         logger.debug("")
         logger.debug("  Per-Band Dynamics:")
-        for band_name, metrics in meta["band_metrics"].items():
+        for dbg_band_name, metrics in meta["band_metrics"].items():
             logger.debug(
-                f"    {band_name.replace('_', '-').title():12s}: "
-                f"Mid {metrics['mid_reduction_db']:+5.1f} dB, "
-                f"Side {metrics['side_reduction_db']:+5.1f} dB"
+                "    %-12s: Mid %+5.1f dB, Side %+5.1f dB",
+                dbg_band_name.replace("_", "-").title(),
+                metrics["mid_reduction_db"],
+                metrics["side_reduction_db"],
             )
         logger.debug("")
         logger.debug("  Processing time: %.3fs (%.2f× realtime)", meta["processing_time_s"], meta["realtime_factor"])

@@ -63,6 +63,18 @@ assert all(scores[g] >= effective_targets[g] for g in applicable_goals), scores
 ```
 
 **Invariante (§2.54-konform)**: Am **Pipeline-Ende** müssen alle 15 anwendbaren Ziele ≥ effektivem Zielwert liegen.
+
+### §1.2c Teamwork- statt Dominanz-Prinzip [RELEASE_MUST]
+
+Die 15 Musical Goals sind ein kooperativer Zielvektor. Jede der 64 Phasen liefert mit
+phasenspezifischem Algorithmus und adaptiver Staerke einen Teilbeitrag. Ein Einzelziel darf
+die Endentscheidung nicht dominieren.
+
+Normative Konsequenzen:
+
+1. Pipeline-Ende MUSS gegen den vollstaendigen 15er-Zielvektor pruefen.
+2. Fehlende Einzel-Goal-Messungen duerfen nicht stillschweigend ignoriert werden.
+3. Goal-Recovery ist multi-goal-basiert (weighted-gap), nicht single-goal-maximierend.
 Einzelphasen dürfen Proxy-Werte vorübergehend senken, wenn:
 
 - **Carrier-Repair** (§2.44 Referenz-Paradoxon): Tonträgerschaden-Inversion verändert Chroma/Centroid intentional

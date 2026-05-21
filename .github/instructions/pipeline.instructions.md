@@ -4,7 +4,39 @@ applyTo: "backend/core/unified_restorer_v3.py"
 
 # UV3 — Pipeline-Regeln (normativ, Aurik 9.12.x)
 
+## §2.31 Material-Phase-Initialstärken — Transfer-Chain-Aware [RELEASE_MUST v9.12.9]
+
+**Problem**: Wenn `_restoration_context["transfer_chain"]` mehrere Stufen enthält (z.B. `["vinyl", "cassette"]`), darf nur die **strengste** Schwächungsstufe über alle Kettenglieder die Initialstärke einer Phase bestimmen.
+
+```python
+# KANONISCH — UV3 restore(), §2.31:
+_mat_val = canonical_material_key(material_type)            # primäres Material
+_chain_mat_vals = [canonical_material_key(s) for s in _cal_transfer_chain or []]
+_material_factor_keys = list(dict.fromkeys([_mat_val] + _chain_mat_vals))
+
+for _pid in all_phase_ids:
+    _mat_s = min(_get_mat_strength(_fk, _pid) for _fk in _material_factor_keys)
+    _material_phase_initial_strengths[_pid] = _mat_s
+
+# VERBOTEN: nur _mat_val prüfen, Chain-Stufen ignorieren
+# → Cassette-Material erbt dann Vinyl-Defaults → HF-Halluzination
+
+# Logging:
+logger.info("§2.31 Material-Phase-Initialstärken: %d Phasen für material=%s chain=%s",
+            len(_material_phase_initial_strengths), _mat_val, _material_factor_keys)
+```
+
+**INVARIANTE**: `_MATERIAL_PHASE_FACTORS` in `defect_phase_mapper.py` MUSS für jeden möglichen Chain-Materialschlüssel einen Eintrag haben. Fehlt ein Key, fällt `_get_mat_strength()` auf Generic-Defaults zurück → zu hohe Stärke für restriktive Materialien.
+
 ## §2.44 Holistic Perceptual Index (HPI) — letztes Export-Gate
+
+Quelle: `[SRC:S06,S07,S08,S09,S10,S11]`
+
+Evidenzklassen-Hinweis (operativ):
+
+- Klasse A: Loudness/TruePeak-Regeln (`[SRC:S06,S07]`) sind normgebunden.
+- Klasse B: AFG-/Vocal-Detektorgrenzen (`[SRC:S14,S15,S16,S17,S18]`) erfordern peer-reviewte Evidenz + Regressionen.
+- Klasse C: Kalibrierte Floors (z. B. materialadaptive Proxy-Werte) duerfen nur mit Revalidierungsnachweis angepasst werden.
 
 ```python
 # KANONISCH — Restoration (Instrumental):
@@ -47,7 +79,7 @@ if artifact_freedom < 0.95:
 # Shellac: 0.62 | Vinyl: 0.72 | CD/Digital: 0.82 | unknown_analog: 0.72
 if panns_singing >= 0.35 and vqi < material_vqi_floor:   # VERBOTEN: vqi < 0.72 hardcoded
     return _recovery_cascade("vqi < material_floor", audio)  # Recovery-Trigger
-**VERSA-Primärpflicht**: `use_versa_in_loop=True`. MERT nur Fallback → `metadata["mert_proxy_used"] = True`.
+**VERSA-Primärpflicht**: `use_versa_in_loop=True`. MERT nur Fallback → `metadata["mert_proxy_used"] = True`. `[SRC:S07]`
 
 ## §0d Vollständiges Referenz-Paradoxon-Handling (Lücke 1 — ALLE HPI-Faktoren)
 
@@ -149,26 +181,87 @@ _CARRIER_REPAIR_PHASE_PREFIXES = {
 
 ## §2.49 Artefakt-Freiheits-Gate
 
+Quelle: `[SRC:S03,S04,S12,S13]`
+
 ```python
-# artifact_freedom = 1.0 - (weighted_sum / _max_tolerance) + penalties — KEIN Pipeline-Delta
-# Gewichtete Summe der Komponenten-Scores (alle müssen < Toleranz bleiben):
-# Implementierung: artifact_freedom_gate.py (NICHT min()-Formel — weighted-sum ist präziser)
+# artifact_freedom = clip(1.0 - (weighted_sum / _max_tolerance) + penalties, 0, 1)
+# Implementierung: backend/core/artifact_freedom_gate.py
+# KEIN Pipeline-Delta — absolute Score-Berechnung gegen Original-Audio
+# NICHT min()-Formel — weighted-sum ist präziser (ein schlechter Wert dominiert)
 #
-# 1. musical_noise_score: Bins wo restored > orig * 1.05 (5 % Überschuss)
-#    → STFT-Maskenvergleich; Bereich [0,1], 1.0 = kein Musical Noise
-# 2. phase_cancellation_score: Anti-Phasigkeit L+R oder Original vs. Restored
-#    → Kreuz-Korrelation < -0.5 über > 10 % der Frames = Fehler
-#    → Frames die im Input bereits anti-phasig waren → NICHT flaggen
-# 3. ringing_score: Pre/Post-Transient-Energie außerhalb physikalischer Grenzen
-#    → STFT Energie 10 ms vor und nach Onset vs. Original-Onset-Energie
-# 4. modulation_noise_score: periodische Modulation in Residual (restored - orig)
-#    → FFT des Residuals auf Periodizität prüfen (Kamm-Spektrum = Fehler)
-# 5. timbre_distortion_score: spektrales Zentroid-Shift > 15 % oder MFCC-Euklid > 0.2
+# SCHRITT 1 — Artefakt-Typ-Gewichte (_TYPE_WEIGHTS):
+#   musical_noise:      1.0  (STFT-Bins wo restored > orig * 1.05)
+#   phase_cancellation: 1.0  (Kreuz-Korrelation < -0.5 über > 10 % Frames)
+#   crackle_impulse:    1.1  (Impulsnoise — besonders salient für Hörer)
+#   metallic_ringing:   0.9  (Pre/Post-Transient-Energie außerhalb Grenzen)
+#   pre_echo:           0.8  (zeitliches Prä-Masking-Artefakt)
+#   spectral_hole:      0.6  (Frequenzlücken durch Over-Suppression)
 #
-# artifact_freedom = 1.0 - (weighted_sum / _max_tolerance) + penalties
-# → Gewichtete Summe aller Komponenten-Beiträge; artifact_freedom < 0.95 = Gate-Fail
-# Jede Komponente trägt nach Gewicht bei — ein schlechter Einzelwert dominiert die Summe
+# SCHRITT 2 — Salienz-Gewichtung pro Artefakt-Instanz:
+#   salience_weighted_score = base_score × salienz × temporal_masking_weight
+#   temporal_masking_weight ∈ [0,1]: 1.0 = kein Masking, < 1.0 = psychoakust. Maskierung
+#
+# SCHRITT 3 — weighted_sum = Σ(_TYPE_WEIGHTS[type] × salience_weighted_score × masking)
+#
+# SCHRITT 4 — _max_tolerance (material-adaptiv, §2.54):
+#   digital/cd:    5.0  vinyl: 6.5  shellac/wax: 7.5  tape: 6.2  mp3_low: 6.0
+#   Restorative-Bonus (§0d): _max_tolerance × (1.0 + max(0, (80-restorability)/80) × 0.8)
+#   → stark degradiertes Material bekommt bis ×1.8 Toleranz
+#
+# SCHRITT 5 — Endformel:
+#   artifact_freedom = clip(1.0 - (weighted_sum / _max_tolerance), 0, 1)
+#   artifact_freedom += noise_penalty      # negativ: globales Rausch-Niveau
+#   artifact_freedom += roughness_penalty  # negativ: §2.49c Rauhigkeit/Schärfe
+#   artifact_freedom = clip(artifact_freedom, 0.0, 1.0)
+#
+# artifact_freedom < 0.95 → Gate-Fail (primärer VETO-Faktor §0h — absolut, kein Override) [SRC:S03,S04]
+# metadata["weighted_artifact_sum"] und metadata["max_tolerance"] werden gepflegt
 ```
+
+## §2.48b Umgewichtung vor Rollback [RELEASE_MUST]
+
+Wenn eine Phase in PMGG/CIG/PDV an der Grenze scheitert, MUSS vor einem harten Rollback
+ein konservativer Umgewichtungsversuch erfolgen (z. B. Dry/Wet-Reweight oder Blend zur
+pre-phase Referenz), damit die Phase nicht sofort vollstaendig verwirkt wird.
+
+Ausnahme (harte Guards):
+
+- natuerlichkeit-Hard-Guard verletzt
+- artifact_freedom < 0.95
+- explizite Export-Sicherheitsverletzung
+
+In diesen Faellen bleibt sofortiger Rollback/Veto verpflichtend.
+
+## §1.2c Teamwork-Invariante fuer 15 Musical Goals [RELEASE_MUST]
+
+Jede Phase traegt mit phasenspezifischer, adaptiv berechneter Staerke zur Zielerreichung bei.
+Kein Einzelziel und keine Einzelphase darf die Endentscheidung dominieren.
+
+Pflichtregeln in UV3-Endgate:
+
+```python
+# 1) Vollstaendiger Zielvektor (15 Goals) ist Pflicht:
+goal_vector_keys = sorted(effective_goal_thresholds.keys())
+missing = [g for g in goal_vector_keys if g not in musical_goal_scores]
+if missing:
+    for g in missing:
+        musical_goal_scores[g] = 0.0  # fail-safe: fehlende Messung = nicht bestanden
+
+# 2) Pass/Fail muss immer gegen den vollstaendigen 15er-Vektor laufen,
+#    nicht nur gegen Keys, die zufaellig im Score-Dict auftauchen.
+musical_goals_passed = {
+    g: (True if g not in applicable_goals else musical_goal_scores[g] >= effective_goal_thresholds[g])
+    for g in goal_vector_keys
+}
+
+# 3) Recovery/Candidate-Ranking bleibt multi-goal (weighted-gap),
+#    keine Dominanz eines Einzelgoals ueber alle anderen.
+```
+
+VERBOTEN:
+
+- Verletzungszaehler auf `len(musical_goal_scores)` basieren lassen, wenn der 15er-Vektor groesser ist.
+- Ein Goal durch fehlenden Score stillschweigend aus der Gate-Entscheidung entfernen.
 
 ## VERSA — Primäre Qualitäts-Metrik (`use_versa_in_loop=True`)
 
@@ -205,6 +298,21 @@ from backend.core.dsp.emotional_arc import compute_emotional_arc_preservation
 emo_arc = compute_emotional_arc_preservation(audio_orig, audio_restored, sr,
                                               frisson_zones=frisson_zones)
 # VERBOTEN: emotional_arc aus Spektral-Merkmalen approximieren (Envelope ist Ground Truth)
+
+# frisson_zones FORMAT (FrissonZone-Dataclass aus backend/core/frisson_candidate_detector.py):
+# @dataclass
+# class FrissonZone:
+#     start_s: float   — Zonen-Startzeit in Sekunden
+#     end_s:   float   — Zonen-Endzeit in Sekunden (≥ start_s + 0.1)
+#     score:   float   — kombinierter Frisson-Score [0.0, 1.0] (höher = stärker)
+#     trigger: str     — dominanter akustischer Auslöser der den Score bestimmt
+#
+# Bezug: frisson_zones = get_frisson_detector().detect(audio, sr)  # List[FrissonZone]
+# VERBOTEN: frisson_zones=None als gültiger Zustand (V16): immer [] wenn keine Zonen
+# VERBOTEN: frisson_zones ohne .start_s/.end_s/.score/.trigger — getattr-Zugriff sichert ab
+# Verwendung: _restoration_context["frisson_zones"] nach VocalFocusAnalyzer setzen;
+#   alle Phasen + measure_emotional_arc() + correct_emotional_arc() erhalten es via kwargs
+# Mindestscore-Filter: MIN_SCORE = 0.28 (FrissonCandidateDetector intern); max_zones = 20
 ```
 
 ## §2.51 Stereo — Hard-Fail-Invariante
@@ -247,7 +355,30 @@ _NEVER_SKIP = {
 # wenn precomputed_phase_plan vorhanden
 ```
 
+## §2.53c Kompressionsdefekt-Routing in _select_phases
+
+```python
+# RELEASE_MUST in UV3-Selektionslogik:
+# Kompressionsdefekte müssen sowohl spektrale Reparatur als auch dynamische
+# Entkompression triggern.
+
+if sev(DefectType.COMPRESSION_ARTIFACTS) > 0.25:
+    selected.append("phase_23_spectral_repair")
+
+if (
+    sev(DefectType.DYNAMIC_COMPRESSION_EXCESS) > 0.30
+    or sev(DefectType.COMPRESSION_ARTIFACTS) > 0.25
+):
+    selected.append("phase_54_transparent_dynamics")
+
+# VERBOTEN: Nur einen der beiden Pfade zu aktivieren.
+# Phase 23 behandelt spektrale Flattening-/Residue-Produkte,
+# Phase 54 behandelt Pumping/Envelope-Artefakte.
+```
+
 ## §2.60 Rollback-Hierarchie + `_recovery_cascade()` Vollspezifikation (Lücke 2)
+
+Quelle: `[SRC:S06,S07,S12,S13]`
 
 ```python
 # _recovery_cascade() — vollständig spezifiziert, KEINE ad-hoc-Implementierung erlaubt:
@@ -490,6 +621,37 @@ gp_result = gp_optimizer.optimize(
 
 **VERBOTEN**: `RecordingChainProfiler` auf weniger als 3 aktiven Causes aufrufen — zu wenig Evidenz für Cluster-Erkennung; `chain_hint=None` zurückgeben.
 
+## §2.56c [RELEASE_MUST] Transfer-Chain-aware Strength-Oracle-Handover
+
+**Problem**: Material-adaptive Initialstaerken aus §2.31 wirken indirekt, reichen aber nicht als
+lokale Interventionssteuerung innerhalb einer einzelnen Phase.
+
+**Pflicht**: `_prepare_profiled_phase_runtime_context()` MUSS `transfer_chain` und
+`material_confidence` direkt an `resolve_phase_strength_oracle()` uebergeben.
+
+```python
+_chain = kwargs.get("transfer_chain") \
+    or getattr(kwargs.get("cached_medium_result"), "transfer_chain", None) \
+    or self._restoration_context.get("transfer_chain", [])
+
+_chain_conf = kwargs.get("material_confidence")
+if not isinstance(_chain_conf, (int, float)):
+    _chain_conf = getattr(kwargs.get("cached_medium_result"), "confidence", None)
+
+oracle_profile = resolve_phase_strength_oracle(
+    ...,
+    transfer_chain=[str(s).lower() for s in (_chain or []) if str(s).strip()],
+    chain_confidence=float(_chain_conf) if isinstance(_chain_conf, (int, float)) else None,
+)
+```
+
+**Invarianten:**
+
+- `chain_factor` muss im Oracle-Profil (`hard_caps`) persistiert werden.
+- Mehrstufige Ketten (`vinyl->cassette->mp3_low`) muessen konservativer sein als Einzeltraeger. `[SRC:S03,S04]`
+- Low-Confidence-Ketten duerfen die Steuerung nur abgeschwaecht beeinflussen (confidence blending). `[SRC:S03]`
+- Non-blocking bleibt verpflichtend: Oracle-Ausfall darf Pipeline nicht stoppen.
+
 **Kanonische Cluster**:
 
 | Cluster | Enthaltene Causes | Primäre Integrierte Korrektur |
@@ -553,11 +715,17 @@ from backend.core.temporal_continuity_guard import check_temporal_continuity
 tc_result = check_temporal_continuity(pre=pre_phase_audio, post=audio, phase_id=phase_id, sr=sr)
 metadata.setdefault("temporal_continuity", {})[phase_id] = {
     "variance_ratio": tc_result.variance_ratio,
+    "gain_step_db": tc_result.gain_step_db,
     "ok": tc_result.ok,
 }
 # KEIN Veto — nur Protokollierung. Warnung ab variance_ratio > 2.5:
 if not tc_result.ok:
     logger.warning("temporal_continuity phase=%s variance_ratio=%.2f", phase_id, tc_result.variance_ratio)
+# Zusätzlich: gain_step_db > 1.5 — abrupter Gain-Sprung an Phase-Grenze → Mikro-Klick:
+if tc_result.gain_step_db > 1.5:
+    logger.warning("temporal_continuity_gain phase=%s gain_step_db=%.1f dB > 1.5 → potential click",
+                   phase_id, tc_result.gain_step_db)
+    metadata.setdefault("temporal_continuity_gain_warnings", []).append(phase_id)
 ```
 
 **`TemporalContinuityResult`-Felder**: `ok: bool`, `variance_ratio: float`, `phase_id: str`.
@@ -574,7 +742,14 @@ def check_temporal_continuity(pre, post, phase_id, sr):
     frame_rms_post = librosa.feature.rms(y=np.mean(post, axis=0) if post.ndim==2 else post,
                                           frame_length=2048, hop_length=512)[0]
     variance_ratio = float(np.var(frame_rms_post) / (np.var(frame_rms_pre) + 1e-8))
-    return TemporalContinuityResult(ok=variance_ratio < 2.5, variance_ratio=variance_ratio, phase_id=phase_id)
+    # gain_step_db: abrupter Pegel-Sprung an Phase-Grenze (Fade-out letztes Frame → Fade-in erstes)
+    rms_pre_last  = float(frame_rms_pre[-1])  if len(frame_rms_pre) > 0  else 1e-8
+    rms_post_first = float(frame_rms_post[0]) if len(frame_rms_post) > 0 else 1e-8
+    gain_step_db = float(20 * np.log10((rms_post_first + 1e-10) / (rms_pre_last + 1e-10)))
+    return TemporalContinuityResult(
+        ok=variance_ratio < 2.5, variance_ratio=variance_ratio,
+        phase_id=phase_id, gain_step_db=abs(gain_step_db),
+    )
 ```
 
 > Langfristig: `variance_ratio`-Daten aus `metadata` aggregieren → Era/Material-adaptive Schwellwerte.
@@ -619,7 +794,116 @@ if export_hpi > 0 and metadata.get("artifact_freedom", 0) >= 0.95:
 
 > Datei-Pfad: `~/.aurik/restoration_memory.json`. Konfigurierbar via `AURIK_MEMORY_PATH`-Env-Variable (Desktop-Offline-Pflicht beachten).
 
-## §6.2a Material-Pflicht-Phasen
+## §2.71 Formant-Toleranz-Verscharfäung [RELEASE_MUST v9.5]
+
+Quelle: `[SRC:S08,S09]`
+
+**Änderung**: Per-Formant-Toleranz statt globalem ±2 dB.
+
+| Formant | Grenze | Begründung |
+|---|---|---|
+| F1 | ± 1.0 dB | Vokalität (Offenheit): hoch-perceptuell |
+| F2 | ± 1.0 dB | Vokalität (Vorderzunge): hoch-perceptuell |
+| F3 | ± 1.5 dB | Timbre-Qualität: mittel-perceptuell |
+| F4 | ± 1.5 dB | Brillanz/Nasalität: niedriger-perceptuell |
+
+```python
+# UV3 setzt _FORMANT_TOLERANCE_DB in _restoration_context nach VocalFocusAnalyzer:
+_ctx["formant_tolerance_db"] = [1.0, 1.0, 1.5, 1.5]  # F1, F2, F3, F4
+# Bei era_decade < 1960: resolve_formant_tolerance_db() lockt historisch bedingt auf [1.5, 1.5, 2.0, 2.0]
+```
+
+> `resolve_formant_tolerance_db()` in `backend/core/musical_goals/era_vocal_profile.py` — gibt era-adaptierte Werte zurück; nutzt `_ctx["formant_tolerance_db"]` als Input-Maximum.
+
+## §2.72 Vibrato-Tiefe-Schutz [RELEASE_MUST v9.5]
+
+Quelle: `[SRC:S10,S11]`
+
+**Regel**: F0-Modulationstiefe (max–min F0 in Hz innerhalb Vibrato-Zonen) darf durch NR/Kompression nicht mehr als ±10 % reduziert werden.
+
+```python
+# UV3 triggert check nach jeder NR/Dynamics-Phase auf Vokal-Material:
+from backend.core.dsp.vibrato_guard import check_vibrato_depth_preservation
+
+_vdp = check_vibrato_depth_preservation(audio_pre, audio_post, sr)
+if _vdp.depth_reduction_pct > 10.0:
+    # Blend in Vibrato-Segmenten: 50 % Dry
+    metadata["vibrato_depth_reduction_pct"] = _vdp.depth_reduction_pct
+    logger.warning("vibrato_depth: %.1f%% > 10%% → blend 50%% dry in vibrato-segments", _vdp.depth_reduction_pct)
+```
+
+## §2.73 Pre-Echo-Prevention [RELEASE_MUST v9.5]
+
+**Regel**: Additive ML-Phasen können Transient-Onsets zeitlich verschieben (≤ 2 ms = tolerierbar; > 2 ms = Blend-Reduction).
+
+```python
+# Prüfung in _profiled_phase_call_with_delta() für ADDITIVE-Phasen:
+if phase_id in {"phase_06", "phase_07", "phase_23"}:
+    from backend.core.dsp.transient_guard import detect_transient_shifts
+    _ts = detect_transient_shifts(pre_phase_audio, audio, sr)
+    if _ts.max_shift_ms > 2.0:
+        audio = pre_phase_audio * (_ts.max_shift_ms / 2.0) + audio * (1.0 - _ts.max_shift_ms / 2.0)
+        metadata["onset_shift_ms"] = _ts.max_shift_ms
+```
+
+## §2.74 Spektralfarbe-Erhaltung [RELEASE_MUST v9.5]
+
+**Regel**: Die charakteristische 1/3-Oktav-Kurve (200–8000 Hz) muss nach EQ/NR-Phasen zu ≥ 0.97 korreliert bleiben.
+
+```python
+# Nach EQ/NR-Phasen:
+from backend.core.dsp.spectral_color_guard import check_spectral_color_preservation
+
+_scp = check_spectral_color_preservation(pre_phase_audio, audio, sr)
+if _scp.correlation < 0.97:
+    audio = pre_phase_audio * 0.30 + audio * 0.70  # Strength -30 %
+    metadata["spectral_color_corr"] = _scp.correlation
+```
+
+## §2.75 Mikrodynamik-Korrelation [RELEASE_MUST v9.5]
+
+**Regel**: Frame-Energie-Korrelation (10 ms) auf voiced-Zonen ≥ 0.97 nach NR/Dynamics-Phasen.
+
+```python
+from backend.core.dsp.mikrodynamik_guard import frame_energy_correlation
+if panns_singing >= 0.25:
+    _corr = frame_energy_correlation(pre_phase_audio, audio, sr, frame_ms=10)
+    if _corr < 0.97:
+        _wet = float(min(1.0, max(0.0, (_corr - 0.90) / 0.07)))
+        audio = pre_phase_audio * (1.0 - _wet) + audio * _wet
+        metadata["mikrodynamik_corr"] = _corr
+```
+
+## §2.76 Wärmeband-Guard [RELEASE_MUST v9.5]
+
+**Regel**: Kumulativer 200–800 Hz Verlust über alle Phases > 2.5 dB → Blend-Faktor für alle weiteren Phasen.
+
+```python
+# In UV3._restoration_context aktuell halten:
+_ctx.setdefault("warmth_band_loss_db", 0.0)
+_ctx["warmth_band_loss_db"] += max(0.0, _wbd.loss_db)
+if _ctx["warmth_band_loss_db"] > 2.5:
+    # Blend-Faktor: bei 2.5 dB Verlust = 0.5; bei 5.0 dB = 0.0 (vollständiges Dry)
+    warmth_blend = float(1.0 - _ctx["warmth_band_loss_db"] / 5.0)
+    warmth_blend = max(0.0, min(1.0, warmth_blend))
+    audio = pre_phase_audio * (1.0 - warmth_blend) + audio * warmth_blend
+    metadata["warmth_band_loss_db"] = _ctx["warmth_band_loss_db"]
+```
+
+## §2.77 Angriffstransienten-Integrität [RELEASE_MUST v9.5]
+
+**Regel**: Onset-Fenster (0–20 ms nach Transient) sind perceptuell sensitivste Frames — max. 1.5 dB Änderung.
+
+```python
+# In UV3 nach NR/EQ-Phasen:
+from backend.core.dsp.onset_guard import apply_onset_protection_mask
+audio = apply_onset_protection_mask(
+    audio_pre=pre_phase_audio, audio_post=audio,
+    onset_mask=_ctx["onset_mask"],
+    max_delta_db=1.5,
+)
+# onset_mask wird einmalig nach SongCalibration via HPSS berechnet und in _ctx gespeichert.
+```
 
 | Material | Pflicht-Phasen (unabhängig von DefectScanner-Score) |
 |---|---|
@@ -759,5 +1043,7 @@ if elapsed > _PHASE_WALL_TIME_BUDGET[phase_id]:
 | phase_49 (Dereverb) | 18 | WPE oder Hybrid-Dereverb |
 | phase_50 (MP3-Artefakte) | 12 | Transient-MDCT-Korrektur |
 | alle anderen Phasen (Default) | 10 | konservatives Budget |
+
+Normquelle fuer Loudness-/TruePeak-Regeln: `[SRC:S06,S07]`.
 
 > `_PHASE_WALL_TIME_BUDGET` als Klassen-Konstante in `backend/core/unified_restorer_v3.py`.

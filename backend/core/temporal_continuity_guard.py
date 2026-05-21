@@ -43,12 +43,15 @@ class TemporalContinuityResult:
         variance_ratio: Frame-RMS-Varianz(post) / Frame-RMS-Varianz(pre).
         phase_id:       ID der geprüften Phase.
         critical:       True wenn variance_ratio > 8.0.
+        gain_step_db:   Abrupter Gain-Sprung an der Phasengrenze (§2.69 v9.5).
+                        > 1.5 dB → WARNING (Mikro-Klick-Risiko). Kein Veto.
     """
 
     ok: bool
     variance_ratio: float
     phase_id: str
     critical: bool = False
+    gain_step_db: float = 0.0
 
 
 def check_temporal_continuity(
@@ -100,6 +103,20 @@ def check_temporal_continuity(
         ok = ratio <= _VARIANCE_RATIO_WARN
         critical = ratio > _VARIANCE_RATIO_CRITICAL
 
+        # §2.69 v9.5: Gain-Sprung an Phasengrenze messen (abrupter RMS-Anstieg/-Abfall).
+        # Vergleicht die letzten 3 pre-Frames mit den ersten 3 post-Frames.
+        _n_boundary_frames = 3
+        pre_boundary_rms = float(np.mean(rms_pre[-_n_boundary_frames:]) + 1e-12)
+        post_boundary_rms = float(np.mean(rms_post[:_n_boundary_frames]) + 1e-12)
+        gain_step_db = float(abs(20.0 * np.log10(post_boundary_rms / pre_boundary_rms)))
+        gain_step_db = float(np.nan_to_num(gain_step_db, nan=0.0, posinf=0.0, neginf=0.0))
+        if gain_step_db > 1.5:
+            logger.warning(
+                "TemporalContinuityGuard §2.69 gain_step_db=%.2f dB > 1.5 dB phase=%s — Mikro-Klick-Risiko",
+                gain_step_db,
+                phase_id,
+            )
+
         if critical:
             logger.warning(
                 "TemporalContinuityGuard CRITICAL phase=%s variance_ratio=%.2f",
@@ -119,8 +136,14 @@ def check_temporal_continuity(
                 ratio,
             )
 
-        return TemporalContinuityResult(ok=ok, variance_ratio=ratio, phase_id=phase_id, critical=critical)
+        return TemporalContinuityResult(
+            ok=ok,
+            variance_ratio=ratio,
+            phase_id=phase_id,
+            critical=critical,
+            gain_step_db=round(gain_step_db, 3),
+        )
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.debug("TemporalContinuityGuard non-blocking: phase=%s err=%s", phase_id, exc)
-        return TemporalContinuityResult(ok=True, variance_ratio=1.0, phase_id=phase_id)
+        return TemporalContinuityResult(ok=True, variance_ratio=1.0, phase_id=phase_id, gain_step_db=0.0)

@@ -154,12 +154,12 @@ class TestJitterArtifacts:
 
     def test_dat_material_activates_phases(self):
         phases = _select_phases_for(MaterialType.DAT, DefectType.JITTER_ARTIFACTS, QualityMode.QUALITY)
-        assert "phase_12_wow_flutter_fix" in phases
+        assert "phase_14_phase_correction" in phases
         assert "phase_23_spectral_repair" in phases
 
     def test_streaming_material_activates_phases(self):
         phases = _select_phases_for(MaterialType.STREAMING, DefectType.JITTER_ARTIFACTS, QualityMode.QUALITY)
-        assert "phase_12_wow_flutter_fix" in phases
+        assert "phase_14_phase_correction" in phases
 
     def test_all_materials_produce_phases(self):
         for mat in MaterialType:
@@ -419,15 +419,15 @@ class TestAliasing:
     """Fix #10: ALIASING — AA-Filter-Artefakte aus ADC-Digitalisierung."""
 
     def test_cd_activates_denoise_and_spectral(self):
-        """CD-Aliasing → phase_03_denoise + phase_23_spectral_repair."""
+        """CD-Aliasing → spektrale Chirurgie (Denoise ist kontraindiziert, V30)."""
         phases = _select_phases_for(MaterialType.CD_DIGITAL, DefectType.ALIASING, QualityMode.QUALITY)
-        assert "phase_03_denoise" in phases
         assert "phase_23_spectral_repair" in phases
+        assert "phase_03_denoise" not in phases
 
     def test_tape_activates_denoise_and_spectral(self):
         phases = _select_phases_for(MaterialType.TAPE, DefectType.ALIASING, QualityMode.QUALITY)
-        assert "phase_03_denoise" in phases
         assert "phase_23_spectral_repair" in phases
+        assert "phase_03_denoise" not in phases
 
     def test_balanced_mode_adds_spectral_repair_second_pass(self):
         """Schweres Aliasing im BALANCED-Modus → phase_50_spectral_repair (zweiter Pass)."""

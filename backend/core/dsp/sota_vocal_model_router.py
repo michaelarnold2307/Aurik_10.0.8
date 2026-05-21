@@ -210,17 +210,28 @@ class SotaVocalModelRouter:
             sgmse = get_sgmse_plugin()
             raw = sgmse.enhance(reference, sr)
             out = getattr(raw, "audio", raw)
+            sgmse_audio = self._coerce_like(out, reference)
+            _sgmse_model_used = str(getattr(raw, "model_used", "sgmse_plus"))
+            compensated = self._compensate_missing_miipher(
+                sgmse_audio,
+                reference,
+                sr,
+                energy_bias_db=energy_bias_db,
+                base_model_used=_sgmse_model_used,
+            )
+            metadata = {
+                "energy_bias_db": float(energy_bias_db),
+                "miipher_model_loaded": False,
+                "sgmse_model_loaded": bool(getattr(sgmse, "_model_loaded", False)),
+                "capability_status": self._capability_status(capability_report, "sgmse_plus"),
+            }
+            metadata.update(compensated.get("metadata", {}))
             return EnhancementRouteResult(
-                audio=self._coerce_like(out, reference),
+                audio=self._coerce_like(compensated.get("audio", sgmse_audio), reference),
                 success=True,
-                model_used=str(getattr(raw, "model_used", "sgmse_plus")),
+                model_used=str(compensated.get("model_used", _sgmse_model_used)),
                 fallback_chain=attempts.copy(),
-                metadata={
-                    "energy_bias_db": float(energy_bias_db),
-                    "miipher_model_loaded": False,
-                    "sgmse_model_loaded": bool(getattr(sgmse, "_model_loaded", False)),
-                    "capability_status": self._capability_status(capability_report, "sgmse_plus"),
-                },
+                metadata=metadata,
             )
         except Exception as exc:  # pylint: disable=broad-except
             attempts.append(f"sgmse_plus:{type(exc).__name__}")
@@ -231,6 +242,45 @@ class SotaVocalModelRouter:
         if dfn_result.success:
             dfn_result.model_used = f"vocal_{dfn_result.model_used}"
         return dfn_result
+
+    def _compensate_missing_miipher(
+        self,
+        sgmse_audio: np.ndarray,
+        reference: np.ndarray,
+        sr: int,
+        *,
+        energy_bias_db: float,
+        base_model_used: str,
+    ) -> dict[str, object]:
+        """Kompensiert fehlendes MIIPHER bestmöglich via DFN + optionalem HNR-Blend."""
+        base_audio = self._coerce_like(sgmse_audio, reference)
+        metadata: dict[str, object] = {
+            "miipher_compensation_active": True,
+            "miipher_compensation_dfn_applied": False,
+            "miipher_compensation_hnr_applied": False,
+        }
+        model_used = str(base_model_used or "sgmse_plus")
+
+        dfn_result = self.enhance_instrumental(base_audio, sr, energy_bias_db=energy_bias_db)
+        if not dfn_result.success:
+            metadata["miipher_compensation_dfn_reason"] = "deepfilternet_unavailable"
+            return {"audio": base_audio, "model_used": model_used, "metadata": metadata}
+
+        compensated_audio = self._coerce_like(dfn_result.audio, reference)
+        metadata["miipher_compensation_dfn_applied"] = True
+        metadata["miipher_compensation_dfn_model"] = str(dfn_result.model_used)
+        model_used = f"sgmse_plus+{dfn_result.model_used}"
+
+        try:
+            from backend.core.dsp.hnr_guard import apply_hnr_blend  # pylint: disable=import-outside-toplevel
+
+            compensated_audio = self._coerce_like(apply_hnr_blend(reference, compensated_audio, sr), reference)
+            metadata["miipher_compensation_hnr_applied"] = True
+            model_used = f"{model_used}+hnr_blend"
+        except Exception as exc:  # pylint: disable=broad-except
+            metadata["miipher_compensation_hnr_reason"] = type(exc).__name__
+
+        return {"audio": compensated_audio, "model_used": model_used, "metadata": metadata}
 
     def enhance_instrumental(
         self,

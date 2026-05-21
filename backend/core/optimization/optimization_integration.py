@@ -96,12 +96,16 @@ class OptimizationIntegration:
     def _load_all_material_parameters(self) -> bool:
         """Lädt optimized parameters for all available materials."""
         material_types = ["vinyl", "tape_shellac", "tape_cassette", "tape_reel", "digital", "live", "mp3"]
+        loaded_any = False
 
         for material in material_types:
             params = self._load_material_parameters(material)
             if params:
                 self.material_params_cache[material] = params
                 logger.info("  Loaded optimized parameters for: %s", material)
+                loaded_any = True
+
+        return loaded_any
 
     def _load_material_parameters(self, material_type: str) -> dict[str, Any] | None:
         """Lädt optimized parameters for specific material."""
@@ -112,7 +116,7 @@ class OptimizationIntegration:
             return None
 
         try:
-            with open(params_path) as f:
+            with open(params_path, encoding="utf-8") as f:
                 params = yaml.safe_load(f)
             return params
         except Exception as e:
@@ -318,9 +322,13 @@ class OptimizationIntegration:
             logger.warning("No reference audio provided, quality assessment limited")
             return 0.5 if not return_details else (0.5, {"warning": "no_reference"})
 
-        # Convert to torch tensors
-        output_tensor = torch.from_numpy(output_audio).float().unsqueeze(0).unsqueeze(0).to(self.device)
-        reference_tensor = torch.from_numpy(reference_audio).float().unsqueeze(0).unsqueeze(0).to(self.device)
+        # Convert to torch tensors (robust against array subclasses/views).
+        output_np = np.asarray(output_audio, dtype=np.float32)
+        reference_np = np.asarray(reference_audio, dtype=np.float32)
+        output_tensor = torch.as_tensor(output_np, dtype=torch.float32, device=self.device).unsqueeze(0).unsqueeze(0)
+        reference_tensor = (
+            torch.as_tensor(reference_np, dtype=torch.float32, device=self.device).unsqueeze(0).unsqueeze(0)
+        )
 
         # Ensure same length
         min_len = min(output_tensor.shape[-1], reference_tensor.shape[-1])
@@ -353,6 +361,7 @@ class OptimizationIntegration:
             Recommended processing strategy
         """
         params = self.get_optimized_parameters(material_type)
+        detected_artifacts = context.get("detected_artifacts", []) if isinstance(context, dict) else []
 
         strategy = {
             "material_type": material_type,
@@ -423,6 +432,8 @@ class OptimizationIntegration:
         logger.info("Processing strategy recommended for %s", material_type)
         logger.info("  Models: %s", strategy["recommended_models"])
         logger.info("  DSP chain: %s", strategy["recommended_dsp_chain"])
+        if detected_artifacts:
+            logger.debug("  Context artifacts: %s", detected_artifacts)
 
         return strategy
 
@@ -468,7 +479,12 @@ class OptimizationIntegration:
         weights_path = self.optimization_base_path / material_type / f"nas_network_{material_type}.pth"
         if weights_path.exists():
             try:
-                network.load_state_dict(torch.load(weights_path, map_location=self.device))  # nosec B614 — interner Checkpoint aus models/
+                network.load_state_dict(
+                    torch.load(  # nosec B614 — interner Checkpoint aus models/
+                        weights_path,
+                        map_location=self.device,
+                    )
+                )
                 logger.info("Loaded pretrained NAS network for %s", material_type)
             except Exception as e:
                 logger.warning("Failed to load NAS weights for %s: %s", material_type, e)
@@ -499,7 +515,9 @@ class OptimizationIntegration:
         Returns:
             AdvancedEnsemble instance
         """
-        cache_key = f"{material_type}_{strategy}_{len(members)}" if material_type else None
+        cache_key = (
+            f"{material_type}_{strategy}_{len(members)}_{meta_features_dim}_{output_dim}" if material_type else None
+        )
 
         if cache_key and cache_key in self._ensemble_cache:
             logger.debug("Using cached ensemble for %s", material_type)
@@ -519,7 +537,13 @@ class OptimizationIntegration:
         if cache_key:
             self._ensemble_cache[cache_key] = ensemble
 
-        logger.info("Created %s ensemble with %s members", strategy, len(members))
+        logger.info(
+            "Created %s ensemble with %s members (meta_dim=%s, out_dim=%s)",
+            strategy,
+            len(members),
+            meta_features_dim,
+            output_dim,
+        )
 
         return ensemble
 
@@ -540,6 +564,12 @@ class OptimizationIntegration:
         if self._moo_optimizer is None:
             self._moo_optimizer = create_audio_restoration_moo()
             logger.info("Created Multi-Objective Optimizer (generic audio restoration)")
+        logger.debug(
+            "MOO request: material=%s pop=%s objectives=%s",
+            material_type,
+            population_size,
+            n_objectives,
+        )
 
         return self._moo_optimizer
 
@@ -631,7 +661,7 @@ class OptimizationIntegration:
 
 
 # Singleton (Thread-safe Double-Checked Locking — §3.x Aurik Spec)
-_optimization_integration_instance: OptimizationIntegration | None = None
+_optimization_integration_state: dict[str, OptimizationIntegration | None] = {"instance": None}
 _optimization_integration_lock = threading.Lock()
 
 
@@ -648,14 +678,14 @@ def get_optimization_integration(
     Returns:
         OptimizationIntegration instance
     """
-    global _optimization_integration_instance
-    if _optimization_integration_instance is None:
+    _instance = _optimization_integration_state["instance"]
+    if _instance is None:
         with _optimization_integration_lock:
-            if _optimization_integration_instance is None:
-                _optimization_integration_instance = OptimizationIntegration(
-                    optimization_base_path=optimization_base_path, sr=sr
-                )
-    return _optimization_integration_instance
+            _instance = _optimization_integration_state["instance"]
+            if _instance is None:
+                _instance = OptimizationIntegration(optimization_base_path=optimization_base_path, sr=sr)
+                _optimization_integration_state["instance"] = _instance
+    return _instance
 
 
 # Example usage
@@ -664,15 +694,15 @@ if __name__ == "__main__":
     integration = OptimizationIntegration()
 
     # Get optimized parameters for vinyl
-    params = integration.get_optimized_parameters("vinyl")
-    logger.debug("Vinyl parameters: %s", params)
+    vinyl_params = integration.get_optimized_parameters("vinyl")
+    logger.debug("Vinyl parameters: %s", vinyl_params)
 
     # Apply to context
-    context = {"material_type": "vinyl", "detected_artifacts": ["clicks", "pops", "rumble"]}
+    demo_context = {"material_type": "vinyl", "detected_artifacts": ["clicks", "pops", "rumble"]}
 
-    context = integration.apply_optimized_parameters_to_context(context, "vinyl")
-    logger.debug("\nUpdated context: %s", context)
+    demo_context = integration.apply_optimized_parameters_to_context(demo_context, "vinyl")
+    logger.debug("\nUpdated context: %s", demo_context)
 
     # Recommend strategy
-    strategy = integration.recommend_processing_strategy(context, "vinyl")
-    logger.debug("\nRecommended strategy: %s", strategy)
+    demo_strategy = integration.recommend_processing_strategy(demo_context, "vinyl")
+    logger.debug("\nRecommended strategy: %s", demo_strategy)

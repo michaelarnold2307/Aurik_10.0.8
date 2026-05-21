@@ -61,6 +61,26 @@ def _normalize_mode(mode: str) -> str:
     return "Restoration"
 
 
+def _normalize_phase_strength_oracle_rollout(mode: str | None) -> str | None:
+    """Normalisiert den optionalen Strength-Oracle-Rollout-Modus (off/pilot/all)."""
+    if mode is None:
+        return None
+    raw = str(mode).strip().lower().replace("-", "_")
+    aliases = {
+        "0": "off",
+        "false": "off",
+        "disabled": "off",
+        "none": "off",
+        "pilot": "pilot",
+        "1": "all",
+        "true": "all",
+        "enabled": "all",
+        "full": "all",
+        "all": "all",
+    }
+    return aliases.get(raw)
+
+
 def _rms_dbfs(audio: np.ndarray) -> float:
     arr = np.asarray(audio, dtype=np.float32)
     if arr.ndim == 2:
@@ -112,6 +132,113 @@ def _rms_dbfs(audio: np.ndarray) -> float:
     return float(20.0 * np.log10(max(rms, 1e-12)))
 
 
+def _compute_export_signal_signature(audio: np.ndarray, sr: int) -> dict[str, float]:
+    """Berechnet leichte Signal-Features für exportseitige Gate-Entscheidungen."""
+    arr = np.nan_to_num(np.asarray(audio, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if arr.ndim == 2:
+        if arr.shape[0] <= 2 and arr.shape[1] > 2:
+            arr = arr.mean(axis=0)
+        elif arr.shape[1] <= 2 and arr.shape[0] > 2:
+            arr = arr.mean(axis=1)
+        else:
+            arr = arr.mean(axis=-1)
+    elif arr.ndim != 1:
+        arr = np.ravel(arr)
+
+    if arr.size < 128:
+        return {"crest_db": 0.0, "hf_ratio": 0.0, "transient_ratio": 0.0, "micro_dynamic_db": 0.0}
+
+    arr64 = arr.astype(np.float64, copy=False)
+    peak = float(np.max(np.abs(arr64)) + 1e-12)
+    rms = float(np.sqrt(np.mean(arr64 * arr64) + 1e-12))
+    crest_db = float(20.0 * np.log10(max(peak / max(rms, 1e-8), 1e-8)))
+
+    n_fft = int(min(16384, arr64.size))
+    if n_fft >= 512:
+        frame = arr64[:n_fft]
+        spectrum = np.abs(np.fft.rfft(frame * np.hanning(n_fft))) ** 2
+        freqs = np.fft.rfftfreq(n_fft, d=1.0 / max(sr, 1))
+        total_energy = float(np.sum(spectrum) + 1e-12)
+        hf_energy = float(np.sum(spectrum[freqs >= 6000.0]))
+        hf_ratio = float(np.clip(hf_energy / total_energy, 0.0, 1.0))
+    else:
+        hf_ratio = 0.0
+
+    diff = np.abs(np.diff(arr64, prepend=arr64[0]))
+    transient_thr = max(float(np.percentile(diff, 99.0)), 1e-6)
+    transient_ratio = float(np.mean(diff > transient_thr))
+
+    frame_len = 2048
+    frame_rms_db: list[float] = []
+    if arr64.size >= frame_len:
+        for start in range(0, arr64.size - frame_len + 1, frame_len):
+            chunk = arr64[start : start + frame_len]
+            chunk_rms = float(np.sqrt(np.mean(chunk * chunk) + 1e-12))
+            frame_rms_db.append(float(20.0 * np.log10(max(chunk_rms, 1e-12))))
+    micro_dynamic_db = (
+        float(max(0.0, float(np.percentile(frame_rms_db, 95)) - float(np.percentile(frame_rms_db, 5))))
+        if frame_rms_db
+        else 0.0
+    )
+
+    return {
+        "crest_db": float(np.clip(crest_db, 0.0, 40.0)),
+        "hf_ratio": hf_ratio,
+        "transient_ratio": float(np.clip(transient_ratio, 0.0, 1.0)),
+        "micro_dynamic_db": float(np.clip(micro_dynamic_db, 0.0, 60.0)),
+    }
+
+
+def _compute_export_gate_adjustment(
+    material_key: str,
+    signal_signature: dict[str, float],
+    result_obj: object,
+) -> tuple[float, float, str]:
+    """Leitet adaptive Gate-Offsets ab: (qe_delta, pegel_delta_db, reason)."""
+    historical = {
+        "wax_cylinder",
+        "shellac",
+        "wire_recording",
+        "lacquer_disc",
+        "vinyl",
+        "tape",
+        "reel_tape",
+        "cassette",
+    }
+    modern = {"cd_digital", "dat", "lossless", "aac", "mp3_high", "streaming"}
+
+    crest_db = float(signal_signature.get("crest_db", 0.0))
+    hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+    transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+    micro_dynamic_db = float(signal_signature.get("micro_dynamic_db", 0.0))
+
+    risk = 0.0
+    if material_key in historical:
+        risk += 0.24
+    if crest_db >= 18.0:
+        risk += 0.12
+    if transient_ratio >= 0.01:
+        risk += 0.12
+    if micro_dynamic_db >= 14.0:
+        risk += 0.08
+    if hf_ratio <= 0.02 and material_key in historical:
+        risk += 0.06
+
+    # Nutze Denker-Telemetrie wenn vorhanden (gleiche Intelligenzlinie).
+    stage_notes = getattr(result_obj, "stage_notes", None)
+    if isinstance(stage_notes, dict):
+        profile = stage_notes.get("exzellenz_recovery_profile")
+        if isinstance(profile, dict):
+            risk += float(profile.get("preserve_signal", 0.0)) * 0.20
+
+    risk = float(np.clip(risk, 0.0, 1.0))
+    if material_key in modern and risk <= 0.15:
+        return (0.02, -0.4, f"modern_stable(risk={risk:.2f})")
+    if risk >= 0.45:
+        return (-0.03, +0.8, f"fragile_or_transient_risk(risk={risk:.2f})")
+    return (0.0, 0.0, f"neutral(risk={risk:.2f})")
+
+
 def _resample_to_48k(audio: np.ndarray, sr: int) -> np.ndarray:
     """Resample to 48 kHz with frontend-parity path (soxr HQ, fallback scipy)."""
     if sr == _TARGET_SR:
@@ -160,6 +287,44 @@ def _export_audio_frontend_parity(
 
     eq_passed, eq_warnings = validate_export_quality(result)
     eq_payload = build_export_quality_gate_payload(result)
+    _ml_payload = eq_payload.get("musiclover", {}) if isinstance(eq_payload, dict) else {}
+    _ml_stereo = _ml_payload.get("stereo_integrity", {}) if isinstance(_ml_payload, dict) else {}
+    _ml_vocal = _ml_payload.get("vocal_integrity", {}) if isinstance(_ml_payload, dict) else {}
+    _ml_temporal = _ml_payload.get("temporal_risk", {}) if isinstance(_ml_payload, dict) else {}
+    _ml_goals = _ml_payload.get("musical_goals", {}) if isinstance(_ml_payload, dict) else {}
+    _ml_decision = _ml_payload.get("decision_trace", {}) if isinstance(_ml_payload, dict) else {}
+    _wcs_payload = (
+        eq_payload.get("worldclass_composite_gate", {})
+        if isinstance(eq_payload.get("worldclass_composite_gate", {}), dict)
+        else {}
+    )
+    _evidence_payload = (
+        eq_payload.get("threshold_evidence", {}) if isinstance(eq_payload.get("threshold_evidence", {}), dict) else {}
+    )
+    _wcs_evidence = (
+        _evidence_payload.get("worldclass_composite_gate", {})
+        if isinstance(_evidence_payload.get("worldclass_composite_gate", {}), dict)
+        else {}
+    )
+    _ml_mono_softened = False
+
+    # Music-Lover Exportschutz: leichte Mid/Side-Softening-Korrektur bei Mono-Risikoflag.
+    if (
+        bool(_ml_stereo.get("mono_compatibility_warning", False))
+        and isinstance(write_audio, np.ndarray)
+        and write_audio.ndim == 2
+        and write_audio.shape[1] >= 2
+    ):
+        _left = write_audio[:, 0].astype(np.float32)
+        _right = write_audio[:, 1].astype(np.float32)
+        _mid = 0.5 * (_left + _right)
+        _side = 0.5 * (_left - _right)
+        _side *= 0.92
+        write_audio[:, 0] = np.clip(_mid + _side, -1.0, 1.0)
+        write_audio[:, 1] = np.clip(_mid - _side, -1.0, 1.0)
+        _ml_mono_softened = True
+        logger.info("CLI Export-MonoGuard: leichte Stereo-Softening-Korrektur aktiv")
+
     if eq_warnings:
         for warning in eq_warnings:
             logger.warning("Export-Quality: %s", warning)
@@ -168,6 +333,11 @@ def _export_audio_frontend_parity(
         if isinstance(metadata, dict):
             metadata["export_quality_gate_failed"] = True
             metadata["export_quality_gate_warnings"] = list(eq_warnings)
+            metadata["export_blocked_by_quality_gate"] = True
+        raise RuntimeError(
+            "Export blockiert: Export-Quality-Gate nicht bestanden"
+            + (f" ({'; '.join(eq_warnings)})" if eq_warnings else "")
+        )
 
     export_metadata = {
         "quality_gate_passed": str(bool(eq_payload.get("passed", eq_passed))),
@@ -178,6 +348,32 @@ def _export_audio_frontend_parity(
         "fallback_quality_floor_status": str(
             (eq_payload.get("fallback_quality_floor", {}) or {}).get("status", "passed")
         ),
+        "quality_gate_profile": str(eq_payload.get("profile", "")),
+        "quality_gate_material": str(eq_payload.get("material", "")),
+        "quality_gate_preserve_signal": str(float(eq_payload.get("preserve_signal", 0.0) or 0.0)),
+        "quality_gate_threshold_qe": str(
+            float((eq_payload.get("thresholds", {}) or {}).get("quality_estimate", 0.0) or 0.0)
+        ),
+        "quality_gate_threshold_level_drop_db": str(
+            float((eq_payload.get("thresholds", {}) or {}).get("level_drop_db", 0.0) or 0.0)
+        ),
+        "quality_gate_worldclass_score": str(float(_wcs_payload.get("wcs", 0.0) or 0.0)),
+        "quality_gate_worldclass_threshold": str(float(_wcs_payload.get("threshold", 0.0) or 0.0)),
+        "quality_gate_worldclass_passed": str(bool(_wcs_payload.get("passed", False))),
+        "quality_gate_worldclass_profile": str(_wcs_payload.get("profile", "") or ""),
+        "quality_gate_worldclass_artifact_veto": str(bool(_wcs_payload.get("artifact_veto", False))),
+        "quality_gate_evidence_worldclass_source_class": str(_wcs_evidence.get("source_class", "") or ""),
+        "quality_gate_evidence_worldclass_revalidate_by": str(_wcs_evidence.get("revalidate_by", "") or ""),
+        "quality_gate_musiclover_vqi": str(float(_ml_vocal.get("vqi", 0.0) or 0.0)),
+        "quality_gate_musiclover_sid": str(float(_ml_vocal.get("singer_identity_cosine", 0.0) or 0.0)),
+        "quality_gate_musiclover_temporal_hotspots": str(int(_ml_temporal.get("hotspot_count", 0) or 0)),
+        "quality_gate_musiclover_mono_warning": str(bool(_ml_stereo.get("mono_compatibility_warning", False))),
+        "quality_gate_musiclover_remaining_goals": str(
+            int((_ml_goals.get("remaining_count", 0) if isinstance(_ml_goals, dict) else 0) or 0)
+        ),
+        "quality_gate_musiclover_mono_softened": str(bool(_ml_mono_softened)),
+        "quality_gate_musiclover_all_sota_real": str(bool(_ml_decision.get("all_sota_real", True))),
+        "quality_gate_musiclover_sota_reason": str(_ml_decision.get("vocal_restoration_capability_status", "") or ""),
     }
 
     out_path = Path(output_path)
@@ -212,10 +408,16 @@ def _export_audio_frontend_parity(
 
     if str(out_path) != output_path:
         logger.info("Ausgabepfad ohne Dateiendung wurde als WAV geschrieben: %s", out_path)
-    return bool(eq_payload.get("passed", eq_passed)), [str(w) for w in eq_warnings], eq_payload
+    return True, [str(w) for w in eq_warnings], eq_payload
 
 
-def process_audio(input_path: str, output_path: str, verbose: bool = True, mode: str = "Restoration") -> object:
+def process_audio(
+    input_path: str,
+    output_path: str,
+    verbose: bool = True,
+    mode: str = "Restoration",
+    phase_strength_oracle_rollout: str | None = None,
+) -> object:
     """Verarbeitet eine Audiodatei über denselben Denker-/Exportpfad wie das Frontend."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s: %(message)s")
     logger = logging.getLogger("aurik_cli")
@@ -224,6 +426,15 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
     if mode not in _VALID_MODES:
         logger.warning("Unbekannter Modus '%s' — verwende 'Restoration'.", mode)
         mode = "Restoration"
+
+    rollout_mode = _normalize_phase_strength_oracle_rollout(phase_strength_oracle_rollout)
+    if rollout_mode is None:
+        rollout_mode = _normalize_phase_strength_oracle_rollout(os.getenv("AURIK_PHASE_STRENGTH_ORACLE_ROLLOUT"))
+    if phase_strength_oracle_rollout is not None and rollout_mode is None:
+        logger.warning(
+            "Ungültiger Strength-Oracle-Rollout '%s' — verwende Pipeline-Default.",
+            phase_strength_oracle_rollout,
+        )
 
     if not os.path.exists(input_path):
         logger.error("Input-Datei nicht gefunden: %s", input_path)
@@ -274,6 +485,7 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
             input_path=input_path,
             output_path=output_path,
             pre_analysis_result=pre,
+            phase_strength_oracle_rollout=rollout_mode,
         )
     except Exception as exc:
         logger.error("Fehler in der Restaurierungspipeline: %s", exc)
@@ -328,6 +540,9 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         "lossless": 0.55,
     }
     _qe_threshold = _QE_THRESHOLD.get(_mat_str, 0.45)
+    _sig = _compute_export_signal_signature(result.audio, _TARGET_SR)
+    _qe_delta, _pegel_delta, _gate_profile = _compute_export_gate_adjustment(_mat_str, _sig, result)
+    _qe_threshold = float(np.clip(_qe_threshold + _qe_delta, 0.25, 0.70))
     _qe = getattr(result, "quality_estimate", None)
     if _qe is not None and _qe < _qe_threshold:
         _export_degraded = True
@@ -338,6 +553,14 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
             _qe_threshold,
             _mat_str or "default",
         )
+    logger.info(
+        "Export-Gate-Profil: %s · qe_threshold=%.2f · crest=%.1f dB · hf=%.3f · transient=%.4f",
+        _gate_profile,
+        _qe_threshold,
+        _sig.get("crest_db", 0.0),
+        _sig.get("hf_ratio", 0.0),
+        _sig.get("transient_ratio", 0.0),
+    )
 
     # P1/P2 Musical Goals — normativ erstrebenswert, kein Hard-Export-Stop (§0c)
     _P1_P2_THRESHOLDS = {
@@ -384,6 +607,30 @@ def process_audio(input_path: str, output_path: str, verbose: bool = True, mode:
         "minidisc": 3.5,
     }
     _pegel_threshold = _PEGEL_THRESHOLD.get(_mat_str, 4.0)
+    _pegel_threshold = float(np.clip(_pegel_threshold + _pegel_delta, 1.5, 8.5))
+    _meta_obj = getattr(result, "metadata", None)
+    _meta_dict = dict(_meta_obj) if isinstance(_meta_obj, dict) else {}
+    _stage_notes = getattr(result, "stage_notes", None)
+    _xp_profile = _stage_notes.get("exzellenz_recovery_profile", {}) if isinstance(_stage_notes, dict) else {}
+    _preserve_signal = float(np.clip(float((_xp_profile or {}).get("preserve_signal", 0.0) or 0.0), 0.0, 1.0))
+    _meta_dict.update(
+        {
+            "export_gate_profile": str(_gate_profile),
+            "export_gate_material": str(_mat_str),
+            "export_gate_preserve_signal": _preserve_signal,
+            "export_gate_signal_signature": {
+                "crest_db": float(_sig.get("crest_db", 0.0) or 0.0),
+                "hf_ratio": float(_sig.get("hf_ratio", 0.0) or 0.0),
+                "transient_ratio": float(_sig.get("transient_ratio", 0.0) or 0.0),
+                "micro_dynamic_db": float(_sig.get("micro_dynamic_db", 0.0) or 0.0),
+            },
+            "export_gate_thresholds": {
+                "quality_estimate": float(_qe_threshold),
+                "level_drop_db": float(_pegel_threshold),
+            },
+        }
+    )
+    setattr(result, "metadata", _meta_dict)
     if _drop_db > _pegel_threshold:
         _export_degraded = True
         _export_degraded_reasons.append(f"Pegelabfall={_drop_db:.2f}dB>{_pegel_threshold:.1f}dB")
@@ -452,6 +699,7 @@ def main():
     input_file = None
     output_file = None
     mode = "Restoration"
+    phase_strength_oracle_rollout: str | None = None
     skip_next = False
     for i, arg in enumerate(args):
         if skip_next:
@@ -475,7 +723,6 @@ def main():
                 skip_next = True
         elif "=" in arg and arg.split("=", 1)[0] == "--mode":
             mode = arg.split("=", 1)[1]
-
     # Positional Fallback: nur Nicht-Flag-Argumente verwenden
     positional = [a for a in args if not a.startswith("-")]
     if input_file is None and len(positional) >= 1:
@@ -488,7 +735,13 @@ def main():
         print_usage()
         sys.exit(1)
 
-    process_audio(input_file, output_file, verbose=verbose, mode=mode)
+    process_audio(
+        input_file,
+        output_file,
+        verbose=verbose,
+        mode=mode,
+        phase_strength_oracle_rollout=phase_strength_oracle_rollout,
+    )
 
 
 if __name__ == "__main__":

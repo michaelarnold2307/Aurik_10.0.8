@@ -53,6 +53,12 @@ from scipy import signal
 
 from backend.core.audio_utils import audio_sample_count, stereo_channel_view, stereo_like
 from backend.core.defect_scanner import MaterialType
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
+
+try:
+    from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
+except ImportError:  # pragma: no cover
+    apply_psychoacoustic_masking_clamp = None  # type: ignore[assignment]
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -147,7 +153,11 @@ class FinalEQ(PhaseInterface):
         )
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.CD_DIGITAL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str | MaterialType = "unknown",
+        **kwargs,
     ) -> PhaseResult:
         """
         Wendet an: multi-band linear-phase EQ to audio.
@@ -155,7 +165,7 @@ class FinalEQ(PhaseInterface):
         Args:
             audio: Input audio (mono or stereo)
             sample_rate: Sample rate in Hz
-            material: Material type for adaptive processing
+            material_type: Material type for adaptive processing
 
         Returns:
             PhaseResult with EQ'd audio
@@ -164,11 +174,16 @@ class FinalEQ(PhaseInterface):
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         self.validate_input(audio)
+        material = kwargs.get("material", material_type)
+        if not isinstance(material, MaterialType):
+            try:
+                material = MaterialType(str(material))
+            except Exception:
+                material = MaterialType.CD_DIGITAL
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _effective_strength = float(_strength_ctx["effective_strength"])
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -241,18 +256,17 @@ class FinalEQ(PhaseInterface):
             eq_audio = np.clip(eq_audio, -1.0, 1.0)
 
         # §4.5 Psychoacoustic Masking Clamp — EQ corrections only where audible
-        try:
-            from backend.core.dsp.psychoacoustics import apply_psychoacoustic_masking_clamp
-
-            eq_audio = apply_psychoacoustic_masking_clamp(
-                audio,
-                eq_audio,
-                sample_rate,
-                strength=_effective_strength,
-                mode="additive",
-            )
-        except Exception as _pm_exc:
-            logger.debug("Phase16 masking clamp non-blocking: %s", _pm_exc)
+        if apply_psychoacoustic_masking_clamp is not None:
+            try:
+                eq_audio = apply_psychoacoustic_masking_clamp(
+                    audio,
+                    eq_audio,
+                    sample_rate,
+                    strength=_effective_strength,
+                    mode="additive",
+                )
+            except Exception as _pm_exc:
+                logger.debug("Phase16 masking clamp non-blocking: %s", _pm_exc)
 
         return PhaseResult(
             success=True,
@@ -277,13 +291,13 @@ class FinalEQ(PhaseInterface):
         # **GUARD: Short-Audio-Buffer (§2.47, §0 Primum non nocere)**
         MIN_AUDIO_SAMPLES = 512  # 10 ms @ 48 kHz
         if len(audio) < MIN_AUDIO_SAMPLES:
-            logger.debug(f"phase_16: audio too short ({len(audio)} < {MIN_AUDIO_SAMPLES}), skipping EQ")
+            logger.debug("phase_16: audio too short (%d < %d), skipping EQ", len(audio), MIN_AUDIO_SAMPLES)
             return np.asarray(audio, dtype=np.float32).copy()
 
         eq_audio = audio.copy()
 
         # Apply each band EQ
-        for band_name, band_config in config.items():
+        for band_config in config.values():
             eq_type = band_config["type"]
             freq = band_config["freq"]
             gain_db = band_config["gain_db"]

@@ -881,3 +881,27 @@ class TestContextPriors:
         assert proposals
         for proposal in proposals:
             assert isinstance(proposal, ParameterProposal)
+
+    def test_84_memory_prior_causal_confidence_increases_blend(self, tmp_path, monkeypatch):
+        import backend.core.gp_parameter_optimizer as gp_mod
+
+        monkeypatch.setattr(gp_mod, "_MEMORY_DIR", tmp_path)
+        opt = GPParameterOptimizer(rng_seed=37)
+
+        weak = opt.propose(
+            material="tape",
+            memory_prior={"phase_params": {"noise_reduction_strength": 0.20}, "hpi_achieved": 0.8},
+        )
+        strong = opt.propose(
+            material="tape",
+            memory_prior={
+                "phase_params": {
+                    "noise_reduction_strength": 0.20,
+                    "_causal_credit_confidence": 1.0,
+                },
+                "hpi_achieved": 0.8,
+            },
+        )
+
+        # Höhere kausale Konfidenz -> stärkeres Blending Richtung Prior (0.20)
+        assert strong.parameters["noise_reduction_strength"] < weak.parameters["noise_reduction_strength"]

@@ -95,6 +95,19 @@ class TestHPGEvaluateRestoration:
         assert result.passed is False
         assert result.hpi == pytest.approx(0.0, abs=1e-4)
 
+    def test_reference_audio_sets_carrier_reference_mode(self):
+        """reference_audio aktiviert den Carrier-Referenzmodus im HPI-Ergebnis."""
+        gate = self._make_gate()
+        audio = self._sine()
+        result = gate.evaluate_restoration(
+            audio,
+            audio,
+            48000,
+            reference_audio=audio,
+        )
+        assert result.reference_mode == "best_carrier_checkpoint"
+        assert result.detail["reference_mode"] == "best_carrier_checkpoint"
+
     def test_strict_gate_at_high_restorability(self):
         """restorability > 85 → HPI *= 0.95 (strict gate), detail['strict_gate']=True."""
         gate = self._make_gate()
@@ -183,3 +196,10 @@ class TestUV3HPGWiring:
         assert 'genre="DEFAULT"' not in block, "Hardcoded genre='DEFAULT' im HPG-Aufruf"
         assert 'era_bin="post-1990"' not in block, "Hardcoded era_bin='post-1990' im HPG-Aufruf"
         assert "era_bin='post-1990'" not in block, "Hardcoded era_bin='post-1990' im HPG-Aufruf"
+
+    def test_afg_shape_mismatch_path_is_fail_closed(self, uv3_source: str):
+        """AFG-Veto darf bei inkompatiblem Checkpoint nicht in Export-trotzdem kippen."""
+        assert "Export trotzdem" not in uv3_source, "AFG-Pfad enthält noch fail-open Export-trotzdem-Text"
+        assert "kein kompatibler Rollback-Checkpoint (fail-closed auf Original)" in uv3_source, (
+            "AFG-Shape-Mismatch muss explizit fail-closed auf Original loggen"
+        )

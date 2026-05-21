@@ -135,7 +135,7 @@ def _extract_cause_to_phases(module_source: str) -> dict[str, list[str]]:
 
     Unterst\u00fctzt sowohl normales Assignment (``CAUSE_TO_PHASES = {...}``)
     als auch type-annotiertes Assignment (``CAUSE_TO_PHASES: dict[...] = {...}``)
-    da Python 3.6+ annotierte Assignments als ``ast.AnnAssign`` repr\u00e4sentiert.
+    da Python 3.6+ annotierte Assignments als ``ast.AnnAssign`` repräsentiert.
     """
     tree = ast.parse(module_source)
     for node in ast.walk(tree):

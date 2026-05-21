@@ -26,6 +26,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+try:
+    import psutil as _psutil
+except Exception:
+    _psutil = None
+
 if TYPE_CHECKING:
     from PyQt5.QtCore import QThread, pyqtSignal
 else:
@@ -33,50 +38,75 @@ else:
         from PyQt5.QtCore import QThread, pyqtSignal
     except ImportError:  # Headless test environment
 
-        class QThread:  # type: ignore[no-redef]
+        class QThread:
+            """Minimaler QThread-Stub für headless Testumgebungen."""
+
             LowPriority = 1
 
             def __init__(self) -> None:
+                """Initialisiert den Stub-Threadzustand."""
                 self._interrupt = False
 
             def isInterruptionRequested(self) -> bool:
+                """Kompatible Qt-API: liefert den lokalen Interrupt-Status."""
                 return self._interrupt
 
             def requestInterruption(self) -> None:
+                """Kompatible Qt-API: markiert den Thread als unterbrochen."""
                 self._interrupt = True
 
             def setPriority(self, _p) -> None:
-                pass
+                """No-op im Stub: Prioritäten werden ohne Qt nicht gesetzt."""
 
             def start(self, _p=None) -> None:
+                """Kompatible Qt-API: startet synchron per direktem run()-Aufruf."""
                 self.run()
 
-        def pyqtSignal(*args):  # type: ignore[no-redef]
+        def pyqtSignal(*_args):
+            """Einfacher Signal-Stub mit connect/emit-Kompatibilität."""
+
             class _Sig:
+                """Signalobjekt-Stub für Tests ohne PyQt5."""
+
                 def connect(self, _fn):
-                    pass
+                    """No-op connect für API-Kompatibilität."""
 
                 def emit(self, *a, **kw):
-                    pass
+                    """No-op emit für API-Kompatibilität."""
 
             return _Sig()
 
 
-if TYPE_CHECKING:
-    DeferredRefinementJob = Any
-else:
-    try:
-        from backend.api.bridge import get_deferred_refinement_job_class as _get_drj_class
+try:
+    from backend.api.bridge import get_deferred_refinement_job_class as _get_drj_class
 
-        DeferredRefinementJob = _get_drj_class()
-    except Exception:
-        # Bridge unavailable — MLRefinementThread remains non-functional (no direct core bypass).
-        DeferredRefinementJob = None  # type: ignore[assignment,misc]
+    DeferredRefinementJob = _get_drj_class()
+except Exception as _bridge_exc:
+
+    class DeferredRefinementJob:  # type: ignore[no-redef]
+        """UI-lokaler Fallback-Typ bei fehlender Bridge (nur fuer Typvertrag-Tests)."""
+
+    logger = logging.getLogger(__name__)
+    logger.warning(
+        "MLRefinementThread: Bridge-Import fehlgeschlagen (%s), verwende lokalen Fallback fuer DeferredRefinementJob",
+        _bridge_exc,
+    )
 
 logger = logging.getLogger(__name__)
 
 # ── Spec §2.38: Hintergrundthread läuft ohne RT-Limit ────────────────────────
 _LIMIT_BACKGROUND: float = float("inf")
+
+
+def _set_job_budget_registered(job: object, registered: bool) -> None:
+    """Setzt _budget_registered best-effort für release_buffer()-Semantik."""
+    try:
+        object.__setattr__(job, "_budget_registered", bool(registered))
+    except Exception:
+        logger.debug(
+            "KMV Stufe 2: _budget_registered konnte nicht gesetzt werden (non-fatal)",
+            exc_info=True,
+        )
 
 
 class MLRefinementThread(QThread):
@@ -96,7 +126,7 @@ class MLRefinementThread(QThread):
     refinement_complete = pyqtSignal(str, object)
     refinement_cancelled = pyqtSignal(str)
 
-    def __init__(self, job: DeferredRefinementJob) -> None:
+    def __init__(self, job: Any) -> None:
         super().__init__()
         self.job = job
         self._result = None
@@ -106,19 +136,20 @@ class MLRefinementThread(QThread):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def should_start(job: DeferredRefinementJob) -> bool:
+    def should_start(job: Any) -> bool:
         """Gibt True when all Stufe-2 start conditions are met (§2.38) zurück."""
         if not job.deferred_phase_ids:
             return False
         try:
-            import psutil
-
-            avail_gb = psutil.virtual_memory().available / 1024**3
+            if _psutil is None:
+                raise RuntimeError("psutil nicht verfuegbar")
+            avail_gb = _psutil.virtual_memory().available / 1024**3
             if avail_gb < 4.0:
                 logger.info("KMV Stufe 2 nicht gestartet: nur %.1f GB RAM frei (< 4 GB)", avail_gb)
                 return False
         except Exception:
-            pass  # psutil not available → proceed without check
+            logger.debug("KMV should_start: psutil nicht verfuegbar, RAM-Check uebersprungen", exc_info=True)
+            # psutil not available -> proceed without check
         return True
 
     # ------------------------------------------------------------------
@@ -134,11 +165,11 @@ class MLRefinementThread(QThread):
         try:
             self.setPriority(QThread.LowPriority)
         except Exception:
-            pass
+            logger.debug("KMV Stufe 2: QThread-Prioritaet konnte nicht gesetzt werden", exc_info=True)
         try:
             os.nice(10)
         except Exception:
-            pass
+            logger.debug("KMV Stufe 2: os.nice(10) nicht anwendbar", exc_info=True)
 
         self.refinement_started.emit(output_path, job.n_deferred)
         logger.info(
@@ -150,10 +181,11 @@ class MLRefinementThread(QThread):
         # ── 1. Register audio in ml_memory_budget ────────────────────────────
         _budget_registered = False
         try:
-            from backend.api.bridge import get_ml_memory_budget
+            from backend.api.bridge import get_ml_memory_budget  # pylint: disable=import-outside-toplevel
 
             _budget = get_ml_memory_budget()
             _budget_registered = _budget.try_allocate("kmv_job", job.audio_size_gb)
+            _set_job_budget_registered(job, _budget_registered)
             if not _budget_registered:
                 logger.warning(
                     "KMV Stufe 2: ml_memory_budget.try_allocate('kmv_job', %.2f GB) fehlgeschlagen"
@@ -166,6 +198,7 @@ class MLRefinementThread(QThread):
             logger.debug("ml_memory_budget nicht verfügbar (KMV): %s", _be)
             # Continue without budget guard if module absent (test environments)
             _budget_registered = False
+            _set_job_budget_registered(job, False)
 
         t0 = time.perf_counter()
         _result = None
@@ -178,7 +211,9 @@ class MLRefinementThread(QThread):
             self.refinement_progress.emit(5, "ML-Veredelung: Analyse …")
 
             try:
-                from backend.api.bridge import get_aurik_denker_instance as _get_denker
+                from backend.api.bridge import (  # pylint: disable=import-outside-toplevel
+                    get_aurik_denker_instance as _get_denker,
+                )
 
                 _denker = _get_denker()
             except Exception as _imp_err:
@@ -253,7 +288,7 @@ class MLRefinementThread(QThread):
                 try:
                     Path(_tmp_path).unlink(missing_ok=True)
                 except Exception:
-                    pass
+                    logger.debug("KMV Stufe 2: Temp-Datei konnte nicht entfernt werden: %s", _tmp_path, exc_info=True)
                 self.refinement_cancelled.emit(output_path)
                 return
 
@@ -262,7 +297,7 @@ class MLRefinementThread(QThread):
                 _r.refinement_complete = True
                 _r.stufe2_quality_estimate = float(_stufe2_quality)
             except Exception:
-                pass
+                logger.debug("KMV Stufe 2: Result-Metadaten konnten nicht gesetzt werden", exc_info=True)
 
             elapsed = time.perf_counter() - t0
             logger.info(
@@ -283,17 +318,10 @@ class MLRefinementThread(QThread):
             # DeferredRefinementJob.release_buffer() calls ml_memory_budget.release()
             # and sets audio_original=None so GC can reclaim the large array.
             # §2.38a Invariante: Nur release() wenn try_allocate() erfolgreich war
-            if _budget_registered:
-                try:
-                    job.release_buffer()
-                except Exception as _rel_err:
-                    logger.debug("KMV buffer release failed (non-fatal): %s", _rel_err)
-            else:
-                # Budget war nie registriert (early return oder Exception), fallback: job-Destruktor
-                try:
-                    job._audio_original = None
-                except Exception:
-                    pass
+            try:
+                job.release_buffer()
+            except Exception as _rel_err:
+                logger.debug("KMV buffer release failed (non-fatal): %s", _rel_err)
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
@@ -337,15 +365,14 @@ def _extract_audio(result: object) -> np.ndarray | None:
 def _write_audio(audio: np.ndarray, sr: int, path: str) -> None:
     """Schreibt audio to file — tries soundfile, falls back to scipy.io.wavfile."""
     try:
-        import soundfile as sf
+        import soundfile as sf  # pylint: disable=import-outside-toplevel
 
         mono_or_stereo = audio if audio.ndim == 2 else audio[:, None]
         sf.write(path, mono_or_stereo, sr, subtype="FLOAT")
         return
     except Exception:
-        pass
-    import numpy as _np
-    import scipy.io.wavfile as _wf
+        logger.debug("KMV _write_audio: soundfile write fehlgeschlagen, nutze scipy-Fallback", exc_info=True)
+    import scipy.io.wavfile as _wf  # pylint: disable=import-outside-toplevel
 
-    _a = (audio * 32767).astype(_np.int16)
+    _a = (audio * 32767).astype(np.int16)
     _wf.write(path, sr, _a)

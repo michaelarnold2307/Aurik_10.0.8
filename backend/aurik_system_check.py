@@ -10,8 +10,12 @@ import importlib
 import logging
 import os
 import sys
+from typing import Any
 
-import requests
+try:
+    requests: Any | None = importlib.import_module("requests")
+except Exception:
+    requests = None
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +52,35 @@ for f in glob.glob(os.path.join(plugin_dir, "*.py")):
         logger.error("[SOTA-Check] ERROR: %s: %s", mod, e)
         failed.append(mod)
 
-# Health-Endpoint prüfen
-try:
-    r = requests.get("http://localhost:8000/health", timeout=2)
-    if r.status_code == 200 and "ok" in r.text:
-        logger.info("[SOTA-Check] Health-Endpoint OK")
-    else:
-        logger.error("[SOTA-Check] Health-Endpoint Fehler: %s %s", r.status_code, r.text)
+# Desktop-Offline ist Standard: kein lokaler HTTP-Server als Pflicht.
+# Optional kann ein HTTP-Health-Probe explizit aktiviert werden.
+_http_health_enabled = os.getenv("AURIK_ENABLE_HTTP_HEALTH", "0") == "1"
+if _http_health_enabled:
+    if requests is None:
+        logger.error("[SOTA-Check] HTTP-Health-Probe aktiviert, aber requests nicht verfügbar")
         failed.append("health-endpoint")
-except Exception as e:
-    logger.info("[SOTA-Check] Health-Endpoint nicht erreichbar: %s", e)
-    failed.append("health-endpoint")
+    else:
+        _health_urls = (
+            "http://localhost:8000/api/health",
+            "http://localhost:8000/health",
+        )
+        _health_ok = False
+        _last_error = ""
+        for _url in _health_urls:
+            try:
+                r = requests.get(_url, timeout=2)
+                if r.status_code == 200 and "ok" in r.text.lower():
+                    logger.info("[SOTA-Check] Health-Endpoint OK: %s", _url)
+                    _health_ok = True
+                    break
+                _last_error = f"{_url} -> {r.status_code} {r.text}"[:300]
+            except Exception as e:
+                _last_error = f"{_url} -> {e}"[:300]
+        if not _health_ok:
+            logger.error("[SOTA-Check] Health-Endpoint Fehler: %s", _last_error)
+            failed.append("health-endpoint")
+else:
+    logger.info("[SOTA-Check] HTTP-Health-Probe übersprungen (Desktop-Offline-Standard)")
 
 if failed:
     logger.error("[SOTA-Check] Fehlerhafte Komponenten: %s", failed)

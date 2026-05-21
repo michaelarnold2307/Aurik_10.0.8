@@ -310,3 +310,35 @@ class TestModeAliasNormalization:
         m3 = StrategieDenker._parse_mode("Studio 2026")
 
         assert m1 == m2 == m3
+
+
+class TestSignalAwareSeverity:
+    def test_32_derive_effective_severity_increases_on_risky_signature(self):
+        from denker.strategie_denker import _derive_effective_defect_severity
+
+        base = 0.25
+        sig = {
+            "crest_db": 21.0,
+            "transient_ratio": 0.015,
+            "micro_dynamic_db": 16.0,
+            "hf_ratio": 0.15,
+        }
+        effective = _derive_effective_defect_severity(base, sig)
+        assert effective > base
+        assert 0.0 <= effective <= 1.0
+
+    def test_33_plan_uses_signal_signature_for_chunking(self):
+        import numpy as np
+
+        from denker.strategie_denker import StrategieDenker
+
+        audio = np.zeros(int(SR * 120), dtype=np.float32)
+        sig = {
+            "crest_db": 22.0,
+            "transient_ratio": 0.02,
+            "micro_dynamic_db": 18.0,
+            "hf_ratio": 0.14,
+        }
+        plan = StrategieDenker().plan(audio, SR, defect_severity=0.1, signal_signature=sig)
+        assert plan.defect_severity > 0.1
+        assert plan.recommended_chunk_s == pytest.approx(15.0, rel=1e-6)

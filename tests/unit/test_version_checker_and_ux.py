@@ -5,6 +5,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 from Aurik910.core.version_checker import (
+    _CURRENT_VERSION,
     VersionCheckResult,
     _parse_version,
     check_for_update,
@@ -27,7 +28,11 @@ def test_parse_version_with_V_prefix():
 
 
 def test_parse_version_non_numeric():
-    assert _parse_version("v9.10.beta") == (9, 10, 0)
+    assert _parse_version("v9.10.beta") == (9, 10)
+
+
+def test_parse_version_hotfix_suffix():
+    assert _parse_version("v9.12.9-hotfix.2") == (9, 12, 9, 2)
 
 
 def test_parse_version_comparison():
@@ -35,6 +40,7 @@ def test_parse_version_comparison():
     assert _parse_version("9.11.0") > _parse_version("9.10.99")
     assert _parse_version("10.0.0") > _parse_version("9.99.99")
     assert _parse_version("9.10.77") == _parse_version("v9.10.77")
+    assert _parse_version("9.12.9-hotfix.2") > _parse_version("9.12.9-hotfix.1")
 
 
 # ── VersionCheckResult ─────────────────────────────────────────────────────
@@ -46,6 +52,12 @@ def test_result_defaults():
     assert r.error == ""
     assert r.latest_version == ""
     assert r.download_url == ""
+
+
+def test_default_current_version_uses_package_version():
+    from Aurik910 import __version__
+
+    assert __version__ == _CURRENT_VERSION
 
 
 def test_result_available():
@@ -181,9 +193,9 @@ def test_simple_batch_item_retry_reset():
     class _Item:
         def __init__(self):
             self.status = "failed"
-            self.error = "some error"
+            self.error: str | None = "some error"
             self.progress = 100
-            self.restoration_result = object()
+            self.restoration_result: object | None = object()
 
     item = _Item()
     # Simulate retry reset logic

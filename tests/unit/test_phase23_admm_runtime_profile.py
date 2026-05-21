@@ -62,3 +62,9 @@ def test_lossy_material_raises_clip_floor_vs_analog() -> None:
     )
 
     assert lossy["clip_floor"] > analog["clip_floor"]
+
+
+def test_cassette_bw_ceiling_is_material_adaptive() -> None:
+    assert SpectralRepair._material_bw_ceiling_hz(MaterialType.CASSETTE) == 12000.0
+    assert SpectralRepair._material_bw_ceiling_hz(MaterialType.TAPE) == 15000.0
+    assert SpectralRepair._material_bw_ceiling_hz(MaterialType.REEL_TAPE) == 18000.0

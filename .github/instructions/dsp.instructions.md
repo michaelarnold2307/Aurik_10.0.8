@@ -173,9 +173,14 @@ from backend.core.musical_goals.era_vocal_profile import resolve_formant_toleran
 
 pre_formants = check_formant_integrity(audio_pre, sr)  # F1–F4 via LPC
 post_formants = check_formant_integrity(audio_post, sr)
-threshold_db = resolve_formant_tolerance_db(era_decade=era_decade, era_profile=era_profile)
+
+# §2.71 (v9.5): Per-Formant-Toleranz — F1/F2 ±1 dB, F3/F4 ±1.5 dB
+# (war: global ±2 dB — zu grob für Weltklasse-Vokalrestauration)
+_FORMANT_TOLERANCE_DB = [1.0, 1.0, 1.5, 1.5]  # F1, F2, F3, F4
 
 for f_idx in range(4):  # F1, F2, F3, F4
+    era_tolerance = resolve_formant_tolerance_db(era_decade=era_decade, era_profile=era_profile)
+    threshold_db = min(_FORMANT_TOLERANCE_DB[f_idx], era_tolerance)
     shift_db = abs(post_formants[f_idx] - pre_formants[f_idx])
     if shift_db > threshold_db:
         logger.warning("formant_shift F%d = %.1f dB > %.1f → rollback", f_idx+1, shift_db, threshold_db)
@@ -195,6 +200,16 @@ vibrato_mask = artifacts.vibrato_mask  # bool-Array, True = geschützte Frame
 if np.any(vibrato_mask):
     strength = min(strength, 0.20)  # Vibrato ist Naturalness-Marker
     logger.debug("vibrato_guard: strength capped to 0.20 (%d frames)", np.sum(vibrato_mask))
+
+# §2.72 (v9.5) Vibrato-Tiefe — F0-Modulationstiefe darf nicht > ±10 % reduziert werden:
+from backend.core.dsp.vibrato_guard import check_vibrato_depth_preservation
+_vdp = check_vibrato_depth_preservation(audio_pre, audio_post, sr)
+if _vdp.depth_reduction_pct > 10.0:
+    # Strength in Vibrato-Zonen halbieren
+    strength_in_vibrato = strength * 0.5
+    logger.warning("vibrato_depth_guard: reduction=%.1f%% → strength %.2f→0.5×",
+                   _vdp.depth_reduction_pct, strength)
+    # Blend: 50 % Dry in Vibrato-Frames, volle Strength außerhalb
 ```
 
 ## §0p Passaggio-Zone-Awareness (MIIPHER/DFN bei Gesang)
@@ -324,4 +339,177 @@ peak = np.max(np.abs(audio))
 
 # RICHTIG:
 peak = np.percentile(np.abs(audio), 99.9)
+```
+
+---
+
+## §NTI Noise-Textur-Invariante (V19) [RELEASE_MUST v9.5]
+
+**Regel**: Residualrauschen nach NR muss das Spektralprofil des Trägers behalten — kein Whitening.
+
+```python
+# PFLICHT nach jeder NR-Phase (DFN, OMLSA, SGMSE+, MIIPHER):
+from backend.core.dsp.noise_texture_guard import compute_noise_texture_distance
+
+_residual = audio_pre_nr - audio_post_nr  # Entferntes Rauschen isolieren
+_ntd = compute_noise_texture_distance(_residual, material=material_type)
+if _ntd > 0.25:
+    # Rauschtextur zu weit vom Träger entfernt → Strength halbieren, nicht voll anwenden
+    _blend_factor = 0.5
+    audio_post_nr = audio_pre_nr * (1.0 - _blend_factor) + audio_post_nr * _blend_factor
+    logger.warning("noise_texture_guard: ntd=%.3f > 0.25 → strength x0.5 (V19)", _ntd)
+    metadata["noise_texture_distance"] = _ntd
+
+# Referenzprofile per Material (backend/core/dsp/noise_texture_guard.py):
+# SHELLAC: spektrale Steigung -3 dB/oct (200-8000 Hz) + Rumpelkomponente 50-200 Hz
+# VINYL:   rosa Rauschen 1/f; HF-Hiss Anstieg 8-16 kHz
+# TAPE:    Brown-Rauschen tief + HF-Hiss um 6-10 kHz
+# CD:      Weißes Rauschen, flat -96 dBFS; Jitter-Artefakt 15-18 kHz
+# VERBOTEN: NR die reines Stille-Fundament (-100 dBFS) auf analog-Material erzeugt
+```
+
+## §MKK Mikrodynamik-Korrelation (V20) [RELEASE_MUST v9.5]
+
+**Regel**: Das "Atmen" einer Stimme (10ms-Frame-Energie in voiced-Zonen) muss überlebt jede NR/Dynamics-Phase.
+
+```python
+# PFLICHT nach jeder NR/Kompressor-Phase wenn panns_singing >= 0.25:
+from backend.core.dsp.mikrodynamik_guard import frame_energy_correlation
+
+_corr = frame_energy_correlation(audio_pre, audio_post, sr, frame_ms=10)
+if _corr < 0.97:
+    # Dry-Wet-Blend: bei corr=0.90 → wet=0.0 (vollständiges Dry); bei 0.97 → wet=1.0
+    _wet = float(min(1.0, max(0.0, (_corr - 0.90) / 0.07)))
+    audio_post = audio_pre * (1.0 - _wet) + audio_post * _wet
+    logger.warning("mikrodynamik_guard: corr=%.3f < 0.97 → wet_blend=%.2f (V20)", _corr, _wet)
+    metadata["mikrodynamik_corr"] = _corr
+
+# Warum wichtig: Der Unterschied zwischen "restauriert" und "klinisch"
+# liegt fast ausschließlich in der Mikrodynamik der Stimme.
+# Kompressor-/NR-bedingte Glättung vernichtet Expressivität.
+```
+
+## §MNF Mindestrauschboden in Pausen (V21) [RELEASE_MUST v9.5]
+
+**Regel**: Digitale Stille (−∞ dBFS) in Pausenzonen von analog-Material klingt sofort unnatürlich.
+
+```python
+# PFLICHT nach jeder NR-Phase auf analog-Material (Shellac, Vinyl, Tape, Cassette):
+from backend.core.dsp.noise_floor_guard import apply_noise_floor_minimum
+
+_MATERIAL_NOISE_FLOOR_MIN_DBFS = {
+    "shellac": -42.0,   # ~15 dB SNR — Rauschen ist hörbar
+    "vinyl":   -55.0,   # ~60 dB SNR — subtiles Trägerrauschen
+    "tape":    -52.0,   # ~60-70 dB SNR — Brown-Hiss muss bleiben
+    "cassette": -50.0,  # ~55 dB SNR — leises HF-Hiss
+    "unknown_analog": -52.0,  # konservativer Fallback
+}
+audio_post = apply_noise_floor_minimum(
+    audio_post, sr, material=material_type,
+    floor_dbfs=_MATERIAL_NOISE_FLOOR_MIN_DBFS.get(material_type, -55.0)
+)
+# VERBOTEN: Pausenzonen auf unter -70 dBFS abfallen lassen bei analog-Material
+```
+
+## §PEP Pre-Echo-Prevention (V22) [RELEASE_MUST v9.5]
+
+**Regel**: Additive ML-Phasen (AudioSR, Harmonik-Extrapolation) können Transient-Onsets zeitlich verschieben — das zerstört den "Punch" einer Aufnahme.
+
+```python
+# PFLICHT nach phase_06, phase_07, phase_23 (additive ML-Phasen):
+from backend.core.dsp.transient_guard import detect_transient_shifts
+
+_ts = detect_transient_shifts(audio_pre, audio_post, sr)
+if _ts.max_shift_ms > 2.0:
+    _blend_reduction = min(_ts.max_shift_ms / 2.0, 1.0)
+    audio_post = audio_pre * _blend_reduction + audio_post * (1.0 - _blend_reduction)
+    logger.warning("pre_echo_guard: onset_shift=%.1fms > 2ms → blend_reduction=%.2f (V22)",
+                   _ts.max_shift_ms, _blend_reduction)
+    metadata["onset_shift_ms"] = _ts.max_shift_ms
+# Non-blocking: Shift bis 2ms tolerierbar; über 2ms → proportionaler Blend
+```
+
+## §MKI Mono-Kompatibilität (V23) [RELEASE_MUST v9.5]
+
+**Regel**: Viele Restaurierungen klingen in Stereo gut, kollabieren beim Mono-Sum (Radio, TV, Streaming-Normalisierung).
+
+```python
+# PFLICHT vor Export wenn Stereo + panns_singing >= 0.25:
+from backend.core.dsp.stereo_guard import check_mono_compatibility
+
+if audio.ndim == 2 and panns_singing >= 0.25:
+    _mc = check_mono_compatibility(audio, sr)
+    if _mc.phase_cancellation_db > 3.0:
+        # Intensity-Stereo-Softening: Phasendifferenz reduzieren
+        _mid = (audio[0] + audio[1]) * 0.5
+        _side_blended = (audio[0] - audio[1]) * 0.5 * (1.0 - _mc.phase_cancellation_db / 12.0)
+        audio = np.stack([_mid + _side_blended, _mid - _side_blended])
+        metadata["mono_compatibility_warning"] = True
+        metadata["phase_cancellation_db"] = _mc.phase_cancellation_db
+        logger.warning("mono_compat_guard: cancellation=%.1f dB > 3 dB (V23)",
+                       _mc.phase_cancellation_db)
+# Non-blocking; niemals Veto
+```
+
+## §SCK Spektralfarbe (V24) [RELEASE_MUST v9.5]
+
+**Regel**: Der EQ-Charakter einer Aufnahme ist Teil der künstlerischen Substanz. NR whitened subtil.
+
+```python
+# PFLICHT nach EQ/NR-Phasen:
+from backend.core.dsp.spectral_color_guard import check_spectral_color_preservation
+
+_scp = check_spectral_color_preservation(audio_pre, audio_post, sr)
+if _scp.correlation < 0.97:
+    _strength_reduction = 0.30  # Strength 30 % reduzieren
+    # Blend: audio_out = audio_pre * 0.3 + audio_post * 0.7
+    audio_post = audio_pre * _strength_reduction + audio_post * (1.0 - _strength_reduction)
+    logger.warning("spectral_color_guard: corr=%.3f < 0.97 → strength-0.30 (V24)", _scp.correlation)
+    metadata["spectral_color_corr"] = _scp.correlation
+# Messung: 1/3-Oktav-Energiekurve 200–8000 Hz, exkl. DefectScanner-Defektfrequenzen
+```
+
+## §WBG Wärmeband-Guard (V25) [RELEASE_MUST v9.5]
+
+**Regel**: 200–800 Hz ist das „Wärme“-Band. Kumulativer Verlust durch mehrere NR/EQ-Phasen macht Aufnahmen „dünn“.
+
+```python
+# PFLICHT nach jeder Phase in Restoration-Modus:
+from backend.core.dsp.warmth_guard import measure_warmth_band_delta
+
+_wbd = measure_warmth_band_delta(audio_pre, audio_post, sr)
+# In _restoration_context akkumulieren:
+_ctx["warmth_band_loss_db"] = _ctx.get("warmth_band_loss_db", 0.0) + max(0.0, _wbd.loss_db)
+
+if _ctx["warmth_band_loss_db"] > 2.5:
+    # Alle weiteren Phasen skalieren bis Verlust unter 2.5 dB
+    _warmth_blend = float(1.0 - _ctx["warmth_band_loss_db"] / 5.0)
+    _warmth_blend = max(0.0, min(1.0, _warmth_blend))
+    audio_post = audio_pre * (1.0 - _warmth_blend) + audio_post * _warmth_blend
+    logger.warning("warmth_guard: cum_loss=%.1f dB > 2.5 → blend=%.2f (V25)",
+                   _ctx["warmth_band_loss_db"], _warmth_blend)
+    metadata["warmth_band_loss_db"] = _ctx["warmth_band_loss_db"]
+# Frequenzbereich: 200–800 Hz (Butter-Bandpass 4. Ordnung, zero-phase)
+# VERBOTEN: Wärme-Verlust > 4 dB akkumuliert → Aufnahme klingt unnatürlich „radiogefärbt“
+```
+
+## §ATI Angriffstransienten-Integrität (V26) [RELEASE_MUST v9.5]
+
+**Regel**: Die ersten 0–20 ms eines Phonem-Onsets sind perceptuell die wichtigsten Frames — sie bestimmen Punch, Klarheit und Artikulation.
+
+```python
+# PFLICHT nach NR/EQ-Phasen (alle Phasen die Energie verändern):
+from backend.core.dsp.onset_guard import apply_onset_protection_mask
+
+# onset_mask: bool-Array aus HPSS-Transient-Detektor (True = Onset-Frame)
+audio_post = apply_onset_protection_mask(
+    audio_pre=audio_pre,
+    audio_post=audio_post,
+    onset_mask=onset_mask,   # aus _restoration_context["onset_mask"]
+    max_delta_db=1.5,        # max. 1.5 dB Änderung in Onset-Frames
+)
+# onset_mask: HPSS → Transient-Komponente → Frames mit Energie > Schwelle
+# Onset-Fenster: 0–20 ms nach erstem Transient-Frame (Hörfenster für Attack)
+# Strength-Cap in Onset-Frames: 0.15 (absolut)
+# Non-blocking: Überschreitung blend-reduziert, kein Veto
 ```

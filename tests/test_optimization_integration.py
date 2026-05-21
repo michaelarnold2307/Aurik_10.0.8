@@ -7,8 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, ClassVar
 
 import numpy as np
+import pytest
 
 
 def test_optimization_integration():
@@ -52,10 +54,10 @@ def test_cli_export_helper_uses_audio_exporter_and_quality_payload(monkeypatch, 
     """CLI-Export muss AudioExporter, Export-Guard und Gate-Payload wie das Frontend nutzen."""
     from cli import aurik_cli
 
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
 
     class FakeAudioExporter:
-        FORMATS = {".wav": {}}
+        FORMATS: ClassVar[dict[str, dict[str, Any]]] = {".wav": {}}
 
         def export(self, audio, sr, output_path, **kwargs):
             calls["audio"] = np.asarray(audio)
@@ -86,23 +88,110 @@ def test_cli_export_helper_uses_audio_exporter_and_quality_payload(monkeypatch, 
     )
 
     result = SimpleNamespace(audio=np.zeros((2, 8), dtype=np.float32), metadata={})
-    passed, warnings, payload = aurik_cli._export_audio_frontend_parity(
+    with pytest.raises(RuntimeError, match="Export blockiert: Export-Quality-Gate nicht bestanden"):
+        aurik_cli._export_audio_frontend_parity(
+            result,
+            str(tmp_path / "out.wav"),
+            np.array([[np.nan, 2.0, -2.0, 0.0], [0.1, 0.2, 0.3, 0.4]], dtype=np.float32),
+            np.zeros((4, 2), dtype=np.float32),
+            aurik_cli.logging.getLogger("test_cli_export"),
+        )
+
+    assert calls["guard_count"] == 2
+    assert result.metadata["export_quality_gate_failed"] is True
+    assert result.metadata["export_quality_gate_warnings"] == ["gate-warning"]
+    assert result.metadata["export_blocked_by_quality_gate"] is True
+
+
+def test_cli_export_helper_applies_mono_guard_and_forwards_musiclover_metadata(monkeypatch, tmp_path):
+    """Bei mono_compatibility_warning muss CLI vor Export leichtes Stereo-Softening anwenden."""
+    from cli import aurik_cli
+
+    calls: dict[str, Any] = {}
+
+    class FakeAudioExporter:
+        FORMATS: ClassVar[dict[str, dict[str, Any]]] = {".wav": {}}
+
+        def export(self, audio, sr, output_path, **kwargs):
+            calls["audio"] = np.asarray(audio)
+            calls["sr"] = sr
+            calls["kwargs"] = kwargs
+            Path(output_path).write_bytes(b"fake-wav")
+            return output_path
+
+    def fake_export_guard(audio):
+        return np.clip(np.nan_to_num(np.asarray(audio, dtype=np.float32)), -1.0, 1.0)
+
+    monkeypatch.setattr(aurik_cli, "get_audio_exporter_class", lambda: FakeAudioExporter)
+    monkeypatch.setattr(aurik_cli, "export_guard", fake_export_guard)
+    monkeypatch.setattr(aurik_cli, "validate_export_quality", lambda result: (True, []))
+    monkeypatch.setattr(
+        aurik_cli,
+        "build_export_quality_gate_payload",
+        lambda result: {
+            "passed": True,
+            "degradation_status": "ok",
+            "fail_reason": "",
+            "recovery_attempted": False,
+            "best_possible_reached": False,
+            "fallback_quality_floor": {"status": "passed"},
+            "worldclass_composite_gate": {
+                "wcs": 0.86,
+                "threshold": 0.85,
+                "profile": "instrumental",
+                "artifact_veto": False,
+                "passed": True,
+            },
+            "threshold_evidence": {
+                "worldclass_composite_gate": {
+                    "source_class": "C",
+                    "revalidate_by": "2026-09-30",
+                }
+            },
+            "musiclover": {
+                "vocal_integrity": {"vqi": 0.87, "singer_identity_cosine": 0.95},
+                "temporal_risk": {"hotspot_count": 2},
+                "stereo_integrity": {"mono_compatibility_warning": True},
+                "decision_trace": {
+                    "all_sota_real": False,
+                    "vocal_restoration_capability_status": "sota_fallback",
+                },
+            },
+        },
+    )
+
+    # Anti-phase Stereo, damit MonoGuard wirksam wird.
+    restored = np.column_stack(
+        [
+            np.ones(64, dtype=np.float32),
+            -np.ones(64, dtype=np.float32),
+        ]
+    )
+    result = SimpleNamespace(audio=restored.copy(), metadata={})
+    ok, warnings, payload = aurik_cli._export_audio_frontend_parity(
         result,
-        str(tmp_path / "out.wav"),
-        np.array([[np.nan, 2.0, -2.0, 0.0], [0.1, 0.2, 0.3, 0.4]], dtype=np.float32),
-        np.zeros((4, 2), dtype=np.float32),
+        str(tmp_path / "ok.wav"),
+        restored,
+        restored,
         aurik_cli.logging.getLogger("test_cli_export"),
     )
 
-    assert passed is False
-    assert warnings == ["gate-warning"]
-    assert payload["degradation_status"] == "degraded"
-    assert calls["guard_count"] == 2
-    assert calls["sr"] == 48_000
-    assert calls["audio"].shape == (4, 2)
-    kwargs = calls["kwargs"]
-    assert kwargs["bit_depth"] == 24
-    assert kwargs["quality"] == "veryhigh"
-    assert kwargs["normalize"] is False
-    assert kwargs["metadata"]["quality_gate_degradation_status"] == "degraded"
-    assert result.metadata["export_quality_gate_failed"] is True
+    assert ok is True
+    assert warnings == []
+    assert payload["passed"] is True
+    out_audio = calls["audio"]
+    # Side wurde um 8 % reduziert: ±1.0 → ±0.92
+    assert float(out_audio[:, 0].mean()) == pytest.approx(0.92, abs=1e-5)
+    assert float(out_audio[:, 1].mean()) == pytest.approx(-0.92, abs=1e-5)
+    md = calls["kwargs"]["metadata"]
+    assert md["quality_gate_musiclover_vqi"] == "0.87"
+    assert md["quality_gate_musiclover_temporal_hotspots"] == "2"
+    assert md["quality_gate_musiclover_mono_warning"] == "True"
+    assert md["quality_gate_musiclover_all_sota_real"] == "False"
+    assert md["quality_gate_musiclover_sota_reason"] == "sota_fallback"
+    assert md["quality_gate_worldclass_score"] == "0.86"
+    assert md["quality_gate_worldclass_threshold"] == "0.85"
+    assert md["quality_gate_worldclass_passed"] == "True"
+    assert md["quality_gate_worldclass_profile"] == "instrumental"
+    assert md["quality_gate_evidence_worldclass_source_class"] == "C"
+    assert md["quality_gate_evidence_worldclass_revalidate_by"] == "2026-09-30"

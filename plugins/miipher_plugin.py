@@ -20,8 +20,10 @@ unbekannte Singstimmen → hallucination_guard.py nach Anwendung Pflicht.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -29,8 +31,30 @@ import numpy.typing as npt
 
 logger = logging.getLogger(__name__)
 
-# Modell-Pfad (nach Integration in AppImage)
-_MIIPHER_ONNX_PATH = None  # TODO: "models/miipher/miipher.onnx" nach Modell-Integration
+
+def _resolve_miipher_onnx_path() -> Path | None:
+    """Löst den nativen MIIPHER-ONNX-Pfad auf (ENV-Override zuerst, dann Bundles)."""
+    env_path = os.getenv("AURIK_MIIPHER_ONNX_PATH", "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.is_file():
+            return candidate
+        logger.debug("AURIK_MIIPHER_ONNX_PATH gesetzt aber Datei fehlt: %s", candidate)
+        return None
+
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates = (
+        repo_root / "models" / "miipher" / "miipher.onnx",
+        repo_root / "models" / "miipher.onnx",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+# Modell-Pfad (ENV-Override oder gebündelter Standardpfad)
+_MIIPHER_ONNX_PATH = _resolve_miipher_onnx_path()
 
 # SNR-Schwellwert für MIIPHER-Aktivierung (dB)
 MIIPHER_SNR_THRESHOLD_DB = 10.0
@@ -211,7 +235,11 @@ class MiipherPlugin:
         # Fallback: DeepFilterNet v3.II
         try:
             result = self._enhance_dfn_fallback(
-                reference, sr, noise_snr_db=noise_snr_db, vocal_energy_bias_db=vocal_energy_bias_db
+                reference,
+                sr,
+                noise_snr_db=noise_snr_db,
+                vocal_energy_bias_db=vocal_energy_bias_db,
+                panns_singing=float(panns_singing),
             )
             _used_bias = vocal_energy_bias_db if vocal_energy_bias_db is not None else _DFN_FALLBACK_ENERGY_BIAS_DB
             self._last_route_metadata = {
@@ -237,6 +265,122 @@ class MiipherPlugin:
         }
         return result
 
+    def _enhance_stem_sgmse(
+        self,
+        audio: npt.NDArray[np.float32],
+        sr: int,
+        panns_singing: float = 0.0,
+    ) -> npt.NDArray[np.float32]:
+        """Stem-isoliertes SGMSE+ — Kern-Verbesserung gegenüber Full-Mix-Ansatz.
+
+        Algorithmus (MIIPHER-Substitut, v9.12.9):
+        1. MelBandRoFormer → vocal_stem (Mono-Soft-Mask aus Mono-Mixing)
+        2. Stereo-Soft-Mask: vocal_stereo = audio × mask, instrumental = audio − vocal_stereo
+        3. SGMSE+ nur auf vocal_stereo → keine Instrument-als-Rauschen-Konfusion
+        4. Mix: enhanced_vocal + instrumental
+        5. HNR-Blend + Hallucination-Guard (§0p/§2.46e)
+
+        Qualitätsgates:
+        - SDRi ≥ 1.0 dB (MBR-Ausgabe) → Separation hinreichend
+        - Vocal-Stem-Energie ≥ −40 dBFS → überhaupt Inhalt
+
+        Raises:
+            RuntimeError: wenn MBR oder SGMSE+ nicht verfügbar oder Qualität unzureichend.
+        """
+        is_stereo = audio.ndim == 2 and audio.shape[0] == 2
+
+        # --- 1. MelBandRoFormer vocal stem separation ---
+        mbr_plugin_mod = _load_module("plugins.bs_roformer_plugin")
+        get_mbr = getattr(mbr_plugin_mod, "get_bs_roformer_plugin", None)
+        if get_mbr is None:
+            raise RuntimeError("BS-RoFormer accessor unavailable for stem SGMSE+")
+        mbr = get_mbr()
+        if mbr is None:
+            raise RuntimeError("BS-RoFormer plugin unavailable")
+
+        sep_result = mbr.separate(audio, sr, stems=["vocals"])
+        vocal_mono: npt.NDArray[np.float32] = np.asarray(
+            sep_result.stems.get("vocals", np.zeros(audio.shape[-1], dtype=np.float32)),
+            dtype=np.float32,
+        )
+
+        # SDRi-Qualitätsgate: nur fortfahren wenn Separation bedeutsam
+        sdri = float(getattr(sep_result, "sdri", None) or 0.0)
+        if sdri < 1.0:
+            raise RuntimeError(f"BS-RoFormer SDRi={sdri:.2f} dB zu niedrig für Stem-SGMSE+ (min 1.0 dB)")
+
+        # Vocal-Energie-Gate: stem muss hörbar sein
+        _vocal_rms = float(np.sqrt(np.mean(vocal_mono**2)) + 1e-12)
+        if 20.0 * np.log10(_vocal_rms) < -40.0:
+            raise RuntimeError("Vocal-Stem-Energie < −40 dBFS — kein Gesang isolierbar")
+
+        # --- 2. Stereo-Soft-Mask ---
+        mix_mono: npt.NDArray[np.float32] = (
+            audio.mean(axis=0).astype(np.float32) if is_stereo else audio.astype(np.float32)
+        )
+        # Soft Wiener-Mask: Verhältnis Vocal zu Mix (clamped [0,1])
+        _abs_mix = np.abs(mix_mono)
+        _abs_vocal = np.abs(vocal_mono)
+        _mix_peak = float(np.percentile(_abs_mix, 99.9))
+        if _mix_peak < 1e-6:
+            raise RuntimeError("Mix-Peak zu gering — Stem-SGMSE+ nicht sinnvoll")
+        mask: npt.NDArray[np.float32] = np.clip(_abs_vocal / (_abs_mix + 1e-7), 0.0, 1.0).astype(np.float32)
+
+        if is_stereo:
+            # Broadcast mask auf beide Kanäle
+            vocal_stereo: npt.NDArray[np.float32] = (audio * mask[np.newaxis, :]).astype(np.float32)
+        else:
+            vocal_stereo = (audio * mask).astype(np.float32)
+
+        instrumental: npt.NDArray[np.float32] = (audio - vocal_stereo).astype(np.float32)
+
+        # --- 3. SGMSE+ nur auf Vocal-Stem ---
+        sgmse_plugin = _load_module("plugins.sgmse_plugin")
+        getter = getattr(sgmse_plugin, "get_sgmse_plus_plugin", None) or getattr(sgmse_plugin, "get_sgmse_plugin", None)
+        if getter is None:
+            raise RuntimeError("SGMSE+ accessor unavailable")
+        sgmse = getter()
+        if sgmse is None or not bool(getattr(sgmse, "_model_loaded", False)):
+            raise RuntimeError("SGMSE+ model not loaded")
+
+        raw_vocal = sgmse.enhance(vocal_stereo, sr, panns_singing=float(panns_singing))
+        raw_vocal_arr = getattr(raw_vocal, "audio", raw_vocal)
+        enhanced_vocal: npt.NDArray[np.float32] = np.clip(
+            np.nan_to_num(np.asarray(raw_vocal_arr, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0),
+            -1.0,
+            1.0,
+        )
+
+        # Längenausgleich (SGMSE+ kann minimal kürzen)
+        n_target = audio.shape[-1]
+        if enhanced_vocal.shape[-1] < n_target:
+            pad_len = n_target - enhanced_vocal.shape[-1]
+            if is_stereo:
+                enhanced_vocal = np.pad(enhanced_vocal, ((0, 0), (0, pad_len)), mode="edge")
+            else:
+                enhanced_vocal = np.pad(enhanced_vocal, (0, pad_len), mode="edge")
+        elif enhanced_vocal.shape[-1] > n_target:
+            if is_stereo:
+                enhanced_vocal = enhanced_vocal[:, :n_target]
+            else:
+                enhanced_vocal = enhanced_vocal[:n_target]
+
+        # --- 4. Mix: Enhanced-Vocal + Instrumental ---
+        mixed: npt.NDArray[np.float32] = np.clip(
+            np.nan_to_num(enhanced_vocal + instrumental, nan=0.0, posinf=0.0, neginf=0.0),
+            -1.0,
+            1.0,
+        ).astype(np.float32)
+
+        # --- 5. Vocal Safety Guards (§0p/§2.46e) ---
+        result = self._apply_vocal_safety_guards(audio, mixed, sr, model_name="StemSGMSE+")
+        logger.debug(
+            "MIIPHER adapter: Stem-SGMSE+ succeeded (SDRi=%.1f dB, is_stereo=%s)",
+            sdri,
+            is_stereo,
+        )
+        return result
+
     def _enhance_miipher(
         self,
         audio: npt.NDArray[np.float32],
@@ -245,9 +389,23 @@ class MiipherPlugin:
     ) -> npt.NDArray[np.float32]:
         """Productive open-source MIIPHER substitute via SGMSE+.
 
-        Kaskade: SGMSE+ → HNR-Blend (§0p) → Hallucination-Guard (§2.46e).
-        Fallback auf DFN via raise RuntimeError → Aufrufer fängt und leitet an _enhance_dfn_fallback.
+        Prioritätskaskade:
+        1. Stem-SGMSE+ (MelBandRoFormer → SGMSE+ auf Vocal-Stem → Remix) — bestes Ergebnis
+        2. Full-Mix-SGMSE+ (Fallback wenn MBR nicht verfügbar oder SDRi zu niedrig)
+
+        Beide Pfade: HNR-Blend (§0p) + Hallucination-Guard (§2.46e).
+        Raises RuntimeError → Aufrufer leitet an _enhance_dfn_fallback.
         """
+        # Priorität 1: Stem-based SGMSE+ (MIIPHER-Annäherung)
+        try:
+            return self._enhance_stem_sgmse(audio, sr, panns_singing=float(panns_singing))
+        except Exception as _stem_exc:
+            logger.debug(
+                "MIIPHER adapter: Stem-SGMSE+ nicht verfügbar (%s) — Full-Mix-SGMSE+ Fallback",
+                _stem_exc,
+            )
+
+        # Priorität 2: Full-Mix-SGMSE+ (bisheriger Ansatz)
         try:
             sgmse_plugin = _load_module("plugins.sgmse_plugin")
 
@@ -284,6 +442,7 @@ class MiipherPlugin:
         sr: int,
         noise_snr_db: float = 0.0,
         vocal_energy_bias_db: float | None = None,  # §0p v9.12.9: register-adaptiv
+        panns_singing: float = 0.0,  # §FCPE: Harmonik-Guard nur bei Gesang
     ) -> npt.NDArray[np.float32]:
         """DeepFilterNet v3.II Fallback mit register-adaptivem energy_bias (§0p).
 
@@ -339,11 +498,57 @@ class MiipherPlugin:
             _noise_psd_om = _noise_psd_om * max(_eb_lin, 1e-3)
             _chs_om = [out_f32[0], out_f32[1]] if out_f32.ndim == 2 and out_f32.shape[0] == 2 else [_omlsa_mono]
             _out_chs_om = []
+
+            # §FCPE F0-guided harmonic protection (v9.12.9) — non-blocking.
+            # Schützt Vokal-Harmoniken (F0·k, k=1..12) vor Over-Suppression im Wiener-Gain.
+            # FCPE läuft auf DFN-Output (höherer SNR → zuverlässigere F0-Schätzung).
+            _harmonic_gain_floor: np.ndarray | None = None
+            try:
+                if float(panns_singing or 0.0) >= 0.25:
+                    _fcpe_plug = _load_symbol("plugins.fcpe_plugin", "get_fcpe_plugin")()
+                    _fcpe_res = _fcpe_plug.analyze(_omlsa_mono, sr)
+                    _f0_raw = np.asarray(_fcpe_res.f0_hz, dtype=np.float32)  # (T_fcpe,)
+                    _n_fft_bins = _n_fft_om // 2 + 1
+                    _freqs_om = np.linspace(0.0, sr / 2.0, _n_fft_bins, dtype=np.float32)
+                    _n_frames_stft = max(1, int(len(_omlsa_mono) // _hop_om + 1))
+                    _f0_interp = np.interp(
+                        np.linspace(0, max(len(_f0_raw) - 1, 0), _n_frames_stft),
+                        np.arange(len(_f0_raw)),
+                        _f0_raw,
+                    ).astype(np.float32)  # (n_frames_stft,)
+                    # Harmonischen Schutz-Mask: ±40 Hz um jeden Oberton (F0·1..12)
+                    _harm_bw_hz = 40.0
+                    _hmask = np.zeros((_n_fft_bins, _n_frames_stft), dtype=np.float32)
+                    for _k in range(1, 13):
+                        _hfreq = _f0_interp[np.newaxis, :] * _k  # (1, n_frames)
+                        _dist = np.abs(_freqs_om[:, np.newaxis] - _hfreq)  # (n_bins, n_frames)
+                        _hmask += (_dist < _harm_bw_hz).astype(np.float32)
+                    _hmask = np.clip(_hmask, 0.0, 1.0)
+                    # Nur in voiced Frames (f0 > 0): Gain-Floor 0.80 → Harmoniken bleiben hörbar
+                    _voiced_f = (_f0_interp > 0.0).astype(np.float32)[np.newaxis, :]
+                    _harmonic_gain_floor = (_hmask * _voiced_f * 0.80).astype(np.float32)
+                    logger.debug(
+                        "MIIPHER DFN: FCPE F0-guided harmonic guard active (voiced=%d/%d frames)",
+                        int(np.sum(_f0_interp > 0.0)),
+                        _n_frames_stft,
+                    )
+            except Exception as _fcpe_exc:
+                logger.debug("MIIPHER DFN: FCPE harmonic protection non-blocking: %s", _fcpe_exc)
+                _harmonic_gain_floor = None
+
             for _ch_om in _chs_om:
                 _, _, _Zxx = _stft_om(_ch_om, fs=sr, nperseg=_n_fft_om, noverlap=_n_fft_om - _hop_om, window="hann")
                 _nf = min(_Zxx.shape[1], _noise_psd_om.shape[1])
                 _spow = np.abs(_Zxx[:, :_nf]) ** 2
                 _g_w = np.maximum(_spow - _noise_psd_om[:, :_nf], 0.0) / (_spow + 1e-12)
+                # §FCPE Harmonik-Schutz: Minimum-Gain für Vokal-Harmoniken
+                if _harmonic_gain_floor is not None:
+                    _nf_h = min(_Zxx.shape[1], _harmonic_gain_floor.shape[1])
+                    _g_w[:, :_nf_h] = np.maximum(_g_w[:, :_nf_h], _harmonic_gain_floor[:, :_nf_h])
+                    # §v9.12.9 Interharmonic NR: cap Wiener gain in non-harmonic voiced bins
+                    # → additional 6 dB suppression of residual noise between harmonics → improved HNR
+                    _nonharm_cap = 1.0 - (1.0 - _hmask[:, :_nf_h]) * _voiced_f[:, :_nf_h] * 0.50
+                    _g_w[:, :_nf_h] = np.minimum(_g_w[:, :_nf_h], _nonharm_cap)
                 _Zxx_out = _Zxx.copy()
                 _Zxx_out[:, :_nf] *= _g_w
                 _, _ch_rec = _istft_om(_Zxx_out, fs=sr, nperseg=_n_fft_om, noverlap=_n_fft_om - _hop_om, window="hann")

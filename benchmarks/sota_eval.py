@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib
 import json
 import logging
 import os
@@ -31,6 +32,16 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+try:
+    from scipy.signal import welch as _welch
+except Exception:  # pragma: no cover - scipy optional in minimal envs
+    _welch = None
+
+try:
+    from backend.file_import import load_audio_file
+except Exception:  # pragma: no cover - backend import may fail in isolated runs
+    load_audio_file = None
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +89,9 @@ CRITERION_NAMES = [
 SUPPORTED_MODELS: dict[str, str] = {
     "DeepFilterNetV3": "plugins.deepfilternet_v3_ii_plugin",
     "AudioSR": "plugins.audiosr_plugin",
-    "SGMSE+": "plugins.sgmse_plus_plugin",
-    "MelBandRoformer": "plugins.melbandroformer_plugin",
-    "VERSA": "backend.core.versa_mos",
+    "SGMSE+": "plugins.sgmse_plugin",
+    "MelBandRoformer": "plugins.bs_roformer_plugin",
+    "VERSA": "plugins.versa_plugin",
     "ResembleEnhance": "plugins.resemble_enhance_plugin",
 }
 
@@ -112,6 +123,7 @@ class ScenarioResult:
         self.skip_reason: str = ""
 
     def to_dict(self) -> dict:
+        """Serialisiert das Szenario-Ergebnis als JSON-kompatibles Dict."""
         return {
             "scenario_id": self.scenario_id,
             "model_name": self.model_name,
@@ -144,6 +156,7 @@ class EvalReport:
         self.overall_pass: bool = False
 
     def add_result(self, result: ScenarioResult) -> None:
+        """Hängt ein Szenario-Ergebnis an den aktuellen Bericht an."""
         self.scenario_results.append(result)
 
     def evaluate_criteria(self, baseline_oqs: dict[str, float] | None = None) -> None:  # pylint: disable=unused-argument
@@ -215,6 +228,7 @@ class EvalReport:
         self.overall_pass = all(self.criteria_results.values())
 
     def to_dict(self) -> dict:
+        """Serialisiert den vollständigen Evaluationsbericht als Dict."""
         return {
             "model_name": self.model_name,
             "eval_date": self.eval_date,
@@ -299,7 +313,8 @@ def _oqs_proxy(audio_before: np.ndarray, audio_after: np.ndarray, sr: int) -> fl
 def _timbral_fidelity_proxy(ref: np.ndarray, test: np.ndarray, sr: int) -> float:
     """Spektrale Korrelation als timbral_fidelity-Proxy."""
     try:
-        from scipy.signal import welch as _welch
+        if _welch is None:
+            return 1.0
 
         nperseg = min(2048, len(ref), len(test))
         if nperseg < 128:
@@ -347,9 +362,10 @@ def evaluate_scenario(
 
         # Audio laden (synthetisch oder real)
         if use_real_audio and audio_path and os.path.isfile(audio_path):
-            from backend.file_import import load_audio_file
-
-            _load_result = load_audio_file(audio_path)
+            if load_audio_file is None:
+                _load_result = None
+            else:
+                _load_result = load_audio_file(audio_path)
             if _load_result is not None and _load_result.get("audio") is not None:
                 audio_deg = np.asarray(_load_result["audio"], dtype=np.float32)
                 if isinstance(_load_result.get("sr"), int):
@@ -375,8 +391,6 @@ def evaluate_scenario(
         plugin_module = SUPPORTED_MODELS.get(model_name)
         if plugin_module:
             try:
-                import importlib
-
                 mod = importlib.import_module(plugin_module)
                 get_fn_name = f"get_{model_name.lower().replace('+', '_plus').replace(' ', '_')}_plugin"
                 # Fallback: generische get_plugin-Funktion
@@ -420,7 +434,8 @@ def evaluate_scenario(
         result.timbral_fidelity = _timbral_fidelity_proxy(audio_mono, audio_processed, sr)
 
         # P1/P2 Proxy über spektrale Flachheit (Naturalness-Proxy)
-        from scipy.signal import welch as _welch
+        if _welch is None:
+            raise RuntimeError("scipy.signal.welch nicht verfügbar")
 
         nperseg = min(2048, len(audio_mono))
         _, psd_before = _welch(audio_mono.astype(np.float64), fs=sr, nperseg=nperseg)
@@ -577,6 +592,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI-Einstiegspunkt für das §4.4a-SOTA-Evaluationsprotokoll."""
     args = _build_parser().parse_args()
 
     if args.report_only:

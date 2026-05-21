@@ -31,6 +31,9 @@ import numpy as np
 import scipy.signal as sig
 
 from backend.core.audio_utils import to_channels_last
+from backend.core.core_utils import fft_crosscorr
+from backend.core.dsp.hallucination_guard import check_hallucination
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -61,8 +64,6 @@ def _compute_iacc(L: np.ndarray, R: np.ndarray, sr: int) -> float:
     n = min(len(L), len(R), 65536)
     L_n = L[:n] / (np.std(L[:n]) + 1e-10)
     R_n = R[:n] / (np.std(R[:n]) + 1e-10)
-    from backend.core.core_utils import fft_crosscorr
-
     xcf = fft_crosscorr(L_n, R_n)
     center = len(xcf) // 2
     window = xcf[center - max_lag : center + max_lag + 1]
@@ -176,13 +177,20 @@ class StereoWidthEnhancerPhase(PhaseInterface):
             description=self.description,
         )
 
-    def process(self, audio: np.ndarray, sample_rate: int, **kwargs) -> PhaseResult:
+    def process(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs,
+    ) -> PhaseResult:
         """
         Frequenzabhängige Stereobreite + IACC-Guard.
 
         Args:
             audio:       Mono oder Stereo
             sample_rate: Abtastrate Hz
+            material_type: Unbenutzt, nur fuer kanonische PhaseInterface-Signatur.
             **kwargs:    width   (float, default 1.25)
                          diffuse (bool, default True)
                          iacc_guard (bool, default True)
@@ -193,10 +201,9 @@ class StereoWidthEnhancerPhase(PhaseInterface):
         self.validate_input(audio)
         t0 = time.time()
 
-        phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
-        phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
-        effective_strength = float(kwargs.get("strength", 1.0)) * phase_locality_factor
-        effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        effective_strength = float(_strength_ctx["effective_strength"])
 
         if effective_strength <= 1e-6:
             dry = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
@@ -290,12 +297,8 @@ class StereoWidthEnhancerPhase(PhaseInterface):
         processed = np.clip(processed, -1.0, 1.0)
         # §2.46e Hallucination-Guard (Pflicht für additive Phasen)
         try:
-            from backend.core.dsp.hallucination_guard import (
-                check_hallucination as _check_hg_48,  # pylint: disable=import-outside-toplevel
-            )
-
             _mode_48 = "studio_2026" if _p48_studio else "restoration"
-            _hg_48 = _check_hg_48(audio, processed, sr=sample_rate, mode=_mode_48)
+            _hg_48 = check_hallucination(audio, processed, sr=sample_rate, mode=_mode_48)
             if _hg_48.requires_rollback:
                 logger.warning(
                     "phase_48: hallucination_guard rollback (spectral_novelty=%.3f)", _hg_48.spectral_novelty

@@ -14,9 +14,12 @@ Prüft:
 
 from __future__ import annotations
 
+import builtins
 import importlib
 import inspect
+import sys
 import threading
+import types
 
 import numpy as np
 import pytest
@@ -272,6 +275,72 @@ class TestAudioExporterClass:
             pytest.fail(f"get_audio_exporter_class() wirft ImportError: {e}")
 
 
+class TestAudioExporterStatus:
+    """AudioExporter-Fallbackpfad liefert explizite Importstatus-Telemetrie."""
+
+    def test_get_audio_exporter_status_has_stable_keys(self, bridge):
+        status = bridge.get_audio_exporter_status()
+        assert isinstance(status, dict)
+        for key in ("available", "failures", "last_error"):
+            assert key in status
+
+    def test_audio_exporter_import_failure_updates_status(self, bridge, monkeypatch):
+        before = bridge.get_audio_exporter_status()
+        before_failures = int(before.get("failures", 0))
+
+        real_import = builtins.__import__
+
+        def _raising_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "backend.core.audio_exporter":
+                raise ImportError("simulated audio_exporter import failure")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _raising_import)
+
+        result = bridge.get_audio_exporter_class()
+        assert result is None
+
+        after = bridge.get_audio_exporter_status()
+        assert after.get("available") is False
+        assert int(after.get("failures", 0)) >= before_failures + 1
+        assert "ImportError" in str(after.get("last_error", ""))
+
+
+# ---------------------------------------------------------------------------
+# 5b. MediumDetector-Stub-Policy — fail-closed + Telemetrie
+# ---------------------------------------------------------------------------
+
+
+class TestMediumDetectorStubPolicy:
+    """Bridge-MediumDetector-Fallback ist explizit, fail-closed und telemetrierbar."""
+
+    def test_medium_detector_import_failure_returns_fail_closed_stub(self, bridge, monkeypatch):
+        fake_mod = types.ModuleType("forensics.medium_detector")
+        monkeypatch.setitem(sys.modules, "forensics.medium_detector", fake_mod)
+
+        md = bridge.get_medium_detector()
+
+        assert md is not None, "Bei Importfehler muss ein expliziter Stub statt None zurückkommen"
+        assert getattr(md, "is_stub", False) is True
+        assert hasattr(md, "detect")
+
+        with pytest.raises(RuntimeError, match="legacy fallback ist deaktiviert"):
+            md.detect(np.zeros(128, dtype=np.float32), 48000, file_ext=".wav")
+
+    def test_medium_detector_stub_status_tracks_activation(self, bridge, monkeypatch):
+        before = bridge.get_medium_detector_stub_status()
+        before_count = int(before.get("activations", 0))
+
+        fake_mod = types.ModuleType("forensics.medium_detector")
+        monkeypatch.setitem(sys.modules, "forensics.medium_detector", fake_mod)
+        _ = bridge.get_medium_detector()
+
+        after = bridge.get_medium_detector_stub_status()
+        assert after.get("active") is True
+        assert int(after.get("activations", 0)) >= before_count + 1
+        assert isinstance(after.get("last_error", ""), str) and after.get("last_error", "")
+
+
 # ---------------------------------------------------------------------------
 # 6. get_ml_memory_budget_status — immer Dict (§2.37)
 # ---------------------------------------------------------------------------
@@ -298,6 +367,38 @@ class TestMlMemoryBudgetStatus:
         assert isinstance(result.get("models", {}), dict)
 
 
+class TestMlMemoryBudgetImportStatus:
+    """ml_memory_budget-Fallbackpfad liefert explizite Importstatus-Telemetrie."""
+
+    def test_get_ml_memory_budget_import_status_has_stable_keys(self, bridge):
+        status = bridge.get_ml_memory_budget_import_status()
+        assert isinstance(status, dict)
+        for key in ("available", "failures", "last_error"):
+            assert key in status
+
+    def test_ml_memory_budget_import_failure_updates_status(self, bridge, monkeypatch):
+        before = bridge.get_ml_memory_budget_import_status()
+        before_failures = int(before.get("failures", 0))
+
+        real_import = builtins.__import__
+
+        def _raising_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "backend.core.ml_memory_budget":
+                raise ImportError("simulated ml_memory_budget import failure")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _raising_import)
+
+        result = bridge.get_ml_memory_budget_status()
+        assert isinstance(result, dict)
+        assert {"max_gb", "allocated_gb", "free_gb", "models"}.issubset(set(result.keys()))
+
+        after = bridge.get_ml_memory_budget_import_status()
+        assert after.get("available") is False
+        assert int(after.get("failures", 0)) >= before_failures + 1
+        assert "ImportError" in str(after.get("last_error", ""))
+
+
 # ---------------------------------------------------------------------------
 # 6b. get_experience_insights — Contract & Robustness (§11.1a Spec 08)
 # ---------------------------------------------------------------------------
@@ -317,6 +418,10 @@ class TestExperienceInsights:
         assert res["cluster_policy"] == {}
         assert res["recommendations"] == []
         assert res["recommendation_count"] == 0
+        assert "user_guidance" in res
+        assert "quality_scale" in res
+        assert res["user_guidance"]["tone"] in {"focus", "caution", "confidence"}
+        assert res["quality_scale"]["band"] in {"hoch", "mittel", "kritisch"}
 
     def test_clamps_and_sanitizes_invalid_values(self, bridge):
         r = _DummyResult(
@@ -357,6 +462,18 @@ class TestExperienceInsights:
         )
         res = bridge.get_experience_insights(r)
         assert res["recommendation_count"] == 1
+
+    def test_guidance_tone_caution_for_degraded_status(self, bridge):
+        r = _DummyResult(
+            {
+                "degradation_status": "degraded",
+                "fail_reason": "HPI_FAIL",
+            }
+        )
+        res = bridge.get_experience_insights(r)
+        ug = res["user_guidance"]
+        assert ug["tone"] == "caution"
+        assert isinstance(ug["next_actions"], list)
 
     def test_recovery_certainty_defaults(self, bridge):
         r = _DummyResult({})
@@ -477,6 +594,73 @@ class TestWarmupModelsBackground:
             bridge.warmup_models_background()
         except Exception as e:
             pytest.fail(f"warmup_models_background() wirft Exception: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 7b. Startup-Check — keine stille Exception, Status-Telemetrie vorhanden
+# ---------------------------------------------------------------------------
+
+
+class TestStartupCheckStatus:
+    """Startup-Check-Bridge meldet Fehler transparent über Status-Telemetrie."""
+
+    def test_get_startup_check_status_has_stable_keys(self, bridge):
+        status = bridge.get_startup_check_status()
+        assert isinstance(status, dict)
+        for key in ("available", "failures", "last_error"):
+            assert key in status
+
+    def test_startup_check_import_failure_increments_status(self, bridge, monkeypatch):
+        before = bridge.get_startup_check_status()
+        before_failures = int(before.get("failures", 0))
+
+        real_import = builtins.__import__
+
+        def _raising_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "backend.core.startup_model_check":
+                raise ImportError("simulated startup check import failure")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _raising_import)
+
+        result = bridge.get_startup_check_result()
+        assert result is None
+
+        after = bridge.get_startup_check_status()
+        assert after.get("available") is False
+        assert int(after.get("failures", 0)) >= before_failures + 1
+        assert "ImportError" in str(after.get("last_error", ""))
+
+
+class TestPreAnalysisResultStatus:
+    """PreAnalysisResult-Importpfad ist transparent und telemetriert."""
+
+    def test_get_pre_analysis_result_status_has_stable_keys(self, bridge):
+        status = bridge.get_pre_analysis_result_status()
+        assert isinstance(status, dict)
+        for key in ("available", "failures", "last_error"):
+            assert key in status
+
+    def test_pre_analysis_result_import_failure_updates_status(self, bridge, monkeypatch):
+        before = bridge.get_pre_analysis_result_status()
+        before_failures = int(before.get("failures", 0))
+
+        real_import = builtins.__import__
+
+        def _raising_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "backend.core.pre_analysis":
+                raise ImportError("simulated pre_analysis import failure")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _raising_import)
+
+        result_type = bridge.get_pre_analysis_result_type()
+        assert result_type is None
+
+        after = bridge.get_pre_analysis_result_status()
+        assert after.get("available") is False
+        assert int(after.get("failures", 0)) >= before_failures + 1
+        assert "ImportError" in str(after.get("last_error", ""))
 
 
 # ---------------------------------------------------------------------------

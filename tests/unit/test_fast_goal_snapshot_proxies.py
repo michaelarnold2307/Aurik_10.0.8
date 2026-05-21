@@ -232,3 +232,129 @@ class TestSnapshotCompleteness:
         s = _snap(stereo, _SR)
         assert isinstance(s, dict)
         assert len(s) >= 10
+
+
+class TestSpatialDepthProxyMSRatio:
+    """§2.64 v9.12.9 — spatial_depth/raumtiefe Proxy: M/S-Stereobreite statt HF-Anteil.
+
+    Regression-Test für Bug: alter Proxy (4–16 kHz / 200–16 kHz * 2.5) lieferte
+    für cassette/mp3_low-Material ~0.11 trotz guter Stereobreite → §GOAL_BASELINE_CHECK
+    triggerte phase_46_spatial_enhancement false-positive für jede Kassetten-Restaurierung.
+
+    Fix: Mid/Side-Energieverhältnis misst tatsächliche Stereobreite, unabhängig vom BW.
+    """
+
+    def _make_cassette_stereo(self, side_factor: float = 0.3) -> np.ndarray:
+        """Simuliert Kassetten-Audio: stereo, hauptsächlich bass/mid, kein HF (BW <= 12 kHz).
+        side_factor: Verhältnis Side/Mid-Amplitude (0=mono, 0.3=moderate, 1.0=pure side).
+        side_factor=0.3 → Side-Energie ≈ 8% von Gesamt → spatial_depth ≈ 0.33 (via M/S-Proxy).
+        """
+        n = _SR * 4
+        t = np.arange(n) / _SR
+        # Nur Frequenzen bis 3 kHz (cassette-like: kein HF über 12 kHz)
+        base = 0.2 * np.sin(2 * np.pi * 300 * t) + 0.1 * np.sin(2 * np.pi * 800 * t)
+        side = side_factor * base  # skalierte L/R-Differenz
+        left = (base + side).astype(np.float32)
+        right = (base - side).astype(np.float32)
+        return np.stack([left, right])
+
+    def test_stereo_signal_gives_reasonable_spatial_depth(self):
+        """Stereo-Signal mit echter L/R-Differenz muss spatial_depth > 0.1 liefern.
+        side_factor=0.3 → side_rms ≈ 0.3 * mid_rms → Side-Energie / Gesamt ≈ 8%
+        → M/S-Proxy ≈ 0.33 (Beweis: HF-Proxy hätte ~0.02 für LF-dominantes Signal).
+        """
+        audio = self._make_cassette_stereo(side_factor=0.3)
+        s = _snap(audio, _SR)
+        val = s.get("spatial_depth", 0.0)
+        assert val > 0.1, (
+            f"spatial_depth={val:.3f} für Stereo-Signal (side_factor=0.3) — "
+            "M/S-Proxy sollte > 0.1 liefern (HF-Proxy gäbe ~0.02 für LF-Signal)"
+        )
+
+    def test_mono_signal_gives_low_spatial_depth(self):
+        """Exakt mono (L==R) muss spatial_depth < 0.1 liefern (keine künstliche Breite)."""
+        n = _SR * 4
+        t = np.arange(n) / _SR
+        mono = (0.2 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+        audio = np.stack([mono, mono])  # perfektes Mono
+        s = _snap(audio, _SR)
+        val = s.get("spatial_depth", 1.0)
+        assert val < 0.1, f"spatial_depth={val:.3f} für reines Mono — sollte nahe 0 sein"
+
+    def test_spatial_depth_independent_of_hf_content(self):
+        """spatial_depth darf NICHT mit HF-Anteil korrelieren (alter Bug).
+        Gleiche L/R-Breite → gleiche spatial_depth, egal ob HF-reich oder HF-arm.
+        """
+        n = _SR * 4
+        t = np.arange(n) / _SR
+        base = 0.2 * np.sin(2 * np.pi * 300 * t)
+        side = 0.05 * np.sin(2 * np.pi * 250 * t + 0.5)
+
+        # HF-arm: nur Frequenzen unter 1 kHz
+        hf_poor_l = (base + side).astype(np.float32)
+        hf_poor_r = (base - side).astype(np.float32)
+
+        # HF-reich: gleiche Basis + HF-Anteil (simuliert CD)
+        hf_component = 0.1 * np.sin(2 * np.pi * 8000 * t)
+        hf_rich_l = (base + side + hf_component).astype(np.float32)
+        hf_rich_r = (base - side + hf_component).astype(np.float32)
+
+        s_poor = _snap(np.stack([hf_poor_l, hf_poor_r]), _SR)
+        s_rich = _snap(np.stack([hf_rich_l, hf_rich_r]), _SR)
+
+        val_poor = s_poor.get("spatial_depth", 0.0)
+        val_rich = s_rich.get("spatial_depth", 0.0)
+
+        # Beide sollten ähnliche spatial_depth haben (gleiche L/R-Differenz)
+        assert abs(val_poor - val_rich) < 0.15, (
+            f"spatial_depth: HF-arm={val_poor:.3f}, HF-reich={val_rich:.3f} — "
+            "M/S-Proxy sollte HF-unabhängig sein (Differenz < 0.15)"
+        )
+
+    def test_spatial_depth_alias_matches_raumtiefe(self):
+        """'spatial_depth' und 'raumtiefe' müssen identisch sein."""
+        audio = self._make_cassette_stereo(side_factor=0.3)
+        s = _snap(audio, _SR)
+        assert s.get("spatial_depth") == s.get("raumtiefe"), "'spatial_depth' und 'raumtiefe' müssen identisch sein"
+
+
+class TestPrimaryMaterialEnumNormalization:
+    """§2.64 v9.12.9 — primary_material Enum→String-Normalisierung.
+
+    Regression-Test für Bug: Python 3.12 str(MaterialType.CASSETTE) = 'MaterialType.CASSETTE'
+    → groove-noisy_mat-Set-Check scheitert → groove proxy false-low für ALLE Kassetten.
+    Fix: .value wenn Enum, sonst str(...).lower().
+    """
+
+    def test_material_type_enum_normalization(self):
+        """MaterialType.CASSETTE.value.lower() muss 'cassette' ergeben."""
+        from backend.core.defect_scanner import MaterialType
+
+        pm_raw = MaterialType.CASSETTE
+        pm_str = (pm_raw.value if hasattr(pm_raw, "value") else str(pm_raw)).lower()
+        assert pm_str == "cassette", (
+            f"Enum-Normalisierung: '{pm_str}' != 'cassette' — "
+            "Python 3.12 str(Enum) gibt 'MaterialType.CASSETTE', nicht 'cassette'"
+        )
+
+    def test_groove_proxy_noisy_mat_set_does_not_accept_enum_string(self):
+        """Bug-Regression: Python 3.12 str(MaterialType.CASSETTE) = 'MaterialType.CASSETTE'.
+        Das in noisy_mat-Set-Check als 'materialtype.cassette' übergeben darf NICHT matchen
+        — das wäre der alte Bugs-Zustand (vor Fix v9.12.9).
+        Fix: primary_material normalisiert zu .value.lower() → 'cassette' vor Speicherung.
+        """
+        _noisy_mat_set = {"cassette", "tape", "reel_tape", "mp3_low", "mp3_high"}
+        # Simuliert den ALTEN Bugzustand (kein .value): str(Enum) ohne Normalisierung
+        from backend.core.defect_scanner import MaterialType
+
+        old_buggy_str = str(MaterialType.CASSETTE).lower()  # 'materialtype.cassette' in Python 3.12
+        assert old_buggy_str not in _noisy_mat_set, (
+            f"'{old_buggy_str}' sollte NICHT in noisy_mat_set sein — das wäre der Bug-Zustand (kein .value)"
+        )
+        # Simuliert den NEUEN korrekten Zustand (mit .value):
+        fixed_str = (
+            MaterialType.CASSETTE.value if hasattr(MaterialType.CASSETTE, "value") else str(MaterialType.CASSETTE)
+        ).lower()
+        assert fixed_str in _noisy_mat_set, (
+            f"'{fixed_str}' muss in noisy_mat_set sein — korrekte Normalisierung via .value"
+        )

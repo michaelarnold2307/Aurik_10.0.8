@@ -1201,3 +1201,101 @@ Bei Änderungen an Kernphasen, PMGG, DefectScanner oder heavy ML-Fallbacks:
 - ≤ 1940: `noise_reduction_strength ~ N(0.90, 0.05)`
 - ≤ 1960: `N(0.75, 0.08)`
 - ≥ 1970: `N(0.50, 0.10)`
+
+### §8.6 [RELEASE_MUST] Worldclass Hybrid-Engineer Protocol (v9.12.10)
+
+Rolle Aurik: hybrider Restaurierungstoningenieur fuer Musik mit Gesang.
+Diese Rolle ist nur erfuellt, wenn menschlich nachbildbare Spitzenfaehigkeiten
+und maschinelle Vorteile gleichzeitig, messbar und reproduzierbar im Ergebnis vorliegen.
+
+#### §8.6a Human-Talent-Emulation-Vektor (HTEV)
+
+Jeder Release-Lauf muss einen HTEV-Metadatensatz bereitstellen:
+
+- `vocal_identity_preservation` (singer_identity_cosine)
+- `formant_integrity` (F1-F4 Delta)
+- `vibrato_depth_preservation` (Hz-Modulationstiefe)
+- `breath_naturalness` (Atemsegment-Erhalt)
+- `micro_dynamic_correlation` (voiced frame energy correlation)
+- `transient_articulation` (Onset-Shift/Onset-Energie)
+- `stereo_scene_stability` (Mono-Kompatibilitaet + Interchannel-Lag)
+- `noise_texture_authenticity` (Noise-Textur-Distanz)
+- `spectral_color_preservation` (1/3-Oktav-Korrelation)
+- `emotional_arc_preservation` (global + local arousal)
+- `artifact_freedom` (primaerer Veto-Faktor)
+- `goal_team_balance` (15-Goal-Teamabweichung)
+
+Pflicht: `metadata["hybrid_engineer_vector"]` mit allen 12 Schluesseln und
+Werten in [0.0, 1.0] (oder explizit normierter Delta-Umrechnung).
+
+#### §8.6b Psychoakustischer Weltspitzen-Composite-Score
+
+Fuer Release-Entscheidungen ist zusaetzlich ein zusammengesetzter
+Weltspitzen-Score zu fuehren:
+
+```text
+WCS = 0.30 * artifact_freedom
+    + 0.20 * vocal_identity_preservation
+    + 0.15 * formant_integrity
+    + 0.10 * micro_dynamic_correlation
+    + 0.10 * emotional_arc_preservation
+    + 0.10 * spectral_color_preservation
+    + 0.05 * stereo_scene_stability
+```
+
+Release-Mindestziele:
+
+- Restoration mit Gesang (`panns_singing >= 0.35`): `WCS >= 0.88`
+- Studio 2026 mit Gesang (`panns_singing >= 0.35`): `WCS >= 0.91`
+- Instrumental: `WCS >= 0.85`
+
+Hinweis: `artifact_freedom < 0.95` blockiert weiterhin absolut,
+unabhaengig vom WCS.
+
+#### §8.6c Wissenschaftliche Evidenzklassen (Gate-faehig)
+
+Jeder neue Schwellwert in HPI/AFG/VQI/WCS benoetigt eine Evidenzklasse:
+
+- Klasse A: Norm oder peer-reviewed Primarquelle + interne Reproduktion
+- Klasse B: peer-reviewed Sekundaerachse + robuste interne Reproduktion
+- Klasse C: kalibriert auf AMRB/UAT, befristet mit Revalidierungsdeadline
+
+Verboten:
+
+- Klasse-C-Schwellen ohne Revalidierungsdatum
+- Klasse-C-Schwellen als dauerhafte RELEASE_MUST-Basis ohne Upgrade-Plan
+
+Pflichtmetadaten pro Schwelle:
+
+- `source_class` (A/B/C)
+- `source_ref`
+- `validated_on`
+- `revalidate_by` (bei Klasse C)
+
+#### §8.6d Human-vs-Machine-Kooperationsinvariante
+
+Maschinelle Gewinne (SNR, Rauschreduktion, BW-Recovery) duerfen nie auf Kosten
+human-kritischer Vokalwahrheit gehen.
+
+Bindende Konfliktauflosung:
+
+1. Stimmintegritaet
+2. Emotionale Authentizitaet
+3. Musikalischer Kontext
+4. Technische Kennzahlen
+
+Wenn eine niedrigere Ebene eine hoehere verletzt, muss die Pipeline automatisch
+auf die hoehere Ebene zurueckpriorisieren (adaptive Strength-Reduktion, Rollback,
+oder sichere Alternativkette).
+
+#### §8.6e Testpflicht fuer Weltspitzen-Claim
+
+Neue oder geaenderte Kernlogik (Phasen, Gates, Aggregationsmetriken,
+Fallback-Kaskaden, Vokalpfade) ist nur release-faehig mit:
+
+1. `tests/normative/test_worldclass_hybrid_engineer_vector.py`
+2. `tests/normative/test_worldclass_composite_score_gate.py`
+3. `tests/normative/test_evidence_class_metadata_contract.py`
+4. mindestens einem Real-Audio-Gate-Lauf auf vokalem Material
+
+Fehlt einer dieser Nachweise, ist der Weltspitzen-Claim fuer den Patch nicht gueltig.

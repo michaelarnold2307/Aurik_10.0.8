@@ -75,7 +75,7 @@ def test_gate_stats_counts_negative_release_status_as_failed_gate() -> None:
     assert passed == 0
 
 
-def test_gate_stats_ignores_diagnostic_gates_by_default() -> None:
+def test_gate_stats_can_ignore_diagnostic_gates_explicitly() -> None:
     audit_data = [
         {
             "vocal_quality_check": {"authentizitaet": False},
@@ -83,7 +83,7 @@ def test_gate_stats_ignores_diagnostic_gates_by_default() -> None:
             "release_result": {"status": "release_check_not_available"},
         }
     ]
-    total, passed = release_check._gate_stats(audit_data)
+    total, passed = release_check._gate_stats(audit_data, include_diagnostic_gates=False)
     assert total == 0
     assert passed == 0
 
@@ -100,9 +100,98 @@ def test_check_release_returns_structured_status(tmp_path: Path) -> None:
         audit_path=str(audit_path),
         gates_doc=str(gates_doc),
         policy_path=str(policy_file),
+        include_diagnostic_gates=False,
         output_path=str(tmp_path / "release_report.json"),
     )
 
     assert result["status"] == "release_ready"
     assert result["release_ready"] is True
     assert result["score"] == 10.0
+
+
+def test_check_release_strict_mode_blocks_if_gate_coverage_is_too_low(tmp_path: Path) -> None:
+    audit_path = tmp_path / "audit_trail.json"
+    audit_path.write_text(json.dumps([{"results": {"gate_a": True}}]), encoding="utf-8")
+    gates_doc = tmp_path / "QUALITY_GATES.md"
+    gates_doc.write_text("gate_a\n", encoding="utf-8")
+    policy_file = tmp_path / "policy_engine.py"
+    policy_file.write_text("# ok\n", encoding="utf-8")
+
+    result = release_check.check_release(
+        audit_path=str(audit_path),
+        gates_doc=str(gates_doc),
+        policy_path=str(policy_file),
+        include_diagnostic_gates=True,
+        output_path=str(tmp_path / "release_report_strict.json"),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["release_ready"] is False
+    assert any("Audit-Abdeckung zu gering" in change for change in result["changes"])
+
+
+def test_check_compliance_strict_mode_blocks_when_voice_first_blockers_missing(tmp_path: Path) -> None:
+    gates_doc = tmp_path / "QUALITY_GATES.md"
+    gates_doc.write_text("gate_a\ngate_b\ngate_c\ngate_d\ngate_e\n", encoding="utf-8")
+    policy_file = tmp_path / "policy_engine.py"
+    policy_file.write_text("# ok\n", encoding="utf-8")
+
+    audit_data = [
+        {
+            "results": {
+                "gate_a": True,
+                "gate_b": True,
+                "gate_c": True,
+                "gate_d": True,
+                "gate_e": True,
+            },
+            "scores": {"media_characteristics": {"vocal": True}},
+            "vocal_quality_check": {"authentizitaet": True},
+        }
+    ]
+
+    compliance_ok, changes = release_check.check_compliance(
+        audit_data=audit_data,
+        doc_gates_path=str(gates_doc),
+        doc_policy_path=str(policy_file),
+        include_diagnostic_gates=True,
+    )
+
+    assert compliance_ok is False
+    assert any("Voice-First-Blocker fehlen" in change for change in changes)
+
+
+def test_check_compliance_strict_mode_accepts_present_voice_first_blockers(tmp_path: Path) -> None:
+    gates_doc = tmp_path / "QUALITY_GATES.md"
+    gates_doc.write_text("gate_a\ngate_b\ngate_c\ngate_d\ngate_e\n", encoding="utf-8")
+    policy_file = tmp_path / "policy_engine.py"
+    policy_file.write_text("# ok\n", encoding="utf-8")
+
+    audit_data = [
+        {
+            "results": {
+                "gate_a": True,
+                "gate_b": True,
+                "gate_c": True,
+                "gate_d": True,
+                "gate_e": True,
+            },
+            "scores": {"media_characteristics": {"vocal": True}},
+            "vocal_quality_check": {
+                "vqi": True,
+                "formant_integrity": True,
+                "vibrato_depth_preserved": True,
+                "micro_dynamic_correlation": True,
+            },
+        }
+    ]
+
+    compliance_ok, changes = release_check.check_compliance(
+        audit_data=audit_data,
+        doc_gates_path=str(gates_doc),
+        doc_policy_path=str(policy_file),
+        include_diagnostic_gates=True,
+    )
+
+    assert compliance_ok is True
+    assert not any("Voice-First-Blocker" in change for change in changes)

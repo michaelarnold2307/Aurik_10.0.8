@@ -185,6 +185,8 @@ FORCED_TRACEABILITY: dict[str, list[str]] = {
 
 @dataclass(frozen=True)
 class CoverageItem:
+    """Traceability result for one RELEASE_MUST instruction line."""
+
     release_must: str
     matched_tests: list[str]
     covered: bool
@@ -272,6 +274,8 @@ def _match_tests(release_line: str) -> list[str]:
 
 
 def build_report() -> dict:
+    """Build the RELEASE_MUST-to-test coverage report payload."""
+
     spec_text = SPEC_PATH.read_text(encoding="utf-8", errors="replace")
     release_must_items = _extract_release_must_lines(spec_text)
 
@@ -298,6 +302,8 @@ def build_report() -> dict:
 
 
 def main() -> int:
+    """Write the coverage report and return the CI-style exit code."""
+
     report = build_report()
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

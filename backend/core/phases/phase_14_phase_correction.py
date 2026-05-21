@@ -74,6 +74,8 @@ class PhaseCorrection(PhaseInterface):
         MaterialType.SHELLAC: 0.60,  # was 0.80 — reduced: avoid over-processing analogue stereo
         MaterialType.VINYL: 0.45,  # was 0.70 — false-positive rate too high for modern pop on vinyl
         MaterialType.TAPE: 0.60,  # was 0.85 — head misalignment needs correction but gently
+        # Compact cassette shares tape-head alignment physics; explicit key avoids vinyl fallback.
+        MaterialType.CASSETTE: 0.60,
         MaterialType.CD_DIGITAL: 0.25,  # Minimal (production errors only)
         MaterialType.STREAMING: 0.15,  # Very minimal
     }
@@ -123,7 +125,11 @@ class PhaseCorrection(PhaseInterface):
         )
 
     def process(
-        self, audio: np.ndarray, sample_rate: int, material: MaterialType = MaterialType.VINYL, **kwargs
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 48000,
+        material_type: MaterialType | str = MaterialType.VINYL,
+        **kwargs,
     ) -> PhaseResult:
         """
         Wendet an: multi-band phase correction.
@@ -131,15 +137,23 @@ class PhaseCorrection(PhaseInterface):
         Args:
             audio: Stereo audio [samples, 2]
             sample_rate: Sample rate in Hz
-            material: Material type
+            material_type: Material type
 
         Returns:
             PhaseResult with corrected audio
         """
         self.validate_input(audio)
-        sample_rate = kwargs.get("sample_rate", 48000)
+        sample_rate = kwargs.get("sample_rate", sample_rate)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
+
+        if isinstance(material_type, MaterialType):
+            material_enum = material_type
+        else:
+            try:
+                material_enum = MaterialType(str(material_type).lower())
+            except Exception:
+                material_enum = MaterialType.VINYL
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -187,8 +201,8 @@ class PhaseCorrection(PhaseInterface):
                 },
             )
 
-        strength = float(self.CORRECTION_STRENGTH.get(material, 0.7) * _effective_strength)
-        threshold = self.CORRELATION_THRESHOLD.get(material, 0.75)
+        strength = float(self.CORRECTION_STRENGTH.get(material_enum, 0.7) * _effective_strength)
+        threshold = self.CORRELATION_THRESHOLD.get(material_enum, 0.75)
 
         # Extract L/R channels
         left, right = stereo_channel_view(audio)
@@ -207,7 +221,7 @@ class PhaseCorrection(PhaseInterface):
 
         band_names = ["bass", "low_mid", "mid_high", "high"]
 
-        for i, (band_l, band_r, band_name) in enumerate(zip(bands_left, bands_right, band_names)):
+        for band_l, band_r, band_name in zip(bands_left, bands_right, band_names):
             # Analyze correlation — now returns float delay (sub-sample precision)
             corr_before, delay = self._analyze_phase(band_l, band_r, self.MAX_DELAY_SAMPLES[band_name])
             correlations_before.append(corr_before)
@@ -254,7 +268,7 @@ class PhaseCorrection(PhaseInterface):
                     "per_band_correlation_after": [float(c) for c in correlations_before],
                     "delays_corrected_samples": [0.0] * len(correlations_before),
                     "correction_strength": 0.0,
-                    "material": material.value,
+                    "material": material_enum.value,
                 },
                 execution_time_seconds=time.time() - start_time,
                 metadata={
@@ -290,7 +304,7 @@ class PhaseCorrection(PhaseInterface):
                     "per_band_correlation_after": [float(c) for c in correlations_before],
                     "delays_corrected_samples": delays_corrected,
                     "correction_strength": 0.0,
-                    "material": material.value,
+                    "material": material_enum.value,
                 },
                 execution_time_seconds=time.time() - start_time,
                 metadata={
@@ -337,7 +351,7 @@ class PhaseCorrection(PhaseInterface):
                 "per_band_correlation_after": [float(c) for c in correlations_after],
                 "delays_corrected_samples": delays_corrected,
                 "correction_strength": strength,
-                "material": material.value,
+                "material": material_enum.value,
             },
             execution_time_seconds=processing_time,
             metadata={
@@ -552,8 +566,8 @@ if __name__ == "__main__":
 
     # Generate test stereo audio with phase error
     duration = 3.0
-    sample_rate = 44100
-    t = np.linspace(0, duration, int(sample_rate * duration))
+    test_sample_rate = 44100
+    t = np.linspace(0, duration, int(test_sample_rate * duration))
 
     # Multi-frequency signal
     signal_base = (
@@ -565,19 +579,23 @@ if __name__ == "__main__":
 
     # Create stereo with phase errors (different delays per band)
     delay_bass = 30  # samples (~0.68ms)
-    delay_mid = 15  # samples (~0.34ms)
+    _delay_mid = 15  # samples (~0.34ms)
 
-    left = signal_base
-    right = signal_base.copy()
+    test_left = signal_base
+    test_right = signal_base.copy()
 
     # Apply delays to simulate phase errors
-    right = np.roll(right, delay_bass)
-    right[:delay_bass] = 0
+    test_right = np.roll(test_right, delay_bass)
+    test_right[:delay_bass] = 0
 
-    test_audio = np.column_stack([left, right])
+    test_audio = np.column_stack([test_left, test_right])
 
-    logger.debug("Generated %ss test audio @ %s Hz", duration, sample_rate)
-    logger.debug("Phase error: Right delayed by %s samples (~%.2fms)", delay_bass, delay_bass * 1000 / sample_rate)
+    logger.debug("Generated %ss test audio @ %s Hz", duration, test_sample_rate)
+    logger.debug(
+        "Phase error: Right delayed by %s samples (~%.2fms)",
+        delay_bass,
+        delay_bass * 1000 / test_sample_rate,
+    )
     logger.debug("")
 
     # Test with different materials
@@ -587,30 +605,30 @@ if __name__ == "__main__":
         (MaterialType.CD_DIGITAL, "CD_DIGITAL"),
     ]
 
-    for material, material_name in materials:
+    for test_material, material_name in materials:
         logger.debug("─" * 80)
         logger.debug("Material: %s", material_name)
         logger.debug("─" * 80)
         logger.debug("")
 
         phase = PhaseCorrection()
-        result = phase.process(test_audio, sample_rate, material)
+        result = phase.process(test_audio, test_sample_rate, test_material)
 
         logger.debug("✅ Professional Phase Correction:")
         logger.debug("   Correlation Before: %.4f", result.metrics["correlation_before"])
         logger.debug("   Correlation After: %.4f", result.metrics["correlation_after"])
         logger.debug("   Improvement: %.4f", result.metrics["correlation_improvement"])
         logger.debug("")
-        logger.debug(
-            f"   Per-Band Correlation Before: {[f'{c:.3f}' for c in result.metrics['per_band_correlation_before']]}"
-        )
-        logger.debug(
-            f"   Per-Band Correlation After:  {[f'{c:.3f}' for c in result.metrics['per_band_correlation_after']]}"
-        )
+        _corr_before_txt = [format(c, ".3f") for c in result.metrics["per_band_correlation_before"]]
+        _corr_after_txt = [format(c, ".3f") for c in result.metrics["per_band_correlation_after"]]
+        logger.debug("   Per-Band Correlation Before: %s", _corr_before_txt)
+        logger.debug("   Per-Band Correlation After:  %s", _corr_after_txt)
         logger.debug("   Delays Corrected (samples):  %s", result.metrics["delays_corrected_samples"])
         logger.debug("")
         logger.debug(
-            f"   Processing time: {result.execution_time_seconds:.3f}s ({result.execution_time_seconds / duration:.2f}× realtime)"
+            "   Processing time: %.3fs (%.2fx realtime)",
+            result.execution_time_seconds,
+            result.execution_time_seconds / duration,
         )
         logger.debug("   Correction strength: %s", result.metrics["correction_strength"])
         logger.debug("")

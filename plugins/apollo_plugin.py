@@ -27,12 +27,42 @@ Modell-Gewichte: ~/.aurik/models/apollo/ (via ModelDownloader)
 
 from __future__ import annotations
 
+import gc
 import logging
+import os
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore[assignment]
+
+try:
+    import torchaudio
+except ImportError:
+    torchaudio = None  # type: ignore[assignment]
+
+try:
+    from backend.core.ml_memory_budget import release as _ml_budget_release
+    from backend.core.ml_memory_budget import try_allocate as _ml_budget_try_allocate
+except ImportError:
+    _ml_budget_release = None
+    _ml_budget_try_allocate = None
+
+try:
+    import backend.core.ml_device_manager as _ml_device_manager
+except ImportError:
+    _ml_device_manager = None
+
+try:
+    import backend.core.plugin_lifecycle_manager as _plugin_lifecycle_manager
+except ImportError:
+    _plugin_lifecycle_manager = None
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +95,7 @@ class CodecRepairResult:
     metadata: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict:
+        """Serialisiert das Ergebnis für Logging/Telemetry als Dictionary."""
         return {
             "sr": self.sr,
             "hf_gain_db": self.hf_gain_db,
@@ -80,7 +111,7 @@ class CodecRepairResult:
 # Singleton (Double-Checked Locking, Thread-Safe)
 # ---------------------------------------------------------------------------
 
-_instance: ApolloPlugin | None = None
+_instance_holder: list[ApolloPlugin | None] = [None]
 _lock = threading.Lock()
 
 # Material-Typen, für die Apollo aktiviert wird
@@ -139,10 +170,10 @@ class ApolloPlugin:
     def _try_load_model(self) -> None:
         """Lädt Apollo TorchScript-Modell; aktiviert DSP-Fallback bei Fehler."""
         try:
-            from backend.core.ml_memory_budget import release as _release
-            from backend.core.ml_memory_budget import try_allocate
+            if _ml_budget_try_allocate is None:
+                raise ImportError("backend.core.ml_memory_budget nicht verfügbar")
 
-            if not try_allocate(self._BUDGET_NAME, size_gb=self._BUDGET_SIZE_GB):
+            if not _ml_budget_try_allocate(self._BUDGET_NAME, size_gb=self._BUDGET_SIZE_GB):
                 logger.info("Apollo: ML-Budget erschöpft — DSP-Fallback aktiv.")
                 self._fallback_active = True
                 return
@@ -151,24 +182,26 @@ class ApolloPlugin:
                 "Optional import not available (non-critical): %s", _exc
             )  # Budget-Modul fehlt → load trotzdem versuchen
         try:
-            import os as _os
+            if torch is None:
+                raise ImportError("torch nicht verfügbar")
 
-            import torch
-
-            torch.set_num_threads(_os.cpu_count() or 4)  # §2.37 CPU-Thread-Budget
+            torch.set_num_threads(os.cpu_count() or 4)  # §2.37 CPU-Thread-Budget
             model_path = self.MODELS_DIR / self._MODEL_FILENAME
             if model_path.exists():
                 try:
-                    from backend.core.ml_device_manager import get_torch_device as _get_dev
-
-                    _dev = _get_dev("ApolloPlugin")
+                    if _ml_device_manager is None:
+                        raise RuntimeError("ml_device_manager nicht verfügbar")
+                    _dev = _ml_device_manager.get_torch_device("ApolloPlugin")
                 except Exception:
                     _dev = "cpu"
                 if _dev != "cpu":
                     try:
-                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
+                        if _ml_device_manager is None:
+                            raise RuntimeError("ml_device_manager nicht verfügbar")
 
-                        if not _mgr().try_allocate_vram("ApolloPlugin", self._BUDGET_SIZE_GB):
+                        if not _ml_device_manager.get_ml_device_manager().try_allocate_vram(
+                            "ApolloPlugin", self._BUDGET_SIZE_GB
+                        ):
                             logger.info("Apollo: VRAM-Budget erschöpft — CPU-Load")
                             _dev = "cpu"
                     except Exception:
@@ -180,9 +213,12 @@ class ApolloPlugin:
                 self._model_loaded = True
                 logger.info("🟡 Apollo TorchScript geladen: %s (device=%s)", model_path.name, _dev)
                 try:
-                    from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
-
-                    _reg_plm(self._BUDGET_NAME, size_gb=self._BUDGET_SIZE_GB, unload_fn=_unload_apollo)
+                    if _plugin_lifecycle_manager is not None:
+                        _plugin_lifecycle_manager.register_plugin(
+                            self._BUDGET_NAME,
+                            size_gb=self._BUDGET_SIZE_GB,
+                            unload_fn=_unload_apollo,
+                        )
                 except Exception as _exc:
                     logger.debug("Plugin operation failed (non-critical): %s", _exc)
             else:
@@ -195,18 +231,16 @@ class ApolloPlugin:
             logger.debug("torch nicht verfügbar — Apollo DSP-Fallback aktiv")
             self._fallback_active = True
             try:
-                from backend.core.ml_memory_budget import release as _release
-
-                _release(self._BUDGET_NAME)
+                if _ml_budget_release is not None:
+                    _ml_budget_release(self._BUDGET_NAME)
             except Exception as _exc:
                 logger.debug("Plugin operation failed (non-critical): %s", _exc)
         except Exception as exc:
             logger.warning("Apollo Modell-Lade-Fehler: %s — DSP-Fallback", exc)
             self._fallback_active = True
             try:
-                from backend.core.ml_memory_budget import release as _release
-
-                _release(self._BUDGET_NAME)
+                if _ml_budget_release is not None:
+                    _ml_budget_release(self._BUDGET_NAME)
             except Exception as _exc:
                 logger.debug("Plugin operation failed (non-critical): %s", _exc)
 
@@ -253,11 +287,10 @@ class ApolloPlugin:
         if self._model_loaded and self._torch_model is not None:
             lifecycle_manager = None
             try:
-                from backend.core.plugin_lifecycle_manager import get_plugin_lifecycle_manager
-
-                lifecycle_manager = get_plugin_lifecycle_manager()
-                lifecycle_manager.touch(self._BUDGET_NAME)
-                lifecycle_manager.set_active(self._BUDGET_NAME, True)
+                if _plugin_lifecycle_manager is not None:
+                    lifecycle_manager = _plugin_lifecycle_manager.get_plugin_lifecycle_manager()
+                    lifecycle_manager.touch(self._BUDGET_NAME)
+                    lifecycle_manager.set_active(self._BUDGET_NAME, True)
             except Exception as exc:
                 logger.debug("Apollo: failed to mark plugin active in PLM: %s", exc)
 
@@ -332,10 +365,8 @@ class ApolloPlugin:
             )
             audio = np.pad(audio.astype(np.float32), (0, _min_at_sr - _orig_len), mode="constant")
         try:
-            import time
-
-            import torch
-            import torchaudio
+            if torch is None or torchaudio is None:
+                raise RuntimeError("Apollo benötigt torch + torchaudio für ML-Inferenz")
 
             model = self._torch_model
             if model is None:
@@ -418,15 +449,25 @@ class ApolloPlugin:
                         self._torch_model.cpu()
                     self._device = "cpu"
                     try:
-                        from backend.core.ml_device_manager import get_ml_device_manager as _mgr
-
-                        _mgr().report_gpu_error("ApolloPlugin", exc)
+                        if _ml_device_manager is not None:
+                            _ml_device_manager.get_ml_device_manager().report_gpu_error("ApolloPlugin", exc)
                     except Exception:
                         pass
                 except Exception as _mv_exc:
                     logger.debug("Apollo GPU→CPU move fehlgeschlagen: %s", _mv_exc)
                     self._device = "cpu"
                 return self._repair_apollo(audio, sr, material)
+            _exc_msg = str(exc)
+            if "expected np.ndarray (got numpy.ndarray)" in _exc_msg:
+                logger.warning(
+                    "Apollo TorchScript-Inkompatibilitaet erkannt (%s) — schneller no-harm Fallback",
+                    _exc_msg,
+                )
+                return np.clip(
+                    np.nan_to_num(np.asarray(audio, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0),
+                    -1.0,
+                    1.0,
+                )
             logger.warning("Apollo TorchScript-Fehler: %s — DSP-Fallback", exc)
             return self._repair_dsp_fallback(audio, sr, material)
 
@@ -500,7 +541,7 @@ class ApolloPlugin:
                 continue
 
             # Process frames streaming-style: build & process per-frame, not per-file
-            for i, start in enumerate(frame_starts):
+            for start in frame_starts:
                 frame = chunk_f64[start : start + n_fft] * window
                 spec = np.fft.rfft(frame, n=n_fft)
                 mag = np.abs(spec)
@@ -642,11 +683,8 @@ class ApolloPlugin:
 
 def _unload_apollo() -> None:
     """Entlädt das Apollo-Singleton aus dem RAM (PLM-Eviction-Callback)."""
-    global _instance
-    _instance = None  # type: ignore[assignment]
+    _instance_holder[0] = None
     try:
-        import gc
-
         gc.collect()
     except Exception as _exc:
         logger.debug("Plugin operation failed (non-critical): %s", _exc)
@@ -654,12 +692,15 @@ def _unload_apollo() -> None:
 
 def get_apollo() -> ApolloPlugin:
     """Thread-sicherer Singleton-Accessor (Double-Checked Locking)."""
-    global _instance
-    if _instance is None:
+    if _instance_holder[0] is None:
         with _lock:
-            if _instance is None:
-                _instance = ApolloPlugin()
-    return _instance
+            if _instance_holder[0] is None:
+                _instance_holder[0] = ApolloPlugin()
+
+    plugin = _instance_holder[0]
+    if plugin is None:
+        raise RuntimeError("ApolloPlugin konnte nicht initialisiert werden")
+    return plugin
 
 
 def repair_codec_artifacts(

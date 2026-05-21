@@ -6,15 +6,18 @@ this module never transmits user data; it only fetches a single JSON endpoint.
 
 import json
 import logging
+import re
 import threading
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from Aurik910 import __version__ as _AURIK_VERSION
 
 logger = logging.getLogger(__name__)
 
 _GITHUB_RELEASES_URL = "https://api.github.com/repos/AURIK-audio/aurik-professional/releases/latest"
 _TIMEOUT_S = 8
-_CURRENT_VERSION = "9.12.8"
+_CURRENT_VERSION = _AURIK_VERSION
 
 # Singleton
 _instance = None
@@ -44,15 +47,8 @@ class VersionCheckResult:
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
-    """Parst 'v9.10.77' oder '9.10.77' in ein vergleichbares Tupel."""
-    v = v.lstrip("vV").strip()
-    parts = []
-    for p in v.split("."):
-        try:
-            parts.append(int(p))
-        except ValueError:
-            parts.append(0)
-    return tuple(parts)
+    """Parst 'v9.10.77' oder '9.12.9-hotfix.2' in ein vergleichbares Tupel."""
+    return tuple(int(part) for part in re.findall(r"\d+", v.lstrip("vV").strip()))
 
 
 def check_for_update(current_version: str | None = None) -> VersionCheckResult:

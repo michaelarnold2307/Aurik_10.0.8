@@ -131,6 +131,97 @@ class TestRestorationConfig:
         assert cfg.mode == QualityMode.MAXIMUM
         assert cfg.studio_2026 is True
 
+    def test_12_phase_strength_oracle_rollout_default_all(self):
+        cfg = RestorationConfig()
+        assert cfg.phase_strength_oracle_rollout == "all"
+
+
+class TestStrengthOracleRollout:
+    def test_40zza_normalize_rollout_aliases(self):
+        assert UnifiedRestorerV3._normalize_phase_strength_oracle_rollout_mode("disabled") == "off"
+        assert UnifiedRestorerV3._normalize_phase_strength_oracle_rollout_mode("pilot") == "pilot"
+        assert UnifiedRestorerV3._normalize_phase_strength_oracle_rollout_mode("enabled") == "all"
+
+    def test_40zzb_resolve_rollout_prefers_kwargs_over_context_and_config(self):
+        restorer = object.__new__(UnifiedRestorerV3)
+        restorer._restoration_context = {"phase_strength_oracle_rollout": "pilot"}
+        restorer.config = RestorationConfig(phase_strength_oracle_rollout="off")
+
+        mode = UnifiedRestorerV3._resolve_phase_strength_oracle_rollout_mode(
+            restorer,
+            {"phase_strength_oracle_rollout": "all"},
+        )
+        assert mode == "all"
+
+    def test_40zzc_phase_enablement_honors_rollout_mode(self):
+        phase_id = "phase_03_denoise"
+        assert UnifiedRestorerV3._is_phase_strength_oracle_enabled_for_phase(phase_id, "off") is False
+        assert UnifiedRestorerV3._is_phase_strength_oracle_enabled_for_phase(phase_id, "all") is True
+
+
+class TestFallbackTeamworkController:
+    def test_40zzd_initialize_controller_uses_capability_and_stem_signals(self):
+        restorer = object.__new__(UnifiedRestorerV3)
+        restorer._global_conservative_scalar = 1.0
+        restorer._restoration_context = {
+            "model_capability_report": {
+                "summary": {
+                    "all_sota_real": False,
+                    "degraded_capabilities": ["miipher_native", "sgmse_plus"],
+                    "vocal_restoration_status": "sota_fallback",
+                }
+            },
+            "stem_level_restorer": {
+                "success": False,
+                "fallback_reason": "oom",
+            },
+        }
+
+        profile = UnifiedRestorerV3._initialize_fallback_teamwork_controller(restorer)
+
+        assert isinstance(profile, dict)
+        assert profile.get("all_sota_real") is False
+        assert int(profile.get("event_count", 0)) == 0
+        assert float(profile.get("global_strength_scalar", 1.0)) < 1.0
+        assert "fallback_teamwork_controller" in restorer._restoration_context
+        assert float(restorer._restoration_context.get("fallback_teamwork_scalar", 1.0)) < 1.0
+
+    def test_40zze_update_controller_reacts_to_guard_event(self):
+        restorer = object.__new__(UnifiedRestorerV3)
+        restorer._global_conservative_scalar = 1.0
+        restorer._restoration_context = {
+            "model_capability_report": {
+                "summary": {
+                    "all_sota_real": True,
+                    "degraded_capabilities": [],
+                    "vocal_restoration_status": "sota_real",
+                }
+            }
+        }
+
+        UnifiedRestorerV3._initialize_fallback_teamwork_controller(restorer)
+        UnifiedRestorerV3._update_fallback_teamwork_controller_from_event(
+            restorer,
+            {
+                "phase_id": "phase_03_denoise",
+                "model": "miipher",
+                "reason": "oom",
+                "fallback": "sgmse_plus",
+                "channels": 2,
+                "duration_s": 120.0,
+                "required_gb": 8.0,
+                "available_gb": 3.0,
+            },
+            "phase_03_denoise",
+        )
+
+        profile = restorer._restoration_context.get("fallback_teamwork_controller", {})
+        assert int(profile.get("event_count", 0)) == 1
+        assert float(profile.get("cumulative_risk", 0.0)) > 0.0
+        assert float(profile.get("global_strength_scalar", 1.0)) < 1.0
+        assert int(profile.get("feedback_chain_iteration_boost", 0)) >= 0
+        assert float(restorer._restoration_context.get("fallback_gate_tightening", 1.0)) >= 1.0
+
 
 class TestPhaseCoalitions:
     def test_tape_transport_coalition_requires_two_members(self):
@@ -420,6 +511,20 @@ class TestPreventFirstQuietEdges:
 
         assert float(profile["vocal_presence"]) >= 0.82
 
+    def test_40h2_build_song_calibration_profile_preserves_latched_vocal_confidence(self):
+        profile = UnifiedRestorerV3._build_song_calibration_profile(
+            material_type=MaterialType.TAPE,
+            mode=QualityMode.QUALITY,
+            restorability_score=60.0,
+            input_snr_db=22.0,
+            max_defect_severity=0.35,
+            pipeline_confidence=0.8,
+            panns_tags={"Singing voice": 0.0, "Vocals": 0.17, "Music": 0.88},
+            panns_vocals_confidence=0.35,
+        )
+
+        assert float(profile["vocal_presence"]) >= 0.35
+
     def test_40i_autosetup_policy_caps_vocal_enhancement_for_vocal_material(self):
         profile = {
             "family_scalars": {"dynamics_eq": 1.0, "vocal": 1.0, "reconstruction": 1.0},
@@ -467,17 +572,34 @@ class TestPreventFirstQuietEdges:
 
         assert confidence >= 0.35
 
-    def test_40j3_vocal_presence_does_not_floor_low_non_vocal_material(self):
-        # §0p: Schlager-Genre-Floor greift nur wenn confidence >= 0.10.
-        # Vocals=0.08 liegt auf dem Noise-Floor (Schwelle > 0.08 nicht erfüllt)
-        # → keine Confidence-Elevation → kein Floor → confidence bleibt niedrig.
+    def test_40j3_vocal_presence_floor_with_is_schlager_true_regardless_of_panns(self):
+        # §0p v9.12.12: is_schlager=True (Klassifizierer-Ergebnis) aktiviert den 0.35-Floor
+        # OHNE Mindestschwelle auf PANNs-Vocals. Auf degradiertem Cassette/Tape-Material
+        # liefert PANNs systematisch 0.0-0.08 auch bei 80-90% Vokalanteil (Intro-Segment,
+        # SNR < 15 dB). is_schlager=True ist zuverlässiger als rohes PANNs-Singing.
+        # Frühere "confidence >= 0.10"-Schranke deaktivierte Vokalschutz bei Intro-Segmenten.
         confidence = UnifiedRestorerV3._compute_vocal_presence_confidence(
             {"Singing voice": 0.0, "Vocals": 0.08, "Music": 0.88},
             is_schlager=True,
             genre_label="Schlager",
         )
 
-        assert confidence < 0.25
+        assert confidence >= 0.35, (
+            f"§0p: is_schlager=True muss Floor ≥ 0.35 setzen unabhängig von PANNs-Score: {confidence:.3f}"
+        )
+
+    def test_40j3b_vocal_presence_no_floor_for_keyword_only_with_zero_panns(self):
+        # §0p v9.12.12: Reine Genre-Keyword-Treffer (ohne is_schlager=True) behalten die
+        # 0.10-Schwelle als False-Positive-Schutz bei falschem Genre-Label.
+        confidence = UnifiedRestorerV3._compute_vocal_presence_confidence(
+            {"Singing voice": 0.0, "Vocals": 0.02, "Music": 0.88},
+            is_schlager=False,
+            genre_label="folk",
+        )
+
+        assert confidence < 0.20, (
+            f"§0p: Keyword-only (is_schlager=False) mit PANNs < 0.05 soll keinen Floor setzen: {confidence:.3f}"
+        )
 
     def test_40j4_vocal_presence_music_vocal_heuristic_reaches_vqi_threshold(self):
         # §0p v9.12.9: PANNs Vocals=0.17, Music=0.60, no genre detected
@@ -903,6 +1025,30 @@ class TestSelectPhases:
         )
 
         assert "phase_25_azimuth_correction" in phases
+
+    def test_33e_compression_artifacts_trigger_phase23_spectral_repair(self):
+        restorer = UnifiedRestorerV3()
+        mock_defect = _make_mock_defect_result()
+        mock_defect.material_type = MaterialType.TAPE
+        mock_defect.scores = {
+            DefectType.COMPRESSION_ARTIFACTS: types.SimpleNamespace(severity=0.60),
+        }
+
+        phases = restorer._select_phases(mock_defect)
+
+        assert "phase_23_spectral_repair" in phases
+
+    def test_33f_compression_artifacts_trigger_phase54_transparent_dynamics(self):
+        restorer = UnifiedRestorerV3()
+        mock_defect = _make_mock_defect_result()
+        mock_defect.material_type = MaterialType.TAPE
+        mock_defect.scores = {
+            DefectType.COMPRESSION_ARTIFACTS: types.SimpleNamespace(severity=0.55),
+        }
+
+        phases = restorer._select_phases(mock_defect)
+
+        assert "phase_54_transparent_dynamics" in phases
 
 
 class TestPhaseInteractionGuards:
@@ -2656,6 +2802,15 @@ class TestPhase65VqiRecoveryTrigger:
             "§H4: UV3 prüft VQI < 0.74 Schwelle nicht — "
             "VERBOTEN-Regel 'VQI-Abfall nach NR ohne DSP-Korrektiv-Recovery' verletzt."
         )
+        assert "compute_vocal_max_alignment" in src, (
+            "§0p: UV3 muss VQI-Recovery prozentual am maximal erreichbaren Vocal-Ziel ausrichten."
+        )
+        assert "vocal_max_alignment_percent" in src, (
+            "§0p: UV3 muss den prozentualen Abstand zum Vocal-Maximum in Metadata/Fail-Reasons tragen."
+        )
+        assert "_p65_vqi_deficit = max(0.74 - _vqi_score, _vqi_max_target - _vqi_score, 0.0)" in src, (
+            "§0p: Phase_65-Stärke muss proportional zum Maximum-Defizit skaliert werden."
+        )
 
 
 class TestChoirVqiGateZeroPanns:
@@ -2771,4 +2926,47 @@ class TestSection0aRestCauseGuards:
         assert "is_studio_mode" in multiband_section, (
             "§0a: Multiband-Kompression-Block enthält keinen is_studio_mode()-Guard. "
             "phase_35 würde in Restoration-Modus in selected_phases gelangen."
+        )
+
+
+class TestPhaseIdValidationGuards:
+    """Regression-Guards gegen stille Skips durch unbekannte Phase-IDs."""
+
+    def test_validate_selected_phase_ids_removes_unknown_and_normalizes_aliases(self) -> None:
+        cfg = RestorationConfig(
+            enable_phase_gate=False,
+            enable_phase_skipping=False,
+            enable_performance_guard=False,
+        )
+        restorer = UnifiedRestorerV3(cfg)
+        restorer.phase_metadata = {
+            "phase_01_click_removal": {"name": "Click"},
+            "phase_48_stereo_width_enhancer": {"name": "Stereo Width"},
+        }
+        restorer._PHASE_ALIASES = {
+            "phase_48_stereo_imaging": "phase_48_stereo_width_enhancer",
+        }
+
+        resolved, invalid = restorer._validate_selected_phase_ids(
+            [
+                "phase_48_stereo_imaging",
+                "phase_999_missing",
+                "phase_01_click_removal",
+                "phase_01_click_removal",
+            ],
+            context="unit_test",
+        )
+
+        assert resolved == ["phase_48_stereo_width_enhancer", "phase_01_click_removal"]
+        assert invalid == ["phase_999_missing"]
+
+    def test_uv3_source_goal_gap_uses_existing_phase48_id(self) -> None:
+        import pathlib
+
+        src = (pathlib.Path(__file__).parents[2] / "backend" / "core" / "unified_restorer_v3.py").read_text()
+        assert '"spatial_depth": ["phase_48_stereo_width_enhancer"]' in src, (
+            "§PHASE_ID_VALIDATE: Goal-Gap spatial_depth muss auf existierende phase_48 zeigen."
+        )
+        assert "phase_48_stereo_imaging" not in src, (
+            "§PHASE_ID_VALIDATE: veraltete/ungültige phase_48-ID wurde wieder eingeführt."
         )

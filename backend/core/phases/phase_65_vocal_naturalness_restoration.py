@@ -36,6 +36,7 @@ import numpy as np
 import scipy.signal as sps
 
 from backend.core.audio_utils import to_channels_last
+from backend.core.phase_strength_contract import resolve_phase_strength_contract
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -160,7 +161,10 @@ def _apply_shelving_eq(
         if audio_f64.shape[0] <= 2 and audio_f64.shape[1] > audio_f64.shape[0]:
             # [C, T] — nach to_channels_last
             return np.stack([sps.sosfiltfilt(sos, audio_f64[c]) for c in range(audio_f64.shape[0])]).astype(audio.dtype)  # type: ignore[no-any-return]
-        return np.stack([sps.sosfiltfilt(sos, audio_f64[:, c]) for c in range(audio_f64.shape[1])], axis=1).astype(  # type: ignore[no-any-return]
+        return np.stack(
+            [sps.sosfiltfilt(sos, audio_f64[:, c]) for c in range(audio_f64.shape[1])],
+            axis=1,
+        ).astype(  # type: ignore[no-any-return]
             audio.dtype
         )
     return audio
@@ -224,6 +228,9 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
             "stages_applied": [],
             "activation_triggered": False,
         }
+        _strength_ctx = resolve_phase_strength_contract(kwargs)
+        phase_locality_factor = float(_strength_ctx["phase_locality_factor"])
+        _p65_meta["phase_locality_factor"] = phase_locality_factor
 
         # §0a Guard: Phase_65 ist VERBOTEN in Studio 2026
         quality_mode = str(kwargs.get("quality_mode", "restoration")).strip().lower()
@@ -335,7 +342,8 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
         _p65_meta["tilt_delta"] = round(tilt_delta, 3)
 
         result = audio.copy().astype(np.float32)
-        effective_strength = float(np.clip(float(kwargs.get("strength", 1.0)), 0.0, 1.0))
+        effective_strength = float(_strength_ctx["effective_strength"])
+        _p65_meta["effective_strength"] = round(effective_strength, 4)
 
         # ---- Stufe 1: Spektral-Tilt-Korrektur ----
         if abs(tilt_delta) > _TILT_DELTA_THRESHOLD:
@@ -454,6 +462,8 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
             metadata=_p65_meta,
             metrics={
                 "activation_triggered": 1 if activation_triggered else 0,
+                "phase_locality_factor": round(phase_locality_factor, 4),
+                "effective_strength": round(effective_strength, 4),
                 "delta_hnr": round(delta_hnr, 3),
                 "tilt_delta": round(tilt_delta, 3),
                 "vqi_before": round(_vqi_before, 4),

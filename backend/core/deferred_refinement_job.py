@@ -16,6 +16,11 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from backend.core.ml_memory_budget import release as _ml_budget_release
+except Exception:
+    _ml_budget_release = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +69,7 @@ class DeferredRefinementJob:
 
     @property
     def n_deferred(self) -> int:
+        """Anzahl der in Stufe 1 zurückgestellten Phasen."""
         return len(self.deferred_phase_ids)
 
     # ------------------------------------------------------------------
@@ -83,9 +89,8 @@ class DeferredRefinementJob:
         """
         if getattr(self, "_budget_registered", False):
             try:
-                from backend.core.ml_memory_budget import release as _release
-
-                _release("kmv_job")
+                if _ml_budget_release is not None:
+                    _ml_budget_release("kmv_job")
             except Exception as _exc:
                 logger.debug(
                     "Operation failed (non-critical): %s", _exc

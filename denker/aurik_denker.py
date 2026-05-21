@@ -116,6 +116,8 @@ _HEAVY_DEFECT_HINTS: frozenset[str] = frozenset(
     }
 )
 
+_ORACLE_ROLLOUT_MODES: frozenset[str] = frozenset({"off", "pilot", "all"})
+
 
 def _load_symbol(module_name: str, symbol_name: str) -> Any:
     """Lädt a symbol lazily to avoid module-level circular imports."""
@@ -332,6 +334,7 @@ class AurikDenker:
         input_path: str = "",
         output_path: str = "",
         no_rt_limit: bool = False,
+        phase_strength_oracle_rollout: str | None = None,
     ) -> AurikErgebnis:
         """Vollständige Aurik-Restaurierung: 8 Stufen orchestriert.
 
@@ -395,6 +398,7 @@ class AurikDenker:
                 input_path=input_path,
                 output_path=output_path,
                 no_rt_limit=no_rt_limit,
+                phase_strength_oracle_rollout=phase_strength_oracle_rollout,
             )
         except MemoryError as exc:
             elapsed = time.perf_counter() - t_start
@@ -463,6 +467,7 @@ class AurikDenker:
             input_path=kwargs.get("input_path", ""),
             output_path=kwargs.get("output_path", ""),
             no_rt_limit=bool(kwargs.get("no_rt_limit", False)),
+            phase_strength_oracle_rollout=kwargs.get("phase_strength_oracle_rollout"),
         )
 
     @staticmethod
@@ -586,6 +591,253 @@ class AurikDenker:
         }
         return aliases.get(normalized, normalized)
 
+    @staticmethod
+    def _normalize_oracle_rollout_mode(mode: str | None) -> str | None:
+        """Normalisiert den Strength-Oracle-Rollout-Modus auf off/pilot/all."""
+        if mode is None:
+            return None
+        raw = str(mode).strip().lower().replace("-", "_")
+        aliases = {
+            "0": "off",
+            "false": "off",
+            "disabled": "off",
+            "none": "off",
+            "pilot": "pilot",
+            "1": "all",
+            "true": "all",
+            "enabled": "all",
+            "full": "all",
+            "all": "all",
+        }
+        normalized = aliases.get(raw)
+        if normalized not in _ORACLE_ROLLOUT_MODES:
+            return None
+        return normalized
+
+    @staticmethod
+    def _compute_signal_intelligence_signature(audio: np.ndarray, sr: int) -> dict[str, float]:
+        """Berechnet robuste, leichtgewichtige Signal-Indikatoren für Risikoentscheidungen."""
+        arr = np.nan_to_num(np.asarray(audio, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        if arr.ndim == 2:
+            # channels-first (2, N) und channels-last (N, 2) robust behandeln.
+            if arr.shape[0] <= 2 < arr.shape[1]:
+                arr = np.mean(arr, axis=0)
+            elif arr.shape[1] <= 2 < arr.shape[0]:
+                arr = np.mean(arr, axis=1)
+            else:
+                arr = np.mean(arr, axis=-1)
+        elif arr.ndim != 1:
+            arr = np.ravel(arr)
+
+        if arr.size < 64:
+            return {
+                "rms_dbfs": -120.0,
+                "crest_db": 0.0,
+                "hf_ratio": 0.0,
+                "transient_ratio": 0.0,
+                "micro_dynamic_db": 0.0,
+            }
+
+        arr64 = arr.astype(np.float64, copy=False)
+        rms = float(np.sqrt(np.mean(arr64 * arr64) + 1e-12))
+        peak = float(np.max(np.abs(arr64)) + 1e-12)
+        rms_dbfs = float(20.0 * np.log10(max(rms, 1e-12)))
+        crest_db = float(20.0 * np.log10(max(peak / max(rms, 1e-8), 1e-8)))
+
+        # Hochfrequenz-Anteil (>6 kHz) als Proxy für Zisch-/Artefaktrisiko.
+        n_fft = int(min(16384, arr64.size))
+        if n_fft >= 512:
+            frame = arr64[:n_fft]
+            window = np.hanning(n_fft)
+            spectrum = np.abs(np.fft.rfft(frame * window)) ** 2
+            freqs = np.fft.rfftfreq(n_fft, d=1.0 / max(sr, 1))
+            total_energy = float(np.sum(spectrum) + 1e-12)
+            hf_energy = float(np.sum(spectrum[freqs >= 6000.0]))
+            hf_ratio = float(np.clip(hf_energy / total_energy, 0.0, 1.0))
+        else:
+            hf_ratio = 0.0
+
+        # Transienten-Dichte via 1. Ableitung als schonender Onset-Proxy.
+        diff = np.abs(np.diff(arr64, prepend=arr64[0]))
+        if diff.size > 8:
+            transient_thr = max(float(np.percentile(diff, 99.0)), 1e-6)
+            transient_ratio = float(np.mean(diff > transient_thr))
+        else:
+            transient_ratio = 0.0
+
+        # Mikrodynamik-Proxy: P95-P05 der Frame-RMS in dB.
+        frame_len = 2048
+        if arr64.size >= frame_len:
+            frame_rms_db: list[float] = []
+            for start in range(0, arr64.size - frame_len + 1, frame_len):
+                chunk = arr64[start : start + frame_len]
+                chunk_rms = float(np.sqrt(np.mean(chunk * chunk) + 1e-12))
+                frame_rms_db.append(float(20.0 * np.log10(max(chunk_rms, 1e-12))))
+            if frame_rms_db:
+                p95 = float(np.percentile(frame_rms_db, 95))
+                p05 = float(np.percentile(frame_rms_db, 5))
+                micro_dynamic_db = max(0.0, p95 - p05)
+            else:
+                micro_dynamic_db = 0.0
+        else:
+            micro_dynamic_db = 0.0
+
+        return {
+            "rms_dbfs": rms_dbfs,
+            "crest_db": float(np.clip(crest_db, 0.0, 40.0)),
+            "hf_ratio": hf_ratio,
+            "transient_ratio": float(np.clip(transient_ratio, 0.0, 1.0)),
+            "micro_dynamic_db": float(np.clip(micro_dynamic_db, 0.0, 60.0)),
+        }
+
+    @classmethod
+    def _recommend_phase_strength_oracle_rollout(
+        cls,
+        *,
+        requested_rollout: str | None,
+        material: str,
+        chain_info: dict[str, Any] | None,
+        defekt: Any,
+        global_plan: Any,
+        effective_mode: str,
+        cached_restorability_result: Any | None,
+        signal_signature: dict[str, float],
+    ) -> tuple[str, str]:
+        """Empfiehlt einen risikoadaptiven Strength-Oracle-Rollout (off/pilot/all)."""
+        normalized_requested = cls._normalize_oracle_rollout_mode(requested_rollout)
+        if normalized_requested is not None:
+            return normalized_requested, (
+                f"Expliziter Oracle-Rollout '{normalized_requested}' beibehalten (Nutzer-/Aufrufer-Vorgabe)."
+            )
+
+        resolved_material = cls._resolve_excellence_material(material, chain_info)
+        severity = float(getattr(defekt, "overall_severity", 0.0) or 0.0)
+        primary_defect = (
+            str(getattr(defekt, "primary_defect", None) or getattr(defekt, "primary_cause", "unknown")).strip().lower()
+        )
+
+        decade_value = None
+        if global_plan is not None:
+            portrait = getattr(global_plan, "portrait", None)
+            if portrait is not None:
+                try:
+                    decade_value = int(getattr(portrait, "decade", 0) or 0)
+                except (TypeError, ValueError):
+                    decade_value = None
+
+        restorability_score = float(getattr(cached_restorability_result, "restorability_score", 65.0) or 65.0)
+        crest_db = float(signal_signature.get("crest_db", 0.0))
+        hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+        transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+        micro_dynamic_db = float(signal_signature.get("micro_dynamic_db", 0.0))
+
+        is_historical_material = resolved_material in _HISTORICAL_OR_FRAGILE_MATERIALS
+        is_modern_digital = resolved_material in _MODERN_DIGITAL_MATERIALS
+        is_historical_era = decade_value is not None and decade_value <= 1965
+        has_heavy_defect = severity >= 0.60 or any(token in primary_defect for token in _HEAVY_DEFECT_HINTS)
+
+        chain = list((chain_info or {}).get("chain") or []) if isinstance(chain_info, dict) else []
+        has_analog_origin = any(str(node).strip().lower() in _HISTORICAL_OR_FRAGILE_MATERIALS for node in chain)
+
+        # Wissenschaftsbasierter Risiko-Index (psychoakustisch + materialspezifisch).
+        risk_score = 0.0
+        if is_historical_material:
+            risk_score += 0.30
+        if is_historical_era:
+            risk_score += 0.12
+        if has_analog_origin:
+            risk_score += 0.18
+        if severity >= 0.75:
+            risk_score += 0.26
+        elif severity >= 0.45:
+            risk_score += 0.14
+        if has_heavy_defect:
+            risk_score += 0.10
+        if crest_db >= 20.0:
+            risk_score += 0.10
+        elif crest_db >= 16.0:
+            risk_score += 0.05
+        if transient_ratio >= 0.012:
+            risk_score += 0.08
+        if micro_dynamic_db >= 14.0:
+            risk_score += 0.06
+        if hf_ratio <= 0.025 and (is_historical_material or has_analog_origin):
+            risk_score += 0.05
+
+        # Bei sehr gut restaurierbarem modernem Digitalmaterial aggressiver ausrollen.
+        if is_modern_digital and restorability_score >= 80.0 and severity < 0.35:
+            risk_score -= 0.22
+
+        risk_score = float(np.clip(risk_score, 0.0, 1.0))
+
+        recommended = "all"
+        if severity >= 0.85 and (is_historical_material or has_analog_origin) and transient_ratio >= 0.01:
+            recommended = "off"
+        elif risk_score >= 0.45:
+            recommended = "pilot"
+
+        # Studio-2026 darf bei stabilem modernem Material voll laufen.
+        if cls._normalize_mode_name(effective_mode) == "studio2026" and is_modern_digital and risk_score < 0.45:
+            recommended = "all"
+
+        reason = (
+            f"Oracle-Rollout '{recommended}' (risk={risk_score:.2f}, material={resolved_material}, "
+            f"severity={severity:.2f}, crest={crest_db:.1f}dB, hf={hf_ratio:.3f}, "
+            f"transient={transient_ratio:.4f}, restorability={restorability_score:.1f})."
+        )
+        if requested_rollout is not None and normalized_requested is None:
+            reason = f"Ungültiger expliziter Rollout '{requested_rollout}' ignoriert. " + reason
+        return recommended, reason
+
+    @classmethod
+    def _recommend_excellence_recovery_profile(
+        cls,
+        *,
+        material: str,
+        chain_info: dict[str, Any] | None,
+        effective_mode: str,
+        signal_signature: dict[str, float],
+        versa_mos: float,
+    ) -> dict[str, Any]:
+        """Leitet eine material-/signaladaptive Recovery-Strategie für Exzellenz ab."""
+        resolved_material = cls._resolve_excellence_material(material, chain_info)
+        crest_db = float(signal_signature.get("crest_db", 0.0))
+        transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+        hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+        micro_dynamic_db = float(signal_signature.get("micro_dynamic_db", 0.0))
+
+        is_historical = resolved_material in _HISTORICAL_OR_FRAGILE_MATERIALS
+        is_modern = resolved_material in _MODERN_DIGITAL_MATERIALS
+        is_studio = cls._normalize_mode_name(effective_mode) == "studio2026"
+
+        preserve_signal = 0.0
+        if is_historical:
+            preserve_signal += 0.25
+        if crest_db >= 18.0:
+            preserve_signal += 0.15
+        if transient_ratio >= 0.01:
+            preserve_signal += 0.15
+        if micro_dynamic_db >= 14.0:
+            preserve_signal += 0.10
+        if hf_ratio <= 0.02:
+            preserve_signal += 0.05
+        preserve_signal = float(np.clip(preserve_signal, 0.0, 0.75))
+
+        if is_studio and is_modern and preserve_signal < 0.20:
+            blend_alphas = (0.90, 0.84, 0.78)
+        elif preserve_signal >= 0.40:
+            blend_alphas = (0.95, 0.92, 0.89)
+        else:
+            blend_alphas = (0.92, 0.88, 0.84)
+
+        strict_mos_recovery = bool(0.0 < versa_mos < 3.5)
+        return {
+            "resolved_material": resolved_material,
+            "preserve_signal": preserve_signal,
+            "blend_alphas": blend_alphas,
+            "strict_mos_recovery": strict_mos_recovery,
+        }
+
     @classmethod
     def _recommend_autopilot_mode(
         cls,
@@ -701,6 +953,7 @@ class AurikDenker:
         input_path: str = "",
         output_path: str = "",
         no_rt_limit: bool = False,
+        phase_strength_oracle_rollout: str | None = None,
     ) -> AurikErgebnis:
         """Führt die 10-stufige Restaurierungs-Pipeline aus.
 
@@ -967,6 +1220,10 @@ class AurikDenker:
             _record_stage_failure("globalplan", "MusikalischerGlobalplan", exc)
             logger.warning("AurikDenker [4/10] MusikalischerGlobalplan: %s", exc)
 
+        # Wissenschaftliche Signal-Signatur einmal zentral berechnen und in
+        # Strategie-, Orchestrierungs- und Rollout-Entscheidungen wiederverwenden.
+        _signal_signature = self._compute_signal_intelligence_signature(aktuelles_audio, sr)
+
         # ── Stufe 5: Strategie (8×RT-Budget) ────────────────────────────────
         _emit(10, "Restaurierungsstrategie geplant …")
         strategie = None
@@ -980,6 +1237,7 @@ class AurikDenker:
                 sr,
                 enforce_3x_rt=True,
                 defect_severity=_defect_sev_for_plan,
+                signal_signature=_signal_signature,
             )
             strat_denker.starte_timer(audio_duration_s)
             _budget_raw = getattr(strategie, "max_processing_s", audio_duration_s * _3X_RT_LIMIT)
@@ -1026,6 +1284,26 @@ class AurikDenker:
                 "(SongCal, PMGG, FeedbackChain) sind aktiv."
             )
 
+        # Wissenschaftsbasierte Oracle-Rollout-Empfehlung (off/pilot/all).
+        try:
+            _effective_oracle_rollout, _oracle_rollout_note = self._recommend_phase_strength_oracle_rollout(
+                requested_rollout=phase_strength_oracle_rollout,
+                material=material,
+                chain_info=chain_info,
+                defekt=defekt,
+                global_plan=_globalplan,
+                effective_mode=effective_mode,
+                cached_restorability_result=cached_restorability_result,
+                signal_signature=_signal_signature,
+            )
+        except Exception as _oracle_exc:
+            _effective_oracle_rollout = self._normalize_oracle_rollout_mode(phase_strength_oracle_rollout) or "all"
+            _oracle_rollout_note = f"Oracle-Rollout-Fallback nach Fehler: {_oracle_exc}"
+            logger.warning("Oracle rollout recommendation failed: %s", _oracle_exc)
+        stage_notes["oracle_rollout"] = _oracle_rollout_note
+        stage_notes["oracle_signal_signature"] = dict(_signal_signature)
+        logger.info("AurikDenker [5a/10] %s", _oracle_rollout_note)
+
         # ── Stufe 5b: PhaseInteractionDenker — Orchestrierung übernehmen ────────
         # Erzeugt einen semantisch aufgelösten, konfliktfreien Phasenplan.
         # UV3.restore() erhält diesen als precomputed_phase_plan und agiert dann
@@ -1033,6 +1311,7 @@ class AurikDenker:
         # Bei Fehler: leerer Plan → UV3 selektiert autonom (fail-safe §0).
         _pid_plan = None
         _pid_phase_plan: list[str] | None = None
+        _pid_runtime_hint: dict[str, Any] = {}
         try:
             _pid_defect_result = cached_defect_result or (
                 getattr(defekt, "raw_scan_result", None) if defekt is not None else None
@@ -1073,15 +1352,37 @@ class AurikDenker:
                     goal_risk_map=_goal_risk_map or None,
                     strategie_plan=strategie,
                     causal_plan=defekt,
+                    signal_signature=_signal_signature,
                 )
                 if _pid_plan.is_valid:
                     _pid_phase_plan = _pid_plan.phases
                     _pid_injected = sum(1 for n in _pid_plan.conflict_notes if "Injektion" in n)
+                    _pid_top_goal = ""
+                    _pid_top_risk = 0.0
+                    if _goal_risk_map:
+                        _pid_top_goal, _pid_top_risk = max(_goal_risk_map.items(), key=lambda kv: float(kv[1]))
+                    _pid_runtime_hint = {
+                        "phase_count": len(_pid_phase_plan),
+                        "suppressed_count": len(_pid_plan.suppressed),
+                        "injected_count": int(_pid_injected),
+                        "top_goal": str(_pid_top_goal),
+                        "top_goal_risk": float(_pid_top_risk),
+                        "risk_goal_count": len(_goal_risk_map),
+                    }
                     stage_notes["phase_interaction"] = (
                         f"PhaseInteractionDenker: {len(_pid_phase_plan)} Phasen "
                         f"({len(_pid_plan.suppressed)} supprimiert, "
                         f"{len(_pid_plan.ordering_applied)} Ordnungsänderungen, "
                         f"{_pid_injected} injiziert)"
+                    )
+                    _emit(
+                        12,
+                        "__pid_live_hint__:"
+                        + f"phases={_pid_runtime_hint['phase_count']}|"
+                        + f"suppressed={_pid_runtime_hint['suppressed_count']}|"
+                        + f"injected={_pid_runtime_hint['injected_count']}|"
+                        + f"goal={_pid_runtime_hint['top_goal']}|"
+                        + f"risk={_pid_runtime_hint['top_goal_risk']:.3f}",
                     )
                     phases_executed.append("phase_interaction_denker")
                     logger.info(
@@ -1217,6 +1518,7 @@ class AurikDenker:
                                     input_path=input_path,
                                     output_path=output_path,
                                     no_rt_limit=no_rt_limit,
+                                    phase_strength_oracle_rollout=_effective_oracle_rollout,
                                 )
                             )
                             return
@@ -1360,6 +1662,7 @@ class AurikDenker:
                                 no_rt_limit=no_rt_limit,
                                 # §PID: PhaseInteractionDenker-Plan — UV3 als reiner Executor
                                 precomputed_phase_plan=_pid_phase_plan,
+                                phase_strength_oracle_rollout=_effective_oracle_rollout,
                             )
                         )
                     except Exception as _e:
@@ -1410,6 +1713,15 @@ class AurikDenker:
                 _rest_goals_passed = int(getattr(rest, "goals_passed", 0))
                 _meta_raw = getattr(rest, "metadata", None)
                 _rest_metadata = dict(_meta_raw) if isinstance(_meta_raw, dict) else {}
+                if _pid_runtime_hint:
+                    _rest_metadata["phase_interaction"] = {
+                        "phase_count": int(_pid_runtime_hint.get("phase_count", 0) or 0),
+                        "suppressed_count": int(_pid_runtime_hint.get("suppressed_count", 0) or 0),
+                        "injected_count": int(_pid_runtime_hint.get("injected_count", 0) or 0),
+                        "top_goal": str(_pid_runtime_hint.get("top_goal", "") or ""),
+                        "top_goal_risk": float(_pid_runtime_hint.get("top_goal_risk", 0.0) or 0.0),
+                        "risk_goal_count": int(_pid_runtime_hint.get("risk_goal_count", 0) or 0),
+                    }
                 # Keep a single canonical material label across UV3 scorecards and
                 # AurikDenker final logs/exports.
                 _rest_mat_raw = getattr(rest, "material_type", None)
@@ -1504,6 +1816,19 @@ class AurikDenker:
             material,
             chain_info,
         )
+        _exz_recovery_profile = self._recommend_excellence_recovery_profile(
+            material=material,
+            chain_info=chain_info,
+            effective_mode=effective_mode,
+            signal_signature=_signal_signature,
+            versa_mos=_exz_versa_mos,
+        )
+        stage_notes["exzellenz_recovery_profile"] = {
+            "material": _exz_recovery_profile.get("resolved_material"),
+            "preserve_signal": float(_exz_recovery_profile.get("preserve_signal", 0.0)),
+            "blend_alphas": list(_exz_recovery_profile.get("blend_alphas", (0.92, 0.88, 0.84))),
+            "strict_mos_recovery": bool(_exz_recovery_profile.get("strict_mos_recovery", False)),
+        }
 
         if _rest_rollback:
             # ARE rollback means restoration degraded quality — ExzellenzDenker
@@ -1685,7 +2010,8 @@ class AurikDenker:
                         _best_score = excellence_score
                         _best_crit = _crit_pass_before
 
-                        for _alpha in (0.92, 0.88, 0.84):
+                        _blend_alphas = tuple(_exz_recovery_profile.get("blend_alphas", (0.92, 0.88, 0.84)))
+                        for _alpha in _blend_alphas:
                             _candidate = np.clip(_alpha * aktuelles_audio + (1.0 - _alpha) * audio, -1.0, 1.0)
                             _cand_goals = _normalize_goal_scores(_mg_budget.measure_all(_candidate, sr))
                             _cand_finite = [v for v in _cand_goals.values() if math.isfinite(v)]
@@ -1695,12 +2021,17 @@ class AurikDenker:
                                 1 for g, v in _cand_goals.items() if g in _critical_goals and float(v) >= 0.75
                             )
 
+                            _strict_mos = bool(_exz_recovery_profile.get("strict_mos_recovery", False))
                             _is_better = (_cand_crit > _best_crit) or (
                                 _cand_crit == _best_crit
                                 and (
                                     _cand_pass > _best_pass or (_cand_pass == _best_pass and _cand_score > _best_score)
                                 )
                             )
+                            if _strict_mos and _cand_pass == _best_pass and _cand_score >= _best_score - 1e-6:
+                                # Bei kritischem MOS erlauben wir neutralen Goal-Tradeoff,
+                                # wenn dadurch später ein stärkerer Originalanteil möglich ist.
+                                _is_better = True
                             if _is_better:
                                 _best_audio = _candidate
                                 _best_goals = dict(_cand_goals)

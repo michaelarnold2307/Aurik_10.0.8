@@ -20,11 +20,18 @@ import math
 import threading
 import time
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _load_symbol(module_name: str, symbol_name: str) -> Any:
+    """Lädt Symbole lazy, um schwere/zyklische Imports zu vermeiden."""
+    return getattr(import_module(module_name), symbol_name)
+
 
 # 32×RT-Grenze aus §9.5 / PerformanceGuard.LIMIT_3X_RT
 _3X_RT_LIMIT: float = 32.0
@@ -64,6 +71,7 @@ class StrategiePlan:
     """Hinweis auf Budget-Engpässe (Deutsch, laienverständlich)."""
 
     def as_dict(self) -> dict:
+        """Serialisiert den StrategiePlan als dict für Telemetrie/Logging."""
         return {
             "audio_duration_s": self.audio_duration_s,
             "max_processing_s": self.max_processing_s,
@@ -182,11 +190,11 @@ class StrategieDenker:
         """Instantiate or re-instantiate PerformanceGuard with given mode."""
         with self._guard_lock:
             try:
-                from backend.core.performance_guard import PerformanceGuard
+                _performance_guard_cls = _load_symbol("backend.core.performance_guard", "PerformanceGuard")
 
                 # Map string mode to QualityMode if possible
                 quality_mode_obj = self._parse_mode(mode)
-                self._guard = PerformanceGuard(
+                self._guard = _performance_guard_cls(
                     mode=quality_mode_obj,
                     enforce_limit=enforce,
                     enable_adaptive_skipping=True,
@@ -204,20 +212,20 @@ class StrategieDenker:
     def _parse_mode(mode_str: str) -> Any:
         """Konvertiert mode string to QualityMode enum value if available."""
         try:
-            from backend.core.unified_restorer_v3 import QualityMode
+            _quality_mode_cls = _load_symbol("backend.core.unified_restorer_v3", "QualityMode")
 
             _m = str(mode_str or "quality").strip().lower().replace("_", "").replace(" ", "")
             mapping = {
-                "fast": QualityMode.FAST,
-                "balanced": QualityMode.BALANCED,
-                "quality": QualityMode.QUALITY,
-                "restoration": QualityMode.QUALITY,
-                "maximum": QualityMode.MAXIMUM,
-                "studio2026": QualityMode.MAXIMUM,
-                "studio": QualityMode.MAXIMUM,
+                "fast": _quality_mode_cls.FAST,
+                "balanced": _quality_mode_cls.BALANCED,
+                "quality": _quality_mode_cls.QUALITY,
+                "restoration": _quality_mode_cls.QUALITY,
+                "maximum": _quality_mode_cls.MAXIMUM,
+                "studio2026": _quality_mode_cls.MAXIMUM,
+                "studio": _quality_mode_cls.MAXIMUM,
                 # "speed" existiert nicht im QualityMode-Enum → FAST als Fallback
             }
-            return mapping.get(_m, QualityMode.QUALITY)
+            return mapping.get(_m, _quality_mode_cls.QUALITY)
         except Exception:
             return mode_str  # PerformanceGuard handles unknown mode gracefully
 
@@ -233,6 +241,7 @@ class StrategieDenker:
         mode: str = "quality",
         enforce_3x_rt: bool = True,
         defect_severity: float = 0.0,
+        signal_signature: dict[str, float] | None = None,
     ) -> StrategiePlan:
         """Erstellt den Verarbeitungs-Strategieplan.
 
@@ -259,7 +268,8 @@ class StrategieDenker:
         max_proc = _3X_RT_LIMIT * audio_dur
         _sev = float(defect_severity) if math.isfinite(float(defect_severity)) else 0.0
         _sev = max(0.0, min(1.0, _sev))
-        chunk_s = _adaptive_chunk(audio_dur, defect_severity=_sev)
+        _effective_sev = _derive_effective_defect_severity(_sev, signal_signature)
+        chunk_s = _adaptive_chunk(audio_dur, defect_severity=_effective_sev)
 
         note = ""
         if audio_dur > 300:
@@ -277,15 +287,17 @@ class StrategieDenker:
             enforce_limit=enforce_3x_rt,
             enable_adaptive_skipping=True,
             recommended_chunk_s=chunk_s,
-            defect_severity=_sev,
+            defect_severity=_effective_sev,
             budget_note=note,
         )
         self._current_plan = plan
         logger.info(
-            "StrategieDenker: Strategieplan — Dauer=%.1fs, Budget=%.1fs, Chunk=%.1fs",
+            "StrategieDenker: Strategieplan — Dauer=%.1fs, Budget=%.1fs, Chunk=%.1fs, Sev=%.2f (base=%.2f)",
             audio_dur,
             max_proc,
             chunk_s,
+            _effective_sev,
+            _sev,
         )
         return plan
 
@@ -484,19 +496,50 @@ def _adaptive_chunk(audio_dur_s: float, defect_severity: float = 0.0) -> float:
     return float(min(max(chunk, 2.0), audio_dur_s))
 
 
+def _derive_effective_defect_severity(base_severity: float, signal_signature: dict[str, float] | None) -> float:
+    """Leitet eine signalbewusste Defektschwere für Budget-/Chunk-Planung ab."""
+    sev = float(np.clip(base_severity, 0.0, 1.0))
+    if not signal_signature:
+        return sev
+
+    crest_db = float(signal_signature.get("crest_db", 0.0))
+    transient_ratio = float(signal_signature.get("transient_ratio", 0.0))
+    micro_dynamic_db = float(signal_signature.get("micro_dynamic_db", 0.0))
+    hf_ratio = float(signal_signature.get("hf_ratio", 0.0))
+
+    # Defekt-Risiko nur nach oben korrigieren (konservativ, no-harm).
+    extra = 0.0
+    if crest_db >= 20.0:
+        extra += 0.15
+    elif crest_db >= 16.0:
+        extra += 0.08
+    if transient_ratio >= 0.012:
+        extra += 0.14
+    elif transient_ratio >= 0.006:
+        extra += 0.08
+    if micro_dynamic_db >= 14.0:
+        extra += 0.06
+    if hf_ratio >= 0.12:
+        extra += 0.05
+
+    return float(np.clip(sev + extra, 0.0, 1.0))
+
+
 # ---------------------------------------------------------------------------
 # Singleton-Accessor (§3.2 — Double-Checked Locking)
 # ---------------------------------------------------------------------------
 
-_instance: StrategieDenker | None = None
-_lock = threading.Lock()
+_SINGLETON: dict[str, StrategieDenker | None] = {"instance": None}
+_SINGLETON_LOCK = threading.Lock()
 
 
 def get_strategie_denker() -> StrategieDenker:
     """Thread-sicherer Singleton-Accessor für StrategieDenker."""
-    global _instance
+    _instance = _SINGLETON["instance"]
     if _instance is None:
-        with _lock:
+        with _SINGLETON_LOCK:
+            _instance = _SINGLETON["instance"]
             if _instance is None:
                 _instance = StrategieDenker()
+                _SINGLETON["instance"] = _instance
     return _instance

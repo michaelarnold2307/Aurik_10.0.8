@@ -259,6 +259,39 @@ class TestThresholdBehavior:
         rms_out = float(np.sqrt(np.mean(result.audio**2)))
         assert rms_out < rms_in * 0.95, "Aggressive Schwelle soll Sibilanz reduzieren"
 
+
+class TestSeverityCoupledActivation:
+    """Hohe Sibilance/Harshness darf bei niedriger PMGG-Stärke nicht wirkungslos werden."""
+
+    def test_25_high_severity_raises_control_strength(self, phase):
+        sib = _sibilant_signal(freq_hz=7_200.0)
+        result = phase.process(
+            sib,
+            SR,
+            strength=0.06,
+            phase_locality_factor=1.0,
+            defect_scores={"sibilance": 0.92, "vocal_harshness": 0.78},
+        )
+        assert result.metadata["effective_strength"] == pytest.approx(0.06, rel=0.01)
+        assert result.metadata["control_strength"] >= 0.30
+        assert result.metadata["sibilance_pressure"] >= 0.90
+        assert result.metadata["ratio"] > 1.8
+        assert result.metadata["threshold_db"] <= -24.0
+
+    def test_26_low_severity_keeps_soft_control(self, phase):
+        sib = _sibilant_signal(freq_hz=7_200.0)
+        result = phase.process(
+            sib,
+            SR,
+            strength=0.06,
+            phase_locality_factor=1.0,
+            defect_scores={"sibilance": 0.20},
+        )
+        assert result.metadata["effective_strength"] == pytest.approx(0.06, rel=0.01)
+        assert result.metadata["control_strength"] == pytest.approx(0.06, rel=0.01)
+        assert result.metadata["ratio"] < 1.3
+        assert result.metadata["threshold_db"] == pytest.approx(-20.0, abs=0.1)
+
     def test_25_metadata_threshold_matches_input(self, phase, mono):
         result = phase.process(mono, SR, threshold_db=-15.0)
         assert result.metadata["threshold_db"] == pytest.approx(-15.0)

@@ -9,6 +9,13 @@
       "title": "AurikDenker Einstieg genutzt"
     },
     {
+      "evidence": "Kein AurikDenker-Abschluss im Run-Window",
+      "id": "run_completed",
+      "passed": false,
+      "required": true,
+      "title": "AurikDenker Lauf vollst\u00e4ndig abgeschlossen"
+    },
+    {
       "evidence": "mode=restoration/studio_2026 vorhanden",
       "id": "mode_contract",
       "passed": true,
@@ -30,9 +37,9 @@
       "title": "MediumDetector im Lauf nicht mehrfach aktiv"
     },
     {
-      "evidence": "Kein Final-AFG-Eintrag",
+      "evidence": "artifact_freedom=0.950",
       "id": "artifact_gate",
-      "passed": false,
+      "passed": true,
       "required": true,
       "title": "\u00a72.49 Artifact-Freedom Gate erf\u00fcllt"
     },
@@ -65,6 +72,27 @@
       "title": "\u00a72.53 cluster_policy propagiert"
     },
     {
+      "evidence": "Finale DAG-Validierung fehlt",
+      "id": "dag_final_clean",
+      "passed": false,
+      "required": true,
+      "title": "\u00a77.5a Finale DAG-Validierung ohne Verletzung"
+    },
+    {
+      "evidence": "Phase 12 gestartet, aber low-confidence Skip erkannt",
+      "id": "phase12_effective_when_started",
+      "passed": false,
+      "required": true,
+      "title": "Phase 12 wirkt bei Ausf\u00fchrung (kein low-confidence Komplett-Skip)"
+    },
+    {
+      "evidence": "MediumDetector meldet cassette, SongCalibration nutzt tape",
+      "id": "material_specificity_guard",
+      "passed": false,
+      "required": true,
+      "title": "Material-Spezifit\u00e4t erhalten (kein cassette\u2192tape Downcast)"
+    },
+    {
       "evidence": "Kein expliziter Exzellenz-API-Hinweis im Log (inconclusive)",
       "id": "exzellenz_api_contract",
       "passed": false,
@@ -75,10 +103,10 @@
   "compliance_ok": false,
   "frontend_log": "logs/aurik_frontend.out",
   "latest_run_window": {
-    "end_line": 25882,
-    "start_line": 25876
+    "end_line": 13202,
+    "start_line": 12324
   },
-  "required_passed": 4,
-  "required_total": 9,
-  "timestamp": "2026-05-17T11:25:19.401060"
+  "required_passed": 5,
+  "required_total": 13,
+  "timestamp": "2026-05-20T13:06:07.378971"
 }

@@ -146,6 +146,88 @@ class FeaturesDict(TypedDict, total=False):
     genre: str | None
 
 
+def _extract_numeric(mapping: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    """Liest den ersten numerischen Wert aus Alias-Schlüsseln."""
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _extract_bool(mapping: dict[str, Any], keys: tuple[str, ...]) -> bool | None:
+    """Liest den ersten booleschen Wert aus Alias-Schlüsseln."""
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _build_decision_quality_payload(
+    features: dict[str, Any] | None = None,
+    vocal_quality: dict[str, Any] | None = None,
+    release_result: dict[str, Any] | None = None,
+    regression_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Erzeugt ein kanonisches Decision-Quality-Payload für den Audit-Trail."""
+    merged: dict[str, Any] = {}
+    for source in (features, vocal_quality, release_result, regression_result):
+        if isinstance(source, dict):
+            merged.update(source)
+
+    causal_credit_confidence = _extract_numeric(
+        merged,
+        (
+            "causal_credit_confidence",
+            "causal_confidence",
+            "causal_score",
+        ),
+    )
+    prior_drift_ratio = _extract_numeric(
+        merged,
+        (
+            "prior_drift_ratio",
+            "drift_ratio",
+            "learning_drift_ratio",
+        ),
+    )
+    decision_stability_score = _extract_numeric(
+        merged,
+        (
+            "decision_stability_score",
+            "stability_score",
+            "decision_consistency",
+        ),
+    )
+
+    learning_applied = _extract_bool(
+        merged,
+        (
+            "learning_applied",
+            "learn_applied",
+            "applied",
+        ),
+    )
+
+    if decision_stability_score is None and isinstance(vocal_quality, dict):
+        bool_values = [float(v) for v in vocal_quality.values() if isinstance(v, bool)]
+        if bool_values:
+            decision_stability_score = float(sum(bool_values) / max(len(bool_values), 1))
+
+    if learning_applied is None:
+        status = str((release_result or {}).get("status", "")).strip().lower()
+        status_failed = status in {"failed", "error", "blocked", "not_ready", "release_check_not_available"}
+        learning_applied = bool((causal_credit_confidence or 0.0) > 0.0 or not status_failed)
+
+    return {
+        "learning_applied": bool(learning_applied),
+        "causal_credit_confidence": float(np.clip(causal_credit_confidence or 0.0, 0.0, 1.0)),
+        "prior_drift_ratio": float(max(0.0, prior_drift_ratio or 0.0)),
+        "decision_stability_score": float(np.clip(decision_stability_score or 1.0, 0.0, 1.0)),
+    }
+
+
 class ChainAuthenticityChecker:
     """
     SOTA ChainAuthenticityChecker: Prüft DSP-Ketten auf Authentizität und dokumentiert im Audit-Log.
@@ -176,6 +258,7 @@ class ChainAuthenticityChecker:
                     "chain_check": details,
                     "dsp_chain": dsp_chain,
                     "media_history": media_history,
+                    "decision_quality": _build_decision_quality_payload(),
                 }
             )
             with open(audit_path, "w") as f:
@@ -239,6 +322,7 @@ class VocalQualityChecker:
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "vocal_quality_check": results,
                     "scores": scores,
+                    "decision_quality": _build_decision_quality_payload(features=scores, vocal_quality=results),
                 }
             )
             with open(audit_path, "w") as f:
@@ -414,6 +498,12 @@ class PolicyEngine:
             [d.__class__.__name__ for d in dsp_chain], media_history or {}
         )
         vocal_quality_result = self.vocal_quality_checker.check(features)
+        decision_quality_result = _build_decision_quality_payload(
+            features=features,
+            vocal_quality=vocal_quality_result,
+            release_result=release_result if isinstance(release_result, dict) else None,
+            regression_result=regression_result if isinstance(regression_result, dict) else None,
+        )
         # Audit-Log mit Exzellenz-Metriken und Tonträgeranzeige
         try:
             import json
@@ -439,6 +529,7 @@ class PolicyEngine:
                     "user_feedback_result": user_feedback_result,
                     "chain_authenticity": chain_auth_result,
                     "vocal_quality": vocal_quality_result,
+                    "decision_quality": decision_quality_result,
                     "detected_media": detected_media,
                 }
             )
@@ -450,6 +541,7 @@ class PolicyEngine:
         return {
             "quality_passed": quality_results.get("voice_match", True),
             "vocal_quality": vocal_quality_result,
+            "decision_quality": decision_quality_result,
             "chain_authenticity": chain_auth_result,
             "feedback_optimizer": feedback_result,
             "regression_monitor": regression_result,

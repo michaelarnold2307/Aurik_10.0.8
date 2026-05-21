@@ -532,9 +532,9 @@ class TestPerformance:
         for _ in range(10):
             calculator.compute_all(audio)
 
-        # Verify we can obtain a result object and it is a dict
+        # Verify we can obtain a valid result object after repeated calls.
         res = calculator.compute_all(audio)
-        assert isinstance(res, dict)
+        assert isinstance(res, ComprehensiveMetricsResult)
 
 
 # ============================================================

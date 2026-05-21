@@ -38,6 +38,11 @@ MEM_KB=$(( MEM_GB * 1024 * 1024 ))
 LOG_FILE="${AURIK_LOG_FILE:-${SCRIPT_DIR}/logs/pytest_safe.log}"
 RSS_LIMIT_MB="${AURIK_TEST_RSS_LIMIT_MB:-$(( MEM_GB * 1024 * 85 / 100 ))}"
 
+# Robuste Terminal-Capability-Umgebung fuer Snap/VS-Code-Subprozesse
+export TERM="${TERM:-xterm-256color}"
+export TERMINFO="${TERMINFO:-/usr/share/terminfo}"
+export TERMINFO_DIRS="${TERMINFO_DIRS:-/usr/share/terminfo:/lib/terminfo:/etc/terminfo}"
+
 # Konftest-Watchdog-Limit aus Speicher-Cap ableiten (85 % des Caps)
 export AURIK_TEST_RSS_LIMIT_MB="$RSS_LIMIT_MB"
 
@@ -71,6 +76,9 @@ if [[ "$_SYSTEMD_OK" -eq 1 ]]; then
         --scope \
         --collect \
         --quiet \
+        --setenv=TERM="$TERM" \
+        --setenv=TERMINFO="$TERMINFO" \
+        --setenv=TERMINFO_DIRS="$TERMINFO_DIRS" \
         -p "MemoryMax=${MEM_GB}G" \
         -p "MemorySwapMax=512M" \
         -p "CPUWeight=50" \

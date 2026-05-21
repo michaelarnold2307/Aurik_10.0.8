@@ -32,6 +32,7 @@ from denker.phase_interaction_denker import (
     _PHASE_SEMANTICS,
     PhaseInteractionDenker,
     PhasePlan,
+    _goal_risk_threshold_from_signal,
     get_phase_interaction_denker,
 )
 
@@ -424,3 +425,28 @@ def test_no_self_referential_order_constraint() -> None:
     """Kein Constraint (A, A) — wäre ein Deadlock."""
     for before, after in _ORDER_CONSTRAINTS:
         assert before != after, f"Selbstreferenz in ORDER_CONSTRAINTS: {before}"
+
+
+def test_goal_risk_threshold_from_signal_lowers_for_risky_signature() -> None:
+    base_like = _goal_risk_threshold_from_signal(None, restorability_score=70.0)
+    risky = _goal_risk_threshold_from_signal(
+        {"transient_ratio": 0.02, "crest_db": 20.0, "hf_ratio": 0.15},
+        restorability_score=35.0,
+    )
+    assert risky < base_like
+
+
+def test_plan_signal_signature_injects_transient_and_deesser_phase(denker: PhaseInteractionDenker) -> None:
+    dr = _fake_defect_result()
+    phases = ["phase_03_denoise"]
+    with patch.object(denker, "_select_via_uv3", return_value=phases):
+        plan = denker.plan(
+            defect_result=dr,
+            material="vinyl",
+            mode="restoration",
+            signal_signature={"transient_ratio": 0.02, "hf_ratio": 0.14},
+        )
+
+    assert plan.is_valid
+    assert "phase_08_transient_preservation" in plan.phases
+    assert "phase_19_de_esser" in plan.phases

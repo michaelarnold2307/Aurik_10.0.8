@@ -83,6 +83,7 @@ from scipy import signal
 from backend.core.audio_utils import to_channels_last
 from backend.core.defect_scanner import MaterialType
 from backend.core.dsp.deesser_intelligibility import assess_deesser_intelligibility_preservation
+from backend.core.dsp.deesser_intensity import compute_optimal_deesser_intensity
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
@@ -679,12 +680,30 @@ class DeEsserPhase(PhaseInterface):
                 logger.debug("SNR-Referenzmessung fehlgeschlagen, Skip: %s", _snr_ref_exc)
 
         band_weights = self.BAND_WEIGHTS.get(material, {"low": 0.6, "mid": 0.7, "high": 0.8})
+        _s_band_low, _s_band_high = self.vocal_profile.get("s_band", (5000.0, 10000.0))
+        _defect_scores_for_intensity = kwargs.get("defect_scores_raw", kwargs.get("defect_scores", {}))
+        _ptl_19_hint = kwargs.get("phoneme_timeline")
 
-        # Gender-adaptive max_reduction (Profil überschreibt Material, wenn stärker)
+        # Material/Gender-Basis: zwischen sanftem und assertivem Profil interpolieren,
+        # statt pauschal den sanfteren Wert zu erzwingen.
         material_max_reduction_db = self.MAX_REDUCTION_DB.get(material, -6.0)
         gender_max_reduction_db = self.vocal_profile.get("max_depth_db", -3.5)
-        max_reduction_db = max(material_max_reduction_db, gender_max_reduction_db)  # Sanftere gewinnt
-        max_reduction_db = float(max_reduction_db * _effective_strength)
+        _gentle_abs = abs(max(material_max_reduction_db, gender_max_reduction_db))
+        _assertive_abs = abs(min(material_max_reduction_db, gender_max_reduction_db))
+        _intensity_profile = compute_optimal_deesser_intensity(
+            enhanced_audio,
+            sample_rate,
+            effective_strength=_effective_strength,
+            defect_scores=_defect_scores_for_intensity,
+            fricative_snr_db=_snr_ref,
+            breathiness=self.stats.get("breathiness_ratio", 0.0),
+            freq_low=float(_s_band_low),
+            freq_high=float(_s_band_high),
+            language_hint=str(kwargs.get("language", getattr(_ptl_19_hint, "language", "")) or ""),
+            phoneme_timeline=_ptl_19_hint,
+        )
+        _target_abs = float(_gentle_abs + _intensity_profile.reduction_mix * (_assertive_abs - _gentle_abs))
+        max_reduction_db = float(-_target_abs * _effective_strength)
 
         # §2.20 Genre-adaptive de-essing cap: genre_profile.deessing_strength_cap
         # limits how aggressive de-essing can be (e.g. Schlager 0.45, Oper 0.35).
@@ -711,7 +730,9 @@ class DeEsserPhase(PhaseInterface):
                 max_reduction_db,
             )
 
-        threshold_ratio = self.SIBILANCE_THRESHOLD_RATIO.get(material, 1.8)
+        threshold_ratio = float(
+            self.SIBILANCE_THRESHOLD_RATIO.get(material, 1.8) * _intensity_profile.threshold_ratio_scale
+        )
 
         if abs(max_reduction_db) < 1.0:
             logger.debug("De-Esser skipped (max_reduction=%.1f dB < 1.0 dB)", max_reduction_db)
@@ -1086,6 +1107,11 @@ class DeEsserPhase(PhaseInterface):
                 "sibilant_types": self.stats["sibilant_types_detected"],
                 "max_reduction_db": max_reduction_db,
                 "threshold_ratio": threshold_ratio,
+                "deesser_intensity": _intensity_profile.intensity,
+                "affricate_drive": _intensity_profile.affricate_drive,
+                "phoneme_drive": _intensity_profile.phoneme_drive,
+                "sibilance_ratio": _intensity_profile.sibilance_ratio,
+                "fricative_drive": _intensity_profile.fricative_drive,
                 # Stage 8: Preservation
                 "intelligibility_protected": self.stats["intelligibility_protected"],
                 "intelligibility_score": round(self.stats.get("intelligibility_score", 1.0), 4),
@@ -1113,6 +1139,8 @@ class DeEsserPhase(PhaseInterface):
                 "sibilance_energy_before": float(sibilance_energy_before),
                 "sibilance_energy_after": float(sibilance_energy_after),
                 "max_gain_reduction_db": float(self.stats["max_gain_reduction_db"]),
+                "deesser_intensity": float(_intensity_profile.intensity),
+                "phoneme_drive": float(_intensity_profile.phoneme_drive),
                 "hf_loss_ratio": float(hf_loss_ratio),
                 "intelligibility_score": float(self.stats.get("intelligibility_score", 1.0)),
                 "intelligibility_presence_ratio": float(self.stats.get("intelligibility_presence_ratio", 1.0)),

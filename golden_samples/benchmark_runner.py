@@ -20,6 +20,8 @@ Autor: AI Team
 Datum: 11. Februar 2026
 """
 
+import argparse
+import importlib
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -114,7 +116,7 @@ class GoldenSampleBenchmarkRunner:
         if not metadata_path.exists():
             raise FileNotFoundError(f"metadata.json not found: {metadata_path}")
 
-        with open(metadata_path, 'r') as f:
+        with open(metadata_path, "r", encoding="utf-8") as f:
             self.metadata = json.load(f)
 
         # Initialize quality checker
@@ -130,9 +132,10 @@ class GoldenSampleBenchmarkRunner:
             self.quality_gate = None
 
         logger.info(
-            f"BenchmarkRunner initialized: {len(self.metadata['golden_samples'])} samples, "
-            f"mode={processing_mode.value}, "
-            f"perceptual={enable_perceptual_metrics}"
+            "BenchmarkRunner initialized: %d samples, mode=%s, perceptual=%s",
+            len(self.metadata["golden_samples"]),
+            processing_mode.value,
+            enable_perceptual_metrics,
         )
 
     def run_benchmark(
@@ -163,31 +166,33 @@ class GoldenSampleBenchmarkRunner:
         if max_samples:
             samples = samples[:max_samples]
 
-        logger.info(f"Running benchmark on {len(samples)} samples...")
+        logger.info("Running benchmark on %d samples...", len(samples))
 
         results = []
 
         for i, sample_meta in enumerate(samples, 1):
-            logger.info(f"[{i}/{len(samples)}] Processing {sample_meta['filename']}...")
+            logger.info("[%d/%d] Processing %s...", i, len(samples), sample_meta["filename"])
 
             try:
                 result = self._benchmark_sample(sample_meta, processing_function)
                 results.append(result)
+                avg_improvement = np.mean(list(result.improvements.values())) if result.improvements else 0.0
 
                 logger.info(
-                    f"  Result: passed={result.passed}, "
-                    f"avg_improvement={np.mean(list(result.improvements.values())):.3f}, "
-                    f"time={result.processing_time_s:.2f}s"
+                    "  Result: passed=%s, avg_improvement=%.3f, time=%.2fs",
+                    result.passed,
+                    avg_improvement,
+                    result.processing_time_s,
                 )
 
             except Exception as e:
-                logger.error(f"  Failed to benchmark {sample_meta['filename']}: {e}")
+                logger.error("  Failed to benchmark %s: %s", sample_meta["filename"], e)
                 continue
 
         # Generate summary
         summary = self._generate_summary(results)
 
-        logger.info(f"\n✓ Benchmark complete: {summary.passed}/{summary.total_samples} passed")
+        logger.info("\n✓ Benchmark complete: %d/%d passed", summary.passed, summary.total_samples)
 
         return results, summary
 
@@ -223,7 +228,7 @@ class GoldenSampleBenchmarkRunner:
         improvements = {}
         degradations = {}
 
-        for goal in achieved_scores.keys():
+        for goal in achieved_scores:
             baseline = baseline_scores.get(goal, 0.0)
             achieved = achieved_scores[goal]
             delta = achieved - baseline
@@ -400,10 +405,10 @@ class GoldenSampleBenchmarkRunner:
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, 'w') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
 
-        logger.info(f"✓ Benchmark report exported: {output_path}")
+        logger.info("✓ Benchmark report exported: %s", output_path)
 
     def print_summary(self, summary: BenchmarkSummary) -> None:
         """Print summary to console."""
@@ -436,8 +441,6 @@ class GoldenSampleBenchmarkRunner:
 
 def main():
     """Run golden sample benchmark."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run golden sample benchmark")
     parser.add_argument(
         "--golden-samples",
@@ -509,11 +512,9 @@ def main():
     processing_fn: Optional[Callable[[np.ndarray, int], np.ndarray]] = None
     if args.process:
         try:
-            import numpy as _np
+            _restauriere = getattr(importlib.import_module("denker"), "restauriere")
 
-            from denker import restauriere as _restauriere
-
-            def _aurik_processing_fn(audio: _np.ndarray, sr: int) -> _np.ndarray:
+            def _aurik_processing_fn(audio: np.ndarray, sr: int) -> np.ndarray:
                 """Aurik-Restaurierung als Benchmark-Processing-Funktion."""
                 try:
                     result = _restauriere(audio, sr=sr)
