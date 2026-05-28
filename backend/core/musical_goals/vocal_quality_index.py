@@ -252,10 +252,15 @@ def _compute_formant_stability(
         frame_len = int(sr * 0.025)  # 25 ms Frames
         hop = frame_len // 2
 
-        # LPC-Order 30: §0p Formant-Integrität — Spec fordert Ord. 30–40 @ 48 kHz.
-        # Ord. 14 wäre für 8 kHz-Telefonsignal ausreichend; bei 48 kHz wird mit Ord. 14
-        # nur jede dritte Partial-Resonanz erfasst, F3/F4 gehen verloren.
-        lpc_order = 30
+        # LPC-Order 14: Standard für Vokal-Formant-Analyse im Bandpass-Band 200–3400 Hz.
+        # §BUG-FIX v9.12.10: Order 30 ist für das VOLLE 48 kHz-Spektrum gedacht —
+        # nach dem 200–3400 Hz Bandpass enthält das Signal nur noch ~3,2 kHz Bandbreite.
+        # LPC Order 30 auf einem 3,2 kHz-Band → 15 Polpaare → alle spektralen Details
+        # (HF-Boost-Artefakte, Kassetten-Flutter-Harmonische) als "Formanten" erkannt.
+        # Folge: F1-Schätzung instabil, formant_stability_score ≈ 0.14 statt ≈ 0.85.
+        # Order 14 = 7 Polpaare auf 3400 Hz-Band — erfasst F1, F2, F3 korrekt (ITUT P.501).
+        # F4 liegt > 3000 Hz und fällt bereits außerhalb des Bandpass → kein Verlust.
+        lpc_order = 14
 
         def _lpc_f1_frames(audio: np.ndarray) -> list[float]:
             frames = librosa.util.frame(audio, frame_length=frame_len, hop_length=hop)

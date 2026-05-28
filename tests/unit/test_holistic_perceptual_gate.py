@@ -658,3 +658,214 @@ def test_45_genre_material_era_in_detail():
     assert result.detail.get("genre") == "schlager"
     assert result.detail.get("material") == "vinyl_std"
     assert result.detail.get("era_bin") == "1960-1990"
+
+
+# ── §2.44 BW-Ceiling-Guard ─────────────────────────────────────────────────
+
+
+def test_46_bw_ceiling_dict_contains_cassette():
+    """_MATERIAL_BW_CEILING_HZ muss 'cassette' mit 12000 Hz enthalten (IEC 60094-1)."""
+    from backend.core.holistic_perceptual_gate import _MATERIAL_BW_CEILING_HZ
+
+    assert "cassette" in _MATERIAL_BW_CEILING_HZ
+    assert _MATERIAL_BW_CEILING_HZ["cassette"] == 12000
+
+
+def test_47_bw_ceiling_dict_contains_all_material_types():
+    """_MATERIAL_BW_CEILING_HZ muss alle kanonischen Material-Typen enthalten."""
+    from backend.core.holistic_perceptual_gate import _MATERIAL_BW_CEILING_HZ
+
+    required = {
+        "shellac",
+        "wax_cylinder",
+        "lacquer_disc",
+        "wire_recording",
+        "vinyl",
+        "tape",
+        "reel_tape",
+        "cassette",
+        "cd_digital",
+        "dat",
+        "md",
+        "mp3_low",
+        "mp3_high",
+        "aac",
+        "unknown",
+    }
+    missing = required - set(_MATERIAL_BW_CEILING_HZ.keys())
+    assert not missing, f"Fehlende Material-Typen in _MATERIAL_BW_CEILING_HZ: {missing}"
+
+
+def test_48_spectral_proxy_bw_ceiling_limits_comparison():
+    """BW-Ceiling-Guard: Spectral-Proxy mit ceiling=8000 Hz soll BW-Erweiterung nicht bestrafen.
+
+    Aufbau:
+     - original: 440 Hz Sinus (Energie nur im Bassbereich)
+     - restored: original + synthetisierter 14 kHz Ton (AudioSR-Simulation)
+     - Mit ceiling=8000 Hz: Proxy vergleicht nur 0–8 kHz → Similarity ≈ 1.0
+     - Ohne ceiling (full-band): 14 kHz-Energie macht restored anders → niedrigere Similarity
+    """
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 2.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    # Original: 440 Hz Ton (typisch für Vokalinhalt)
+    original = (0.4 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    # Restored: Original + 14 kHz Syntheseinhalt (AudioSR über Kassetten-Ceiling)
+    restored = original + 0.3 * np.sin(2 * np.pi * 14000.0 * t).astype(np.float32)
+
+    sim_full = gate._compute_mert_similarity_spectral_proxy(original, restored, SR)
+    sim_ceil = gate._compute_mert_similarity_spectral_proxy(original, restored, SR, bw_ceiling_hz=8000)
+
+    # Mit BW-Ceiling muss Similarity HÖHER sein als ohne (14 kHz ignoriert)
+    assert sim_ceil > sim_full, (
+        f"BW-Ceiling-Guard unwirksam: sim_ceil={sim_ceil:.3f} ≤ sim_full={sim_full:.3f} — "
+        "BW-Erweiterung wird auch mit Ceiling bestraft (§2.44 BW-Ceiling-Guard)"
+    )
+    # Mit Ceiling: 14 kHz komplett außerhalb → Similarity nahe 1.0 (nur 440 Hz verglichen)
+    assert sim_ceil >= 0.90, f"Mit BW-Ceiling sollte Similarity ≥ 0.90 sein, got {sim_ceil:.3f}"
+
+
+def test_49_spectral_proxy_no_ceiling_penalizes_hf_extension():
+    """Ohne BW-Ceiling: 14 kHz Extrasignal senkt Spectral-Proxy-Similarity."""
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 2.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    original = (0.4 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    restored = original + 0.3 * np.sin(2 * np.pi * 14000.0 * t).astype(np.float32)
+
+    sim_no_ceil = gate._compute_mert_similarity_spectral_proxy(original, restored, SR)
+    sim_identical = gate._compute_mert_similarity_spectral_proxy(original, original, SR)
+
+    assert sim_no_ceil < sim_identical, (
+        "14 kHz-Zusatzinhalt soll Spectral-Proxy ohne Ceiling absenken "
+        f"(sim_no_ceil={sim_no_ceil:.3f} vs. sim_identical={sim_identical:.3f})"
+    )
+
+
+def test_50_evaluate_restoration_cassette_passes_bw_ceiling():
+    """evaluate_restoration mit material='cassette' soll BW-Ceiling korrekt anwenden.
+
+    Simuliert: original (Kassetten-Tier, kein HF), restored mit AudioSR-Extension (14 kHz).
+    HPI muss > 0 bleiben (BW-Extension ist kein Qualitätsverlust).
+    """
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 2.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    original = (0.4 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    restored = original + 0.2 * np.sin(2 * np.pi * 14000.0 * t).astype(np.float32)
+
+    result = gate.evaluate_restoration(
+        original,
+        restored,
+        SR,
+        artifact_freedom=0.98,
+        material="cassette",
+        restorability_score=55.0,
+    )
+    # Muss passieren — BW-Extension ist kein Defekt
+    assert result.hpi > 0, f"HPI={result.hpi:.4f} — BW-Erweiterung auf Kassette darf HPI nicht auf ≤ 0 senken"
+
+
+# ---------------------------------------------------------------------------
+# test_51–53: mel-Embedding BW-Ceiling-Guard (v9.12.10) — _compute_embedding
+# §2.44: AudioSR-synthetisierter HF-Content darf timbral_input nicht verfälschen.
+# ---------------------------------------------------------------------------
+
+
+def test_51_embedding_bw_ceiling_limits_hf_bins():
+    """_compute_embedding mit bw_ceiling_hz erzeugt anderes Embedding als ohne Ceiling.
+
+    Für Audio mit Energie ausschließlich bei 14 kHz:
+    - Ohne Ceiling: signifikante Energie in hohen Mel-Bins
+    - Mit Ceiling=8000: alle hohen Mel-Bins = 0 → anderes Embedding
+    """
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 1.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    # Ton NUR bei 14 kHz (oberhalb 8 kHz Ceiling)
+    audio_hf = (0.5 * np.sin(2 * np.pi * 14_000.0 * t)).astype(np.float32)
+
+    embed_full = gate._compute_embedding(audio_hf, SR)
+    embed_ceil = gate._compute_embedding(audio_hf, SR, bw_ceiling_hz=8000)
+
+    # Mit Ceiling muss der Inhalt unsichtbar sein → niedrige Norm (fast Nullvektor)
+    # → Norm des gemittelten Embeddings nahe 0 (log1p(0)=0, dann normiert auf 1-Vektor)
+    # Aber: norm nach Normierung = 1 immer; stattdessen prüfen ob Embeddings verschieden sind
+    sim = float(np.dot(embed_full, embed_ceil))
+    assert sim < 0.98, (
+        f"Embedding mit und ohne BW-Ceiling für reinen 14-kHz-Ton muss verschieden sein "
+        f"(cos_sim={sim:.4f} ≥ 0.98 — BW-Ceiling hat keine Wirkung)"
+    )
+
+
+def test_52_timbral_fidelity_bw_ceiling_higher_similarity():
+    """BW-Ceiling erhöht timbral_fidelity wenn original kein HF hat, restored HF-Extension hat.
+
+    Szenario: Kassetten-Restaurierung mit AudioSR (12 kHz → 22 kHz Extension).
+    - Ohne Ceiling: Cosinus-Ähnlichkeit sinkt wegen HF-Divergenz (Reference Paradox)
+    - Mit Ceiling=12000: HF-Anteil ignoriert → höhere Ähnlichkeit
+    """
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 2.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    original = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    # Restored: original + starker HF-Ton bei 15 kHz (AudioSR-Synthetik)
+    restored_with_hf = (original + 0.6 * np.sin(2 * np.pi * 15_000.0 * t)).astype(np.float32)
+
+    sim_full = gate._compute_timbral_fidelity(original, restored_with_hf, SR)
+    sim_ceil = gate._compute_timbral_fidelity(original, restored_with_hf, SR, bw_ceiling_hz=12_000)
+
+    assert sim_ceil > sim_full, (
+        f"BW-Ceiling (12 kHz) muss höhere Ähnlichkeit liefern als voller Spektralvergleich "
+        f"bei HF-Extension: sim_ceil={sim_ceil:.4f} soll > sim_full={sim_full:.4f}"
+    )
+
+
+def test_53_evaluate_restoration_cassette_timbral_bw_ceiling_passed():
+    """evaluate_restoration leitet BW-Ceiling korrekt an _compute_timbral_fidelity weiter.
+
+    Prüft indirekt: HPI für cassette mit HF-Extension ist höher als ohne material-spezifische
+    Ceiling (d.h. evaluate_restoration nutzt material='cassette' → bw_ceiling=12000 →
+    timbral_input ist größer → HPI ist größer als bei material='digital').
+    """
+    from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
+
+    gate = HolisticPerceptualGate()
+    dur = 2.0
+    t = np.linspace(0, dur, int(dur * SR), endpoint=False, dtype=np.float32)
+    original = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    restored = (original + 0.5 * np.sin(2 * np.pi * 15_000.0 * t)).astype(np.float32)
+
+    result_cassette = gate.evaluate_restoration(
+        original,
+        restored,
+        SR,
+        artifact_freedom=0.99,
+        material="cassette",
+        restorability_score=55.0,
+    )
+    result_digital = gate.evaluate_restoration(
+        original,
+        restored,
+        SR,
+        artifact_freedom=0.99,
+        material="cd_digital",
+        restorability_score=55.0,
+    )
+
+    # Kassette mit BW-Ceiling muss höheren oder gleichen HPI liefern als Vollband-Vergleich
+    # (digital = 22050 Hz ceiling → kein Unterschied zum alten Code für digital)
+    assert result_cassette.hpi >= result_digital.hpi - 0.01, (
+        f"Kassetten-BW-Ceiling soll HPI nicht verschlechtern vs digital: "
+        f"cassette.hpi={result_cassette.hpi:.4f} vs digital.hpi={result_digital.hpi:.4f}"
+    )

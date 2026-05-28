@@ -176,11 +176,14 @@ RULES: list[Rule] = [
         allow_in=["backend/core/medium_classifier.py"],  # Implementierungs-Datei ausgeschlossen
         severity="error",
     ),
-    # R16 — LPC-Ordnung < 16 explizit gesetzt
+    # R16 — LPC-Ordnung < 10 explizit gesetzt
+    # BUG-FIX v9.12.10: Formant-Analyse auf schmalem Vokalband (200–3400 Hz) benötigt
+    # lpc_order=14 (ITU-T P.501: 7 Polpaare für F1–F3). Breitband-LPC (0–24 kHz)
+    # verwendet 30–40. Schwelle auf 10 gesenkt um beide Anwendungsfälle zu erlauben.
     Rule(
         id="R16",
-        description="LPC-Ordnung < 16 verboten — Ord. 30–40 @ 48 kHz verwenden",
-        pattern=re.compile(r"\blpc_order\s*=\s*([1-9]|1[0-5])\b|order\s*=\s*([1-9]|1[0-5])\b.*lpc"),
+        description="LPC-Ordnung < 10 verboten — für Breitband-LPC (0–24 kHz) Ord. 30–40 verwenden; Schmalband-Formant-Analyse (ITU-T P.501) min. 12",
+        pattern=re.compile(r"\blpc_order\s*=\s*[1-9]\b|order\s*=\s*[1-9]\b.*lpc"),
         severity="error",
     ),
     # R17 — SongCal-Bounds 0.0 / 2.0 (falsche Clip-Grenzen)

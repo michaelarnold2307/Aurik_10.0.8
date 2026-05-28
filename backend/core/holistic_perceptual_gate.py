@@ -32,6 +32,29 @@ logger = logging.getLogger(__name__)
 _EMA_ALPHA: float = 0.15
 _MIN_OBS_CALIBRATED: int = 3  # < 3 obs → Bootstrap mit erhöhter Unsicherheit
 
+# ── Material-native BW-Ceiling für MERT-Spectral-Proxy (§2.44 BW-Ceiling-Guard) ──────────────
+# Quelle: IEC 60094-1 (Kassette), DIN 45511 (Analogband), RIAA-Spec (Vinyl), CD-Standard.
+# Werte gelten für das ORIGINAL-Signal ohne BW-Erweiterung; nach AudioSR (phase_06) kann
+# das restaurierte Signal über diesen Wert hinausgehende Energie enthalten —
+# Spectral-Proxy darf diese Energie NICHT als Divergenz bestrafen (Reference Paradox §0d).
+_MATERIAL_BW_CEILING_HZ: dict[str, int] = {
+    "shellac": 6000,  # Frühe elektr. Aufnahmen, Horncharakteristik ≤ 6 kHz
+    "wax_cylinder": 4000,  # Wachswalze (akustisches Richtrohr)
+    "lacquer_disc": 8000,  # Lackfolie (direktschnitt)
+    "wire_recording": 5000,  # Drahtaufnahme (Magnetdraht)
+    "vinyl": 20000,  # Vinyl-Pressungen — voller Bereich; keine Einschränkung
+    "tape": 15000,  # Analogband, beste Bedingungen (DIN 45511)
+    "reel_tape": 15000,  # Tonband/Spule (identisch)
+    "cassette": 12000,  # Kassette Type I IEC 60094-1 bei 4,75 cm/s
+    "cd_digital": 22050,  # CD-Nyquist
+    "dat": 22050,  # DAT-Nyquist
+    "md": 20000,  # MiniDisc ATRAC
+    "mp3_low": 12000,  # ≤ 128 kbps — psychoakust. HF-Cutoff
+    "mp3_high": 16000,  # 320 kbps
+    "aac": 18000,  # AAC HE/LC typisch
+    "unknown": 22050,  # keine Einschränkung
+}
+
 # ── Singleton ──────────────────────────────────────────────────────────────
 _instance: HolisticPerceptualGate | None = None
 _lock = threading.Lock()
@@ -121,7 +144,12 @@ class HolisticPerceptualGate:
         self._mert_proxy_used = False  # reset per evaluation
         _reference_audio = reference_audio if reference_audio is not None else original
         _reference_mode = "best_carrier_checkpoint" if reference_audio is not None else "degraded_input"
-        mert_sim = self._compute_mert_similarity(_reference_audio, restored, sr)
+        # §2.44 BW-Ceiling-Guard: MERT-Spectral-Proxy darf absichtliche BW-Erweiterung
+        # (AudioSR phase_06 auf Kassette/Shellac) nicht als Spektral-Divergenz werten.
+        # Material-BW-Ceiling wird als Frequenz-Obergrenze in den Spectral-Proxy übergeben.
+        _mat_key_mert = str(material).lower().replace(" ", "_")
+        _bw_ceiling_hz = _MATERIAL_BW_CEILING_HZ.get(_mat_key_mert, _MATERIAL_BW_CEILING_HZ["unknown"])
+        mert_sim = self._compute_mert_similarity(_reference_audio, restored, sr, bw_ceiling_hz=_bw_ceiling_hz)
         # §2.44 [BUG-FIX v9.12.0]: MERT-Floor verhindert HPI-Kollaps auf 0 bei MERT-Ausfall.
         mert_sim = max(float(mert_sim), 0.5)
 
@@ -136,7 +164,9 @@ class HolisticPerceptualGate:
             timbral_ref = self._compute_directional_restoration_quality(original, restored, sr)
 
         # timbral_input als Content-Integrity-Anteil (für Logging und niedrige Restorability)
-        timbral_input = self._compute_timbral_fidelity(_reference_audio, restored, sr)
+        # §2.44 BW-Ceiling-Guard (v9.12.10): mel-Vergleich auf material-native BW begrenzen
+        # → AudioSR-synthetisierter HF-Content bestraft timbral_input nicht mehr.
+        timbral_input = self._compute_timbral_fidelity(_reference_audio, restored, sr, bw_ceiling_hz=_bw_ceiling_hz)
 
         # §2.44 Restorability-dependent weights — Referenz/Direktional dominiert stets
         if restorability_score > 70.0:
@@ -387,8 +417,20 @@ class HolisticPerceptualGate:
         # Stufe 5: Kein Referenz-Vektor
         return None
 
-    def _compute_embedding(self, audio: np.ndarray, sr: int) -> np.ndarray:
-        """Berechnet spectral embedding (mel-energy vector) as MERT-proxy."""
+    def _compute_embedding(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        bw_ceiling_hz: int | None = None,
+    ) -> np.ndarray:
+        """Berechnet spectral embedding (mel-energy vector) as MERT-proxy.
+
+        §2.44 BW-Ceiling-Guard (v9.12.10): Wenn bw_ceiling_hz gesetzt ist, wird das
+        Mel-Filterbank auf diesen Frequenzbereich begrenzt. Verhindert, dass
+        AudioSR-synthetisierter HF-Content (z.B. 12–22 kHz für Kassette) beim
+        timbral_input-Vergleich fälschlicherweise die Cosinus-Ähnlichkeit reduziert
+        (Reference Paradox, §0d).
+        """
         mono = audio if audio.ndim == 1 else np.mean(audio, axis=0)
         n_samples = len(mono)
         if n_samples < 2048:
@@ -400,8 +442,13 @@ class HolisticPerceptualGate:
         n_frames = min(200, max(1, (n_samples - n_fft) // hop))
         win = np.hanning(n_fft).astype(np.float32)
 
+        # §2.44 BW-Ceiling-Guard: obere Mel-Grenze auf material-native BW begrenzen.
+        _mel_f_max = float(sr) / 2.0
+        if bw_ceiling_hz is not None and int(bw_ceiling_hz) < int(sr // 2):
+            _mel_f_max = float(max(4000, int(bw_ceiling_hz)))
+
         # Mel filterbank
-        mel_freqs = np.linspace(0, 2595 * np.log10(1 + (sr / 2.0) / 700.0), n_mels + 2)
+        mel_freqs = np.linspace(0, 2595 * np.log10(1 + _mel_f_max / 700.0), n_mels + 2)
         hz_freqs = 700.0 * (10.0 ** (mel_freqs / 2595.0) - 1.0)
         bin_freqs = np.clip(np.floor((n_fft + 1) * hz_freqs / sr).astype(int), 0, n_fft // 2)
         filterbank = np.zeros((n_mels, n_fft // 2 + 1), dtype=np.float32)
@@ -523,6 +570,7 @@ class HolisticPerceptualGate:
         original: np.ndarray,
         restored: np.ndarray,
         sr: int,
+        bw_ceiling_hz: int | None = None,
     ) -> float:
         """Compute musical quality coefficient for HPI.
 
@@ -530,6 +578,11 @@ class HolisticPerceptualGate:
         Primary path: VERSA MOS auf restoreriertem Audio (referenzfrei, kein Referenz-Paradoxon).
         Fallback path 1: MERT plugin similarity (proxy, setzt self._mert_proxy_used=True).
         Fallback path 2: spectral correlation proxy (artifact-safe).
+
+        bw_ceiling_hz: Material-native BW-Grenze (Hz) für Spectral-Proxy-Fallback.
+            Wenn gesetzt, wird der Frequenzvergleich auf [0, bw_ceiling_hz] begrenzt,
+            damit absichtliche BW-Erweiterung (AudioSR phase_06) nicht als Divergenz
+            gewertet wird (§2.44 BW-Ceiling-Guard, Reference Paradox §0d).
         """
         orig_clean = np.nan_to_num(original.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         rest_clean = np.nan_to_num(restored.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
@@ -604,7 +657,9 @@ class HolisticPerceptualGate:
                 # §2.44 Blend: 65% Plugin-Score + 35% Spektral-Proxy.
                 # min() war zu konservativ und zog valide Ergebnisse systematisch nach unten
                 # (proxy ~0.7 bei Breitband-Änderungen → false rollback auch bei plugin=0.95).
-                proxy_sim = self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr)
+                proxy_sim = self._compute_mert_similarity_spectral_proxy(
+                    orig_clean, rest_clean, sr, bw_ceiling_hz=bw_ceiling_hz
+                )
                 sim = 0.65 * float(plugin_sim) + 0.35 * float(proxy_sim)
                 return float(np.clip(sim, 0.0, 1.0))
             except Exception as exc:
@@ -613,15 +668,22 @@ class HolisticPerceptualGate:
                 self._mert_path_disabled = True
 
         # Failure-safe spectral proxy fallback.
-        return self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr)
+        return self._compute_mert_similarity_spectral_proxy(orig_clean, rest_clean, sr, bw_ceiling_hz=bw_ceiling_hz)
 
     def _compute_mert_similarity_spectral_proxy(
         self,
         original: np.ndarray,
         restored: np.ndarray,
-        sr: int,  # pylint: disable=unused-argument
+        sr: int,
+        bw_ceiling_hz: int | None = None,
     ) -> float:
-        """Spectral proxy for musical similarity when MERT plugin is unavailable."""
+        """Spectral proxy for musical similarity when MERT plugin is unavailable.
+
+        bw_ceiling_hz: Wenn gesetzt, wird der Cosine-Vergleich auf Frequenzbins
+            ≤ bw_ceiling_hz beschränkt. BW-Erweiterung über das Material-Ceiling
+            (AudioSR für Kassette/Shellac) erscheint als Divergenz im vollen Spektrum,
+            obwohl sie eine gewollte Restaurierungsleistung ist (§2.44 BW-Ceiling-Guard).
+        """
         orig_mono = original if original.ndim == 1 else np.mean(original, axis=0)
         rest_mono = restored if restored.ndim == 1 else np.mean(restored, axis=0)
         min_len = min(len(orig_mono), len(rest_mono))
@@ -637,6 +699,18 @@ class HolisticPerceptualGate:
         n_frames = max(1, (min_len - n_fft) // hop)
         n_frames = min(n_frames, 100)
 
+        # §2.44 BW-Ceiling-Guard: Frequenz-Obergrenze für Material-native Bandbreite.
+        # Bins oberhalb des Material-Ceilings (z.B. Kassette: 12 kHz) enthalten
+        # im Original nur Träger-Hiss oder Stille; im Restored AudioSR-synthetisierten
+        # Inhalt. Der Cosine-Proxy darf diese gewollte Divergenz nicht bestrafen.
+        # Bin-Berechnung: bin = freq_hz × n_fft / sr (rfft-Bin-Index).
+        _spec_bin_count = n_fft // 2 + 1  # Anzahl rfft-Ausgangsbins
+        if bw_ceiling_hz is not None and int(bw_ceiling_hz) < sr // 2:
+            _bin_ceil = int(round(int(bw_ceiling_hz) * n_fft / sr))
+            _bin_ceil = max(32, min(_bin_ceil, _spec_bin_count))  # Safety-Clamp
+        else:
+            _bin_ceil = _spec_bin_count  # kein Ceiling → volles Spektrum
+
         correlations = []
         win = np.hanning(n_fft).astype(np.float32)
 
@@ -646,8 +720,8 @@ class HolisticPerceptualGate:
             if e > min_len:
                 break
 
-            orig_spec = np.abs(np.fft.rfft(orig_mono[s:e] * win))
-            rest_spec = np.abs(np.fft.rfft(rest_mono[s:e] * win))
+            orig_spec = np.abs(np.fft.rfft(orig_mono[s:e] * win))[:_bin_ceil]
+            rest_spec = np.abs(np.fft.rfft(rest_mono[s:e] * win))[:_bin_ceil]
 
             # Log-magnitude correlation (perceptually meaningful)
             orig_log = np.log1p(orig_spec)
@@ -673,11 +747,16 @@ class HolisticPerceptualGate:
         original: np.ndarray,
         restored: np.ndarray,
         sr: int,
+        bw_ceiling_hz: int | None = None,
     ) -> float:
         """Content-integrity check via mel-embedding cosine similarity.
 
         Used as small content-preservation anchor in evaluate_restoration().
         NOT used as primary timbral_fidelity measure (see §2.44 FIX v9.11.2).
+
+        §2.44 BW-Ceiling-Guard (v9.12.10): bw_ceiling_hz begrenzt den Mel-Vergleich
+        auf den material-nativen Frequenzbereich. Verhindert false-negative
+        timbral_input-Werte bei AudioSR-Extension auf historischem Material.
         """
         min_len = min(
             len(original) if original.ndim == 1 else original.shape[-1],
@@ -685,8 +764,8 @@ class HolisticPerceptualGate:
         )
         if min_len < 2048:
             return 1.0
-        orig_embed = self._compute_embedding(original, sr)
-        rest_embed = self._compute_embedding(restored, sr)
+        orig_embed = self._compute_embedding(original, sr, bw_ceiling_hz=bw_ceiling_hz)
+        rest_embed = self._compute_embedding(restored, sr, bw_ceiling_hz=bw_ceiling_hz)
         return float(np.clip(self._cosine_similarity(orig_embed, rest_embed), 0.0, 1.0))
 
     def _compute_directional_restoration_quality(
