@@ -569,3 +569,77 @@ class TestV38Phase55VfaZoneRouting:
         audio = np.zeros(sr, dtype=np.float32)
         r = p.process(audio, sr, material_type="vinyl")
         assert r.audio.shape == audio.shape
+
+
+class TestV38Phase27VfaZoneCaps:
+    """§V38 phase_27 per-click-strength-oracle VFA-Schutzzonen."""
+
+    def test_compute_click_local_strength_base_zero(self):
+        """base_strength < 1e-6 → 0.0 (V38-Invariante)."""
+        import numpy as np
+
+        from backend.core.phases.phase_27_click_pop_removal import ClickPopRemoval
+
+        p = ClickPopRemoval()
+        audio = np.random.default_rng(0).random(48000).astype(np.float32) * 0.1
+        result = p._compute_click_local_strength(audio, 1000, 1020, 48000, 0.0, [])
+        assert result == 0.0
+
+    def test_compute_click_local_strength_vibrato_cap(self):
+        """Vibrato-Zone cap 0.20 wird eingehalten."""
+        import numpy as np
+
+        from backend.core.phases.phase_27_click_pop_removal import ClickPopRemoval
+
+        p = ClickPopRemoval()
+        audio = np.ones(48000, dtype=np.float32) * 0.5
+        # click at 0.5s, vibrato zone 0.4–0.7s
+        start = int(0.5 * 48000)
+        end = start + 10
+        protected_zones = [(0.4, 0.7, 0.20)]
+        result = p._compute_click_local_strength(audio, start, end, 48000, 1.0, protected_zones)
+        assert result <= 0.20
+
+    def test_compute_click_local_strength_frisson_cap(self):
+        """Frisson-Zone cap 0.30 wird eingehalten."""
+        import numpy as np
+
+        from backend.core.phases.phase_27_click_pop_removal import ClickPopRemoval
+
+        p = ClickPopRemoval()
+        audio = np.ones(48000, dtype=np.float32) * 0.5
+        start = int(0.5 * 48000)
+        end = start + 10
+        protected_zones = [(0.4, 0.7, 0.30)]
+        result = p._compute_click_local_strength(audio, start, end, 48000, 1.0, protected_zones)
+        assert result <= 0.30
+
+    def test_process_with_vibrato_zones_no_crash(self):
+        """process() mit vibrato_zones läuft ohne Exception durch."""
+        import numpy as np
+
+        from backend.core.phases.phase_27_click_pop_removal import ClickPopRemoval
+
+        p = ClickPopRemoval()
+        sr = 48000
+        audio = np.random.default_rng(1).random(sr * 2).astype(np.float32) * 0.05
+        r = p.process(
+            audio,
+            sr,
+            material_type="vinyl",
+            vibrato_zones=[(0.3, 0.6)],
+            frisson_zones=[(0.8, 1.0)],
+        )
+        assert r.audio.shape == audio.shape
+
+    def test_process_without_vfa_zones_normal_path(self):
+        """Ohne VFA-Zones läuft normaler Klick-Reparatur-Pfad."""
+        import numpy as np
+
+        from backend.core.phases.phase_27_click_pop_removal import ClickPopRemoval
+
+        p = ClickPopRemoval()
+        sr = 48000
+        audio = np.zeros(sr, dtype=np.float32)
+        r = p.process(audio, sr, material_type="vinyl")
+        assert r.audio.shape == audio.shape
