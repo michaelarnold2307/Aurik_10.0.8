@@ -8822,6 +8822,42 @@ class UnifiedRestorerV3:
                 else None
             )
 
+        # §2.79 FeasibilityController — Pre-Pipeline Erreichbarkeitsprüfung [RELEASE_MUST]
+        # Berechnet per-Goal ob das Ziel physikalisch erreichbar ist.
+        # Nicht-erreichbare Goals werden in metadata["goal_feasibility_limits"] dokumentiert.
+        # Non-blocking: Exception → leeres Dict, Pipeline läuft unverändert weiter.
+        try:
+            from backend.core.feasibility_controller import estimate_goal_feasibility as _est_feasibility
+
+            _fc_mat = str(getattr(material_type, "value", material_type) or "unknown").lower()
+            _fc_chain = list(_cal_transfer_chain) if _cal_transfer_chain else []
+            _fc_restorability = float(getattr(self, "_last_restorability_score", 65.0))
+            _fc_raw = _analysis_audio if "_analysis_audio" in dir() else audio
+            _fc_audio = (
+                _fc_raw[:2] if (hasattr(_fc_raw, "ndim") and _fc_raw.ndim == 2 and _fc_raw.shape[0] > 2) else _fc_raw
+            )
+            _goal_feasibility = _est_feasibility(
+                audio=_fc_audio,
+                sr=sample_rate,
+                material=_fc_mat,
+                restorability=_fc_restorability,
+                transfer_chain=_fc_chain,
+            )
+            if _goal_feasibility:
+                _fc_limits = {g: v.to_dict() for g, v in _goal_feasibility.items() if not v.reachable}
+                if _fc_limits:
+                    if isinstance(getattr(self, "_phase_metadata_accumulator", None), dict):
+                        self._phase_metadata_accumulator.setdefault("goal_feasibility_limits", {}).update(_fc_limits)
+                    if isinstance(getattr(self, "_restoration_context", None), dict):
+                        self._restoration_context.setdefault("goal_feasibility_limits", {}).update(_fc_limits)
+                    logger.info(
+                        "§2.79 FeasibilityController: %d Goals physikalisch nicht erreichbar: %s",
+                        len(_fc_limits),
+                        list(_fc_limits.keys())[:8],
+                    )
+        except Exception as _fc_err:
+            logger.debug("§2.79 FeasibilityController nicht verfügbar: %s", _fc_err)
+
         if _pass_through_mode:
             if _clean_digital_mode and not (_input_snr_db > 40.0 and _max_defect_severity < 0.15):
                 logger.info(
@@ -11661,45 +11697,68 @@ class UnifiedRestorerV3:
                             _n_capped,
                             _mat_str_ceil,
                         )
-                # §2.46a Chain-End-Ceiling: the LAST stage of the transfer chain can impose
-                # stricter ceilings than the primary source material (e.g. vinyl→cassette→mp3_low:
-                # primary=vinyl but codec destroys HF → brillanz ceiling from mp3_low applies).
-                # Only HF-sensitive goals are chain-end-adjusted; P1/P2 goals remain primary-based.
-                _chain_end_hf_goals = {"brillanz", "transparenz", "separation_fidelity"}
-                try:
-                    _chain_info_obj = getattr(self, "_active_chain_info", None)
-                    _chain_list: list[str] = []
-                    if _chain_info_obj is not None:
-                        _cl = None
-                        if isinstance(_chain_info_obj, dict):
-                            _cl = _chain_info_obj.get("chain") or _chain_info_obj.get("transfer_chain")
-                        else:
-                            _cl = getattr(_chain_info_obj, "chain", None) or getattr(
-                                _chain_info_obj, "transfer_chain", None
-                            )
-                        if isinstance(_cl, (list, tuple)):
-                            _chain_list = [str(s).lower() for s in _cl]
-                    if len(_chain_list) >= 2:
-                        _chain_end = _chain_list[-1]
-                        _chain_end_map = _estimate_chain_ceiling(_chain_list)
-                        _n_chain_capped = 0
-                        for _hf_goal in _chain_end_hf_goals:
-                            if _hf_goal in _chain_end_map and _hf_goal in _effective_goal_thresholds:
-                                _chain_ceil = float(_chain_end_map[_hf_goal])
-                                if float(_effective_goal_thresholds[_hf_goal]) > _chain_ceil:
-                                    _effective_goal_thresholds[_hf_goal] = _chain_ceil
-                                    _n_chain_capped += 1
-                        if _n_chain_capped:
-                            logger.info(
-                                "§2.46a Chain-End-Ceiling: %d HF-Goal(s) gekappt durch Ketten-Ende '%s' (chain=%s).",
-                                _n_chain_capped,
-                                _chain_end,
-                                _chain_list,
-                            )
-                except Exception as _chain_ceil_exc:
-                    logger.debug("§2.46a Chain-End-Ceiling fehlgeschlagen (non-blocking): %s", _chain_ceil_exc)
-            except Exception as _mc_exc:
-                logger.debug("§0a Material-Ceiling-Check fehlgeschlagen (non-blocking): %s", _mc_exc)
+            except Exception as _mat_ceil_exc:
+                logger.debug("§0a Material-Ceiling clamp nicht verfügbar: %s", _mat_ceil_exc)
+
+            # §MG-FEAS [RELEASE_MUST] FeasibilityController-Cap:
+            # effective_threshold[goal] = min(effective_threshold[goal], feasibility.max_achievable)
+            # Verhindert dass nicht-erreichbare Goals als "Failed" markiert werden obwohl die
+            # physikalische Grenze das Problem ist — nicht die Restaurierung.
+            _feasibility_limits_local: dict[str, Any] = {}
+            if isinstance(getattr(self, "_restoration_context", None), dict):
+                _feasibility_limits_local = dict(self._restoration_context.get("goal_feasibility_limits", {}) or {})
+            if isinstance(getattr(self, "_phase_metadata_accumulator", None), dict):
+                _feasibility_limits_local.update(
+                    self._phase_metadata_accumulator.get("goal_feasibility_limits", {}) or {}
+                )
+            if _feasibility_limits_local and _effective_goal_thresholds:
+                _fc_capped = 0
+                for _fc_goal, _fc_data in _feasibility_limits_local.items():
+                    if _fc_goal in _effective_goal_thresholds and isinstance(_fc_data, dict):
+                        _fc_max = float(_fc_data.get("max_achievable", 1.0) or 1.0)
+                        if math.isfinite(_fc_max) and _fc_max < float(_effective_goal_thresholds[_fc_goal]):
+                            _effective_goal_thresholds[_fc_goal] = max(_fc_max, 0.30)
+                            _fc_capped += 1
+                if _fc_capped:
+                    logger.debug("§MG-FEAS: %d Schwelle(n) per FeasibilityController gekappt.", _fc_capped)
+
+            # §2.46a Chain-End-Ceiling: the LAST stage of the transfer chain can impose
+            # stricter ceilings than the primary source material (e.g. vinyl→cassette→mp3_low:
+            # primary=vinyl but codec destroys HF → brillanz ceiling from mp3_low applies).
+            # Only HF-sensitive goals are chain-end-adjusted; P1/P2 goals remain primary-based.
+            _chain_end_hf_goals = {"brillanz", "transparenz", "separation_fidelity"}
+            try:
+                _chain_info_obj = getattr(self, "_active_chain_info", None)
+                _chain_list: list[str] = []
+                if _chain_info_obj is not None:
+                    _cl = None
+                    if isinstance(_chain_info_obj, dict):
+                        _cl = _chain_info_obj.get("chain") or _chain_info_obj.get("transfer_chain")
+                    else:
+                        _cl = getattr(_chain_info_obj, "chain", None) or getattr(
+                            _chain_info_obj, "transfer_chain", None
+                        )
+                    if isinstance(_cl, (list, tuple)):
+                        _chain_list = [str(s).lower() for s in _cl]
+                if len(_chain_list) >= 2:
+                    _chain_end = _chain_list[-1]
+                    _chain_end_map = _estimate_chain_ceiling(_chain_list)
+                    _n_chain_capped = 0
+                    for _hf_goal in _chain_end_hf_goals:
+                        if _hf_goal in _chain_end_map and _hf_goal in _effective_goal_thresholds:
+                            _chain_ceil = float(_chain_end_map[_hf_goal])
+                            if float(_effective_goal_thresholds[_hf_goal]) > _chain_ceil:
+                                _effective_goal_thresholds[_hf_goal] = _chain_ceil
+                                _n_chain_capped += 1
+                    if _n_chain_capped:
+                        logger.info(
+                            "§2.46a Chain-End-Ceiling: %d HF-Goal(s) gekappt durch Ketten-Ende '%s' (chain=%s).",
+                            _n_chain_capped,
+                            _chain_end,
+                            _chain_list,
+                        )
+            except Exception as _chain_ceil_exc:
+                logger.debug("§2.46a Chain-End-Ceiling fehlgeschlagen (non-blocking): %s", _chain_ceil_exc)
 
             _applicable_goal_names = (
                 set(_goal_applicability_result.applicable)
@@ -12087,6 +12146,17 @@ class UnifiedRestorerV3:
                             "audio": restored_audio,
                             "scores": _musical_goal_scores,
                             "rank": _current_rank,
+                            # §2.80 Transparenz-Objektiv für den aktuellen Kandidaten
+                            "transparency_objective": float(
+                                np.clip(
+                                    0.35 * float(_musical_goal_scores.get("transparenz", 0.80))
+                                    + 0.30 * float(_musical_goal_scores.get("timbre_authentizitaet", 0.80))
+                                    + 0.20 * float(_musical_goal_scores.get("emotionalitaet", 0.80))
+                                    + 0.15 * float(_musical_goal_scores.get("micro_dynamics", 0.80)),
+                                    0.0,
+                                    1.0,
+                                )
+                            ),
                         }
                     ]
                     _candidate_sources: list[tuple[str, Any, float]] = []
@@ -12140,24 +12210,49 @@ class UnifiedRestorerV3:
                                     goal_weights=_ranking_weights,
                                     preservation_penalty=float(_variant_penalty),
                                 )
+                                # §2.80 Transparenz-Objektiv — kein hörbarer Eingriff als
+                                # Soft-Tiebreaker (kein Hard-Gate). Verwendet Musical-Goal-Proxys:
+                                # transparenz (artifact_freedom), timbre_authentizitaet (timbral_fidelity),
+                                # emotionalitaet (emotional_arc), micro_dynamics (micro_dyn_preservation).
+                                _t_obj_80 = float(
+                                    np.clip(
+                                        0.35 * float(_variant_scores.get("transparenz", 0.80))
+                                        + 0.30 * float(_variant_scores.get("timbre_authentizitaet", 0.80))
+                                        + 0.20 * float(_variant_scores.get("emotionalitaet", 0.80))
+                                        + 0.15 * float(_variant_scores.get("micro_dynamics", 0.80)),
+                                        0.0,
+                                        1.0,
+                                    )
+                                )
                                 _ranked_candidates.append(
                                     {
                                         "name": _variant_name,
                                         "audio": _variant_audio,
                                         "scores": _variant_scores,
                                         "rank": _variant_rank,
+                                        "transparency_objective": _t_obj_80,
                                     }
                                 )
                         except Exception as _candidate_exc:
                             logger.debug("End-Gate candidate %s failed: %s", _cand_name, _candidate_exc)
 
-                    _best_ranked = min(_ranked_candidates, key=lambda item: item["rank"])
+                    # §2.80 Transparenz-Objektiv: Primär nach Rank (Hard-Gates),
+                    # Tiebreaker nach höchstem transparency_objective (kein hörbarer Eingriff).
+                    def _final_rank_key_80(item: dict) -> tuple:
+                        base = item["rank"]  # 8-Tuple (violations, critical_violations, …)
+                        # Negieren: höheres t_obj → niedrigerer Tiebreaker → wird bevorzugt
+                        t_neg = -float(item.get("transparency_objective", 0.0) or 0.0)
+                        # Einbetten zwischen Position 6 (regressions) und 7 (-excellence)
+                        return base[:7] + (t_neg,) + base[7:]
+
+                    _best_ranked = min(_ranked_candidates, key=_final_rank_key_80)
                     if _best_ranked["name"] != "current" and _best_ranked["rank"] < _current_rank:
                         logger.info(
-                            "🔄 End-Gate: Goal-Candidate-Ranking wählt %s — rank %s→%s",
+                            "🔄 End-Gate: Goal-Candidate-Ranking wählt %s — rank %s→%s t_obj=%.3f",
                             _best_ranked["name"],
                             _current_rank,
                             _best_ranked["rank"],
+                            float(_best_ranked.get("transparency_objective", 0.0) or 0.0),
                         )
                         restored_audio = _best_ranked["audio"]
                         _musical_goal_scores = _best_ranked["scores"]
@@ -12174,9 +12269,15 @@ class UnifiedRestorerV3:
                         _goal_recovery_meta["candidate_ranking_best"] = str(_best_ranked["name"])
                         _goal_recovery_meta["candidate_ranking_before"] = list(_current_rank)
                         _goal_recovery_meta["candidate_ranking_after"] = list(_best_ranked["rank"])
+                        _goal_recovery_meta["transparency_objective"] = float(
+                            _best_ranked.get("transparency_objective", 0.0) or 0.0
+                        )
                     else:
                         _goal_recovery_meta["candidate_ranking_applied"] = False
                         _goal_recovery_meta["candidate_ranking_best"] = "current"
+                        _goal_recovery_meta["transparency_objective"] = float(
+                            _ranked_candidates[0].get("transparency_objective", 0.0) or 0.0
+                        )
                     _goal_recovery_meta["candidate_ranking_evaluated"] = len(_ranked_candidates)
                 except Exception as _candidate_ranking_exc:
                     logger.debug("End-Gate Goal-Candidate-Ranking skipped: %s", _candidate_ranking_exc)
@@ -24149,6 +24250,110 @@ class UnifiedRestorerV3:
                     )
             except Exception as _hnr_budget_exc:
                 logger.debug("HNR-Budget pre-check non-blocking: %s", _hnr_budget_exc)
+
+        # §2.82 Segment-Probe-Kalibrierung [RELEASE_MUST]
+        # Für schnelle DSP-Phasen: empirische Stärkenverifikation auf 3 s-Segment.
+        # Ersetzt oracle-Stärke durch empirisch bestätigten Wert wenn Probe nicht übersprungen.
+        # Non-blocking: Exception → kwargs["strength"] bleibt oracle-Wert.
+        _PROBE_ELIGIBLE_UV3: frozenset[str] = frozenset(
+            {
+                "phase_04_eq_correction",
+                "phase_05_rumble_filter",
+                "phase_10_compression",
+                "phase_11_limiting",
+                "phase_16_final_eq",
+                "phase_18_noise_gate",
+                "phase_26_dynamic_range_expansion",
+                "phase_36_transient_shaper",
+                "phase_54_transparent_dynamics",
+            }
+        )
+        if (
+            phase_metadata.phase_id in _PROBE_ELIGIBLE_UV3
+            and not _strength_explicit
+            and isinstance(kwargs.get("strength"), (int, float))
+            and isinstance(audio, np.ndarray)
+        ):
+            try:
+                from backend.core.dsp.segment_probe_calibrator import (
+                    run_segment_probe as _run_segment_probe,
+                )
+
+                _probe_oracle_s = float(kwargs["strength"])
+                _probe_sr = int(kwargs.get("sample_rate", 48000) or 48000)
+                _probe_mat = str(
+                    getattr(
+                        kwargs.get("material_type") or kwargs.get("material"),
+                        "value",
+                        kwargs.get("material"),
+                    )
+                    or getattr(self, "_restoration_context", {}).get("primary_material", "unknown")
+                    or "unknown"
+                ).lower()
+                # Goal-Gaps aus Pre-Snapshot (bereits von _profiled_phase_call berechnet)
+                _probe_pre_snap = getattr(self, "_phase_pre_snapshot", {}) or {}
+                _probe_targets: dict[str, Any] = (
+                    getattr(self, "_pmgg_ceiling_capped_targets", None)
+                    or getattr(self, "_song_goal_targets", None)
+                    or {}
+                )
+                _probe_goal_gaps: dict[str, float] = {}
+                if isinstance(_probe_targets, dict):
+                    for _pg, _pt in _probe_targets.items():
+                        try:
+                            _pt_f = float(_pt)
+                            if math.isfinite(_pt_f):
+                                _gap_v = max(0.0, _pt_f - float(_probe_pre_snap.get(str(_pg), 0.0)))
+                                if _gap_v > 0.0:
+                                    _probe_goal_gaps[str(_pg)] = _gap_v
+                        except (TypeError, ValueError):
+                            pass
+
+                # Phase-Wrapper: isolierter Aufruf, gibt nur np.ndarray zurück
+                def _probe_phase_wrapper(seg: np.ndarray, **kw: Any) -> np.ndarray:
+                    try:
+                        _r = phase.process(seg, **kw)
+                        if hasattr(_r, "audio") and isinstance(_r.audio, np.ndarray):
+                            return np.asarray(_r.audio, dtype=np.float32)
+                        if isinstance(_r, np.ndarray):
+                            return _r.astype(np.float32)
+                    except Exception:
+                        pass
+                    return np.asarray(seg, dtype=np.float32)
+
+                _probe_result = _run_segment_probe(
+                    audio=audio,
+                    sr=_probe_sr,
+                    phase_process_fn=_probe_phase_wrapper,
+                    base_kwargs=dict(kwargs),
+                    oracle_strength=_probe_oracle_s,
+                    goal_gaps=_probe_goal_gaps,
+                    goal_weights=kwargs.get("song_goal_weights") or None,
+                    material_key=_probe_mat,
+                )
+
+                if not _probe_result.skipped:
+                    kwargs["strength"] = _probe_result.confirmed_strength
+                    kwargs["segment_probe_result"] = _probe_result.to_dict()
+                    # Telemetrie
+                    try:
+                        _pm_p82 = self._phase_metadata_accumulator.setdefault(phase_metadata.phase_id, {})
+                        if isinstance(_pm_p82, dict):
+                            _pm_p82["segment_probe"] = {
+                                "oracle_strength": round(_probe_oracle_s, 4),
+                                "confirmed_strength": round(_probe_result.confirmed_strength, 4),
+                                "delta": round(_probe_result.confirmed_strength - _probe_oracle_s, 4),
+                                "duration_s": round(_probe_result.probe_duration_s, 3),
+                                "best_candidate_idx": _probe_result.best_candidate_idx,
+                            }
+                    except Exception:
+                        pass
+            except Exception as _probe_exc:
+                logger.debug(
+                    "§2.82 SegmentProbe non-blocking (%s): %s",
+                    phase_metadata.phase_id,
+                    _probe_exc,
+                )
 
         try:
             result = phase.process(audio, **kwargs)
