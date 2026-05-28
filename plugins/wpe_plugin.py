@@ -171,19 +171,53 @@ def _wpe_stft(
 
 
 def _wpe_nara(mono: np.ndarray, sr: int) -> np.ndarray | None:
-    """nara_wpe-Bibliothek als Tier-1 (falls installiert)."""
-    try:
-        from nara_wpe.utils import istft as nwpe_istft  # type: ignore[import-untyped]
-        from nara_wpe.utils import stft as nwpe_stft
-        from nara_wpe.wpe import wpe  # type: ignore[import-untyped]
+    """nara_wpe-Bibliothek als Tier-1 (falls installiert).
 
-        Y = nwpe_stft(mono, size=_N_FFT, shift=_HOP)  # [T, K]
-        Y_e = wpe(Y.T[..., np.newaxis])  # [K, T, 1]
-        out = nwpe_istft(Y_e[:, :, 0].T, size=_N_FFT, shift=_HOP)
-        out = np.clip(np.nan_to_num(out.astype(np.float32), nan=0.0), -1.0, 1.0)
-        return out[: len(mono)]
-    except Exception:
+    Timeout-Guard: nara_wpe.wpe() kann bei fast-singulaeren Kovarianzmatrizen
+    (kurze / leise Signale) in np.linalg.lstsq haengen.  Thread-Timeout von
+    8 s verhindert Production-Hang (V38-Kompatibilitaet: kein Signal.alarm,
+    funktioniert auch auf Windows).
+    """
+    # Mindest-Signal-Pruefung: WPE braucht ausreichend Frames fuer eine
+    # gut-konditionierte Kovarianzmatrix.  Unter ~0,5 s (24 000 Samples @
+    # 48 kHz) ist nara_wpe's lstsq-System fast-singulaer → haengt.
+    _min_samples = 24_000  # 0,5 s @ 48 kHz
+    if len(mono) < _min_samples:
+        logger.debug(
+            "WpePlugin: nara_wpe uebersprungen (Signal zu kurz: %d < %d Samples).",
+            len(mono),
+            _min_samples,
+        )
         return None
+
+    _nara_result: list[np.ndarray | None] = [None]
+    _nara_exc: list[BaseException | None] = [None]
+
+    def _run() -> None:
+        try:
+            from nara_wpe.utils import istft as nwpe_istft  # type: ignore[import-untyped]
+            from nara_wpe.utils import stft as nwpe_stft
+            from nara_wpe.wpe import wpe  # type: ignore[import-untyped]
+
+            Y = nwpe_stft(mono, size=_N_FFT, shift=_HOP)  # [T, K]
+            Y_e = wpe(Y.T[..., np.newaxis])  # [K, T, 1]
+            out = nwpe_istft(Y_e[:, :, 0].T, size=_N_FFT, shift=_HOP)
+            out = np.clip(np.nan_to_num(out.astype(np.float32), nan=0.0), -1.0, 1.0)
+            _nara_result[0] = out[: len(mono)]
+        except Exception as exc:
+            _nara_exc[0] = exc
+
+    _t = threading.Thread(target=_run, daemon=True)
+    _t.start()
+    _t.join(timeout=8.0)  # 8 s Timeout — verhindert Hang bei singulaerer Matrix
+
+    if _t.is_alive():
+        logger.warning("WpePlugin: nara_wpe Timeout (>8 s) — Tier-2 NumPy-WPE wird verwendet.")
+        return None
+    if _nara_exc[0] is not None:
+        logger.debug("WpePlugin: nara_wpe Exception — %s", _nara_exc[0])
+        return None
+    return _nara_result[0]
 
 
 def _omlsa_fallback(
