@@ -399,6 +399,33 @@ class PrintThroughReductionPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", strength))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
+        try:
+            from backend.core.dsp.nmr_feedback import (
+                compute_nmr_score as _nmr_fn_57,  # pylint: disable=import-outside-toplevel
+            )
+
+            _nmr_result_57 = _nmr_fn_57(audio, sample_rate)
+            if not _nmr_result_57.ok:
+                logger.warning(
+                    "Phase57 §V40 NMR: nmr_above_masking → §2.45 Minimal-Intervention prüfen",
+                )
+            _effective_strength = float(
+                np.clip(
+                    _effective_strength + _nmr_result_57.recommended_nr_strength_delta,
+                    0.0,
+                    1.0,
+                )
+            )
+            logger.debug(
+                "Phase57 §V40 NMR: delta=%.3f → eff_str=%.3f",
+                _nmr_result_57.recommended_nr_strength_delta,
+                _effective_strength,
+            )
+        except Exception as _nmr_exc_57:  # pylint: disable=broad-except
+            logger.debug("Phase57 §V40 NMR non-blocking: %s", _nmr_exc_57)
+
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
             passthrough = np.clip(passthrough, -1.0, 1.0)

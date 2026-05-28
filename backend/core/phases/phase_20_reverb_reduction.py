@@ -318,6 +318,32 @@ class ReverbReduction(PhaseInterface):
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
 
+        # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
+        try:
+            from backend.core.dsp.nmr_feedback import (
+                compute_nmr_score as _nmr_fn_20,  # pylint: disable=import-outside-toplevel
+            )
+
+            _nmr_result_20 = _nmr_fn_20(audio, sample_rate)
+            if not _nmr_result_20.ok:
+                logger.warning(
+                    "Phase20 §V40 NMR: nmr_above_masking → §2.45 Minimal-Intervention prüfen",
+                )
+            _effective_strength = float(
+                np.clip(
+                    _effective_strength + _nmr_result_20.recommended_nr_strength_delta,
+                    0.0,
+                    1.0,
+                )
+            )
+            logger.debug(
+                "Phase20 §V40 NMR: delta=%.3f → eff_str=%.3f",
+                _nmr_result_20.recommended_nr_strength_delta,
+                _effective_strength,
+            )
+        except Exception as _nmr_exc_20:  # pylint: disable=broad-except
+            logger.debug("Phase20 §V40 NMR non-blocking: %s", _nmr_exc_20)
+
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
             passthrough = np.clip(passthrough, -1.0, 1.0)

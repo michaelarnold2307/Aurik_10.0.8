@@ -267,6 +267,32 @@ class AdvancedDereverbPhase(PhaseInterface):
         effective_strength = float(kwargs.get("strength", 0.7)) * phase_locality_factor
         effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
 
+        # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
+        try:
+            from backend.core.dsp.nmr_feedback import (
+                compute_nmr_score as _nmr_fn_49,  # pylint: disable=import-outside-toplevel
+            )
+
+            _nmr_result_49 = _nmr_fn_49(audio, sample_rate)
+            if not _nmr_result_49.ok:
+                logger.warning(
+                    "Phase49 §V40 NMR: nmr_above_masking → §2.45 Minimal-Intervention prüfen",
+                )
+            effective_strength = float(
+                np.clip(
+                    effective_strength + _nmr_result_49.recommended_nr_strength_delta,
+                    0.0,
+                    1.0,
+                )
+            )
+            logger.debug(
+                "Phase49 §V40 NMR: delta=%.3f → eff_str=%.3f",
+                _nmr_result_49.recommended_nr_strength_delta,
+                effective_strength,
+            )
+        except Exception as _nmr_exc_49:  # pylint: disable=broad-except
+            logger.debug("Phase49 §V40 NMR non-blocking: %s", _nmr_exc_49)
+
         if effective_strength <= 1e-6:
             dry = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             dry = np.clip(dry, -1.0, 1.0)
