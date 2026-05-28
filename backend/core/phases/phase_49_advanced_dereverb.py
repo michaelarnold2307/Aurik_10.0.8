@@ -440,7 +440,21 @@ class AdvancedDereverbPhase(PhaseInterface):
         processed: np.ndarray = audio.copy()  # safe fallback if all paths are skipped
         _sgmse_used = False
         _ml_model_name = "WPE-DSP"
+        # Mindest-Signallänge für SGMSE+: RT60 > 0.4 s ist nur aus ≥ 1 s Audio
+        # zuverlässig messbar; kürzere Signale haben unzureichenden Kontext und
+        # erzeugen hohe ML-Overhead (> 10 s/call) ohne Qualitätsgewinn.
+        _audio_dur_mono_s = float(audio.shape[-1] if audio.ndim > 1 else len(audio)) / max(1, sample_rate)
+        _sgmse_min_dur_s = 1.0  # < 1 s → direkt WPE DSP
+        _sgmse_skipped_short = _audio_dur_mono_s < _sgmse_min_dur_s
+        if _sgmse_skipped_short:
+            logger.debug(
+                "Phase 49: SGMSE+ übersprungen (Signaldauer %.2fs < %.1fs Mindest) → WPE-DSP",
+                _audio_dur_mono_s,
+                _sgmse_min_dur_s,
+            )
         try:
+            if _sgmse_skipped_short:
+                raise ImportError("short-signal-skip")  # → WPE-DSP direkt
             from backend.core.ml_memory_budget import (  # pylint: disable=import-outside-toplevel
                 release as _release_49,
             )
