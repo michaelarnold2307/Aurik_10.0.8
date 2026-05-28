@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aurik VERBOTEN-Linter — prüft normativ verbotene Anti-Patterns (V01–V33).
+"""Aurik VERBOTEN-Linter — prüft normativ verbotene Anti-Patterns (V01–V39).
 
 Verwendung:
     python scripts/aurik_verboten_linter.py [pfad ...]
@@ -132,6 +132,12 @@ RULES = {
         "MaterialType-keyed Phase-Dict ohne MaterialType.CASSETTE — "
         "neuer Materialtyp darf nicht still auf Vinyl/Tape-Fallback fallen",
     ),
+    "V39": Rule(
+        "V39",
+        "\u00a70a-verbotene Phase (phase_21_exciter / phase_35_multiband_compression / "
+        "phase_42_vocal_enhancement) als CAUSE_TO_PHASES-Eintrag f\u00fcr Restoration-Cause "
+        "— CDR soll diese Phasen nie vorschlagen (\u00a70a Crossfire-Invariante)",
+    ),
 }
 
 # V02 ist Warning-Level: Heuristik hat false-positive-Rate bei Analyse/Telemetrie-Kontext.
@@ -141,6 +147,7 @@ RULES = {
 # V14 ist ERROR-Level: Inpainting ohne SSIP führt zu katastrophalen Pegelexplosionen in Stille.
 # V16 ist ERROR-Level: structural_silence_zones=None bedeutet deaktivierter Stille-Schutz.
 # V31 ist WARNING-Level: room-mode mapping ohne notch-EQ ist gefährlich, aber bewusst konservativ.
+# V39 ist ERROR-Level: §0a-verbotene Phasen in CAUSE_TO_PHASES sind ein CDR-Architekturbruch.
 # Alle anderen Regeln sind ERROR-Level (blockieren CI).
 WARNING_RULES: frozenset[str] = frozenset({"V02", "V11", "V31"})
 ERROR_RULES: frozenset[str] = frozenset(RULES) - WARNING_RULES
@@ -1015,6 +1022,69 @@ def _check_transparenz_exclusion_for_subtractive_noise_phases(filepath: Path) ->
     return violations
 
 
+# ---------------------------------------------------------------------------
+# V39: §0a-verbotene Phasen in CAUSE_TO_PHASES (Crossfire-Invariante)
+# ---------------------------------------------------------------------------
+
+_V39_FORBIDDEN_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_21_exciter",
+        "phase_35_multiband_compression",
+        "phase_42_vocal_enhancement",
+    }
+)
+
+
+def _check_section0a_crossfire_cause_to_phases(filepath: Path) -> list[Violation]:
+    """V39: Prüft ob §0a-verbotene Phasen in CAUSE_TO_PHASES vorkommen (causal_defect_reasoner.py).
+
+    phase_21_exciter, phase_35_multiband_compression und phase_42_vocal_enhancement
+    sind im Restoration-Modus absolut verboten (§0a Crossfire-Invariante). UV3 blockt
+    sie zur Runtime, aber CausalDefectReasoner soll sie gar nicht erst vorschlagen.
+    """
+    if filepath.name != "causal_defect_reasoner.py":
+        return []
+    try:
+        source = filepath.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = source.splitlines()
+    violations: list[Violation] = []
+
+    # Alle CAUSE_TO_PHASES-Values auf §0a-verbotene Phasen prüfen.
+    # _extract_string_list_dict_entry() versteht nur je einen Cause-Key;
+    # schnellere Heuristik: Regex-Suche über den vollen CAUSE_TO_PHASES-Block.
+    c2p_match = re.search(
+        r"CAUSE_TO_PHASES\s*[=:]\s*\{(?P<body>[\s\S]+?)\n\}",
+        source,
+    )
+    if c2p_match is None:
+        # Kein CAUSE_TO_PHASES gefunden — kein False-Positive auslösen.
+        return []
+
+    body_start = c2p_match.start("body")
+    body_text = c2p_match.group("body")
+
+    for forbidden in sorted(_V39_FORBIDDEN_PHASES):
+        for match in re.finditer(re.escape(forbidden), body_text):
+            abs_pos = body_start + match.start()
+            lineno = source[:abs_pos].count("\n") + 1
+            snippet = lines[lineno - 1].rstrip() if 0 < lineno <= len(lines) else ""
+            violations.append(
+                Violation(
+                    filepath,
+                    lineno,
+                    0,
+                    "V39",
+                    f"§0a-verbotene Phase '{forbidden}' in CAUSE_TO_PHASES — "
+                    "CDR darf diese Phase nie vorschlagen (§0a Crossfire-Invariante)",
+                    snippet,
+                )
+            )
+
+    return violations
+
+
 def _check_phase_materialtype_dict_completeness(filepath: Path) -> list[Violation]:
     """Prüft konservativ V33 auf bekannte Material-Dict-Konstanten in phase_*.py.
 
@@ -1159,6 +1229,7 @@ def scan_file(filepath: Path) -> list[Violation]:
         + _check_forbidden_defect_mappings(filepath)  # V27–V31
         + _check_transparenz_exclusion_for_subtractive_noise_phases(filepath)  # V32
         + _check_phase_materialtype_dict_completeness(filepath)  # V33
+        + _check_section0a_crossfire_cause_to_phases(filepath)  # V39
     )
     return checker.violations + v16_checker.violations + module_violations
 
