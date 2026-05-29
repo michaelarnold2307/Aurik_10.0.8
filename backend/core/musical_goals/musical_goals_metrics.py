@@ -3286,26 +3286,46 @@ class SeparationFidelityMetric:
             (2000, 6000),
             (6000, min(sr // 2 - 1, 16000)),
         ]
-        harmonicity_scores: list[float] = []
-        mag = np.abs(np.fft.rfft(audio[: self.N_FFT] * np.hanning(self.N_FFT).astype(np.float32)))
+        # Multi-Segment-Mittelung: 5 Segmente aus 15–85% des Audios statt nur den
+        # ersten N_FFT ≈ 0.085 s — bei analogem Material (Kassette, Tape) beginnt
+        # der Song häufig mit Rauschen/Stille → erste Samples unrepräsentativ.
+        _win = np.hanning(self.N_FFT).astype(np.float32)
         freqs = np.fft.rfftfreq(self.N_FFT, 1.0 / sr)
-
-        for lo, hi in bands:
-            mask = (freqs >= lo) & (freqs <= hi)
-            if not mask.any():
-                continue
-            band_mag = mag[mask]
-            if len(band_mag) < 4:
-                continue
-            flatness = float(np.exp(np.mean(np.log(band_mag + 1e-10))) / (np.mean(band_mag) + 1e-10))
-            # Niedrige Flatness = tonaler, besser separiert
-            harmonicity_scores.append(float(1.0 - np.clip(flatness, 0.0, 1.0)))
+        _fracs = [0.15, 0.30, 0.50, 0.65, 0.80]
+        _per_seg: list[list[float]] = []
+        for _frac in _fracs:
+            _start = int(_frac * max(0, len(audio) - self.N_FFT))
+            if _start + self.N_FFT > len(audio):
+                break
+            _seg = audio[_start : _start + self.N_FFT].astype(np.float32)
+            mag = np.abs(np.fft.rfft(_seg * _win))
+            _seg_scores: list[float] = []
+            for lo, hi in bands:
+                _mask = (freqs >= lo) & (freqs <= hi)
+                if not _mask.any():
+                    continue
+                band_mag = mag[_mask]
+                if len(band_mag) < 4:
+                    continue
+                flatness = float(np.exp(np.mean(np.log(band_mag + 1e-10))) / (np.mean(band_mag) + 1e-10))
+                # Niedrige Flatness = tonaler, besser separiert
+                _seg_scores.append(float(1.0 - np.clip(flatness, 0.0, 1.0)))
+            if _seg_scores:
+                _per_seg.append(_seg_scores)
+        if _per_seg:
+            _n_b = max(len(s) for s in _per_seg)
+            harmonicity_scores: list[float] = [
+                float(np.mean([s[b] for s in _per_seg if b < len(s)])) for b in range(_n_b)
+            ]
+        else:
+            harmonicity_scores = []
 
         if not harmonicity_scores:
             return 1.0
         # §musical_goals.instructions.md material-adaptive Harmonicity-Floor:
         # Ohne Referenz kann Separation-Fidelity nicht gegen einen universellen Schwellwert
         # geprüft werden. Material-spezifische Floors spiegeln physikalische SDR-Ceilings wider.
+        # Kombinierte Transfer-Chains (z.B. "cassette+mp3_low") → strengster Einzel-Floor gilt.
         _mat_key_sep = str(material_type or "").lower().strip()
         _sep_floors: dict[str, float] = {
             "shellac": 0.62,
@@ -3327,7 +3347,10 @@ class SeparationFidelityMetric:
             "cd": 0.75,
             "dat": 0.75,
         }
-        _sep_floor = _sep_floors.get(_mat_key_sep, 0.70)
+        # Transfer-Chain-Matching: "cassette+mp3_low" → min(cassette=0.66, mp3_low=0.68) = 0.66
+        _chain_parts = [p.strip() for p in _mat_key_sep.replace("+", " ").split() if p.strip()]
+        _matched = [_sep_floors[p] for p in _chain_parts if p in _sep_floors]
+        _sep_floor = float(min(_matched)) if _matched else _sep_floors.get(_mat_key_sep, 0.70)
         score = float(np.clip(np.mean(harmonicity_scores) * 1.5, _sep_floor, 1.0))
         return score
 
