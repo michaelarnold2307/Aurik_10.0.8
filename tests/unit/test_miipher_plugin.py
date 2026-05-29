@@ -52,7 +52,7 @@ def test_miipher_adapter_uses_loaded_sgmse_plus(monkeypatch):
 
     np.testing.assert_allclose(result, audio * 0.4, atol=1e-7)
     metadata = plugin.route_metadata
-    assert metadata["model_used"] == "miipher_sgmse_plus"
+    assert metadata["model_used"] in ("miipher_sgmse_plus_fullmix", "miipher_sgmse_plus_stem")
     assert metadata["capability_status"] == "sota_fallback"
     assert metadata["native_miipher_loaded"] is False
 
@@ -176,7 +176,7 @@ def test_stem_sgmse_succeeds_when_mbr_available(monkeypatch):
     assert result.shape == audio.shape
     assert np.all(np.isfinite(result))
     assert np.max(np.abs(result)) <= 1.0
-    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus"
+    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus_stem"
 
 
 def test_stem_sgmse_falls_back_to_fullmix_when_mbr_unavailable(monkeypatch):
@@ -213,7 +213,7 @@ def test_stem_sgmse_falls_back_to_fullmix_when_mbr_unavailable(monkeypatch):
 
     assert full_mix_called, "Full-Mix-SGMSE+ muss als Fallback aufgerufen werden"
     assert result.shape == audio.shape
-    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus"
+    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus_fullmix"
 
 
 def test_stem_sgmse_falls_back_when_sdri_too_low(monkeypatch):
@@ -248,7 +248,7 @@ def test_stem_sgmse_falls_back_when_sdri_too_low(monkeypatch):
     # Muss trotzdem erfolgreich sein (Full-Mix-Fallback greift)
     result = plugin.enhance(audio, 48000, noise_snr_db=5.0, panns_singing=0.5)
     assert result.shape == audio.shape
-    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus"
+    assert plugin.route_metadata["model_used"] == "miipher_sgmse_plus_fullmix"
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +435,94 @@ def test_interharmonic_gain_cap_attenuates_nonharmonic_bins(monkeypatch):
 # ---------------------------------------------------------------------------
 # Option 2: phase_65 in CAUSE_TO_PHASES für Noise-Causes
 # ---------------------------------------------------------------------------
+
+
+def test_run_native_miipher_onnx_uses_model_session_and_sets_path(monkeypatch):
+    """_run_native_miipher_onnx: nutzt _model_session, setzt last_miipher_path='native_onnx'
+    und gibt Audio gleicher Shape zurück (\u00a74.4 SOTA-Primary Pfad).
+    """
+    import sys
+
+    from plugins.miipher_plugin import MiipherPlugin
+
+    _patch_vocal_guards(monkeypatch)
+
+    # Fake ONNX session: gibt input direkt zurück (noise-free passthrough)
+    class _FakeOrtSession:
+        def get_inputs(self):
+            return [types.SimpleNamespace(name="waveform", shape=[1, None])]
+
+        def get_modelmeta(self):
+            return types.SimpleNamespace(custom_metadata_map={"sample_rate": "48000"})
+
+        def run(self, output_names, feed_dict):
+            wav = list(feed_dict.values())[0]
+            return [wav * 0.9]  # leichte Dämpfung als Nachweis der Inferenz
+
+    # Fake librosa (kein Resampling nötig bei model_sr==48000)
+    monkeypatch.setitem(
+        sys.modules,
+        "librosa",
+        types.SimpleNamespace(
+            resample=lambda x, orig_sr, target_sr: x,
+        ),
+    )
+
+    plugin = MiipherPlugin()
+    plugin._model_loaded = True
+    plugin._model_session = _FakeOrtSession()
+
+    audio = np.linspace(-0.3, 0.3, 4800, dtype=np.float32)
+    result = plugin._run_native_miipher_onnx(audio, sr=48000)
+
+    assert plugin._last_miipher_path == "native_onnx"
+    assert result.shape == audio.shape
+    assert np.all(np.isfinite(result))
+    assert np.max(np.abs(result)) <= 1.0
+
+
+def test_enhance_routes_to_native_onnx_when_model_loaded(monkeypatch):
+    """enhance(): setzt capability_status='sota_real' und model_used='miipher_native_onnx'
+    wenn _model_loaded=True und native ONNX erfolgreich läuft (\u00a74.4 Routing-Korrektur).
+    """
+    import sys
+
+    from plugins.miipher_plugin import MiipherPlugin
+
+    _patch_vocal_guards(monkeypatch)
+
+    class _FakeOrtSession:
+        def get_inputs(self):
+            return [types.SimpleNamespace(name="wav", shape=[1, None])]
+
+        def get_modelmeta(self):
+            return types.SimpleNamespace(custom_metadata_map={"sample_rate": "48000"})
+
+        def run(self, output_names, feed_dict):
+            wav = list(feed_dict.values())[0]
+            return [wav * 0.85]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "librosa",
+        types.SimpleNamespace(resample=lambda x, orig_sr, target_sr: x),
+    )
+
+    plugin = MiipherPlugin()
+    plugin._model_loaded = True
+    plugin._model_session = _FakeOrtSession()
+
+    audio = np.linspace(-0.2, 0.2, 4800, dtype=np.float32)
+    result = plugin.enhance(audio, 48000, noise_snr_db=3.0, panns_singing=0.7)
+
+    meta = plugin.route_metadata
+    assert meta["model_used"] == "miipher_native_onnx", (
+        f"Wenn native ONNX läuft, muss model_used='miipher_native_onnx' sein, war: {meta['model_used']}"
+    )
+    assert meta["capability_status"] == "sota_real"
+    assert meta["native_miipher_loaded"] is True
+    assert result.shape == audio.shape
+    assert np.all(np.isfinite(result))
 
 
 def test_phase65_in_secondary_phases_for_noise_causes():
