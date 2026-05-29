@@ -184,6 +184,8 @@ def test_router_prefers_bs_roformer_for_vocal_material(monkeypatch):
         "plugins.bs_roformer_plugin",
         types.SimpleNamespace(get_bs_roformer=lambda: _FakeBs()),
     )
+    # RAM-Preflight mocken: genug RAM vortäuschen, damit BS-RoFormer nicht übersprungen wird
+    monkeypatch.setattr(SotaVocalModelRouter, "_available_memory_gb", staticmethod(lambda: 32.0))
 
     result = SotaVocalModelRouter().separate_vocal_instrumental(
         _audio(),
@@ -240,6 +242,8 @@ def test_router_skips_roformer_fallback_and_uses_demucs(monkeypatch):
         "plugins.mdx23c_plugin",
         types.SimpleNamespace(get_mdx23c_plugin=lambda: (_ for _ in ()).throw(RuntimeError("mdx unavailable"))),
     )
+    # RAM-Preflight mocken: genug RAM vortäuschen, damit BS-RoFormer ausgeführt wird (nmf_dsp_fallback erwartet)
+    monkeypatch.setattr(SotaVocalModelRouter, "_available_memory_gb", staticmethod(lambda: 32.0))
 
     result = SotaVocalModelRouter().separate_vocal_instrumental(
         _audio(),
