@@ -2445,7 +2445,7 @@ class TestRestorativeBaselineCapping:
         assert _CANONICAL_THRESHOLDS_RESTORATION["micro_dynamics"] == pytest.approx(0.88, abs=1e-9)
         assert _CANONICAL_THRESHOLDS_RESTORATION["groove"] == pytest.approx(0.83, abs=1e-9)
         assert _CANONICAL_THRESHOLDS_RESTORATION["transparenz"] == pytest.approx(0.82, abs=1e-9)
-        assert _CANONICAL_THRESHOLDS_RESTORATION["waerme"] == pytest.approx(0.75, abs=1e-9)
+        assert _CANONICAL_THRESHOLDS_RESTORATION["waerme"] == pytest.approx(0.77, abs=1e-9)
         assert _CANONICAL_THRESHOLDS_RESTORATION["bass_kraft"] == pytest.approx(0.78, abs=1e-9)
         assert _CANONICAL_THRESHOLDS_RESTORATION["separation_fidelity"] == pytest.approx(0.80, abs=1e-9)
         assert _CANONICAL_THRESHOLDS_RESTORATION["brillanz"] == pytest.approx(0.78, abs=1e-9)
