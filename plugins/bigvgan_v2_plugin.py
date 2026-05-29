@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 # Konstantdefinitionen (Mel-Featureisierung)
 # ---------------------------------------------------------------------------
 
-MEL_BANDS: int = 80  # Standard für BigVGAN-v2
-MEL_HOP_MS: float = 12.5  # 12.5 ms Hop → 600 Frames/s @ 48000 Hz
-MEL_WIN_MS: float = 50.0  # 50 ms Analysefenster
+MEL_BANDS: int = 128  # bigvgan_v2_44khz_128band_512x: 128 Mel-Bänder
 MEL_FMIN: float = 0.0  # Untergrenze Mel-Filterbank
-MEL_FMAX: float = 24000.0  # Obergrenze = Nyquist @ 48000 Hz
+MEL_FMAX = None  # null in config.json → librosa/BigVGAN nutzen Nyquist intern
+_BIGVGAN_SR: int = 44100  # Nativer Sample-Rate des gebündelten bigvgan_v2.pth Checkpoints
+# Hop/Win-Größen direkt aus config.json (bigvgan_v2_44khz_128band_512x)
+_BIGVGAN_HOP: int = 512  # "hop_size": 512 in config.json
+_BIGVGAN_WIN: int = 2048  # "win_size": 2048 in config.json
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +127,8 @@ class BigVGANv2Plugin:
     """
 
     MODELS_DIR: Path = _ROOT / "models" / "bigvgan"
-    MEL_HOP: int = int(48000 * MEL_HOP_MS / 1000)  # 600 Samples @ 48000 Hz
-    MEL_WIN: int = int(48000 * MEL_WIN_MS / 1000)  # 2400 Samples @ 48000 Hz
+    MEL_HOP: int = _BIGVGAN_HOP  # 512 Samples @ 44100 Hz (aus config.json)
+    MEL_WIN: int = _BIGVGAN_WIN  # 2048 Samples @ 44100 Hz (aus config.json)
 
     def __init__(self) -> None:
         self._session = None  # onnxruntime.InferenceSession
@@ -191,24 +193,26 @@ class BigVGANv2Plugin:
                     # upsample_initial_channel aus state_dict
                     _up0 = _gen_sd.get("ups.0.0.weight_v")
                     _upsample_ch = int(_up0.shape[0]) if _up0 is not None else 512
-                    # Basisconfig für den Plugin-MEL-Standard (80 Bänder / 48 kHz)
+                    # Exakte Konfiguration aus config.json (bigvgan_v2_44khz_128band_512x)
                     _h = _AttrDict(
                         {
                             "resblock": "1",
-                            "upsample_rates": [8, 8, 2, 2],
+                            "upsample_rates": [8, 4, 2, 2, 2, 2],
                             "upsample_initial_channel": _upsample_ch,
-                            "upsample_kernel_sizes": [16, 16, 4, 4],
+                            "upsample_kernel_sizes": [16, 8, 4, 4, 4, 4],
                             "resblock_kernel_sizes": [3, 7, 11],
                             "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
                             "activation": "snakebeta",
                             "snake_logscale": True,
+                            "use_tanh_at_final": False,  # aus config.json
+                            "use_bias_at_final": False,  # aus config.json → kein conv_post.bias
                             "num_mels": _num_mel,
-                            "sampling_rate": 48000,
+                            "sampling_rate": _BIGVGAN_SR,  # 44100
                             "n_fft": 2048,
-                            "hop_size": 600,
-                            "win_size": 2400,
+                            "hop_size": _BIGVGAN_HOP,  # 512
+                            "win_size": _BIGVGAN_WIN,  # 2048
                             "fmin": 0,
-                            "fmax": None,
+                            "fmax": None,  # null in config.json
                         }
                     )
                     _model = _BigVGAN(_h, use_cuda_kernel=False)
@@ -377,6 +381,14 @@ class BigVGANv2Plugin:
             else:
                 raise RuntimeError("Kein Modell verfügbar")
 
+            # BigVGAN läuft bei 44100 Hz → auf 48000 Hz zurückresamplen
+            if sr != _BIGVGAN_SR:
+                try:
+                    import librosa as _lb
+
+                    synthesized = _lb.resample(synthesized, orig_sr=_BIGVGAN_SR, target_sr=sr)
+                except Exception as _rs_exc:
+                    logger.debug("BigVGAN Resample 44k→48k fehlgeschlagen: %s", _rs_exc)
             n = min(len(audio), len(synthesized))
             result = np.zeros(len(audio), dtype=np.float32)
             result[:n] = np.nan_to_num(synthesized[:n], nan=0.0, posinf=0.0, neginf=0.0)
@@ -469,8 +481,8 @@ class BigVGANv2Plugin:
         sr: int,
     ) -> tuple[np.ndarray, str, float]:
         """Phase-coherent STFT/iSTFT fallback without neural model dependency."""
-        n_fft = max(64, int(round(sr * MEL_WIN_MS / 1000.0)))
-        hop = max(1, int(round(sr * MEL_HOP_MS / 1000.0)))
+        n_fft = max(64, int(round(sr * 50.0 / 1000.0)))  # 50 ms Fenster
+        hop = max(1, int(round(sr * 12.5 / 1000.0)))  # 12.5 ms Hop
         window = np.hanning(n_fft).astype(np.float32)
 
         if len(audio) < n_fft:
@@ -506,9 +518,10 @@ class BigVGANv2Plugin:
     # ------------------------------------------------------------------
 
     def _compute_mel(self, audio: np.ndarray, sr: int) -> np.ndarray:
-        """Mel-Spektrogramm (80 Bänder) für BigVGAN-v2-Konditionierung.
+        """Mel-Spektrogramm (128 Bänder @ 44100 Hz) für BigVGAN-v2-Konditionierung.
 
         f_mel(n) = 2595 · log₁₀(1 + f/700)
+        Resamplet intern auf _BIGVGAN_SR=44100 Hz falls sr != _BIGVGAN_SR.
 
         Returns:
             np.ndarray: [n_mel, T] float32
@@ -516,9 +529,14 @@ class BigVGANv2Plugin:
         try:
             import librosa
 
+            # Resample auf Checkpoint-SR (44100 Hz) vor Mel-Berechnung
+            audio_mel = audio
+            if sr != _BIGVGAN_SR:
+                audio_mel = librosa.resample(audio, orig_sr=sr, target_sr=_BIGVGAN_SR)
+
             mel = librosa.feature.melspectrogram(
-                y=audio,
-                sr=sr,
+                y=audio_mel,
+                sr=_BIGVGAN_SR,
                 n_fft=self.MEL_WIN,
                 hop_length=self.MEL_HOP,
                 n_mels=MEL_BANDS,
