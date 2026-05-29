@@ -82,6 +82,9 @@ torchmetrics==1.8.2
 # WICHTIG: s3prl install zieht librosa<=0.10 / TTS-Abhängigkeiten → NACH s3prl
 # sofort `pip install librosa==0.11.0 --force-reinstall` ausführen.
 s3prl==0.4.18
+# pysptk: Pflicht-Dependency für VERSA/SingMOS Pro (Pitch-Merkmale via SPTK-Bibliothek)
+# Ohne pysptk schlägt versa.utterance_metrics.pseudo_mos fehl → DSP-Fallback.
+pysptk>=1.0.1
 
 # ZWINGEND nach s3prl: librosa 0.11.0 wiederherstellen (s3prl downgradet auf 0.10)
 # s3prl zieht via descript-audiotools / torchlibrosa librosa 0.10.0 → CQT-Segfault
