@@ -23,7 +23,7 @@ def _make_warmth_signal(n: int = _N) -> np.ndarray:
     audio = (
         0.3 * np.sin(2 * np.pi * 300.0 * t) + 0.25 * np.sin(2 * np.pi * 500.0 * t) + 0.2 * np.sin(2 * np.pi * 700.0 * t)
     )
-    return audio.astype(np.float32)
+    return np.asarray(audio, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

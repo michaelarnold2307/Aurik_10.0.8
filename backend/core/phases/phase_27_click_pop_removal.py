@@ -262,7 +262,7 @@ class ClickPopRemoval(PhaseInterface):
             material_enum = material_type
         else:
             _mat_norm = str(material_type or "unknown").strip().upper().replace("-", "_").replace(" ", "_")
-            material_enum = getattr(MaterialType, _mat_norm, MaterialType.CD_DIGITAL)
+            material_enum = getattr(MaterialType, _mat_norm, MaterialType.CD_DIGITAL)  # type: ignore[arg-type]
         material_name = material_enum.name
 
         is_stereo = audio.ndim == 2
@@ -281,7 +281,7 @@ class ClickPopRemoval(PhaseInterface):
         click_repair_profile = self._compute_click_repair_profile(_material_key, _quality_mode, _restorability_score)
         self._click_repair_profile_current = click_repair_profile
         _safe_strength = self._derive_safe_click_strength(_effective_strength, _material_key, _panns_tags)
-        config["repair_strength"] = float(np.clip(float(config["repair_strength"]) * _safe_strength, 0.0, 1.0))
+        config["repair_strength"] = float(np.clip(float(config["repair_strength"]) * _safe_strength, 0.0, 1.0))  # type: ignore[arg-type]
         config["sample_rate"] = int(sample_rate)
 
         # §V38 VFA-Schutzzonen für per-Click-Strength-Oracle (§0p Vocal-Supremacy)
@@ -645,7 +645,7 @@ class ClickPopRemoval(PhaseInterface):
         x_repair = np.arange(start, end + 1)
         repaired = cs(x_repair)
 
-        return repaired
+        return np.asarray(repaired, dtype=np.float32)
 
     def _ar_prediction(self, audio: np.ndarray, start: int, end: int) -> np.ndarray:
         """AR prediction for medium pops (order ≥ 16 @ 48 kHz, §VERBOTEN: LPC < 16)."""
@@ -698,4 +698,4 @@ class ClickPopRemoval(PhaseInterface):
 
         repaired = before_avg * fade + after_avg * (1 - fade)
 
-        return repaired
+        return np.asarray(repaired, dtype=np.float32)

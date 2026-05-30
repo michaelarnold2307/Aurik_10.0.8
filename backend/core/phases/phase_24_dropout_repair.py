@@ -923,7 +923,7 @@ class DropoutRepairPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
-        params["repair_strength"] = float(np.clip(float(params["repair_strength"]) * _effective_strength, 0.0, 1.0))
+        params["repair_strength"] = float(np.clip(float(params["repair_strength"]) * _effective_strength, 0.0, 1.0))  # type: ignore[arg-type]
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)

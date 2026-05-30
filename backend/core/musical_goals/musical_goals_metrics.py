@@ -128,7 +128,7 @@ def _warm_up_librosa() -> None:
                     message=r"Trying to estimate tuning from empty frequency set",
                     category=UserWarning,
                 )
-                _call(*_args, **_kwargs)
+                _call(*_args, **_kwargs)  # type: ignore[operator]
         except Exception as exc:
             logger.debug("librosa warm-up %s: %s", getattr(_call, "__name__", _call), exc)
 
@@ -155,7 +155,7 @@ def _warm_up_librosa() -> None:
             logger.debug(
                 "librosa warm-up beat_track: kompatibilitaets-pfad aktiv (numba dispatcher ohne get_call_template)"
             )
-            _bt_fn = None
+            _bt_fn = None  # type: ignore[assignment]
         if _bt_fn is None:
             raise RuntimeError("beat_track warm-up uebersprungen (kompatibilitaets-pfad)")
         with warnings.catch_warnings():
@@ -453,7 +453,7 @@ class BassKraftMetric:
         # Clip to [0, 1]
         score = min(1.0, max(0.0, score))
 
-        return score
+        return float(score)
 
     @staticmethod
     def _virtual_pitch_score(magnitude: np.ndarray, freqs: np.ndarray) -> float:
@@ -1050,7 +1050,7 @@ class NatuerlichkeitMetric:
                 _flatness_light,
                 score,
             )
-            return score
+            return float(score)
 
         # ---------- Monophonic/solo path — Voicing-Natürlichkeits-Indikator ----------
         # FIXED v9.11: Previously CREPE load-state changed w_crepe AND w_onset (0.24→0.16),
@@ -1183,7 +1183,7 @@ class NatuerlichkeitMetric:
         else:
             score = dsp_score
 
-        return score
+        return float(score)
 
 
 class AuthentizitaetMetric:
@@ -1403,7 +1403,7 @@ class AuthentizitaetMetric:
         score = min(
             1.0, max(0.0, score)
         )  # v9.11: kein Floor — schlechte Authentizität muss messbar sein (war: max(0.88,...) → blind)
-        return score
+        return float(score)
 
 
 class _VATEmotionEstimator:
@@ -1616,7 +1616,7 @@ class EmotionalitaetMetric:
             _p10, _p90 = np.percentile(_rms_frames, [10, 90])
             _range_score = min(1.0, (_p90 - _p10) * 10)
 
-            return 0.30 * _crest_score + 0.30 * _variance_score + 0.20 * _micro_score + 0.20 * _range_score
+            return float(0.30 * _crest_score + 0.30 * _variance_score + 0.20 * _micro_score + 0.20 * _range_score)
 
         _WINDOW_SAMPLES = int(sr * 10)  # 10 s — long enough to capture a phrase arc
         _FULL_CAP = int(sr * 30)  # tracks ≤ 30 s: score in full
@@ -2475,7 +2475,7 @@ class TimbralAuthenticityMetric:
     @staticmethod
     def _to_mono(audio: np.ndarray) -> np.ndarray:
         if audio.ndim == 2:
-            return audio.mean(axis=1)
+            return np.asarray(audio.mean(axis=1), dtype=audio.dtype)
         return audio
 
     def _mfcc(self, audio: np.ndarray, sr: int) -> np.ndarray:
@@ -2513,7 +2513,7 @@ class TimbralAuthenticityMetric:
         mel_power = mel_matrix @ power  # (n_mels, T)
         log_mel = np.log(mel_power + 1e-10)
         mfcc = sp_dct(log_mel, axis=0, norm="ortho")[: self.N_MFCC]  # (13, T)
-        return np.nan_to_num(mfcc, nan=0.0)
+        return np.asarray(np.nan_to_num(mfcc, nan=0.0), dtype=np.float64)
 
     def _spectral_centroid(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """Spectral Centroid Zeitreihe (Hz)."""
@@ -2530,7 +2530,7 @@ class TimbralAuthenticityMetric:
             return np.array([float(sr / 4)], dtype=np.float32)
         power = np.abs(Zxx) + 1e-10
         centroid = np.sum(freqs[:, None] * power, axis=0) / (np.sum(power, axis=0) + 1e-10)
-        return np.nan_to_num(centroid, nan=float(sr / 4))
+        return np.asarray(np.nan_to_num(centroid, nan=float(sr / 4)), dtype=np.float64)
 
     def _spectral_rolloff(self, audio: np.ndarray, sr: int, threshold: float = 0.85) -> np.ndarray:
         """Spectral Rolloff Zeitreihe (Hz)."""
@@ -2551,7 +2551,7 @@ class TimbralAuthenticityMetric:
         rolloff_idx = np.argmax(cumsum >= threshold * total, axis=0)
         # Guard: rolloff_idx muss in [0, len(freqs)-1] liegen
         rolloff_idx = np.clip(rolloff_idx, 0, len(freqs) - 1)
-        return np.nan_to_num(freqs[rolloff_idx], nan=float(sr / 4))
+        return np.asarray(np.nan_to_num(freqs[rolloff_idx], nan=float(sr / 4)), dtype=np.float64)
 
     def _pearson(self, a: np.ndarray, b: np.ndarray) -> float:
         """Pearson-Korrelation, NaN-sicher ∈ [-1, 1] (§VERBOTEN: np.corrcoef → guarded dot-product)."""
@@ -2587,7 +2587,7 @@ class TimbralAuthenticityMetric:
                     emb = emb[0] if len(emb) > 0 else None
                 if emb is not None and isinstance(emb, np.ndarray) and emb.ndim == 1 and len(emb) > 0:
                     norm = float(np.linalg.norm(emb) + 1e-12)
-                    return (emb / norm).astype(np.float32)
+                    return np.asarray(emb / norm, dtype=np.float32)
         except Exception:  # plugin absent → DSP fallback
             pass
 
@@ -2645,7 +2645,7 @@ class TimbralAuthenticityMetric:
             if len(emb) < 64:
                 emb = np.pad(emb, (0, 64 - len(emb)))
             norm = float(np.linalg.norm(emb) + 1e-12)
-            return (emb / norm).astype(np.float32)
+            return np.asarray(emb / norm, dtype=np.float32)
         except Exception:
             return None
 
@@ -2927,7 +2927,7 @@ class TonalCenterMetric:
                 pc = round(12.0 * np.log2(f / 16.352 + 1e-10)) % 12
                 chroma[pc, t] += psd[bi]
         col_max = np.max(chroma, axis=0, keepdims=True) + 1e-10
-        return chroma / col_max
+        return np.asarray(chroma / col_max, dtype=np.float32)
 
 
 class MicroDynamicsMetric:
@@ -3057,7 +3057,7 @@ class MicroDynamicsMetric:
         # Vectorised reshape — no Python loop (O(n) → O(1) allocations)
         frames = audio[: n_frames * win_samples].reshape(n_frames, win_samples).astype(np.float64)
         profile = np.sqrt(np.mean(frames**2, axis=1) + 1e-10).astype(np.float32)
-        return profile
+        return np.asarray(profile, dtype=np.float32)
 
     def _crest_factor_db(self, audio: np.ndarray) -> float:
         """Crest-Faktor in dB: robuster Peak (p99.9) / RMS (§V08)."""
@@ -3617,7 +3617,7 @@ class ArticulationMetric:
         from scipy.fftpack import dct as sp_dct  # pylint: disable=import-outside-toplevel
 
         mfcc = sp_dct(log_mel, norm="ortho")[:13]
-        return np.nan_to_num(mfcc, nan=0.0)
+        return np.asarray(np.nan_to_num(mfcc, nan=0.0), dtype=np.float32)
 
     def _energy_envelope(self, audio: np.ndarray, win: int, hop: int) -> np.ndarray:
         """Berechnet RMS-Einhüllende mit kurzen Frames."""
@@ -3626,7 +3626,7 @@ class ArticulationMetric:
             return np.zeros(n_frames, dtype=np.float32)
         # Vectorized sliding-window RMS — replaces Python frame loop
         windows = np.lib.stride_tricks.sliding_window_view(audio, win)[::hop][:n_frames]
-        return np.sqrt(np.mean(windows.astype(np.float64) ** 2, axis=1) + 1e-12).astype(np.float32)
+        return np.asarray(np.sqrt(np.mean(windows.astype(np.float64) ** 2, axis=1) + 1e-12), dtype=np.float32)
 
     def _detect_onsets(self, envelope: np.ndarray) -> np.ndarray:
         """Einfacher Onset-Detektor: Frames mit starkem Energie-Anstieg."""
@@ -3833,15 +3833,15 @@ class MusicalGoalsChecker:
                     # §9.12.6/9.12.7: material_type für material-adaptive Metriken.
                     # BrillanzMetric: reference ist dokumentiert als ignoriert (API-compat only).
                     # §musical_goals.instructions §natuerlichkeit: panns_singing ≥ 0.35 → SingMOS-Pfad.
-                    scores[goal_name] = metric.measure(  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                    scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                         audio, sr, material_type=material_type, panns_singing=panns_singing
                     )
                 elif goal_name == "waerme":
                     # §9.12.8: WaermeMetric braucht material_type UND optional reference.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(audio, sr, reference=reference, material_type=material_type)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(audio, sr, reference=reference, material_type=material_type)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                     else:
-                        scores[goal_name] = metric.measure(audio, sr, material_type=material_type)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(audio, sr, material_type=material_type)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                 elif (
                     goal_name
                     in (
@@ -3855,30 +3855,30 @@ class MusicalGoalsChecker:
                     )
                     and reference is not None
                 ):
-                    scores[goal_name] = metric.measure(audio, sr, reference=reference)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                    scores[goal_name] = metric.measure(audio, sr, reference=reference)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                 elif goal_name == "separation_fidelity":
                     # §9.12.8/§musical_goals.instructions: material_type für material-adaptive
                     # Harmonicity-Floor in _reference_free() + SDR-Ceiling-Skalierung.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                             audio, sr, reference=reference, material_type=material_type
                         )
                     else:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                             audio, sr, material_type=material_type
                         )
                 elif goal_name == "transparenz":
                     # §9.12.8: material_type für BW-adaptive Band-Selektion in TransparenzMetric.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                             audio, sr, reference=reference, material_type=material_type
                         )
                     else:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
                             audio, sr, material_type=material_type
                         )
                 else:
-                    scores[goal_name] = metric.measure(audio, sr)
+                    scores[goal_name] = metric.measure(audio, sr)  # type: ignore[attr-defined]
             except Exception as _metric_exc:
                 logger.warning("measure_all: goal=%s failed: %s — using 0.0", goal_name, _metric_exc)
                 scores[goal_name] = 0.0
@@ -4124,7 +4124,7 @@ class MusicalGoalsChecker:
             raise ValueError(f"Unknown goal: {goal_name}. Available: {list(self.metrics.keys())}")
 
         metric = self.metrics[goal_name]
-        score = metric.measure(audio, sr)
+        score = metric.measure(audio, sr)  # type: ignore[attr-defined]
         threshold = self.thresholds[goal_name]
         # FIX v9.10: numpy.bool_ (from comparison) fails isinstance(..., bool) in NumPy 2.x
         passed: bool = bool(score >= threshold)

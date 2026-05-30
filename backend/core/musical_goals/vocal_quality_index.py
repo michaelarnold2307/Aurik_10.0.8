@@ -125,11 +125,11 @@ def _to_mono(audio: np.ndarray) -> np.ndarray:
         return audio.astype(np.float32)
     if audio.ndim == 2:
         if audio.shape[0] == 2 and audio.shape[1] > 2:
-            return audio.mean(axis=0).astype(np.float32)
+            return np.asarray(audio.mean(axis=0), dtype=np.float32)
         if audio.shape[1] == 2:
-            return audio.mean(axis=1).astype(np.float32)
+            return np.asarray(audio.mean(axis=1), dtype=np.float32)
         if audio.shape[0] == 1:
-            return audio[0].astype(np.float32)
+            return np.asarray(audio[0], dtype=np.float32)
     return audio.flatten().astype(np.float32)
 
 
@@ -461,7 +461,7 @@ def compute_vqi(  # pylint: disable=too-many-positional-arguments
             "proximity_score": 0.90,
             "sibilance_naturalness": 0.90,
             "singer_id_dsp_fallback": True,
-            "vqi_tier": "world_class",
+            "vqi_tier": "world_class",  # type: ignore[dict-item]
         }
 
     orig_m = orig_m[:min_len]
@@ -636,7 +636,7 @@ def compute_vqi(  # pylint: disable=too-many-positional-arguments
         "proximity_score": float(np.clip(proximity, 0.0, 1.0)),
         "sibilance_naturalness": float(np.clip(sibilance, 0.0, 1.0)),
         "singer_id_dsp_fallback": dsp_fallback,
-        "vqi_tier": tier,
+        "vqi_tier": tier,  # type: ignore[dict-item]
         "reference_audio_used": _reference_audio_used,  # §P1 Artist-Voice-Reference anchor used
-        "genre_weights_used": _genre_used,  # None = default weights
+        "genre_weights_used": _genre_used,  # type: ignore[dict-item]  # None = default weights
     }

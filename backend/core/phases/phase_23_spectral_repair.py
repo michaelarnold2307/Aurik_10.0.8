@@ -87,7 +87,7 @@ def _try_get_apollo_instance() -> Any | None:
     ohnehin nicht nutzen.
     """
     try:
-        from plugins.apollo_plugin import get_apollo  # pylint: disable=import-outside-toplevel
+        from plugins.apollo_plugin import get_apollo
 
         return get_apollo()
     except Exception as _apollo_import_exc:  # pragma: no cover - environment/ABI dependent
@@ -516,7 +516,7 @@ class SpectralRepair(PhaseInterface):
         """Lädt beim ersten Zugriff: AudioSR plugin for ML-based repair."""
         if self._audiosr_plugin is None:
             try:
-                from plugins.audiosr_plugin import AudioSRPlugin  # pylint: disable=import-outside-toplevel
+                from plugins.audiosr_plugin import AudioSRPlugin
 
                 self._audiosr_plugin = AudioSRPlugin()
                 logger.info("AudioSR plugin loaded successfully")
@@ -575,7 +575,7 @@ class SpectralRepair(PhaseInterface):
         _report_progress(2.0, "Spektralreparatur: Vorbereitung")
         self._ml_guard_events = []
         # Store material as lowercase string value for guard comparison (handles both str and MaterialType enum)
-        self._current_material = str(getattr(material, "value", material)).lower()
+        self._current_material = str(getattr(material, "value", material)).lower()  # type: ignore[assignment]
         self.validate_input(audio)
         _audio_for_tilt_p23 = audio.copy()  # §2.46b: tilt reference before any processing (incl. Apollo)
 
@@ -663,7 +663,7 @@ class SpectralRepair(PhaseInterface):
         _ssip_zones_p23: list[tuple[int, int]] = []
         _mat23_ssip_key = str(getattr(material, "value", str(material_type) or "unknown") or "unknown").lower()
         try:
-            from backend.core.dsp.structural_silence_isolation import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.structural_silence_isolation import (
                 _get_structural_silence_zones as _ssip_get_zones_p23,
             )
 
@@ -736,7 +736,7 @@ class SpectralRepair(PhaseInterface):
                             # Audio is normalized to (N, 2) at method start — safe to use [:, 0]
                             if _plm23 is not None:
                                 try:
-                                    _plm23.touch_plugin("Apollo")
+                                    _plm23.touch_plugin("Apollo")  # type: ignore[attr-defined]
                                 except Exception:
                                     pass
                             _ap_l = _apollo_inst.repair(audio[:, 0], sample_rate, material=self._current_material)
@@ -747,7 +747,7 @@ class SpectralRepair(PhaseInterface):
                             gc.collect(0)
                             if _plm23 is not None:
                                 try:
-                                    _plm23.touch_plugin("Apollo")
+                                    _plm23.touch_plugin("Apollo")  # type: ignore[attr-defined]
                                 except Exception:
                                     pass
                             _ap_r = _apollo_inst.repair(audio[:, 1], sample_rate, material=self._current_material)
@@ -1215,7 +1215,7 @@ class SpectralRepair(PhaseInterface):
         # Muss nach channels-first-Restore laufen damit Layout-Format korrekt ist.
         if _ssip_zones_p23:
             try:
-                from backend.core.dsp.structural_silence_isolation import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.structural_silence_isolation import (
                     get_structural_silence_isolator as _get_ssip_audit23,
                 )
 
@@ -1235,7 +1235,7 @@ class SpectralRepair(PhaseInterface):
         # §V22 Pre-Echo-Prevention — Generative Spektralreparatur auf Transient-Shifts prüfen (§2.73, non-blocking)
         try:
             from backend.core.dsp.transient_guard import (
-                detect_transient_shifts as _dts_23,  # pylint: disable=import-outside-toplevel
+                detect_transient_shifts as _dts_23,
             )
 
             _pre_v22_23 = (
@@ -2204,7 +2204,7 @@ class SpectralRepair(PhaseInterface):
         b_min = 1.66
         noise_floor = np.sqrt(np.maximum(b_min * min_smoothed, 1e-20))
         noise_floor = np.nan_to_num(noise_floor, nan=1e-10, posinf=1.0, neginf=1e-10)
-        return noise_floor
+        return np.asarray(noise_floor, dtype=np.float32)
 
     # §2.57 BW-Ceiling pro analogem Material (Hz): restaurierte HF über diesem
     # Schwellwert darf nicht als Codec-Spike erkannt werden (Phase_06-Restaurierung schützen).
@@ -2285,7 +2285,7 @@ class SpectralRepair(PhaseInterface):
         defect_mask = ndimage.binary_opening(defect_mask, structure=np.ones((3, 3)))
         defect_mask = ndimage.binary_closing(defect_mask, structure=np.ones((5, 3)))
 
-        return defect_mask
+        return np.asarray(defect_mask)
 
     def _inpaint_magnitude(self, magnitude: np.ndarray, defect_mask: np.ndarray) -> np.ndarray:
         """Vektorisiertes Spectral Inpainting — O(F+T) statt O(F×T).

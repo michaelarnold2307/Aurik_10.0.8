@@ -74,7 +74,7 @@ try:
 
     LIBROSA_AVAILABLE = True
 except ImportError:
-    _librosa_lpc = None
+    _librosa_lpc = None  # type: ignore[assignment]
     LIBROSA_AVAILABLE = False
 
 try:
@@ -82,14 +82,14 @@ try:
 
     DEEPFILTERNET_PLUGIN_AVAILABLE = True
 except ImportError:
-    DeepFilterNetV3IIPlugin = None
+    DeepFilterNetV3IIPlugin = None  # type: ignore[assignment, misc]
     DEEPFILTERNET_PLUGIN_AVAILABLE = False
 
 # ML-Hybrid Support: DFN Plugin (enhance() API, kein subprocess)
 # SOUNDFILE_AVAILABLE wird nach Umstieg auf enhance() nicht mehr benötigt.
 
 try:
-    from backend.core.quality_mode import QualityMode, should_use_ml
+    from backend.core.quality_mode import QualityMode, should_use_ml  # type: ignore[attr-defined]
 
     QUALITY_MODE_AVAILABLE = True
 except ImportError:

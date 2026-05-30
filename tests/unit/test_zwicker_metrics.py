@@ -21,7 +21,7 @@ def _silence(duration_s: float = 1.0) -> np.ndarray:
 
 def _sine(freq_hz: float = 440.0, duration_s: float = 1.0, amp: float = 0.5) -> np.ndarray:
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
-    return (amp * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)
+    return np.asarray(amp * np.sin(2 * np.pi * freq_hz * t), dtype=np.float32)
 
 
 def _am_sine(carrier_hz: float = 1000.0, mod_hz: float = 70.0, m: float = 1.0, duration_s: float = 1.0) -> np.ndarray:
@@ -29,7 +29,7 @@ def _am_sine(carrier_hz: float = 1000.0, mod_hz: float = 70.0, m: float = 1.0, d
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
     carrier = np.sin(2 * np.pi * carrier_hz * t)
     envelope = 1.0 + m * np.sin(2 * np.pi * mod_hz * t)
-    return (0.4 * carrier * envelope).astype(np.float32)
+    return np.asarray(0.4 * carrier * envelope, dtype=np.float32)
 
 
 def _fm_sine(
@@ -38,7 +38,7 @@ def _fm_sine(
     """Frequenzmodulierter Sinus — Vibrato → Fluctuation Strength bei mod_hz ~4 Hz."""
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
     phase = 2 * np.pi * carrier_hz * t + (deviation_hz / mod_hz) * np.sin(2 * np.pi * mod_hz * t)
-    return (0.5 * np.sin(phase)).astype(np.float32)
+    return np.asarray(0.5 * np.sin(phase), dtype=np.float32)
 
 
 class TestZwickerMetricsResult:

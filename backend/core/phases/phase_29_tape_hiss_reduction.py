@@ -51,7 +51,7 @@ try:
         - For ν → ∞  (high SNR): E1(ν) → 0    → gain ≈ Wiener
         All gains are subsequently clamped to [G_floor, 1.0].
         """
-        return np.exp(np.clip(0.5 * _scipy_exp1_p29(np.maximum(nu, 1e-10)), 0.0, 5.0))
+        return np.asarray(np.exp(np.clip(0.5 * _scipy_exp1_p29(np.maximum(nu, 1e-10)), 0.0, 5.0)), dtype=np.float64)
 
 except ImportError:  # pragma: no cover
 
@@ -70,7 +70,6 @@ from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
-# pylint: disable=import-outside-toplevel
 # ML-Hybrid Support
 try:
     import soundfile as sf
@@ -394,7 +393,7 @@ class TapeHissReductionPhase(PhaseInterface):
             description="HF-OMLSA-Rauschunterdrückung (Cohen 2002/2003) — Über-SOTA",
         )
 
-    def process(  # type: ignore[override]  # pylint: disable=arguments-renamed
+    def process(  # type: ignore[override]
         self,
         audio: np.ndarray,
         sample_rate: int,
@@ -695,13 +694,13 @@ class TapeHissReductionPhase(PhaseInterface):
                         _p29_acf_cap_f,
                         _effective_strength,
                     )
-        except Exception as _p29_cap_exc:  # pylint: disable=broad-except
+        except Exception as _p29_cap_exc:
             logger.debug("Phase29 ACF-Pre-Cap (non-blocking): %s", _p29_cap_exc)
 
         # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
         try:
             from backend.core.dsp.nmr_feedback import (
-                compute_nmr_score as _nmr_fn_29,  # pylint: disable=import-outside-toplevel
+                compute_nmr_score as _nmr_fn_29,
             )
 
             _nmr_result_29 = _nmr_fn_29(audio, sample_rate)
@@ -721,7 +720,7 @@ class TapeHissReductionPhase(PhaseInterface):
                 _nmr_result_29.recommended_nr_strength_delta,
                 _effective_strength,
             )
-        except Exception as _nmr_exc_29:  # pylint: disable=broad-except
+        except Exception as _nmr_exc_29:
             logger.debug("Phase29 §V40 NMR non-blocking: %s", _nmr_exc_29)
 
         if _effective_strength <= 0.0:
@@ -922,7 +921,7 @@ class TapeHissReductionPhase(PhaseInterface):
         # §0p HNR-Blend nach OMLSA-NR (RELEASE_MUST §0p): ΔHNR > 3 dB → Dry-Wet-Blend
         if _p29_panns >= 0.25:
             try:
-                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_p29  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_p29
 
                 _hnr_blended_p29, _hnr_diag_p29 = _apply_hnr_p29(
                     audio.astype(np.float32), audio_processed.astype(np.float32), sample_rate
@@ -937,7 +936,7 @@ class TapeHissReductionPhase(PhaseInterface):
         if _p29_panns >= 0.35:
             try:
                 from backend.core.musical_goals.era_vocal_profile import (
-                    get_era_vocal_profile as _gevp_p29,  # pylint: disable=import-outside-toplevel  # §EraVocalProfile
+                    get_era_vocal_profile as _gevp_p29,  # §EraVocalProfile
                 )
                 from backend.core.musical_goals.vocal_quality_index import compute_vqi as _compute_vqi_p29
 
@@ -968,8 +967,8 @@ class TapeHissReductionPhase(PhaseInterface):
         # Spektralenergie-Shift an F1–F4 direkt messen.
         if _p29_panns >= 0.25:
             try:
-                from backend.core.dsp.lpc_formant_tracker import check_formant_shift_db as _cfs_p29  # pylint: disable=import-outside-toplevel  # noqa: I001
-                from backend.core.musical_goals.era_vocal_profile import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.lpc_formant_tracker import check_formant_shift_db as _cfs_p29
+                from backend.core.musical_goals.era_vocal_profile import (
                     resolve_formant_tolerance_db as _rft_p29,
                 )
 
@@ -1044,7 +1043,7 @@ class TapeHissReductionPhase(PhaseInterface):
 
         # §Gap3 PhraseBoundaryGuard — taper artifacts at phrase transitions (§0p Vocal-Supremacy)
         try:
-            from backend.core.dsp.phrase_boundary_guard import (  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.dsp.phrase_boundary_guard import (  # noqa: I001
                 detect_phrase_boundaries as _detect_pbg_29,
                 apply_phrase_boundary_taper as _apply_pbg_29,
             )
@@ -1067,7 +1066,7 @@ class TapeHissReductionPhase(PhaseInterface):
         # V19 Noise-Textur-Invariante (§NTI): Residual nach Tape-Hiss-NR darf kein
         # material-fremdes Spektralprofil (Whitening) aufweisen (VERBOTEN-V19).
         try:
-            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.noise_texture_guard import (
                 compute_noise_texture_distance as _nt29_dist_fn,
             )
 
@@ -1086,7 +1085,7 @@ class TapeHissReductionPhase(PhaseInterface):
         # nach Tape-Hiss-NR (VERBOTEN-V20).
         if _p29_panns >= 0.25:
             try:
-                from backend.core.dsp.mikrodynamik_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.mikrodynamik_guard import (
                     frame_energy_correlation as _fec29,
                 )
 
@@ -1107,7 +1106,7 @@ class TapeHissReductionPhase(PhaseInterface):
         _mat29_str = str(material_key or "unknown").lower()
         if any(t in _mat29_str for t in ("shellac", "vinyl", "tape", "analog")):
             try:
-                from backend.core.dsp.noise_floor_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.noise_floor_guard import (
                     apply_noise_floor_minimum as _nfg29,
                 )
 
@@ -1117,7 +1116,7 @@ class TapeHissReductionPhase(PhaseInterface):
 
         # §V24 Spektralfarbe-Prüfung nach NR (§2.74, non-blocking WARNING)
         try:
-            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.spectral_color_guard import (
                 check_spectral_color_preservation as _scg_29,
             )
 
@@ -1125,13 +1124,13 @@ class TapeHissReductionPhase(PhaseInterface):
             if not _sc_result_29.ok:
                 _sc_wet_29 = 0.70  # Phase-Strength −30 % (§V24)
                 audio_processed = (_sc_wet_29 * audio_processed + (1.0 - _sc_wet_29) * audio).astype(np.float32)
-        except Exception as _sc_exc_29:  # pylint: disable=broad-except
+        except Exception as _sc_exc_29:
             logger.debug("§V24 phase_29 spectral_color non-blocking: %s", _sc_exc_29)
 
         # V26 Onset-Guard (§2.77): HPSS-Onset-Fenster (0–20 ms nach Transient) dürfen durch
         # Tape-Hiss-NR nicht energetisch beeinflusst werden (VERBOTEN-V26).
         try:
-            from backend.core.dsp.onset_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.onset_guard import (
                 apply_onset_protection_mask as _opg29,
             )
 
@@ -1143,7 +1142,7 @@ class TapeHissReductionPhase(PhaseInterface):
         # darf durch Tape-Hiss-NR nicht mehr als ±10 % reduziert werden → 50 %-Blend.
         if _p29_panns >= 0.25:
             try:
-                from backend.core.dsp.vibrato_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.vibrato_guard import (
                     check_vibrato_depth_preservation as _vib29,
                 )
 
@@ -1190,7 +1189,7 @@ class TapeHissReductionPhase(PhaseInterface):
                         _p29_auth_out,
                         _p29_post_blend,
                     )
-        except Exception as _p29_delta_exc:  # pylint: disable=broad-except
+        except Exception as _p29_delta_exc:
             logger.debug("Phase29 ACF-Delta-Guard (non-blocking): %s", _p29_delta_exc)
 
         audio_processed, _quiet_zone_stats_p29 = self._limit_quiet_zone_boost(
@@ -1208,7 +1207,7 @@ class TapeHissReductionPhase(PhaseInterface):
 
         # §V42 Rauigkeits-Regression nach Tape-Hiss-NR (non-blocking, §2.62): VERBOTEN-V42
         try:
-            from backend.core.dsp.zwicker_metrics import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.zwicker_metrics import (
                 check_roughness_regression as _crr29,
             )
 
@@ -1219,7 +1218,7 @@ class TapeHissReductionPhase(PhaseInterface):
             if _zr29.pumping_detected:
                 audio_processed = (0.80 * audio_processed + 0.20 * audio).astype(np.float32)
                 logger.warning("Phase29 §V42 NR-Pumpen → Blend ×0.80")
-        except Exception as _zr29_exc:  # pylint: disable=broad-except
+        except Exception as _zr29_exc:
             logger.debug("Phase29 §V42 Roughness-Check non-blocking: %s", _zr29_exc)
 
         return PhaseResult(
@@ -1974,7 +1973,7 @@ class TapeHissReductionPhase(PhaseInterface):
             float(np.mean(G_combined)),
             linked_sidechain is not None,
         )
-        return audio_out
+        return np.asarray(audio_out, dtype=np.float32)
 
     def _extract_band(self, signal_in: np.ndarray, sample_rate: int, low_freq: float, high_freq: float) -> np.ndarray:
         """Bandpass-Filterung f\u00fcr Metrik-Berechnung (Hilfsmethode)."""
@@ -1984,7 +1983,7 @@ class TapeHissReductionPhase(PhaseInterface):
         if low_norm >= high_norm:
             return signal_in.copy()
         sos = signal.butter(4, [low_norm, high_norm], btype="band", fs=sample_rate, output="sos")
-        return signal.sosfilt(sos, signal_in)
+        return np.asarray(signal.sosfilt(sos, signal_in), dtype=np.float32)
 
     def _estimate_noise_floor(self, band_signal: np.ndarray) -> float:
         """
@@ -2007,7 +2006,7 @@ class TapeHissReductionPhase(PhaseInterface):
         noise_floor = np.percentile(rms_vals, 10) if rms_vals else 1e-10
         noise_floor_db = 20 * np.log10(noise_floor + 1e-10)
 
-        return noise_floor_db
+        return float(noise_floor_db)
 
     def _refine_hf_with_ml(self, audio: np.ndarray, sample_rate: int, panns_singing: float = 0.0) -> bool:
         """
@@ -2210,7 +2209,7 @@ class TapeHissReductionPhase(PhaseInterface):
         # Apply gains
         processed = band_signal * gains_smoothed
 
-        return processed
+        return np.asarray(processed, dtype=np.float32)
 
     def _compute_envelope(
         self, signal_in: np.ndarray, sample_rate: int, attack_ms: float = 5.0, release_ms: float = 50.0
@@ -2237,7 +2236,7 @@ class TapeHissReductionPhase(PhaseInterface):
                 # Release
                 envelope[i] = release_coeff * envelope[i - 1] + (1 - release_coeff) * rectified[i]
 
-        return envelope
+        return np.asarray(envelope, dtype=np.float32)
 
     def _smooth_gains(self, gains: np.ndarray, sample_rate: int, smooth_ms: float = 10.0) -> np.ndarray:
         """
@@ -2248,7 +2247,7 @@ class TapeHissReductionPhase(PhaseInterface):
         sos = signal.butter(2, cutoff, "low", fs=sample_rate, output="sos")
         gains_smoothed = signal.sosfilt(sos, gains)
 
-        return gains_smoothed
+        return np.asarray(gains_smoothed, dtype=np.float32)
 
 
 # Test harness

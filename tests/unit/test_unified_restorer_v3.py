@@ -35,7 +35,7 @@ SR = 48000
 
 def _sine(secs: float = 2.0, freq: float = 440.0) -> np.ndarray:
     t = np.linspace(0, secs, int(SR * secs), endpoint=False)
-    return np.sin(2 * np.pi * freq * t).astype(np.float32)
+    return np.asarray(np.sin(2 * np.pi * freq * t), dtype=np.float32)
 
 
 def _noise(secs: float = 1.0, amp: float = 0.05) -> np.ndarray:
@@ -660,7 +660,7 @@ class TestPreventFirstQuietEdges:
             "phase_99_gain_a": {"name": "Gain A", "dependencies": [], "category": "mastering"},
             "phase_99_gain_b": {"name": "Gain B", "dependencies": [], "category": "mastering"},
         }
-        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign, assignment, return-value]
 
         def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
             boosted = np.clip(np.asarray(_audio, dtype=np.float32) * 1.18, -1.0, 1.0)
@@ -671,7 +671,7 @@ class TestPreventFirstQuietEdges:
                 warnings=[],
             )
 
-        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign, assignment]
 
         intro = _sine(secs=1.0, freq=220.0) * 0.015
         middle = _sine(secs=2.0, freq=440.0) * 0.18
@@ -922,8 +922,8 @@ class TestNoRtLimitPhaseDeferralBypass:
                 "dependencies": [],
             }
         }
-        restorer._get_phase = lambda _pid: _DummyPhaseForNoRt()  # type: ignore[method-assign]
-        restorer._profiled_phase_call = (  # type: ignore[method-assign]
+        restorer._get_phase = lambda _pid: _DummyPhaseForNoRt()  # type: ignore[method-assign, assignment, return-value]
+        restorer._profiled_phase_call = (  # type: ignore[method-assign, assignment]
             lambda _phase, _audio, **_kwargs: types.SimpleNamespace(
                 success=True,
                 # §2.45: tiny spectral change so perceptual_delta > 0 in the direct path.
@@ -937,7 +937,7 @@ class TestNoRtLimitPhaseDeferralBypass:
     def test_55_rt_guard_defers_phase_without_no_rt_limit(self):
         restorer = self._build_restorer()
         guard = _AlwaysSkipGuard()
-        restorer.performance_guard = guard
+        restorer.performance_guard = guard  # type: ignore[assignment]
 
         audio = _sine(secs=0.3)
         defect_result = types.SimpleNamespace(scores={})
@@ -961,7 +961,7 @@ class TestNoRtLimitPhaseDeferralBypass:
     def test_56_no_rt_limit_executes_phase_despite_guard_skip(self):
         restorer = self._build_restorer()
         guard = _AlwaysSkipGuard()
-        restorer.performance_guard = guard
+        restorer.performance_guard = guard  # type: ignore[assignment]
 
         audio = _sine(secs=0.3)
         defect_result = types.SimpleNamespace(scores={})
@@ -1037,7 +1037,9 @@ def test_57_phase_skipper_medium_map_covers_extended_legacy_media(
 ) -> None:
     """_apply_phase_skipping must map legacy media to concrete SourceMedium values."""
     restorer = UnifiedRestorerV3(RestorationConfig(enable_phase_skipping=False))
-    restorer.phase_skipper = object()  # only truthy check is required in _apply_phase_skipping
+    restorer.phase_skipper = (
+        object()
+    )  # only truthy check is required in _apply_phase_skipping  # type: ignore[assignment]
 
     captured: dict[str, object] = {}
 
@@ -1362,7 +1364,7 @@ class TestRestoreMocked:
             calls["n"] = int(a.shape[-1])
             raise RuntimeError("stop_after_scan")
 
-        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign]
+        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign, assignment]
 
         cached_medium = types.SimpleNamespace(
             material=MaterialType.VINYL,
@@ -1441,7 +1443,7 @@ class TestRestoreMocked:
             calls["forensic_medium_result"] = kwargs.get("forensic_medium_result")
             raise RuntimeError("stop_after_scan")
 
-        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign]
+        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign, assignment]
 
         pre_medium = types.SimpleNamespace(
             transfer_chain=["vinyl", "mp3_low"],
@@ -1494,7 +1496,7 @@ class TestRestoreMocked:
             calls["forensic_medium_result"] = kwargs.get("forensic_medium_result")
             raise RuntimeError("stop_after_scan")
 
-        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign]
+        restorer.defect_scanner.scan = _scan_capture  # type: ignore[method-assign, assignment]
 
         cached_era = types.SimpleNamespace(decade=1970, material_prior="vinyl", confidence=0.99)
         cached_genre = types.SimpleNamespace(
@@ -2710,10 +2712,10 @@ class TestSingleGainAuthorityEndToEnd:
         audio_in = np.clip(rng.standard_normal(SR * 2) * input_level, -1.0, 1.0).astype(np.float32)
 
         _PhaseStub = TestSingleGainAuthorityEndToEnd._PhaseStub
-        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign, assignment, return-value]
 
         def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
-            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr]
+            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr, attr-defined]
             factor = 0.5 if "phase_05" in pid else 0.1  # HPF: -6 dB; phase_35: -20 dB
             return types.SimpleNamespace(
                 success=True,
@@ -2722,7 +2724,7 @@ class TestSingleGainAuthorityEndToEnd:
                 warnings=[],
             )
 
-        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign, assignment]
         rms_before = float(np.sqrt(np.mean(audio_in**2)))
 
         _fake_vm = types.SimpleNamespace(available=8 * 1024 * 1024 * 1024, percent=20.0, total=16 * 1024 * 1024 * 1024)
@@ -2765,10 +2767,10 @@ class TestSingleGainAuthorityEndToEnd:
         audio_in = np.clip(rng.standard_normal(SR) * 0.15, -1.0, 1.0).astype(np.float32)
 
         _PhaseStub = TestSingleGainAuthorityEndToEnd._PhaseStub
-        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign, assignment, return-value]
 
         def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
-            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr]
+            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr, attr-defined]
             factor = 0.5 if "phase_05" in pid else 0.85
             return types.SimpleNamespace(
                 success=True,
@@ -2777,7 +2779,7 @@ class TestSingleGainAuthorityEndToEnd:
                 warnings=[],
             )
 
-        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign, assignment]
 
         _fake_vm = types.SimpleNamespace(available=8 * 1024 * 1024 * 1024, percent=20.0, total=16 * 1024 * 1024 * 1024)
         with patch("psutil.virtual_memory", return_value=_fake_vm):
@@ -3368,10 +3370,10 @@ class TestCIGRollbackNoMakeupGain:
         audio_in = np.clip(np.concatenate([music, fadeout]), -1.0, 1.0)
 
         _PhaseStub = TestSingleGainAuthorityEndToEnd._PhaseStub
-        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign]
+        restorer._get_phase = lambda pid: _PhaseStub(pid)  # type: ignore[method-assign, assignment, return-value]
 
         def _mock_profiled_call(_phase: object, _audio: np.ndarray, **_kwargs: object) -> object:
-            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr]
+            pid: str = _phase.get_metadata().phase_id  # type: ignore[union-attr, attr-defined]
             # phase_05: HPF removes sub-bass energy (−6 dB)
             # phase_03: would denoise (−3 dB) but CIG rolls it back — return slightly attenuated
             # so the rollback has something to revert.
@@ -3383,7 +3385,7 @@ class TestCIGRollbackNoMakeupGain:
                 warnings=[],
             )
 
-        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign]
+        restorer._profiled_phase_call = _mock_profiled_call  # type: ignore[method-assign, assignment]
 
         # Inject a mock interaction guard that always rolls back phase_03
         class _RollbackGuard:

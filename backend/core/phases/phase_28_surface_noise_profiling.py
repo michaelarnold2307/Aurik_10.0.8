@@ -251,7 +251,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         self,
         audio: np.ndarray,
         sample_rate: int = 48000,
-        material_type: MaterialType = MaterialType.CD_DIGITAL,
+        material_type: MaterialType = MaterialType.CD_DIGITAL,  # type: ignore[override]
         **kwargs,
     ) -> PhaseResult:
         """
@@ -276,7 +276,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         _npa_result_28 = None
         try:
             from backend.core.natural_performance_detector import (
-                get_natural_performance_detector,  # pylint: disable=import-outside-toplevel
+                get_natural_performance_detector,
             )
 
             _npa_result_28 = get_natural_performance_detector().detect(audio, sample_rate)
@@ -293,7 +293,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
         try:
             from backend.core.dsp.nmr_feedback import (
-                compute_nmr_score as _nmr_fn_28,  # pylint: disable=import-outside-toplevel
+                compute_nmr_score as _nmr_fn_28,
             )
 
             _nmr_result_28 = _nmr_fn_28(audio, sample_rate)
@@ -313,7 +313,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
                 _nmr_result_28.recommended_nr_strength_delta,
                 _effective_strength,
             )
-        except Exception as _nmr_exc_28:  # pylint: disable=broad-except
+        except Exception as _nmr_exc_28:
             logger.debug("Phase28 §V40 NMR non-blocking: %s", _nmr_exc_28)
 
         _material_key = str(getattr(material, "name", material)).lower()
@@ -374,7 +374,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # from unnecessary surface-noise removal (§0 Primum non nocere).
         try:
             from backend.core.dsp.psychoacoustics import (
-                apply_psychoacoustic_masking_clamp,  # pylint: disable=import-outside-toplevel
+                apply_psychoacoustic_masking_clamp,
             )
 
             _mono_orig = safe_to_mono(audio)
@@ -430,7 +430,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         _p28_panns = float(kwargs.get("panns_singing", kwargs.get("panns_singing_confidence", 0.0)))
         if _p28_panns >= 0.25:
             try:
-                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_28  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_28
 
                 _hnr_blended_28, _hnr_diag_28 = _apply_hnr_28(
                     audio.astype(np.float32), denoised_audio.astype(np.float32), sample_rate
@@ -442,7 +442,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         _nt28_residual = audio - denoised_audio
         try:
-            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.noise_texture_guard import (
                 compute_noise_texture_distance as _nt28_dist_fn,
             )
 
@@ -456,7 +456,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         if _p28_panns >= 0.25:
             try:
-                from backend.core.dsp.mikrodynamik_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.mikrodynamik_guard import (
                     frame_energy_correlation as _fec28,
                 )
 
@@ -470,7 +470,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         if any(x in _material_key for x in ("shellac", "vinyl", "tape", "analog")):
             try:
-                from backend.core.dsp.noise_floor_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.noise_floor_guard import (
                     apply_noise_floor_minimum as _nfmin28,
                 )
 
@@ -480,7 +480,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         # §V24 Spektralfarbe-Prüfung nach NR (§2.74, non-blocking WARNING)
         try:
-            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.spectral_color_guard import (
                 check_spectral_color_preservation as _scg_28,
             )
 
@@ -488,11 +488,11 @@ class SurfaceNoiseProfiling(PhaseInterface):
             if not _sc_result_28.ok:
                 _sc_wet_28 = 0.70  # Phase-Strength −30 % (§V24)
                 denoised_audio = (_sc_wet_28 * denoised_audio + (1.0 - _sc_wet_28) * audio).astype(np.float32)
-        except Exception as _sc_exc_28:  # pylint: disable=broad-except
+        except Exception as _sc_exc_28:
             logger.debug("§V24 phase_28 spectral_color non-blocking: %s", _sc_exc_28)
 
         try:
-            from backend.core.dsp.onset_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.onset_guard import (
                 apply_onset_protection_mask as _opm28,
             )
 
@@ -502,7 +502,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         if _p28_panns >= 0.25:
             try:
-                from backend.core.dsp.vibrato_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.vibrato_guard import (
                     check_vibrato_depth_preservation as _vib28_fn,
                 )
 
@@ -543,7 +543,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         processed_audio: np.ndarray,
         material: MaterialType,
     ) -> tuple[np.ndarray, dict[str, float]]:
-        from backend.core.audio_utils import (  # pylint: disable=import-outside-toplevel
+        from backend.core.audio_utils import (
             apply_musical_gain_envelope,
             compute_gated_rms_dbfs,
             compute_signal_relative_gate_dbfs,
@@ -637,7 +637,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # §2.62 Psychoakustischer Masking-Guard (ISO 11172-3) — per-Band Floor (non-blocking)
         try:
             from backend.core.dsp.psychoacoustics import (
-                compute_masking_threshold_iso11172 as _cmask_p28,  # pylint: disable=import-outside-toplevel
+                compute_masking_threshold_iso11172 as _cmask_p28,
             )
 
             _mask_ratio_p28 = _cmask_p28(audio, sample_rate, n_fft=self.FRAME_SIZE, hop_length=self.HOP_SIZE)
@@ -667,7 +667,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # wie Surface-Noise → OMLSA würde Artikulation zerstören. (VERBOTEN §2.36)
         try:
             from backend.core.lyrics_guided_enhancement import (
-                get_phoneme_mask as _get_pmask_p28,  # pylint: disable=import-outside-toplevel
+                get_phoneme_mask as _get_pmask_p28,
             )
 
             _pmask_p28 = _get_pmask_p28(audio.astype(np.float32), sample_rate, hop_length=self.HOP_SIZE)
@@ -769,7 +769,7 @@ class SurfaceNoiseProfiling(PhaseInterface):
 
         # Bias-Korrektur + Wurzel → Rauschbetrag
         noise_mag = np.sqrt(np.maximum(b_min * noise_power, eps))
-        return np.nan_to_num(noise_mag, nan=eps, posinf=eps, neginf=eps)
+        return np.asarray(np.nan_to_num(noise_mag, nan=eps, posinf=eps, neginf=eps), dtype=np.float32)
 
     def _compute_omlsa_gain(self, magnitude: np.ndarray, noise_mag: np.ndarray, config: dict[str, Any]) -> np.ndarray:
         """OMLSA-Gain: G(t,f) = G_floor^(1-p) * (xi/(1+xi))^p  (Cohen 2003).
@@ -811,4 +811,4 @@ class SurfaceNoiseProfiling(PhaseInterface):
         log_G = np.clip(log_G, np.log(G_floor), 0.0)
         G = np.exp(log_G)
         G = np.nan_to_num(G, nan=G_floor, posinf=1.0, neginf=G_floor)
-        return np.clip(G, G_floor, 1.0)
+        return np.asarray(np.clip(G, G_floor, 1.0), dtype=np.float32)

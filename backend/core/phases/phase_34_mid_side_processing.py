@@ -620,7 +620,7 @@ class MidSideProcessing(PhaseInterface):
 
     def _combine_bands(self, bands: list[np.ndarray]) -> np.ndarray:
         """Kombiniert frequency bands back together."""
-        return sum(bands)
+        return np.asarray(sum(bands), dtype=bands[0].dtype)
 
     def _ms_decode(self, audio: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Dekodiert L/R to Mid/Side."""
@@ -640,7 +640,7 @@ class MidSideProcessing(PhaseInterface):
             return np.asarray(mid, dtype=template.dtype)
         left = mid + side
         right = mid - side
-        return stereo_like(left, right, template)
+        return np.asarray(stereo_like(left, right, template), dtype=template.dtype)
 
     def _detect_transients(self, audio: np.ndarray) -> np.ndarray:
         """Erkennt transients using fast envelope follower."""
@@ -736,7 +736,7 @@ class MidSideProcessing(PhaseInterface):
         # Ratio of mono to stereo energy (should be close to 1.0 for good compatibility)
         ratio = mono_energy / (stereo_energy + 1e-10)
 
-        return min(ratio, 1.0)
+        return float(min(float(ratio), 1.0))
 
 
 # Test harness
@@ -797,7 +797,7 @@ if __name__ == "__main__":
 
         # Process
         start = time.time()
-        result = processor.process(demo_audio, demo_sr, demo_material)
+        result = processor.process(demo_audio, demo_sr, demo_material.value)
         meta = result.metadata or {}
         _elapsed_demo = time.time() - start
 

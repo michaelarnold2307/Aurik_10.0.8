@@ -309,7 +309,7 @@ class NoiseGate(PhaseInterface):
             # bool → float32 Wahrscheinlichkeitskurve (NaN/Inf-sicher)
             vad_probabilities = bool_mask.astype(np.float32)
             vad_probabilities = np.nan_to_num(vad_probabilities, nan=1.0, posinf=1.0, neginf=0.0)
-            return np.clip(vad_probabilities, 0.0, 1.0)
+            return np.asarray(np.clip(vad_probabilities, 0.0, 1.0), dtype=np.float32)
         except Exception as e:
             logger.error("Voice activity detection failed: %s", e)
             # Fallback: Gate komplett offen (kein Signalverlust)
@@ -341,12 +341,12 @@ class NoiseGate(PhaseInterface):
             material = material_type
         else:
             try:
-                material = MaterialType(str(material_type).upper())
+                material = MaterialType(str(material_type).upper())  # type: ignore[assignment]
             except ValueError:
                 try:
-                    material = MaterialType[str(material_type).upper()]
+                    material = MaterialType[str(material_type).upper()]  # type: ignore[assignment]
                 except (KeyError, AttributeError):
-                    material = MaterialType.UNKNOWN
+                    material = MaterialType.UNKNOWN  # type: ignore[assignment]
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -356,7 +356,7 @@ class NoiseGate(PhaseInterface):
         # §V40 NMR-Feedback: NR-Stärke adaptiv anpassen (FeedbackChain-aware).
         try:
             from backend.core.dsp.nmr_feedback import (
-                compute_nmr_score as _nmr_fn_18,  # pylint: disable=import-outside-toplevel
+                compute_nmr_score as _nmr_fn_18,
             )
 
             _nmr_result_18 = _nmr_fn_18(audio, sample_rate)
@@ -376,12 +376,12 @@ class NoiseGate(PhaseInterface):
                 _nmr_result_18.recommended_nr_strength_delta,
                 _effective_strength,
             )
-        except Exception as _nmr_exc_18:  # pylint: disable=broad-except
+        except Exception as _nmr_exc_18:
             logger.debug("Phase18 §V40 NMR non-blocking: %s", _nmr_exc_18)
 
         is_stereo = audio.ndim == 2
         config = dict(self.GATE_CONFIG.get(material, self.GATE_CONFIG[MaterialType.CD_DIGITAL]))
-        config["reductions_db"] = [float(r * _effective_strength) for r in config["reductions_db"]]
+        config["reductions_db"] = [float(r * _effective_strength) for r in config["reductions_db"]]  # type: ignore[attr-defined]
         config["masking_gain_floors"] = _compute_band_masking_gain_floors(audio, sample_rate)
 
         if _effective_strength <= 0.0:
@@ -394,7 +394,7 @@ class NoiseGate(PhaseInterface):
                 metadata={
                     "material": material.name,
                     "noise_reduction_db": 0.0,
-                    "bands": len(config["thresholds_db"]),
+                    "bands": len(config["thresholds_db"]),  # type: ignore[arg-type]
                     "phase_locality_factor": phase_locality_factor,
                     "effective_strength": _effective_strength,
                     "processing": "skipped_zero_strength",
@@ -563,7 +563,7 @@ class NoiseGate(PhaseInterface):
         _mat18_guards = str(getattr(material, "name", str(material)) or "unknown").lower()
         if _p18_panns >= 0.25:
             try:
-                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_18  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.hnr_guard import apply_hnr_blend as _apply_hnr_18
 
                 _hnr_blended_18, _hnr_diag_18 = _apply_hnr_18(
                     audio.astype(np.float32), gated_audio.astype(np.float32), sample_rate
@@ -575,7 +575,7 @@ class NoiseGate(PhaseInterface):
 
         _nt18_residual = audio - gated_audio
         try:
-            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.noise_texture_guard import (
                 compute_noise_texture_distance as _nt18_dist_fn,
             )
 
@@ -589,7 +589,7 @@ class NoiseGate(PhaseInterface):
 
         if _p18_panns >= 0.25:
             try:
-                from backend.core.dsp.mikrodynamik_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.mikrodynamik_guard import (
                     frame_energy_correlation as _fec18,
                 )
 
@@ -603,7 +603,7 @@ class NoiseGate(PhaseInterface):
 
         if any(x in _mat18_guards for x in ("shellac", "vinyl", "tape", "analog")):
             try:
-                from backend.core.dsp.noise_floor_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.noise_floor_guard import (
                     apply_noise_floor_minimum as _nfmin18,
                 )
 
@@ -613,7 +613,7 @@ class NoiseGate(PhaseInterface):
 
         # §V24 Spektralfarbe-Prüfung nach NR (§2.74, non-blocking WARNING)
         try:
-            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.spectral_color_guard import (
                 check_spectral_color_preservation as _scg_18,
             )
 
@@ -621,11 +621,11 @@ class NoiseGate(PhaseInterface):
             if not _sc_result_18.ok:
                 _sc_wet_18 = 0.70  # Phase-Strength −30 % (§V24)
                 gated_audio = (_sc_wet_18 * gated_audio + (1.0 - _sc_wet_18) * audio).astype(np.float32)
-        except Exception as _sc_exc_18:  # pylint: disable=broad-except
+        except Exception as _sc_exc_18:
             logger.debug("§V24 phase_18 spectral_color non-blocking: %s", _sc_exc_18)
 
         try:
-            from backend.core.dsp.onset_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.onset_guard import (
                 apply_onset_protection_mask as _opm18,
             )
 
@@ -635,7 +635,7 @@ class NoiseGate(PhaseInterface):
 
         if _p18_panns >= 0.25:
             try:
-                from backend.core.dsp.vibrato_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.vibrato_guard import (
                     check_vibrato_depth_preservation as _vib18_fn,
                 )
 
@@ -663,7 +663,7 @@ class NoiseGate(PhaseInterface):
             metadata={
                 "material": material.name,
                 "noise_reduction_db": float(noise_reduction_db),
-                "bands": len(config["thresholds_db"]),
+                "bands": len(config["thresholds_db"]),  # type: ignore[arg-type]
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
                 "rms_drop_db": loudness_stats["rms_drop_db"],
@@ -929,7 +929,7 @@ class NoiseGate(PhaseInterface):
     def _combine_bands(self, bands: list) -> np.ndarray:
         """Kombiniert frequency bands back into full-bandwidth signal."""
         # Simple summation (Linkwitz-Riley filters sum to flat response)
-        return sum(bands)
+        return np.asarray(sum(bands), dtype=np.float32)
 
     def _apply_gate(
         self,
@@ -1022,4 +1022,4 @@ class NoiseGate(PhaseInterface):
         gain_linear = np.maximum(gain_linear, float(np.clip(masking_gain_floor, 0.10, 1.0)))
         gated = audio * gain_linear
 
-        return gated
+        return np.asarray(gated, dtype=np.float32)

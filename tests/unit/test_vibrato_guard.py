@@ -22,12 +22,12 @@ def _make_vibrato_sine(
     t = np.linspace(0.0, n / SR, n, endpoint=False)
     instantaneous_freq = carrier_hz + vibrato_depth_hz * np.sin(2.0 * np.pi * vibrato_rate_hz * t)
     phase = np.cumsum(2.0 * np.pi * instantaneous_freq / SR)
-    return (0.4 * np.sin(phase)).astype(np.float32)
+    return np.asarray(0.4 * np.sin(phase), dtype=np.float32)
 
 
 def _make_sine(freq_hz: float = 440.0, n: int = _N) -> np.ndarray:
     t = np.linspace(0.0, n / SR, n, endpoint=False)
-    return (0.4 * np.sin(2.0 * np.pi * freq_hz * t)).astype(np.float32)
+    return np.asarray(0.4 * np.sin(2.0 * np.pi * freq_hz * t), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ def _silence(duration_s: float = 2.0) -> np.ndarray:
 
 def _sine(freq_hz: float = 440.0, duration_s: float = 2.0, amp: float = 0.5) -> np.ndarray:
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
-    return (amp * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)
+    return np.asarray(amp * np.sin(2 * np.pi * freq_hz * t), dtype=np.float32)
 
 
 def _white_noise(duration_s: float = 2.0, seed: int = 42) -> np.ndarray:
@@ -31,17 +31,19 @@ def _white_noise(duration_s: float = 2.0, seed: int = 42) -> np.ndarray:
 def _major_chord(duration_s: float = 2.0, amp: float = 0.3) -> np.ndarray:
     """C-Dur Dreiklang: C4 (261 Hz), E4 (330 Hz), G4 (392 Hz)."""
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
-    return (
-        amp * (np.sin(2 * np.pi * 261.63 * t) + np.sin(2 * np.pi * 329.63 * t) + np.sin(2 * np.pi * 392.00 * t)) / 3.0
-    ).astype(np.float32)
+    return np.asarray(
+        amp * (np.sin(2 * np.pi * 261.63 * t) + np.sin(2 * np.pi * 329.63 * t) + np.sin(2 * np.pi * 392.00 * t)) / 3.0,
+        dtype=np.float32,
+    )
 
 
 def _minor_chord(duration_s: float = 2.0, amp: float = 0.3) -> np.ndarray:
     """A-Moll Dreiklang: A3 (220 Hz), C4 (261 Hz), E4 (330 Hz)."""
     t = np.linspace(0, duration_s, int(duration_s * SR), endpoint=False)
-    return (
-        amp * (np.sin(2 * np.pi * 220.00 * t) + np.sin(2 * np.pi * 261.63 * t) + np.sin(2 * np.pi * 329.63 * t)) / 3.0
-    ).astype(np.float32)
+    return np.asarray(
+        amp * (np.sin(2 * np.pi * 220.00 * t) + np.sin(2 * np.pi * 261.63 * t) + np.sin(2 * np.pi * 329.63 * t)) / 3.0,
+        dtype=np.float32,
+    )
 
 
 class TestVATEmotionEstimatorImport:
