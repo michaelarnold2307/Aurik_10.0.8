@@ -374,6 +374,7 @@ def test_32_update_rejected_if_hpi_too_low():
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
+    gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
     gate.update_reference_memory(
         audio,
@@ -393,6 +394,7 @@ def test_33_update_rejected_if_artifact_freedom_low():
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
+    gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
     gate.update_reference_memory(
         audio,
@@ -412,6 +414,7 @@ def test_34_update_rejected_if_p1_p2_failed():
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
+    gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
     gate.update_reference_memory(
         audio,
@@ -431,6 +434,7 @@ def test_35_update_creates_entry():
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
+    gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
     gate.update_reference_memory(
         audio,
@@ -453,6 +457,7 @@ def test_36_update_ema_three_times_calibrated():
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
+    gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
     key = ("pop", "tape_std", "1960-1990")
     for _ in range(3):
