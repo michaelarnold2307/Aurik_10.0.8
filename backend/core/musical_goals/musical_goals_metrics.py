@@ -198,7 +198,7 @@ def _get_crepe():
     try:
         if str(_PLUGINS_DIR) not in sys.path:
             sys.path.insert(0, str(_PLUGINS_DIR.parent))
-        from plugins.crepe_plugin import get_crepe_plugin  # pylint: disable=import-outside-toplevel
+        from plugins.crepe_plugin import get_crepe_plugin
 
         return get_crepe_plugin()
     except Exception:
@@ -210,7 +210,7 @@ def _get_versa():
     try:
         if str(_PLUGINS_DIR.parent) not in sys.path:
             sys.path.insert(0, str(_PLUGINS_DIR.parent))
-        from plugins.versa_plugin import get_versa_plugin  # pylint: disable=import-outside-toplevel
+        from plugins.versa_plugin import get_versa_plugin
 
         return get_versa_plugin()
     except Exception:
@@ -563,7 +563,7 @@ class BrillanzMetric:
     def __init__(self, threshold: float = 0.85) -> None:
         self.threshold = threshold
 
-    def measure(  # pylint: disable=unused-argument
+    def measure(
         self,
         audio: np.ndarray,
         sr: int,
@@ -713,7 +713,7 @@ class WaermeMetric:
         # NOTE: Use module-level attribute lookup (plugins.mert_plugin.get_mert_plugin) so
         # that unittest.mock.patch("plugins.mert_plugin.get_mert_plugin") is effective.
         try:
-            import plugins.mert_plugin as _mert_mod  # pylint: disable=import-outside-toplevel
+            import plugins.mert_plugin as _mert_mod
 
             mert = _mert_mod.get_mert_plugin()
             _mert_is_mock = type(mert).__module__.startswith("unittest.mock") if mert is not None else False
@@ -931,7 +931,7 @@ class NatuerlichkeitMetric:
             _stride = max(1, int(round(sr / float(_target_sr))))
             if _stride > 1:
                 try:
-                    from scipy.signal import decimate as _decimate  # pylint: disable=import-outside-toplevel
+                    from scipy.signal import decimate as _decimate
 
                     proc_audio = np.asarray(_decimate(audio, _stride, zero_phase=True), dtype=np.float64)
                 except Exception:
@@ -1147,7 +1147,7 @@ class NatuerlichkeitMetric:
         _panns = float(np.clip(panns_singing, 0.0, 1.0))
         if _panns >= 0.01:
             try:
-                from backend.core.dsp.quality_predictors import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.quality_predictors import (
                     get_dnsmos_predictor,
                     get_singmos_predictor,
                 )
@@ -1589,7 +1589,7 @@ class EmotionalitaetMetric:
             # micro, range) are loudness-dependent. Normalize each window to -14 LUFS
             # before computing dynamics; fallback to RMS proxy only if pyloudnorm is unavailable.
             try:
-                import pyloudnorm as _pyln  # pylint: disable=import-outside-toplevel
+                import pyloudnorm as _pyln
 
                 _meter = _pyln.Meter(sr)
                 _loudness = float(_meter.integrated_loudness(seg))
@@ -1644,7 +1644,7 @@ class EmotionalitaetMetric:
         # never triggers a lazy MERT load.  One-directional: MERT can only raise the
         # score (never reduce a high-dynamic DSP score for synthetic audio).
         try:
-            from plugins.mert_plugin import get_loaded_mert_plugin  # pylint: disable=import-outside-toplevel
+            from plugins.mert_plugin import get_loaded_mert_plugin
 
             mert = get_loaded_mert_plugin()
             # Pytest runs this metric in large acceptance matrices; keep the
@@ -1751,7 +1751,7 @@ class TransparenzMetric:
     def __init__(self, threshold: float = 0.89) -> None:
         self.threshold = threshold
 
-    def measure(  # pylint: disable=unused-argument
+    def measure(
         self, audio: np.ndarray, sr: int, reference: np.ndarray | None = None, material_type: str = "unknown"
     ) -> float:
         """Measure transparenz score (0.0 - 1.0).
@@ -1987,7 +1987,7 @@ class GrooveMetric:
             _r_start = (len(reference) - _MAX_DTW_SAMPLES) // 2
             reference = reference[_r_start : _r_start + _MAX_DTW_SAMPLES]
         try:
-            from dsp.dtw_groove import get_groove_measurer  # pylint: disable=import-outside-toplevel
+            from dsp.dtw_groove import get_groove_measurer
 
             measurer = get_groove_measurer(sr=sr)
             result = measurer.measure(reference, audio, sr=sr)
@@ -2117,7 +2117,7 @@ class GrooveMetric:
         processed = np.nan_to_num(processed, nan=0.0)
 
         try:
-            from dsp.dtw_groove import get_groove_measurer  # pylint: disable=import-outside-toplevel
+            from dsp.dtw_groove import get_groove_measurer
 
             measurer = get_groove_measurer(sr=sr)
             result = measurer.measure(original, processed, sr=sr)
@@ -2289,13 +2289,13 @@ class SpatialDepthMetric:
 
         try:  # §V44 stereo_guard.compute_iacc primär (RELEASE_MUST §V44)
             from backend.core.dsp.stereo_guard import (
-                compute_iacc as _sg_iacc_sf_v44,  # pylint: disable=import-outside-toplevel
+                compute_iacc as _sg_iacc_sf_v44,
             )
 
             _sg_sf_arr_v44 = np.stack([left, right], axis=0)
             _sg_sf_res_v44 = _sg_iacc_sf_v44(_sg_sf_arr_v44, sr=sr)
             iacc = _sg_sf_res_v44.iacc
-        except Exception as _sf_v44_exc:  # pylint: disable=broad-except
+        except Exception as _sf_v44_exc:
             logger.debug("SpatialDepthMetric._spatial_features §V44 non-blocking: %s", _sf_v44_exc)
             iacc = self._compute_iacc(left, right, max_lag_ms=1.0, sr=sr)
         # Guarded Pearson correlation — np.clip does NOT protect against NaN (§VERBOTEN: np.corrcoef)
@@ -2327,7 +2327,7 @@ class SpatialDepthMetric:
         # 0. §V44: IACC via stereo_guard.compute_iacc (primärer Raumtiefe-Proxy; VERBOTEN V44).
         # Fallback auf private _compute_iacc bei SR ≠ 48000 oder Exception (non-blocking).
         try:
-            from backend.core.dsp.stereo_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.stereo_guard import (
                 compute_iacc as _sg_iacc_v44,
             )
 
@@ -2338,7 +2338,7 @@ class SpatialDepthMetric:
                     "SpatialDepthMetric §V44: IACC=%.3f → Mono-Kompatibilitätswarnung",
                     iacc,
                 )
-        except Exception as _v44_exc:  # pylint: disable=broad-except
+        except Exception as _v44_exc:
             logger.debug("SpatialDepthMetric §V44 stereo_guard.compute_iacc non-blocking: %s", _v44_exc)
             iacc = self._compute_iacc(left, right, max_lag_ms=1.0, sr=sr)
 
@@ -2485,8 +2485,8 @@ class TimbralAuthenticityMetric:
         n_mels = 40
 
         # Mel-Filterbank via Scipy STFT + Dreieck-Filter
-        from scipy.fftpack import dct as sp_dct  # pylint: disable=import-outside-toplevel
-        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
+        from scipy.fftpack import dct as sp_dct
+        from scipy.signal import stft as sp_stft
 
         _, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         Zxx = np.nan_to_num(Zxx, nan=0.0, posinf=0.0, neginf=0.0)  # §3.1: Inf/NaN-Guard
@@ -2523,7 +2523,7 @@ class TimbralAuthenticityMetric:
             return np.array([float(sr / 4)], dtype=np.float32)
         n_fft = min(_n_fft_target, len(audio))
         hop = max(1, min(n_fft - 1, int(sr * self.HOP_SIZE_S)))
-        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
+        from scipy.signal import stft as sp_stft
 
         freqs, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         if Zxx.shape[1] == 0:
@@ -2540,7 +2540,7 @@ class TimbralAuthenticityMetric:
             return np.array([float(sr / 4)], dtype=np.float32)
         n_fft = min(_n_fft_target, len(audio))
         hop = max(1, min(n_fft - 1, int(sr * self.HOP_SIZE_S)))
-        from scipy.signal import stft as sp_stft  # pylint: disable=import-outside-toplevel
+        from scipy.signal import stft as sp_stft
 
         freqs, _, Zxx = sp_stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop)
         if Zxx.shape[1] == 0 or len(freqs) == 0:
@@ -2575,8 +2575,7 @@ class TimbralAuthenticityMetric:
         Returns L2-normalised float32 embedding or None on hard error.
         """
         try:
-            # pylint: disable=import-outside-toplevel
-            from plugins.ecapa_plugin import get_ecapa_plugin  # type: ignore  # pylint: disable=no-name-in-module
+            from plugins.ecapa_plugin import get_ecapa_plugin  # type: ignore
 
             _plg = get_ecapa_plugin()
             if _plg is not None:
@@ -2890,15 +2889,15 @@ class TonalCenterMetric:
         _nyq = float(sr) / 2.0
         if _nyq > 4000.0 and len(audio_mono) >= 27:  # sosfiltfilt needs >=27 samples @order-4
             try:
-                from scipy.signal import butter as _butter  # pylint: disable=import-outside-toplevel
-                from scipy.signal import sosfiltfilt as _sosfiltfilt  # pylint: disable=import-outside-toplevel
+                from scipy.signal import butter as _butter
+                from scipy.signal import sosfiltfilt as _sosfiltfilt
 
                 _sos_lp = _butter(4, 4000.0 / _nyq, btype="low", output="sos")
                 audio_mono = _sosfiltfilt(_sos_lp, audio_mono).astype(np.float32)
             except Exception:
                 pass  # Filter unavailable — continue with full-bandwidth chroma (conservative)
         try:
-            import librosa  # type: ignore[import]  # pylint: disable=redefined-outer-name,import-outside-toplevel
+            import librosa  # type: ignore[import]
 
             n_fft = _safe_fft_size(len(audio_mono), target=2048, minimum=64)
             hop = max(16, min(2048, n_fft // 4))
@@ -3614,7 +3613,7 @@ class ArticulationMetric:
         mel_energies = (_w @ power).astype(np.float32)  # (n_mels,)
 
         log_mel = np.log(mel_energies + 1e-10)
-        from scipy.fftpack import dct as sp_dct  # pylint: disable=import-outside-toplevel
+        from scipy.fftpack import dct as sp_dct
 
         mfcc = sp_dct(log_mel, norm="ortho")[:13]
         return np.asarray(np.nan_to_num(mfcc, nan=0.0), dtype=np.float32)
@@ -3823,7 +3822,7 @@ class MusicalGoalsChecker:
         elif reference is not None and reference.ndim == 2 and reference.shape[0] == 1:
             reference = reference[0]
 
-        import time as _time  # pylint: disable=import-outside-toplevel
+        import time as _time
 
         _t_all_start = _time.perf_counter()
         for goal_name, metric in self.metrics.items():
@@ -3833,15 +3832,15 @@ class MusicalGoalsChecker:
                     # §9.12.6/9.12.7: material_type für material-adaptive Metriken.
                     # BrillanzMetric: reference ist dokumentiert als ignoriert (API-compat only).
                     # §musical_goals.instructions §natuerlichkeit: panns_singing ≥ 0.35 → SingMOS-Pfad.
-                    scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                    scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]
                         audio, sr, material_type=material_type, panns_singing=panns_singing
                     )
                 elif goal_name == "waerme":
                     # §9.12.8: WaermeMetric braucht material_type UND optional reference.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(audio, sr, reference=reference, material_type=material_type)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(audio, sr, reference=reference, material_type=material_type)  # type: ignore[call-arg, attr-defined]
                     else:
-                        scores[goal_name] = metric.measure(audio, sr, material_type=material_type)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(audio, sr, material_type=material_type)  # type: ignore[call-arg, attr-defined]
                 elif (
                     goal_name
                     in (
@@ -3855,26 +3854,26 @@ class MusicalGoalsChecker:
                     )
                     and reference is not None
                 ):
-                    scores[goal_name] = metric.measure(audio, sr, reference=reference)  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                    scores[goal_name] = metric.measure(audio, sr, reference=reference)  # type: ignore[call-arg, attr-defined]
                 elif goal_name == "separation_fidelity":
                     # §9.12.8/§musical_goals.instructions: material_type für material-adaptive
                     # Harmonicity-Floor in _reference_free() + SDR-Ceiling-Skalierung.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]
                             audio, sr, reference=reference, material_type=material_type
                         )
                     else:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]
                             audio, sr, material_type=material_type
                         )
                 elif goal_name == "transparenz":
                     # §9.12.8: material_type für BW-adaptive Band-Selektion in TransparenzMetric.
                     if reference is not None:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]
                             audio, sr, reference=reference, material_type=material_type
                         )
                     else:
-                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]  # pylint: disable=unexpected-keyword-arg
+                        scores[goal_name] = metric.measure(  # type: ignore[call-arg, attr-defined]
                             audio, sr, material_type=material_type
                         )
                 else:
@@ -3896,7 +3895,7 @@ class MusicalGoalsChecker:
         # PHASE_GOAL_EXCLUSIONS: phase_18 + phase_26 sind ausgenommen (see transient_energy_metric.py)
         if reference is not None:
             try:
-                from backend.core.musical_goals.transient_energy_metric import (  # pylint: disable=import-outside-toplevel
+                from backend.core.musical_goals.transient_energy_metric import (
                     get_transient_energy_metric as _get_tem,
                 )
 
@@ -4159,7 +4158,7 @@ def get_checker(custom_thresholds: dict[str, float] | None = None) -> MusicalGoa
     Returns:
         Singleton-Instanz von :class:`MusicalGoalsChecker`.
     """
-    global _checker_instance  # pylint: disable=global-statement
+    global _checker_instance
     if _checker_instance is None:
         with _checker_lock:
             if _checker_instance is None:
