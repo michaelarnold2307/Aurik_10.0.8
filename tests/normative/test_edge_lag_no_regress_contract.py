@@ -47,9 +47,7 @@ def test_phase23_uses_ms_path_and_avoids_lr_independent_ml_repair() -> None:
     text = _PHASE23.read_text(encoding="utf-8")
 
     assert "M/S domain" in text or "M/S" in text, "Phase 23 muss den M/S-Stereo-Pfad dokumentieren."
-    assert "do NOT repair L/R independently" in text, (
-        "Phase 23 muss unabhängige L/R-ML-Reparatur explizit verbieten."
-    )
+    assert "do NOT repair L/R independently" in text, "Phase 23 muss unabhängige L/R-ML-Reparatur explizit verbieten."
 
     # Hard anti-regression checks for the old independent-L/R call pattern.
     assert "_repair_single_channel(audio_arr[ch])" not in text, (
@@ -57,4 +55,38 @@ def test_phase23_uses_ms_path_and_avoids_lr_independent_ml_repair() -> None:
     )
     assert "_repair_single_channel(audio_arr[:, ch])" not in text, (
         "Regression erkannt: unabhängiger L/R-ML-Pfad (samples-first) wurde wieder eingeführt."
+    )
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
+def test_phase23_bw_ceiling_skips_harmonic_ceiling_violation_check() -> None:
+    """§6.2c + §2.46e False-Positive-Bug v9.12.10:
+    Wenn _apply_material_bw_ceiling applied=True zurückgibt, darf
+    check_hallucination KEIN material_bw_ceiling_hz erhalten — sonst
+    triggert der 6th-Order-Butterworth-Rolloff ein false-positive
+    ceiling_band_ratio > 8× → vollständiger phase_23-Rollback für
+    Kassetten-Material (AudioSR-Arbeit vollständig verworfen).
+    """
+    assert _PHASE23.exists(), f"Fehlt: {_PHASE23}"
+    text = _PHASE23.read_text(encoding="utf-8")
+
+    # Der Fix muss den _hg_ceiling_hz23-Guard enthalten (None wenn applied)
+    assert "_hg_ceiling_hz23" in text, (
+        "§6.2c/§2.46e Fix fehlt: _hg_ceiling_hz23-Variable muss in phase_23 existieren. "
+        "Ohne diesen Guard triggert der 6th-Order-Butterworth-Rolloff false-positive "
+        "harmonic_ceiling_violation für Kassetten-Material (cassette BW-Ceiling 12 kHz)."
+    )
+    assert "None if _bw_ceiling_applied23 else" in text, (
+        "§6.2c/§2.46e Fix fehlt: material_bw_ceiling_hz muss None sein wenn "
+        "_bw_ceiling_applied23=True — sonst false-positive Rollback aller phase_23-Arbeit."
+    )
+    # Blend-Pfad muss ebenfalls geschützt sein
+    assert "_cand_hg_ceiling_hz23" in text, (
+        "§6.2c/§2.46e Fix unvollständig: _cand_hg_ceiling_hz23 fehlt im Blend-Retry-Pfad. "
+        "Alle 3 Blend-Versuche müssten ebenfalls None übergeben wenn Ceiling angewendet."
+    )
+    assert "None if _blend_ceiling_applied23 else" in text, (
+        "§6.2c/§2.46e Fix unvollständig: Blend-Retry übergibt _bw23 statt None nach "
+        "_apply_material_bw_ceiling → gleicher false-positive wie Hauptpfad."
     )

@@ -1092,12 +1092,20 @@ class SpectralRepair(PhaseInterface):
                 _mono_rep23 = repaired_audio.mean(axis=-1) if repaired_audio.ndim == 2 else repaired_audio
                 _mono_orig23 = _mono_orig23 if _mono_orig23.ndim == 1 else _mono_orig23.ravel()
                 _mono_rep23 = _mono_rep23 if _mono_rep23.ndim == 1 else _mono_rep23.ravel()
+                # §6.2c BW-Ceiling-Guard-Interaktion: Wenn _apply_material_bw_ceiling bereits
+                # angewendet wurde, ist eine erneute harmonic_ceiling_violation-Prüfung ein
+                # False-Positive. Der 6th-Order-Butterworth liefert kein Brick-Wall-Rolloff
+                # (−36 dB an Nyquist); AudioSR erzeugt vor dem Ceiling deutlich mehr Energie
+                # über dem Ceiling, sodass Restenergie nach Filterung dennoch ceiling_band_ratio
+                # > 8× ergibt → vollständiger Rollback obwohl das Signal korrekt gedeckelt ist.
+                # Lösung: material_bw_ceiling_hz nur übergeben wenn Ceiling noch NICHT aktiv war.
+                _hg_ceiling_hz23 = None if _bw_ceiling_applied23 else _bw23
                 _hg_result23 = check_hallucination(
                     _mono_orig23,
                     _mono_rep23,
                     sr=sample_rate,
                     mode=_mode23,
-                    material_bw_ceiling_hz=_bw23,
+                    material_bw_ceiling_hz=_hg_ceiling_hz23,
                 )
                 if _hg_result23.requires_rollback:
                     _salvaged23 = False
@@ -1114,8 +1122,9 @@ class SpectralRepair(PhaseInterface):
                         _candidate23 = np.nan_to_num(_candidate23, nan=0.0, posinf=0.0, neginf=0.0)
                         _candidate23 = np.clip(_candidate23, -1.0, 1.0)
 
+                        _blend_ceiling_applied23 = False
                         try:
-                            _candidate23, _, _ = self._apply_material_bw_ceiling(
+                            _candidate23, _blend_ceiling_applied23, _ = self._apply_material_bw_ceiling(
                                 _candidate23,
                                 sample_rate,
                                 material,
@@ -1127,12 +1136,13 @@ class SpectralRepair(PhaseInterface):
 
                         _cand_mono23 = _candidate23.mean(axis=-1) if _candidate23.ndim == 2 else _candidate23
                         _cand_mono23 = _cand_mono23 if _cand_mono23.ndim == 1 else _cand_mono23.ravel()
+                        _cand_hg_ceiling_hz23 = None if _blend_ceiling_applied23 else _bw23
                         _cand_hg23 = check_hallucination(
                             _mono_orig23,
                             _cand_mono23,
                             sr=sample_rate,
                             mode=_mode23,
-                            material_bw_ceiling_hz=_bw23,
+                            material_bw_ceiling_hz=_cand_hg_ceiling_hz23,
                         )
                         if not _cand_hg23.requires_rollback:
                             repaired_audio = _candidate23
