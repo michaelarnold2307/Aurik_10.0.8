@@ -58,12 +58,12 @@ def erb_rate(f_hz: float) -> float:
 
     N(f) = 21.4 * log10(0.00437*f + 1)     [Glasberg & Moore 1990, Eq. 4]
     """
-    return 21.4 * np.log10(0.00437 * f_hz + 1.0)
+    return float(21.4 * np.log10(0.00437 * f_hz + 1.0))
 
 
 def erb_rate_to_hz(n_cams: float) -> float:
     """Konvertiert ERB-rate (Cams) back to Hz."""
-    return (10.0 ** (n_cams / 21.4) - 1.0) / 0.00437
+    return float((10.0 ** (n_cams / 21.4) - 1.0) / 0.00437)
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +532,7 @@ class ERBAuditoryMaskingModel:
         # mask_mat @ spectrum = Summe der Spektral-Energie pro Band (n_bands,)
         powers = np.maximum(1e-15, (mask_mat @ spectrum) / band_sizes)
 
-        return powers
+        return np.asarray(powers, dtype=np.float64)
 
     def _estimate_tonality(
         self,
