@@ -32,6 +32,7 @@ import backend.core.model_downloader as _md_module
 from backend.core.model_downloader import (
     ModelDownloader,
     ModelEntry,
+    _download_remote_model,
     get_model_downloader,
     verify_and_load,
     verify_model,
@@ -451,6 +452,21 @@ class TestScheduleSotaUpgrade:
 
         assert len(started) >= 1
         assert all(started)  # alle gestarteten Threads sind daemon=True
+
+
+class TestDownloadHardeningAndMiipherManifest:
+    def test_25_download_helper_rejects_non_https(self, tmp_path: Path):
+        target = tmp_path / "model.onnx"
+        with pytest.raises(ValueError, match="Nicht erlaubtes Download-Schema"):
+            _download_remote_model("http://example.com/model.onnx", target)
+
+    def test_26_project_manifest_exposes_miipher_entry(self):
+        dl = get_model_downloader()
+        entry = dl.get_entry("miipher")
+        assert entry is not None, "miipher fehlt im Projekt-Manifest"
+        assert entry.bundled is False
+        assert entry.bundled_path == "models/miipher/miipher.onnx"
+        assert entry.fallback == "sgmse_plus"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

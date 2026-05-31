@@ -210,6 +210,8 @@ class PhaseConductor:
         goal_weights: dict[str, float] | None = None,
         song_goal_targets: dict[str, float] | None = None,
         current_goal_scores: dict[str, float] | None = None,
+        current_phase_id: str | None = None,
+        active_phase_coalitions: dict[str, tuple[str, ...]] | None = None,
     ) -> ConductorRecommendation:
         """Empfehle Stärke / Skip-Entscheidung für die nächste Phase.
 
@@ -231,6 +233,11 @@ class PhaseConductor:
             Stopp-Signal: wenn aktuelle Scores ≥ Targets − 0.03 → Strength 0.0.
         current_goal_scores : dict[str, float] | None
             Aktuelle Musical-Goal-Scores (nach letzter Phase).
+        current_phase_id : str | None
+            Zuletzt abgeschlossene Phase; ermöglicht Koalitions-Kontinuität.
+        active_phase_coalitions : dict[str, tuple[str, ...]] | None
+            Aktive Phase-Koalitionen aus dem Restorer; verhindert vorzeitige
+            Skip- oder Dämpfungs-Empfehlungen innerhalb zusammengehöriger Gruppen.
 
         Returns
         -------
@@ -246,6 +253,10 @@ class PhaseConductor:
                 confidence=1.0,
                 state_snapshot=current_state,
             )
+
+        current_coalition = _coalition_name_for_phase(current_phase_id, active_phase_coalitions)
+        next_coalition = _coalition_name_for_phase(next_phase_id, active_phase_coalitions)
+        coalition_continuation = bool(current_coalition and current_coalition == next_coalition)
 
         grid_key = _canonical_material(material_type)
         grid = _REFERENCE_GRID.get(grid_key, _REFERENCE_GRID["unknown"])
@@ -335,6 +346,13 @@ class PhaseConductor:
             except Exception:
                 pass  # Non-blocking — Stopp-Signal-Fehler nie pipeline-blockierend
 
+        if coalition_continuation:
+            # Koalitions-Mitglieder dürfen nicht von einem einzelnen State-Snapshot
+            # auf Skip oder zu starke Dämpfung gedrückt werden; Gruppe wird erst
+            # nach Abschluss der Koalition beurteilt.
+            recommended_strength = float(np.clip(max(recommended_strength, 0.55), 0.0, 1.0))
+            confidence = float(np.clip(max(confidence, 0.75), 0.0, 1.0))
+
         # Mindest-Stärke aus Invariante
         min_str = _MIN_STRENGTH.get(next_phase_id, _DEFAULT_MIN_STRENGTH)
         recommended_strength = max(recommended_strength, min_str)
@@ -347,6 +365,7 @@ class PhaseConductor:
             and current_state.hf_energy_ratio > 0.55
             and current_state.harmonic_coherence > 0.88
             and recommended_strength < 0.12
+            and not coalition_continuation
         ):
             # Signal bereits sehr sauber — Phase bringt kaum Gewinn
             skip = True
@@ -359,7 +378,7 @@ class PhaseConductor:
         return ConductorRecommendation(
             next_phase_id=next_phase_id,
             recommended_strength=recommended_strength,
-            skip_recommended=skip,
+            skip_recommended=skip and not coalition_continuation,
             skip_reason=skip_reason,
             confidence=confidence,
             state_snapshot=current_state,
@@ -467,6 +486,18 @@ def _canonical_material(material_type: str) -> str:
     if "cd" in m or "digital" in m or "stream" in m or "mp3" in m or "aac" in m:
         return "cd_digital"
     return "unknown"
+
+
+def _coalition_name_for_phase(
+    phase_id: str | None,
+    active_phase_coalitions: dict[str, tuple[str, ...]] | None,
+) -> str:
+    if not phase_id or not active_phase_coalitions:
+        return ""
+    for coalition_name, members in active_phase_coalitions.items():
+        if phase_id in members:
+            return str(coalition_name)
+    return ""
 
 
 # ── Singleton ──────────────────────────────────────────────────────────

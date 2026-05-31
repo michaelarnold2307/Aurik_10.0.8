@@ -225,12 +225,22 @@ def _aurik_restoration_fn(audio: np.ndarray, sr: int, sid: str | None = None) ->
         restorer.config.enable_phase_gate = _prev_phase_gate
 
 
-def _run_competitive(n_items: int = 1, verbose: bool = False) -> BenchmarkReport:
+def _smoke_passthrough_restoration_fn(audio: np.ndarray, sr: int, sid: str | None = None) -> np.ndarray:
+    """Deterministischer Smoke-Pfad für den Vocal-Subset-Check."""
+    del sr, sid
+    return np.asarray(audio, dtype=np.float32).copy()
+
+
+def _run_competitive(
+    n_items: int = 1,
+    verbose: bool = False,
+    scenarios: list[str] | None = None,
+) -> BenchmarkReport:
     config = BenchmarkConfig(
         restoration_fn=_aurik_restoration_fn,
         system_name="Aurik 9 Competitive",
         n_items_per_scenario=n_items,
-        scenarios=_SCENARIOS_SELECTED,
+        scenarios=scenarios if scenarios is not None else _SCENARIOS_SELECTED,
         # Competitive-CI soll den Marktvergleich robust, aber laufzeitstabil prüfen.
         # Teure Zusatzpfade (Proxy/Formal-Session/Musical-Goals) sind dafür nicht nötig.
         duration_s=5.0,
@@ -373,6 +383,52 @@ def test_aurik_overall_score_above_izotope_overall() -> None:
         _IZOTOPE_MUSHRA,
         margin,
     )
+
+
+@pytest.mark.timeout(30)
+def test_vocal_subset_smoke_gate_runs_single_scenario() -> None:
+    """Leichter Smoke-Gate: Der explizite Vocal-Subset-Pfad muss ohne Heavy-Setup laufen."""
+    report = run_benchmark(
+        BenchmarkConfig(
+            restoration_fn=_smoke_passthrough_restoration_fn,
+            sample_rate=48_000,
+            n_items_per_scenario=1,
+            duration_s=0.25,
+            scenarios=["AMRB-06-VOCAL"],
+            system_name="Aurik Vocal Smoke Gate",
+            verbose=False,
+            enable_mushra_proxy=False,
+            enable_musical_goals=False,
+            enable_formal_session=False,
+            enforce_min_fragment_guard=False,
+        )
+    )
+
+    assert report.n_scenarios == 1
+    assert list(report.scenario_results) == ["AMRB-06-VOCAL"]
+    assert report.scenario_results["AMRB-06-VOCAL"].scenario_type == "synthetic"
+
+
+@pytest.mark.competitive
+@pytest.mark.timeout(1200)
+def test_aurik_beats_izotope_in_vocal_subset_when_explicitly_selected() -> None:
+    """Expliziter Vocal-Subset-Gate: AMRB-06-VOCAL muss RX 11 schlagen, wenn isoliert angefordert."""
+    if _SCENARIOS_SELECTED != ["AMRB-06-VOCAL"]:
+        pytest.skip("Vocal-Subset-Gate läuft nur bei exakt AURIK_COMPETITIVE_SCENARIOS=AMRB-06-VOCAL.")
+
+    report = _run_competitive(n_items=_N_ITEMS_DEFAULT, verbose=False, scenarios=_SCENARIOS_SELECTED)
+    restore_failures = _collect_restore_exceptions(report)
+    assert not restore_failures, (
+        "Competitive-Vocal-Gate abgebrochen: interne Restore-Fehler/Timeouts erkannt. "
+        "Belastbare Wettbewerbsbewertung nicht möglich. Betroffene Items: " + ", ".join(restore_failures)
+    )
+
+    vocal = report.scenario_results.get("AMRB-06-VOCAL")
+    assert vocal is not None, "AMRB-06-VOCAL fehlt im Vocal-Subset-Report."
+    assert vocal.mushra_mean > _PER_SCENARIO_WIN_THRESHOLD, (
+        f"AMRB-06-VOCAL liegt nicht über iZotope RX 11: {vocal.mushra_mean:.1f} ≤ {_PER_SCENARIO_WIN_THRESHOLD:.1f}."
+    )
+    assert vocal.passed, f"AMRB-06-VOCAL muss den AMRB-Pass-Threshold bestehen, war {vocal.mushra_mean:.1f}."
 
 
 @pytest.mark.competitive

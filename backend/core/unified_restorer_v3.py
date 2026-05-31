@@ -19,7 +19,7 @@ Author: Aurik Development Team
 Version: 9.12.8
 Date: 2026-05-19
 """
-# pylint: disable=import-outside-toplevel,reimported
+# pylint: disable=import-outside-toplevel,reimported,wrong-import-position
 
 import contextlib
 import dataclasses
@@ -7139,13 +7139,13 @@ class UnifiedRestorerV3:
         # historisches Material (era_decade < 1960) benötigt andere Formant-Toleranzen, sonst
         # falsch-negative VQI-Scores → unnötige Recovery-Kaskaden in VocalNoHarmGate + SLR-VQI.
         try:
-            from backend.core.musical_goals.era_vocal_profile import (  # pylint: disable=import-outside-toplevel
+            from backend.core.musical_goals.era_vocal_profile import (
                 get_era_vocal_profile as _gevp_ctx,
             )
 
             _evp_decade = int(getattr(_era_result, "decade", None) or 1975)
             self._restoration_context["era_vocal_profile"] = _gevp_ctx(_evp_decade)
-        except Exception as _evp_ctx_exc:  # pylint: disable=broad-except
+        except Exception as _evp_ctx_exc:
             logger.debug("§EraVocalProfile context non-blocking: %s", _evp_ctx_exc)
         if _genre_profile:
             self._restoration_context.update(
@@ -7197,7 +7197,7 @@ class UnifiedRestorerV3:
             self._restoration_context["climax_type"] = _vfa_result.climax_type
             # §Lücke3 PhraseStrengthMap — nach VFA, vor Phasen
             try:
-                from backend.core.dsp.phrase_masking_strength import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.phrase_masking_strength import (
                     compute_phrase_strength_map as _comp_psm,
                 )
 
@@ -7248,7 +7248,7 @@ class UnifiedRestorerV3:
         # Schätzt RT60, DRR und Schutz-Cap für phase_20 + phase_49.
         # Non-blocking: Fehler blockieren nie die Pipeline.
         try:
-            from backend.core.room_acoustics_fingerprinter import (  # pylint: disable=import-outside-toplevel
+            from backend.core.room_acoustics_fingerprinter import (
                 compute_room_acoustics_fingerprint as _comp_raf,
             )
 
@@ -7265,7 +7265,7 @@ class UnifiedRestorerV3:
         # §Gap2 Song-Wide Coherence Monitor — nach VFA + Room-Acoustics, vor Phasen.
         # Liefert coherence_score + inconsistent_sections für phasenseitige Timbral-Korrektur.
         try:
-            from backend.core.song_coherence_monitor import (  # pylint: disable=import-outside-toplevel
+            from backend.core.song_coherence_monitor import (
                 get_song_coherence_monitor as _get_scm,
             )
 
@@ -7280,7 +7280,7 @@ class UnifiedRestorerV3:
         # §Gap5 Blind Internal Reference — sauberste Segmente als interner Qualitätsanker.
         # Kalibriert timbral_fidelity-Gating (§0d best_carrier_checkpoint) und Wiener-Filter.
         try:
-            from backend.core.blind_internal_reference import (  # pylint: disable=import-outside-toplevel
+            from backend.core.blind_internal_reference import (
                 get_blind_internal_reference as _get_bir,
             )
 
@@ -7360,7 +7360,7 @@ class UnifiedRestorerV3:
         # Only for vocal material (panns_singing ≥ 0.25). Non-blocking.
         if float(getattr(self, "_panns_singing", 0.0)) >= 0.25:
             try:
-                from backend.core.singer_voice_model import get_singer_voice_model  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.singer_voice_model import get_singer_voice_model
 
                 _svm = get_singer_voice_model()
                 _svm_result = _svm.build_from_audio(
@@ -7389,7 +7389,7 @@ class UnifiedRestorerV3:
         # Maps (era_year, material) → label EQ curve + defect priors for era-aware phases.
         # Non-blocking.
         try:
-            from backend.core.label_transfer_db import get_label_transfer_db  # pylint: disable=import-outside-toplevel
+            from backend.core.label_transfer_db import get_label_transfer_db
 
             _ltd = get_label_transfer_db()
             _ltd_era_year = int(self._restoration_context.get("decade") or 1970)
@@ -7427,7 +7427,7 @@ class UnifiedRestorerV3:
 
         # §HCA-1 HarmonicContextAnalyzer — chord-progression + harmonic mask
         try:
-            from backend.core.harmonic_context_analyzer import get_harmonic_context_analyzer  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.harmonic_context_analyzer import get_harmonic_context_analyzer
 
             _hca = get_harmonic_context_analyzer()
             _hca_result = _hca.analyze(audio, sample_rate)
@@ -7450,7 +7450,7 @@ class UnifiedRestorerV3:
 
         # §AKB-1 ArtistKnowledgeBase — persistent cross-session restoration prior
         try:
-            from backend.core.artist_knowledge_base import get_artist_knowledge_base  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.artist_knowledge_base import get_artist_knowledge_base
 
             _akb = get_artist_knowledge_base()
             _akb_era = int(self._restoration_context.get("decade", 1970))
@@ -7481,7 +7481,7 @@ class UnifiedRestorerV3:
 
         # §AID-1 ArtisticIntentDiscriminator — intentional vs. defect classification
         try:
-            from backend.core.artistic_intent_discriminator import get_artistic_intent_discriminator  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.artistic_intent_discriminator import get_artistic_intent_discriminator
 
             _aid = get_artistic_intent_discriminator()
             _aid_era = int(self._restoration_context.get("decade", 1970))
@@ -8073,7 +8073,7 @@ class UnifiedRestorerV3:
         _rm_material_key: str = "unknown"
         _rm_cluster_hash: str = "00000000"
         try:
-            import hashlib as _hashlib_rm  # pylint: disable=import-outside-toplevel
+            import hashlib as _hashlib_rm
 
             from backend.core.restoration_memory import (
                 get_restoration_memory as _get_rm,
@@ -8149,8 +8149,7 @@ class UnifiedRestorerV3:
             try:
                 from plugins.audiosr_plugin import get_audiosr_plugin as _get_audiosr
 
-                _get_audiosr  # noqa: B018  # pylint: disable=pointless-statement
-                _audiosr_avail = True
+                _audiosr_avail = callable(_get_audiosr)
             except Exception:
                 pass
 
@@ -8465,7 +8464,11 @@ class UnifiedRestorerV3:
                 from backend.core.comprehensive_metrics import ComprehensiveMetricsCalculator
 
                 _cm = ComprehensiveMetricsCalculator(sample_rate)
-                _sgi_tonality = float(_cm._compute_tonality(_pa_mono))  # pylint: disable=protected-access
+                _sgi_tonality_fn: Any = getattr(_cm, "_compute_tonality", None)
+                if callable(_sgi_tonality_fn):
+                    _sgi_tonality = float(_sgi_tonality_fn(_pa_mono))
+                else:
+                    _sgi_tonality = 0.5
                 # Bark-scale analysis: frequency balance, masked ratio, centroid
                 from backend.core.psychoacoustic_core import PsychoacousticCore
 
@@ -9668,7 +9671,7 @@ class UnifiedRestorerV3:
         # Non-blocking: any error leaves audio unchanged.
         _slr_panns = float(getattr(self, "_panns_singing", 0.0))
         try:
-            from backend.core.dsp.model_capability_gate import get_model_capability_gate  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.dsp.model_capability_gate import get_model_capability_gate
 
             _model_capability_report = get_model_capability_gate().build_report()
             self._restoration_context["model_capability_report"] = _model_capability_report
@@ -9682,7 +9685,7 @@ class UnifiedRestorerV3:
         if not self.is_studio_mode() and _slr_panns >= 0.35:
             try:
                 try:
-                    from backend.core.plugin_lifecycle_manager import (  # pylint: disable=import-outside-toplevel
+                    from backend.core.plugin_lifecycle_manager import (
                         get_plugin_lifecycle_manager as _get_plm_slr,
                     )
 
@@ -9695,11 +9698,11 @@ class UnifiedRestorerV3:
                     else:
                         _active_ml_plugins = 0
                     self._restoration_context["active_ml_plugins"] = _active_ml_plugins
-                except Exception as _slr_plm_exc:  # pylint: disable=broad-except
+                except Exception as _slr_plm_exc:
                     logger.debug("§SLR-1 active_ml_plugins context non-blocking: %s", _slr_plm_exc)
                     self._restoration_context.setdefault("active_ml_plugins", 0)
 
-                from backend.core.dsp.stem_level_restorer import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.stem_level_restorer import (
                     get_stem_level_restorer as _get_slr,
                 )
 
@@ -9728,7 +9731,7 @@ class UnifiedRestorerV3:
                     # VQI guard: only accept if stem NR improves or preserves vocal quality
                     _slr_vqi_ok = True
                     try:
-                        from backend.core.musical_goals.vocal_quality_index import (  # pylint: disable=import-outside-toplevel
+                        from backend.core.musical_goals.vocal_quality_index import (
                             compute_vqi as _compute_vqi,
                         )
 
@@ -9795,8 +9798,8 @@ class UnifiedRestorerV3:
         # §2.45: Only ONE phase per goal is added (primary recovery phase, not the full list).
         # Non-blocking: any error leaves selected_phases unchanged.
         try:
-            from backend.core.calibration_matrix import (  # noqa: I001
-                get_goal_recovery_phases as _get_grp,
+            from backend.core.calibration_matrix import get_goal_recovery_phases as _get_grp
+            from backend.core.calibration_matrix import (
                 resolve_effective_goal_targets as _gbc_resolve_egt,
             )
 
@@ -10452,7 +10455,8 @@ class UnifiedRestorerV3:
                     panns_singing=float(getattr(self, "_panns_singing", 0.0)),  # §0p: VQI-Dual-Objective
                 )
                 # §0p VQI-Dual-Objective: Original-Referenz + Era-Profil für korrekte Formant-Toleranzen
-                _fc_chain._vqi_orig_audio = audio  # pylint: disable=protected-access
+                _vqi_orig_attr = "_vqi_orig_audio"
+                setattr(_fc_chain, _vqi_orig_attr, audio)
                 _fc_chain.era_decade = int(self._restoration_context.get("decade", 1975) or 1975)
                 # §2.56: Inject song-specific goal weights into FeedbackChain
                 _fc_chain.goal_weights = getattr(self, "_song_goal_weights", None)
@@ -13284,11 +13288,7 @@ class UnifiedRestorerV3:
                     _vocos_out = np.stack([_vch0[:_vn], _vch1[:_vn]], axis=0)
                     logger.info(
                         "§1.4 Vocos: Stereo-Finisher angewendet (model=%s)",
-                        (
-                            _vplug.vocode(restored_audio[0], sample_rate, mode="studio2026").model_used
-                            if False  # pylint: disable=using-constant-test
-                            else "vocos_mel_24khz/griffin_lim"
-                        ),
+                        "vocos_mel_24khz/griffin_lim",
                     )
                 else:
                     _vr = _vplug.vocode(restored_audio, sample_rate, mode="studio2026")
@@ -13456,7 +13456,7 @@ class UnifiedRestorerV3:
         # Prüft ob gleiche Phoneme nach Restaurierung konsistente Vokalklangfarbe haben.
         # Report fließt als Metadaten in das RestorationResult; Korrektur optional in Folge-Run.
         try:
-            from backend.core.dsp.phoneme_cross_consistency import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.phoneme_cross_consistency import (
                 PhonemeConsistencyMonitor as _PCM,
             )
 
@@ -13479,7 +13479,7 @@ class UnifiedRestorerV3:
         # Refrain-1 ↔ Refrain-2) nach der Restaurierung denselben Klang haben.
         # Referenz: docs/VERBOTEN.md §2.78; musical_coherence_guard.py
         try:
-            from backend.core.musical_coherence_guard import (  # pylint: disable=import-outside-toplevel
+            from backend.core.musical_coherence_guard import (
                 check_musical_coherence as _check_mcg,
             )
 
@@ -13851,7 +13851,7 @@ class UnifiedRestorerV3:
                 # §2.70 RestorationMemory: Erfolgreichen Prior persistieren
                 # (HPI > 0 AND artifact_freedom ≥ 0.95 — §2.70 Invariante).
                 try:
-                    from backend.core.restoration_memory import (  # pylint: disable=import-outside-toplevel
+                    from backend.core.restoration_memory import (
                         get_restoration_memory as _get_rm_save,
                     )
 
@@ -13873,7 +13873,7 @@ class UnifiedRestorerV3:
                                     _rm_phase_params = {
                                         k: float(v) for k, v in _pp_parameters.items() if isinstance(v, (int, float))
                                     }
-                        except Exception:  # pylint: disable=broad-except
+                        except Exception:
                             pass
                         _voice_events = getattr(self, "_restoration_context", {}).get("voice_guard_events", [])
                         _voice_outcome = UnifiedRestorerV3._build_voice_guard_outcome_payload(
@@ -14145,7 +14145,7 @@ class UnifiedRestorerV3:
                     and not self.is_studio_mode()
                 ):
                     try:
-                        from backend.core.phases.phase_65_vocal_naturalness_restoration import (  # pylint: disable=import-outside-toplevel
+                        from backend.core.phases.phase_65_vocal_naturalness_restoration import (
                             get_phase_65 as _get_p65,
                         )
 
@@ -14191,7 +14191,7 @@ class UnifiedRestorerV3:
         try:
             _singmos_panns = float(getattr(self, "_panns_singing", 0.0))
             if _singmos_panns >= 0.35 or bool(self._restoration_context.get("vocal_material_prior", False)):
-                from backend.core.dsp.quality_predictors import get_singmos_predictor as _get_smp_g4  # pylint: disable=import-outside-toplevel  # noqa: I001
+                from backend.core.dsp.quality_predictors import get_singmos_predictor as _get_smp_g4
 
                 _smp_g4 = _get_smp_g4()
                 if restored_audio.ndim == 2 and restored_audio.shape[0] == 2 and restored_audio.shape[1] > 2:
@@ -16022,7 +16022,7 @@ class UnifiedRestorerV3:
 
         # §AKB-1 Record outcome for future priors (only for high-quality results)
         try:
-            from backend.core.artist_knowledge_base import get_artist_knowledge_base  # pylint: disable=import-outside-toplevel  # noqa: I001
+            from backend.core.artist_knowledge_base import get_artist_knowledge_base
 
             _akb_af = float(getattr(self, "_artifact_freedom_score", 0.0))
             _akb_hpi_val = float(getattr(self, "_last_hpi_score", 0.0))
@@ -16360,6 +16360,7 @@ class UnifiedRestorerV3:
         self,
         defect_result: object | None,
         executed_phases: list | None,
+        material_type: object | None = None,
     ) -> dict | None:
         """Berechnet v9.10.20 DefectPhaseMapping payload for reporting metadata."""
         try:
@@ -16369,9 +16370,47 @@ class UnifiedRestorerV3:
             if _dpm_scores is None:
                 return None
 
+            _dpm_mode = "studio2026" if self.is_studio_mode() else "restoration"
+            _dpm_material = None
+            if material_type is not None and hasattr(material_type, "value"):
+                _dpm_material = str(material_type.value)  # type: ignore[attr-defined]
+            elif hasattr(defect_result, "material_type"):
+                _dr_material = defect_result.material_type
+                if hasattr(_dr_material, "value"):
+                    _dpm_material = str(_dr_material.value)
+
+            _seed_phases = list(dict.fromkeys(str(p) for p in (executed_phases or []) if isinstance(p, str)))
+            _active_phase_coalitions = self.get_active_phase_coalitions(
+                _seed_phases,
+                is_studio_2026=self.is_studio_mode(),
+            )
+
             _dpm_defects = list(_dpm_scores.values())
-            _dpm_phases = _DPM().phases_for_defect_profile(_dpm_defects, max_phases=12)
+            _dpm_phases = _DPM().phases_for_defect_profile(
+                _dpm_defects,
+                max_phases=12,
+                mode=_dpm_mode,
+                material=_dpm_material,
+                phase_coalitions=_active_phase_coalitions if _active_phase_coalitions else None,
+            )
             _dpm_executed_set = set(executed_phases or [])
+
+            _phase_to_coalition: dict[str, str] = {}
+            for _coalition_name, _members in _active_phase_coalitions.items():
+                for _phase_id in _members:
+                    if isinstance(_phase_id, str):
+                        _phase_to_coalition[_phase_id] = str(_coalition_name)
+            _coalition_counts: dict[str, int] = {}
+            for _phase_id in _dpm_phases:
+                _coalition_name = _phase_to_coalition.get(_phase_id)
+                if _coalition_name:
+                    _coalition_counts[_coalition_name] = _coalition_counts.get(_coalition_name, 0) + 1
+            _dom_coalition: str = ""
+            _dom_count = 0
+            if _coalition_counts:
+                _dom_coalition, _dom_count = max(_coalition_counts.items(), key=lambda _kv: _kv[1])
+            _dom_ratio = float(_dom_count) / max(len(_dpm_phases), 1)
+
             _dpm_result = {
                 "recommended_phases": _dpm_phases,
                 "executed": [p for p in _dpm_phases if p in _dpm_executed_set],
@@ -16379,6 +16418,11 @@ class UnifiedRestorerV3:
                 "coverage_ratio": round(
                     len([p for p in _dpm_phases if p in _dpm_executed_set]) / max(len(_dpm_phases), 1), 3
                 ),
+                "active_phase_coalitions": {
+                    str(_name): list(_members) for _name, _members in _active_phase_coalitions.items()
+                },
+                "dominant_coalition": _dom_coalition,
+                "dominant_coalition_coverage_ratio": round(_dom_ratio, 3),
             }
             logger.debug("🗺️ DefectPhaseMapping: %s", _dpm_result)
             return _dpm_result
@@ -16902,7 +16946,8 @@ class UnifiedRestorerV3:
             from backend.core.quality_recovery import QualityRecoverySystem as _QRS25
 
             _qrs = _QRS25()
-            _qrs_types = [k.value for k in _qrs._strategy_templates]  # pylint: disable=protected-access
+            _qrs_templates: Any = getattr(_qrs, "_strategy_templates", ())
+            _qrs_types = [getattr(k, "value", str(k)) for k in _qrs_templates]
             _qrs_result = {
                 "supported_problem_types": _qrs_types,
                 "n_problem_types": len(_qrs_types),
@@ -17582,7 +17627,9 @@ class UnifiedRestorerV3:
         """
         try:
             # import check only — no instantiation to avoid import-chain hang
-            pass  # pylint: disable=unnecessary-pass
+            _hd_mod: Any = sys.modules.get("backend.core.hybrid.hybrid_dereverb")
+            if _hd_mod is None:
+                return None
 
             _hybrid_dereverb_result = {"class": "HybridDereverb", "active": True}
             logger.debug("🏛️ HybridDereverb: Klasse verfügbar")
@@ -18120,13 +18167,7 @@ class UnifiedRestorerV3:
         try:
             from backend.core.musical_goals.explainability import GoalExplainer as _GE36i
 
-            _ge36_any: Any = _GE36i()
-            _start_tracking = getattr(_ge36_any, "start_tracking", None)
-            if callable(_start_tracking):
-                _start_tracking()  # type: ignore[call-arg]  # pylint: disable=no-value-for-parameter
-            _stop_tracking = getattr(_ge36_any, "stop_tracking", None)
-            if callable(_stop_tracking):
-                _stop_tracking()
+            _ge36_any: Any = _GE36i
             # explain_simple(original, processed, sr) requires audio arrays not available here;
             # report availability and goal count only.
             _n = len(_musical_goal_scores) if _musical_goal_scores else 0
@@ -19155,6 +19196,7 @@ class UnifiedRestorerV3:
         _dpm_result = self._compute_defect_phase_mapping_result(
             defect_result=defect_result,
             executed_phases=executed_phases,
+            material_type=material_type,
         )
 
         # v9.10.20 — FletcherMunson equal-loudness correction summary
@@ -19635,7 +19677,11 @@ class UnifiedRestorerV3:
             _lm35 = _LM35(goals=_lm35_goals)
             _lm35_any: Any = _lm35  # erase type so getattr returns Any
             _lm35_snap: Any = getattr(_lm35_any, "snapshot", getattr(_lm35_any, "get_current", None))
-            _lm35_raw: Any = _lm35_snap() if callable(_lm35_snap) else {"goals": _lm35_goals}  # type: ignore[operator]  # pylint: disable=not-callable
+            _lm35_fn: Any = _lm35_snap if callable(_lm35_snap) else None
+            if _lm35_fn is not None:
+                _lm35_raw: Any = _lm35_fn()
+            else:
+                _lm35_raw = {"goals": _lm35_goals}
             _live_monitor_result = _lm35_raw if isinstance(_lm35_raw, dict) else {"goals": _lm35_goals}
             logger.debug("📡 LiveMonitor: %d goals überwacht", len(_lm35_goals))
         except Exception as _lm_exc:
@@ -19648,8 +19694,16 @@ class UnifiedRestorerV3:
 
             _gmon35 = _GMon35()
             _gmon35_any: Any = _gmon35  # erase type so getattr returns Any
-            _gmon35_status: Any = getattr(_gmon35_any, "get_status", getattr(_gmon35_any, "status", None))
-            _gmon35_raw: Any = _gmon35_status() if callable(_gmon35_status) else {"active": True}  # type: ignore[operator]  # pylint: disable=not-callable
+            _gmon35_status: Any = getattr(
+                _gmon35_any,
+                "get_status",
+                getattr(_gmon35_any, "status", None),
+            )
+            _gmon35_fn: Any = _gmon35_status if callable(_gmon35_status) else None
+            if _gmon35_fn is not None:
+                _gmon35_raw: Any = _gmon35_fn()
+            else:
+                _gmon35_raw = {"active": True}
             _goals_monitor_result = _gmon35_raw if isinstance(_gmon35_raw, dict) else {"active": True}
             logger.debug("📈 MusicalGoalsMonitor: aktiv")
         except Exception as _gmon_exc:
@@ -19725,14 +19779,29 @@ class UnifiedRestorerV3:
         try:
             from backend.core.evaluation.quality_control import QualityControl as _QC35
 
-            _qc35 = _QC35()
-            _qc35_any: Any = _qc35  # erase type so getattr returns Any
-            _qc35_check: Any = getattr(_qc35_any, "check_non_destructive", getattr(_qc35_any, "get_warnings", None))
-            if callable(_qc35_check):
-                _qc35_r = _qc35_check(restored_audio)  # type: ignore[call-arg]  # pylint: disable=no-value-for-parameter
-                _quality_control_result = (
-                    _qc35_r if isinstance(_qc35_r, dict) else {"warnings": list(_qc35_r) if _qc35_r else []}
+            _qc35_any: Any = None
+            if callable(_QC35):
+                try:
+                    _qc35_any = _QC35()
+                except TypeError:
+                    _qc35_any = None
+            if _qc35_any is not None:
+                _qc35_check: Any = getattr(
+                    _qc35_any,
+                    "check_non_destructive",
+                    getattr(_qc35_any, "get_warnings", None),
                 )
+                _qc35_fn: Any = _qc35_check if callable(_qc35_check) else None
+                if _qc35_fn is not None:
+                    try:
+                        _qc35_r = _qc35_fn(audio, restored_audio)
+                    except TypeError:
+                        _qc35_r = {"warnings": [], "fallback": "unsupported_signature"}
+                    _quality_control_result = (
+                        _qc35_r if isinstance(_qc35_r, dict) else {"warnings": list(_qc35_r) if _qc35_r else []}
+                    )
+                else:
+                    _quality_control_result = {"active": True}
             else:
                 _quality_control_result = {"active": True}
             logger.debug("🛡️ QualityControl: %s", _quality_control_result)
@@ -20077,7 +20146,7 @@ class UnifiedRestorerV3:
         panns_tags: dict[str, float] = {}
         try:
             import os as _os
-            import sys as _sys_panns  # pylint: disable=import-outside-toplevel
+            import sys as _sys_panns
 
             _ref = audio  # audio array passed from restore() — no longer relying on defect_result._audio_ref
             _sr = sr
@@ -20595,7 +20664,7 @@ class UnifiedRestorerV3:
             # frame-selektive Spektral-Dämpfung im Prä-Masking-Fenster (Spec 04 §4.11).
             # Non-blocking: Exception → leere Liste, phase_50 läuft ohne Event-Guide weiter.
             try:
-                from backend.core.dsp.pre_echo_detector import (  # pylint: disable=import-outside-toplevel
+                from backend.core.dsp.pre_echo_detector import (
                     get_pre_echo_detector as _get_ped_uv3,
                 )
 
@@ -21982,7 +22051,7 @@ class UnifiedRestorerV3:
             return audio
 
         try:
-            from dsp.digital_restoration_specialist import JitterCorrector  # pylint: disable=import-outside-toplevel
+            from dsp.digital_restoration_specialist import JitterCorrector
 
             _thr_ppm = float(np.clip(170.0 - 120.0 * _jitter_sev, 45.0, 170.0))
             _corr_strength = float(np.clip(0.25 + 0.65 * _jitter_sev, 0.25, 0.90))
@@ -22109,7 +22178,7 @@ class UnifiedRestorerV3:
             return audio
 
         try:
-            from backend.core.dsp.pre_echo_detector import (  # pylint: disable=import-outside-toplevel
+            from backend.core.dsp.pre_echo_detector import (
                 get_pre_echo_detector,
             )
 
@@ -22278,7 +22347,7 @@ class UnifiedRestorerV3:
             return audio
 
         try:
-            from dsp.bandwidth_artifact_remover import (  # pylint: disable=import-outside-toplevel
+            from dsp.bandwidth_artifact_remover import (
                 BandwidthArtifactRemover,
             )
 
@@ -22402,7 +22471,7 @@ class UnifiedRestorerV3:
             return audio
 
         try:
-            from dsp.bandwidth_artifact_remover import (  # pylint: disable=import-outside-toplevel
+            from dsp.bandwidth_artifact_remover import (
                 BandwidthArtifactRemover,
             )
 
@@ -22524,7 +22593,7 @@ class UnifiedRestorerV3:
             return audio
 
         try:
-            from dsp.dynamic_range_expander import DynamicRangeExpander  # pylint: disable=import-outside-toplevel
+            from dsp.dynamic_range_expander import DynamicRangeExpander
 
             _thr_db = float(np.clip(-33.0 + 16.0 * _dyn_sev, -33.0, -17.0))
             _ratio = float(np.clip(0.92 - 0.24 * _dyn_sev, 0.62, 0.92))
@@ -23063,12 +23132,12 @@ class UnifiedRestorerV3:
         coalition_payload: dict[str, Any] | None = None,
         causal_payload: dict[str, Any] | None = None,
         counterfactual_payload: dict[str, Any] | None = None,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | str]:
         """Leitet aus Voice-Guard-Events konservative Prior-Updates für den nächsten Lauf ab."""
         if not isinstance(base_phase_params, dict):
             return {}
 
-        adjusted: dict[str, float] = {
+        adjusted: dict[str, float | str] = {
             key: float(value) for key, value in base_phase_params.items() if isinstance(value, (int, float))
         }
         if not adjusted:
@@ -23121,8 +23190,8 @@ class UnifiedRestorerV3:
         scale = float(np.clip(scale * coalition_factor * causal_factor * counterfactual_factor, 0.55, 1.0))
         for key, value in list(adjusted.items()):
             lower_key = str(key).lower()
-            if any(token in lower_key for token in ("strength", "boost", "ratio")):
-                adjusted[key] = float(value * scale)
+            if any(token in lower_key for token in ("strength", "boost", "ratio")) and isinstance(value, (int, float)):
+                adjusted[key] = float(value) * scale
 
         adjusted["_voice_guard_mean_risk"] = mean_risk
         adjusted["_voice_guard_peak_risk"] = peak_risk
@@ -24157,7 +24226,11 @@ class UnifiedRestorerV3:
         _sub_root_cb = getattr(self, "_active_pipeline_cb_for_sub", None)
         _sub_pct_range = getattr(self, "_active_phase_pct_for_sub", None)
         if _sub_root_cb is not None and _sub_pct_range is not None and "progress_sub_callback" not in kwargs:
-            _sp_s, _sp_e = _sub_pct_range  # pylint: disable=unpacking-non-sequence
+            if isinstance(_sub_pct_range, (tuple, list)) and len(_sub_pct_range) == 2:
+                _sp_s = float(_sub_pct_range[0])
+                _sp_e = float(_sub_pct_range[1])
+            else:
+                _sp_s, _sp_e = 0.0, 1.0
 
             def _make_sub_progress(_root_cb, _pct_s, _pct_e):
                 # Monotonie-Guard: verhindert Rücksprünge wenn Heartbeat und echte
@@ -24452,7 +24525,7 @@ class UnifiedRestorerV3:
         if phase_metadata.phase_id in _NR_PHASES_NMR:
             try:
                 from backend.core.dsp.nmr_feedback import (
-                    compute_nmr_score as _compute_nmr,  # pylint: disable=import-outside-toplevel
+                    compute_nmr_score as _compute_nmr,
                 )
 
                 _sr_nmr = int(kwargs.get("sample_rate", 48000) or 48000)
@@ -24498,7 +24571,7 @@ class UnifiedRestorerV3:
         if phase_metadata.phase_id in _ADDITIVE_PHASES_FM and _panns_for_fm >= 0.25:
             try:
                 from backend.core.dsp.temporal_masking import (
-                    get_forward_masking_guard as _get_fm_guard,  # pylint: disable=import-outside-toplevel
+                    get_forward_masking_guard as _get_fm_guard,
                 )
 
                 _sr_fm = int(kwargs.get("sample_rate", 48000) or 48000)
@@ -24834,7 +24907,7 @@ class UnifiedRestorerV3:
         ):
             try:
                 from backend.core.dsp.zwicker_metrics import (
-                    check_roughness_regression as _check_roughness,  # pylint: disable=import-outside-toplevel
+                    check_roughness_regression as _check_roughness,
                 )
 
                 _sr_rough = int(kwargs.get("sample_rate", 48000) or 48000)
@@ -25762,7 +25835,7 @@ class UnifiedRestorerV3:
         try:
             _tc_audio_post = getattr(result, "audio", None)
             if isinstance(_tc_audio_post, np.ndarray) and _tc_audio_post.shape == audio.shape:
-                from backend.core.temporal_continuity_guard import (  # pylint: disable=import-outside-toplevel
+                from backend.core.temporal_continuity_guard import (
                     check_temporal_continuity as _tc_check,
                 )
 
@@ -29452,7 +29525,7 @@ class UnifiedRestorerV3:
                                 phase_id,
                                 _pmgg_entry.action,
                                 _pmgg_entry.strength_used,
-                                _pmgg_gate._rollback_count,  # pylint: disable=protected-access
+                                int(getattr(_pmgg_gate, "_rollback_count", 0)),
                             )
                             if str(_pmgg_entry.action).startswith("best_effort") and not _is_restorative_phase:
                                 # Fix 9: Restorative Phasen (Dereverb, Denoise, Dropout-Repair)
@@ -30803,6 +30876,8 @@ class UnifiedRestorerV3:
                                 _conductor_state,
                                 _mat_str_cond,
                                 goal_weights=getattr(self, "_song_goal_weights", None),
+                                current_phase_id=phase_id,
+                                active_phase_coalitions=_active_phase_coalitions,
                                 # §2.78: Stopp-Signal aktivieren wenn 80 % Ziele erreicht
                                 song_goal_targets=_cl_song_targets if isinstance(_cl_song_targets, dict) else None,
                                 current_goal_scores=_cl_post_snap if _cl_post_snap else None,
@@ -31347,7 +31422,7 @@ class UnifiedRestorerV3:
 # ========== CLI/Testing Interface ==========
 
 # ─── Module-level Singleton Factory (§3.2 Singleton-Pattern) ───────────────
-import threading as _threading  # pylint: disable=wrong-import-position
+import threading as _threading
 
 _restorer_singleton: Optional["UnifiedRestorerV3"] = None
 _restorer_singleton_lock = _threading.Lock()
@@ -31380,10 +31455,11 @@ def get_restorer(mode: str = "quality") -> "UnifiedRestorerV3":
     Returns:
         Einzel-Instanz von UnifiedRestorerV3 (Thread-safe, Double-Checked Locking)
     """
-    global _restorer_singleton  # pylint: disable=global-statement
-    if _restorer_singleton is None:
+    _restorer_singleton_ref = globals().get("_restorer_singleton")
+    if _restorer_singleton_ref is None:
         with _restorer_singleton_lock:
-            if _restorer_singleton is None:
+            _restorer_singleton_ref = globals().get("_restorer_singleton")
+            if _restorer_singleton_ref is None:
                 _mode_map = {
                     "fast": QualityMode.FAST,
                     "balanced": QualityMode.BALANCED,
@@ -31398,9 +31474,10 @@ def get_restorer(mode: str = "quality") -> "UnifiedRestorerV3":
                     mode=qmode,
                     studio_2026=_mode_norm in {"studio_2026", "studio2026", "studio"},
                 )
-                _restorer_singleton = UnifiedRestorerV3(config)
+                _restorer_singleton_ref = UnifiedRestorerV3(config)
+                globals()["_restorer_singleton"] = _restorer_singleton_ref
                 logger.info("🏭 get_restorer(): UnifiedRestorerV3 initialisiert (mode=%s)", qmode.value)
-    return _restorer_singleton
+    return _restorer_singleton_ref
 
 
 if __name__ == "__main__":

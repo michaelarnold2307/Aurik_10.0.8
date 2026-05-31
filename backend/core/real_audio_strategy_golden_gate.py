@@ -17,6 +17,7 @@ from backend.core.causal_defect_reasoner import reason_about_defects
 from backend.core.defect_phase_mapper import _RESTORATION_FORBIDDEN_PHASES, DefectPhaseMapper
 from backend.core.defect_scanner import DefectScanner, MaterialType
 from backend.core.real_audio_defect_golden_gate import _audio_from_import, _load_manifest
+from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,8 @@ class RealAudioStrategyGoldenGateReport:
 
 
 def _thresholds_from_manifest(payload: dict[str, Any]) -> StrategyGateThresholds:
-    raw = payload.get("thresholds") if isinstance(payload.get("thresholds"), dict) else {}
+    raw_thresholds = payload.get("thresholds")
+    raw = raw_thresholds if isinstance(raw_thresholds, dict) else {}
     return StrategyGateThresholds(
         min_cause_topk_accuracy=float(raw.get("min_cause_topk_accuracy", 0.875)),
         min_phase_recall=float(raw.get("min_phase_recall", 0.95)),
@@ -144,6 +146,35 @@ def _dedupe_phases(*phase_lists: list[str]) -> tuple[str, ...]:
     return tuple(phases)
 
 
+def _resolve_strategy_phase_coalitions(
+    seed_phases: list[str],
+    *,
+    is_studio_2026: bool = False,
+) -> dict[str, tuple[str, ...]]:
+    """Liefert aktive §2.67-Phasenkoalitionen für den Strategy-Gate-Pfad."""
+    if not seed_phases:
+        return {}
+    try:
+        resolved = UnifiedRestorerV3.get_active_phase_coalitions(
+            seed_phases,
+            is_studio_2026=is_studio_2026,
+        )
+        if not isinstance(resolved, dict):
+            return {}
+        normalized: dict[str, tuple[str, ...]] = {}
+        for coalition_name, members in resolved.items():
+            if not isinstance(coalition_name, str):
+                continue
+            if not isinstance(members, tuple):
+                continue
+            normalized_members = tuple(phase_id for phase_id in members if isinstance(phase_id, str))
+            if len(normalized_members) >= 2:
+                normalized[coalition_name] = normalized_members
+        return normalized
+    except Exception:
+        return {}
+
+
 def _scan_strategy_case(raw_case: dict[str, Any], repo_root: Path, target_sr: int) -> StrategyCaseResult:
     case_id = str(raw_case.get("case_id", "") or "").strip()
     if not case_id:
@@ -167,12 +198,17 @@ def _scan_strategy_case(raw_case: dict[str, Any], repo_root: Path, target_sr: in
     defect_result = scanner.scan(audio, sr, material_type=material, file_ext=path.suffix)
     defect_scores = {score.defect_type.value: score.severity for score in defect_result.get_top_defects(8)}
     plan = reason_about_defects(defect_scores, material=material.value, audio=audio, sample_rate=sr)
+    reasoner_phases = [str(phase) for phase in plan.recommended_phases]
+    active_phase_coalitions = _resolve_strategy_phase_coalitions(reasoner_phases, is_studio_2026=False)
     mapper_phases = DefectPhaseMapper().phases_for_defect_profile(
-        list(defect_result.scores.values()), max_phases=12, material=material.value
+        list(defect_result.scores.values()),
+        max_phases=12,
+        mode="restoration",
+        material=material.value,
+        phase_coalitions=active_phase_coalitions if active_phase_coalitions else None,
     )
     runtime_seconds = float(time.time() - start_time)
 
-    reasoner_phases = [str(phase) for phase in plan.recommended_phases]
     combined_phases = _dedupe_phases(reasoner_phases, mapper_phases)
     combined_set = set(combined_phases)
     top_causes = tuple(cause for cause, _prob in plan.ranked_causes[:10])
@@ -193,6 +229,24 @@ def _scan_strategy_case(raw_case: dict[str, Any], repo_root: Path, target_sr: in
         for before, after in ordered_before
         if before in phase_index and after in phase_index and phase_index[before] > phase_index[after]
     )
+
+    phase_to_coalition: dict[str, str] = {}
+    for coalition_name, members in active_phase_coalitions.items():
+        coalition_name_text = str(coalition_name)
+        for phase_id in members:
+            phase_to_coalition[str(phase_id)] = coalition_name_text
+    coalition_counts: dict[str, int] = {}
+    for phase_id in mapper_phases:
+        coalition_for_phase = phase_to_coalition.get(phase_id)
+        if coalition_for_phase:
+            coalition_counts[coalition_for_phase] = coalition_counts.get(coalition_for_phase, 0) + 1
+    dominant_coalition: str = ""
+    dominant_coalition_ratio = 0.0
+    if coalition_counts:
+        dominant_item = max(coalition_counts.items(), key=lambda item: item[1])
+        dominant_coalition = str(dominant_item[0])
+        dominant_count = int(dominant_item[1])
+        dominant_coalition_ratio = float(dominant_count) / max(len(mapper_phases), 1)
 
     return StrategyCaseResult(
         case_id=case_id,
@@ -220,6 +274,9 @@ def _scan_strategy_case(raw_case: dict[str, Any], repo_root: Path, target_sr: in
             "sample_rate": int(defect_result.sample_rate),
             "description": str(raw_case.get("description", "") or ""),
             "defect_scores": {key: float(value) for key, value in defect_scores.items()},
+            "active_phase_coalitions": {name: list(members) for name, members in active_phase_coalitions.items()},
+            "dominant_coalition": dominant_coalition,
+            "dominant_coalition_ratio": round(float(dominant_coalition_ratio), 3),
         },
     )
 

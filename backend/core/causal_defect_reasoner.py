@@ -1607,6 +1607,16 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     ],
 }
 
+# §2.67 Koalitions-Priorisierung bereits auf Ursache→Phase-Ebene.
+# Damit bleiben zusammengehörige Reparaturphasen auch vor der UV3-Ausführung
+# dichter beieinander und werden weniger durch globale Einzelscores getrennt.
+_CAUSAL_PHASE_COALITIONS: dict[str, tuple[str, ...]] = {
+    "digital_repair_chain": ("phase_23_spectral_repair", "phase_50_spectral_repair"),
+    "hiss_harmonic_rebuild": ("phase_29_tape_hiss_reduction", "phase_07_harmonic_restoration"),
+    "stereo_alignment": ("phase_14_phase_correction", "phase_25_azimuth_correction"),
+    "generation_loss_rebuild": ("phase_23_spectral_repair", "phase_07_harmonic_restoration"),
+}
+
 # §6.2b/c Era-Verarbeitungsrichtlinien: Materialspezifische Phasen-Ausschlüsse.
 # Phasen die für ein bestimmtes Material VERBOTEN sind — unabhängig von der Defect-Ursache.
 # Spec copilot-instructions.md §ERA-Tabelle:
@@ -3283,6 +3293,16 @@ class CausalDefectReasoner:
                 len(ordered_phases),
             )
 
+        # §2.67 Koalitions-Priorisierung: Nach dem globalen Severity-Reorder
+        # zusammengehörige Phasen sanft zusammenziehen.
+        _coalition_ordered = self._apply_phase_coalition_priority(ordered_phases, ranked)
+        if _coalition_ordered != ordered_phases:
+            logger.info(
+                "§2.67 Causal-Coalition-Priority: reordered %d phases for coalition continuity",
+                len(_coalition_ordered),
+            )
+            ordered_phases = _coalition_ordered
+
         reasoning = self._build_reasoning(primary_cause, ranked, sf, material)
 
         return RestorationPlan(
@@ -3294,6 +3314,38 @@ class CausalDefectReasoner:
             confidence=confidence,
             reasoning=reasoning,
             material=material,
+        )
+
+    @staticmethod
+    def _apply_phase_coalition_priority(
+        ordered_phases: list[str],
+        ranked_causes: list[tuple[str, float]],
+        phase_coalitions: dict[str, tuple[str, ...]] | None = None,
+    ) -> list[str]:
+        """Wendet eine milde §2.67-Koalitionspriorisierung auf die Phasenliste an."""
+        if not ordered_phases:
+            return ordered_phases
+
+        phase_priority: dict[str, float] = {}
+        for cause, prob in ranked_causes[:10]:
+            for phase in CAUSE_TO_PHASES.get(cause, []):
+                phase_priority[phase] = max(phase_priority.get(phase, 0.0), float(prob))
+
+        coalitions = phase_coalitions if isinstance(phase_coalitions, dict) else _CAUSAL_PHASE_COALITIONS
+        for members in coalitions.values():
+            present = [phase_id for phase_id in members if phase_id in ordered_phases]
+            if len(present) < 2:
+                continue
+            dominant = max(phase_priority.get(phase_id, 0.0) for phase_id in present)
+            coalition_floor = max(0.0, float(dominant) * 0.92)
+            for phase_id in present:
+                phase_priority[phase_id] = max(float(phase_priority.get(phase_id, 0.0)), coalition_floor)
+
+        original_order = {phase_id: idx for idx, phase_id in enumerate(ordered_phases)}
+        return sorted(
+            ordered_phases,
+            key=lambda phase_id: (phase_priority.get(phase_id, 0.0), -original_order.get(phase_id, 999)),
+            reverse=True,
         )
 
     def _build_reasoning(

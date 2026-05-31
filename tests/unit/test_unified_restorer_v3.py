@@ -457,6 +457,66 @@ class TestPhaseCoalitions:
         assert "phase_42_vocal_enhancement" in active["vocal_production"]
 
 
+class TestDefectPhaseMappingReporting:
+    def test_compute_defect_phase_mapping_result_includes_coalition_context(self, monkeypatch):
+        restorer = object.__new__(UnifiedRestorerV3)
+        restorer.config = RestorationConfig(mode=QualityMode.QUALITY, studio_2026=False)
+        restorer._restoration_context = {}
+
+        captured: dict[str, object] = {}
+
+        class _DummyMapper:
+            def phases_for_defect_profile(
+                self, defects, max_phases=10, mode="restoration", material=None, phase_coalitions=None
+            ):
+                captured["mode"] = mode
+                captured["material"] = material
+                captured["phase_coalitions"] = phase_coalitions
+                return [
+                    "phase_23_spectral_repair",
+                    "phase_50_spectral_repair",
+                    "phase_03_denoise",
+                ]
+
+        monkeypatch.setattr("backend.core.defect_phase_mapper.DefectPhaseMapper", lambda: _DummyMapper())
+        monkeypatch.setattr(
+            UnifiedRestorerV3,
+            "get_active_phase_coalitions",
+            classmethod(
+                lambda cls, selected_phases, is_studio_2026=False: {
+                    "digital_repair_chain": (
+                        "phase_23_spectral_repair",
+                        "phase_50_spectral_repair",
+                    )
+                }
+            ),
+        )
+
+        defect_result = types.SimpleNamespace(
+            scores={
+                "a": types.SimpleNamespace(defect_type=DefectType.ALIASING, severity=0.8),
+            }
+        )
+        material_stub = types.SimpleNamespace(value="cd_digital")
+
+        result = restorer._compute_defect_phase_mapping_result(
+            defect_result=defect_result,
+            executed_phases=[
+                "phase_23_spectral_repair",
+                "phase_50_spectral_repair",
+                "phase_03_denoise",
+            ],
+            material_type=material_stub,
+        )
+
+        assert result is not None
+        assert captured["mode"] == "restoration"
+        assert captured["material"] == "cd_digital"
+        assert isinstance(captured["phase_coalitions"], dict)
+        assert result["dominant_coalition"] == "digital_repair_chain"
+        assert result["dominant_coalition_coverage_ratio"] == 0.667
+
+
 # ---------------------------------------------------------------------------
 # Klasse 2: RestorationResult
 # ---------------------------------------------------------------------------

@@ -568,6 +568,25 @@ class TestDefectPhaseMapper:
         assert "phase_01_click_removal" in phases
         assert phases.index("phase_01_click_removal") < len(phases) // 2 + 2
 
+    def test_phases_for_defect_profile_coalition_priority(self):
+        """§2.67: Koalitionsphasen werden im Profil als zusammengehörige Gruppe priorisiert."""
+        from backend.core.defect_phase_mapper import DefectPhaseMapper
+
+        mapper = DefectPhaseMapper()
+        defects = [
+            DefectScore(DefectType.GENERATION_LOSS, severity=0.9, confidence=0.9),
+            DefectScore(DefectType.LOW_FREQ_RUMBLE, severity=0.8, confidence=0.8),
+        ]
+        phases = mapper.phases_for_defect_profile(defects, max_phases=10)
+
+        assert "phase_23_spectral_repair" in phases
+        assert "phase_07_harmonic_restoration" in phases
+        assert "phase_05_rumble_filter" in phases
+
+        # Ohne Koalitions-Priorisierung läge phase_05 (0.8) vor phase_07 (0.54).
+        # Mit §2.67-Coalition wird phase_07 als Partner von phase_23 nach vorne gezogen.
+        assert phases.index("phase_07_harmonic_restoration") < phases.index("phase_05_rumble_filter")
+
     def test_describe_returns_string(self):
         """describe() gibt nicht-leeren String zurück."""
         from backend.core.defect_phase_mapper import DefectPhaseMapper

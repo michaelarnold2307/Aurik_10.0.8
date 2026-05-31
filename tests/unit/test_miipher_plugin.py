@@ -55,6 +55,7 @@ def test_miipher_adapter_uses_loaded_sgmse_plus(monkeypatch):
     assert metadata["model_used"] in ("miipher_sgmse_plus_fullmix", "miipher_sgmse_plus_stem")
     assert metadata["capability_status"] == "sota_fallback"
     assert metadata["native_miipher_loaded"] is False
+    assert metadata["activation_reason"] == "sgmse_plus_chain"
 
 
 def test_resolve_miipher_onnx_path_uses_env_override_when_file_exists(monkeypatch, tmp_path):
@@ -521,8 +522,26 @@ def test_enhance_routes_to_native_onnx_when_model_loaded(monkeypatch):
     )
     assert meta["capability_status"] == "sota_real"
     assert meta["native_miipher_loaded"] is True
+    assert plugin.is_productive()
+    assert meta["activation_reason"] == "native_onnx"
     assert result.shape == audio.shape
     assert np.all(np.isfinite(result))
+
+
+def test_is_productive_with_loaded_sgmse_plus(monkeypatch):
+    import plugins
+    from plugins.miipher_plugin import MiipherPlugin
+
+    class _FakeSgmsePlus:
+        _model_loaded = True
+
+    fake_sgmse_mod = types.SimpleNamespace(get_sgmse_plus_plugin=lambda: _FakeSgmsePlus())
+    monkeypatch.setitem(__import__("sys").modules, "plugins.sgmse_plugin", fake_sgmse_mod)
+    monkeypatch.setattr(plugins, "sgmse_plugin", fake_sgmse_mod, raising=False)
+
+    plugin = MiipherPlugin()
+
+    assert plugin.is_productive()
 
 
 def test_phase65_in_secondary_phases_for_noise_causes():

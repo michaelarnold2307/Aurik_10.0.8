@@ -132,6 +132,26 @@ class TestPhaseConductor:
         # For cd_digital + clean audio, skip should be recommended
         assert isinstance(rec.skip_recommended, bool)
 
+    def test_recommend_keeps_coalition_continuation_active(self, mono_audio):
+        """Coalition-Mitglieder dürfen nicht vorzeitig auf Skip optimiert werden."""
+        from backend.core.phase_conductor import get_phase_conductor
+
+        cond = get_phase_conductor()
+        state = cond.measure_state(mono_audio, 48000, "phase_29_tape_hiss_reduction")
+        coalitions: dict[str, tuple[str, ...]] = {
+            "tape_cleanup": ("phase_29_tape_hiss_reduction", "phase_07_harmonic_restoration")
+        }
+        rec = cond.recommend(
+            "phase_07_harmonic_restoration",
+            state,
+            "reel_tape",
+            active_phase_coalitions=coalitions,
+            current_phase_id="phase_29_tape_hiss_reduction",
+        )
+        assert rec.skip_recommended is False
+        assert rec.recommended_strength >= 0.55
+        assert rec.confidence >= 0.75
+
     def test_as_vec_normalized(self, mono_audio):
         """PhaseState.as_vec() must return array with values in [0, 1]."""
         from backend.core.phase_conductor import get_phase_conductor

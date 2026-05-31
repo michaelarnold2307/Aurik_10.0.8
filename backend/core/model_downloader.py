@@ -22,7 +22,6 @@ import shutil
 import threading
 import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path

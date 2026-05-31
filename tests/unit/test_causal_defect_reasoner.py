@@ -464,3 +464,36 @@ class TestConvenienceFunctions:
             "§ERA 1900-1925: phase_07 BW-Ceiling für wax_cylinder ist noch 5000 Hz — muss 3000 Hz sein"
         )
         assert '"wax_cylinder": 3000.0' in src, "§ERA 1900-1925: phase_07 BW-Ceiling für wax_cylinder muss 3000 Hz sein"
+
+    def test_59_causal_coalition_priority_lifts_digital_pair(self):
+        """§2.67: phase_50 wird als Partner von phase_23 in der Rangfolge angehoben."""
+        reasoner = CausalDefectReasoner()
+        ordered = [
+            "phase_23_spectral_repair",
+            "phase_29_tape_hiss_reduction",
+            "phase_50_spectral_repair",
+        ]
+        ranked = [
+            ("generation_loss", 0.60),
+            ("high_freq_noise", 0.54),
+            ("aliasing", 0.10),
+        ]
+
+        result = reasoner._apply_phase_coalition_priority(ordered, ranked)
+        assert result.index("phase_50_spectral_repair") < result.index("phase_29_tape_hiss_reduction")
+
+    def test_60_causal_coalition_priority_keeps_non_members_stable(self):
+        """Ohne ausreichende Koalitions-Mitglieder bleibt die Reihenfolge unverändert."""
+        reasoner = CausalDefectReasoner()
+        ordered = [
+            "phase_29_tape_hiss_reduction",
+            "phase_03_denoise",
+            "phase_04_eq_correction",
+        ]
+        ranked = [
+            ("tape_hiss", 0.62),
+            ("motor_interference", 0.41),
+        ]
+
+        result = reasoner._apply_phase_coalition_priority(ordered, ranked)
+        assert result == ordered

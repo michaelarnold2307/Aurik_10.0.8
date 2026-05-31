@@ -81,6 +81,19 @@ _DIGITAL_CODEC_MATERIALS: frozenset[str] = frozenset(
     {"mp3_low", "mp3_high", "aac", "cd_digital", "dat", "streaming", "minidisc"}
 )
 
+# ---------------------------------------------------------------------------
+# §2.67 Koalitions-Priorisierung im DefectMapper
+# Zusammengehörige Phasen werden bereits in der Defektprofil-Selektion näher
+# zusammengezogen, damit sie nicht erst spät durch globale Sortierung getrennt
+# werden. Nur additive Priorisierung, keine harte Erzwingung.
+# ---------------------------------------------------------------------------
+_DEFECT_MAPPER_PHASE_COALITIONS: dict[str, tuple[str, ...]] = {
+    "digital_repair_chain": ("phase_23_spectral_repair", "phase_50_spectral_repair"),
+    "hiss_harmonic_rebuild": ("phase_29_tape_hiss_reduction", "phase_07_harmonic_restoration"),
+    "stereo_alignment": ("phase_14_phase_correction", "phase_25_azimuth_correction"),
+    "generation_loss_rebuild": ("phase_23_spectral_repair", "phase_07_harmonic_restoration"),
+}
+
 
 # ---------------------------------------------------------------------------
 # Datenstruktur: PhaseAssignment
@@ -1966,6 +1979,7 @@ class DefectPhaseMapper:
         max_phases: int = 10,
         mode: str = "restoration",
         material: str | None = None,
+        phase_coalitions: dict[str, tuple[str, ...]] | None = None,
     ) -> list[str]:
         """
         Gibt eine de-duplizierte, priorisierte Phase-Liste für mehrere Defekte zurück.
@@ -1977,6 +1991,9 @@ class DefectPhaseMapper:
                         (phase_21_exciter, phase_35_multiband_compression, phase_42_vocal_enhancement).
             material:   Optionaler MaterialType.value-String. Für digitale Codec-Materialien
                         wird phase_09_crackle_removal ausgeblendet (V29, §4.11).
+            phase_coalitions:
+                        Optionaler Koalitions-Mapping-Override (coalition_name → tuple[phase_id]).
+                        Falls None, werden die internen DPM-Koalitionen verwendet.
 
         Returns:
             Geordnete Phase-ID-Liste (primary first, dann secondary, dann de-dup)
@@ -2003,6 +2020,20 @@ class DefectPhaseMapper:
         # (Codec-Artefakte sind keine Vinyl/Shellac-Kratzer — KEIN phase_09 für MP3/AAC/CD)
         if material and material in _DIGITAL_CODEC_MATERIALS:
             seen.pop("phase_09_crackle_removal", None)
+
+        # §2.67 Koalitions-Priorisierung: Wenn mindestens zwei Mitglieder einer
+        # Koalition aktiv sind, werden die Scores innerhalb der Koalition enger
+        # zusammengezogen. Dadurch laufen zusammengehörige Reparaturschritte
+        # konsistenter als Gruppe statt durch globale Defekt-Scores getrennt.
+        _coalitions = phase_coalitions if isinstance(phase_coalitions, dict) else _DEFECT_MAPPER_PHASE_COALITIONS
+        for members in _coalitions.values():
+            present = [pid for pid in members if pid in seen]
+            if len(present) < 2:
+                continue
+            dominant = max(float(seen[pid]) for pid in present)
+            coalition_floor = max(0.0, dominant * 0.92)
+            for pid in present:
+                seen[pid] = max(float(seen[pid]), coalition_floor)
 
         # Sortieren: primäre (severity×1.0) zuerst, sekundäre danach
         sorted_phases = sorted(seen.items(), key=lambda kv: kv[1], reverse=True)

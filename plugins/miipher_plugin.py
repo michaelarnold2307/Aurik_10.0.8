@@ -69,7 +69,7 @@ _DFN_FALLBACK_ENERGY_BIAS_DB = -6.0
 _MIIPHER_NATIVE_SR_DEFAULT = 16000
 
 # Singleton
-_instance: MiipherPlugin | None = None
+_INSTANCE_HOLDER: list[MiipherPlugin | None] = [None]
 _lock = threading.Lock()
 
 
@@ -105,6 +105,7 @@ class MiipherPlugin:
             "capability_status": "unavailable",
             "fallback_chain": [],
             "native_miipher_loaded": False,
+            "activation_reason": "not_initialized",
         }
         self._try_load_model()
 
@@ -114,20 +115,19 @@ class MiipherPlugin:
         return dict(self._last_route_metadata)
 
     def is_productive(self) -> bool:
-        """True when a real local SOTA/fallback model path is available."""
+        """True, wenn ein produktiver lokaler MIIPHER- oder Fallback-Pfad verfügbar ist."""
+        if self._model_loaded and self._model_session is not None:
+            return True
         try:
-            get_model_capability_gate = _load_symbol(
-                "backend.core.dsp.model_capability_gate",
-                "get_model_capability_gate",
-            )
-            report = get_model_capability_gate().build_report()
-            capabilities = report.get("capabilities", {}) if isinstance(report, dict) else {}
-            if not isinstance(capabilities, dict):
-                return False
-            for name in ("sgmse_plus", "deepfilternet_v3_ii"):
-                cap = capabilities.get(name, {})
-                if isinstance(cap, dict) and cap.get("status") in {"sota_real", "sota_fallback"}:
-                    return True
+            get_sgmse_plus_plugin = _load_symbol("plugins.sgmse_plugin", "get_sgmse_plus_plugin")
+            sgmse = get_sgmse_plus_plugin()
+            if sgmse is not None and bool(getattr(sgmse, "_model_loaded", False)):
+                return True
+
+            get_deepfilternet_plugin = _load_symbol("plugins.deepfilternet_v3_ii_plugin", "get_deepfilternet_plugin")
+            dfn = get_deepfilternet_plugin()
+            if dfn is not None and bool(getattr(dfn, "_model_loaded", False)):
+                return True
         except Exception as exc:  # pylint: disable=broad-except
             logger.debug("MIIPHER adapter capability check unavailable: %s", exc)
         return False
@@ -218,6 +218,7 @@ class MiipherPlugin:
             "capability_status": "unavailable",
             "fallback_chain": fallback_chain.copy(),
             "native_miipher_loaded": bool(self._model_loaded),
+            "activation_reason": "miipher_entry",
         }
 
         # Productive open-source SOTA chain: SGMSE+ is the best available local
@@ -232,6 +233,7 @@ class MiipherPlugin:
                 "fallback_chain": fallback_chain.copy(),
                 "native_miipher_loaded": bool(self._model_loaded),
                 "energy_bias_db": _DFN_FALLBACK_ENERGY_BIAS_DB,
+                "activation_reason": "native_onnx" if _is_native else "sgmse_plus_chain",
             }
             return result
         except Exception as exc:  # pylint: disable=broad-except
@@ -254,6 +256,7 @@ class MiipherPlugin:
                 "fallback_chain": fallback_chain.copy(),
                 "native_miipher_loaded": bool(self._model_loaded),
                 "energy_bias_db": _used_bias,
+                "activation_reason": "deepfilternet_fallback",
             }
             return result
         except Exception as exc:  # pylint: disable=broad-except
@@ -268,6 +271,7 @@ class MiipherPlugin:
             "fallback_chain": fallback_chain.copy(),
             "native_miipher_loaded": bool(self._model_loaded),
             "energy_bias_db": _DFN_FALLBACK_ENERGY_BIAS_DB,
+            "activation_reason": "wiener_last_resort",
         }
         return result
 
@@ -821,9 +825,10 @@ class MiipherPlugin:
 
 def get_miipher_plugin() -> MiipherPlugin:
     """Thread-safe Singleton (Double-Checked Locking, §3.2)."""
-    global _instance  # pylint: disable=global-statement
-    if _instance is None:
+    if _INSTANCE_HOLDER[0] is None:
         with _lock:
-            if _instance is None:
-                _instance = MiipherPlugin()
-    return _instance
+            if _INSTANCE_HOLDER[0] is None:
+                _INSTANCE_HOLDER[0] = MiipherPlugin()
+    plugin = _INSTANCE_HOLDER[0]
+    assert plugin is not None
+    return plugin
