@@ -379,7 +379,12 @@ class MertPlugin:
         self._analysis_cache: dict[str, MertAnalysis] = {}
         self._analysis_cache_lock = threading.Lock()
         self._analysis_cache_max_entries = 64
-        if os.getenv("AURIK_SAFE_VALIDATION_PROFILE", "0") == "1" or _is_pytest_context():
+        if os.getenv("AURIK_SAFE_VALIDATION_PROFILE", "0") == "1":
+            self._try_load_local_dsp()
+            return
+        # In Tests standardmäßig DSP-Fallback erzwingen, außer es wurde explizit
+        # ein Modellpfad übergeben (gezielte Loader-Unit-Tests).
+        if _is_pytest_context() and model_dir is None:
             self._try_load_local_dsp()
             return
         self._try_load_model()
