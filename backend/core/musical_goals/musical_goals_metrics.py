@@ -104,6 +104,17 @@ except Exception:
     _COMPUTE_IACC_IMPL = None
 _COMPUTE_IACC: Any = _COMPUTE_IACC_IMPL
 
+
+def _get_compute_iacc_callable() -> Any:
+    """Liefert compute_iacc dynamisch, damit Monkeypatches zur Laufzeit greifen."""
+    try:
+        from backend.core.dsp import stereo_guard as _stereo_guard
+
+        return getattr(_stereo_guard, "compute_iacc", _COMPUTE_IACC)
+    except Exception:
+        return _COMPUTE_IACC
+
+
 try:
     from backend.core.musical_goals.transient_energy_metric import (
         get_transient_energy_metric as _GET_TRANSIENT_ENERGY_METRIC_IMPL,
@@ -2396,11 +2407,12 @@ class SpatialDepthMetric:
         left, right = audio[:, 0], audio[:, 1]
 
         try:  # §V44 stereo_guard.compute_iacc primär (RELEASE_MUST §V44)
-            if _COMPUTE_IACC is None:
+            _compute_iacc_fn = _get_compute_iacc_callable()
+            if _compute_iacc_fn is None:
                 raise ImportError("stereo_guard unavailable")
 
             _sg_sf_arr_v44 = np.stack([left, right], axis=0)
-            _sg_sf_res_v44 = _COMPUTE_IACC(_sg_sf_arr_v44, sr=sr)
+            _sg_sf_res_v44 = _compute_iacc_fn(_sg_sf_arr_v44, sr=sr)
             iacc = _sg_sf_res_v44.iacc
         except Exception as _sf_v44_exc:
             logger.debug("SpatialDepthMetric._spatial_features §V44 non-blocking: %s", _sf_v44_exc)
@@ -2436,10 +2448,11 @@ class SpatialDepthMetric:
         # spatial_depth_score = 1.0 − iacc ist der kanonische primäre Proxy (stereo_guard-Semantik).
         _sds_v44: float | None = None  # §V44: spatial_depth_score — try-Block oder Ableitung
         try:
-            if _COMPUTE_IACC is None:
+            _compute_iacc_fn = _get_compute_iacc_callable()
+            if _compute_iacc_fn is None:
                 raise ImportError("stereo_guard unavailable")
 
-            _iacc_res_v44 = _COMPUTE_IACC(audio, sr=sr)
+            _iacc_res_v44 = _compute_iacc_fn(audio, sr=sr)
             iacc = _iacc_res_v44.iacc
             _sds_v44 = _iacc_res_v44.spatial_depth_score  # §V44: primärer Proxy
             if not _iacc_res_v44.ok:

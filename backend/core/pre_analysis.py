@@ -285,6 +285,7 @@ def run_pre_analysis(
     }
 
     _pool = _cf.ThreadPoolExecutor(max_workers=4)
+    _had_substep_timeout = False
     try:
         _fut = {name: _pool.submit(fn) for name, fn in _step_fns.items()}
 
@@ -294,6 +295,7 @@ def run_pre_analysis(
                 setattr(result, name, sub)
                 logger.debug("pre_analysis: step=%s done", name)
             except (TimeoutError, _cf.TimeoutError):  # Python 3.10: cf.TimeoutError != builtins.TimeoutError
+                _had_substep_timeout = True
                 result.errors[name] = f"timeout_after={_SUBSTEP_TIMEOUT_S:.1f}s"
                 fut.cancel()
                 logger.warning(
@@ -307,7 +309,7 @@ def run_pre_analysis(
     finally:
         # Die Futures wurden oben bereits konsumiert; hier wollen wir die Worker
         # deterministisch beenden statt sie bis zum Interpreter-Exit offen zu lassen.
-        _pool.shutdown(wait=True, cancel_futures=True)
+        _pool.shutdown(wait=not _had_substep_timeout, cancel_futures=True)
 
     _cb(90, "Analyse abgeschlossen — Ergebnisse werden gespeichert…")
 
