@@ -251,56 +251,64 @@ def map_panns_to_profile(panns_tags: dict[str, float]) -> str:
 # ─── Datenklassen ────────────────────────────────────────────────────────────
 
 
-@dataclass
-class ExcellenceContext:
-    """Schnell berechneter Audio-Kontext für adaptives Processing."""
+if "ExcellenceContext" not in globals():
 
-    sample_rate: int
-    is_stereo: bool
-    rms_db: float  # Gesamt-RMS in dBFS
-    noise_floor_db: float  # Geschätzter Rauschboden in dBFS
-    snr_estimate_db: float  # Geschätzter SNR
-    harmonicity: float  # Harmonizitäts-Grad [0, 1]
-    transient_density: float  # Anteil transienter Frames [0, 1]
-    spectral_centroid_mean: float  # Mittlere Spektralzentroids-Frequenz Hz
-    dynamic_cv: float  # Koeffizient der Variation der RMS (micro-dynamics)
+    @dataclass
+    class ExcellenceContext:
+        """Schnell berechneter Audio-Kontext für adaptives Processing."""
 
-    @property
-    def needs_continuity_fix(self) -> bool:
-        """Signalisiert Bedarf an Spectral-Continuity-Enhancement."""
-        return 20 < self.snr_estimate_db < 45 and self.transient_density < 0.40  # v9.15-C2: obere SNR-Grenze 45 dB
+        sample_rate: int
+        is_stereo: bool
+        rms_db: float  # Gesamt-RMS in dBFS
+        noise_floor_db: float  # Geschätzter Rauschboden in dBFS
+        snr_estimate_db: float  # Geschätzter SNR
+        harmonicity: float  # Harmonizitäts-Grad [0, 1]
+        transient_density: float  # Anteil transienter Frames [0, 1]
+        spectral_centroid_mean: float  # Mittlere Spektralzentroids-Frequenz Hz
+        dynamic_cv: float  # Koeffizient der Variation der RMS (micro-dynamics)
 
-    @property
-    def needs_micro_dynamics(self) -> bool:
-        """Signalisiert Bedarf an Micro-Dynamic Re-injection."""
-        return self.dynamic_cv < _TARGET_CV_MIN  # v9.12: SNR-Gate entfernt — Mikrodynamik-Injektion unabhängig von SNR
+        @property
+        def needs_continuity_fix(self) -> bool:
+            """Signalisiert Bedarf an Spectral-Continuity-Enhancement."""
+            return 20 < self.snr_estimate_db < 45 and self.transient_density < 0.40  # v9.15-C2: obere SNR-Grenze 45 dB
 
-    @property
-    def needs_harmonic_boost(self) -> bool:
-        """Signalisiert Bedarf an Harmonic Reinforcement."""
-        return self.harmonicity < 0.60 and self.rms_db > -40  # v9.12: Schwelle ↑0.45→0.60 — mehr Signale erhalten Boost
+        @property
+        def needs_micro_dynamics(self) -> bool:
+            """Signalisiert Bedarf an Micro-Dynamic Re-injection."""
+            return (
+                self.dynamic_cv < _TARGET_CV_MIN
+            )  # v9.12: SNR-Gate entfernt — Mikrodynamik-Injektion unabhängig von SNR
+
+        @property
+        def needs_harmonic_boost(self) -> bool:
+            """Signalisiert Bedarf an Harmonic Reinforcement."""
+            return (
+                self.harmonicity < 0.60 and self.rms_db > -40
+            )  # v9.12: Schwelle ↑0.45→0.60 — mehr Signale erhalten Boost
 
 
-@dataclass
-class ExcellenceResult:
-    """Ergebnis des Excellence-Optimizers."""
+if "ExcellenceResult" not in globals():
 
-    applied_steps: list[str] = field(default_factory=list)
-    delta_rms_db: float = 0.0
-    continuity_smoothing_applied: bool = False
-    micro_dynamic_injected: bool = False
-    harmonic_reinforcement_db: float = 0.0
-    ola_crossfades: int = 0
+    @dataclass
+    class ExcellenceResult:
+        """Ergebnis des Excellence-Optimizers."""
 
-    def summary(self) -> str:
-        return (
-            f"ExcellenceOptimizer: steps={self.applied_steps}, "
-            f"Δrms={self.delta_rms_db:+.2f}dB, "
-            f"continuity={self.continuity_smoothing_applied}, "
-            f"microdyn={self.micro_dynamic_injected}, "
-            f"harm={self.harmonic_reinforcement_db:+.2f}dB, "
-            f"ola_xfades={self.ola_crossfades}"
-        )
+        applied_steps: list[str] = field(default_factory=list)
+        delta_rms_db: float = 0.0
+        continuity_smoothing_applied: bool = False
+        micro_dynamic_injected: bool = False
+        harmonic_reinforcement_db: float = 0.0
+        ola_crossfades: int = 0
+
+        def summary(self) -> str:
+            return (
+                f"ExcellenceOptimizer: steps={self.applied_steps}, "
+                f"Δrms={self.delta_rms_db:+.2f}dB, "
+                f"continuity={self.continuity_smoothing_applied}, "
+                f"microdyn={self.micro_dynamic_injected}, "
+                f"harm={self.harmonic_reinforcement_db:+.2f}dB, "
+                f"ola_xfades={self.ola_crossfades}"
+            )
 
 
 # ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
@@ -502,9 +510,10 @@ def _enhance_spectral_continuity(
     # §9.10.119: PGHI phase reconstruction after magnitude modification
     # (Perraudin et al. 2013 — magnitude-only ISTFT with original phase
     # introduces phase inconsistency; PGHI corrects this).
-    if _PGHI_AVAILABLE_EX:
+    _pghi_fn = _pghi_excellence
+    if _PGHI_AVAILABLE_EX and callable(_pghi_fn):
         try:
-            Zxx_new = _pghi_excellence(Zxx_new, hop_length=_HOP)
+            Zxx_new = _pghi_fn(Zxx_new, hop=_HOP)
         except Exception:
             pass  # fallback: use original-phase reconstruction
     smoothed = _istft(Zxx_new, len(_audio_proc))
@@ -650,9 +659,10 @@ def _reinforce_harmonics(
 
     Zxx_new = mag * np.exp(1j * phase)
     # §9.10.119: PGHI after harmonic boost magnitude changes
-    if _PGHI_AVAILABLE_EX:
+    _pghi_fn = _pghi_excellence
+    if _PGHI_AVAILABLE_EX and callable(_pghi_fn):
         try:
-            Zxx_new = _pghi_excellence(Zxx_new, hop_length=_HOP)
+            Zxx_new = _pghi_fn(Zxx_new, hop=_HOP)
         except Exception as _pghi_exc:
             logger.debug("PGHI excellence harmonic boost failed, using unmodified phase: %s", _pghi_exc)
     boosted = _istft(Zxx_new, len(_audio_proc))
