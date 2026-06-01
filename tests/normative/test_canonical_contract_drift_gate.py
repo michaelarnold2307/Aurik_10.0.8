@@ -17,6 +17,7 @@ _SPEC_07 = _ROOT / ".github" / "specs" / "07_quality_and_tests.md"
 _CLI = _ROOT / "cli" / "aurik_cli.py"
 _CLI_DEBUG = _ROOT / "cli" / "aurik_debug.py"
 _FRONTEND = _ROOT / "Aurik910" / "ui" / "modern_window.py"
+_BATCH = _ROOT / "batch_processor.py"
 _REST_LEGACY = [
     _ROOT / "backend" / "api" / "rest" / "batch_api.py",
     _ROOT / "backend" / "api" / "rest" / "batch_endpoints.py",
@@ -90,6 +91,34 @@ def test_frontend_release_path_uses_bridge_contract() -> None:
         "Frontend darf UV3 nicht direkt ueber get_restorer().restore() aufrufen."
     )
     assert "UnifiedRestorerV3.restore(" not in src, "Frontend darf UV3 nicht direkt aufrufen."
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
+def test_batch_release_path_uses_bridge_contract() -> None:
+    """Batch-Pfad muss den kanonischen Bridge-Vertrag vollstaendig einhalten."""
+    src = _BATCH.read_text(encoding="utf-8")
+    required_tokens = {
+        "_get_load_audio_fn": "Batch muss den Bridge-Loader verwenden.",
+        "_run_pre_analysis": "Batch muss run_pre_analysis() vor Denker ausfuehren.",
+        "_get_aurik_denker_instance": "Batch muss den Denker-Singleton verwenden.",
+        "denker.denke(": "Batch muss den Pflicht-Einstieg AurikDenker.denke() verwenden.",
+        "_export_guard(": "Batch-Export muss export_guard() nutzen.",
+        "_validate_export_quality(": "Batch muss das Bridge-Export-Quality-Gate nutzen.",
+        "_build_export_quality_gate_payload(": "Batch muss den strukturierten Export-Gate-Payload erzeugen.",
+        "_get_audio_exporter_class": "Batch muss den Bridge-AudioExporter einbinden.",
+        "os.replace(tmp_path, output_file)": "Batch-Fallback muss atomic WAV schreiben.",
+    }
+    for token, message in required_tokens.items():
+        assert token in src, message
+
+    forbidden_tokens = (
+        "UnifiedRestorerV3.restore(",
+        "get_restorer().restore(",
+        "librosa.load(",
+    )
+    for token in forbidden_tokens:
+        assert token not in src, f"Batch enthaelt verbotenen Parallelpfad: {token}"
 
 
 @pytest.mark.normative

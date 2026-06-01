@@ -244,6 +244,7 @@ def test_batch_processor_forwards_worldclass_and_hybrid_metadata(monkeypatch, tm
 
     monkeypatch.setattr(bp, "sf", _FakeSf)
     monkeypatch.setattr(bp, "_get_aurik_denker", lambda: _FakeDenker())
+    monkeypatch.setattr(bp, "_run_pre_analysis", lambda **_kwargs: None)
     monkeypatch.setattr(
         bp,
         "_load_audio_file",
