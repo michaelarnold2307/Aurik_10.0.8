@@ -1024,7 +1024,7 @@ def optimize_for_excellence(
 
 # ─── Singleton-Accessor (gem. Aurik-9-Standard §3.2) ───────────────────────────────────
 
-_optimizer_instance: ExcellenceOptimizer | None = None
+_optimizer_holder: list[ExcellenceOptimizer | None] = [None]
 _optimizer_lock = threading.Lock()
 
 
@@ -1047,11 +1047,10 @@ def get_excellence_optimizer(
     Returns:
         Singleton-Instanz von :class:`ExcellenceOptimizer`.
     """
-    global _optimizer_instance
-    if _optimizer_instance is None:
+    if _optimizer_holder[0] is None:
         with _optimizer_lock:
-            if _optimizer_instance is None:
-                _optimizer_instance = ExcellenceOptimizer(
+            if _optimizer_holder[0] is None:
+                _optimizer_holder[0] = ExcellenceOptimizer(
                     sample_rate=sample_rate,
                     material=material,
                     use_mert=use_mert,
@@ -1061,4 +1060,4 @@ def get_excellence_optimizer(
                     sample_rate,
                     material,
                 )
-    return _optimizer_instance
+    return _optimizer_holder[0]
