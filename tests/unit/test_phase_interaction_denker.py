@@ -450,3 +450,131 @@ def test_plan_signal_signature_injects_transient_and_deesser_phase(denker: Phase
     assert plan.is_valid
     assert "phase_08_transient_preservation" in plan.phases
     assert "phase_19_de_esser" in plan.phases
+
+
+# ---------------------------------------------------------------------------
+# §0a Crossfire-Modus-Invariante — verbotene Phasen in Restoration
+# ---------------------------------------------------------------------------
+
+
+def test_forbidden_prefixes_cover_canonical_set() -> None:
+    """§0a: Präfix-Set deckt jede kanonische _RESTORATION_FORBIDDEN-Phase ab."""
+    from backend.core.adaptive_phase_rescheduler import _RESTORATION_FORBIDDEN
+    from denker.phase_interaction_denker import _restoration_forbidden_prefixes
+
+    prefixes = _restoration_forbidden_prefixes()
+    assert prefixes  # nicht leer
+    for pid in _RESTORATION_FORBIDDEN:
+        parts = pid.split("_")
+        prefix = f"{parts[0]}_{parts[1]}"
+        assert prefix in prefixes, f"§0a-Präfix für kanonische Phase {pid} fehlt: {prefix}"
+
+
+def test_strip_restoration_forbidden_removes_phase21_35_42(denker: PhaseInteractionDenker) -> None:
+    """§0a: phase_21/35/42 werden in Restoration entfernt, Rest bleibt unverändert."""
+    phases = [
+        "phase_03_denoise",
+        "phase_21_harmonic_exciter",
+        "phase_07_harmonic_restoration",
+        "phase_35_multiband_compression",
+        "phase_42_vocal_enhancement",
+        "phase_47_truepeak_limiter",
+    ]
+    kept, removed = denker._strip_restoration_forbidden(phases, "restoration")
+    assert kept == [
+        "phase_03_denoise",
+        "phase_07_harmonic_restoration",
+        "phase_47_truepeak_limiter",
+    ]
+    assert set(removed) == {
+        "phase_21_harmonic_exciter",
+        "phase_35_multiband_compression",
+        "phase_42_vocal_enhancement",
+    }
+
+
+def test_strip_restoration_forbidden_keeps_phases_in_studio(denker: PhaseInteractionDenker) -> None:
+    """§0a: Studio-2026 behält phase_21/35/42 — Filter greift nur in Restoration."""
+    phases = [
+        "phase_03_denoise",
+        "phase_21_harmonic_exciter",
+        "phase_35_multiband_compression",
+        "phase_42_vocal_enhancement",
+    ]
+    for studio_mode in ("studio2026", "studio_2026", "maximum"):
+        kept, removed = denker._strip_restoration_forbidden(phases, studio_mode)
+        assert kept == phases, f"Studio-Modus {studio_mode} darf nichts entfernen"
+        assert removed == []
+
+
+def test_strip_restoration_forbidden_noop_when_clean(denker: PhaseInteractionDenker) -> None:
+    """§0a: Plan ohne verbotene Phasen bleibt unverändert (kein False-Positive)."""
+    phases = ["phase_03_denoise", "phase_07_harmonic_restoration", "phase_47_truepeak_limiter"]
+    kept, removed = denker._strip_restoration_forbidden(phases, "restoration")
+    assert kept == phases
+    assert removed == []
+
+
+def test_plan_strips_forbidden_from_chain_injection(denker: PhaseInteractionDenker) -> None:
+    """§0a Defense-in-Depth: Ketten-Injektion einer verbotenen Phase wird in Restoration entfernt.
+
+    Simuliert eine Trägerkette, deren must_have_phases eine §0a-verbotene Phase
+    (phase_21) enthält — der PhaseInteractionDenker darf sie NIE in den finalen
+    Restoration-Plan durchlassen.
+    """
+    dr = _fake_defect_result()
+
+    _chain_result = MagicMock()
+    _chain_plan = MagicMock()
+    _chain_plan.chain_string = "vinyl→cassette"
+    _chain_plan.must_have_phases = ["phase_06_frequency_restoration", "phase_21_harmonic_exciter"]
+    _chain_denker = MagicMock()
+    _chain_denker.leite_phasen_ab.return_value = _chain_plan
+
+    with (
+        patch.object(denker, "_select_via_uv3", return_value=["phase_03_denoise"]),
+        patch(
+            "denker.tontraegerkette_denker.get_tontraegerkette_denker",
+            return_value=_chain_denker,
+        ),
+    ):
+        plan = denker.plan(
+            defect_result=dr,
+            material="vinyl",
+            mode="restoration",
+            chain_result=_chain_result,
+        )
+
+    assert plan.is_valid
+    assert "phase_21_harmonic_exciter" not in plan.phases, "§0a-Verletzung: phase_21 im Restoration-Plan"
+    assert "phase_06_frequency_restoration" in plan.phases  # legitime Ketten-Phase bleibt
+    assert any("§0a Crossfire-Guard" in n for n in plan.conflict_notes)
+
+
+def test_plan_keeps_forbidden_in_studio_chain_injection(denker: PhaseInteractionDenker) -> None:
+    """§0a: In Studio-2026 darf dieselbe Ketten-Injektion phase_21 behalten."""
+    dr = _fake_defect_result()
+
+    _chain_result = MagicMock()
+    _chain_plan = MagicMock()
+    _chain_plan.chain_string = "vinyl→cassette"
+    _chain_plan.must_have_phases = ["phase_21_harmonic_exciter"]
+    _chain_denker = MagicMock()
+    _chain_denker.leite_phasen_ab.return_value = _chain_plan
+
+    with (
+        patch.object(denker, "_select_via_uv3", return_value=["phase_03_denoise"]),
+        patch(
+            "denker.tontraegerkette_denker.get_tontraegerkette_denker",
+            return_value=_chain_denker,
+        ),
+    ):
+        plan = denker.plan(
+            defect_result=dr,
+            material="vinyl",
+            mode="studio2026",
+            chain_result=_chain_result,
+        )
+
+    assert plan.is_valid
+    assert "phase_21_harmonic_exciter" in plan.phases, "Studio-2026 darf phase_21 behalten"

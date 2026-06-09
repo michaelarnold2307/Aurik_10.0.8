@@ -98,6 +98,41 @@ def _goal_risk_threshold_from_signal(
 
 
 # ---------------------------------------------------------------------------
+# §0a Crossfire-Modus-Invariante — verbotene Phasen-Präfixe in Restoration
+# ---------------------------------------------------------------------------
+# Kanonische Quelle: backend.core.adaptive_phase_rescheduler._RESTORATION_FORBIDDEN
+# (phase_21_exciter, phase_35_multiband_compression, phase_42_vocal_enhancement).
+# Präfix-Matching (phase_21/phase_35/phase_42) ist robust gegen Namensvarianten
+# (z. B. phase_21_exciter vs. phase_21_harmonic_exciter) — phase_21/35/42 sind
+# eindeutig dem Exciter / der Multiband-Kompression / dem Vocal-Enhancement
+# zugeordnet, daher ist Nummer-Präfix-Matching korrekt und sicher.
+_RESTORATION_FORBIDDEN_PREFIXES: frozenset[str] | None = None
+
+
+def _restoration_forbidden_prefixes() -> frozenset[str]:
+    """Leitet §0a-verbotene Phasen-Nummer-Präfixe aus der kanonischen Quelle ab (cached).
+
+    Vermeidet eine Parallelwelt-Definition: liest ``_RESTORATION_FORBIDDEN`` aus dem
+    AdaptivePhaseRescheduler und reduziert jeden Eintrag auf sein ``phase_NN``-Präfix.
+    Fällt bei Import-Fehler auf die drei kanonischen IDs zurück.
+    """
+    global _RESTORATION_FORBIDDEN_PREFIXES
+    if _RESTORATION_FORBIDDEN_PREFIXES is not None:
+        return _RESTORATION_FORBIDDEN_PREFIXES
+    try:
+        canonical = _load_symbol("backend.core.adaptive_phase_rescheduler", "_RESTORATION_FORBIDDEN")
+    except Exception:
+        canonical = frozenset({"phase_21_exciter", "phase_35_multiband_compression", "phase_42_vocal_enhancement"})
+    prefixes: set[str] = set()
+    for pid in canonical:
+        parts = str(pid).split("_")
+        if len(parts) >= 2 and parts[0] == "phase":
+            prefixes.add(f"{parts[0]}_{parts[1]}")
+    _RESTORATION_FORBIDDEN_PREFIXES = frozenset(prefixes)
+    return _RESTORATION_FORBIDDEN_PREFIXES
+
+
+# ---------------------------------------------------------------------------
 # Semantische Typ-Taxonomie (§2.48)
 # ---------------------------------------------------------------------------
 # Jede Phase erhält eine Menge semantischer Tags.
@@ -195,7 +230,7 @@ _ORDER_CONSTRAINTS: list[tuple[str, str]] = [
 # ---------------------------------------------------------------------------
 # Prophylaktische Phasen-Injektion wenn ExzellenzDenker.prognostiziere() Risiko meldet.
 _GOAL_RISK_THRESHOLD: float = 0.60
-"""Risikoschwelle ∈ [0, 1] ab der eine schützende Phase injiziert wird."""
+# Risikoschwelle ∈ [0, 1] ab der eine schützende Phase injiziert wird.
 
 _GOAL_RISK_PROTECTIVE_PHASES: dict[str, str] = {
     "natuerlichkeit": "phase_03_denoise",  # Rauschen → Natürlichkeit
@@ -429,6 +464,19 @@ class PhaseInteractionDenker:
                 injected_notes.append(note)
                 logger.info("PhaseInteractionDenker %s", note)
 
+        # 3c. §0a Crossfire-Modus-Invariante (Defense-in-Depth):
+        # phase_21 (Exciter), phase_35 (Multiband-Kompression), phase_42
+        # (Vocal-Enhancement) dürfen in Restoration NIEMALS in einen PhasePlan
+        # gelangen — auch nicht über Ketten-/Goal-Risk-/Signal-Injektion oben.
+        # UV3 und der Rescheduler erzwingen denselben Guard; der
+        # PhaseInteractionDenker als primäre planbildende Schicht erzwingt ihn
+        # hier am eigenen Ausgabe-Rand, bevor Annotation/Konflikt/Ordering laufen.
+        merged_phases, _forbidden_removed = self._strip_restoration_forbidden(merged_phases, mode)
+        for _fr in _forbidden_removed:
+            note = f"§0a Crossfire-Guard [restoration]: {_fr} entfernt (verbotene Phase)"
+            injected_notes.append(note)
+            logger.info("PhaseInteractionDenker %s", note)
+
         # 4. Semantische Annotation
         annotations = self._annotate(merged_phases)
 
@@ -639,3 +687,31 @@ class PhaseInteractionDenker:
                 )
 
         return result, applied
+
+    @staticmethod
+    def _strip_restoration_forbidden(phases: list[str], mode: str) -> tuple[list[str], list[str]]:
+        """§0a Crossfire-Modus-Invariante: entfernt verbotene Phasen in Restoration.
+
+        phase_21 (Exciter), phase_35 (Multiband-Kompression) und phase_42
+        (Vocal-Enhancement) dürfen in ``restoration`` NIEMALS Teil eines
+        ``PhasePlan`` sein — bidirektional, auch nicht als Fallback oder über
+        eine Injektionsquelle. Studio-2026 behält die Phasen.
+
+        Matching per ``phase_NN``-Nummer-Präfix → robust gegen Namensvarianten.
+        Rückgabe: (bereinigte Phasenliste, entfernte Phasen) — deterministisch,
+        Reihenfolge der verbleibenden Phasen unverändert.
+        """
+        _is_studio = mode in ("studio2026", "studio_2026", "maximum")
+        if _is_studio:
+            return list(phases), []
+        forbidden_prefixes = _restoration_forbidden_prefixes()
+        kept: list[str] = []
+        removed: list[str] = []
+        for p in phases:
+            parts = str(p).split("_")
+            prefix = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else str(p)
+            if prefix in forbidden_prefixes:
+                removed.append(p)
+            else:
+                kept.append(p)
+        return kept, removed
