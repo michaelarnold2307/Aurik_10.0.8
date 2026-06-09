@@ -71,23 +71,13 @@ _SCENARIOS_REQUIRED: int = 8  # von 10 Szenarien müssen bestanden sein
 
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktion: Aurik-Pipeline als AMRB restoration_fn
-# ---------------------------------------------------------------------------
-
-
-def _aurik_restoration_fn(audio: np.ndarray, sr: int) -> np.ndarray:
-    """Verwendet den bestehenden schnellen DSP-AMRB-Pfad für stabile CI-Läufe."""
-    return dsp_restore(audio, sr)
-
-
-# ---------------------------------------------------------------------------
 # Hilfsfunktion: Benchmark ausführen und Bericht zurückgeben
 # ---------------------------------------------------------------------------
 
 
 def _run_amrb(n_items: int = 1, verbose: bool = False) -> BenchmarkReport:
     config = BenchmarkConfig(
-        restoration_fn=_aurik_restoration_fn,
+        restoration_fn=dsp_restore,
         system_name="Aurik 9 CI",
         n_items_per_scenario=n_items,
         # Normative Gate fokusiert auf AMRB-MUSHRA-Ziele; schwere Zusatzpfade
