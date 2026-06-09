@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from operator import methodcaller
 from typing import Any
@@ -638,7 +639,7 @@ class SotaVocalModelRouter:
     @classmethod
     def _stems_to_vocal_instr(
         cls,
-        stems: dict[str, object],
+        stems: Mapping[str, object],
         reference: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         vocal = cls._coerce_like(stems.get("vocals", np.zeros_like(reference)), reference)
