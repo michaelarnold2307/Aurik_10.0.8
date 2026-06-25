@@ -261,9 +261,9 @@ def apply(
         right_out = np.nan_to_num(right_out, nan=0.0, posinf=0.0, neginf=0.0)
 
         if channels_first:
-            return np.stack([left_out, right_out], axis=0).astype(np.float32)
+            return np.stack([left_out, right_out], axis=0).astype(np.float32)  # type: ignore[no-any-return]
         else:
-            return np.stack([left_out, right_out], axis=1).astype(np.float32)
+            return np.stack([left_out, right_out], axis=1).astype(np.float32)  # type: ignore[no-any-return]
 
     # Mono path
     x = audio.astype(np.float32)
@@ -497,6 +497,36 @@ class IntermodulationReductionPhase(PhaseInterface):
                     result_audio[_npa_m63] = audio[_npa_m63]
         except Exception as _npa63_exc:
             logger.debug("§2.46f phase_63 NPA-Guard (non-blocking): %s", _npa63_exc)
+
+        # §V19 Noise-Textur-Invariante (VERBOTEN-V19): Residual bewahrt Materialcharakter
+        _mat63_str = str(material_type or "unknown").lower()
+        try:
+            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+                compute_noise_texture_distance as _nt63_fn,
+            )
+
+            if result_audio.shape == audio.shape:
+                _nt63_d = _nt63_fn(
+                    audio.astype(np.float32) - result_audio.astype(np.float32), _mat63_str, sr=sample_rate
+                )
+                if _nt63_d > 0.25:
+                    result_audio = (0.5 * result_audio + 0.5 * audio).astype(np.float32)
+                    logger.warning("§V19 phase_63 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt63_d)
+        except Exception as _nt63_exc:
+            logger.debug("§V19 phase_63 noise_texture_guard (non-blocking): %s", _nt63_exc)
+
+        # §V24 Spektralfarbe-Prüfung (VERBOTEN-V24): 1/3-Oktav-Profil darf nicht verfärbt werden
+        try:
+            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+                check_spectral_color_preservation as _scg63,
+            )
+
+            if result_audio.shape == audio.shape:
+                _sc63 = _scg63(audio.astype(np.float32), result_audio.astype(np.float32), sample_rate)
+                if not _sc63.ok:
+                    result_audio = (0.70 * result_audio + 0.30 * audio).astype(np.float32)
+        except Exception as _sc63_exc:
+            logger.debug("§V24 phase_63 spectral_color_guard (non-blocking): %s", _sc63_exc)
 
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0

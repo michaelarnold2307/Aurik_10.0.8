@@ -100,7 +100,7 @@ def _peaking_eq(x: np.ndarray, sr: int, freq: float, gain_db: float, q: float) -
     # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
     # padlen = 3*max(len(a),len(b))-1 = 8 — safe for 48 kHz audio (always >> 8 samples).
     if x.ndim == 1:
-        return sig.filtfilt(b, a, x)
+        return sig.filtfilt(b, a, x)  # type: ignore[no-any-return]
     # Handle both (2,N) channels-first and (N,2) channels-last
     if x.shape[0] == 2 and x.shape[1] > 2:
         return np.vstack([sig.filtfilt(b, a, x[ch, :]) for ch in range(x.shape[0])])
@@ -244,7 +244,7 @@ class GuitarEnhancementPhase(PhaseInterface):
             if a_max > 1e-10:
                 attack = attack / a_max
             # Boost signal at attack moments (wet/dry)
-            return ch_audio * (1.0 + transient_gain * attack)
+            return ch_audio * (1.0 + transient_gain * attack)  # type: ignore[no-any-return]
 
         if x.ndim == 1:
             x = _transient_boost_channel(x)
@@ -284,7 +284,7 @@ class GuitarEnhancementPhase(PhaseInterface):
             else:  # Pop
                 # Mild saturation
                 excited = np.tanh(body_band * 1.5) * 0.09 * g
-            return ch_audio + excited
+            return ch_audio + excited  # type: ignore[no-any-return]
 
         if x.ndim == 1:
             x = _excite_channel(x)
@@ -402,6 +402,32 @@ class GuitarEnhancementPhase(PhaseInterface):
 
         if 0.0 < _effective_strength < 1.0 and processed.shape == audio.shape:
             processed = audio + _effective_strength * (processed - audio)
+
+        # §2.46e HallucinationGuard: Additive Phase darf kein halluziniertes Material einführen (VERBOTEN)
+        try:
+            from backend.core.dsp.hallucination_guard import (  # pylint: disable=import-outside-toplevel
+                check_hallucination as _chk_hg44,
+            )
+
+            _hg_mode_44 = str(kwargs.get("mode", "restoration"))
+            _pre44_mono = (
+                audio.mean(axis=0)
+                if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
+            _post44_mono = (
+                processed.mean(axis=0)
+                if (processed.ndim == 2 and processed.shape[0] == 2 and processed.shape[1] > 2)
+                else (processed.mean(axis=1) if processed.ndim == 2 else processed)
+            )
+            _hg44 = _chk_hg44(
+                _pre44_mono.astype(np.float32), _post44_mono.astype(np.float32), sr=sample_rate, mode=_hg_mode_44
+            )
+            if _hg44.requires_rollback:
+                processed = audio.copy()
+                logger.warning("§2.46e phase_44 HallucinationGuard: rollback (spectral_novelty > 0.15)")
+        except Exception as _hg44_exc:
+            logger.debug("§2.46e phase_44 HallucinationGuard (non-blocking): %s", _hg44_exc)
 
         return PhaseResult(
             success=True,

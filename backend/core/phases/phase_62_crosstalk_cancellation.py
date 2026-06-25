@@ -109,7 +109,7 @@ def _estimate_alpha_f(
     denom = np.sqrt(np.maximum(sum_ll * sum_rr, 1e-30))
     alpha_f = np.sqrt(sum_lr_r**2 + sum_lr_i**2) / denom
     # Hard cap to guarantee invertibility and prevent over-correction
-    return np.clip(alpha_f, 0.0, alpha_max)
+    return np.clip(alpha_f, 0.0, alpha_max)  # type: ignore[no-any-return]
 
 
 def apply(
@@ -200,7 +200,7 @@ def apply(
     else:
         result = np.stack([left_out, right_out], axis=1)
 
-    return np.clip(result, -1.0, 1.0).astype(np.float32)
+    return np.clip(result, -1.0, 1.0).astype(np.float32)  # type: ignore[no-any-return]
 
 
 # ─── PhaseInterface ────────────────────────────────────────────────────────────
@@ -392,6 +392,36 @@ class CrosstalkCancellationPhase(PhaseInterface):
             result_audio = apply_psychoacoustic_masking_clamp(audio, result_audio, sample_rate, mode="restoration")
         except Exception as _pmask62_exc:
             logger.debug("§2.62 Phase62 Masking-Guard (non-blocking): %s", _pmask62_exc)
+
+        # §V19 Noise-Textur-Invariante (VERBOTEN-V19): Residual bewahrt Materialcharakter
+        _mat62_str = str(material_type or "unknown").lower()
+        try:
+            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+                compute_noise_texture_distance as _nt62_fn,
+            )
+
+            if result_audio.shape == audio.shape:
+                _nt62_d = _nt62_fn(
+                    audio.astype(np.float32) - result_audio.astype(np.float32), _mat62_str, sr=sample_rate
+                )
+                if _nt62_d > 0.25:
+                    result_audio = (0.5 * result_audio + 0.5 * audio).astype(np.float32)
+                    logger.warning("§V19 phase_62 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt62_d)
+        except Exception as _nt62_exc:
+            logger.debug("§V19 phase_62 noise_texture_guard (non-blocking): %s", _nt62_exc)
+
+        # §V24 Spektralfarbe-Prüfung (VERBOTEN-V24): 1/3-Oktav-Profil darf nicht verfärbt werden
+        try:
+            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+                check_spectral_color_preservation as _scg62,
+            )
+
+            if result_audio.shape == audio.shape:
+                _sc62 = _scg62(audio.astype(np.float32), result_audio.astype(np.float32), sample_rate)
+                if not _sc62.ok:
+                    result_audio = (0.70 * result_audio + 0.30 * audio).astype(np.float32)
+        except Exception as _sc62_exc:
+            logger.debug("§V24 phase_62 spectral_color_guard (non-blocking): %s", _sc62_exc)
 
         _rms_out_db = _rms_dbfs_gated(result_audio)
         _rms_drop = (_rms_out_db - _rms_in_db) if _rms_in_db > -80.0 else 0.0

@@ -181,7 +181,7 @@ class DrumsEnhancementV1(PhaseInterface):
         super().__init__(sample_rate, **kwargs)
         self.enhancer = None  # Lazy init
 
-    def process(
+    def process(  # type: ignore[override]
         self,
         audio: np.ndarray,
         sample_rate: int = 48000,
@@ -311,7 +311,7 @@ class DrumsEnhancementV1(PhaseInterface):
 
             # Lazy init enhancer
             if self.enhancer is None:
-                self.enhancer = DrumsEnhancementSystem(
+                self.enhancer = DrumsEnhancementSystem(  # type: ignore[assignment]
                     kick_gain_db=config["kick_gain_db"],
                     snare_articulation=config["snare_articulation"],
                     hihat_clarity_db=config["hihat_clarity_db"],
@@ -319,7 +319,7 @@ class DrumsEnhancementV1(PhaseInterface):
                 )
 
             # Process audio
-            processed_audio, report = self.enhancer.process(audio, self.sample_rate)
+            processed_audio, report = self.enhancer.process(audio, self.sample_rate)  # type: ignore[union-attr]
 
             # Mix with original (parallel processing)
             mix = float(np.clip(config["mix"], 0.0, 1.0)) * effective_strength
@@ -429,6 +429,32 @@ class DrumsEnhancementV1(PhaseInterface):
                     enhanced = audio + effective_strength * (enhanced - audio)
                 enhanced = np.nan_to_num(enhanced, nan=0.0, posinf=0.0, neginf=0.0)
                 enhanced = np.clip(enhanced, -1.0, 1.0)
+
+            # §2.46e HallucinationGuard: Additive Phase darf kein halluziniertes Material einführen (VERBOTEN)
+            try:
+                from backend.core.dsp.hallucination_guard import (  # pylint: disable=import-outside-toplevel
+                    check_hallucination as _chk_hg51,
+                )
+
+                _hg_mode_51 = str(kwargs.get("mode", "restoration"))
+                _pre51_mono = (
+                    audio.mean(axis=0)
+                    if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                    else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+                )
+                _post51_mono = (
+                    enhanced.mean(axis=0)
+                    if (enhanced.ndim == 2 and enhanced.shape[0] == 2 and enhanced.shape[1] > 2)
+                    else (enhanced.mean(axis=1) if enhanced.ndim == 2 else enhanced)
+                )
+                _hg51 = _chk_hg51(
+                    _pre51_mono.astype(np.float32), _post51_mono.astype(np.float32), sr=sample_rate, mode=_hg_mode_51
+                )
+                if _hg51.requires_rollback:
+                    enhanced = audio.copy()
+                    logger.warning("§2.46e phase_51 HallucinationGuard: rollback (spectral_novelty > 0.15)")
+            except Exception as _hg51_exc:
+                logger.debug("§2.46e phase_51 HallucinationGuard (non-blocking): %s", _hg51_exc)
 
             return PhaseResult(
                 success=True,

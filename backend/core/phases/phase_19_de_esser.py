@@ -393,11 +393,11 @@ class DeEsserPhase(PhaseInterface):
             logger.info("✅ Aurik 8.0 Complete Enhancement Stack loaded (5 modules)")
         else:
             # Current Implementation: De-Essing Only (Stages 2-6 sind Roadmap Features)
-            self.breath_intelligence = None
-            self.formant_system = None
-            self.vocal_presence = None
-            self.spectral_inpainting = None
-            self.vocal_dynamics = None
+            self.breath_intelligence = None  # type: ignore[assignment]
+            self.formant_system = None  # type: ignore[assignment]
+            self.vocal_presence = None  # type: ignore[assignment]
+            self.spectral_inpainting = None  # type: ignore[assignment]
+            self.vocal_dynamics = None  # type: ignore[assignment]
             logger.info("ℹ️ Phase 19 v4.0: Gender-Aware De-Esser (Stages 2-6 are roadmap features)")
 
         # Stats Tracking (v4.0 erweitert)
@@ -415,7 +415,7 @@ class DeEsserPhase(PhaseInterface):
             "brilliance_preservation": self.vocal_profile.get("brilliance_preserve", 0.90),
         }
 
-    def process(  # pylint: disable=signature-differs
+    def process(  # pylint: disable=signature-differs  # type: ignore[override]
         self, audio: np.ndarray, sample_rate: int, material_type: MaterialType, gender: str | None = None, **kwargs
     ) -> PhaseResult:
         """
@@ -636,7 +636,7 @@ class DeEsserPhase(PhaseInterface):
                 logger.debug("🎵 Stage 5: Spectral Inpainting")
                 _stage_audio, inpaint_report = spectral_inpainting.process(_stage_audio, sample_rate)
                 self.stats["spectral_gaps_repaired"] = inpaint_report.get("gaps_repaired", 0)
-                if self.stats["spectral_gaps_repaired"] > 0:
+                if self.stats["spectral_gaps_repaired"] > 0:  # type: ignore[operator]
                     logger.debug("  ✅ %s spectral gaps repaired", self.stats["spectral_gaps_repaired"])
 
                 # STAGE 6: Vocal Dynamics (Micro-Compression)
@@ -690,17 +690,17 @@ class DeEsserPhase(PhaseInterface):
         # statt pauschal den sanfteren Wert zu erzwingen.
         material_max_reduction_db = self.MAX_REDUCTION_DB.get(material, -6.0)
         gender_max_reduction_db = self.vocal_profile.get("max_depth_db", -3.5)
-        _gentle_abs = abs(max(material_max_reduction_db, gender_max_reduction_db))
-        _assertive_abs = abs(min(material_max_reduction_db, gender_max_reduction_db))
+        _gentle_abs = abs(max(material_max_reduction_db, gender_max_reduction_db))  # type: ignore[call-overload]
+        _assertive_abs = abs(min(material_max_reduction_db, gender_max_reduction_db))  # type: ignore[call-overload]
         _intensity_profile = compute_optimal_deesser_intensity(
             enhanced_audio,
             sample_rate,
             effective_strength=_effective_strength,
             defect_scores=_defect_scores_for_intensity,
             fricative_snr_db=_snr_ref,
-            breathiness=self.stats.get("breathiness_ratio", 0.0),
-            freq_low=float(_s_band_low),
-            freq_high=float(_s_band_high),
+            breathiness=self.stats.get("breathiness_ratio", 0.0),  # type: ignore[arg-type]
+            freq_low=float(_s_band_low),  # type: ignore[has-type]
+            freq_high=float(_s_band_high),  # type: ignore[has-type]
             language_hint=str(kwargs.get("language", getattr(_ptl_19_hint, "language", "")) or ""),
             phoneme_timeline=_ptl_19_hint,
         )
@@ -876,7 +876,7 @@ class DeEsserPhase(PhaseInterface):
                 consonant_result = enhance_consonants(
                     deessed_audio,
                     sample_rate,
-                    voice_gender=_gender_str,
+                    voice_gender=_gender_str,  # type: ignore[arg-type]
                     defect_scores=_defect_scores,
                 )
                 if consonant_result.fricative_segments > 0:
@@ -905,7 +905,7 @@ class DeEsserPhase(PhaseInterface):
                     if isinstance(self.stats.get("gender_profile"), str)
                     else VocalGender.AUTO
                 )
-                _snr_after_chain = measure_fricative_snr(deessed_audio, sample_rate, _chain_gender)
+                _snr_after_chain = measure_fricative_snr(deessed_audio, sample_rate, _chain_gender)  # type: ignore[arg-type]
                 _snr_required = _snr_ref + 3.0  # §2.8: Ketten-Ergebnis ≥ Eingang + 3 dB
                 _fricative_snr_invariant_met = _snr_after_chain >= _snr_required
 
@@ -927,12 +927,12 @@ class DeEsserPhase(PhaseInterface):
                     _retry_result = enhance_consonants(
                         deessed_audio,
                         sample_rate,
-                        voice_gender=_chain_gender,
+                        voice_gender=_chain_gender,  # type: ignore[arg-type]
                         defect_scores=_defect_scores_retry,
                     )
                     if _retry_result.fricative_segments > 0:
                         deessed_audio = _retry_result.audio
-                        _snr_after_chain = measure_fricative_snr(deessed_audio, sample_rate, _chain_gender)
+                        _snr_after_chain = measure_fricative_snr(deessed_audio, sample_rate, _chain_gender)  # type: ignore[arg-type]
                         _fricative_snr_invariant_met = _snr_after_chain >= _snr_required
                         logger.debug(
                             "Stage 8c Retry: SNR_nach=%.1f dB, required=%.1f dB, met=%s",
@@ -977,7 +977,7 @@ class DeEsserPhase(PhaseInterface):
             "🏆 Phase 19 v4.0 Complete: %.1f dB reduction, %s sibilant types, "
             "GR=%.1f dB, Breaths=%s, Formants=%s, Time=%.2fs",
             sibilance_reduction_db,
-            len(self.stats["sibilant_types_detected"]),
+            len(self.stats["sibilant_types_detected"]),  # type: ignore[arg-type]
             self.stats["max_gain_reduction_db"],
             self.stats["breath_events_detected"],
             self.stats["formants_corrected"],
@@ -1090,6 +1090,53 @@ class DeEsserPhase(PhaseInterface):
         except Exception as _npa19_exc:
             logger.debug("§2.46f phase_19 NPA-Guard (non-blocking): %s", _npa19_exc)
 
+        # §V19 Noise-Textur-Invariante (VERBOTEN-V19): Residual bewahrt Materialcharakter
+        _mat19_str = str(material_type or "unknown").lower()
+        try:
+            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+                compute_noise_texture_distance as _nt19_fn,
+            )
+
+            # channels-last [N,2] → channels-first [2,N] für Guard
+            _a19cf = (
+                audio.T.astype(np.float32)
+                if (audio.ndim == 2 and audio.shape[1] == 2 and audio.shape[0] > 2)
+                else audio.astype(np.float32)
+            )
+            _d19cf = (
+                deessed_audio.T.astype(np.float32)
+                if (deessed_audio.ndim == 2 and deessed_audio.shape[1] == 2 and deessed_audio.shape[0] > 2)
+                else deessed_audio.astype(np.float32)
+            )
+            _nt19_d = _nt19_fn(_a19cf - _d19cf, _mat19_str, sr=sample_rate)
+            if _nt19_d > 0.25:
+                deessed_audio = (0.5 * deessed_audio + 0.5 * audio).astype(np.float32)
+                logger.warning("§V19 phase_19 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt19_d)
+        except Exception as _nt19_exc:
+            logger.debug("§V19 phase_19 noise_texture_guard (non-blocking): %s", _nt19_exc)
+
+        # §V24 Spektralfarbe-Prüfung (VERBOTEN-V24): 1/3-Oktav-Profil darf nicht verfärbt werden
+        try:
+            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+                check_spectral_color_preservation as _scg19,
+            )
+
+            _a19cf2 = (
+                audio.T.astype(np.float32)
+                if (audio.ndim == 2 and audio.shape[1] == 2 and audio.shape[0] > 2)
+                else audio.astype(np.float32)
+            )
+            _d19cf2 = (
+                deessed_audio.T.astype(np.float32)
+                if (deessed_audio.ndim == 2 and deessed_audio.shape[1] == 2 and deessed_audio.shape[0] > 2)
+                else deessed_audio.astype(np.float32)
+            )
+            _sc19 = _scg19(_a19cf2, _d19cf2, sample_rate)
+            if not _sc19.ok:
+                deessed_audio = (0.70 * deessed_audio + 0.30 * audio).astype(np.float32)
+        except Exception as _sc19_exc:
+            logger.debug("§V24 phase_19 spectral_color_guard (non-blocking): %s", _sc19_exc)
+
         return PhaseResult(
             success=True,
             audio=deessed_audio,
@@ -1116,13 +1163,13 @@ class DeEsserPhase(PhaseInterface):
                 "fricative_drive": _intensity_profile.fricative_drive,
                 # Stage 8: Preservation
                 "intelligibility_protected": self.stats["intelligibility_protected"],
-                "intelligibility_score": round(self.stats.get("intelligibility_score", 1.0), 4),
-                "intelligibility_presence_ratio": round(self.stats.get("intelligibility_presence_ratio", 1.0), 4),
-                "intelligibility_articulation_ratio": round(
+                "intelligibility_score": round(self.stats.get("intelligibility_score", 1.0), 4),  # type: ignore[call-overload]
+                "intelligibility_presence_ratio": round(self.stats.get("intelligibility_presence_ratio", 1.0), 4),  # type: ignore[call-overload]
+                "intelligibility_articulation_ratio": round(  # type: ignore[call-overload]
                     self.stats.get("intelligibility_articulation_ratio", 1.0), 4
                 ),
-                "intelligibility_air_ratio": round(self.stats.get("intelligibility_air_ratio", 1.0), 4),
-                "intelligibility_fricative_snr_delta_db": round(
+                "intelligibility_air_ratio": round(self.stats.get("intelligibility_air_ratio", 1.0), 4),  # type: ignore[call-overload]
+                "intelligibility_fricative_snr_delta_db": round(  # type: ignore[call-overload]
                     self.stats.get("intelligibility_fricative_snr_delta_db", 0.0), 2
                 ),
                 "formant_preservation": self.stats["formant_preservation"],
@@ -1137,28 +1184,28 @@ class DeEsserPhase(PhaseInterface):
                 "loudness_makeup_db": 0.0,
             },
             metrics={
-                "sibilance_reduction_db": float(sibilance_reduction_db),
+                "sibilance_reduction_db": float(sibilance_reduction_db),  # type: ignore[arg-type]
                 "sibilance_energy_before": float(sibilance_energy_before),
                 "sibilance_energy_after": float(sibilance_energy_after),
-                "max_gain_reduction_db": float(self.stats["max_gain_reduction_db"]),
+                "max_gain_reduction_db": float(self.stats["max_gain_reduction_db"]),  # type: ignore[arg-type]
                 "deesser_intensity": float(_intensity_profile.intensity),
                 "phoneme_drive": float(_intensity_profile.phoneme_drive),
                 "hf_loss_ratio": float(hf_loss_ratio),
-                "intelligibility_score": float(self.stats.get("intelligibility_score", 1.0)),
-                "intelligibility_presence_ratio": float(self.stats.get("intelligibility_presence_ratio", 1.0)),
-                "intelligibility_articulation_ratio": float(self.stats.get("intelligibility_articulation_ratio", 1.0)),
-                "intelligibility_air_ratio": float(self.stats.get("intelligibility_air_ratio", 1.0)),
+                "intelligibility_score": float(self.stats.get("intelligibility_score", 1.0)),  # type: ignore[arg-type]
+                "intelligibility_presence_ratio": float(self.stats.get("intelligibility_presence_ratio", 1.0)),  # type: ignore[arg-type]
+                "intelligibility_articulation_ratio": float(self.stats.get("intelligibility_articulation_ratio", 1.0)),  # type: ignore[arg-type]
+                "intelligibility_air_ratio": float(self.stats.get("intelligibility_air_ratio", 1.0)),  # type: ignore[arg-type]
                 "intelligibility_fricative_snr_delta_db": float(
-                    self.stats.get("intelligibility_fricative_snr_delta_db", 0.0)
+                    self.stats.get("intelligibility_fricative_snr_delta_db", 0.0)  # type: ignore[arg-type]
                 ),
                 # Musical Goals Compliance
-                "musical_goal_brillanz": float(np.clip(self.stats.get("intelligibility_air_ratio", 1.0), 0.0, 1.0)),
+                "musical_goal_brillanz": float(np.clip(self.stats.get("intelligibility_air_ratio", 1.0), 0.0, 1.0)),  # type: ignore[call-overload]
                 "musical_goal_authentizitaet": float(
-                    np.clip(self.stats.get("intelligibility_presence_ratio", 1.0), 0.0, 1.0)
+                    np.clip(self.stats.get("intelligibility_presence_ratio", 1.0), 0.0, 1.0)  # type: ignore[call-overload]
                 ),
-                "musical_goal_transparenz": float(np.clip(self.stats.get("intelligibility_score", 1.0), 0.0, 1.0)),
+                "musical_goal_transparenz": float(np.clip(self.stats.get("intelligibility_score", 1.0), 0.0, 1.0)),  # type: ignore[call-overload]
                 "musical_goal_artikulation": float(
-                    np.clip(self.stats.get("intelligibility_articulation_ratio", 1.0), 0.0, 1.0)
+                    np.clip(self.stats.get("intelligibility_articulation_ratio", 1.0), 0.0, 1.0)  # type: ignore[call-overload]
                 ),
                 # ConsonantEnhancement (Stage 8b)
                 "consonant_fricative_segments": (consonant_result.fricative_segments if consonant_result else 0),
@@ -1308,9 +1355,9 @@ class DeEsserPhase(PhaseInterface):
             # Sibilant-Typ-Estimation (spektraler Schwerpunkt)
             if np.min(gain_smoothed) < 0.95:  # Gain Reduction stattgefunden
                 sibilant_type = self._estimate_sibilant_type(processing_band, sample_rate, band_name)
-                if sibilant_type and sibilant_type not in self.stats["sibilant_types_detected"]:
-                    self.stats["sibilant_types_detected"].append(sibilant_type)
-                self.stats["bands_processed"][band_name] = True
+                if sibilant_type and sibilant_type not in self.stats["sibilant_types_detected"]:  # type: ignore[operator]
+                    self.stats["sibilant_types_detected"].append(sibilant_type)  # type: ignore[attr-defined]
+                self.stats["bands_processed"][band_name] = True  # type: ignore[index]
                 min_gain_db = 20 * np.log10(np.min(gain_smoothed) + 1e-9)
                 self.stats["max_gain_reduction_db"] = min(self.stats["max_gain_reduction_db"], min_gain_db)
 
@@ -1378,11 +1425,11 @@ class DeEsserPhase(PhaseInterface):
         n = len(band_audio)
         if n < 256:
             # Signal too short for reliable STFT — simple multiply
-            return band_audio * gain_curve
+            return band_audio * gain_curve  # type: ignore[no-any-return]
 
         # Fast path: gain near unity everywhere → skip STFT overhead
         if np.min(gain_curve) > 0.998:
-            return band_audio * gain_curve
+            return band_audio * gain_curve  # type: ignore[no-any-return]
 
         _istft_fn = signal.istft
         _stft_fn = signal.stft
@@ -1466,7 +1513,7 @@ class DeEsserPhase(PhaseInterface):
         rms_squared = np.convolve(squared, window, mode="same")
         rms = np.sqrt(np.maximum(rms_squared, 0))  # Ensure non-negative
 
-        return rms
+        return rms  # type: ignore[no-any-return]
 
     def _compute_peak_hold_envelope(
         self,
@@ -1506,7 +1553,7 @@ class DeEsserPhase(PhaseInterface):
         abs_sig = np.abs(signal_data)
         n = len(abs_sig)
         if n == 0:
-            return abs_sig.copy()
+            return abs_sig.copy()  # type: ignore[no-any-return]
 
         # Downsample factor (keep attack resolution ≤ 1 ms)
         _DS = max(1, int(attack_ms * sample_rate / 1000) // 2) or 1
@@ -1573,7 +1620,7 @@ class DeEsserPhase(PhaseInterface):
         # Above knee: full reduction
         above_knee = envelope >= threshold_upper
         if np.any(above_knee):
-            gain_linear = 10 ** (max_reduction_db / 20)
+            gain_linear = 10 ** (max_reduction_db / 20)  # type: ignore[assignment]
             gain_curve[above_knee] = gain_linear
 
         return gain_curve
@@ -1684,7 +1731,7 @@ class DeEsserPhase(PhaseInterface):
             audio = np.mean(audio, axis=1)
 
         if bands is None:
-            bands = self.SIBILANCE_BANDS
+            bands = self.SIBILANCE_BANDS  # type: ignore[assignment]
 
         nyquist = sample_rate / 2.0
         total_energy = 0.0
@@ -1736,19 +1783,19 @@ class DeEsserPhase(PhaseInterface):
         nyquist = sample_rate / 2.0
         safe_nyquist = nyquist * 0.95  # 5% Sicherheitsabstand
 
-        if s_high > safe_nyquist:
+        if s_high > safe_nyquist:  # type: ignore[has-type]
             logger.warning(
                 "⚠️ Sibilance band %.0f Hz > Nyquist %.0f Hz, clamping to %.0f Hz",
-                s_high,
+                s_high,  # type: ignore[has-type]
                 nyquist,
                 safe_nyquist,
             )
             s_high = safe_nyquist
 
-        if s_low > safe_nyquist:
+        if s_low > safe_nyquist:  # type: ignore[has-type]
             logger.warning(
                 "⚠️ Sibilance band lower bound %.0f Hz > Nyquist, adjusting to %.0f-%.0f Hz",
-                s_low,
+                s_low,  # type: ignore[has-type]
                 safe_nyquist * 0.7,
                 safe_nyquist,
             )
@@ -1774,7 +1821,7 @@ class DeEsserPhase(PhaseInterface):
         # Call original multi-band processing mit angepassten Bändern
         # (Überschreibe temporär class-level SIBILANCE_BANDS)
         original_bands = self.SIBILANCE_BANDS.copy()
-        self.SIBILANCE_BANDS = gender_adaptive_bands
+        self.SIBILANCE_BANDS = gender_adaptive_bands  # type: ignore[assignment]
 
         try:
             # Nutze existierende Multi-Band-Logik
@@ -1787,9 +1834,9 @@ class DeEsserPhase(PhaseInterface):
                 original=audio,
                 processed=result,
                 sample_rate=sample_rate,
-                formant_low=formant_low,
-                formant_high=formant_high,
-                protection_factor=formant_protect_factor,
+                formant_low=formant_low,  # type: ignore[has-type]
+                formant_high=formant_high,  # type: ignore[has-type]
+                protection_factor=formant_protect_factor,  # type: ignore[arg-type]
             )
 
             # Chest-Resonance-Protection (speziell für MALE - Bass-Kraft-Ziel)
@@ -1799,8 +1846,8 @@ class DeEsserPhase(PhaseInterface):
                     original=audio,
                     processed=result,
                     sample_rate=sample_rate,
-                    formant_low=chest_low,
-                    formant_high=chest_high,
+                    formant_low=chest_low,  # type: ignore[has-type]
+                    formant_high=chest_high,  # type: ignore[has-type]
                     protection_factor=0.95,  # Sehr starker Schutz für Bass
                 )
 

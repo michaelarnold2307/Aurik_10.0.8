@@ -88,7 +88,7 @@ def _peaking_eq(audio: np.ndarray, sr: int, freq: float, gain_db: float, q: floa
 
     # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
     if audio.ndim == 1:
-        return sig.filtfilt(b, a, audio)
+        return sig.filtfilt(b, a, audio)  # type: ignore[no-any-return]
     result = np.empty_like(audio)
     for ch in range(audio.shape[1]):
         result[:, ch] = sig.filtfilt(b, a, audio[:, ch])
@@ -114,7 +114,7 @@ def _high_shelf(audio: np.ndarray, sr: int, freq: float, gain_db: float) -> np.n
 
     # §2.51 zero-phase: filtfilt eliminates causal group-delay → no L/R interchannel lag.
     if audio.ndim == 1:
-        return sig.filtfilt(b, a, audio)
+        return sig.filtfilt(b, a, audio)  # type: ignore[no-any-return]
     result = np.empty_like(audio)
     for ch in range(audio.shape[1]):
         result[:, ch] = sig.filtfilt(b, a, audio[:, ch])
@@ -351,6 +351,32 @@ class BrassEnhancementPhase(PhaseInterface):
 
         if 0.0 < _effective_strength < 1.0 and processed.shape == audio.shape:
             processed = audio + _effective_strength * (processed - audio)
+
+        # §2.46e HallucinationGuard: Additive Phase darf kein halluziniertes Material einführen (VERBOTEN)
+        try:
+            from backend.core.dsp.hallucination_guard import (  # pylint: disable=import-outside-toplevel
+                check_hallucination as _chk_hg45,
+            )
+
+            _hg_mode_45 = str(kwargs.get("mode", "restoration"))
+            _pre45_mono = (
+                audio.mean(axis=0)
+                if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
+            _post45_mono = (
+                processed.mean(axis=0)
+                if (processed.ndim == 2 and processed.shape[0] == 2 and processed.shape[1] > 2)
+                else (processed.mean(axis=1) if processed.ndim == 2 else processed)
+            )
+            _hg45 = _chk_hg45(
+                _pre45_mono.astype(np.float32), _post45_mono.astype(np.float32), sr=sample_rate, mode=_hg_mode_45
+            )
+            if _hg45.requires_rollback:
+                processed = audio.copy()
+                logger.warning("§2.46e phase_45 HallucinationGuard: rollback (spectral_novelty > 0.15)")
+        except Exception as _hg45_exc:
+            logger.debug("§2.46e phase_45 HallucinationGuard (non-blocking): %s", _hg45_exc)
 
         return PhaseResult(
             success=True,

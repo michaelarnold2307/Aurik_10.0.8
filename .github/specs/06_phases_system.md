@@ -524,6 +524,10 @@ CAUSE_TO_PHASES = {
                                   "phase_03_denoise", "phase_01_click_removal"],
     "vocal_quality_degradation": ["phase_65_vocal_naturalness_restoration", "phase_03_denoise",
                                   "phase_19_de_esser"],
+    "vocal_stem_noise":          ["phase_66_stem_targeted_nr",
+                                  # Primary: BSRoFormer + stem-spezifische DFN-NR
+                                  "phase_03_denoise",  # Sekundär: wideband-NR als Ergänzung
+                                  "phase_65_vocal_naturalness_restoration"],  # Tertiär: VQI-Korrektiv wenn nötig
 }
 # PFLICHT: Jede neue Ursache → Eintrag hier UND in allen Material-Prior-Tabellen des DefectScanners.
 

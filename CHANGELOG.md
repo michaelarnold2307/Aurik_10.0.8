@@ -4,6 +4,36 @@
 > Historische Qualitäts- und Marketingformulierungen bleiben zur Nachvollziehbarkeit erhalten
 > und sind nicht automatisch als aktueller, normativ bindender Außenclaim zu verstehen.
 
+## Version 9.17.0 — Guard-Vollständigkeit Wave 2: V19/V24 + §2.46e HallucinationGuard (26. Juni 2026)
+
+### Neue Funktionen / Systemische Verbesserungen
+
+#### V19 Noise-Textur-Guard + V24 Spektralfarbe-Guard: 6 weitere Phasen nachgerüstet
+
+- **phase_09** (`crackle_removal`), **phase_19** (`de_esser`), **phase_27** (`click_pop_removal`): V19+V24 Guards eingefügt — channels-last-kompatibel (`.T`-Transposition für compute_noise_texture_distance).
+- **phase_62** (`crosstalk_cancellation`), **phase_63** (`intermodulation_reduction`), **phase_64** (`tape_splice_repair`): V19+V24 Guards nach NPA/Masking-Guard — channels-first.
+- Alle Guards non-blocking (try/except), Schwelle V19: 0.25 (0.18 bei panns_singing ≥ 0.35), Blend 50 %; V24: Blend 0.70 bei `.ok=False`.
+
+#### §2.46e HallucinationGuard: 6 additive Enhancement-Phasen nachgerüstet
+
+- **phase_36** (`transient_shaper`), **phase_44** (`guitar_enhancement`), **phase_45** (`brass_enhancement`): HallucinationGuard vor return, channels-first.
+- **phase_51** (`drums_enhancement`), **phase_52** (`piano_restoration`): channels-last, Guard nach output_guard.fallback-Block.
+- **phase_58** (`lyrics_guided_enhancement`): nach §2.47-Blend-Block vor `create_phase_result()`.
+- Pattern: mono-Extraktion universell (axis=0 für [2,N], axis=1 für [N,2], pass-through für [N]); `requires_rollback=True` → Output-Variable auf `audio.copy()` zurückgesetzt.
+- **phase_53** (`semantic_audio`): korrekt übersprungen (audio=audio UNVERÄNDERT, Kategorie METADATA).
+
+#### Spec-Konsistenz: vocal_stem_noise + V39/V54/V55 nachgeführt
+
+- `.github/specs/06_phases_system.md`: `vocal_stem_noise` in `CAUSE_TO_PHASES` ergänzt (`phase_66_stem_targeted_nr`, `phase_03_denoise`, `phase_65_vocal_naturalness_restoration`) — normativer Test `test_all_code_causes_in_spec06` ✓.
+- `copilot-instructions.md` VERBOTEN-Tabelle: V39 (§0a-verbotene Phasen in CAUSE_TO_PHASES), V54 (`_hg.update_reference_memory()` fehlt nach HPI), V55 (`lpc_formant_enhance()` ohne `era_decade` bei Shellac) — normativer Test `test_linter_codes_present_in_copilot_instructions` ✓.
+
+### Tests
+
+- 686 normative Tests grün (alle 23 Spec-Konsistenz-Tests bestanden).
+- Alle 12 bearbeiteten Phase-Module importierbar ohne Fehler.
+
+---
+
 ## Version 9.16.0 — Psychoakustische Guard-Vollständigkeit + MIIPHER-Spec-Klarstellung (27. Juni 2026)
 
 ### Neue Funktionen / Systemische Verbesserungen

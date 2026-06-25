@@ -228,7 +228,7 @@ class PianoRestorationV1(PhaseInterface):
         """
         if f0_hz <= 0 or n <= 0:
             return freq_hz
-        return n * f0_hz * np.sqrt(1.0 + B * float(n) ** 2)
+        return n * f0_hz * np.sqrt(1.0 + B * float(n) ** 2)  # type: ignore[no-any-return]
 
     def _get_piano_B_coefficient(self, f0_hz: float) -> float:
         """Inharmonicity coefficient B per spec §4.5b (Piano-Inharmonizität-B table).
@@ -252,7 +252,7 @@ class PianoRestorationV1(PhaseInterface):
             return 0.002  # MIDI 48–71: mid / alto register
         return 0.005  # MIDI 72–108: short stiff treble strings
 
-    def process(
+    def process(  # type: ignore[override]
         self,
         audio: np.ndarray,
         sample_rate: int = 48000,
@@ -493,6 +493,32 @@ class PianoRestorationV1(PhaseInterface):
             audio_out = np.nan_to_num(audio_out, nan=0.0, posinf=0.0, neginf=0.0)
             audio_out = np.clip(audio_out, -1.0, 1.0)
 
+        # §2.46e HallucinationGuard: Additive Phase darf kein halluziniertes Material einführen (VERBOTEN)
+        try:
+            from backend.core.dsp.hallucination_guard import (  # pylint: disable=import-outside-toplevel
+                check_hallucination as _chk_hg52,
+            )
+
+            _hg_mode_52 = str(kwargs.get("mode", "restoration"))
+            _pre52_mono = (
+                audio.mean(axis=0)
+                if (audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2)
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
+            _post52_mono = (
+                audio_out.mean(axis=0)
+                if (audio_out.ndim == 2 and audio_out.shape[0] == 2 and audio_out.shape[1] > 2)
+                else (audio_out.mean(axis=1) if audio_out.ndim == 2 else audio_out)
+            )
+            _hg52 = _chk_hg52(
+                _pre52_mono.astype(np.float32), _post52_mono.astype(np.float32), sr=sample_rate, mode=_hg_mode_52
+            )
+            if _hg52.requires_rollback:
+                audio_out = audio.copy()
+                logger.warning("§2.46e phase_52 HallucinationGuard: rollback (spectral_novelty > 0.15)")
+        except Exception as _hg52_exc:
+            logger.debug("§2.46e phase_52 HallucinationGuard (non-blocking): %s", _hg52_exc)
+
         return PhaseResult(
             success=True,
             audio=audio_out,
@@ -633,7 +659,7 @@ class PianoRestorationV1(PhaseInterface):
         # Trim to original length
         audio_enhanced = audio_enhanced[: len(audio)]
 
-        return audio_enhanced
+        return audio_enhanced  # type: ignore[no-any-return]
 
     def _reduce_pedal_noise(self, audio: np.ndarray, intensity: float, threshold_db: float) -> np.ndarray:
         """
@@ -677,7 +703,7 @@ class PianoRestorationV1(PhaseInterface):
         # Reconstruct: original - pedal_band + pedal_band_reduced
         audio_cleaned = audio - pedal_band + pedal_band_reduced
 
-        return audio_cleaned
+        return audio_cleaned  # type: ignore[no-any-return]
 
     def _restore_dynamics(self, audio: np.ndarray, expansion_ratio: float) -> np.ndarray:
         """
@@ -731,7 +757,7 @@ class PianoRestorationV1(PhaseInterface):
         if float(np.percentile(np.abs(audio_expanded), 99.9)) > max_val:
             audio_expanded = audio_expanded / (float(np.percentile(np.abs(audio_expanded), 99.9)) + 1e-10) * max_val
 
-        return audio_expanded
+        return audio_expanded  # type: ignore[no-any-return]
 
     def get_metadata(self) -> PhaseMetadata:
         """Gibt phase metadata zurück."""

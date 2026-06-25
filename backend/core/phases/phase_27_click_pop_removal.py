@@ -390,6 +390,36 @@ class ClickPopRemoval(PhaseInterface):
         except Exception as _guard27_exc:
             logger.debug("§2.36/§2.46f Phase27 guards (non-blocking): %s", _guard27_exc)
 
+        # §V19 Noise-Textur-Invariante (VERBOTEN-V19): Residual bewahrt Materialcharakter
+        _mat27_str = str(material_type or "unknown").lower()
+        try:
+            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+                compute_noise_texture_distance as _nt27_fn,
+            )
+
+            if cleaned_audio.shape == audio.shape:
+                _nt27_d = _nt27_fn(
+                    audio.astype(np.float32) - cleaned_audio.astype(np.float32), _mat27_str, sr=sample_rate
+                )
+                if _nt27_d > 0.25:
+                    cleaned_audio = (0.5 * cleaned_audio + 0.5 * audio).astype(np.float32)
+                    logger.warning("§V19 phase_27 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt27_d)
+        except Exception as _nt27_exc:
+            logger.debug("§V19 phase_27 noise_texture_guard (non-blocking): %s", _nt27_exc)
+
+        # §V24 Spektralfarbe-Prüfung (VERBOTEN-V24): 1/3-Oktav-Profil darf nicht verfärbt werden
+        try:
+            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+                check_spectral_color_preservation as _scg27,
+            )
+
+            if cleaned_audio.shape == audio.shape:
+                _sc27 = _scg27(audio.astype(np.float32), cleaned_audio.astype(np.float32), sample_rate)
+                if not _sc27.ok:
+                    cleaned_audio = (0.70 * cleaned_audio + 0.30 * audio).astype(np.float32)
+        except Exception as _sc27_exc:
+            logger.debug("§V24 phase_27 spectral_color_guard (non-blocking): %s", _sc27_exc)
+
         return PhaseResult(
             success=True,
             audio=cleaned_audio,

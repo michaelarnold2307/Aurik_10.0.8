@@ -523,7 +523,7 @@ QSvgRenderer = QtSvg.QSvgRenderer
 try:
     from Aurik910 import __version__ as _AURIK_VERSION
 except Exception:
-    _AURIK_VERSION = "9.16.0"
+    _AURIK_VERSION = "9.17.0"
 
 # SVG-Phasen-Icons (2.5D mystisch-profi)
 try:

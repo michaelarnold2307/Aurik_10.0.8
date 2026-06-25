@@ -1136,6 +1136,53 @@ class CrackleRemovalPhase(PhaseInterface):
                     _makeup_09,
                 )
 
+        # §V19 Noise-Textur-Invariante (VERBOTEN-V19): Residual bewahrt Materialcharakter
+        _mat09_str = str(material_type or "unknown").lower()
+        try:
+            from backend.core.dsp.noise_texture_guard import (  # pylint: disable=import-outside-toplevel
+                compute_noise_texture_distance as _nt09_fn,
+            )
+
+            # channels-last [N,2] → channels-first [2,N] für Guard
+            _a09cf = (
+                audio.T.astype(np.float32)
+                if (audio.ndim == 2 and audio.shape[1] == 2 and audio.shape[0] > 2)
+                else audio.astype(np.float32)
+            )
+            _r09cf = (
+                restored.T.astype(np.float32)
+                if (restored.ndim == 2 and restored.shape[1] == 2 and restored.shape[0] > 2)
+                else restored.astype(np.float32)
+            )
+            _nt09_d = _nt09_fn(_a09cf - _r09cf, _mat09_str, sr=sample_rate)
+            if _nt09_d > 0.25:
+                restored = (0.5 * restored + 0.5 * audio).astype(np.float32)
+                logger.warning("§V19 phase_09 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt09_d)
+        except Exception as _nt09_exc:
+            logger.debug("§V19 phase_09 noise_texture_guard (non-blocking): %s", _nt09_exc)
+
+        # §V24 Spektralfarbe-Prüfung (VERBOTEN-V24): 1/3-Oktav-Profil darf nicht verfärbt werden
+        try:
+            from backend.core.dsp.spectral_color_guard import (  # pylint: disable=import-outside-toplevel
+                check_spectral_color_preservation as _scg09,
+            )
+
+            _a09cf2 = (
+                audio.T.astype(np.float32)
+                if (audio.ndim == 2 and audio.shape[1] == 2 and audio.shape[0] > 2)
+                else audio.astype(np.float32)
+            )
+            _r09cf2 = (
+                restored.T.astype(np.float32)
+                if (restored.ndim == 2 and restored.shape[1] == 2 and restored.shape[0] > 2)
+                else restored.astype(np.float32)
+            )
+            _sc09 = _scg09(_a09cf2, _r09cf2, sample_rate)
+            if not _sc09.ok:
+                restored = (0.70 * restored + 0.30 * audio).astype(np.float32)
+        except Exception as _sc09_exc:
+            logger.debug("§V24 phase_09 spectral_color_guard (non-blocking): %s", _sc09_exc)
+
         return create_phase_result(
             audio=restored,
             modifications={
