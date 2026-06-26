@@ -24,7 +24,7 @@ Für jede `phase_*.py` mit additiver oder NR-Funktion prüfen:
 
 ```
 [ ] V38: per-Event-Strength-Oracle (_compute_<defect>_local_strength) bei Event-Schleifen
-[ ] V41: ForwardMaskingGuard bei additiven Phasen mit panns_singing >= 0.25
+[x] V41: ForwardMaskingGuard bei additiven Phasen mit panns_singing >= 0.25  ← ERLEDIGT commit 0c9a069
 [ ] V33: Alle dict[MaterialType, ...] enthalten CASSETTE-Key
 [ ] V42: check_roughness_regression() nach NR in phase_03/phase_29
 [ ] V40: compute_nmr_score() wenn FeedbackChain aktiv
@@ -115,7 +115,7 @@ P3 (Backlog): TYPE-SAFETY, Linter-Coverage, Dokumentation
 
 ---
 
-## §10.6 Bekannte offene Gaps (Stand v9.19.0)
+## §10.6 Bekannte offene Gaps (Stand v9.19.0 / Update v9.19.1)
 
 ### §10.6a P2: mypy-Cleanup-Backlog
 
@@ -128,24 +128,21 @@ P3 (Backlog): TYPE-SAFETY, Linter-Coverage, Dokumentation
 
 Fix-Pattern: `cast(np.ndarray, result)` oder `# type: ignore[no-any-return]` (V58).
 
-### §10.6b P2: SSIP phase_55/24 intern (V14–V18)
+### §10.6b ~~P2: SSIP phase_55/24 intern (V14–V18)~~ — ERLEDIGT
 
-UV3 übergibt `structural_silence_zones` korrekt via kwargs. Aber:
+`phase_55_diffusion_inpainting.py` (Z.1347–1577) und `phase_24_dropout_repair.py` (Z.958–1226)
+haben `post_inpainting_silence_audit()` vollständig implementiert. Gap war ein Inventar-Fehler.
 
-- `phase_55_generative_inpainting.py`: `post_inpainting_silence_audit()` nicht aufgerufen
-- `phase_24_inpainting_repair.py`: kein SSIP-interner Guard
+### §10.6c ~~P3: V33 MaterialType CASSETTE-Keys~~ — ERLEDIGT
 
-Fix: `_run_inpainting_with_ssip()` in beiden Phasen — wie bereits in UV3 §2.68 spezifiziert.
+Scan (2026-06-26): Alle Phasen mit `dict[MaterialType, ...]` enthalten CASSETTE-Key.
+Gap war ein Inventar-Fehler.
 
-### §10.6c P3: V33 MaterialType CASSETTE-Keys
+### §10.6d ~~P1: V41 ForwardMaskingGuard additiv~~ — ERLEDIGT (v9.19.1, commit 0c9a069)
 
-Phasen ohne CASSETTE-Eintrag in MaterialType-Dicts:
-
-- `phase_24_inpainting_repair.py`
-- `phase_50_spectral_restoration.py`
-- `phase_40_amplitude_drift_correction.py`
-
-Fix: Wert aus IEC 60094-1 (Type I: 12 kHz BW, WRMS-Flutter ≤ 0.2%) ableiten.
+14 additive Phasen (phase_13,21,24,42,44,45,46,50,51,55,56,58,60,64) hatten keinen
+ForwardMaskingGuard-Block. Standard-Block integriert: `panns_singing >= 0.25` →
+`zone_frac * 0.15` Boost, non-blocking try/except. V41-Gap-Scan: 0 verbleibend.
 
 ---
 
