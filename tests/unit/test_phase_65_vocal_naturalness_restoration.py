@@ -205,12 +205,25 @@ def test_shape_preserved_stereo():
 
 def test_phase_locality_factor_scales_effective_strength(monkeypatch):
     """phase_locality_factor MUSS die Eingriffsstaerke in Phase 65 reduzieren."""
+    import backend.core.dsp.hallucination_guard as _hg_mod
     import backend.core.dsp.hnr_guard as _hnr_guard_mod
     import backend.core.phases.phase_65_vocal_naturalness_restoration as p65
 
     # compute_hnr kann intern ein RNN (GRU) triggern — in Unit-Tests mocken,
     # damit kein PyTorch-Warmup-Timeout entsteht (§tests.instructions.md).
     monkeypatch.setattr(_hnr_guard_mod, "compute_hnr", lambda *a, **kw: 5.0)
+
+    # HallucinationGuard mocken: kein Rollback, damit d_full und d_local
+    # deterministisch vergleichbar sind (nichtlinearer Guard verfälscht sonst
+    # den locality-factor-Vergleich — spectral_novelty=0 durch Mock, V41-Guard OK).
+    _ok_halluc = _hg_mod.HallucinationCheckResult(
+        spectral_novelty=0.0,
+        requires_rollback=False,
+        score_penalty=0.0,
+        harmonic_ceiling_violation=False,
+        metadata={},
+    )
+    monkeypatch.setattr(_hg_mod, "check_hallucination", lambda *a, **kw: _ok_halluc)
 
     phase = _make_phase()
     sr = 48000

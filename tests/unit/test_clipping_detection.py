@@ -524,3 +524,49 @@ class TestEdgeCases:
         result = analyse_clipping(_make_clean_signal(), SR)
         assert hasattr(result, "sub_ceiling_level")
         assert result.sub_ceiling_level >= 0.0
+
+    def test_52_daw_limiter_clipping_band_pile_detected(self) -> None:
+        """DAW-Brickwall-Limiter-Clipping wird per Band-Pile-Ratio erkannt (Methode 2).
+
+        DAW-Limiter setzt Samples nahe ±0.88 mit leichter Streuung ±0.003 —
+        Adjacent-Ratio-Methode greift nicht, Band-Pile-Ratio muss erkennen.
+        """
+        rng = np.random.default_rng(42)
+        t = np.linspace(0, 2.0, SR * 2, endpoint=False)
+        # Polyphones Signal: mehrere Frequenzen → breitbandiges Spektrum
+        sig = 1.25 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
+        for freq in [220, 330, 550, 660, 880, 1100]:
+            sig = sig + 0.3 * np.sin(2 * np.pi * freq * t).astype(np.float32)
+        sig = (sig / np.max(np.abs(sig)) * 1.3).astype(np.float32)
+        # DAW-Limiter: hart clippen, dann leichte Streuung auf Clip-Level-Samples
+        sig_daw = np.clip(sig, -0.88, 0.88).astype(np.float32)
+        noise = np.abs(rng.standard_normal(len(sig)).astype(np.float32)) * 0.003
+        top_mask = sig_daw >= 0.88 * 0.999
+        bot_mask = sig_daw <= -0.88 * 0.999
+        sig_daw[top_mask] -= noise[top_mask]
+        sig_daw[bot_mask] += noise[bot_mask]
+
+        is_clip, clip_level = detect_sub_ceiling_clipping(sig_daw)
+        result = analyse_clipping(sig_daw, SR)
+
+        assert is_clip, f"DAW-Limiter-Clipping nicht erkannt: is_clip={is_clip}, level={clip_level:.4f}"
+        assert clip_level >= 0.75, f"clip_level={clip_level:.4f} außerhalb Sub-Ceiling-Bereich"
+        assert result.clipping_type == ClippingType.CLIPPING, f"Erwartet CLIPPING, got {result.clipping_type.value}"
+
+    def test_53_high_amplitude_sine_no_false_positive_band_pile(self) -> None:
+        """Sinus bei hoher Amplitude wird nicht fälschlich als DAW-Clip erkannt.
+
+        Sinus verweilt natürlich lange nahe seinem Maximum (cos-Dichtefunktion),
+        darf aber trotz hoher band_pile_ratio nicht als Clipping erkannt werden.
+        """
+        t = np.linspace(0, 2.0, SR * 2, endpoint=False)
+        # Sinus @ 0.88 (volle Aussteuerung, keine Begrenzung)
+        sig_sine = (0.88 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+        is_clip, _ = detect_sub_ceiling_clipping(sig_sine)
+        result = analyse_clipping(sig_sine, SR)
+
+        assert not is_clip, "Sinus @0.88 fälschlich als Clipping erkannt (False Positive!)"
+        assert result.clipping_type != ClippingType.CLIPPING or result.flat_tops_pct > 5.0, (
+            f"Sinus soll SOFT_SATURATION sein, got {result.clipping_type.value}"
+        )

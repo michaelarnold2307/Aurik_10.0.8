@@ -4,7 +4,30 @@
 > Historische Qualitäts- und Marketingformulierungen bleiben zur Nachvollziehbarkeit erhalten
 > und sind nicht automatisch als aktueller, normativ bindender Außenclaim zu verstehen.
 
-## Version 9.18.0 — Guard-Vollständigkeit Wave 3 + V55 WLPC + CCR-Timbral-Floor (Stand: 26. Juni 2026)
+## Version 9.19.0 — DAW-Limiter-Erkennung, Kassetten-Goal-Kalibrierung, mypy-Cleanup (Stand: 2. Juli 2026)
+
+### Neue Funktionen / Systemische Verbesserungen
+
+#### P0.1 — Sub-Ceiling DAW-Brickwall-Limiter-Erkennung (V47-Erweiterung)
+
+- **`clipping_detection.py`**: `detect_sub_ceiling_clipping()` Methode 2 — **Band-Pile-Ratio**:
+  DAW-Limiter häuft Samples in einem schmalen Band `[peak-0.005, peak]` an (ratio ≈ 23).
+  Natürliche Signale (Sinus: 3.1; tanh: 4.2; komprimierte Musik: 2.7) bleiben unberührt.
+  Schwellwert `BAND_PILE_RATIO_THRESHOLD = 8.0`. Neue Konstante.
+- **Tests**: `test_52_daw_limiter_clipping_band_pile_detected` + `test_53_high_amplitude_sine_no_false_positive_band_pile` (53 Tests total, alle grün).
+
+#### P0.2 — Kassette-Material-Goal-Böden auf physikalische IEC 60094-1-Grenzen kalibriert
+
+- **`calibration_matrix.py`**: `_MATERIAL_GOAL_FLOOR_OVERRIDES["cassette"]` neu:
+  - `brillanz: 0.68` (IEC Type I: 12 kHz BW-Ceiling begrenzt HF-Restaurierung)
+  - `spatial_depth: 0.55` (Kassetten-Stereo: L/R-Übersprechen ~40 dB)
+  - `separation_fidelity: 0.60` (Kassetten-Bleed: SDR < 15 dB)
+  Schloss 3 false P3-P5-Violations bei Kassetten-Material (tape_analog-Bias unverändert).
+
+#### P1.2 — mypy-Cleanup backend/quality_control.py (22 Fehler → 0)
+
+- `from typing import Any` ergänzt; `job: object` → `Any`; `report: object` → `Any`
+- `results_log: list[Any] = []`; `results: dict[str, Any] = {}`
 
 ### Neue Funktionen / Systemische Verbesserungen
 

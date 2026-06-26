@@ -523,7 +523,7 @@ QSvgRenderer = QtSvg.QSvgRenderer
 try:
     from Aurik910 import __version__ as _AURIK_VERSION
 except Exception:
-    _AURIK_VERSION = "9.18.0"
+    _AURIK_VERSION = "unknown"  # Fallback: Import-Fehler — wird beim nächsten Release-Bump automatisch korrekt
 
 # SVG-Phasen-Icons (2.5D mystisch-profi)
 try:

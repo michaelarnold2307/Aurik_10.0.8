@@ -10,6 +10,7 @@ AURIK v8.0 UPDATE:
 import logging
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -102,7 +103,7 @@ class QualityControl:
 # ==============================================================================
 
 
-def create_quality_report_from_job(job: object) -> object:
+def create_quality_report_from_job(job: Any) -> Any:
     """
     Erstellt formal QualityReport from ResturationJob.
 
@@ -126,8 +127,8 @@ def create_quality_report_from_job(job: object) -> object:
 
 
 def enhance_quality_report_with_objective_metrics(
-    report: object, audio_before: np.ndarray, audio_after: np.ndarray, sr: int
-) -> object:
+    report: Any, audio_before: np.ndarray, audio_after: np.ndarray, sr: int
+) -> Any:
     """
     Enhance QualityReport with additional objective metrics.
 
@@ -382,7 +383,7 @@ class QualityGates:
 
     def __init__(self, use_ml_plugins: bool = True):
         self.cas_calculator = CASScoreCalculator()
-        self.results_log = []
+        self.results_log: list[Any] = []
         self.use_ml_plugins = use_ml_plugins
 
         # Initialize Quality Metrics Manager (lazy load)
@@ -420,7 +421,7 @@ class QualityGates:
         import librosa
         import soundfile as sf
 
-        results = {}
+        results: dict[str, Any] = {}
 
         # Ensure mono for analysis
         if audio_before.ndim > 1:

@@ -283,25 +283,36 @@ def classify_clipping(audio: np.ndarray, sr: int) -> ClippingType:
     return analyse_clipping(audio, sr).clipping_type
 
 
+# Band-Pile-Ratio-Schwelle für Methode 2 (DAW-Brickwall-Limiter-Erkennung).
+# DAW-Limiter häuft Samples in einem schmalen Band nahe dem Clip-Level an
+# (natürliche Signale haben eine flachere Amplitudenverteilung nahe dem Maximum).
+# Kalibrierung (2s polyphones Signal bei 48 kHz, 48% Overdrive):
+#   Sinus 440 Hz (kein Clip):           band_pile_ratio ≈ 3.1  → nicht erkannt
+#   tanh(2.5×sin) ~0.987:               band_pile_ratio ≈ 4.2  → nicht erkannt
+#   Musik polyphon (kein Clip):          band_pile_ratio ≈ 2.7  → nicht erkannt
+#   DAW-Limiter @0.88, ±0.003 Streuung: band_pile_ratio ≈ 23   → erkannt ✓
+BAND_PILE_RATIO_THRESHOLD: float = 8.0
+
+
 def detect_sub_ceiling_clipping(audio: np.ndarray, amplitude_bins: int = 1000) -> tuple[bool, float]:
-    """Erkennt Sub-Ceiling-Clipping durch Amplitudenhistogramm-Adjacent-Ratio-Analyse.
+    """Erkennt Sub-Ceiling-Clipping durch zwei komplementäre Methoden.
 
-    Hard-Clipping (np.clip / DAW-Brickwall-Limiter) setzt alle Samples oberhalb
-    des Clip-Levels auf EXAKT diesen Wert → massiver Spike im Argmax-Bin des
-    Top-5%-Bereichs. Alle anderen Bins haben deutlich weniger Samples.
+    Methode 1 — Adjacent-Ratio-Histogramm (präzise, für exaktes np.clip / Hardware):
+    Hard-Clipping setzt Samples auf EXAKT einen float32-Wert → massiver Spike im
+    Argmax-Bin. Adjacent-Ratio ≥ 20 → Hard-Clip erkannt.
+        tanh(2.5×sin), 0.5 s  → ratio ≈  4.8  → nicht erkannt
+        Hard-Clip @0.88, 2 s  → ratio ≈ 3500  → erkannt
 
-    Weiche Sättigung (tanh, Tape, Kompressor) liefert eine GLATTE, sinusoidal
-    ansteigende Verteilung nahe dem Maximum — kein isolierter Ausreißer.
-
-    Methode: ADJACENT-RATIO = Argmax-Bin-Anzahl (Top-5%-Bereich) dividiert durch
-    zweithäufigsten Bin desselben Bereichs.
-        Hard-Clip: ratio ≫ 20 (alle geclippten Samples in einem Bin;
-                               natürliche Verteilung darunter: fast leer).
-        tanh/Tape: ratio ≈ 2–10 (glatter, sinusoidaler Dichtenanstieg).
-
-    Kalibrierung (440 Hz-Sinussignale bei 48 kHz):
-        tanh(2.5×sin), 0.5 s  → adjacent_ratio ≈  4.8  → nicht erkannt (< 20)
-        Hard-Clip @0.88, 2 s  → adjacent_ratio ≈ 3500  → erkannt    (≥ 20)
+    Methode 2 — Band-Pile-Ratio (DAW-Brickwall-Limiter / Loudness-War):
+    DAW-Limiter häuft Samples in einem schmalen Band nahe dem Clip-Level an
+    (auch wenn Samples leicht gestreut sind, z.B. ±0.003). Die Ratio aus
+    Samples im engen Peak-Band [peak-0.005, peak] vs. dem breiteren Band darunter
+    [peak-0.02, peak-0.005] unterscheidet Clipping (ratio ≈ 23) von natürlichen
+    Signalen (Sinus: 3.1; tanh: 4.2; komprimierte Musik: 2.7).
+        Sinus 440 Hz (kein Clip):           ratio ≈  3.1  → nicht erkannt
+        tanh(2.5×sin) ~0.987:               ratio ≈  4.2  → nicht erkannt
+        Musik polyphon (kein Clip, @0.88):   ratio ≈  2.7  → nicht erkannt
+        DAW-Limiter @0.88 (±0.003 Streuung): ratio ≈ 23.0  → erkannt ✓
 
     Returns:
         (is_sub_ceiling_clip, clip_level) — clip_level = 0.0 wenn kein Clipping
@@ -350,6 +361,31 @@ def detect_sub_ceiling_clipping(audio: np.ndarray, amplitude_bins: int = 1000) -
         top_peak_abs_idx = top_5pct_idx + int(np.argmax(top_region))
         clip_level = float(centers[top_peak_abs_idx])
         return True, clip_level
+
+    # --- Methode 2: Band-Pile-Ratio (DAW-Brickwall-Limiter-Erkennung) ---
+    # DAW-Limiter häuft Samples im schmalen Band [peak-0.005, peak] an.
+    # Band 1 (Pile):    [peak - 0.005, peak]       — 0.5%-Streifen nahe dem Maximum
+    # Band 2 (Natural): [peak - 0.020, peak-0.005] — 1.5%-Streifen darunter (3× breiter)
+    # Normiertes Verhältnis: b1 / (b2/3). Clipping: ~23; natürlich: ~2.7–4.2.
+    if len(abs_audio) >= 512:
+        b1 = float(np.sum((abs_audio >= peak - 0.005) & (abs_audio <= peak)))
+        b2 = float(np.sum((abs_audio >= peak - 0.020) & (abs_audio < peak - 0.005)))
+        band_pile_ratio = b1 / (b2 / 3.0 + 0.5)
+        logger.debug(
+            "detect_sub_ceiling M2: band_pile_ratio=%.2f (b1=%.0f, b2=%.0f, peak=%.4f)",
+            band_pile_ratio,
+            b1,
+            b2,
+            peak,
+        )
+        if band_pile_ratio >= BAND_PILE_RATIO_THRESHOLD:
+            logger.info(
+                "detect_sub_ceiling: Band-Pile-Clip erkannt (ratio=%.1f ≥ %.1f, peak=%.4f)",
+                band_pile_ratio,
+                BAND_PILE_RATIO_THRESHOLD,
+                peak,
+            )
+            return True, peak
 
     return False, 0.0
 

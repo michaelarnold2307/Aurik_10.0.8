@@ -325,6 +325,23 @@ _MATERIAL_GOAL_FLOOR_OVERRIDES: dict[str, dict[str, float]] = {
     "aac": {"spatial_depth": 0.44},
     "streaming": {"spatial_depth": 0.44},
     "minidisc": {"spatial_depth": 0.36},  # ATRAC Stereo-Masking aggressiver als MP3
+    # §09.19 Kassette — IEC 60094-1 Type I physikalische Grenzen (v9.19.0):
+    # brillanz:          12-kHz-BW-Ceiling (IEC Type I) begrenzt HF-Restaurierung auf ~0.68;
+    #                    tape_analog-Bias -0.22 ergibt ~0.721 — zu optimistisch nach phase_06.
+    # spatial_depth:     Kassetten-Stereo: L/R-Übersprechen ~40 dB (IEC 60094-1 §5.4);
+    #                    physikalisches Ceiling ~0.55 (tape_analog-Bias -0.04 ergibt ~0.689).
+    # separation_fidelity: Kassetten-Bleed: SDR < 15 dB; Ceiling ~0.60
+    #                    (tape_analog-Bias -0.22 ergibt ~0.741 — deutlich zu hoch).
+    "cassette": {
+        "brillanz": 0.68,
+        "spatial_depth": 0.55,
+        "separation_fidelity": 0.60,
+    },
+    "kassette": {
+        "brillanz": 0.68,
+        "spatial_depth": 0.55,
+        "separation_fidelity": 0.60,
+    },
 }
 
 _MATERIAL_BIAS: dict[str, dict[str, float]] = {

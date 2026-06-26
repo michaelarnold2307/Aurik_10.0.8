@@ -3,5 +3,5 @@ Aurik 9 — Intelligentes Musik-Restaurierungssystem
 Weltweit erstmaliges kognitiv-perceptuelles Audio-Restaurierungssystem.
 """
 
-__version__ = "9.18.0"
+__version__ = "9.19.0"
 __author__ = "Aurik Team"
