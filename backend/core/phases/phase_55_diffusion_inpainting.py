@@ -1308,6 +1308,22 @@ class DiffusionInpaintingPhase(PhaseInterface):
         if _vocals_conf == 0.0:  # Fallback: direct callers may use panns_singing key
             _vocals_conf = float(kwargs.get("panns_singing", 0.0))
         safe_strength = self._derive_safe_inpainting_strength(effective_strength, _mat_key, _vocals_conf)
+
+        # §V41 ForwardMaskingGuard — Enhancement-Stärke in post-transienten Masking-Zonen erhöhen
+        if _vocals_conf >= 0.25 and effective_strength > 0.0:
+            try:
+                from backend.core.dsp.temporal_masking import (
+                    get_forward_masking_guard as _fmg_fn_55,
+                )
+
+                _fmz_55 = kwargs.get("forward_masking_zones") or _fmg_fn_55().compute_zones(audio, sample_rate)
+                if _fmz_55:
+                    _n_s_55 = audio.shape[-1] if audio.ndim > 1 else len(audio)
+                    _zone_s_55 = sum(z.end_sample - z.start_sample for z in _fmz_55)
+                    _zone_frac_55 = float(np.clip(_zone_s_55 / max(1, _n_s_55), 0.0, 1.0))
+                    effective_strength = float(np.clip(effective_strength + _zone_frac_55 * 0.15, 0.0, 1.0))
+            except Exception as _fmg_exc_55:
+                logger.debug("Phase55 §V41 ForwardMaskingGuard non-blocking: %s", _fmg_exc_55)
         _goal_weights = kwargs.get("song_goal_weights")
         if not isinstance(_goal_weights, dict):
             _goal_weights = None

@@ -705,6 +705,23 @@ class SpectralBandGapRepairPhase(PhaseInterface):
         effective_strength = float(kwargs.get("strength", 1.0)) * phase_locality_factor
         effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
 
+        # §V41 ForwardMaskingGuard — Enhancement-Stärke in post-transienten Masking-Zonen erhöhen
+        _panns_s_56 = float(kwargs.get("panns_singing", 0.0))
+        if _panns_s_56 >= 0.25 and effective_strength > 0.0:
+            try:
+                from backend.core.dsp.temporal_masking import (
+                    get_forward_masking_guard as _fmg_fn_56,
+                )
+
+                _fmz_56 = kwargs.get("forward_masking_zones") or _fmg_fn_56().compute_zones(audio, sample_rate)
+                if _fmz_56:
+                    _n_s_56 = audio.shape[-1] if audio.ndim > 1 else len(audio)
+                    _zone_s_56 = sum(z.end_sample - z.start_sample for z in _fmz_56)
+                    _zone_frac_56 = float(np.clip(_zone_s_56 / max(1, _n_s_56), 0.0, 1.0))
+                    effective_strength = float(np.clip(effective_strength + _zone_frac_56 * 0.15, 0.0, 1.0))
+            except Exception as _fmg_exc_56:
+                logger.debug("Phase56 §V41 ForwardMaskingGuard non-blocking: %s", _fmg_exc_56)
+
         if effective_strength <= 1e-6:
             return create_phase_result(
                 audio,

@@ -225,6 +225,23 @@ class Exciter(PhaseInterface):
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
 
+        # §V41 ForwardMaskingGuard — Enhancement-Stärke in post-transienten Masking-Zonen erhöhen
+        _panns_s_21 = float(kwargs.get("panns_singing", 0.0))
+        if _panns_s_21 >= 0.25 and _effective_strength > 0.0:
+            try:
+                from backend.core.dsp.temporal_masking import (
+                    get_forward_masking_guard as _fmg_fn_21,
+                )
+
+                _fmz_21 = kwargs.get("forward_masking_zones") or _fmg_fn_21().compute_zones(audio, sample_rate)
+                if _fmz_21:
+                    _n_s_21 = audio.shape[-1] if audio.ndim > 1 else len(audio)
+                    _zone_s_21 = sum(z.end_sample - z.start_sample for z in _fmz_21)
+                    _zone_frac_21 = float(np.clip(_zone_s_21 / max(1, _n_s_21), 0.0, 1.0))
+                    _effective_strength = float(np.clip(_effective_strength + _zone_frac_21 * 0.15, 0.0, 1.0))
+            except Exception as _fmg_exc_21:
+                logger.debug("Phase21 §V41 ForwardMaskingGuard non-blocking: %s", _fmg_exc_21)
+
         if _effective_strength <= 0.0:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
@@ -320,10 +337,12 @@ class Exciter(PhaseInterface):
             except Exception as _wsg_exc:
                 logger.debug("Phase 21 Wide-Stereo-Guard non-blocking: %s", _wsg_exc)
 
-        config = copy.deepcopy(self.EXCITER_CONFIG.get(material, self.EXCITER_CONFIG[MaterialType.CD_DIGITAL]))
+        config: dict[str, Any] = copy.deepcopy(
+            self.EXCITER_CONFIG.get(material, self.EXCITER_CONFIG[MaterialType.CD_DIGITAL])
+        )
         for band_name in self.EXCITER_BANDS:
-            config[band_name]["intensity"] = float(config[band_name]["intensity"] * _effective_strength)
-        config["mix"] = float(config["mix"] * _effective_strength)
+            config[band_name]["intensity"] = float(float(config[band_name]["intensity"]) * _effective_strength)
+        config["mix"] = float(float(config["mix"]) * _effective_strength)
 
         # §2.51: M/S domain — excite Mid only, Side untouched
         if is_stereo:
@@ -418,13 +437,13 @@ class Exciter(PhaseInterface):
         if peak > 0.99:
             excited_audio = excited_audio * (0.99 / peak)
 
-        return excited_audio
+        return np.asarray(excited_audio)  # type: ignore[no-any-return]
 
     def _extract_band(self, audio: np.ndarray, sample_rate: int, freq_range: tuple[float, float]) -> np.ndarray:
         """Extrahiert frequency band using bandpass filter."""
         sos = signal.butter(4, freq_range, btype="band", fs=sample_rate, output="sos")
         # §2.51 Anti-Zeitversatz: sosfiltfilt (Zero-Phase) — band wird mit original gemischt.
-        return signal.sosfiltfilt(sos, audio)
+        return np.asarray(signal.sosfiltfilt(sos, audio))  # type: ignore[no-any-return]
 
     def _generate_harmonics(
         self, audio: np.ndarray, intensity: float, harmonic_type: str, saturation_type: str
@@ -461,7 +480,7 @@ class Exciter(PhaseInterface):
         sos_hp = signal.butter(2, 1000, btype="high", fs=48000, output="sos")
         harmonics_only = signal.sosfiltfilt(sos_hp, saturated)
 
-        return harmonics_only * 0.7  # Scale down
+        return np.asarray(harmonics_only * 0.7)  # type: ignore[no-any-return]  # Scale down
 
     def _measure_hf_energy(self, audio: np.ndarray, sample_rate: int) -> float:
         """Misst high-frequency energy (>6 kHz)."""
@@ -470,4 +489,4 @@ class Exciter(PhaseInterface):
 
         sos = signal.butter(4, 6000, btype="high", fs=sample_rate, output="sos")
         hf_signal = signal.sosfilt(sos, audio)
-        return np.sqrt(np.mean(hf_signal**2))
+        return float(np.sqrt(np.mean(hf_signal**2)))

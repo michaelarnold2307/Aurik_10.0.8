@@ -403,6 +403,24 @@ class TapeSpliceRepairPhase(PhaseInterface):
         phase_locality_factor = float(np.clip(float(kwargs.get("phase_locality_factor", 1.0)), 0.35, 1.0))
         _pmgg_strength = float(kwargs.get("strength", strength))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
+        # §V41 ForwardMaskingGuard — Enhancement-Stärke in post-transienten Masking-Zonen erhöhen
+        _panns_s_64 = float(kwargs.get("panns_singing", 0.0))
+        if _panns_s_64 >= 0.25 and _effective_strength > 0.0:
+            try:
+                from backend.core.dsp.temporal_masking import (
+                    get_forward_masking_guard as _fmg_fn_64,
+                )
+
+                _fmz_64 = kwargs.get("forward_masking_zones") or _fmg_fn_64().compute_zones(audio, sample_rate)
+                if _fmz_64:
+                    _n_s_64 = audio.shape[-1] if audio.ndim > 1 else len(audio)
+                    _zone_s_64 = sum(z.end_sample - z.start_sample for z in _fmz_64)
+                    _zone_frac_64 = float(np.clip(_zone_s_64 / max(1, _n_s_64), 0.0, 1.0))
+                    _effective_strength = float(np.clip(_effective_strength + _zone_frac_64 * 0.15, 0.0, 1.0))
+            except Exception as _fmg_exc_64:
+                logger.debug("Phase64 §V41 ForwardMaskingGuard non-blocking: %s", _fmg_exc_64)
+
         _profile_64 = self._compute_splice_profile(
             str(material_type or kwargs.get("material_type") or kwargs.get("material") or "unknown"),
             str(kwargs.get("quality_mode", "balanced")),

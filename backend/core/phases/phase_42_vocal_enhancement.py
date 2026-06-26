@@ -347,6 +347,23 @@ class VocalEnhancement(PhaseInterface):
         _pmgg_strength = float(kwargs.get("strength", 1.0))
         _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
 
+        # §V41 ForwardMaskingGuard — Enhancement-Stärke in post-transienten Masking-Zonen erhöhen
+        _panns_s_42 = float(kwargs.get("panns_singing", 0.0))
+        if _panns_s_42 >= 0.25 and _effective_strength > 0.0:
+            try:
+                from backend.core.dsp.temporal_masking import (
+                    get_forward_masking_guard as _fmg_fn_42,
+                )
+
+                _fmz_42 = kwargs.get("forward_masking_zones") or _fmg_fn_42().compute_zones(audio, sample_rate)
+                if _fmz_42:
+                    _n_s_42 = audio.shape[-1] if audio.ndim > 1 else len(audio)
+                    _zone_s_42 = sum(z.end_sample - z.start_sample for z in _fmz_42)
+                    _zone_frac_42 = float(np.clip(_zone_s_42 / max(1, _n_s_42), 0.0, 1.0))
+                    _effective_strength = float(np.clip(_effective_strength + _zone_frac_42 * 0.15, 0.0, 1.0))
+            except Exception as _fmg_exc_42:
+                logger.debug("Phase42 §V41 ForwardMaskingGuard non-blocking: %s", _fmg_exc_42)
+
         if _effective_strength <= 0.0:
             audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
             audio = np.clip(audio, -1.0, 1.0)
