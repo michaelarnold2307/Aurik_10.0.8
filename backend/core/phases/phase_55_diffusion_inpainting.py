@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 import numpy as np
 
@@ -626,7 +627,8 @@ def _try_consistency_model_inpainting(channel: np.ndarray, start: int, end: int,
             return None
 
         result = np.nan_to_num(np.asarray(result, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-        return np.clip(result[:gap_len], -1.0, 1.0)
+        _out_cim: np.ndarray = np.clip(result[:gap_len], -1.0, 1.0).astype(np.float32)
+        return _out_cim
     except Exception as _exc:
         logger.debug("_try_consistency_model_inpainting failed (non-critical): %s", _exc)
         return None
@@ -677,7 +679,8 @@ def _try_dac_token_inpainting(channel: np.ndarray, start: int, end: int, sample_
             return None
 
         result = np.nan_to_num(np.asarray(result, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-        return np.clip(result[:gap_len], -1.0, 1.0)
+        _out_dac: np.ndarray = np.clip(result[:gap_len], -1.0, 1.0).astype(np.float32)
+        return _out_dac
     except Exception as _exc:
         logger.debug("_try_dac_token_inpainting failed (non-critical): %s", _exc)
         return None
@@ -715,7 +718,8 @@ def _is_ml_thrashing() -> bool:
         except Exception:
             _result = False
         _is_ml_thrashing._cache = (_result, now)  # type: ignore[attr-defined]  # pylint: disable=protected-access
-    return _result
+    _final_thr: bool = bool(_result)
+    return _final_thr
 
 
 def _conservative_boundary_fill(channel: np.ndarray, start: int, end: int) -> np.ndarray:
@@ -1266,14 +1270,14 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         return _repaired_mono.astype(np.float32)
 
-    def process(  # pylint: disable=arguments-renamed  # type: ignore[override]
+    def process(
         self,
         audio: np.ndarray,
-        sample_rate: int,
-        min_gap_ms: float = _MIN_GAP_MS_DEFAULT,
-        **kwargs,
+        sample_rate: int = 48000,
+        material_type: str = "unknown",
+        **kwargs: Any,
     ) -> PhaseResult:
-        sample_rate = kwargs.get("sample_rate", 48000)
+        sample_rate = int(kwargs.get("sample_rate", sample_rate))
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         t0 = time.perf_counter()
 
@@ -1293,7 +1297,7 @@ class DiffusionInpaintingPhase(PhaseInterface):
         effective_strength = float(np.clip(effective_strength, 0.0, 1.0))
 
         # §0 BW-Cap: prevent hallucination of HF content on bandwidth-limited carriers
-        _material = kwargs.get("material_type")
+        _material = kwargs.get("material_type", material_type) or material_type
         _mat_key = str(_material).lower() if _material is not None else ""
         _inpainting_profile = self._compute_inpainting_profile(
             _mat_key,
@@ -1342,14 +1346,13 @@ class DiffusionInpaintingPhase(PhaseInterface):
 
         # §2.68d [RELEASE_MUST] SSIP Null-Propagation-Guard: Stille-Zonen aus ORIGINAL-Audio.
         # _get_structural_silence_zones() liefert immer eine Liste — niemals None.
-        _n_samp_p55_ssip = int(audio.shape[-1] if audio.ndim == 2 else len(audio))
         _ssip_zones_p55: list[tuple[int, int]] = []
         try:
             from backend.core.dsp.structural_silence_isolation import (  # pylint: disable=import-outside-toplevel
                 _get_structural_silence_zones as _ssip_get_zones,
             )
 
-            _mat_key_p55 = str(kwargs.get("material_type", "unknown") or "unknown").lower()
+            _mat_key_p55 = str(kwargs.get("material_type", material_type) or material_type or "unknown").lower()
             _ssip_zones_p55 = _ssip_get_zones(kwargs, audio, sample_rate, _mat_key_p55)
             if _ssip_zones_p55:
                 _repaired_gaps = list(_repaired_gaps) + _ssip_zones_p55
