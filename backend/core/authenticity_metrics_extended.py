@@ -52,13 +52,13 @@ class _DictAccess:
         return getattr(self, key, default)
 
     def items(self):
-        return dataclasses.asdict(self).items()  # type: ignore[arg-type]
+        return dataclasses.asdict(self).items()  # type: ignore[call-overload]
 
     def keys(self):
-        return dataclasses.asdict(self).keys()  # type: ignore[arg-type]
+        return dataclasses.asdict(self).keys()  # type: ignore[call-overload]
 
     def values(self):
-        return dataclasses.asdict(self).values()  # type: ignore[arg-type]
+        return dataclasses.asdict(self).values()  # type: ignore[call-overload]
 
 
 # ─── Result dataclasses ───────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ class FingerNoiseDetector:
         if n_events > 0:
             event_durations = event_ends[:n_events] - event_starts[:n_events]
             total_duration_ms = np.sum(event_durations) / sample_rate * 1000
-            avg_duration_ms = np.mean(event_durations) / sample_rate * 1000
+            avg_duration_ms = float(np.mean(event_durations) / sample_rate * 1000)
         else:
             total_duration_ms = 0.0
             avg_duration_ms = 0.0
@@ -212,15 +212,15 @@ class FingerNoiseDetector:
         total_energy = np.sum(audio**2)
         energy_ratio = finger_noise_energy / (total_energy + 1e-8)
 
-        self.metrics = FingerNoiseResult(
+        self.metrics = FingerNoiseResult(  # type: ignore[assignment]
             finger_noise_detected=n_events > 0,
             num_events=n_events,
             total_duration_ms=total_duration_ms,
-            avg_duration_ms=avg_duration_ms,
+            avg_duration_ms=float(avg_duration_ms),
             energy_ratio=energy_ratio,
             retention_target=0.85,
         )
-        return self.metrics
+        return self.metrics  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -302,14 +302,14 @@ class BowNoiseDetector:
         total_energy = np.sum(audio**2)
         energy_ratio = bow_noise_energy / (total_energy + 1e-8)
 
-        self.metrics = BowNoiseResult(
+        self.metrics = BowNoiseResult(  # type: ignore[assignment]
             bow_noise_detected=bool(bow_noise_ratio > 0.1),
             bow_noise_ratio=float(bow_noise_ratio),
             energy_ratio=float(energy_ratio),
             spectral_flatness_mean=float(np.mean(spectral_flatness)),
             retention_target=0.80,
         )
-        return self.metrics
+        return self.metrics  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -397,13 +397,13 @@ class PedalNoiseDetector:
         total_energy = np.sum(audio**2)
         energy_ratio = pedal_energy / (total_energy + 1e-8)
 
-        self.metrics = PedalNoiseResult(
+        self.metrics = PedalNoiseResult(  # type: ignore[assignment]
             pedal_noise_detected=n_events > 0,
             num_events=n_events,
             energy_ratio=float(energy_ratio),
             retention_target=0.80,
         )
-        return self.metrics
+        return self.metrics  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -485,7 +485,7 @@ class BrushTextureDetector:
 
         if num_regions > 0:
             region_lengths = [np.sum(labeled == i) for i in range(1, num_regions + 1)]
-            avg_region_length_ms = np.mean(region_lengths) / sample_rate * 1000
+            avg_region_length_ms = float(np.mean(region_lengths) / sample_rate * 1000)
             total_active_ms = np.sum(active_frames) / sample_rate * 1000
         else:
             avg_region_length_ms = 0.0
@@ -496,7 +496,7 @@ class BrushTextureDetector:
         total_energy = np.sum(audio**2)
         energy_ratio = brush_energy / (total_energy + 1e-8)
 
-        self.metrics = BrushTextureResult(
+        self.metrics = BrushTextureResult(  # type: ignore[assignment]
             brush_texture_detected=bool(num_regions > 0 and avg_region_length_ms > 100),
             num_regions=num_regions,
             avg_region_length_ms=float(avg_region_length_ms),
@@ -504,7 +504,7 @@ class BrushTextureDetector:
             energy_ratio=float(energy_ratio),
             retention_target=0.85,
         )
-        return self.metrics
+        return self.metrics  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -614,7 +614,7 @@ class VinylCharacterDetector:
         has_warmth = 0.01 < thd < self.thd_threshold  # Warmth: 1-5% THD
         has_defects = noise_ratio > 0.02  # Defects: >2% HF noise
 
-        self.metrics = VinylCharacterResult(
+        self.metrics = VinylCharacterResult(  # type: ignore[assignment]
             vinyl_character_detected=bool(has_warmth or has_defects),
             warmth_detected=bool(has_warmth),
             defects_detected=bool(has_defects),
@@ -623,7 +623,7 @@ class VinylCharacterDetector:
             warmth_retention_target=0.90,
             defects_removal_target=0.90,
         )
-        return self.metrics
+        return self.metrics  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -762,19 +762,19 @@ if __name__ == "__main__":
         if args.detector == "finger":
             detector = FingerNoiseDetector()
         elif args.detector == "bow":
-            detector = BowNoiseDetector()
+            detector = BowNoiseDetector()  # type: ignore[assignment]
         elif args.detector == "pedal":
-            detector = PedalNoiseDetector()
+            detector = PedalNoiseDetector()  # type: ignore[assignment]
         elif args.detector == "brush":
-            detector = BrushTextureDetector()
+            detector = BrushTextureDetector()  # type: ignore[assignment]
         elif args.detector == "vinyl":
-            detector = VinylCharacterDetector()
+            detector = VinylCharacterDetector()  # type: ignore[assignment]
         else:
             raise ValueError(f"Unknown detector: {args.detector}")
 
         # §VERBOTEN: audio[0] liefert bei (samples×channels)-Shape nur 2 Samples → audio[:, 0] korrekt
         audio_mono = audio[:, 0] if audio.ndim == 2 else audio
-        metrics = detector.detect(audio_mono, sr)
+        metrics = detector.detect(audio_mono, sr)  # type: ignore[assignment]
 
         logger.debug("\n%s", "=" * 60)
         logger.debug("%s DETECTOR METRICS:", args.detector.upper())

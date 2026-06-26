@@ -823,7 +823,7 @@ class MultiPassEngine:
             raise RuntimeError("Alle Varianten sind fehlgeschlagen")
 
         # Sort by composite score (descending)
-        results.sort(key=lambda x: x["score"].composite_score, reverse=True)
+        results.sort(key=lambda x: x["score"].composite_score, reverse=True)  # type: ignore[union-attr]
 
         # Best result
         best = results[0]
@@ -832,13 +832,13 @@ class MultiPassEngine:
 
         # Calculate confidence
         all_scores = [r["score"] for r in results]
-        confidence = self.confidence_calc.calculate_confidence(all_scores, best_score)
-        best_score.confidence = confidence
+        confidence = self.confidence_calc.calculate_confidence(all_scores, best_score)  # type: ignore[arg-type]
+        best_score.confidence = confidence  # type: ignore[union-attr]
 
         logger.info(
             "✅ Best variant: '%s' (score=%.3f, confidence=%.2f)",
-            best_variant.name,
-            best_score.composite_score,
+            best_variant.name,  # type: ignore[union-attr]
+            best_score.composite_score,  # type: ignore[union-attr]
             confidence,
         )
 
@@ -846,10 +846,10 @@ class MultiPassEngine:
             "audio": best["audio"],
             "best_audio": best["audio"],  # Alias für Rückwärtskompatibilität
             "success": True,
-            "variant_name": best_variant.name,
-            "variant_strategy": best_variant.strategy,
+            "variant_name": best_variant.name,  # type: ignore[union-attr]
+            "variant_strategy": best_variant.strategy,  # type: ignore[union-attr]
             "confidence": confidence,
-            "composite_score": best_score.composite_score,
+            "composite_score": best_score.composite_score,  # type: ignore[union-attr]
             "best_score": best_score,
             "all_scores": all_scores,
             "processing_times": processing_times,
@@ -917,7 +917,7 @@ class MultiPassEngine:
                 _restore_mode,
                 len(audio) / sample_rate,
             )
-            result = self._restorer.restore(
+            result = self._restorer.restore(  # type: ignore[union-attr,attr-defined]
                 audio=audio,
                 sample_rate=sample_rate,
                 mode=_restore_mode,

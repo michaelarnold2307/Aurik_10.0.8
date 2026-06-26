@@ -315,7 +315,9 @@ class RestorationArtifactDetector:
             start_time = smeared_frames[0] * self.hop_size / sr
             duration = len(smeared_frames) * self.hop_size / sr
 
-            severity = self._classify_severity(np.mean(flatness_increase[smeared_frames]), [0.05, 0.1, 0.15, 0.25])
+            severity = self._classify_severity(
+                float(np.mean(flatness_increase[smeared_frames])), [0.05, 0.1, 0.15, 0.25]
+            )
 
             artifacts.append(
                 Artifact(
@@ -354,7 +356,7 @@ class RestorationArtifactDetector:
                 start_time = group[0] * self.hop_size / sr
                 duration = len(group) * self.hop_size / sr
 
-                severity = self._classify_severity(np.mean(onset_reduction[group]), [0.1, 0.2, 0.3, 0.5])
+                severity = self._classify_severity(float(np.mean(onset_reduction[group])), [0.1, 0.2, 0.3, 0.5])
 
                 artifacts.append(
                     Artifact(
@@ -425,7 +427,7 @@ class RestorationArtifactDetector:
         if len(distorted_indices) > sr // 10:  # >100ms worth
             # Report overall phase distortion
             severity = self._classify_severity(
-                np.mean(phase_diff[distorted_indices]), [np.pi / 4, np.pi / 3, np.pi / 2, np.pi]
+                float(np.mean(phase_diff[distorted_indices])), [np.pi / 4, np.pi / 3, np.pi / 2, np.pi]
             )
 
             artifacts.append(
@@ -466,7 +468,7 @@ class RestorationArtifactDetector:
                     center_freq = (group[len(group) // 2] / len(restored_spectrum)) * (sr / 2)
                     bandwidth = (len(group) / len(restored_spectrum)) * (sr / 2)
 
-                    severity = self._classify_severity(np.mean(ratio[group]), [0.3, 0.2, 0.1, 0.05])
+                    severity = self._classify_severity(float(np.mean(ratio[group])), [0.3, 0.2, 0.1, 0.05])
 
                     artifacts.append(
                         Artifact(
@@ -505,7 +507,8 @@ class RestorationArtifactDetector:
 
         if len(fluctuating_frames) > 5:
             severity = self._classify_severity(
-                np.max(rms_diff[fluctuating_frames]), [threshold, threshold * 1.5, threshold * 2, threshold * 3]
+                float(np.max(rms_diff[fluctuating_frames])),
+                [float(threshold), float(threshold * 1.5), float(threshold * 2), float(threshold * 3)],
             )
 
             artifacts.append(
@@ -537,7 +540,7 @@ class RestorationArtifactDetector:
         ratio = nyquist_energy / (total_energy + 1e-10)
 
         if ratio > 0.1:  # >10% energy near Nyquist
-            severity = self._classify_severity(ratio, [0.1, 0.2, 0.3, 0.5])
+            severity = self._classify_severity(float(ratio), [0.1, 0.2, 0.3, 0.5])
 
             artifacts.append(
                 Artifact(
@@ -660,7 +663,7 @@ class RestorationArtifactDetector:
 
         groups.append(current_group)
 
-        return groups
+        return groups  # type: ignore[return-value]
 
     def _classify_severity(
         self,
