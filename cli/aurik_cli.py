@@ -277,14 +277,20 @@ def _resample_audio(audio: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
         return audio
     if _soxr_rs is not None:
         try:
-            return _soxr_rs.resample(audio, src_sr, dst_sr, quality="HQ").astype(np.float32)
+            _out: np.ndarray = np.asarray(_soxr_rs.resample(audio, src_sr, dst_sr, quality="HQ"), dtype=np.float32)
+            return _out
         except Exception:
             pass
     if _sig is not None:
         n_out = int(round(audio.shape[0] * dst_sr / src_sr))
         if audio.ndim == 1:
-            return _sig.resample(audio, n_out).astype(np.float32)
-        return np.stack([_sig.resample(audio[:, ch], n_out) for ch in range(audio.shape[1])], axis=1).astype(np.float32)
+            _out1: np.ndarray = np.asarray(_sig.resample(audio, n_out), dtype=np.float32)
+            return _out1
+        _out2: np.ndarray = np.stack(
+            [np.asarray(_sig.resample(audio[:, ch], n_out), dtype=np.float32) for ch in range(audio.shape[1])],
+            axis=1,
+        ).astype(np.float32)
+        return _out2
     raise RuntimeError("soxr und scipy nicht verfügbar — Output-Resampling nicht möglich.")
 
 
@@ -721,7 +727,9 @@ def process_audio(
 
 def print_usage():
     """Gibt die CLI-Hilfe aus."""
-    print("\nVerwendung: aurik_cli [--input PATH] [--output PATH] [--mode MODUS] [--bit-depth N] [--output-sr HZ] [-q] [-h]")
+    print(
+        "\nVerwendung: aurik_cli [--input PATH] [--output PATH] [--mode MODUS] [--bit-depth N] [--output-sr HZ] [-q] [-h]"
+    )
     print("\nOptionen:")
     print("  --input, --input_audio PATH  Eingabe-Audiodatei")
     print("  --output, --output_audio PATH Ausgabe-Audiodatei")
@@ -781,10 +789,10 @@ def main():
                     if _bd in (16, 24, 32):
                         bit_depth = _bd
                     else:
-                        print(f"❌ Ungültige Bit-Tiefe '{args[i+1]}' — erlaubt: 16, 24, 32")
+                        print(f"❌ Ungültige Bit-Tiefe '{args[i + 1]}' — erlaubt: 16, 24, 32")
                         sys.exit(1)
                 except ValueError:
-                    print(f"❌ Ungültige Bit-Tiefe '{args[i+1]}' — erlaubt: 16, 24, 32")
+                    print(f"❌ Ungültige Bit-Tiefe '{args[i + 1]}' — erlaubt: 16, 24, 32")
                     sys.exit(1)
                 skip_next = True
         elif "=" in arg and arg.split("=", 1)[0] == "--bit-depth":
@@ -806,10 +814,10 @@ def main():
                     if _sr in (44_100, 48_000):
                         output_sr = _sr
                     else:
-                        print(f"❌ Ungültige Sample-Rate '{args[i+1]}' — erlaubt: 44100, 48000")
+                        print(f"❌ Ungültige Sample-Rate '{args[i + 1]}' — erlaubt: 44100, 48000")
                         sys.exit(1)
                 except ValueError:
-                    print(f"❌ Ungültige Sample-Rate '{args[i+1]}' — erlaubt: 44100, 48000")
+                    print(f"❌ Ungültige Sample-Rate '{args[i + 1]}' — erlaubt: 44100, 48000")
                     sys.exit(1)
                 skip_next = True
         elif "=" in arg and arg.split("=", 1)[0] == "--output-sr":

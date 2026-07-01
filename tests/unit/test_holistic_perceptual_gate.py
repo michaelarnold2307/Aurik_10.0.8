@@ -370,12 +370,29 @@ def test_31_update_reference_memory_method_exists():
 
 
 def test_32_update_rejected_if_hpi_too_low():
-    """Quality-Gate: HPI ≤ 0.5 → kein Update."""
+    """Quality-Gate v9.20.0 (V54-aligned): HPI ≤ 0.0 → kein Update; HPI > 0.0 wird akzeptiert."""
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
     gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
+
+    # HPI = 0.0 → Gate blockiert (HPI must be > 0.0)
+    gate.update_reference_memory(
+        audio,
+        SR,
+        hpi=0.0,
+        artifact_freedom=1.0,
+        p1_p2_passed=True,
+        genre="jazz",
+        material="vinyl_std",
+        era_bin="pre-1960",
+    )
+    assert ("jazz", "vinyl_std", "pre-1960") not in gate._ref_memory, (
+        "HPI=0.0 darf nicht ins Reference-Memory aufgenommen werden (V54-Gate)"
+    )
+
+    # HPI = 0.4 → wird jetzt akzeptiert (V54: HPI > 0.0 AND artifact_freedom ≥ 0.95)
     gate.update_reference_memory(
         audio,
         SR,
@@ -386,7 +403,9 @@ def test_32_update_rejected_if_hpi_too_low():
         material="vinyl_std",
         era_bin="pre-1960",
     )
-    assert ("jazz", "vinyl_std", "pre-1960") not in gate._ref_memory
+    assert ("jazz", "vinyl_std", "pre-1960") in gate._ref_memory, (
+        "HPI=0.4 > 0.0 mit artifact_freedom=1.0 muss akzeptiert werden (V54-Gate)"
+    )
 
 
 def test_33_update_rejected_if_artifact_freedom_low():
@@ -410,12 +429,13 @@ def test_33_update_rejected_if_artifact_freedom_low():
 
 
 def test_34_update_rejected_if_p1_p2_failed():
-    """Quality-Gate: P1/P2 nicht bestanden → kein Update."""
+    """V54-Gate: p1_p2_passed ist kein Blocker mehr — nur HPI > 0.0 + artifact_freedom ≥ 0.95 zählt."""
     from backend.core.holistic_perceptual_gate import HolisticPerceptualGate
 
     gate = HolisticPerceptualGate()
     gate._ref_memory = {}  # Disk-Memory leeren — __init__ lädt ~/.aurik/hpg_reference_memory.json
     audio = _audio(2.0)
+    # p1_p2_passed=False blockiert NICHT mehr (V54-aligned v9.20.0)
     gate.update_reference_memory(
         audio,
         SR,
@@ -426,7 +446,9 @@ def test_34_update_rejected_if_p1_p2_failed():
         material="vinyl_std",
         era_bin="pre-1960",
     )
-    assert ("jazz", "vinyl_std", "pre-1960") not in gate._ref_memory
+    assert ("jazz", "vinyl_std", "pre-1960") in gate._ref_memory, (
+        "p1_p2_passed=False darf den Update nicht mehr blockieren (V54-aligned)"
+    )
 
 
 def test_35_update_creates_entry():
@@ -910,24 +932,25 @@ def test_54_ref_memory_saves_and_loads_from_disk(tmp_path):
 
 
 def test_55_ref_memory_not_saved_below_quality_gate(tmp_path):
-    """update_reference_memory() darf bei HPI < 0.5 NICHT speichern."""
+    """update_reference_memory() darf bei HPI ≤ 0.0 NICHT speichern (V54-Gate v9.20.0)."""
     import backend.core.holistic_perceptual_gate as hpg_mod
 
     mem_path = tmp_path / "hpg_reference_memory.json"
     with patch.object(hpg_mod, "_HPG_REF_MEMORY_PATH", mem_path):
         gate = hpg_mod.HolisticPerceptualGate()
         audio = _audio(dur=1.0, amp=0.2, freq=440.0)
+        # HPI = 0.0 → blockiert (HPI must be > 0.0); artifact_freedom = 0.94 < 0.95 → blockiert
         gate.update_reference_memory(
             restored=audio,
             sr=SR,
-            hpi=0.3,
-            artifact_freedom=0.97,
+            hpi=0.0,
+            artifact_freedom=0.94,
             p1_p2_passed=True,
             genre="pop",
             material="cassette",
             era_bin="era_1970",
         )
-        assert not mem_path.exists(), "Keine Datei bei HPI < 0.5"
+        assert not mem_path.exists(), "Keine Datei wenn HPI=0.0 und artifact_freedom<0.95 (V54-Gate)"
 
 
 def test_56_ref_memory_ema_update_persists(tmp_path):

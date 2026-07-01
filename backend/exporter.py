@@ -11,7 +11,9 @@ import soundfile as sf
 from backend.core.metadata_preserver import get_metadata_preserver
 
 try:
-    from Aurik910 import __version__ as _AURIK_VERSION
+    from backend.core.version import get_aurik_version as _get_aurik_version
+
+    _AURIK_VERSION: str = _get_aurik_version()
 except Exception:
     _AURIK_VERSION = "unknown"
 

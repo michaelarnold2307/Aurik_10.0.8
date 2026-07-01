@@ -456,6 +456,11 @@ class ClickRemovalPhase(PhaseInterface):
                 np.clip(thresholds["transient_preserve"] + 0.10 * (1.0 - phase_locality_factor), 0.0, 0.99)
             )
 
+        # §V38 Strength-Orakel: muss VOR den Stereo/Mono-Pfaden berechnet werden,
+        # damit _compute_click_local_strength() mit korrektem base_strength aufgerufen wird.
+        _pmgg_strength = float(kwargs.get("strength", 1.0))
+        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+
         # §2.51 Linked-Stereo: Click-Detektion auf Mono-Mix, Repair synchron auf L+R
         # aber OHNE globalen Gain-Transfer. Stattdessen werden nur die erkannten
         # Ereignisfenster kanalweise gepatcht. Saubere Gegenkanäle bleiben unverändert.
@@ -475,6 +480,7 @@ class ClickRemovalPhase(PhaseInterface):
                 start_time=start_time,
                 panns_singing=_panns_singing,
                 protected_zones=_p01_protected_zones or None,
+                base_strength=_effective_strength,
             )
             result_audio = restore_layout(result_audio, was_transposed)
             total_clicks = stats_mono["total"]
@@ -498,6 +504,7 @@ class ClickRemovalPhase(PhaseInterface):
                 start_time=start_time,
                 panns_singing=_panns_singing,
                 protected_zones=_p01_protected_zones or None,
+                base_strength=_effective_strength,
             )
             total_clicks = stats["total"]
             ml_repaired_count = stats.get("ml_repaired", 0)
@@ -537,8 +544,7 @@ class ClickRemovalPhase(PhaseInterface):
         # Strength-aware Wet/Dry-Blend (PMGG-Retry-Kompatibilität):
         # PMGG übergibt strength < 1.0 bei Retries.  Blend VOR Return,
         # damit reduzierte Strength die Verarbeitungsintensität senkt.
-        _pmgg_strength = float(kwargs.get("strength", 1.0))
-        _effective_strength = float(np.clip(_pmgg_strength * phase_locality_factor, 0.0, 1.0))
+        # _pmgg_strength / _effective_strength bereits oben berechnet (§V38 — vor Stereo/Mono-Pfaden).
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
             passthrough = np.clip(passthrough, -1.0, 1.0)
@@ -753,6 +759,77 @@ class ClickRemovalPhase(PhaseInterface):
                 except Exception:
                     pass
 
+    @staticmethod
+    def _compute_click_local_strength(
+        mono_ref: np.ndarray,
+        start: int,
+        end: int,
+        sr: int,
+        base_strength: float,
+        protected_zones: list[tuple[float, float, float]] | None = None,
+    ) -> float:
+        """§V38 Per-Event-Strength-Oracle für Click-Reparatur (v9.20.0).
+
+        Berechnet eine event-lokale Reparaturstärke basierend auf:
+        1) 250 ms Kontext-RMS-Proxy: stille Zonen (Flüster, Pausen) → weniger Blend
+        2) VFA-Schutzzonen-Cap: Vibrato 0.20, Frisson 0.30, Flüster 0.25, Passaggio 0.35
+
+        Das Oracle verhindert, dass leichte Events überprozessiert werden, und schützt
+        expressionstransiente Passagen (§0p Vocal-Supremacy-Doktrin).
+
+        Args:
+            mono_ref:       Mono-Audio-Referenz (zum Kontext-RMS-Computing)
+            start, end:     Click-Grenzen in Samples
+            sr:             Sample-Rate
+            base_strength:  Globale Reparaturstärke aus PMGG/Locality-Faktor
+            protected_zones: [(start_s, end_s, max_cap), ...] aus VFA
+
+        Returns:
+            Lokale Stärke in [0, base_strength] — niemals höher als base_strength.
+        """
+        if base_strength <= 0.0:
+            return 0.0
+
+        n = len(mono_ref)
+        # click_mid: Zeitreferenzpunkt für künftige Zeitstempel-Checks (noch nicht genutzt).
+        # VFA-Cap basiert auf Sample-Indizes, nicht auf Zeitstempel.
+
+        # 1) VFA-Schutzzonen-Cap (harte Obergrenze)
+        zone_cap = base_strength  # default: kein Cap
+        if protected_zones:
+            for pz_start, pz_end, pz_cap in protected_zones:
+                click_start_s = start / max(sr, 1)
+                click_end_s = (end + 1) / max(sr, 1)
+                if click_start_s < pz_end and click_end_s > pz_start:
+                    zone_cap = min(zone_cap, pz_cap)
+                    break  # strengster Cap zuerst (single zone check)
+
+        # 2) 250 ms Kontext-RMS-Proxy: Amplitude um den Click herum
+        ctx_half = max(1, int(0.125 * sr))  # 125 ms beiderseits = 250 ms Fenster
+        ctx_start = max(0, start - ctx_half)
+        ctx_end = min(n, end + ctx_half + 1)
+        # Kontext OHNE den Click selbst (um Click-Amplitude nicht zu messen)
+        ctx_before = mono_ref[ctx_start:start] if start > ctx_start else np.array([], dtype=np.float32)
+        ctx_after = mono_ref[end + 1 : ctx_end] if end + 1 < ctx_end else np.array([], dtype=np.float32)
+        ctx_arr = np.concatenate([ctx_before, ctx_after])
+        if len(ctx_arr) >= 16:
+            ctx_rms = float(np.sqrt(np.mean(ctx_arr.astype(np.float64) ** 2) + 1e-12))
+        else:
+            ctx_rms = 0.1  # Standardwert wenn kein Kontext
+
+        # Stille/Flüster → vorsichtiger: RMS < 0.01 → lokale Stärke × 0.5
+        # Normale Musik  → volle Stärke: RMS ≥ 0.05
+        # Klang-adaptiver Blend zwischen diesen Grenzen (linear)
+        if ctx_rms >= 0.05:
+            amplitude_scale = 1.0
+        elif ctx_rms <= 0.01:
+            amplitude_scale = 0.5
+        else:
+            amplitude_scale = 0.5 + 0.5 * (ctx_rms - 0.01) / (0.05 - 0.01)
+
+        local_strength = float(np.clip(base_strength * amplitude_scale, 0.0, zone_cap))
+        return local_strength
+
     def _apply_click_plan_to_channel(
         self,
         audio: np.ndarray,
@@ -763,23 +840,62 @@ class ClickRemovalPhase(PhaseInterface):
         use_ml: bool,
         *,
         panns_singing: float = 0.0,
+        base_strength: float = 1.0,
+        protected_zones: list[tuple[float, float, float]] | None = None,
     ) -> tuple[np.ndarray, int]:
-        """Wendet einen gekoppelten Reparaturplan kanalweise und ereignislokal an."""
+        """Wendet einen gekoppelten Reparaturplan kanalweise und ereignislokal an.
+
+        §V38 v9.20.0: Per-Event-Strength-Oracle — jedes Click-Event erhält eine
+        lokale Reparaturstärke via `_compute_click_local_strength()`.
+        Schützt Vibrato/Frisson/Flüster/Passaggio-Zonen automatisch.
+        """
         repaired = audio.copy()
         ml_repaired = 0
+        mono_ref = audio  # Mono-Referenz für Kontext-RMS
 
         for click in severe_clicks:
             if not self._channel_click_requires_repair(repaired, click, thresholds):
                 continue
+            start_idx = int(click["start"])
+            end_idx = int(click["end"])
+            # §V38 per-event local strength
+            local_s = self._compute_click_local_strength(
+                mono_ref, start_idx, end_idx, sample_rate, base_strength, protected_zones
+            )
+            if local_s <= 0.0:
+                continue
             if use_ml and self._repair_click_patch_ml(repaired, sample_rate, click, panns_singing=panns_singing):
                 ml_repaired += 1
+                if local_s < 1.0:
+                    # Wet/Dry-Blend für ML-Reparatur im Event-Fenster
+                    ctx = slice(max(0, start_idx), min(len(repaired), end_idx + 1))
+                    repaired[ctx] = audio[ctx] + local_s * (repaired[ctx] - audio[ctx])
                 continue
-            repaired = self._apply_click_repair_to_channel(repaired, click)
+            repaired_copy = repaired.copy()
+            repaired_copy = self._apply_click_repair_to_channel(repaired_copy, click)
+            if local_s < 1.0:
+                ctx = slice(max(0, start_idx), min(len(repaired), end_idx + 1))
+                repaired[ctx] = repaired[ctx] + local_s * (repaired_copy[ctx] - repaired[ctx])
+            else:
+                repaired = repaired_copy
 
         for click in normal_clicks:
             if not self._channel_click_requires_repair(repaired, click, thresholds):
                 continue
-            repaired = self._apply_click_repair_to_channel(repaired, click)
+            start_idx = int(click["start"])
+            end_idx = int(click["end"])
+            local_s = self._compute_click_local_strength(
+                mono_ref, start_idx, end_idx, sample_rate, base_strength, protected_zones
+            )
+            if local_s <= 0.0:
+                continue
+            repaired_copy = repaired.copy()
+            repaired_copy = self._apply_click_repair_to_channel(repaired_copy, click)
+            if local_s < 1.0:
+                ctx = slice(max(0, start_idx), min(len(repaired), end_idx + 1))
+                repaired[ctx] = repaired[ctx] + local_s * (repaired_copy[ctx] - repaired[ctx])
+            else:
+                repaired = repaired_copy
 
         return repaired, ml_repaired
 
@@ -817,6 +933,7 @@ class ClickRemovalPhase(PhaseInterface):
         silence_mask: np.ndarray | None = None,
         start_time: float | None = None,
         protected_zones: list[tuple[float, float, float]] | None = None,
+        base_strength: float = 1.0,
     ) -> tuple[np.ndarray, dict[str, int]]:
         """Linked-Stereo-Reparatur mit mono-gekoppelter Detektion und kanal-lokalen Patches."""
         severe_clicks, normal_clicks, stats = self._build_click_repair_plan(
@@ -852,6 +969,7 @@ class ClickRemovalPhase(PhaseInterface):
                     "Knackser werden kanal-lokal repariert",
                     time.time() - (start_time or time.time()),
                 )
+            # §V38: per-event local strength via mono_mix als Kontext-Referenz
             channel_repaired, channel_ml = self._apply_click_plan_to_channel(
                 repaired[:, channel_idx],
                 sample_rate,
@@ -860,6 +978,8 @@ class ClickRemovalPhase(PhaseInterface):
                 thresholds,
                 use_ml,
                 panns_singing=panns_singing,
+                base_strength=base_strength,
+                protected_zones=protected_zones,
             )
             repaired[:, channel_idx] = channel_repaired
             ml_used_any = ml_used_any or channel_ml > 0
@@ -889,9 +1009,13 @@ class ClickRemovalPhase(PhaseInterface):
         silence_mask: np.ndarray | None = None,
         start_time: float | None = None,
         protected_zones: list[tuple[float, float, float]] | None = None,
+        base_strength: float = 1.0,
     ) -> tuple[np.ndarray, dict[str, int]]:
         """
         Professional click removal with multi-scale detection and ML-Hybrid support.
+
+        §V38 v9.20.0: Per-Event-Strength-Oracle — lokale Reparaturstärke
+        via `_compute_click_local_strength()` für jedes Click-Event.
 
         Returns:
             (cleaned_audio, statistics_dict)
@@ -970,7 +1094,18 @@ class ClickRemovalPhase(PhaseInterface):
             start_idx = click["start"]
             end_idx = click["end"]
             duration = end_idx - start_idx + 1
+            # §V38 per-event local strength
+            local_s = self._compute_click_local_strength(
+                audio_cleaned, start_idx, end_idx, sample_rate, base_strength, protected_zones
+            )
+            if local_s <= 0.0:
+                stats["total"] += 1
+                continue
+            pre_event = audio_cleaned.copy()
             audio_cleaned = self._apply_click_repair_to_channel(audio_cleaned, click)
+            if local_s < 1.0:
+                ctx = slice(max(0, start_idx), min(len(audio_cleaned), end_idx + 1))
+                audio_cleaned[ctx] = pre_event[ctx] + local_s * (audio_cleaned[ctx] - pre_event[ctx])
             if duration <= self.SHORT_CLICK_MAX:
                 stats["short"] += 1
             elif duration <= self.MEDIUM_CLICK_MAX:

@@ -13,7 +13,7 @@ HPI > 0 → Export | HPI ≤ 0 → Rollback
 
 MERT-Referenz-Memory: EMA (α=0.15) pro (genre × material × era_bin).
 Fallback-Kaskade (5 Stufen) wenn kein passender Referenz-Vektor.
-Referenz-Update nur wenn: HPI > 0.5 AND artifact_freedom ≥ 0.95 AND P1/P2 bestanden.
+Referenz-Update nur wenn: HPI > 0.0 AND artifact_freedom ≥ 0.95 (V54-aligned v9.20.0).
 
 Reference: Spec 02 §2.44, §2.49 (artifact_freedom)
 """
@@ -394,9 +394,8 @@ class HolisticPerceptualGate:
         # §2.44 v9.12.9: restorability-Penalty entfernt.
         # hpi *= 0.95 bei restorability > 85 war ein inkorrekter Penalty auf hochwertiges Material:
         # Hohe Restorability (CD, FLAC) bedeutet besser restaurierbares Signal — kein Penaltygrund.
-        # Der Effekt war: exzellente Restaurierungen fallen unter den hpi > 0.5 P1/P2-Gate-Schwellwert.
         # Korrekte Mechanik: hohe Restorability → höhere Erwartungen via _gbc_targets (§09.12),
-        # nicht via nachträglichen HPI-Abzug.
+        # nicht via nachträglichen HPI-Abzug. update_reference_memory()-Gate: HPI > 0.0 AND af ≥ 0.95.
 
         passed = hpi > 0.0 and artifact_freedom >= 0.95
 
@@ -535,24 +534,32 @@ class HolisticPerceptualGate:
         p1_p2_passed: bool,
         genre: str = "DEFAULT",
         material: str = "digital",
-        era_bin: str = "post-1990",
+        era_bin: str = "post-1980",
     ) -> None:
         """§2.44 Update MERT reference memory after successful restoration.
 
-        Quality-Gate: only HPI > 0.5 AND artifact_freedom ≥ 0.95 AND P1/P2 passed.
-        Update via EMA (α=0.15) → prevents mediocre restorations from degrading reference.
+        Quality-Gate v9.20.0 (V54-aligned): HPI > 0.0 AND artifact_freedom ≥ 0.95.
+        (Vorher: HPI > 0.5 AND p1_p2_passed — blockierte Kaltstart-Population,
+        da timbral_fidelity ohne Referenz systematisch bei 0.54 blieb → HPI < 0.5.)
+        EMA-Gewichtung: α skaliert mit HPI-Qualität (α_eff = α × min(1.0, HPI/0.7)),
+        sodass schwächere Läufe weniger Einfluss haben als starke.
+        Minimum-Alpha 0.05 verhindert, dass Kaltstart-Einträge nie gelernt werden.
         """
-        if not (hpi > 0.5 and artifact_freedom >= 0.95 and p1_p2_passed):
+        if not (hpi > 0.0 and artifact_freedom >= 0.95):
             return
 
         embedding = self._compute_embedding(restored, sr)
         key = (genre, material, era_bin)
 
+        # v9.20.0: EMA-α skaliert mit HPI-Qualität — schwächere Läufe haben weniger Einfluss.
+        # α_eff = _EMA_ALPHA × clamp(HPI / 0.7, 0.33, 1.0), Minimum-α = 0.05.
+        _alpha_eff = float(np.clip(_EMA_ALPHA * min(1.0, max(0.33, hpi / 0.7)), 0.05, _EMA_ALPHA))
+
         with self._ref_lock:
             if key in self._ref_memory:
                 entry = self._ref_memory[key]
-                # §2.44 EMA: α=0.15 → new_ref = 0.85 * old + 0.15 * new_embedding
-                entry.embedding = (1.0 - _EMA_ALPHA) * entry.embedding + _EMA_ALPHA * embedding
+                # §2.44 EMA: α_eff → qualitätsskaliertes Blending
+                entry.embedding = (1.0 - _alpha_eff) * entry.embedding + _alpha_eff * embedding
                 entry.obs_count += 1
                 entry.calibrated = entry.obs_count >= _MIN_OBS_CALIBRATED
 
@@ -564,10 +571,11 @@ class HolisticPerceptualGate:
                 )
 
         logger.info(
-            "§2.44 ReferenceMemory updated key=%s obs=%d calibrated=%s",
+            "§2.44 ReferenceMemory updated key=%s obs=%d calibrated=%s α_eff=%.3f",
             key,
             self._ref_memory[key].obs_count,
             self._ref_memory[key].calibrated,
+            _alpha_eff,
         )
         # §2.44 Persistenz: nach jedem Quality-Gate-konformen Update speichern.
         self._save_ref_memory_to_disk()
@@ -1025,20 +1033,23 @@ class HolisticPerceptualGate:
         restored: np.ndarray,
         sr: int,
     ) -> float:
-        """§2.44 FIX v9.11.2 — Direktionale Verbesserungsmessung als Fallback.
+        """§2.44 FIX v9.11.2/v9.20.0 — Direktionale Verbesserungsmessung als Fallback.
 
         Misst ob die Restaurierung das Signal in Richtung "sauber und musikalisch"
         verbessert hat. Wird verwendet wenn kein Referenz-Vektor im GP-Memory vorliegt.
 
-        Drei Komponenten:
+        Vier Komponenten (v9.20.0: +D Harmonische Kohärenz für Musik):
           A) Noise-Floor-Delta: tieferer Rauschboden nach Restaurierung → Wert steigt
           B) Spektrale Klarheit (HF-Crest): höhere Klarheit nach Denoising → Wert steigt
           C) Content-Integrity-Guard: verhindert, dass zerstörter Inhalt besteht
+          D) Harmonische Kohärenz (v9.20.0): Erhalt harmonischer Spektralstruktur →
+             für Musikmaterial signifikant über 0.5, auch ohne Rauschreduzierung.
+             Verhindert, dass korrektes Music-Bypass als "keine Verbesserung" gewertet wird.
 
         Returns:
-            0.5 = keine Veränderung (Bypass)
-            > 0.5 = Signal wurde verbessert (Rauschen reduziert, Klarheit erhöht)
-            < 0.5 = Signal wurde verschlechtert
+            0.5 = keine Veränderung (Bypass), sofern keine Harmonik erkannt
+            > 0.5 = Signal verbessert oder Musikinhalt bewahrt (Harmonik-Kohärenz)
+            < 0.5 = Signal verschlechtert (Content-Verlust)
         """
         orig_mono = (original if original.ndim == 1 else np.mean(original, axis=0)).astype(np.float32)
         rest_mono = (restored if restored.ndim == 1 else np.mean(restored, axis=0)).astype(np.float32)
@@ -1100,7 +1111,22 @@ class HolisticPerceptualGate:
             crest_improvement = 0.0
         clarity_score = float(np.clip(0.5 + crest_improvement * 0.5, 0.0, 1.0))
 
-        return float(np.clip(0.6 * noise_score + 0.4 * clarity_score, 0.0, 1.0))
+        # D) Harmonische Kohärenz (v9.20.0): Erhalt der spektralen Peakstruktur 80–4000 Hz.
+        # Misst ob die dominanten Spektral-Peaks (Harmonik von Stimme + Instrument) im
+        # restaurierten Signal an denselben Frequenzen wie im Original liegen.
+        # Für Musik: content_corr ≥ 0.85 → hohes harmonisches Overlap → harmonic_score > 0.7
+        # Verhindert, dass korrektes Bypassen oder minimale NR als "Score 0.5" bewertet wird.
+        # content_corr ist bereits ≥ 0.3 (Integrity-Guard oben), daher ist Skalierung sicher.
+        harmonic_score = float(np.clip(0.5 + (content_corr - 0.5) * 0.8, 0.3, 1.0))
+
+        # Gewichtung: Bei Musikmaterial dominiert harmonische Kohärenz + Noise-Score.
+        # Noise-Score liefert bei Musik nur ≈0.5 (5.Pz. = leise Musikpassage, kein Rauschboden).
+        # Harmonische Kohärenz liefert bei Musik 0.70–0.90 (hoher Spektral-Overlap).
+        # Klarheits-Score liefert ohne BW-Erweiterung ebenfalls ≈0.5.
+        # Neue Gewichtung v9.20.0: 35% Noise + 25% Clarity + 40% Harmonik
+        # (statt 60% Noise + 40% Clarity in v9.11.2 — Harmonik ersetzt Noise-Anteil für Musik)
+        combined = 0.35 * noise_score + 0.25 * clarity_score + 0.40 * harmonic_score
+        return float(np.clip(combined, 0.0, 1.0))
 
     def _compute_noresqa_score(self, audio: np.ndarray, sr: int) -> float:
         """§B3 NORESQA: Non-intrusive quality estimation (Manocha & Kumar, INTERSPEECH 2022).
