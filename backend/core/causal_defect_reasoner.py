@@ -2148,7 +2148,7 @@ def _compute_dropout_density(mono: np.ndarray, sr: int) -> float:
     n_frames = len(mono) // frame_len
     frame_rms = np.array([np.sqrt(np.mean(mono[i * frame_len : (i + 1) * frame_len] ** 2)) for i in range(n_frames)])
     global_rms = np.mean(frame_rms) + 1e-9
-    dropout_frames = np.sum(frame_rms < 0.05 * global_rms)
+    dropout_frames: int = int(np.sum(frame_rms < 0.05 * global_rms))
     dur_s = len(mono) / (sr + 1e-9)
     return float(dropout_frames * 0.005 / dur_s)
 

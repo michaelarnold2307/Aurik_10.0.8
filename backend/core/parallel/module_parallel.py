@@ -140,7 +140,7 @@ class ModuleParallelProcessor:
 
         # Execute phases
         current_audio = audio.copy()
-        module_outputs = {}  # Store outputs for dependent modules
+        module_outputs: dict[str, np.ndarray] = {}  # Store outputs for dependent modules
 
         for phase_idx, phase_modules in enumerate(phases):
             phase_start = time.time()
@@ -202,7 +202,7 @@ class ModuleParallelProcessor:
         # Topological sort to determine execution order
         phases = []
         remaining = {m.name for m in modules}
-        satisfied = set()  # Modules that have been executed
+        satisfied: set[str] = set()  # Modules that have been executed
 
         while remaining:
             # Find modules whose dependencies are satisfied

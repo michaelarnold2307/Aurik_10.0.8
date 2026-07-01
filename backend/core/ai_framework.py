@@ -386,7 +386,7 @@ class UnifiedDefectDetector:
         energy_60hz = check_hum(60.0)
 
         # Total energy for normalization
-        total_energy = np.sum(spectrum)
+        total_energy: float = float(np.sum(spectrum))
 
         # Relative hum energy
         hum_energy = max(energy_50hz, energy_60hz)

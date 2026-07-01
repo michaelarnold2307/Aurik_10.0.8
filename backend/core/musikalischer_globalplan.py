@@ -605,7 +605,7 @@ def _estimate_bpm_with_phrase_extractor(mono: np.ndarray, sr: int) -> float | No
 def _estimate_bpm_heuristic(mono: np.ndarray, sr: int) -> float:
     """Einfache BPM-Heuristik als robuster DSP-Fallback."""
     diff = np.diff(np.abs(mono))
-    onsets = np.sum(diff > diff.std() * 2.5)
+    onsets: int = int(np.sum(diff > diff.std() * 2.5))
     duration_s = max(len(mono) / sr, 1.0)
     return float(np.clip(onsets / duration_s * 0.5 * 60.0, 60.0, 200.0))
 

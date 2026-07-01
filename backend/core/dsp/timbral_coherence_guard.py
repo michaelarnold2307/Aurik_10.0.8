@@ -96,7 +96,7 @@ def _estimate_noise_spectrum(
                 aggregated[k] = float(np.mean(noise_profile[mask]))
 
         # Normieren [0,1]
-        max_val = np.max(aggregated)
+        max_val: float = float(np.max(aggregated))
         if max_val > 1e-10:
             aggregated /= max_val
 

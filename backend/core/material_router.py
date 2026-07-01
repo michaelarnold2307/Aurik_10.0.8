@@ -65,7 +65,7 @@ def _spectral_features(audio: np.ndarray, sr: int) -> dict[str, float]:
     noise_floor = float(np.mean(sorted_power[: max(1, len(sorted_power) // 20)]) / (np.mean(power) + 1e-30))
 
     # Clipping-Ratio: Anteil Samples >= 0.98 Peak
-    peak = np.max(np.abs(x))
+    peak: float = float(np.max(np.abs(x)))
     thresh = peak * 0.98
     clipping_ratio = float(np.mean(np.abs(x) >= thresh)) if peak > 1e-6 else 0.0
 

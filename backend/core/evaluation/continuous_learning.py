@@ -133,7 +133,7 @@ class SuccessPatternAnalyzer:
         Returns:
             Dict[str, ProcessingStrategy]: Strategy name → performance metrics
         """
-        strategy_stats = defaultdict(
+        strategy_stats: defaultdict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "success": 0,
                 "failure": 0,
@@ -273,7 +273,7 @@ class StrategyWeightOptimizer:
         Returns:
             List[LearningRecommendation]
         """
-        recommendations = []
+        recommendations: list[LearningRecommendation] = []
 
         for strategy_name, optimal_weight in optimal_weights.items():
             current_weight = current_weights.get(strategy_name, 0.5)
@@ -369,7 +369,7 @@ class ConfidenceCalibrator:
 
     def generate_calibration_recommendations(self, analysis: dict[str, Any]) -> list[LearningRecommendation]:
         """Generiert Empfehlungen zur Confidence-Kalibrierung."""
-        recommendations = []
+        recommendations: list[LearningRecommendation] = []
 
         if analysis.get("status") != "analyzed":
             return recommendations

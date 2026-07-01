@@ -9,7 +9,7 @@ def analyze_defects_features(audio, sr):
     # Mono-Summe für Analyse
     audio_mono = np.mean(audio, axis=1) if audio.ndim > 1 else audio
     # Knacken/Crackle (Vinyl/Shellac): hohe Amplitudenänderungen, Impulsdetektion
-    crackle_events = np.sum(np.abs(np.diff(audio_mono)) > 0.5)
+    crackle_events: int = int(np.sum(np.abs(np.diff(audio_mono)) > 0.5))
     if crackle_events > sr * 0.1:
         defects.add("crackle")
     # Rauschen/Hiss: hoher Energieanteil im Hochfrequenzbereich
@@ -31,8 +31,10 @@ def analyze_defects_features(audio, sr):
         defects.add("wow_flutter")
     # Dropouts: längere Abschnitte mit sehr niedriger Energie
     window = int(sr * 0.05)
-    dropout_windows = np.sum(
-        [np.mean(np.abs(audio_mono[i : i + window])) < 0.005 for i in range(0, len(audio_mono) - window, window)]
+    dropout_windows: int = int(
+        np.sum(
+            [np.mean(np.abs(audio_mono[i : i + window])) < 0.005 for i in range(0, len(audio_mono) - window, window)]
+        )
     )
     if dropout_windows > 2:
         defects.add("dropouts")

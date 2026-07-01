@@ -132,7 +132,7 @@ def is_allowed_context(line: str, file_path: str, line_num: int) -> bool:
 
 def lint_file(file_path: str) -> list[tuple[int, str, str]]:
     """Lint a Python file for peak-guard violations."""
-    violations = []
+    violations: list[tuple[int, str, str]] = []
 
     if not os.path.isfile(file_path):
         return violations

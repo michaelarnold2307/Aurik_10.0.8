@@ -100,7 +100,7 @@ class MergeStemsSOTA:
         if any(v.get("action") == "bypass" for v in policy.values() if isinstance(v, dict)):
             return np.asarray(merged.astype(stems[0].dtype))  # type: ignore[no-any-return]
         # 4. Clipping vermeiden
-        maxval = np.max(np.abs(merged))
+        maxval: float = float(np.max(np.abs(merged)))
         if maxval > 1.0:
             merged = merged / maxval * 0.999
         merged = np.nan_to_num(merged, nan=0.0, posinf=0.0, neginf=0.0)

@@ -3952,8 +3952,8 @@ class DefectScanner:
         audio_lp = signal.sosfilt(sos, audio)
 
         # Energie-Vergleich
-        rumble_energy = np.sum(audio_lp**2)
-        total_energy = np.sum(audio**2)
+        rumble_energy: float = float(np.sum(audio_lp**2))
+        total_energy: float = float(np.sum(audio**2))
 
         rumble_ratio = rumble_energy / (total_energy + 1e-10)
 
@@ -3975,8 +3975,8 @@ class DefectScanner:
         audio_hp = signal.sosfilt(sos, audio)
 
         # Energie-Vergleich
-        hf_energy = np.sum(audio_hp**2)
-        total_energy = np.sum(audio**2)
+        hf_energy: float = float(np.sum(audio_hp**2))
+        total_energy: float = float(np.sum(audio**2))
 
         hf_ratio = hf_energy / (total_energy + 1e-10)
 
@@ -4114,8 +4114,8 @@ class DefectScanner:
         side = (left - right) / 2
 
         # Phase-Issues: Zu viel Side-Energie (schlechte Mono-Compatibility)
-        mid_energy = np.sum(mid**2)
-        side_energy = np.sum(side**2)
+        mid_energy: float = float(np.sum(mid**2))
+        side_energy: float = float(np.sum(side**2))
         total_energy = mid_energy + side_energy
 
         if total_energy < 1e-10:

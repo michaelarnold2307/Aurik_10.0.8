@@ -259,7 +259,7 @@ class IntroducedArtifactDetector:
             )
             if len(_energies) >= 2:
                 _diff = np.diff(_energies)
-                _transient_frames = np.sum(_diff > 0.20 * float(np.max(_energies) + 1e-12))
+                _transient_frames: int = int(np.sum(_diff > 0.20 * float(np.max(_energies) + 1e-12)))
                 _duration_s = max(len(orig) / sr, 1e-3)
                 _transient_density = float(_transient_frames) / _duration_s  # events/s
             else:

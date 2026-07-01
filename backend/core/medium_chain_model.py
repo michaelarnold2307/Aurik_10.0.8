@@ -147,7 +147,7 @@ class PhysicalMediumChainModel:
             logger.debug("Kein Kettenmodell für %s — keine Korrektur angewendet.", material.value)
 
         # Safety only: avoid loudness-changing peak rescale.
-        peak = np.max(np.abs(audio_out))
+        peak: float = float(np.max(np.abs(audio_out)))
         if peak > 1.0:
             audio_out = np.clip(audio_out, -1.0, 1.0)
             corrections.append("safety_clamp")
@@ -235,7 +235,7 @@ class PhysicalMediumChainModel:
             all_corrections.extend(f"{medium_str}:{c}" for c in step_result.corrections_applied)
             spectral_changes.append(step_result.spectral_change_db)
 
-        peak = np.max(np.abs(audio_out))
+        peak: float = float(np.max(np.abs(audio_out)))
         if peak > 1.0:
             audio_out = np.clip(audio_out, -1.0, 1.0)
             all_corrections.append("chain_sequence_safety_clamp")

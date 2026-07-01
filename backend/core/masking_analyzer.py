@@ -130,7 +130,7 @@ class MaskingProfile:
         Returns:
             Ratio of masked components (0-1)
         """
-        masked = np.sum(self.masking_ratio_db <= 0)
+        masked: int = int(np.sum(self.masking_ratio_db <= 0))
         total = self.masking_ratio_db.size
         return int(masked) / total
 
@@ -458,7 +458,7 @@ class MaskingAnalyzer:
 
         # Average SMR (where signal > threshold)
         audible = profile.masking_ratio_db > 0
-        num_audible = np.sum(audible)
+        num_audible: int = int(np.sum(audible))
 
         if num_audible == 0:
             # All masked - return minimum SMR

@@ -445,8 +445,8 @@ class GenderDetector:
         # DSP fallback: HF energy ratio (breathy voices have more noise above 3 kHz)
         hp_sos = signal.butter(4, 3000, "high", fs=self.sr, output="sos")
         hf_signal = signal.sosfilt(hp_sos, audio)
-        hf_energy = np.sum(hf_signal**2)
-        total_energy = np.sum(audio**2)
+        hf_energy: float = float(np.sum(hf_signal**2))
+        total_energy: float = float(np.sum(audio**2))
         breathiness = hf_energy / (total_energy + 1e-10)
         return min(1.0, breathiness * 5)  # type: ignore[no-any-return]
 
@@ -478,11 +478,11 @@ class GenderDetector:
         pitch_variation = np.std(f0s) / (np.mean(f0s) + 1e-10) if len(f0s) > 1 else 0.0
 
         # Dynamic range
-        dynamic_range = np.max(np.abs(audio)) - np.min(np.abs(audio))
+        dynamic_range: float = float(np.max(np.abs(audio)) - np.min(np.abs(audio)))
 
         # Combine metrics
         intensity = (pitch_variation * 10 + dynamic_range) / 2
-        return min(1.0, intensity)  # type: ignore[no-any-return]
+        return float(min(1.0, intensity))
 
     def _detect_sibilance(self, audio: np.ndarray) -> float:
         """Erkennt sibilance severity via frame-based peak analysis (6-12 kHz).
@@ -965,8 +965,8 @@ class UnifiedVocalAIEnhancer:
         if min_len > 0:
             diff = np.abs(np.array(original_f[:min_len]) - np.array(processed_f[:min_len]))
             rel_diff = diff / (np.array(original_f[:min_len]) + 1e-10)
-            preservation = 1 - np.mean(rel_diff)
-            return max(0, preservation)  # type: ignore[return-value]
+            preservation = float(1.0 - np.mean(rel_diff))
+            return float(max(0.0, preservation))
 
         return 1.0
 

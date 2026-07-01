@@ -342,7 +342,7 @@ class LoudnessAnalyzer:
 
             # Oversample 4x for True Peak approximation
             oversampled = signal.resample(audio_2d, len(audio_2d) * 4, axis=0)
-            true_peak_linear = np.max(np.abs(oversampled))
+            true_peak_linear: float = float(np.max(np.abs(oversampled)))
             true_peak_dbtp = 20 * np.log10(true_peak_linear + 1e-10)
         except Exception:
             # Fallback: Use sample peak
@@ -350,7 +350,7 @@ class LoudnessAnalyzer:
             true_peak_dbtp = 20 * np.log10(true_peak_linear + 1e-10)
 
         # Sample Peak (dBFS)
-        sample_peak_linear = np.max(np.abs(audio_2d))
+        sample_peak_linear: float = float(np.max(np.abs(audio_2d)))
         sample_peak_dbfs = 20 * np.log10(sample_peak_linear + 1e-10)
 
         return LoudnessResult(

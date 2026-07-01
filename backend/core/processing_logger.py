@@ -407,7 +407,7 @@ class ProcessingLogger:
         fundamental_power = magnitudes[vocal_range][fundamental_idx] ** 2
 
         # Estimate harmonics power (rough approximation)
-        total_power = np.sum(magnitudes**2)
+        total_power: float = float(np.sum(magnitudes**2))
         harmonic_power = total_power - fundamental_power
 
         if fundamental_power < 1e-10:

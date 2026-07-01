@@ -107,7 +107,7 @@ class GapReconstructionResult:
         return self.gaps_repaired / max(self.gaps_found, 1)
 
     def summary(self) -> str:
-        methods = {}
+        methods: dict[str, int] = {}
         for g in self.gap_details:
             if g.repaired:
                 methods[g.method_used] = methods.get(g.method_used, 0) + 1

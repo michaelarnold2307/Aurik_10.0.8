@@ -206,7 +206,7 @@ class DefectAnalyzer:
 
                 # Clicks have very rapid attack
                 if len(envelope) > 1:
-                    max_gradient = np.max(np.abs(np.gradient(envelope)))
+                    max_gradient: float = float(np.max(np.abs(np.gradient(envelope))))
                     if max_gradient > 0.2:  # Very sharp
                         click_count += 1
 
@@ -290,7 +290,7 @@ class DefectAnalyzer:
         def check_frequency(target_hz, tolerance=5):
             mask = (freqs >= target_hz - tolerance) & (freqs <= target_hz + tolerance)
             if np.any(mask):
-                peak = np.max(magnitudes[mask])
+                peak: float = float(np.max(magnitudes[mask]))
                 median = np.median(magnitudes)
                 return peak > median * 10  # 10x above median
             return False

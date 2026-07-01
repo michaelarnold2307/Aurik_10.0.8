@@ -371,7 +371,7 @@ class ModuleCoordinator:
             that can be executed in parallel.
         """
         # Build subgraph for selected modules
-        graph = {mod: set() for mod in modules}
+        graph: dict[str, set[str]] = {mod: set() for mod in modules}
         for mod in modules:
             if mod in self._dependency_graph:
                 graph[mod] = self._dependency_graph[mod] & set(modules)

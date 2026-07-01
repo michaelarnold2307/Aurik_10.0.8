@@ -506,7 +506,7 @@ class ConductEnforcer:
 
         # Most common violations
         all_principles = []
-        all_goals = []
+        all_goals: list[str] = []
         for result in self.decision_history:
             all_principles.extend(result.violated_principles)
             all_goals.extend(result.violated_musical_goals.keys())

@@ -239,19 +239,19 @@ class DamageAnalyzer:
         - High zero-crossing rate (noise indicator)
         """
         # Clipping
-        clipped_samples = np.sum(np.abs(audio) > 0.99)
+        clipped_samples: int = int(np.sum(np.abs(audio) > 0.99))
         clipping_ratio = clipped_samples / len(audio)
 
         # Silence (sehr small values)
-        silent_samples = np.sum(np.abs(audio) < 1e-6)
+        silent_samples: int = int(np.sum(np.abs(audio) < 1e-6))
         silence_ratio = silent_samples / len(audio)
 
         # Abnormal values
-        abnormal_samples = np.sum(~np.isfinite(audio))
+        abnormal_samples: int = int(np.sum(~np.isfinite(audio)))
         abnormal_ratio = abnormal_samples / len(audio)
 
         # Zero-crossing rate (normalized)
-        zero_crossings = np.sum(np.diff(np.sign(audio)) != 0)
+        zero_crossings: int = int(np.sum(np.diff(np.sign(audio)) != 0))
         zcr_normalized = zero_crossings / len(audio)
 
         # Weighted corruption estimate (corrected formula)

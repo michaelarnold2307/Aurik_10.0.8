@@ -434,7 +434,7 @@ class ComprehensiveMetricsCalculator:
 
     def _compute_crest_factor(self, audio: np.ndarray) -> float:
         """Crest Factor = Peak / RMS (in dB)."""
-        peak = np.max(np.abs(audio))
+        peak: float = float(np.max(np.abs(audio)))
         rms = np.sqrt(np.mean(audio**2))
         crest_db = 20 * np.log10((peak + 1e-10) / (rms + 1e-10))
         return float(crest_db)
@@ -496,8 +496,8 @@ class ComprehensiveMetricsCalculator:
 
         # Weight higher frequencies more
         weights = np.log10(freqs + 100) / np.log10(10000)
-        weighted_energy = np.sum(spectrum * weights)
-        total_energy = np.sum(spectrum)
+        weighted_energy: float = float(np.sum(spectrum * weights))
+        total_energy: float = float(np.sum(spectrum))
 
         sharpness = weighted_energy / (total_energy + 1e-10)
         return float(np.clip(sharpness, 0, 1))
@@ -511,8 +511,8 @@ class ComprehensiveMetricsCalculator:
 
         # Roughness band: 15-300 Hz modulation
         rough_mask = (freqs >= 15) & (freqs <= 300)
-        roughness_energy = np.sum(envelope_spectrum[rough_mask])
-        total_energy = np.sum(envelope_spectrum)
+        roughness_energy: float = float(np.sum(envelope_spectrum[rough_mask]))
+        total_energy: float = float(np.sum(envelope_spectrum))
 
         roughness = roughness_energy / (total_energy + 1e-10)
         return float(np.clip(roughness, 0, 1))
@@ -572,7 +572,7 @@ class ComprehensiveMetricsCalculator:
 
     def _detect_clipping(self, audio: np.ndarray) -> float:
         """Percentage of clipped samples."""
-        clipped = np.sum(np.abs(audio) > 0.99)
+        clipped: int = int(np.sum(np.abs(audio) > 0.99))
         percent = 100 * clipped / len(audio)
         return float(percent)
 
@@ -993,9 +993,9 @@ class ComprehensiveMetricsCalculator:
         mid = (freqs >= 250) & (freqs < 4000)
         treble = freqs >= 4000
 
-        bass_energy = np.sum(spectrum[bass])
-        mid_energy = np.sum(spectrum[mid])
-        treble_energy = np.sum(spectrum[treble])
+        bass_energy: float = float(np.sum(spectrum[bass]))
+        mid_energy: float = float(np.sum(spectrum[mid]))
+        treble_energy: float = float(np.sum(spectrum[treble]))
 
         total = bass_energy + mid_energy + treble_energy + 1e-10
 
@@ -1127,7 +1127,7 @@ class ComprehensiveMetricsCalculator:
     def _compute_intensity(self, audio: np.ndarray) -> float:
         """Emotional intensity (dynamic range + spectral spread)."""
         # Dynamic range
-        peak = np.max(np.abs(audio))
+        peak: float = float(np.max(np.abs(audio)))
         rms = np.sqrt(np.mean(audio**2))
         dyn_range = peak / (rms + 1e-10)
 

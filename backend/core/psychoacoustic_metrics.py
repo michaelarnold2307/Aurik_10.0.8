@@ -205,7 +205,7 @@ class PsychoAcousticMetrics:
 
         # Count high-energy transients (outliers)
         threshold = np.percentile(diff, 99.5)
-        artifacts = np.sum(diff > threshold)
+        artifacts: int = int(np.sum(diff > threshold))
 
         # Normalize: fewer artifacts = higher score
         max_expected_artifacts = len(audio) * 0.001  # 0.1% threshold

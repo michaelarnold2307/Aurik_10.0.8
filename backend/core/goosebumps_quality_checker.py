@@ -143,7 +143,7 @@ def _onset_envelope(audio: np.ndarray, _sr: int, hop: int = _ONSET_ENV_HOP) -> n
         flux[i] = np.sum(np.maximum(diff, 0.0))
 
     # Normalize
-    flux_max = np.max(flux)
+    flux_max: float = float(np.max(flux))
     if flux_max > 0:
         flux /= flux_max
     return flux  # type: ignore[no-any-return]
@@ -205,7 +205,7 @@ def _measure_transient_integrity(original: np.ndarray, restored: np.ndarray, sr:
         timing_deviations_ms = []
         for op in orig_peaks:
             dists = np.abs(rest_peaks - op)
-            nearest_dist = np.min(dists)
+            nearest_dist: float = float(np.min(dists))
             deviation_ms = nearest_dist * (_ONSET_ENV_HOP / sr) * 1000.0
             timing_deviations_ms.append(deviation_ms)
         mean_deviation_ms = float(np.mean(timing_deviations_ms))

@@ -143,7 +143,7 @@ def _to_mono_resampled(audio: np.ndarray, src_sr: int) -> np.ndarray:
     mono = mono.astype(np.float64)
 
     # Amplitude normieren auf [-1, 1]
-    peak = np.max(np.abs(mono))
+    peak: float = float(np.max(np.abs(mono)))
     if peak > 1e-9:
         mono = mono / peak
 

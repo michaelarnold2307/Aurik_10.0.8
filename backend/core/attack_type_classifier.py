@@ -156,7 +156,7 @@ class AttackTypeClassifier:
     @staticmethod
     def _zcr(frame: np.ndarray) -> float:
         """Zero-crossing rate normalized per sample, in [0, 1]."""
-        zc = np.sum(np.diff(np.sign(frame)) != 0)
+        zc: int = int(np.sum(np.diff(np.sign(frame)) != 0))
         return float(zc / max(len(frame) - 1, 1) / 2.0)
 
     @staticmethod

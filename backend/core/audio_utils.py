@@ -270,6 +270,7 @@ def _profile_channel_flags(
     if profile is None:
         return [fallback] * channel_count
     raw_flags = profile.get(key)
+    flags: list[bool]
     if isinstance(raw_flags, (list, tuple)):
         flags = [bool(v) for v in raw_flags]
     else:

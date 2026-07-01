@@ -285,7 +285,7 @@ class PlosiveDetector:
                 continue
 
             # Energy
-            energy = np.max(envelope)
+            energy: float = float(np.max(envelope))
             energy_db = 20 * np.log10(energy + 1e-10)
 
             if energy_db < self.energy_threshold_db:
@@ -386,7 +386,7 @@ class TransientDetector:
                 continue
 
             # Energy
-            energy = np.max(envelope)
+            energy: float = float(np.max(envelope))
             energy_db = 20 * np.log10(energy + 1e-10)
 
             if energy_db < self.energy_threshold_db:
@@ -445,8 +445,8 @@ class SibilanceDetector:
         sibilance_band = signal.sosfilt(sos, audio)
 
         # Energy in sibilance band
-        sibilance_energy = np.sum(sibilance_band**2)
-        total_energy = np.sum(audio**2)
+        sibilance_energy: float = float(np.sum(sibilance_band**2))
+        total_energy: float = float(np.sum(audio**2))
 
         sibilance_density = sibilance_energy / (total_energy + 1e-10)
 
@@ -473,7 +473,7 @@ class SibilanceDetector:
         sibilant_frames = 0
         for i in range(0, len(sibilance_band) - window_samples, hop_samples):
             frame = sibilance_band[i : i + window_samples]
-            frame_energy = np.sum(frame**2)
+            frame_energy: float = float(np.sum(frame**2))
 
             # Threshold: significant sibilance energy
             if frame_energy > total_energy / len(audio) * window_samples * 2:

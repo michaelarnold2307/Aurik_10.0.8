@@ -208,8 +208,8 @@ class AestheticProxyCalculator:
             freqs = np.fft.rfftfreq(len(audio.flatten()), 1 / sr)
 
             hf_mask = (freqs >= 12000) & (freqs <= 20000)
-            hf_energy = np.sum(np.abs(fft[hf_mask]) ** 2)
-            total_energy = np.sum(np.abs(fft) ** 2)
+            hf_energy: float = float(np.sum(np.abs(fft[hf_mask]) ** 2))
+            total_energy: float = float(np.sum(np.abs(fft) ** 2))
 
             hf_ratio = hf_energy / (total_energy + 1e-10)
             details["hf_energy_ratio"] = float(hf_ratio)
@@ -225,7 +225,7 @@ class AestheticProxyCalculator:
         # 3. Air-Band Presence (15-20kHz)
         if nyquist >= 20000:
             air_mask = (freqs >= 15000) & (freqs <= 20000)
-            air_energy = np.sum(np.abs(fft[air_mask]) ** 2)
+            air_energy: float = float(np.sum(np.abs(fft[air_mask]) ** 2))
             air_presence = air_energy / (total_energy + 1e-10)
             details["air_band_presence"] = float(air_presence)
         else:
@@ -633,8 +633,8 @@ class AestheticProxyCalculator:
         freqs = np.fft.rfftfreq(len(audio.flatten()), 1 / sr)
 
         lowmid_mask = (freqs >= 200) & (freqs <= 800)
-        lowmid_energy = np.sum(np.abs(fft[lowmid_mask]) ** 2)
-        total_energy = np.sum(np.abs(fft) ** 2)
+        lowmid_energy: float = float(np.sum(np.abs(fft[lowmid_mask]) ** 2))
+        total_energy: float = float(np.sum(np.abs(fft) ** 2))
 
         lowmid_balance = lowmid_energy / (total_energy + 1e-10)
         # Normalize to typical range
