@@ -80,14 +80,20 @@ class AdaptiveResourceManager:
     def get_memory_usage(self) -> float:
         """Gibt zurück: current system memory usage percentage."""
         if psutil:
-            return psutil.virtual_memory().percent  # type: ignore[no-any-return]
+            try:
+                return float(psutil.virtual_memory().percent)
+            except AttributeError:
+                return 0.0  # Mock-Objekt ohne .percent (z. B. in Tests)
         else:
             return 0  # Fallback: keine Überwachung
 
     def get_available_memory_mb(self) -> float:
         """Gibt zurück: available system memory in MB."""
         if psutil:
-            return psutil.virtual_memory().available / (1024 * 1024)  # type: ignore[no-any-return]
+            try:
+                return float(psutil.virtual_memory().available) / (1024 * 1024)
+            except AttributeError:
+                return float("inf")  # Mock-Objekt ohne .available
         else:
             return float("inf")  # Fallback: assume unlimited
 

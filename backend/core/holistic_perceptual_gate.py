@@ -338,16 +338,38 @@ class HolisticPerceptualGate:
         # ist physikalisch legitimiert (BW-Extension, Harmonik, Vocal-Enhancement §0d, §2.46 Stufe 5).
         # Ohne diesen Floor: mel-cosine(checkpoint, restored) ≈ 0.54 bestraft korrekte
         # Restaurierungen (HPI 0.42 statt ≈0.65 bei VERSA-MOS 4.5 — §0d-Messzahl-Artefakt v9.15.1).
-        if reference_audio is not None and not self._mert_proxy_used and mert_sim >= 0.74:
+        #
+        # v9.15.2: reference_audio is not None Bedingung entfernt — der Floor gilt auch
+        # ohne aktive Carrier-Chain-Inversion, solange VERSA (primär, kein MERT-Proxy)
+        # mert_sim ≥ 0.74 bestätigt. Begründung: mel-cosine(degraded_input, restored) ≈ 0.54
+        # entsteht immer wenn NR erfolgreich Rauschenergie entfernt — die Divergenz ist
+        # physikalisch legitimiert durch erfolgreiche Rauschunterdrückung, nicht durch
+        # Qualitätsverlust. artifact_freedom ≥ 0.95 (separater Veto-Faktor) schützt
+        # vor falschen Floors bei tatsächlichen Artefakten.
+        if not self._mert_proxy_used and mert_sim >= 0.74:
             _ccr_timbral_floor = float(np.clip(mert_sim * 0.90, 0.65, 0.95))
             if timbral < _ccr_timbral_floor:
                 logger.debug(
-                    "§0d CCR-Timbral-Floor: timbral %.3f → %.3f (versa_sim=%.3f ccr-ref=active)",
+                    "§0d CCR-Timbral-Floor: timbral %.3f → %.3f (versa_sim=%.3f ccr-ref=%s)",
                     timbral,
                     _ccr_timbral_floor,
                     mert_sim,
+                    "active" if reference_audio is not None else "no-carrier",
                 )
                 timbral = _ccr_timbral_floor
+        elif reference_audio is not None and self._mert_proxy_used and mert_sim >= 0.70:
+            # §0d MERT-Proxy-Fallback: konservativerer Floor (0.80 statt 0.90) wenn VERSA
+            # fehlgeschlagen ist aber CCR-Referenz aktiv ist. Schützt vor doppeltem HPI-Penalty
+            # (schlechterer MERT-Proxy-Score + mel-cosine-Penalty auf Carrier-Divergenz).
+            _ccr_timbral_floor_proxy = float(np.clip(mert_sim * 0.80, 0.60, 0.88))
+            if timbral < _ccr_timbral_floor_proxy:
+                logger.debug(
+                    "§0d CCR-Timbral-Floor (MERT-proxy): timbral %.3f → %.3f (mert_sim=%.3f)",
+                    timbral,
+                    _ccr_timbral_floor_proxy,
+                    mert_sim,
+                )
+                timbral = _ccr_timbral_floor_proxy
 
         hpi = mert_sim * timbral * artifact_freedom * emotional_arc_score
 
