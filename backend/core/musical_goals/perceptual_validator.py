@@ -181,8 +181,8 @@ class PerceptualValidator:
 
         # Statistics
         self.validation_count = 0
-        self.listening_test_requests = []
-        self.ab_test_samples = []
+        self.listening_test_requests: list[ListeningTestRequest] = []
+        self.ab_test_samples: list[ABTestSample] = []
 
     def _try_load_onnx_model(self) -> bool:
         """Try loading bundled AST ONNX model (models/ast/ast_model.onnx)."""

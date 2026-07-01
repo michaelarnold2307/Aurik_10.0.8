@@ -67,7 +67,7 @@ class AudioRestorationDataset(Dataset):
 
     def _find_audio_pairs(self) -> list[tuple[Path, Path]]:
         """Findet Paare aus degradierten und sauberen Audiodateien."""
-        pairs = []
+        pairs: list[tuple[Path, Path]] = []
 
         degraded_dir = self.data_dir / "degraded"
         clean_dir = self.data_dir / "clean"

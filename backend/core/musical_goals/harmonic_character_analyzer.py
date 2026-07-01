@@ -226,8 +226,8 @@ class HarmonicCharacterAnalyzer:
         even_harmonics = [harmonic_powers[i] for i in range(0, len(harmonic_powers), 2)]  # 2f, 4f, 6f
         odd_harmonics = [harmonic_powers[i] for i in range(1, len(harmonic_powers), 2)]  # 3f, 5f, 7f
 
-        even_power = np.sum(even_harmonics)
-        odd_power = np.sum(odd_harmonics)
+        even_power: float = float(np.sum(even_harmonics))
+        odd_power: float = float(np.sum(odd_harmonics))
         total_harmonic_power = even_power + odd_power
 
         # Compute ratios (relative to fundamental)

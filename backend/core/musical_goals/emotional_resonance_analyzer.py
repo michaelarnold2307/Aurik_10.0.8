@@ -151,10 +151,10 @@ class EmotionalResonanceAnalyzer:
 
         # Extract 200-800 Hz band
         mask_warmth = (freqs >= 200) & (freqs <= 800)
-        warmth_energy = np.sum(magnitude[mask_warmth])
+        warmth_energy: float = float(np.sum(magnitude[mask_warmth]))
 
         # Total energy
-        total_energy = np.sum(magnitude)
+        total_energy: float = float(np.sum(magnitude))
 
         # Ratio
         warmth_ratio = warmth_energy / (total_energy + 1e-10)
@@ -175,7 +175,7 @@ class EmotionalResonanceAnalyzer:
         Hohe Dynamik = High Expression
         """
         # === 1. Makrodynamik (Peak-to-RMS) ===
-        peak = np.max(np.abs(audio))
+        peak: float = float(np.max(np.abs(audio)))
         rms = np.sqrt(np.mean(audio**2))
 
         dynamic_range_db = 20 * np.log10(peak / rms) if rms > 0 else 0.0
@@ -311,10 +311,10 @@ class EmotionalResonanceAnalyzer:
         if np.sum(mask_air) == 0:
             return 0.0  # No HF content
 
-        air_energy = np.sum(magnitude[mask_air])
+        air_energy: float = float(np.sum(magnitude[mask_air]))
 
         # Total energy
-        total_energy = np.sum(magnitude)
+        total_energy: float = float(np.sum(magnitude))
 
         # Ratio
         air_ratio = air_energy / (total_energy + 1e-10)
@@ -420,7 +420,7 @@ class EmotionalResonanceEnhancer:
             expansion_applied = True
 
         # Normalize
-        peak = np.max(np.abs(enhanced))
+        peak: float = float(np.max(np.abs(enhanced)))
         if peak > 0:
             enhanced = enhanced / peak
 

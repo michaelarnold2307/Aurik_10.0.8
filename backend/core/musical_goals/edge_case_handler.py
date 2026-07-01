@@ -403,14 +403,14 @@ class EdgeCaseHandler:
 
         # Use 99th percentile to catch only extreme spikes
         threshold = np.percentile(energy, 99) * 2.0  # 2x the 99th percentile
-        defect_samples = np.sum(energy > threshold)
+        defect_samples: int = int(np.sum(energy > threshold))
 
         coverage = defect_samples / len(audio)
         return min(1.0, coverage)  # type: ignore[no-any-return]
 
     def _measure_dynamic_range(self, audio: np.ndarray) -> float:
         """Misst dynamic range in dB."""
-        peak = np.max(np.abs(audio))
+        peak: float = float(np.max(np.abs(audio)))
         rms = np.sqrt(np.mean(audio**2))
 
         if rms < 1e-10:
@@ -422,7 +422,7 @@ class EdgeCaseHandler:
     def _detect_clipping(self, audio: np.ndarray) -> float:
         """Erkennt clipping ratio (fraction of samples near ±1.0)."""
         clipping_threshold = 0.99
-        clipped_samples = np.sum(np.abs(audio) > clipping_threshold)
+        clipped_samples: int = int(np.sum(np.abs(audio) > clipping_threshold))
         return clipped_samples / len(audio)  # type: ignore[no-any-return]
 
     def _get_degradation_reason(
@@ -550,7 +550,7 @@ class EdgeCaseHandler:
 
         # Detect sudden drops (> 50% energy reduction)
         energy_diff = np.diff(energy)
-        large_drops = np.sum(energy_diff < -0.5 * np.median(energy))
+        large_drops: int = int(np.sum(energy_diff < -0.5 * np.median(energy)))
 
         return large_drops > 5  # type: ignore[no-any-return]  # More than 5 large drops
 
@@ -575,12 +575,12 @@ class EdgeCaseHandler:
         autocorr_sym = np.concatenate([_ac_full[:0:-1], _ac_full])
         _center_start = max(0, (len(autocorr_sym) - _n) // 2)
         autocorr = autocorr_sym[_center_start : _center_start + _n]
-        _denom = np.max(np.abs(autocorr))
+        _denom: float = float(np.max(np.abs(autocorr)))
         autocorr = autocorr / _denom if _denom > 0 else np.zeros_like(autocorr)  # §3.1
 
         # Check for periodic structure
         center = len(autocorr) // 2
-        side_lobe_energy = np.sum(np.abs(autocorr[center + 10 : center + 50]))
+        side_lobe_energy: float = float(np.sum(np.abs(autocorr[center + 10 : center + 50])))
 
         return side_lobe_energy > 0.3  # type: ignore[no-any-return]
 
@@ -738,10 +738,10 @@ class EdgeCaseHandler:
         treble_mask = (freqs >= 2000) & (freqs <= min(20000, sr / 2))
 
         # Compute energy ratios
-        total_energy = np.sum(power)
-        bass_energy = np.sum(power[bass_mask])
-        mid_energy = np.sum(power[mid_mask])
-        treble_energy = np.sum(power[treble_mask])
+        total_energy: float = float(np.sum(power))
+        bass_energy: float = float(np.sum(power[bass_mask]))
+        mid_energy: float = float(np.sum(power[mid_mask]))
+        treble_energy: float = float(np.sum(power[treble_mask]))
 
         bass_ratio = bass_energy / (total_energy + 1e-10)
         mid_ratio = mid_energy / (total_energy + 1e-10)

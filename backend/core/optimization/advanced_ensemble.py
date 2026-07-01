@@ -17,7 +17,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -90,7 +90,7 @@ class MetaLearner(nn.Module):
         combined_features = torch.cat(features, dim=1)
 
         # Meta-learner prediction
-        output = self.meta_network(combined_features)
+        output = cast(torch.Tensor, self.meta_network(combined_features))
 
         return output
 
@@ -133,16 +133,16 @@ class AttentionWeightPredictor(nn.Module):
         q = self.query(input_features)  # [batch, attention_dim]
 
         # Compute attention scores for each member
-        scores = []
+        scores_list: list[torch.Tensor] = []
         for key_proj in self.keys:
             k = key_proj(input_features)  # [batch, attention_dim]
             score = torch.sum(q * k, dim=1, keepdim=True)  # [batch, 1]
-            scores.append(score)
+            scores_list.append(score)
 
-        scores = torch.cat(scores, dim=1)  # [batch, n_members]
+        scores_tensor = torch.cat(scores_list, dim=1)  # [batch, n_members]
 
         # Softmax to get weights
-        weights = F.softmax(scores, dim=1)
+        weights = F.softmax(scores_tensor, dim=1)
 
         return weights
 
@@ -253,15 +253,15 @@ class MixtureOfExperts(nn.Module):
         gates.scatter_(1, top_k_indices, top_k_gates)
 
         # Expert predictions
-        expert_outputs = []
+        expert_output_list: list[torch.Tensor] = []
         for expert in self.experts:
-            expert_outputs.append(expert(x))
+            expert_output_list.append(expert(x))
 
-        expert_outputs = torch.stack(expert_outputs, dim=1)  # [batch, n_experts, output_dim]
+        expert_outputs_tensor = torch.stack(expert_output_list, dim=1)  # [batch, n_experts, output_dim]
 
         # Weighted combination
         gates_expanded = gates.unsqueeze(-1)  # [batch, n_experts, 1]
-        output = torch.sum(gates_expanded * expert_outputs, dim=1)
+        output = torch.sum(gates_expanded * expert_outputs_tensor, dim=1)
 
         # Load balancing loss (encourage uniform expert usage)
         importance = gates.sum(dim=0)  # [n_experts]
@@ -370,7 +370,7 @@ class AdvancedEnsemble:
             details: Optional details dict
         """
         x = x.to(self.device)
-        details = {} if return_details else None
+        details: dict[str, Any] | None = {} if return_details else None
 
         if self.strategy == "stacking":
             # Get predictions from all base models
@@ -394,40 +394,40 @@ class AdvancedEnsemble:
             weights = self.weight_predictor(features)
 
             # Get weighted predictions
-            predictions = []
+            prediction_list: list[torch.Tensor] = []
             for member in self.members:
                 with torch.no_grad():
                     pred = member.model(x)
-                predictions.append(pred)
+                prediction_list.append(pred)
 
-            predictions = torch.stack(predictions, dim=1)  # [batch, n_members, ...]
+            predictions_tensor = torch.stack(prediction_list, dim=1)  # [batch, n_members, ...]
             # Expand weights to match prediction dimensions
-            while weights.dim() < predictions.dim():
+            while weights.dim() < predictions_tensor.dim():
                 weights = weights.unsqueeze(-1)
 
-            prediction = torch.sum(weights * predictions, dim=1)
+            prediction = torch.sum(weights * predictions_tensor, dim=1)
 
             if return_details:
                 assert details is not None
                 details["weights"] = weights
-                details["predictions"] = predictions
+                details["predictions"] = predictions_tensor
 
         elif self.strategy == "dynamic_selection":
             # Select best members for this input
             selection_mask, selection_scores = self.selector(x)
 
             # Get predictions from selected members
-            predictions = []
+            prediction_list = []
             for member in self.members:
                 with torch.no_grad():
                     pred = member.model(x)
-                predictions.append(pred)
+                prediction_list.append(pred)
 
-            predictions = torch.stack(predictions, dim=1)
+            predictions_tensor = torch.stack(prediction_list, dim=1)
             mask_expanded = selection_mask.unsqueeze(-1)
 
             # Average selected predictions
-            selected_sum = torch.sum(mask_expanded * predictions, dim=1)
+            selected_sum = torch.sum(mask_expanded * predictions_tensor, dim=1)
             selected_count = selection_mask.sum(dim=1, keepdim=True)
             prediction = selected_sum / (selected_count + 1e-8)
 

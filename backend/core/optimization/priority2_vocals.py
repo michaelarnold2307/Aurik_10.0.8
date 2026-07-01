@@ -49,8 +49,8 @@ class VocalPresenceDetector:
         vocal_mask = (freqs >= self._low_hz) & (freqs <= self._high_hz)
         presence_mask = (freqs >= self._presence_low_hz) & (freqs <= self._presence_high_hz)
 
-        vocal_energy = np.sum(spec[vocal_mask] ** 2)
-        presence_energy = np.sum(spec[presence_mask] ** 2)
+        vocal_energy: float = float(np.sum(spec[vocal_mask] ** 2))
+        presence_energy: float = float(np.sum(spec[presence_mask] ** 2))
 
         score = (vocal_energy + 0.5 * presence_energy) / total_energy
         return float(np.clip(score, 0.0, 1.0))

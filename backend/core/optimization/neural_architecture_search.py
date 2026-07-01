@@ -16,7 +16,7 @@ Datum: 14. Februar 2026
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -149,7 +149,8 @@ class MixedOp(nn.Module):
         weights = F.softmax(self.alpha, dim=0)
 
         # Weighted sum of operations
-        output = sum(w * op(x) for w, op in zip(weights, self.operations.values()))
+        op_outputs = [w * cast(nn.Module, op)(x) for w, op in zip(weights, self.operations.values())]
+        output = torch.stack(op_outputs, dim=0).sum(dim=0)
 
         return output
 
@@ -212,12 +213,15 @@ class DARTSCell(nn.Module):
 
         # Create mixed operations for all edges
         self.ops = nn.ModuleList()
+        self._typed_ops: list[MixedOp] = []
 
         # Each node connects to all previous nodes
         # After preprocessing, all states have out_channels
         for i in range(n_nodes):
             for j in range(i + 2):  # +2 for input nodes
-                self.ops.append(MixedOp(out_channels, out_channels))
+                mixed_op = MixedOp(out_channels, out_channels)
+                self.ops.append(mixed_op)
+                self._typed_ops.append(mixed_op)
 
         # Preprocessing for inputs (may have different channel counts)
         self.preprocess0 = nn.Sequential(
@@ -244,7 +248,7 @@ class DARTSCell(nn.Module):
         for i in range(self.n_nodes):
             # Sum of all edges to this node
             node_sum = sum(
-                self.ops[offset + j](states[j])
+                self._typed_ops[offset + j](states[j])
                 for j in range(i + 2)  # Each node i has i+2 incoming edges (from 2 inputs + i previous nodes)
             )
             states.append(node_sum)
@@ -255,13 +259,13 @@ class DARTSCell(nn.Module):
 
     def get_genotype(self) -> dict[str, list[tuple[str, int]]]:
         """Extrahiert the best architecture (genotype)."""
-        gene = []
+        gene: list[tuple[str, int]] = []
         offset = 0
 
         for i in range(self.n_nodes):
             edges = []
             for j in range(i + 2):
-                op = self.ops[offset + j]
+                op = self._typed_ops[offset + j]
                 best_op = op.get_best_operation()
                 if best_op != "none":
                     edges.append((best_op, j))
@@ -270,7 +274,7 @@ class DARTSCell(nn.Module):
             # Keep top-2 edges per node
             edges = sorted(
                 edges,
-                key=lambda x: F.softmax(self.ops[offset - (i + 2) + x[1]].alpha, dim=0).max().item(),
+                key=lambda x: F.softmax(self._typed_ops[offset - (i + 2) + x[1]].alpha, dim=0).max().item(),
                 reverse=True,
             )[:2]
             gene.extend(edges)
@@ -299,6 +303,7 @@ class AudioNASNetwork(nn.Module):
 
         # Cells
         self.cells = nn.ModuleList()
+        self._typed_cells: list[DARTSCell] = []
         channels = init_channels
         prev_channels_0 = init_channels
         prev_channels_1 = init_channels
@@ -310,6 +315,7 @@ class AudioNASNetwork(nn.Module):
 
             cell = DARTSCell(prev_channels_0, prev_channels_1, channels, n_nodes)
             self.cells.append(cell)
+            self._typed_cells.append(cell)
 
             # After cell: output is concat of n_nodes, each with 'channels'
             cell_output_channels = channels * n_nodes
@@ -331,19 +337,19 @@ class AudioNASNetwork(nn.Module):
         """Forward pass through NAS network."""
         s0 = s1 = self.stem(x)
 
-        for cell in self.cells:
+        for cell in self._typed_cells:
             s0, s1 = s1, cell(s0, s1)
 
         # Global pooling + classifier
-        out = self.output(s1)
+        out: torch.Tensor = cast(torch.Tensor, self.output(s1))
 
         return out
 
     def get_genotype(self) -> dict[str, Any]:
         """Extrahiert complete architecture genotype."""
-        genotype = {"cells": []}
+        genotype: dict[str, Any] = {"cells": []}
 
-        for i, cell in enumerate(self.cells):
+        for i, cell in enumerate(self._typed_cells):
             genotype["cells"].append({"cell_id": i, "structure": cell.get_genotype()})
 
         return genotype
@@ -388,8 +394,8 @@ class NASTrainer:
 
         # Collect architecture parameters (alphas)
         arch_params = []
-        for cell in self.model.cells:
-            for op in cell.ops:
+        for cell in self.model._typed_cells:
+            for op in cell._typed_ops:
                 arch_params.append(op.alpha)
 
         self.optimizer_arch = torch.optim.Adam(arch_params, lr=lr_arch, betas=(0.5, 0.999), weight_decay=1e-3)

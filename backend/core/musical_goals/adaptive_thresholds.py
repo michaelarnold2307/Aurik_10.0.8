@@ -175,7 +175,7 @@ class AdaptiveThresholdsManager:
             profiles_path: Optional path to custom profiles JSON
         """
         self.profiles_path = profiles_path
-        self.custom_profiles = []
+        self.custom_profiles: list[ThresholdProfile] = []
 
         if profiles_path and profiles_path.exists():
             self._load_custom_profiles()

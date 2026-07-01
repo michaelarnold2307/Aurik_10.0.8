@@ -451,12 +451,12 @@ class GoalConflictResolver:
             return {"total_conflicts": 0, "by_severity": {}, "most_conflicting_pairs": []}
 
         # Count by severity
-        severity_counts = {}
+        severity_counts: dict[str, int] = {}
         for conflict in self.conflict_history:
             severity_counts[conflict.severity.name] = severity_counts.get(conflict.severity.name, 0) + 1
 
         # Find most common conflict pairs
-        pair_counts = {}
+        pair_counts: dict[tuple[str, str], int] = {}
         for conflict in self.conflict_history:
             pair = tuple(sorted([conflict.goal1, conflict.goal2]))
             pair_counts[pair] = pair_counts.get(pair, 0) + 1

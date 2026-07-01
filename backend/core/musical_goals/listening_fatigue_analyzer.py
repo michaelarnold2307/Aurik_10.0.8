@@ -194,19 +194,19 @@ class ListeningFatigueAnalyzer:
         freqs = librosa.fft_frequencies(sr=sr, n_fft=4096)
 
         # Full spectrum energy
-        full_energy = np.sum(magnitude**2)
+        full_energy: float = float(np.sum(magnitude**2))
 
         # Harshness band energy (3-8 kHz)
         harshness_mask = (freqs >= self.harshness_band[0]) & (freqs <= self.harshness_band[1])
-        harshness_energy = np.sum(magnitude[harshness_mask] ** 2)
+        harshness_energy: float = float(np.sum(magnitude[harshness_mask] ** 2))
 
         # Sibilance band energy (5-10 kHz)
         sibilance_mask = (freqs >= self.sibilance_band[0]) & (freqs <= self.sibilance_band[1])
-        sibilance_energy = np.sum(magnitude[sibilance_mask] ** 2)
+        sibilance_energy: float = float(np.sum(magnitude[sibilance_mask] ** 2))
 
         # Air band energy (12-20 kHz) - should be present but smooth
         air_mask = (freqs >= self.air_band[0]) & (freqs <= self.air_band[1])
-        air_energy = np.sum(magnitude[air_mask] ** 2)
+        air_energy: float = float(np.sum(magnitude[air_mask] ** 2))
 
         # Calculate ratios
         harshness_ratio = harshness_energy / (full_energy + 1e-10)
@@ -390,7 +390,7 @@ class ListeningFatigueAnalyzer:
 
             # Mask for this bark band
             bark_mask = (freqs >= f_low) & (freqs < f_high)
-            bark_energy = np.sum(magnitude[bark_mask] ** 2)
+            bark_energy: float = float(np.sum(magnitude[bark_mask] ** 2))
             bark_energies.append(bark_energy)
 
         bark_energies = np.array(bark_energies)

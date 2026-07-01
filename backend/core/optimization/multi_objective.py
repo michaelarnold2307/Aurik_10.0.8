@@ -317,7 +317,7 @@ class NSGAII:
 
         for generation in range(self.n_generations):
             # Create offspring
-            offspring = []
+            offspring: list[Individual] = []
 
             while len(offspring) < self.population_size:
                 parent1 = self.tournament_selection(self.population)
@@ -449,7 +449,7 @@ class NSGAII:
             preferences = {obj.name: 1.0 for obj in self.objectives}
 
         # Normalize objectives to [0, 1]
-        normalized_objs = {obj.name: [] for obj in self.objectives}
+        normalized_objs: dict[str, list[float]] = {obj.name: [] for obj in self.objectives}
 
         for obj in self.objectives:
             values = [ind.objectives[obj.name] for ind in self.pareto_front]
