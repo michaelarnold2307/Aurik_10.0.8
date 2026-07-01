@@ -1664,7 +1664,7 @@ class DeEsserPhase(PhaseInterface):
         if np.sum(spectrum) < 1e-9:
             return None
 
-        centroid = np.sum(freqs * spectrum) / np.sum(spectrum)
+        centroid: float = float(np.sum(freqs * spectrum) / np.sum(spectrum))
 
         # Typ-Zuordnung basierend auf Centroid
         if band_name == "low" or centroid < 6000:
@@ -1747,7 +1747,7 @@ class DeEsserPhase(PhaseInterface):
                 sos = signal.butter(4, [low, high], btype="band", output="sos")
                 band_audio = signal.sosfilt(sos, audio)
                 # Use peak energy instead of RMS to match de-esser behavior
-                energy = np.max(np.abs(band_audio))  # Peak amplitude
+                energy: float = float(np.max(np.abs(band_audio)))  # Peak amplitude
                 total_energy += energy
             except Exception:
                 continue

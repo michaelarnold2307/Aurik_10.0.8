@@ -1926,7 +1926,7 @@ class FrequencyRestorationPhase(PhaseInterface):
         omega_s = 2.0 * np.pi * source_freqs.astype(np.float64) / float(sr)  # (n_src,)
         expected_inc = omega_s * float(hop)  # rad/frame  (n_src,)
 
-        phi_s = np.angle(Zxx_source).astype(np.float64)  # (n_src, n_frames)
+        phi_s: np.ndarray = np.angle(Zxx_source).astype(np.float64)  # (n_src, n_frames)
         dphi = np.empty_like(phi_s)
         dphi[:, 0] = 0.0
         dphi[:, 1:] = phi_s[:, 1:] - phi_s[:, :-1]

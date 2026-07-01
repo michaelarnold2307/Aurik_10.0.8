@@ -589,6 +589,6 @@ class TransientShaper(PhaseInterface):
         envelope = np.abs(analytic)
 
         # Measure peak envelope energy
-        transient_energy = np.max(envelope)
+        transient_energy: float = float(np.max(envelope))
 
         return float(transient_energy)

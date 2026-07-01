@@ -556,7 +556,7 @@ class ClickPopRemoval(PhaseInterface):
             if duration <= max_duration:
                 # Compute severity metrics
                 if start > 0 and end < len(audio) - 1:
-                    energy = np.sum(audio[start : end + 1] ** 2)
+                    energy: float = float(np.sum(audio[start : end + 1] ** 2))
 
                     click_info = {
                         "start": start,

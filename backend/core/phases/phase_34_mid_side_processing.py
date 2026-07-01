@@ -726,12 +726,12 @@ class MidSideProcessing(PhaseInterface):
         Returns:
             Compatibility ratio (0-1, higher is better mono compatibility)
         """
-        stereo_energy = np.sum(audio**2)
+        stereo_energy: float = float(np.sum(audio**2))
 
         # Create mono fold-down
         mono = safe_to_mono(audio)
         mono_stereo = stereo_like(mono, mono, audio)
-        mono_energy = np.sum(mono_stereo**2)
+        mono_energy: float = float(np.sum(mono_stereo**2))
 
         # Ratio of mono to stereo energy (should be close to 1.0 for good compatibility)
         ratio = mono_energy / (stereo_energy + 1e-10)

@@ -352,7 +352,7 @@ class LimitingPhase(PhaseInterface):
             # Kein Oversampling
             upsampled = np.maximum(np.abs(audio[:, 0]), np.abs(audio[:, 1])) if audio.ndim == 2 else np.abs(audio)
 
-        true_peak_linear = np.max(upsampled)
+        true_peak_linear: float = float(np.max(upsampled))
         true_peak_db = 20 * np.log10(true_peak_linear + 1e-10)
 
         return true_peak_db  # type: ignore[no-any-return]
@@ -495,7 +495,7 @@ class LimitingPhase(PhaseInterface):
             limited = band * smoothed_gain
 
         # Metriken
-        max_gr_linear = np.min(smoothed_gain)
+        max_gr_linear: float = float(np.min(smoothed_gain))
         max_gr_db = 20 * np.log10(max_gr_linear + 1e-10)  # Negativ = Gain Reduction
 
         peak_before = np.abs(band).max()

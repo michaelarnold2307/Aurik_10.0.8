@@ -1534,15 +1534,15 @@ class VocalEnhancement(PhaseInterface):
         # Measure energy in formant region (300-3000 Hz)
         sos_formant = signal.butter(4, self.VOCAL_BANDS["formant"], btype="band", fs=sample_rate, output="sos")
         formant_signal = signal.sosfilt(sos_formant, audio)
-        formant_energy = np.mean(formant_signal**2)
+        formant_energy = float(np.mean(formant_signal**2))
 
         # Measure total energy
-        total_energy = np.mean(audio**2)
+        total_energy = float(np.mean(audio**2))
 
         # If formant region has >20% of total energy, likely contains vocals
         if total_energy > 1e-10:
-            formant_ratio = formant_energy / total_energy
-            return formant_ratio > 0.20  # type: ignore[return-value]
+            formant_ratio = float(formant_energy / total_energy)
+            return formant_ratio > 0.20
         else:
             return False
 

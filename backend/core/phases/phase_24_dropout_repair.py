@@ -1135,9 +1135,9 @@ class DropoutRepairPhase(PhaseInterface):
 
         if num_dropouts > 0:
             dropout_durations_ms = [(end - start) * 1000 / self.sample_rate for start, end in all_dropouts]
-            avg_dropout_ms = np.mean(dropout_durations_ms)
-            max_dropout_ms = np.max(dropout_durations_ms)
-            total_dropout_ms = np.sum(dropout_durations_ms)
+            avg_dropout_ms: float = float(np.mean(dropout_durations_ms))
+            max_dropout_ms: float = float(np.max(dropout_durations_ms))
+            total_dropout_ms: float = float(np.sum(dropout_durations_ms))
         else:
             avg_dropout_ms = 0.0  # type: ignore[assignment]
             max_dropout_ms = 0.0
@@ -1147,7 +1147,9 @@ class DropoutRepairPhase(PhaseInterface):
 
         # Generate warnings
         warnings = []
-        if max_dropout_ms > params["max_dropout_ms"]:
+        max_dropout_param = params["max_dropout_ms"]
+        max_allowed_dropout_ms = float(max_dropout_param) if isinstance(max_dropout_param, (int, float)) else 100.0
+        if max_dropout_ms > max_allowed_dropout_ms:
             warnings.append(f"Very long dropout detected: {max_dropout_ms:.1f}ms (quality-critical)")
         if num_dropouts == 0:
             warnings.append("No dropouts detected (clean signal)")
@@ -2018,7 +2020,7 @@ class DropoutRepairPhase(PhaseInterface):
             idx = np.argmin(np.abs(freqs - harmonic_freq))
             harmonic_energy += spectrum[idx] ** 2
 
-        total_energy = np.sum(spectrum**2)
+        total_energy: float = float(np.sum(spectrum**2))
         return harmonic_energy / (total_energy + 1e-10)  # type: ignore[no-any-return]
 
     def _mrsa_tonal_fill_refine(

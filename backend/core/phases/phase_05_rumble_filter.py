@@ -574,11 +574,11 @@ class RumbleFilterPhase(PhaseInterface):
 
         # Sub-bass region (below cutoff)
         sub_bass_mask = freqs < params["cutoff_hz"]
-        sub_bass_energy = np.sum(magnitude[sub_bass_mask] ** 2)
+        sub_bass_energy: float = float(np.sum(magnitude[sub_bass_mask] ** 2))
 
         # Bass reference region (cutoff to 300 Hz)
         bass_mask = (freqs >= params["cutoff_hz"]) & (freqs < 300)
-        bass_energy = np.sum(magnitude[bass_mask] ** 2)
+        bass_energy: float = float(np.sum(magnitude[bass_mask] ** 2))
 
         # Energy ratio
         energy_ratio = sub_bass_energy / bass_energy if bass_energy > 0 else 0.0

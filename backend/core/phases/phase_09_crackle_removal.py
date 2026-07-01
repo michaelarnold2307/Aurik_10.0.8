@@ -1399,7 +1399,7 @@ class CrackleRemovalPhase(PhaseInterface):
 
     def _compute_zero_crossing_rate(self, audio: np.ndarray) -> float:
         """Berechnet zero-crossing rate."""
-        zero_crossings = np.sum(np.diff(np.sign(audio)) != 0)
+        zero_crossings: int = int(np.sum(np.diff(np.sign(audio)) != 0))
         zcr = zero_crossings / len(audio)
         return float(zcr)
 
@@ -1430,7 +1430,7 @@ class CrackleRemovalPhase(PhaseInterface):
             harmonic_energy += spectrum[idx] ** 2
 
         # Total energy
-        total_energy = np.sum(spectrum**2)
+        total_energy: float = float(np.sum(spectrum**2))
 
         harmonic_ratio = harmonic_energy / (total_energy + 1e-10)
         return float(harmonic_ratio)

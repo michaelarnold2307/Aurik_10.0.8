@@ -1148,8 +1148,8 @@ class ClickRemovalPhase(PhaseInterface):
 
             # Feature extraction
             click_region = audio[start : end + 1]
-            click_energy = np.sum(click_region**2)
-            click_amplitude = np.max(np.abs(click_region))
+            click_energy: float = float(np.sum(click_region**2))
+            click_amplitude: float = float(np.max(np.abs(click_region)))
 
             # Calculate severity (0-1):
             # - Amplitude contribution: 50%

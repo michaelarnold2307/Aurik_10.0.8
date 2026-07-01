@@ -647,7 +647,7 @@ class HumRemovalPhase(PhaseInterface):
         freqs = np.fft.rfftfreq(fft_size, 1 / self.sample_rate)
         spectrum = np.abs(np.fft.rfft(audio_mono[:fft_size]))
 
-        total_energy = np.sum(spectrum**2)
+        total_energy: float = float(np.sum(spectrum**2))
         threshold_energy = total_energy * 10 ** (threshold_db / 10)
 
         # Check each harmonic
