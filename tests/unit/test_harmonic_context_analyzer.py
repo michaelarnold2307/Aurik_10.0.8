@@ -4,6 +4,8 @@ tests/unit/test_harmonic_context_analyzer.py — §HCA-1 Unit-Tests
 Tests for backend/core/harmonic_context_analyzer.py
 """
 
+import warnings
+
 import numpy as np
 
 
@@ -144,6 +146,19 @@ def test_stereo_audio_accepted():
     mono = _make_chord([261.63, 329.63], sr=44100, duration_s=2.0)
     stereo = np.column_stack([mono, mono])  # (samples, 2)
     result = get_harmonic_context_analyzer().analyze(stereo, sr=44100)
+    assert result is not None
+    assert result.harmonic_mask.ndim == 2
+
+
+def test_channels_first_short_stereo_does_not_warn_about_fft_length():
+    from backend.core.harmonic_context_analyzer import get_harmonic_context_analyzer
+
+    mono = _make_chord([261.63, 329.63], sr=48000, duration_s=1.0)
+    stereo = np.vstack([mono, mono])  # UV3 layout: (channels, samples)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+        warnings.filterwarnings("error", message=".*nperseg.*greater than input length.*", category=UserWarning)
+        result = get_harmonic_context_analyzer().analyze(stereo, sr=48000)
     assert result is not None
     assert result.harmonic_mask.ndim == 2
 

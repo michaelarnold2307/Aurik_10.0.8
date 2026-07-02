@@ -109,7 +109,7 @@ class AdaptiveCoreScheduler:
             # User override, aber warnen wenn suboptimal
             self.num_cores = min(num_cores, self.MAX_CORES)
             if num_cores > self.OPTIMAL_CORES:
-                logger.warning(
+                logger.info(
                     f"Using {self.num_cores} cores (requested {num_cores}). "
                     f"Optimal is {self.OPTIMAL_CORES} for Aurik workload!"
                 )

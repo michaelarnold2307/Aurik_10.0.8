@@ -3676,8 +3676,9 @@ class PerPhaseMusicalGoalsGate:
     """
 
     def __init__(self) -> None:
-        """Initialisiert PMGG with zeroed rollback counters."""
-        self._rollback_count: int = 0  # Pro Restaurierungsaufruf
+        """Initialisiert PMGG with zeroed protection counters."""
+        self._rollback_count: int = 0  # Echte Audio-Rollbacks; PMGG best_effort zählt separat.
+        self._best_effort_count: int = 0  # Pro Restaurierungsaufruf
         self._user_warned: bool = False  # Nutzer-Warnung einmalig
         self._last_retry_budget_policy: dict[str, Any] = {}
         self._last_reconstruction_localized_decision: dict[str, Any] = {}
@@ -3685,6 +3686,7 @@ class PerPhaseMusicalGoalsGate:
     def reset(self) -> None:
         """Setzt Zähler für neuen Restaurierungsaufruf zurück."""
         self._rollback_count = 0
+        self._best_effort_count = 0
         self._user_warned = False
         self._last_retry_budget_policy = {}
         self._last_reconstruction_localized_decision = {}
@@ -3950,10 +3952,13 @@ class PerPhaseMusicalGoalsGate:
             adaptive_goal_thresholds=adaptive_goal_thresholds,
         )
 
-        # Best-Effort-Zähler (Phase wurde mit reduzierter Stärke angewendet, nicht übersprungen)
+        # Best-Effort-Zähler: Phase wurde mit bestmöglicher Stärke angewendet,
+        # nicht auf Vor-Phasen-Audio zurückgerollt. Darf daher den echten
+        # Rollback-Zähler nicht erhöhen, sonst interpretiert UV3 Schutz-Telemetrie
+        # als akustische Rollback-Kaskade.
         if action.startswith("best_effort"):
-            self._rollback_count += 1
-            if self._rollback_count > 3 and not self._user_warned:
+            self._best_effort_count += 1
+            if self._best_effort_count > 3 and not self._user_warned:
                 self._user_warned = True
                 logger.warning(
                     "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, um den Klang zu schützen."
@@ -4068,6 +4073,8 @@ class PerPhaseMusicalGoalsGate:
         if action.startswith("best_effort"):
             log_entry.metadata["recovery_attempted"] = True
             log_entry.metadata["best_possible_reached"] = True  # PMGG always returns best found
+            log_entry.metadata["pmgg_best_effort_count"] = int(self._best_effort_count)
+            log_entry.metadata["pmgg_real_rollback_count"] = int(self._rollback_count)
 
         if self._last_retry_budget_policy:
             log_entry.metadata["retry_budget_policy_active"] = bool(self._last_retry_budget_policy.get("active", False))

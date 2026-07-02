@@ -139,7 +139,7 @@ class RestorationResult:
     confidence: float = 1.0  # Gesamtkonfidenz ∈ [0,1] (§2.15)
     genealogy: Any | None = None  # RestorationGenealogy (§10.4)
     harmonic_fingerprint: Any | None = None  # Harmonischer Fingerabdruck (§2.28)
-    phase_gate_log: list[str] | None = None  # PMGG-Rollback-Log (§2.29)
+    phase_gate_log: list[str] | None = None  # PMGG-best_effort-Phasen (§2.29)
     adaptive_thresholds: dict[str, float] = field(default_factory=dict)  # Angewandte PMGG-Schwellwerte (§2.2)
     physical_ceiling: dict[str, float] = field(default_factory=dict)  # PhysikalischesDeckenLimit je Ziel (§2.2)
     goal_applicability: dict[str, bool] = field(default_factory=dict)  # GoalApplicabilityFilter-Ergebnis (§2.2)
@@ -256,6 +256,43 @@ def _resolve_noise_texture_rollback_threshold(material_key: str, transfer_chain:
     for stage in transfer_chain or []:
         thresholds.append(_get_noise_texture_rollback_threshold(str(stage).lower()))
     return float(max(thresholds))
+
+
+_AFG_SOFT_BACKOFF_WETS: tuple[float, ...] = (0.75, 0.55, 0.35, 0.20)
+
+
+def _try_artifact_freedom_soft_backoff(
+    artifact_gate: Any,
+    phase_input: np.ndarray,
+    phase_output: np.ndarray,
+    sr: int,
+    material_key: str,
+    phase_id: str,
+    *,
+    goal_weights: dict[str, float] | None = None,
+    restorability_score: float = 65.0,
+    wet_candidates: tuple[float, ...] = _AFG_SOFT_BACKOFF_WETS,
+) -> tuple[np.ndarray | None, Any | None, float | None]:
+    """Sucht den stärksten artifact-freien Teil-Wet-Anteil für eine Phase."""
+    for wet in wet_candidates:
+        wet = float(np.clip(wet, 0.0, 1.0))
+        candidate = np.clip(
+            phase_input * (1.0 - wet) + phase_output * wet,
+            -1.0,
+            1.0,
+        ).astype(np.float32)
+        candidate_result = artifact_gate.evaluate(
+            phase_input,
+            candidate,
+            sr,
+            material_key,
+            phase_id,
+            goal_weights=goal_weights,
+            restorability_score=restorability_score,
+        )
+        if float(getattr(candidate_result, "artifact_freedom", 0.0)) >= 0.95:
+            return candidate, candidate_result, wet
+    return None, None, None
 
 
 # §0k Material-adaptives HPI-Ceiling (Näherungsfunktion; physikalische Obergrenzen je Träger)
@@ -2689,13 +2726,36 @@ class UnifiedRestorerV3:
         if isinstance(chain_src, str):
             _norm = chain_src.replace("->", ">").replace("→", ">")
             _tokens = [p.strip().lower() for p in _norm.split(">") if p.strip()]
-            return _tokens or None
+            return UnifiedRestorerV3._normalize_transfer_chain_order(_tokens)
 
         if isinstance(chain_src, (list, tuple)):
             _out = [str(v).strip().lower() for v in chain_src if str(v).strip()]
-            return _out or None
+            return UnifiedRestorerV3._normalize_transfer_chain_order(_out)
 
         return None
+
+    @staticmethod
+    def _normalize_transfer_chain_order(chain: list[str] | tuple[str, ...] | None) -> list[str] | None:
+        """Ordnet physikalische Träger vor terminale Lossy-Codecs und dedupliziert stabil."""
+        if not chain:
+            return None
+
+        _terminal_codecs = {"mp3_low", "mp3_high", "aac", "streaming", "minidisc"}
+        _seen: set[str] = set()
+        _physical: list[str] = []
+        _terminal: list[str] = []
+        for _raw in chain:
+            _stage = str(_raw).strip().lower()
+            if not _stage or _stage in _seen:
+                continue
+            _seen.add(_stage)
+            if _stage in _terminal_codecs:
+                _terminal.append(_stage)
+            else:
+                _physical.append(_stage)
+
+        _ordered = [*_physical, *_terminal]
+        return _ordered or None
 
     @staticmethod
     def _infer_tape_speed_ips(
@@ -8077,9 +8137,16 @@ class UnifiedRestorerV3:
         _active_chain_list: list[str] = []
         if isinstance(getattr(self, "_active_chain_info", None), dict):
             _raw_chain = self._active_chain_info.get("chain", [])  # type: ignore[attr-defined]
-            _active_chain_list = [str(c).lower() for c in _raw_chain if c] if isinstance(_raw_chain, list) else []
+            _active_chain_list = (
+                self._normalize_transfer_chain_order([str(c).lower() for c in _raw_chain if c]) or []
+                if isinstance(_raw_chain, list)
+                else []
+            )
         if _active_chain_list:
             self._restoration_context["transfer_chain"] = _active_chain_list
+            if isinstance(getattr(self, "_active_chain_info", None), dict):
+                self._active_chain_info["chain"] = list(_active_chain_list)  # type: ignore[index]
+                self._active_chain_info["transfer_chain"] = list(_active_chain_list)  # type: ignore[index]
 
         # §0p [RELEASE_MUST] VocalFocusAnalyzer — nach _restoration_context-Init,
         # vor GoalApplicabilityFilter. Aktivierung: panns_singing ≥ 0.25.
@@ -8919,14 +8986,19 @@ class UnifiedRestorerV3:
                                     )
                                     if _best_ancestor not in _ctx_chain:
                                         _ctx_chain = [_best_ancestor, *_ctx_chain]
+                                    _ctx_chain = self._normalize_transfer_chain_order(_ctx_chain) or []
                                     if isinstance(getattr(self, "_restoration_context", None), dict):
                                         self._restoration_context["transfer_chain"] = _ctx_chain
 
                                     # _active_chain_info nachführen (alle späteren Chain-Reads)
                                     if self._active_chain_info is None:
-                                        self._active_chain_info = {"chain": list(_ctx_chain)}
+                                        self._active_chain_info = {
+                                            "chain": list(_ctx_chain),
+                                            "transfer_chain": list(_ctx_chain),
+                                        }
                                     elif isinstance(self._active_chain_info, dict):
                                         self._active_chain_info["chain"] = list(_ctx_chain)  # type: ignore[index]
+                                        self._active_chain_info["transfer_chain"] = list(_ctx_chain)  # type: ignore[index]
 
                                     logger.warning(
                                         "§2.47a Autonome Neuzuordnung: '%s' → '%s' "
@@ -29788,7 +29860,7 @@ class UnifiedRestorerV3:
                         _best_alpha = float(_micro_alpha)
                         _best_cost = float(_micro_cost)
                         _accepted = True
-                        logger.warning(
+                        logger.info(
                             "ActiveIntervention %s MICRO-FALLBACK applied: alpha=%.2f cost %.4f -> %.4f",
                             phase_id,
                             _micro_alpha,
@@ -29796,6 +29868,9 @@ class UnifiedRestorerV3:
                             _micro_cost,
                         )
                 if not _accepted:
+                    _best_mode = "base_rejected"
+                    _best_alpha = 0.0
+                    _best_cost = float(_cost_base)
                     logger.warning(
                         "ActiveIntervention %s REJECTED: no beneficial score delta (mode=%s, alpha=%.2f)",
                         phase_id,
@@ -29809,6 +29884,10 @@ class UnifiedRestorerV3:
                     _best_targets.get("quiet_zone", {}).get("measured_explosions", "?"),
                 )
                 _best_sig = _base
+                _best_mode = "base_quiet_zone_guard"
+                _best_alpha = 0.0
+                _best_cost = float(_cost_base)
+                _accepted = False
 
             self._active_intervention_log.append(
                 {
@@ -29826,13 +29905,14 @@ class UnifiedRestorerV3:
                 }
             )
 
-            logger.warning(
-                "ActiveIntervention %s SELECTED mode=%s alpha=%.2f cost %.4f -> %.4f (targets_met=%s)",
+            logger.info(
+                "ActiveIntervention %s SELECTED mode=%s alpha=%.2f cost %.4f -> %.4f (accepted=%s targets_met=%s)",
                 phase_id,
                 _best_mode,
                 _best_alpha,
                 _cost_base,
                 _best_cost,
+                _accepted,
                 _best_targets_met,
             )
 
@@ -31725,11 +31805,12 @@ class UnifiedRestorerV3:
                                 except Exception as _exc:
                                     logger.debug("audio_update_callback (PMGG success) failed: %s", _exc)
                             logger.info(
-                                "✅ %s: PMGG action=%s strength=%.2f rollbacks=%d",
+                                "✅ %s: PMGG action=%s strength=%.2f real_rollbacks=%d best_effort=%d",
                                 phase_id,
                                 _pmgg_entry.action,
                                 _pmgg_entry.strength_used,
                                 int(getattr(_pmgg_gate, "_rollback_count", 0)),
+                                int(getattr(_pmgg_gate, "_best_effort_count", 0)),
                             )
                             if str(_pmgg_entry.action).startswith("best_effort") and not _is_restorative_phase:
                                 # Fix 9: Restorative Phasen (Dereverb, Denoise, Dropout-Repair)
@@ -32812,51 +32893,98 @@ class UnifiedRestorerV3:
                         )
                         if _afg_result.artifact_freedom < 0.95:
                             _dr = _afg_result.detail_report
-                            logger.warning(
-                                "§2.49 artifact_freedom=%.3f < 0.95 after %s (%d artifacts) "
-                                "[PE:%d PC:%d MN:%d SH:%d MR:%d wsum=%.3f] → rollback",
-                                _afg_result.artifact_freedom,
+                            _afg_rescued = False
+                            _afg_failed_score = float(_afg_result.artifact_freedom)
+                            _afg_failed_artifacts = int(len(_afg_result.detected_artifacts))
+                            _afg_candidate, _afg_candidate_result, _afg_wet = _try_artifact_freedom_soft_backoff(
+                                _artifact_gate,
+                                _afg_phase_input,
+                                current_audio,
+                                sample_rate,
+                                _mat_str,
                                 phase_id,
-                                len(_afg_result.detected_artifacts),
-                                _dr.get("n_pre_echo", 0),
-                                _dr.get("n_phase_cancellation", 0),
-                                _dr.get("n_musical_noise", 0),
-                                _dr.get("n_spectral_holes", 0),
-                                _dr.get("n_metallic_ringing", 0),
-                                _dr.get("weighted_artifact_sum", 0.0),
+                                goal_weights=getattr(self, "_song_goal_weights", None),
+                                restorability_score=float(getattr(self, "_last_restorability_score", 65.0)),
                             )
-                            self._register_phase_goal_conflict_event(
-                                phase_id,
-                                "artifact_freedom_rollback",
-                                {
-                                    "artifact_freedom": round(float(_afg_result.artifact_freedom), 4),
-                                    "weighted_artifact_sum": round(float(_dr.get("weighted_artifact_sum", 0.0)), 4),
-                                    "n_detected_artifacts": int(len(_afg_result.detected_artifacts)),
-                                    "n_pre_echo": int(_dr.get("n_pre_echo", 0)),
-                                    "n_phase_cancellation": int(_dr.get("n_phase_cancellation", 0)),
-                                    "n_musical_noise": int(_dr.get("n_musical_noise", 0)),
-                                    "n_spectral_holes": int(_dr.get("n_spectral_holes", 0)),
-                                    "n_metallic_ringing": int(_dr.get("n_metallic_ringing", 0)),
-                                },
-                            )
-                            # Roll back to audio state just before this phase ran
-                            current_audio = np.clip(_afg_phase_input.copy(), -1.0, 1.0)
-                            # §Wall-Time-Budget Refund: AFG-rolled-back phase should not
-                            # consume budget for subsequent phases — the audio change is
-                            # undone, so treating the time as spent is unfair to remaining phases.
-                            if _last_phase_non_exempt_s > 0.0:
-                                _pipeline_non_exempt_elapsed_s = max(
-                                    0.0,
-                                    _pipeline_non_exempt_elapsed_s - _last_phase_non_exempt_s,
+                            if (
+                                _afg_candidate is not None
+                                and _afg_candidate_result is not None
+                                and _afg_wet is not None
+                            ):
+                                current_audio = _afg_candidate
+                                _afg_result = _afg_candidate_result
+                                _afg_best_clean_checkpoint = current_audio.copy()
+                                _afg_best_clean_phase = phase_id
+                                _min_per_phase_afg_score = min(
+                                    _min_per_phase_afg_score,
+                                    float(_afg_candidate_result.artifact_freedom),
                                 )
+                                _afg_rescued = True
                                 logger.info(
-                                    "§Wall-Time-Budget Refund (AFG-Rollback %s): %.0f s zurückgebucht "
-                                    "(non-exempt now %.0f s / budget %.0f s)",
+                                    "§2.49 AFG soft-backoff after %s: artifact_freedom %.3f→%.3f wet=%.2f",
                                     phase_id,
-                                    _last_phase_non_exempt_s,
-                                    _pipeline_non_exempt_elapsed_s,
-                                    _pipeline_wall_budget,
+                                    _afg_failed_score,
+                                    float(_afg_candidate_result.artifact_freedom),
+                                    _afg_wet,
                                 )
+                                self._register_phase_goal_conflict_event(
+                                    phase_id,
+                                    "artifact_freedom_soft_backoff",
+                                    {
+                                        "artifact_freedom_before": round(float(_afg_failed_score), 4),
+                                        "artifact_freedom_after": round(
+                                            float(_afg_candidate_result.artifact_freedom), 4
+                                        ),
+                                        "soft_wet": round(float(_afg_wet), 4),
+                                        "n_detected_artifacts_before": int(_afg_failed_artifacts),
+                                    },
+                                )
+                            if not _afg_rescued:
+                                logger.warning(
+                                    "§2.49 artifact_freedom=%.3f < 0.95 after %s (%d artifacts) "
+                                    "[PE:%d PC:%d MN:%d SH:%d MR:%d wsum=%.3f] → rollback",
+                                    _afg_result.artifact_freedom,
+                                    phase_id,
+                                    len(_afg_result.detected_artifacts),
+                                    _dr.get("n_pre_echo", 0),
+                                    _dr.get("n_phase_cancellation", 0),
+                                    _dr.get("n_musical_noise", 0),
+                                    _dr.get("n_spectral_holes", 0),
+                                    _dr.get("n_metallic_ringing", 0),
+                                    _dr.get("weighted_artifact_sum", 0.0),
+                                )
+                                self._register_phase_goal_conflict_event(
+                                    phase_id,
+                                    "artifact_freedom_rollback",
+                                    {
+                                        "artifact_freedom": round(float(_afg_result.artifact_freedom), 4),
+                                        "weighted_artifact_sum": round(float(_dr.get("weighted_artifact_sum", 0.0)), 4),
+                                        "n_detected_artifacts": int(len(_afg_result.detected_artifacts)),
+                                        "n_pre_echo": int(_dr.get("n_pre_echo", 0)),
+                                        "n_phase_cancellation": int(_dr.get("n_phase_cancellation", 0)),
+                                        "n_musical_noise": int(_dr.get("n_musical_noise", 0)),
+                                        "n_spectral_holes": int(_dr.get("n_spectral_holes", 0)),
+                                        "n_metallic_ringing": int(_dr.get("n_metallic_ringing", 0)),
+                                    },
+                                )
+                                # Roll back to audio state just before this phase ran
+                                current_audio = np.clip(_afg_phase_input.copy(), -1.0, 1.0)
+                                # §Wall-Time-Budget Refund: AFG-rolled-back phase should not
+                                # consume budget for subsequent phases — the audio change is
+                                # undone, so treating the time as spent is unfair to remaining phases.
+                                if _last_phase_non_exempt_s > 0.0:
+                                    _pipeline_non_exempt_elapsed_s = max(
+                                        0.0,
+                                        _pipeline_non_exempt_elapsed_s - _last_phase_non_exempt_s,
+                                    )
+                                    logger.info(
+                                        "§Wall-Time-Budget Refund (AFG-Rollback %s): %.0f s zurückgebucht "
+                                        "(non-exempt now %.0f s / budget %.0f s)",
+                                        phase_id,
+                                        _last_phase_non_exempt_s,
+                                        _pipeline_non_exempt_elapsed_s,
+                                        _pipeline_wall_budget,
+                                    )
                         else:
                             # Update best artifact-free checkpoint
                             _afg_best_clean_checkpoint = current_audio.copy()

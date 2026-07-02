@@ -149,6 +149,7 @@ class TestPMGGReset:
             pass  # Attribut nicht vorhanden → kein Test nötig
         gate.reset()
         assert getattr(gate, "_rollback_count", 0) == 0
+        assert getattr(gate, "_best_effort_count", 0) == 0
 
     def test_04_reset_idempotent(self, gate):
         gate.reset()
@@ -385,13 +386,30 @@ class TestPMGGRegression:
         assert np.isfinite(out).all()
         assert np.max(np.abs(out)) <= 1.0 + 1e-6
 
-    def test_22_rollback_count_increments(self, gate, audio_5s):
+    def test_22_best_effort_does_not_increment_real_rollback_count(self, gate, audio_5s, monkeypatch):
+        """PMGG best_effort ist kein Audio-Rollback und darf Rollback-Telemetrie nicht aufblasen."""
+
         gate.reset()
+
+        def _force_best_effort(*_args, **_kwargs):
+            scores = {"natuerlichkeit": 0.2}
+            return audio_5s.copy(), scores, "best_effort_r1", 0.35
+
+        monkeypatch.setattr(gate, "_run_with_retry", _force_best_effort)
         count_before = getattr(gate, "_rollback_count", 0)
-        gate.wrap_phase(_MockZeroPhase(), audio_5s, SR)
+        _, _, entry = gate.wrap_phase(
+            _MockZeroPhase(),
+            audio_5s,
+            SR,
+            scores_before={"natuerlichkeit": 0.5},
+            applicable_goals={"natuerlichkeit"},
+        )
         count_after = getattr(gate, "_rollback_count", 0)
-        # Count hat sich ggf. erhöht (wenn Rollback ausgelöst wurde)
-        assert count_after >= count_before
+        assert entry.action == "best_effort_r1"
+        assert count_after == count_before == 0
+        assert getattr(gate, "_best_effort_count", 0) == 1
+        assert entry.metadata["pmgg_real_rollback_count"] == 0
+        assert entry.metadata["pmgg_best_effort_count"] == 1
 
 
 # ---------------------------------------------------------------------------

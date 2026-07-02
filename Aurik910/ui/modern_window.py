@@ -9123,8 +9123,12 @@ class ModernTitleBar(QWidget):
 
     def set_status(self, text, color="#7B93B8"):
         """Aktualisiert status indicator."""
+        safe_color = str(color).strip()
+        if not QColor(safe_color).isValid():
+            logger.debug("Ungültige Statusfarbe verworfen: %r", color)
+            safe_color = "#7B93B8"
         self.status_label.setText(text)
-        self.status_label.setStyleSheet(f"color: {color}; padding: 5px 15px;")
+        self.status_label.setStyleSheet(f"color: {safe_color}; padding: 5px 15px;")
 
 
 class ModernButton(QPushButton):

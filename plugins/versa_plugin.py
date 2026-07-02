@@ -16,10 +16,12 @@ CPU-Only.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
 import threading
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,6 +56,19 @@ _SINGMOS_MAX_SAMPLES_16K: int = 30 * _MODEL_SR  # 30 s @ 16 kHz = 480 000 sample
 
 _lock = threading.Lock()
 _instance: VersaPlugin | None = None
+
+
+@contextlib.contextmanager
+def _suppress_s3prl_timm_deprecation():
+    """Unterdrueckt nur die bekannte s3prl/timm-Import-Deprecation."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Importing from timm\.models\.layers is deprecated.*",
+            category=FutureWarning,
+            module=r"timm\.models\.layers",
+        )
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +208,8 @@ class VersaPlugin:
             _pm_path = _VERSA_PATH / "versa" / "utterance_metrics" / "pseudo_mos.py"
             _spec = importlib.util.spec_from_file_location("versa_pseudo_mos", str(_pm_path))
             _pm_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-            _spec.loader.exec_module(_pm_mod)  # type: ignore[union-attr]
+            with _suppress_s3prl_timm_deprecation():
+                _spec.loader.exec_module(_pm_mod)  # type: ignore[union-attr]
             pseudo_mos_setup = _pm_mod.pseudo_mos_setup
             pseudo_mos_metric = _pm_mod.pseudo_mos_metric
 
@@ -204,12 +220,13 @@ class VersaPlugin:
                 _versa_use_gpu = _get_dev("VersaSingMOS") != "cpu"
             except Exception:
                 _versa_use_gpu = False
-            predictor_dict, predictor_fs = pseudo_mos_setup(
-                predictor_types=["singmos_pro"],
-                predictor_args={"singmos_pro": {"fs": _MODEL_SR}},
-                cache_dir=_HUB_CACHE,
-                use_gpu=_versa_use_gpu,
-            )
+            with _suppress_s3prl_timm_deprecation():
+                predictor_dict, predictor_fs = pseudo_mos_setup(
+                    predictor_types=["singmos_pro"],
+                    predictor_args={"singmos_pro": {"fs": _MODEL_SR}},
+                    cache_dir=_HUB_CACHE,
+                    use_gpu=_versa_use_gpu,
+                )
             self._predictor_dict = predictor_dict
             self._predictor_fs = predictor_fs
             self._pseudo_mos_metric = pseudo_mos_metric

@@ -1248,13 +1248,27 @@ class TapeHissReductionPhase(PhaseInterface):
 
         # §BandAnchor: spektrale Grundbalance bei zu heller/zu dünner Ausgabe
         # sanft zurück auf den Originalträger ziehen, ohne den Hiss-Fix zu verlieren.
+        _band_anchor_lowmid_ratio_29 = 1.0
+        _band_anchor_presence_ratio_29 = 1.0
+        _band_anchor_air_ratio_29 = 1.0
+        _band_anchor_mix_29 = 0.0
         try:
-            _anchor_src_29 = audio.mean(axis=0) if audio.ndim == 2 and audio.shape[0] <= 2 else audio
-            _anchor_proc_29 = (
-                audio_processed.mean(axis=0)
-                if audio_processed.ndim == 2 and audio_processed.shape[0] <= 2
-                else audio_processed
-            )
+
+            def _anchor_mono_29(sig: np.ndarray) -> np.ndarray:
+                _arr = np.asarray(sig, dtype=np.float32)
+                if _arr.ndim == 1:
+                    return cast(np.ndarray, _arr)
+                if _arr.ndim == 2:
+                    if _arr.shape[0] <= 8 and _arr.shape[1] > _arr.shape[0]:
+                        return cast(np.ndarray, np.asarray(np.mean(_arr, axis=0), dtype=np.float32))
+                    if _arr.shape[1] <= 8:
+                        return cast(np.ndarray, np.asarray(np.mean(_arr, axis=1), dtype=np.float32))
+                    _axis = 0 if _arr.shape[0] < _arr.shape[1] else 1
+                    return cast(np.ndarray, np.asarray(np.mean(_arr, axis=_axis), dtype=np.float32))
+                return cast(np.ndarray, np.asarray(np.ravel(_arr), dtype=np.float32))
+
+            _anchor_src_29 = _anchor_mono_29(audio)
+            _anchor_proc_29 = _anchor_mono_29(audio_processed)
             if len(_anchor_src_29) >= 2048 and len(_anchor_proc_29) >= 2048:
 
                 def _band_energy_29(sig: np.ndarray, lo: float, hi: float) -> float:
@@ -1274,6 +1288,9 @@ class TapeHissReductionPhase(PhaseInterface):
                 _lowmid_ratio_29 = _proc_lowmid_29 / (_src_lowmid_29 + 1e-18)
                 _presence_ratio_29 = _proc_presence_29 / (_src_presence_29 + 1e-18)
                 _air_ratio_29 = _proc_air_29 / (_src_air_29 + 1e-18)
+                _band_anchor_lowmid_ratio_29 = float(_lowmid_ratio_29)
+                _band_anchor_presence_ratio_29 = float(_presence_ratio_29)
+                _band_anchor_air_ratio_29 = float(_air_ratio_29)
 
                 _anchor_need_29 = 0.0
                 if _lowmid_ratio_29 < 0.86:
@@ -1285,6 +1302,7 @@ class TapeHissReductionPhase(PhaseInterface):
 
                 if _anchor_need_29 > 0.0:
                     _anchor_mix_29 = float(np.clip(_anchor_need_29 * 0.65, 0.0, 0.65))
+                    _band_anchor_mix_29 = float(_anchor_mix_29)
                     audio_processed = ((1.0 - _anchor_mix_29) * audio_processed + _anchor_mix_29 * audio).astype(
                         np.float32
                     )
@@ -1328,6 +1346,10 @@ class TapeHissReductionPhase(PhaseInterface):
                 "lag_output_corrected_samples": int(_stereo_lag_stats["lag_output_corrected_samples"]),
                 "quiet_zone_limited_frames": int(_quiet_zone_stats_p29["quiet_zone_limited_frames"]),
                 "quiet_zone_max_delta_db": float(_quiet_zone_stats_p29["quiet_zone_max_delta_db"]),
+                "band_anchor_lowmid_ratio": round(float(_band_anchor_lowmid_ratio_29), 4),
+                "band_anchor_presence_ratio": round(float(_band_anchor_presence_ratio_29), 4),
+                "band_anchor_air_ratio": round(float(_band_anchor_air_ratio_29), 4),
+                "band_anchor_original_blend": round(float(_band_anchor_mix_29), 4),
             },
             warnings=[] if rt_factor < 0.12 else [f"Performance sub-optimal: {rt_factor:.2f}× realtime"],
         )

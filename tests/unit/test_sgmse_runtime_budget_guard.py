@@ -6,11 +6,12 @@ Ensures long ML paths degrade safely to WPE fallback instead of hanging.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from plugins.sgmse_plugin import SGMSEPlusPlugin
+from plugins.sgmse_plugin import SGMSEPlusPlugin, _quarantine_corrupt_torchscript
 
 
 def test_chunked_runtime_budget_triggers_fallback_for_remaining_audio() -> None:
@@ -57,3 +58,19 @@ def test_forward_timeout_guard_raises_timeout() -> None:
 
     with pytest.raises(TimeoutError):
         plugin._run_with_timeout(_slow_call, timeout_s=0.001)
+
+
+def test_corrupt_torchscript_quarantine_moves_bad_local_model(tmp_path: Path) -> None:
+    """A corrupt local TorchScript must be moved out of the production model path."""
+    model_path = tmp_path / "sgmse_plus.ts"
+    model_path.write_bytes(b"not a torchscript archive")
+
+    quarantined = _quarantine_corrupt_torchscript(
+        model_path,
+        RuntimeError("invalid magic number for TorchScript archive"),
+    )
+
+    assert quarantined is not None
+    assert not model_path.exists()
+    assert quarantined.exists()
+    assert quarantined.read_bytes() == b"not a torchscript archive"

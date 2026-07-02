@@ -253,18 +253,22 @@ class PluginLifecycleManager:
         free_mb = self._free_mb()
         swap_pct = self._swap_percent()
         swap_emergency = self._swap_pressure_requires_evict(ram_pct=ram_pct, free_mb=free_mb, swap_pct=swap_pct)
+        pipeline_emergency = (
+            self._pipeline_active > 0 and ram_pct >= _PIPELINE_EMERGENCY_PCT and free_mb < _SWAP_RELAX_FREE_MB
+        )
         # §Safety: Während Pipeline-Ausführung normalerweise keine automatische
         # Eviction — ONNX-Session-Destruktoren können mit laufender Inferenz
         # kollidieren. ABER: bei kritischem RAM-Druck (>= 82%) MUSS trotzdem
         # evicted werden, sonst killt systemd-oomd den gesamten Prozess.
         if self._pipeline_active > 0 and required_mb <= 0:
-            if ram_pct < _PIPELINE_EMERGENCY_PCT and free_mb >= _MIN_FREE_MB_HARD and not swap_emergency:
+            if not pipeline_emergency and free_mb >= _MIN_FREE_MB_HARD and not swap_emergency:
                 return 0
             _now = time.monotonic()
             if _now - self._last_swap_warn_ts >= 60.0:
-                logger.warning(
-                    "PLM: Pipeline aktiv, aber Speicher kritisch (RAM=%.0f %%, frei=%.0f MB, swap=%.0f %%) "
-                    "— erzwinge Notfall-Eviction inaktiver Plugins",
+                _log_fn = logger.warning if (free_mb < _MIN_FREE_MB_HARD or swap_emergency) else logger.info
+                _log_fn(
+                    "PLM: Pipeline aktiv, Speicherpflege (RAM=%.0f %%, frei=%.0f MB, swap=%.0f %%) "
+                    "— evicte inaktive Plugins",
                     ram_pct,
                     free_mb,
                     swap_pct,
@@ -276,6 +280,7 @@ class PluginLifecycleManager:
             ram_pct > _RAM_EVICT_THRESHOLD_PCT
             or free_mb < _MIN_FREE_MB_HARD
             or (required_mb > 0 and free_mb < required_mb)
+            or pipeline_emergency
             or swap_emergency
         )
         if swap_emergency and not (ram_pct > _RAM_EVICT_THRESHOLD_PCT or free_mb < _MIN_FREE_MB_HARD):

@@ -73,7 +73,14 @@ from typing import Any
 import numpy as np
 from scipy import signal
 
-from backend.core.audio_utils import safe_to_mono
+from backend.core.audio_utils import (
+    audio_sample_count,
+    restore_layout,
+    safe_to_mono,
+    stereo_channel_view,
+    stereo_like,
+    to_channels_last,
+)
 from backend.core.defect_scanner import MaterialType
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
@@ -361,11 +368,12 @@ class WowFlutterFix(PhaseInterface):
         Returns:
             PhaseResult with wow/flutter corrected audio
         """
+        _material_raw = kwargs.get("material", material_type) if material_type == "unknown" else material_type
         material: MaterialType = (
-            material_type
-            if isinstance(material_type, MaterialType)
-            else MaterialType(material_type)
-            if material_type in {m.value for m in MaterialType}
+            _material_raw
+            if isinstance(_material_raw, MaterialType)
+            else MaterialType(_material_raw)
+            if isinstance(_material_raw, str) and _material_raw in {m.value for m in MaterialType}
             else MaterialType.VINYL
         )
         self.validate_input(audio)
@@ -416,9 +424,8 @@ class WowFlutterFix(PhaseInterface):
         strength = float(self.CORRECTION_STRENGTH.get(material, 0.7) * _effective_strength)
         threshold = self.DETECTION_THRESHOLD.get(material, 0.5)
 
-        # Convert to mono for pitch analysis
         is_stereo = audio.ndim == 2
-        mono = np.mean(audio, axis=1) if is_stereo else audio.copy()
+        mono = safe_to_mono(audio).astype(np.float32) if is_stereo else audio.copy()
 
         _report_progress(5.0, "Wow/Flutter: Tonhöhen-Analyse startet")
         # ML-Hybrid Mode Routing (v3.0)
@@ -570,62 +577,94 @@ class WowFlutterFix(PhaseInterface):
         if material in (MaterialType.TAPE, MaterialType.CASSETTE):
             _MIN_CONFIDENCE_FOR_CORRECTION = 0.25  # tape/cassette: transport-start-aware lower threshold
         if _mean_conf < _MIN_CONFIDENCE_FOR_CORRECTION:
-            logger.info(
-                "Phase 12: konservativer Fallback aktiv (Konfidenz %.3f < %.2f) — "
-                "Transportstabilisierung statt Vollkorrektur",
-                _mean_conf,
-                _MIN_CONFIDENCE_FOR_CORRECTION,
-            )
-            # Transport-Level-Stabilisierung auch im Low-Confidence-Pfad,
-            # damit kein Komplett-Skip bei Kassetten-/Bandmaterial entsteht.
-            n_level_dips_repaired = 0
-            # CASSETTE + multi-chain (e.g. vinyl→tape→mp3): trigger also when
-            # TAPE_HEAD_LEVEL_DIP was detected via defect_locations (§2.46a transfer chain)
+            # -------------------------------------------------------------------
+            # Tier-3-Fallback: Instantan-Frequenz-Tracking (IEC 60386, SNR-robust)
+            # Wird aktiviert wenn pYIN/BasicPitch für rauschiges Kassetten-/
+            # Bandmaterial völlig scheitert (Konfidenz ≈ 0.000).
+            # Funktioniert ohne Voiced-Detection; bei Pitch-Unsicherheit bleibt
+            # die nicht-destruktive Transport-Level-Stabilisierung aktiv.
+            # -------------------------------------------------------------------
             _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE, MaterialType.CASSETTE}
             _mat_enum = material if isinstance(material, MaterialType) else None
-            _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
             _is_primary_tape = _mat_enum in _TAPE_LEVEL_MATERIALS
-            if (_is_primary_tape or _has_tape_dip_defect) and _effective_strength > 0.0:
-                audio, n_level_dips_repaired = self._stabilize_tape_level(
-                    audio, sample_rate, _effective_strength, is_primary_tape=_is_primary_tape
+            _centroid_succeeded = False
+
+            if _is_primary_tape and _effective_strength > 0.0:
+                try:
+                    _c_pitch, _c_conf = self._estimate_speed_curve_from_instantaneous_frequency(mono, sample_rate)
+                    _c_valid = _c_conf[_c_conf > 0]
+                    _c_mean_conf = float(np.mean(_c_valid)) if len(_c_valid) > 0 else 0.0
+                    if _c_pitch.size >= 4 and _c_mean_conf >= 0.15:
+                        pitch_trajectory = _c_pitch
+                        confidence = _c_conf
+                        _mean_conf = _c_mean_conf
+                        _centroid_succeeded = True
+                        logger.info(
+                            "Phase 12: Instantan-Frequenz-Fallback aktiviert — "
+                            "Konfidenz %.3f, T=%d Frames, material=%s",
+                            _mean_conf,
+                            len(pitch_trajectory),
+                            material.value,
+                        )
+                except Exception as _c_exc:
+                    logger.warning("Phase 12 IF-Fallback fehlgeschlagen (%s) — Transportstabilisierung", _c_exc)
+
+            if not _centroid_succeeded:
+                logger.info(
+                    "Phase 12: konservativer Fallback aktiv (Konfidenz %.3f < %.2f) — "
+                    "Transportstabilisierung statt Vollkorrektur",
+                    _mean_conf,
+                    _MIN_CONFIDENCE_FOR_CORRECTION,
                 )
-                if n_level_dips_repaired > 0:
-                    logger.info(
-                        "Phase 12 tape level stabilizer (low confidence path): %d dips repaired",
-                        n_level_dips_repaired,
+                # Transport-Level-Stabilisierung auch im Low-Confidence-Pfad,
+                # damit kein Komplett-Skip bei Kassetten-/Bandmaterial entsteht.
+                n_level_dips_repaired = 0
+                # CASSETTE + multi-chain (e.g. vinyl→tape→mp3): trigger also when
+                # TAPE_HEAD_LEVEL_DIP was detected via defect_locations (§2.46a transfer chain)
+                _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
+                if (_is_primary_tape or _has_tape_dip_defect) and _effective_strength > 0.0:
+                    audio, n_level_dips_repaired = self._stabilize_tape_level(
+                        audio, sample_rate, _effective_strength, is_primary_tape=_is_primary_tape
                     )
-            audio, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
-                _original_audio,
-                audio,
-                material,
-            )
-            audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
-            audio = np.clip(audio, -1.0, 1.0)
-            return PhaseResult(
-                success=True,
-                audio=audio,
-                metrics={
-                    "wow_flutter_detected": False,
-                    "max_deviation_percent": 0.0,
-                    "correction_applied": 0.0,
-                    "material": material.value,
-                    "mean_confidence": _mean_conf,
-                    "quality_mode": quality_mode,
-                    "skipped_reason": "low_confidence_fallback",
-                    "tape_level_dips_repaired": n_level_dips_repaired,
-                },
-                execution_time_seconds=time.time() - start_time,
-                metadata={
-                    "algorithm": "confidence_guard_conservative_fallback",
-                    "version": "4.2_confidence_guard_fallback",
-                    "ml_hybrid": use_ml_hybrid,
-                    "polyphonic": _poly_applied,
-                    "phase_locality_factor": phase_locality_factor,
-                    "effective_strength": _effective_strength,
-                    "rms_drop_db": _rms_drop_db,
-                    "loudness_makeup_db": _makeup_db,
-                },
-            )
+                    if n_level_dips_repaired > 0:
+                        logger.info(
+                            "Phase 12 tape level stabilizer (low confidence path): %d dips repaired",
+                            n_level_dips_repaired,
+                        )
+                audio, _rms_drop_db, _makeup_db = self._preserve_phase_loudness(
+                    _original_audio,
+                    audio,
+                    material,
+                )
+                audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+                audio = np.clip(audio, -1.0, 1.0)
+                return PhaseResult(
+                    success=True,
+                    audio=audio,
+                    metrics={
+                        "wow_flutter_detected": False,
+                        "max_deviation_percent": 0.0,
+                        "correction_applied": _effective_strength if n_level_dips_repaired > 0 else 0.0,
+                        "material": material.value,
+                        "mean_confidence": _mean_conf,
+                        "quality_mode": quality_mode,
+                        "skipped_reason": "low_confidence_fallback",
+                        "tape_level_dips_repaired": n_level_dips_repaired,
+                    },
+                    execution_time_seconds=time.time() - start_time,
+                    metadata={
+                        "algorithm": "confidence_guard_conservative_fallback",
+                        "version": "4.2_confidence_guard_fallback",
+                        "ml_hybrid": use_ml_hybrid,
+                        "polyphonic": _poly_applied,
+                        "phase_locality_factor": phase_locality_factor,
+                        "effective_strength": _effective_strength,
+                        "rms_drop_db": _rms_drop_db,
+                        "loudness_makeup_db": _makeup_db,
+                    },
+                )
+            # IF-Fallback erfolgreich → weiter mit normaler Korrekturpipeline
+            # (_fit_sinusoidal_wow_curve → _separate_wow_flutter → _calculate_stretch_factors)
 
         pitch_trajectory, _sinusoidal_wow_profile = self._fit_sinusoidal_wow_curve(
             pitch_trajectory,
@@ -670,7 +709,7 @@ class WowFlutterFix(PhaseInterface):
 
             # Step 6c (also in no-wow/flutter path): Tape level stabilization
             n_level_dips_repaired = 0
-            _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
+            _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE, MaterialType.CASSETTE}
             _mat_enum = material if isinstance(material, MaterialType) else None
             _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
             _is_primary_tape = _mat_enum in _TAPE_LEVEL_MATERIALS
@@ -784,7 +823,7 @@ class WowFlutterFix(PhaseInterface):
         _locality_coverage = 0.0
         stretch_factors, _locality_coverage = self._apply_defect_locality_to_stretch_factors(
             stretch_factors,
-            audio_length_samples=int(audio.shape[0] if audio.ndim == 2 else len(audio)),
+            audio_length_samples=audio_sample_count(audio),
             sample_rate=sample_rate,
             defect_locations=kwargs.get("defect_locations"),
         )
@@ -831,8 +870,9 @@ class WowFlutterFix(PhaseInterface):
             #   R_out = Mid_out - Side_out = R_in[src_pos[t]]  (mathematisch exakt)
             # Beide Kanäle erhalten dasselbe src_pos-Mapping → ZERO L/R Zeitversatz.
             # PSOLA läuft ausschließlich im Mono-Pfad (unten) wo es kein L/R gibt.
-            _mid_ch = (audio[:, 0].astype(np.float32) + audio[:, 1].astype(np.float32)) * 0.5
-            _side_ch = (audio[:, 0].astype(np.float32) - audio[:, 1].astype(np.float32)) * 0.5
+            _left_ch, _right_ch = stereo_channel_view(audio)
+            _mid_ch = (_left_ch.astype(np.float32) + _right_ch.astype(np.float32)) * 0.5
+            _side_ch = (_left_ch.astype(np.float32) - _right_ch.astype(np.float32)) * 0.5
             # §2.51 L/R-Timing-Invariante (v9.11.17): BEIDE M/S-Kanäle MÜSSEN denselben
             # Algorithmus verwenden.  PSOLA (OLA-Grain-Grenzen, pYIN-Perioden) und
             # Phase-Vocoder (np.interp-Sample-Remapping) haben verschiedene effektive
@@ -866,14 +906,14 @@ class WowFlutterFix(PhaseInterface):
                 )
             restored_left = (_mid_stretched[:_n_ms] + _side_stretched[:_n_ms]).astype(audio.dtype)
             restored_right = (_mid_stretched[:_n_ms] - _side_stretched[:_n_ms]).astype(audio.dtype)
-            _p12_n = min(len(restored_left), len(restored_right), audio.shape[0])
-            if _p12_n < audio.shape[0]:
+            _p12_n = min(len(restored_left), len(restored_right), audio_sample_count(audio))
+            if _p12_n < audio_sample_count(audio):
                 logger.debug(
                     "phase_12: M/S-Längenangleichung: orig=%d → %d",
-                    audio.shape[0],
+                    audio_sample_count(audio),
                     _p12_n,
                 )
-            restored = np.column_stack([restored_left[:_p12_n], restored_right[:_p12_n]])
+            restored = stereo_like(restored_left[:_p12_n], restored_right[:_p12_n], audio)
         else:
             if _use_harm_iso:
                 # §DDSP-Harmonic: Zeitstreckung nur auf harmonischen Anteil.
@@ -887,12 +927,18 @@ class WowFlutterFix(PhaseInterface):
         # voiced regions (harmonic misalignment). Apply PGHI-consistent phase
         # regularisation to restore natural harmonic phase relationships.
         try:
-            _orig_mono = np.mean(audio, axis=1).astype(np.float64) if is_stereo else np.asarray(audio, dtype=np.float64)
+            _orig_mono = safe_to_mono(audio).astype(np.float64) if is_stereo else np.asarray(audio, dtype=np.float64)
             if is_stereo:
-                _res_mid = np.mean(restored, axis=1).astype(np.float64)
+                _res_mid = safe_to_mono(restored).astype(np.float64)
                 _res_mid_coh = self._apply_neural_phase_coherence(_res_mid, sample_rate, reference=_orig_mono)
                 _coh_diff = _res_mid_coh - _res_mid
-                restored = restored + _coh_diff[:, np.newaxis] * 0.5  # Symmetric M/S injection
+                _res_left, _res_right = stereo_channel_view(restored)
+                _n_coh = min(len(_res_left), len(_res_right), len(_coh_diff))
+                _left_coh = _res_left.copy()
+                _right_coh = _res_right.copy()
+                _left_coh[:_n_coh] += _coh_diff[:_n_coh] * 0.5
+                _right_coh[:_n_coh] += _coh_diff[:_n_coh] * 0.5
+                restored = stereo_like(_left_coh, _right_coh, restored)
                 restored = np.clip(restored, -1.0, 1.0)
             else:
                 _rest_ref = np.asarray(audio, dtype=np.float64) if len(audio) == len(restored) else None
@@ -902,7 +948,7 @@ class WowFlutterFix(PhaseInterface):
 
         _report_progress(82.0, "Wow/Flutter: Zeitstreckung abgeschlossen")
         # Step 6: Verify correction (measure residual deviation)
-        restored_mono = np.mean(restored, axis=1) if is_stereo else restored
+        restored_mono = safe_to_mono(restored) if is_stereo else restored
 
         # Step 6b: Targeted transport bump repair (impulsive micro-speed jumps 50–300 ms)
         bump_locations = kwargs.get("transport_bump_locations")
@@ -961,7 +1007,7 @@ class WowFlutterFix(PhaseInterface):
                 _bump_strength,
                 protected_zones=_p12_protected_zones or None,
             )
-            restored_mono = np.mean(restored, axis=1) if is_stereo else restored
+            restored_mono = safe_to_mono(restored) if is_stereo else restored
             logger.info(
                 "Phase 12 transport_bump repair: %d/%d bumps repaired (strength=%.3f, conf=%.3f)",
                 n_bumps_repaired,
@@ -978,7 +1024,7 @@ class WowFlutterFix(PhaseInterface):
         # Also triggers for multi-chain material (e.g. vinyl→tape→mp3) when
         # TAPE_HEAD_LEVEL_DIP was detected via defect_locations (§2.46a).
         n_level_dips_repaired = 0
-        _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE}
+        _TAPE_LEVEL_MATERIALS = {MaterialType.TAPE, MaterialType.REEL_TAPE, MaterialType.CASSETTE}
         _mat_enum = material if isinstance(material, MaterialType) else None
         _report_progress(90.0, "Wow/Flutter: Impuls-Reparaturen abgeschlossen")
         _has_tape_dip_defect = bool((kwargs.get("defect_locations") or {}).get("tape_head_level_dip"))
@@ -988,7 +1034,7 @@ class WowFlutterFix(PhaseInterface):
                 restored, sample_rate, _effective_strength, is_primary_tape=_is_primary_tape
             )
             if n_level_dips_repaired > 0:
-                restored_mono = np.mean(restored, axis=1) if is_stereo else restored
+                restored_mono = safe_to_mono(restored) if is_stereo else restored
                 logger.info(
                     "Phase 12 tape level stabilizer: %d dips repaired",
                     n_level_dips_repaired,
@@ -1000,7 +1046,7 @@ class WowFlutterFix(PhaseInterface):
         # Chroma Pearson rollback guard: if tonal center drifts, revert to original
         # (Phase Vocoder / PSOLA can introduce pitch shifts that destroy tonal center)
         try:
-            _orig_mono = np.mean(audio, axis=1) if is_stereo else audio
+            _orig_mono = safe_to_mono(audio) if is_stereo else audio
             _n_chroma = min(len(_orig_mono), len(restored_mono))
             _hop_chroma = 512
             _n_frames = max(1, _n_chroma // _hop_chroma)
@@ -1090,7 +1136,7 @@ class WowFlutterFix(PhaseInterface):
         try:
             from backend.core.natural_performance_detector import get_natural_performance_detector
 
-            _mono12 = _original_audio.mean(axis=0) if _original_audio.ndim == 2 else _original_audio
+            _mono12 = safe_to_mono(_original_audio) if _original_audio.ndim == 2 else _original_audio
             _npa_mask12 = (
                 get_natural_performance_detector()
                 .detect(_mono12, sample_rate)
@@ -1098,7 +1144,18 @@ class WowFlutterFix(PhaseInterface):
             )
             if _npa_mask12 is not None and _npa_mask12.any():
                 if restored.ndim == 2:
-                    restored[:, _npa_mask12] = _original_audio[:, _npa_mask12]
+                    _rest_left, _rest_right = stereo_channel_view(restored)
+                    _orig_left, _orig_right = stereo_channel_view(_original_audio)
+                    _n_mask = min(
+                        len(_npa_mask12), len(_rest_left), len(_rest_right), len(_orig_left), len(_orig_right)
+                    )
+                    _mask = _npa_mask12[:_n_mask]
+                    _left_guarded = _rest_left.copy()
+                    _right_guarded = _rest_right.copy()
+                    _mask_idx = np.flatnonzero(_mask)
+                    _left_guarded[_mask_idx] = _orig_left[_mask_idx]
+                    _right_guarded[_mask_idx] = _orig_right[_mask_idx]
+                    restored = stereo_like(_left_guarded, _right_guarded, restored)
                 else:
                     restored[_npa_mask12] = _original_audio[_npa_mask12]
         except Exception as _npa12_exc:
@@ -1741,14 +1798,14 @@ class WowFlutterFix(PhaseInterface):
         Returns:
             (repaired_audio, n_bumps_repaired)
         """
-        result = audio.copy()
+        result, _was_channels_first = to_channels_last(audio.copy())
         is_stereo = audio.ndim == 2
-        n_samples = audio.shape[0]
+        n_samples = audio_sample_count(result)
         margin_s = 0.030  # 30 ms crossfade margin
         margin_samples = int(margin_s * sample_rate)
         n_repaired = 0
 
-        _mono_ref = np.mean(result, axis=1) if is_stereo else result
+        _mono_ref = safe_to_mono(result) if is_stereo else result
         for bump_start_s, bump_end_s in bump_locations:
             bump_start = int(bump_start_s * sample_rate)
             bump_end = int(bump_end_s * sample_rate)
@@ -1847,7 +1904,7 @@ class WowFlutterFix(PhaseInterface):
         # Safety: NaN/Inf guard + clip
         result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
         result = np.clip(result, -1.0, 1.0)
-        return result, n_repaired
+        return restore_layout(result, _was_channels_first), n_repaired
 
     @staticmethod
     def _smooth_bump_envelope(
@@ -2006,6 +2063,162 @@ class WowFlutterFix(PhaseInterface):
     #   - Fastl & Zwicker (2007): equal-loudness perception of level dips
     # ------------------------------------------------------------------
 
+    def _estimate_speed_curve_from_instantaneous_frequency(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Geschwindigkeitskurve via Hilbert Instantan-Frequenz (IEC 60386, SNR-robust).
+
+        Sicherheitsdesign (IEC 60386 §5.2):
+          - Dieselbe Methode wie DefectScanner._detect_wow() — funktioniert bei
+            SNR = -1 dB (bestätigt: DefectScanner erkennt wow=1.00 für Elke Best)
+          - Keine Voiced-Detection nötig — arbeitet auf beliebigem Audiosignal
+          - Bandpass 80–4000 Hz isoliert stimmhafte/Instruments-Frequenzen
+          - Hilbert-Transform → Instantan-Phase → Instantan-Frequenz pro Sample
+          - Normierung auf Median-IF → relative Geschwindigkeitsabweichung
+          - Wow-Isolierung: Bandpassfilter 0.2–4 Hz auf IF-Zeitreihe
+          - Plausibilitätsprüfung: Amplitude 3–80 Cents + Dominanz ≥ 0.10
+
+        Rückgabe kompatibel mit _fit_sinusoidal_wow_curve / _calculate_stretch_factors:
+          virtual_pitch[t] = 440 * relative_IF_deviation[t]
+        """
+        from scipy.signal import butter, sosfilt, sosfiltfilt
+        from scipy.signal import hilbert as _hilbert
+
+        # --- Konstanten ---
+        BP_LOW = 80.0  # Hz — Untergrenze Bandpass (Stimminhalt / Instrumente)
+        BP_HIGH = 4000.0  # Hz — Obergrenze
+        IF_WIN_MS = 50.0  # ms — Glättungsfenster für Instantan-Frequenz
+        WOW_LOW_HZ = 0.2  # Hz — Untergrenze Wow-Band (IEC 60386 Slow-Wow)
+        WOW_HIGH_HZ = 4.0  # Hz — Obergrenze Wow-Band
+        AMP_MIN_CENTS = 3.0
+        AMP_MAX_CENTS = 80.0
+        VALID_FRAC_MIN = 0.05  # mind. 5 % valide IF-Frames
+
+        mono = (safe_to_mono(audio) if audio.ndim == 2 else audio).astype(np.float32)
+
+        # Kurzsignal-Guard: mindestens 4 s für Sub-Hz Auflösung
+        if len(mono) < sample_rate * 4:
+            logger.debug("Phase 12 IF-Fallback: Audio zu kurz (%d Samples < 4s)", len(mono))
+            return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+        try:
+            # Segment-Limit (120 s) — Hilbert auf dem vollständigen Segment zu teuer
+            _max_samples = min(len(mono), sample_rate * 120)
+            seg = mono[:_max_samples].astype(np.float64)
+
+            # Bandpass 80–4000 Hz
+            _nyq = sample_rate / 2.0
+            bp_sos = butter(
+                3,
+                [max(BP_LOW / _nyq, 0.001), min(BP_HIGH / _nyq, 0.999)],
+                btype="band",
+                output="sos",
+            )
+            bp_audio = sosfilt(bp_sos, seg)
+
+            # Hilbert-Transform → Instantan-Phase → Instantan-Frequenz (Hz)
+            analytic = np.asarray(_hilbert(bp_audio), dtype=np.complex128)
+            inst_phase = np.unwrap(np.angle(analytic))
+            inst_freq = np.diff(inst_phase) * float(sample_rate) / (2.0 * np.pi)  # [N-1]
+
+            # Valide IF-Frames: nur pitched-Frequenzen
+            valid_mask = (inst_freq > 50.0) & (inst_freq < 5000.0)
+            valid_fraction = float(np.sum(valid_mask)) / float(max(1, len(valid_mask)))
+            if valid_fraction < VALID_FRAC_MIN:
+                logger.debug(
+                    "Phase 12 IF-Fallback: zu wenig valide IF-Frames (%.1f %% < %.0f %%)",
+                    valid_fraction * 100,
+                    VALID_FRAC_MIN * 100,
+                )
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            # Normalisierung: IF / Median-IF → relative Abweichung (dimensionslos)
+            median_if = float(np.median(inst_freq[valid_mask]))
+            if median_if < 50.0:
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            if_norm = inst_freq / (median_if + 1e-6)
+            if_norm = np.nan_to_num(if_norm, nan=1.0)
+            if_norm = np.clip(if_norm, 0.80, 1.20)  # max ±20 % (physikalisch plausibel)
+
+            # Glätten: 50-ms-Fester (entspricht Capstan-Meter-Bandbreite)
+            if_win = max(1, int(IF_WIN_MS * sample_rate / 1000))
+            if_smooth = np.convolve(if_norm, np.ones(if_win) / if_win, mode="valid")
+            if len(if_smooth) < 8:
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            # Wow-Band isolieren: Bandpass 0.2–4 Hz auf der IF-Zeitreihe
+            if_frame_rate = float(sample_rate) / float(if_win)
+            _if_nyq = if_frame_rate / 2.0
+            _wow_lo = max(WOW_LOW_HZ / _if_nyq, 0.001)
+            _wow_hi = min(WOW_HIGH_HZ / _if_nyq, 0.999)
+            if _wow_lo >= _wow_hi:
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            sos_wow = butter(4, [_wow_lo, _wow_hi], btype="band", output="sos")
+            wow_component = sosfiltfilt(sos_wow, if_smooth - 1.0)
+            wow_component = np.nan_to_num(wow_component, nan=0.0)
+
+            # Amplitude prüfen (RMS → Peak-Schätzung via sqrt(2))
+            wow_rms = float(np.sqrt(np.mean(wow_component**2)))
+            amplitude_cents = float(abs(1200.0 * np.log2(1.0 + wow_rms * np.sqrt(2.0) + 1e-10)))
+            if amplitude_cents < AMP_MIN_CENTS or amplitude_cents > AMP_MAX_CENTS:
+                logger.debug("Phase 12 IF-Fallback: Amplitude außerhalb Bereich (%.2f Cents)", amplitude_cents)
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            # Dominanz: Wow-Peak vs. Breitband-IF-Energie (0.2–4 Hz)
+            _freqs_fft = np.fft.rfftfreq(len(wow_component), d=1.0 / if_frame_rate)
+            _spectrum = np.abs(np.fft.rfft(wow_component)) ** 2
+            _peak_band = (_freqs_fft >= 0.5) & (_freqs_fft <= 3.0)
+            _total_wow = float(np.sum(_spectrum[(_freqs_fft >= WOW_LOW_HZ) & (_freqs_fft <= WOW_HIGH_HZ)]) + 1e-12)
+            if _peak_band.any():
+                _bp_power = _spectrum[_peak_band]
+                _peak_local = int(np.argmax(_bp_power))
+                _peak_freq = float(_freqs_fft[_peak_band][_peak_local])
+                _dominance = float(_bp_power[_peak_local]) / _total_wow
+            else:
+                _peak_freq, _dominance = 0.0, 0.0
+
+            if _dominance < 0.10:
+                logger.debug(
+                    "Phase 12 IF-Fallback: keine dominante Wow-Komponente (peak=%.2f Hz, dominance=%.4f < 0.10)",
+                    _peak_freq,
+                    _dominance,
+                )
+                return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+            # IF (Wow-Anteil) auf Phase-12-Frame-Rate resamplen
+            _hop_samples = int(self.PITCH_WINDOW_MS * sample_rate / 1000) // self.PITCH_HOP_FACTOR  # typisch 1200
+            _target_len = max(4, len(mono) // _hop_samples)
+            if_resampled = np.interp(
+                np.linspace(0, len(wow_component) - 1, _target_len),
+                np.arange(len(wow_component)),
+                wow_component,
+            )
+
+            # Virtueller Pitch: 440 * (1 + wow_component)
+            virtual_pitch = (440.0 * (1.0 + if_resampled)).astype(np.float64)
+            virtual_pitch = np.clip(virtual_pitch, 20.0, 4000.0)
+
+            # Konfidenz: abhängig von IF-Valid-Fraction und Wow-Dominanz
+            _conf_level = float(np.clip(valid_fraction * _dominance * 8.0, 0.25, 0.75))
+            confidence = np.full(len(virtual_pitch), _conf_level, dtype=np.float64)
+
+            logger.info(
+                "Phase 12 IF-Fallback (IEC 60386): T=%d Frames, "
+                "Wow-Peak=%.2f Hz, Amplitude=%.1f Cents, Dominanz=%.3f, valid_frac=%.2f",
+                len(virtual_pitch),
+                _peak_freq,
+                amplitude_cents,
+                _dominance,
+                valid_fraction,
+            )
+            return virtual_pitch, confidence
+
+        except Exception as _exc:
+            logger.warning("Phase 12 IF-Fallback fehlgeschlagen: %s", _exc)
+            return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
     def _stabilize_tape_level(
         self,
         audio: np.ndarray,
@@ -2057,7 +2270,7 @@ class WowFlutterFix(PhaseInterface):
         audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
 
         is_stereo = audio.ndim == 2
-        n_samples = audio.shape[1] if (audio.ndim == 2 and audio.shape[0] == 2) else audio.shape[0]
+        n_samples = audio_sample_count(audio)
 
         if is_stereo:
             mono = safe_to_mono(audio).astype(np.float64)
@@ -2081,9 +2294,10 @@ class WowFlutterFix(PhaseInterface):
             dip_thresh_db = 6.0  # only repair severe dips (> 6 dB below rolling p75)
             min_dip_frames = 20  # 200 ms minimum — real tape contact dips last 200–500 ms
             max_gain_db = 6.0  # max 6 dB boost for chain material (§0 Primum non nocere)
-        # Intro/outro protection: ignore first and last 5 s to prevent fade-in/out from being
-        # treated as level dips and getting boosted (root cause of begin/end level surge).
-        _protect_s = 5.0
+        # Intro/outro protection: ignore only true edge zones. Primary tape/cassette can contain
+        # audible head-contact dips immediately after start; blanket 5-s protection masks exactly
+        # the defect class phase_12 is supposed to repair. Chain-material stays conservative.
+        _protect_s = 0.5 if is_primary_tape else 5.0
         _protect_frames = int(_protect_s / env_hop_s)
 
         env_win = max(1, int(env_win_s * sample_rate))
@@ -2175,6 +2389,14 @@ class WowFlutterFix(PhaseInterface):
         ctx_n = 64  # context window ≈ 680 ms before dip onset
 
         for rms_frames, deficit in dip_events:
+            _event_max_deficit_db = float(np.max(deficit))
+            if is_primary_tape:
+                event_strength = float(
+                    np.clip(max(strength, 0.45 + 0.02 * (_event_max_deficit_db - dip_thresh_db)), 0.0, 0.68)
+                )
+            else:
+                event_strength = float(np.clip(strength, 0.0, 0.45))
+
             # Map RMS dip frames → nearest STFT frame indices
             rms_ctrs = rms_centres[rms_frames]
             stft_idx = np.searchsorted(stft_centres, rms_ctrs)
@@ -2186,7 +2408,7 @@ class WowFlutterFix(PhaseInterface):
             bb_gain_db_stft = np.interp(
                 stft_centres[stft_idx].astype(float),
                 rms_centres[rms_frames].astype(float),
-                np.clip(deficit * strength, 0.0, max_gain_db),
+                np.clip(deficit * event_strength, 0.0, max_gain_db),
             )  # dB, shape [n_stft_dip]
 
             # ── HF spectral-tilt correction (Wallace spacing-loss inversion) ──
@@ -2220,7 +2442,7 @@ class WowFlutterFix(PhaseInterface):
                 tilt_raw = np.where(snr_in_dip > 6.0, tilt_raw, 0.0)
 
                 # Cap HF tilt at 10 dB; only positive values (loss → boost)
-                hf_tilt_db = np.clip(tilt_raw, 0.0, 10.0) * strength
+                hf_tilt_db = np.clip(tilt_raw, 0.0, 10.0) * event_strength
 
             # ── Asymmetric gain envelope (slow onset / fast recovery) ────
             n_sf = len(stft_idx)
@@ -2280,9 +2502,10 @@ class WowFlutterFix(PhaseInterface):
             return y_out  # type: ignore[no-any-return]
 
         if is_stereo:
-            L_out = _apply_gain_to_channel(audio[:, 0])
-            R_out = _apply_gain_to_channel(audio[:, 1])
-            result = np.stack([L_out, R_out], axis=1)
+            left, right = stereo_channel_view(audio)
+            L_out = _apply_gain_to_channel(left)
+            R_out = _apply_gain_to_channel(right)
+            result = stereo_like(L_out, R_out, audio)
         else:
             result = _apply_gain_to_channel(mono)
 

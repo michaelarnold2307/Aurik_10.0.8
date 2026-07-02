@@ -930,7 +930,8 @@ class HarmonicRestorationPhase(PhaseInterface):
             if not _ts_07.ok:
                 _wet_ts_07 = max(0.0, 1.0 - _ts_07.blend_reduction)
                 restored = (_wet_ts_07 * restored + (1.0 - _wet_ts_07) * _audio_07_orig).astype(np.float32)
-                logger.warning(
+                _log_v22_07 = logger.warning if _wet_ts_07 > 0.0 else logger.info
+                _log_v22_07(
                     "§V22 phase_07: onset_shift=%.2f ms → blend_reduction=%.2f",
                     _ts_07.max_shift_ms,
                     _ts_07.blend_reduction,
@@ -946,6 +947,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "strength": params["strength"],
                 "drive": params["drive"],
                 "blend": params["blend"],
+                "onset_guard_wet": float(locals().get("_wet_ts_07", 1.0)),
                 "even_harmonic_ratio": params["even_harmonic_ratio"],
                 "odd_harmonic_ratio": params["odd_harmonic_ratio"],
                 "hf_enhancement_db": hf_enhancement_db,

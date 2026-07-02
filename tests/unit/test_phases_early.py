@@ -245,6 +245,46 @@ class TestPhase03Denoise:
         _assert_phase_result(result, mono)
         assert bool(result.metadata.get("ml_hybrid")) is True
 
+    def test_ml_hybrid_respects_explicit_strength_wet_scale(self, mono, monkeypatch):
+        """Explicit PMGG/oracle strength must scale the final ML-Hybrid wet output."""
+        import backend.core.phases.phase_03_denoise as phase03_mod
+
+        class _DummyMLResult:
+            def __init__(self, audio):
+                self.audio = np.asarray(audio, dtype=np.float32) * 0.5
+                self.omlsa_applied = True
+                self.resemble_applied = True
+                self.quality_estimate = 0.8
+                self.processing_time = 0.01
+                self.strategy_used = "hybrid"
+                self.metadata = {}
+
+        class _DummyDenoiser:
+            def __init__(self, config):
+                self.config = config
+
+            def denoise(self, audio, sample_rate=48000):
+                return _DummyMLResult(audio)
+
+        monkeypatch.setattr(phase03_mod, "ML_HYBRID_AVAILABLE", True)
+        monkeypatch.setattr(phase03_mod, "HybridMLDenoiser", _DummyDenoiser)
+
+        strength = 0.15
+        result = self.phase.process(
+            mono, material_type="tape", quality_mode="quality", sample_rate=48000, strength=strength
+        )
+
+        _assert_phase_result(result, mono)
+        effective_strength = float(result.modifications["strength"])
+        expected_wet = effective_strength / self.phase.MATERIAL_PARAMS["tape"]["strength"]
+        assert effective_strength < strength
+        assert result.modifications["ml_wet"] == pytest.approx(expected_wet)
+        assert result.modifications["ml_requested_wet"] == pytest.approx(expected_wet)
+        assert result.modifications["noise_reduction_db"] == pytest.approx(
+            result.modifications["ml_raw_noise_reduction_db"] * expected_wet
+        )
+        assert np.max(np.abs(result.audio - (mono * (1.0 - 0.5 * expected_wet)))) < 1e-5
+
 
 # ---------------------------------------------------------------------------
 # Phase 04: EQ Correction

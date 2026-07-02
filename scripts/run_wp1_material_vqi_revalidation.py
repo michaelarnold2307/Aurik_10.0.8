@@ -304,6 +304,16 @@ def main() -> None:
         help="Optionales Limit fuer die Anzahl verarbeiteter WP1-Faelle (0 = kein Limit).",
     )
     parser.add_argument(
+        "--case-id",
+        default="",
+        help="Optional: verarbeitet nur WP1-Zeilen mit dieser case_id.",
+    )
+    parser.add_argument(
+        "--variant",
+        default="",
+        help="Optional: verarbeitet nur WP1-Zeilen mit dieser Variante.",
+    )
+    parser.add_argument(
         "--max-seconds",
         type=float,
         default=8.0,
@@ -329,6 +339,10 @@ def main() -> None:
     result_rows = _read_csv(result_csv)
 
     wp1_plan = [r for r in plan_rows if r.get("workpackage") == "wp1_vqi_floor"]
+    if args.case_id:
+        wp1_plan = [r for r in wp1_plan if r.get("case_id") == args.case_id]
+    if args.variant:
+        wp1_plan = [r for r in wp1_plan if r.get("variant") == args.variant]
     if args.max_cases > 0:
         wp1_plan = wp1_plan[: args.max_cases]
 

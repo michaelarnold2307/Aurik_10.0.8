@@ -1543,14 +1543,49 @@ class DenoisePhase(PhaseInterface):
                     quality_mode,
                 )
 
+                _ml_strength_raw = params.get("strength", 1.0)
+                _ml_strength_val = float(_ml_strength_raw) if isinstance(_ml_strength_raw, int | float) else 1.0
+                _ml_default_strength = float(np.clip(_ml_strength_val, 1e-6, 1.0))
+                _ml_wet = float(np.clip(effective_strength / _ml_default_strength, 0.0, 1.0))
+                _ml_effective_wet = 1.0
+                _ml_ref_audio = np.asarray(_loudness_ref_audio, dtype=np.float32)
+                if _ml_ref_audio.shape != ml_result.audio.shape:
+                    _ml_ref_audio = np.asarray(audio, dtype=np.float32)
+                if _ml_wet < 0.999:
+                    if _ml_ref_audio.shape == ml_result.audio.shape:
+                        ml_result.audio = np.clip(
+                            _ml_ref_audio * (1.0 - _ml_wet) + ml_result.audio * _ml_wet,
+                            -1.0,
+                            1.0,
+                        ).astype(np.float32)
+                        _ml_effective_wet = _ml_wet
+                        logger.info(
+                            "Phase 03 ML strength wet-scale: effective=%.3f default=%.3f wet=%.3f",
+                            effective_strength,
+                            _ml_default_strength,
+                            _ml_wet,
+                        )
+                    else:
+                        ml_result.audio = np.clip(np.asarray(audio, dtype=np.float32), -1.0, 1.0)
+                        _ml_effective_wet = 0.0
+                        logger.warning(
+                            "Phase 03 ML strength wet-scale: shape mismatch ref=%s out=%s → dry fallback",
+                            getattr(_ml_ref_audio, "shape", None),
+                            getattr(ml_result.audio, "shape", None),
+                        )
+                _effective_noise_reduction_db = float(noise_reduction_db) * _ml_effective_wet
+
                 _report_progress(93.0, "Entrauschung: Lautheitskorrektur (ML-Pfad)")
 
                 # §2.51 Rückkonversion via globale _p03_out() Normalisierung
                 return create_phase_result(
                     audio=_p03_out(ml_result.audio),
                     modifications={
-                        "noise_reduction_db": noise_reduction_db,
-                        "strength": params["strength"],
+                        "noise_reduction_db": _effective_noise_reduction_db,
+                        "ml_raw_noise_reduction_db": noise_reduction_db,
+                        "strength": effective_strength,
+                        "ml_wet": _ml_effective_wet,
+                        "ml_requested_wet": _ml_wet,
                         "phase_locality_factor": phase_locality_factor,
                         "omlsa_applied": ml_result.omlsa_applied,
                         "resemble_applied": ml_result.resemble_applied,

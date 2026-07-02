@@ -339,7 +339,8 @@ class BassEnhancement(PhaseInterface):
             if not _ts_37.ok:
                 _wet_ts_37 = max(0.0, 1.0 - _ts_37.blend_reduction)
                 enhanced_audio = (_wet_ts_37 * enhanced_audio + (1.0 - _wet_ts_37) * audio).astype(np.float32)
-                logger.warning(
+                _log_v22_37 = logger.warning if _wet_ts_37 > 0.0 else logger.info
+                _log_v22_37(
                     "§V22 phase_37: onset_shift=%.2f ms → blend_reduction=%.2f",
                     _ts_37.max_shift_ms,
                     _ts_37.blend_reduction,
@@ -356,6 +357,7 @@ class BassEnhancement(PhaseInterface):
                 "harmonic_2_gain": float(config["harmonic_2_gain"]),
                 "harmonic_3_gain": float(config["harmonic_3_gain"]),
                 "sub_harmonic_gain": float(config["sub_harmonic_gain"]),
+                "onset_guard_wet": float(locals().get("_wet_ts_37", 1.0)),
                 "rt_factor": float(rt_factor),
                 "virtual_pitch_active": True,
                 "phase_locality_factor": phase_locality_factor,

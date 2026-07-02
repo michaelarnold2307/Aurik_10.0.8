@@ -25,6 +25,8 @@ import numpy as np
 from scipy import signal
 from scipy.fft import fft, fftfreq
 
+from backend.core.audio_utils import safe_to_mono
+
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -675,9 +677,8 @@ class AuthenticityMetricsExtended:
         """
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
-        # Handle stereo (use left channel for analysis)
-        # §VERBOTEN: audio[0] liefert bei (samples×channels)-Shape nur 2 Samples → audio[:, 0] korrekt
-        audio_mono = audio[:, 0] if audio.ndim == 2 else audio
+        # Handle stereo in both UV3 (channels, samples) and importer (samples, channels) layouts.
+        audio_mono = safe_to_mono(audio)
         audio_mono = np.nan_to_num(audio_mono, nan=0.0, posinf=0.0, neginf=0.0)
 
         logger.debug("AuthenticityMetricsExtended: Analysiere genre-spezifische Authentizitätselemente")

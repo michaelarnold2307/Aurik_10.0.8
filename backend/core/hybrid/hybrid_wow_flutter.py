@@ -242,7 +242,7 @@ class PolyphonicSpeedCurveEstimator:
         # not trigger a full fallback for a crackle-heavy vinyl recording.
         _max_abs_cents = float(np.percentile(np.abs(speed_curve), 99.0)) if len(speed_curve) > 0 else 0.0
         if _max_abs_cents > 200.0:
-            logger.warning(
+            logger.info(
                 "PolyphonicSpeedCurveEstimator: speed_range implausible (max |%.1f| cents > 200) — switching to pYIN fallback",
                 _max_abs_cents,
             )

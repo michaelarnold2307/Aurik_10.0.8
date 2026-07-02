@@ -80,7 +80,7 @@ def _get_structural_silence_zones(
             return list(zones)
 
     # Versuch 3: eigenständige Berechnung (Fallback)
-    logger.warning(
+    logger.info(
         "SSIP: structural_silence_zones nicht in context — "
         "eigenständige Berechnung aus original_audio (Fallback, non-blocking)"
     )

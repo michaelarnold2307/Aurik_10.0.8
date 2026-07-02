@@ -175,6 +175,20 @@ def test_10_harmonic_simplicity_range():
     assert 0.0 <= hsi <= 1.0
 
 
+def test_10b_harmonic_simplicity_short_clip_has_no_cqt_fft_warning():
+    import warnings
+
+    from backend.core.genre_classifier import get_genre_classifier
+
+    clf = get_genre_classifier()
+    audio = _sine(261.63, 2.0)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+        hsi = clf._compute_harmonic_simplicity(audio, SR)
+    assert math.isfinite(hsi)
+    assert 0.0 <= hsi <= 1.0
+
+
 def test_11_melodic_repetition_high_for_repetitive():
     from backend.core.genre_classifier import get_genre_classifier
 
@@ -250,6 +264,19 @@ def test_18_key_field_string():
 
     r = classify_genre(_white_noise(10.0), SR)
     assert isinstance(r.key, str)
+
+
+def test_18b_estimate_key_short_clip_has_no_cqt_fft_warning():
+    import warnings
+
+    from backend.core.genre_classifier import get_genre_classifier
+
+    clf = get_genre_classifier()
+    audio = _sine(261.63, 2.0)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+        key = clf._estimate_key(audio, SR)
+    assert isinstance(key, str)
 
 
 def test_19_reasoning_field_string():

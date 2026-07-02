@@ -671,6 +671,8 @@ class SemanticGoalsEngine:
         """
         self.instrument_library = InstrumentProfileLibrary()
         self.segment_library = SegmentProfileLibrary()
+        self._instrument_fallback_logged = False
+        self._structure_fallback_logged = False
 
         # ML models (optional, fallback if unavailable)
         self.instrument_detector = self._load_instrument_detector(instrument_detector_path)
@@ -689,7 +691,9 @@ class SemanticGoalsEngine:
             Model instance or None
         """
         if model_path is None or not model_path.exists():
-            logger.warning("Instrument detector model not found: %s", model_path)
+            if not self._instrument_fallback_logged:
+                logger.info("SemanticGoals: Instrument-ML nicht gebündelt — akustischer Offline-Fallback aktiv")
+                self._instrument_fallback_logged = True
             return None
 
         try:
@@ -703,7 +707,9 @@ class SemanticGoalsEngine:
             return (model, feature_extractor)
 
         except ImportError:
-            logger.warning("transformers package not installed. pip install transformers")
+            if not self._instrument_fallback_logged:
+                logger.info("SemanticGoals: transformers nicht verfügbar — akustischer Offline-Fallback aktiv")
+                self._instrument_fallback_logged = True
             return None
         except Exception as e:
             logger.warning("Failed to load instrument detector: %s", e)
@@ -725,7 +731,9 @@ class SemanticGoalsEngine:
             logger.info("madmom structure analyzer loaded")
             return madmom
         except ImportError:
-            logger.warning("madmom package not installed. Install with: pip install madmom")
+            if not self._structure_fallback_logged:
+                logger.info("SemanticGoals: madmom nicht gebündelt — heuristische Struktur-Analyse aktiv")
+                self._structure_fallback_logged = True
             return None
 
     def detect_instruments(

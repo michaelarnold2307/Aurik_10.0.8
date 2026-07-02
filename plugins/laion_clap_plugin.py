@@ -487,6 +487,8 @@ class LAIONCLAPPlugin:
             exc_str = str(exc)
             if "torchvision" in exc_str or "nms" in exc_str:
                 logger.info("LAION-CLAP: torchvision nicht verfügbar (%s) — PANNs-Fallback", exc_str[:80])
+            elif "Weights only load failed" in exc_str or "weights_only" in exc_str:
+                logger.info("LAION-CLAP: PyTorch-Checkpoint nicht kompatibel mit weights_only-Loader — PANNs-Fallback")
             else:
                 logger.warning("LAION-CLAP PyTorch-Checkpoint-Fehler: %s — PANNs-Fallback", exc)
             return False

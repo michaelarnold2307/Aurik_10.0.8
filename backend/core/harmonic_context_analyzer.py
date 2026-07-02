@@ -30,9 +30,12 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from backend.core.audio_utils import safe_to_mono
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +170,7 @@ class HarmonicContextAnalyzer:
         """Full harmonic context analysis.
 
         Args:
-            audio: channels-last (samples,) or (samples, channels) float32 array
+            audio: mono or stereo float32 array in either (samples, channels) or (channels, samples) layout
             sr: sample rate (expected 48000 Hz)
 
         Returns:
@@ -175,7 +178,7 @@ class HarmonicContextAnalyzer:
         """
         audio = np.nan_to_num(np.asarray(audio, dtype=np.float32))
         # Collapse to mono
-        mono = audio if audio.ndim == 1 else np.mean(audio, axis=1)
+        mono = np.asarray(safe_to_mono(audio), dtype=np.float32)
         n = mono.shape[0]
         if n == 0:
             return HarmonicContextResult(sr=sr, hop_length=self.HOP_LENGTH)
@@ -235,9 +238,11 @@ class HarmonicContextAnalyzer:
         try:
             import librosa  # pylint: disable=import-outside-toplevel
 
-            return librosa.feature.chroma_cqt(y=mono, sr=sr, hop_length=self.HOP_LENGTH, bins_per_octave=36).astype(  # type: ignore[no-any-return]
-                np.float32
-            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+                return librosa.feature.chroma_cqt(y=mono, sr=sr, hop_length=self.HOP_LENGTH, bins_per_octave=36).astype(  # type: ignore[no-any-return]
+                    np.float32
+                )
         except Exception:
             pass
         # Fallback: STFT chroma
@@ -247,9 +252,10 @@ class HarmonicContextAnalyzer:
         """STFT-based chroma fallback (no librosa required)."""
         from scipy.signal import stft  # pylint: disable=import-outside-toplevel
 
-        n_fft = 4096
+        n_fft = min(4096, max(64, int(mono.shape[0])))
         hop = self.HOP_LENGTH
-        _, _, Zxx = stft(mono, sr, nperseg=n_fft, noverlap=n_fft - hop, boundary="even")
+        noverlap = min(max(0, n_fft - hop), n_fft - 1)
+        _, _, Zxx = stft(mono, sr, nperseg=n_fft, noverlap=noverlap, boundary="even")
         mag = np.abs(Zxx).astype(np.float32)  # (F, T)
         n_freqs, n_frames = mag.shape
 

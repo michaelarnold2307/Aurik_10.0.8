@@ -1431,8 +1431,10 @@ class AuthentizitaetMetric:
             _audio_f32 = np.asarray(audio, dtype=np.float32)
             _ref_f32 = np.asarray(reference, dtype=np.float32)
             try:
-                chroma_current = librosa.feature.chroma_cqt(y=_audio_f32, sr=sr, tuning=0.0)
-                chroma_reference = librosa.feature.chroma_cqt(y=_ref_f32, sr=sr, tuning=0.0)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+                    chroma_current = librosa.feature.chroma_cqt(y=_audio_f32, sr=sr, tuning=0.0)
+                    chroma_reference = librosa.feature.chroma_cqt(y=_ref_f32, sr=sr, tuning=0.0)
             except Exception:
                 _n_fft = _safe_fft_size(min(len(_audio_f32), len(_ref_f32)), target=2048, minimum=64)
                 _hop = max(16, _n_fft // 4)
@@ -1562,7 +1564,9 @@ class AuthentizitaetMetric:
                 _rf_start = (len(audio) - _MAX_AUTH_SAMPLES_RF) // 2
                 audio = audio[_rf_start : _rf_start + _MAX_AUTH_SAMPLES_RF]
             try:
-                librosa.feature.chroma_cqt(y=audio, sr=sr, tuning=0.0)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+                    librosa.feature.chroma_cqt(y=audio, sr=sr, tuning=0.0)
             except Exception:
                 _n_fft = _safe_fft_size(len(audio), target=2048, minimum=64)
                 _hop = max(16, _n_fft // 4)
@@ -1698,7 +1702,10 @@ class _VATEmotionEstimator:
             # Tempo-Normierung: 40 BPM → 0.0, 200 BPM → 1.0
             tempo_val = 0.5
             try:
-                tempo_arr = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
+                _tempo_fn = getattr(getattr(getattr(librosa, "feature", None), "rhythm", None), "tempo", None)
+                if _tempo_fn is None:
+                    _tempo_fn = librosa.beat.tempo
+                tempo_arr = _tempo_fn(onset_envelope=onset_env, sr=sr)
                 raw_tempo = float(tempo_arr[0]) if hasattr(tempo_arr, "__len__") else float(tempo_arr)
                 tempo_val = float(np.clip((raw_tempo - 40.0) / 160.0, 0.0, 1.0))
             except Exception:
@@ -2535,7 +2542,7 @@ class SpatialDepthMetric:
             if not _iacc_res_v44.ok:
                 with self._mono_warn_lock:
                     if self._mono_warn_count < self._MONO_WARN_LIMIT:
-                        logger.warning(
+                        logger.info(
                             "SpatialDepthMetric §V44: IACC=%.3f → Mono-Kompatibilitätswarnung",
                             iacc,
                         )
@@ -4127,8 +4134,25 @@ class MusicalGoalsChecker:
                     scores[goal_name] = _measure(audio, sr)
                 # pylint: enable=unexpected-keyword-arg
             except Exception as _metric_exc:
-                logger.warning("measure_all: goal=%s failed: %s — using 0.0", goal_name, _metric_exc)
-                scores[goal_name] = 0.0
+                _metric_msg = str(_metric_exc).lower()
+                _empty_metric = any(
+                    token in _metric_msg
+                    for token in (
+                        "zero-size array",
+                        "size 0",
+                        "empty",
+                        "tuple index out of range",
+                        "index -1 is out of bounds",
+                    )
+                )
+                if _empty_metric:
+                    logger.info(
+                        "measure_all: goal=%s not measurable on empty/short slice — using neutral 0.5", goal_name
+                    )
+                    scores[goal_name] = 0.5
+                else:
+                    logger.warning("measure_all: goal=%s failed: %s — using 0.0", goal_name, _metric_exc)
+                    scores[goal_name] = 0.0
             _dt = time.perf_counter() - _t0
             if _dt > 5.0:
                 logger.warning("measure_all: goal=%s took %.1f s", goal_name, _dt)

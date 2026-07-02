@@ -14,6 +14,7 @@ Invarianten (§3.1, §3.2):
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -53,6 +54,30 @@ def test_score_mos_callable():
     from plugins.versa_plugin import score_mos
 
     assert callable(score_mos)
+
+
+def test_s3prl_timm_deprecation_filter_is_narrow():
+    """Der VERSA-Importfilter schluckt nur die bekannte timm-Deprecation."""
+    from plugins.versa_plugin import _suppress_s3prl_timm_deprecation
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        with _suppress_s3prl_timm_deprecation():
+            warnings.warn_explicit(
+                "Importing from timm.models.layers is deprecated, please import via timm.layers",
+                FutureWarning,
+                filename="/tmp/timm/models/layers/__init__.py",
+                lineno=49,
+                module="timm.models.layers",
+            )
+            with pytest.raises(FutureWarning):
+                warnings.warn_explicit(
+                    "Importing from some.other.module is deprecated",
+                    FutureWarning,
+                    filename="/tmp/other.py",
+                    lineno=1,
+                    module="some.other.module",
+                )
 
 
 # ---------------------------------------------------------------------------

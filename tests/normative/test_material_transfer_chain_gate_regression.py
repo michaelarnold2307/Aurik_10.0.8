@@ -37,6 +37,16 @@ def test_extract_transfer_chain_normalizes_arrow_string() -> None:
 
 @pytest.mark.normative
 @pytest.mark.timeout(20)
+def test_extract_transfer_chain_moves_terminal_codec_after_physical_stage() -> None:
+    string_chain = UnifiedRestorerV3._extract_transfer_chain_from_forensics({"transfer_chain": "mp3_low -> cassette"})
+    list_chain = UnifiedRestorerV3._extract_transfer_chain_from_forensics(["mp3_low", "cassette"])
+
+    assert string_chain == ["cassette", "mp3_low"]
+    assert list_chain == ["cassette", "mp3_low"]
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
 def test_extract_transfer_chain_from_object_list() -> None:
     class _Forensics:
         transfer_chain = ["Vinyl", "Tape", "MP3_LOW"]

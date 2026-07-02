@@ -184,6 +184,16 @@ FORCED_TRACEABILITY: dict[str, list[str]] = {
         "tests/unit/test_phase_strength_oracle.py",
         "tests/unit/test_unified_restorer_v3.py",
     ],
+    "### §0m [RELEASE_MUST] Maximal-Ausbaustufe Defektintelligenz (beide Modi)": [
+        "tests/normative/test_release_must_0m_0q_contract.py",
+        "tests/normative/test_spec_consistency.py",
+        "tests/unit/test_defect_scanner_gold_standard.py",
+    ],
+    "### §0q [RELEASE_MUST] Bug-Gap-Erkennungs-Strategie (v9.21.0)": [
+        "tests/normative/test_release_must_0m_0q_contract.py",
+        "tests/normative/test_worldclass_kpi_release_gate_contract.py",
+        "tests/normative/test_trusted_vocal_restoration_report.py",
+    ],
     "## [RELEASE_MUST] Frontend-Version-Anzeige-Invariante": [
         "tests/unit/test_version_checker_and_ux.py",
         "tests/normative/test_modern_window_gui_contract.py",

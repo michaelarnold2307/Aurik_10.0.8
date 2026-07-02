@@ -97,6 +97,24 @@ class TestPhase29SnrBypass:
         if meta.get("snr_bypass"):
             assert meta.get("rms_drop_db", 0.0) == 0.0, "Bypassed phase must not report RMS drop"
 
+    def test_band_anchor_channel_last_stereo_uses_real_band_ratios(self) -> None:
+        """Channel-last stereo must not collapse BandAnchor analysis to 0/0 ratios."""
+        from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_29_tape_hiss_reduction import TapeHissReductionPhase
+
+        mono = _noisy_mono(snr_db=8.0)
+        stereo = np.stack([mono, 0.97 * mono], axis=1).astype(np.float32)
+
+        result = TapeHissReductionPhase().process(stereo, SR, material=MaterialType.TAPE, strength=0.45)
+
+        meta = result.metadata or {}
+        assert result.success
+        assert meta.get("processing") != "skipped_digital"
+        assert float(meta.get("band_anchor_lowmid_ratio", 0.0)) > 0.01
+        assert float(meta.get("band_anchor_presence_ratio", 0.0)) > 0.01
+        assert float(meta.get("band_anchor_air_ratio", 0.0)) > 0.01
+        assert float(meta.get("band_anchor_original_blend", 0.0)) < 0.65
+
     def test_digital_source_skipped_before_snr_check(self) -> None:
         """CD_DIGITAL material is skipped before reaching the SNR estimation block."""
         from backend.core.defect_scanner import MaterialType

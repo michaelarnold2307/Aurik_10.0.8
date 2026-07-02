@@ -30,6 +30,7 @@ import pytest
 from numpy import floating
 from numpy._typing._array_like import NDArray
 
+import backend.core.musical_goals.musical_goals_metrics as mgm
 from backend.core.musical_goals import (
     AuthentizitaetMetric,
     BassKraftMetric,
@@ -41,6 +42,34 @@ from backend.core.musical_goals import (
     WaermeMetric,
 )
 from backend.core.musical_goals.musical_goals_metrics import TonalCenterMetric
+
+
+class _RaisingMetric:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def measure(self, _audio: np.ndarray, _sr: int) -> float:
+        raise self._exc
+
+
+class TestMusicalGoalsCheckerMetricFallbacks:
+    def test_empty_metric_error_uses_neutral_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mgm, "_is_fast_validation_context", lambda: False)
+        checker = MusicalGoalsChecker()
+        checker.metrics = {"emotionalitaet": _RaisingMetric(ValueError("zero-size array to reduction operation"))}
+
+        scores = checker.measure_all(np.zeros(128, dtype=np.float32), 48_000)
+
+        assert scores["emotionalitaet"] == 0.5
+
+    def test_unknown_metric_error_remains_hard_failure_score(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mgm, "_is_fast_validation_context", lambda: False)
+        checker = MusicalGoalsChecker()
+        checker.metrics = {"emotionalitaet": _RaisingMetric(RuntimeError("unexpected metric failure"))}
+
+        scores = checker.measure_all(np.zeros(128, dtype=np.float32), 48_000)
+
+        assert scores["emotionalitaet"] == 0.0
 
 
 class TestBassKraftMetric:
@@ -799,6 +828,25 @@ class TestTonalCenterMetricKeyShift:
         """Referenz-freier Modus gibt Score in [0,1]."""
         audio = self._sine_for_key(440.0)
         result = metric.measure(audio, self.SR, reference=None)
+        assert 0.0 <= result <= 1.0
+
+    def test_no_reference_short_clip_has_no_cqt_fft_warning(self, metric: TonalCenterMetric):
+        import warnings
+
+        audio = self._sine_for_key(440.0, dur=2.0)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+            result = metric.measure(audio, self.SR, reference=None)
+        assert 0.0 <= result <= 1.0
+
+    def test_reference_short_clip_has_no_cqt_fft_warning(self, metric: TonalCenterMetric):
+        import warnings
+
+        reference = self._sine_for_key(440.0, dur=2.0)
+        current = reference * 0.98
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+            result = metric.measure(current, self.SR, reference=reference)
         assert 0.0 <= result <= 1.0
 
     def test_rms_profile_vectorised_matches_loop(self):

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -52,6 +53,45 @@ _CKPT_CANDIDATES = (
     _ROOT / "models" / "sgmse_plus" / "sgmse_plus_src_1.ckpt",
     _ROOT / "models" / "sgmse_plus" / "sgmse_wsj0_reverb.ckpt",
 )
+
+
+def _is_corrupt_torchscript_error(exc: BaseException) -> bool:
+    """Erkennt deterministisch defekte/lokal falsche TorchScript-Dateien."""
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "invalid magic number for torchscript archive",
+            "failed finding central directory",
+            "not a zip archive",
+            "constants.pkl",
+            "version file not found",
+        )
+    )
+
+
+def _quarantine_corrupt_torchscript(path: Path, exc: BaseException) -> Path | None:
+    """Verschiebt ein defektes lokales TorchScript aus dem Produktionspfad."""
+    if not path.exists():
+        return None
+    try:
+        quarantine = path.with_suffix(path.suffix + f".corrupt.{int(time.time())}")
+        os.replace(path, quarantine)
+        logger.warning(
+            "SGMSE+: defektes TorchScript isoliert: %s -> %s (%s)",
+            path.name,
+            quarantine.name,
+            str(exc).splitlines()[0],
+        )
+        return quarantine
+    except Exception as quarantine_exc:
+        logger.warning(
+            "SGMSE+: defektes TorchScript erkannt, aber Quarantäne fehlgeschlagen (%s): %s",
+            path,
+            quarantine_exc,
+        )
+        return None
+
 
 # Verarbeitungs-Konstanten (48 kHz)
 _SR: int = 48_000
@@ -206,9 +246,17 @@ class SGMSEPlusPlugin:
                         self._ts_model.to(_dev)
                         self._device = _dev
                     except Exception as _gpu_load_exc:
+                        if _is_corrupt_torchscript_error(_gpu_load_exc):
+                            _quarantine_corrupt_torchscript(_TS_PATH, _gpu_load_exc)
+                            raise
                         if _dev != "cpu":
                             logger.warning("SGMSE+: GPU-Load fehlgeschlagen (%s) — CPU-Retry", _gpu_load_exc)
-                            self._ts_model = torch.jit.load(str(_TS_PATH), map_location="cpu")  # nosec B614
+                            try:
+                                self._ts_model = torch.jit.load(str(_TS_PATH), map_location="cpu")  # nosec B614
+                            except Exception as _cpu_load_exc:
+                                if _is_corrupt_torchscript_error(_cpu_load_exc):
+                                    _quarantine_corrupt_torchscript(_TS_PATH, _cpu_load_exc)
+                                raise
                             self._ts_model.eval()
                             self._device = "cpu"
                         else:

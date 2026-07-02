@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -617,7 +618,13 @@ class GermanSchlagerClassifier:
                 _n_fft = max(512, min(2048, len(audio)))
                 chroma = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=hop_len, n_fft=_n_fft)
             else:
-                chroma = librosa.feature.chroma_cqt(y=audio, sr=sr, hop_length=hop_len)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+                        chroma = librosa.feature.chroma_cqt(y=audio, sr=sr, hop_length=hop_len)
+                except Exception:
+                    _n_fft = max(512, min(4096, len(audio)))
+                    chroma = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=hop_len, n_fft=_n_fft)
             chroma = np.nan_to_num(chroma)
 
             if chroma.shape[1] < 2:
@@ -2008,7 +2015,13 @@ class GermanSchlagerClassifier:
                 _n_fft = max(512, min(2048, len(audio)))
                 chroma = librosa.feature.chroma_stft(y=audio, sr=sr, n_fft=_n_fft)
             else:
-                chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("error", message=".*n_fft=.*too large.*", category=UserWarning)
+                        chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+                except Exception:
+                    _n_fft = max(512, min(4096, len(audio)))
+                    chroma = librosa.feature.chroma_stft(y=audio, sr=sr, n_fft=_n_fft)
             chroma_mean = np.nan_to_num(chroma.mean(axis=1))
             key_idx = int(np.argmax(chroma_mean))
             key_names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "H"]

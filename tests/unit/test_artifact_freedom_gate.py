@@ -39,6 +39,42 @@ def test_01_singleton():
     assert g1 is g2
 
 
+def test_uv3_afg_soft_backoff_keeps_strongest_passing_wet():
+    from types import SimpleNamespace
+
+    from backend.core.unified_restorer_v3 import _try_artifact_freedom_soft_backoff
+
+    phase_input = np.zeros(1024, dtype=np.float32)
+    phase_output = np.ones(1024, dtype=np.float32) * 0.5
+
+    class _Gate:
+        def __init__(self) -> None:
+            self.wets: list[float] = []
+
+        def evaluate(self, original, restored, sr, material_type, phase_id, **kwargs):
+            del original, sr, material_type, phase_id, kwargs
+            wet = float(np.mean(restored) / 0.5)
+            self.wets.append(round(wet, 2))
+            return SimpleNamespace(artifact_freedom=1.0 if wet <= 0.35 else 0.8)
+
+    gate = _Gate()
+    candidate, result, wet = _try_artifact_freedom_soft_backoff(
+        gate,
+        phase_input,
+        phase_output,
+        SR,
+        "cassette",
+        "phase_03_denoise",
+    )
+
+    assert wet == 0.35
+    assert result.artifact_freedom == 1.0
+    assert gate.wets == [0.75, 0.55, 0.35]
+    assert candidate is not None
+    assert candidate.dtype == np.float32
+    assert np.allclose(candidate, phase_output * 0.35)
+
+
 def test_02_clean_audio_perfect_score():
     from backend.core.artifact_freedom_gate import get_artifact_freedom_gate
 
