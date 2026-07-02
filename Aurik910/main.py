@@ -11,6 +11,8 @@ import signal
 import sys
 import threading
 import time
+import warnings
+import weakref
 from logging.handlers import RotatingFileHandler as _RFH
 from pathlib import Path
 
@@ -27,6 +29,19 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")
+
+# Release-Start: bekannte Framework-Hinweise ohne Nutzerwert ausblenden.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Importing from timm\.models\.layers is deprecated.*",
+    category=FutureWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"torch\.meshgrid: in an upcoming release.*",
+    category=UserWarning,
+)
 
 # ── PyTorch global thread-pool — must be set once at startup (§VERBOTEN) ─────
 try:
@@ -162,6 +177,8 @@ from Aurik910.ui.modern_window import ModernMainWindow
 
 # pylint: enable=wrong-import-position
 
+_main_window_ref: weakref.ReferenceType[ModernMainWindow] | None = None
+
 
 def _run_startup_model_check(_app: QApplication) -> None:
     """Prüft ML models before window creation — shows dialog on problems (non-fatal).
@@ -261,21 +278,18 @@ def _emergency_checkpoint_if_running() -> None:
     Writes checkpoint atomically (.tmp → os.replace) if audio is available.
     """
     try:
-        app = QApplication.instance()
-        if app is None:
+        window = _main_window_ref() if _main_window_ref is not None else None
+        if not isinstance(window, ModernMainWindow):
             return
-        for widget in app.topLevelWidgets():
-            if isinstance(widget, ModernMainWindow):
-                bt = getattr(widget, "batch_thread", None)
-                if bt is not None and bt.isRunning():
-                    try:
-                        # best-effort: trigger checkpoint without waiting
-                        save_fn = getattr(bt, "request_emergency_checkpoint", None)
-                        if callable(save_fn):
-                            save_fn()
-                    except Exception as _ce:
-                        logger.debug("Emergency checkpoint failed (non-fatal): %s", _ce)
-                break
+        bt = getattr(window, "batch_thread", None)
+        if bt is not None and bt.isRunning():
+            try:
+                # best-effort: trigger checkpoint without waiting
+                save_fn = getattr(bt, "request_emergency_checkpoint", None)
+                if callable(save_fn):
+                    save_fn()
+            except Exception as _ce:
+                logger.debug("Emergency checkpoint failed (non-fatal): %s", _ce)
     except Exception as _exc:
         logger.debug("_emergency_checkpoint_if_running skipped: %s", _exc)
 
@@ -333,6 +347,8 @@ def _process_events_ms(app: "QApplication", ms: int) -> None:
 
 def main():
     """Launch AURIK Professional"""
+    global _main_window_ref
+
     _enable_crash_forensics()
 
     # Linux hardening: prefer software OpenGL to reduce GPU driver related Qt crashes.
@@ -446,6 +462,7 @@ def main():
         app.processEvents()
 
     window = ModernMainWindow()
+    _main_window_ref = weakref.ref(window)
 
     if splash:
         splash.set_status("Bereit.")

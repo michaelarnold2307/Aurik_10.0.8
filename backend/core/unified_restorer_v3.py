@@ -10133,7 +10133,7 @@ class UnifiedRestorerV3:
                         if _sp250 not in _runtime_never_skip_phases:
                             _runtime_never_skip_phases.append(_sp250)
                 if _injected_250:
-                    logger.warning(
+                    logger.info(
                         "§2.50 Stereo-Notfall-Remediation: ratio=%.2f, mean_compat=%.3f → injiziert: %s",
                         _src_baseline.phase_cancellation_ratio,
                         _src_baseline.stereo_mono_compat_mean,
@@ -28192,7 +28192,7 @@ class UnifiedRestorerV3:
                             -1.0,
                             1.0,
                         )
-                        logger.warning(
+                        logger.info(
                             "§SFT ArtifactRescue %s: flags=%s wet=%.2f",
                             phase_metadata.phase_id,
                             "|".join(_latest_flags),
@@ -29500,7 +29500,7 @@ class UnifiedRestorerV3:
                         "max_attenuation_db": round(float(_qz_guard_meta.get("max_attenuation_db", 0.0)), 3),
                     }
                 )
-                logger.warning(
+                logger.info(
                     "§2.45a QuietZone-Guard %s: explosions %d→%d"
                     " (qz<=%.1f dBFS thr=%.2f dB, maxΔ=%.2f dB,"
                     " p95Δ %.2f→%.2f dB, att=%.2f dB)",
@@ -29883,14 +29883,14 @@ class UnifiedRestorerV3:
                     _best_mode = "base_rejected"
                     _best_alpha = 0.0
                     _best_cost = float(_cost_base)
-                    logger.warning(
+                    logger.info(
                         "ActiveIntervention %s REJECTED: no beneficial score delta (mode=%s, alpha=%.2f)",
                         phase_id,
                         _best_mode,
                         _best_alpha,
                     )
             elif "quiet_zone" in _best_targets and not bool(_best_targets.get("quiet_zone", {}).get("met", False)):
-                logger.warning(
+                logger.info(
                     "ActiveIntervention %s REJECTED: quiet-zone target unmet (explosions=%s)",
                     phase_id,
                     _best_targets.get("quiet_zone", {}).get("measured_explosions", "?"),
@@ -30814,7 +30814,7 @@ class UnifiedRestorerV3:
                             }
                         continue
                     if _pipeline_non_exempt_elapsed_s > _pipeline_wall_budget:
-                        logger.warning(
+                        logger.info(
                             "§Wall-Time-Budget: %.0f s non-exempt > %.0f s"
                             " (material=%s) — %s als Passthrough übersprungen",
                             _pipeline_non_exempt_elapsed_s,

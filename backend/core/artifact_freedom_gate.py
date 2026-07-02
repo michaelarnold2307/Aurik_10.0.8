@@ -1827,7 +1827,7 @@ class ArtifactFreedomGate:
                     baseline.has_critical_stereo_issue = True
 
                 if baseline.has_critical_stereo_issue:
-                    logger.warning(
+                    logger.info(
                         "§2.50 Quellmaterial-Baseline: kritisches Stereo-Feldproblem "
                         "(ratio=%.2f, mean_compat=%.3f, mean_corr=%.3f, lag=%d, mat=%s) — "
                         "phase_14/phase_15 werden als Remediation-Phasen aktiviert",

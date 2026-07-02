@@ -583,7 +583,7 @@ class NoiseGate(PhaseInterface):
                 _nt18_d = _nt18_dist_fn(_nt18_residual, _mat18_guards, sr=sample_rate)
                 if _nt18_d > 0.25:
                     gated_audio = (0.5 * gated_audio + 0.5 * audio).astype(np.float32)
-                    logger.warning("§V19 phase_18: noise_texture_dist=%.3f > 0.25 → 50%% dry-blend", _nt18_d)
+                    logger.info("§V19 phase_18: noise_texture_dist=%.3f > 0.25 → 50%% dry-blend", _nt18_d)
         except Exception as _nt18_exc:
             logger.debug("§V19 phase_18 noise_texture non-blocking: %s", _nt18_exc)
 

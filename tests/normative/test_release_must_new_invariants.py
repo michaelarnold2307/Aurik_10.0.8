@@ -18,6 +18,8 @@ MAIN_FILE = ROOT / "Aurik910" / "main.py"
 WINDOW_FILE = ROOT / "Aurik910" / "ui" / "modern_window.py"
 SPLASH_FILE = ROOT / "Aurik910" / "ui" / "splash_screen.py"
 RUN_SCRIPT = ROOT / "run_aurik.sh"
+AFG_FILE = ROOT / "backend" / "core" / "artifact_freedom_gate.py"
+PHASE_18_FILE = ROOT / "backend" / "core" / "phases" / "phase_18_noise_gate.py"
 
 
 @pytest.mark.normative
@@ -83,3 +85,29 @@ def test_release_must_rocm_torchaudio_abi_invariant_is_enforced_in_launcher() ->
 
     for token, message in required_tokens.items():
         assert token in src, message
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
+def test_release_startup_suppresses_expected_framework_and_remediation_warnings() -> None:
+    """Release startup must not surface expected framework/remediation noise as warnings."""
+    main_src = MAIN_FILE.read_text(encoding="utf-8")
+    run_src = RUN_SCRIPT.read_text(encoding="utf-8")
+    afg_src = AFG_FILE.read_text(encoding="utf-8")
+    uv3_src = UV3_FILE.read_text(encoding="utf-8")
+    phase18_src = PHASE_18_FILE.read_text(encoding="utf-8")
+
+    assert 'os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")' in main_src
+    assert 'export MIOPEN_LOG_LEVEL="${MIOPEN_LOG_LEVEL:-1}"' in run_src
+    assert "warnings.filterwarnings" in main_src
+    assert "Importing from timm\\.models\\.layers is deprecated" in main_src
+    assert "torch\\.meshgrid: in an upcoming release" in main_src
+
+    assert 'logger.info(\n                        "§2.50 Quellmaterial-Baseline' in afg_src
+    assert 'logger.info(\n                        "§2.50 Stereo-Notfall-Remediation' in uv3_src
+    assert 'logger.info("§V19 phase_18: noise_texture_dist=' in phase18_src
+    assert 'logger.info(\n                            "§SFT ArtifactRescue' in uv3_src
+    assert 'logger.info(\n                    "§2.45a QuietZone-Guard' in uv3_src
+    assert 'logger.info(\n                        "ActiveIntervention %s REJECTED: no beneficial score delta' in uv3_src
+    assert 'logger.info(\n                    "ActiveIntervention %s REJECTED: quiet-zone target unmet' in uv3_src
+    assert 'logger.info(\n                            "§Wall-Time-Budget: %.0f s non-exempt > %.0f s' in uv3_src

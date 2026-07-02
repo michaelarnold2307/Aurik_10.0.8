@@ -16,6 +16,10 @@ PIP_ROCM="$HOME/.local/share/aurik/venv_rocm/bin/pip"
 PID_FILE="$SCRIPT_DIR/temp_repro/aurik_gui.pid"
 LOG_FILE="$SCRIPT_DIR/logs/aurik_frontend.out"
 
+# Release-Default: MIOpen meldet harmlose Workspace-Fallbacks sonst als WARNING
+# direkt auf stderr. Fehler bleiben sichtbar; AURIK_DEBUG kann die Stufe anheben.
+export MIOPEN_LOG_LEVEL="${MIOPEN_LOG_LEVEL:-1}"
+
 check_rocm_torchaudio_abi() {
     "$VENV_ROCM" - <<'PY'
 import sys
