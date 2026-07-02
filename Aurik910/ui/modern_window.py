@@ -2099,6 +2099,12 @@ class BatchProcessingThread(QThread):
                                     _time_drift_cap = min(24.0, 0.08 * elapsed_since_tgt)
                                     _overshoot_cap = tgt + max(expected_advance, _time_drift_cap)
 
+                                    # Vor Pipeline-Start (UV3 pct < 20 → UI < 19 %) ist der
+                                    # lange Drift irreführend: Analyse/Vorbereitung darf nicht
+                                    # wie 30–40 % fertige Restaurierung aussehen.
+                                    if tgt < 19.0:
+                                        _overshoot_cap = min(tgt + 1.5, 18.9)
+
                                     # Sub-bar Kopplung: wenn der Phasenbalken sichtbar läuft,
                                     # soll der Hauptbalken innerhalb eines begrenzten Fensters
                                     # mitziehen (keine Starre bei konstantem tgt).
@@ -2108,7 +2114,8 @@ class BatchProcessingThread(QThread):
                                     # "davonläuft" und weiterhin den echten UV3-Callbacks folgt.
                                     _phase_follow_span = min(12.0, max(2.0, last_jump * 2.2))
                                     _phase_follow_cap = tgt + _phase_follow_span * (sub_cur / 100.0)
-                                    _overshoot_cap = max(_overshoot_cap, _phase_follow_cap)
+                                    if tgt >= 19.0:
+                                        _overshoot_cap = max(_overshoot_cap, _phase_follow_cap)
 
                                     new_cur = min(cur + velocity, _overshoot_cap, 96.0)
 
@@ -17280,6 +17287,19 @@ class ModernMainWindow(QMainWindow):
                 _base_is_repair = bool(_phase_id.strip().lower().startswith("phase_"))
                 if _latest_phase and not (_latest_is_planning and _base_is_repair):
                     _base = _latest_phase
+                _runtime_state = self._runtime_display_state if isinstance(self._runtime_display_state, dict) else {}
+                _rt_step = int(_runtime_state.get("step", 0) or 0)
+                _rt_total = int(_runtime_state.get("total", 0) or 0)
+                if _rt_step > 0 and _base and hasattr(self, "_phase_step_label"):
+                    _base_clean = re.sub(r"\s*‹[^›]+›", "", _base).strip()
+                    _step_label = f"Stufe {_rt_step}"
+                    if _rt_total > 0:
+                        _step_label = f"Stufe {_rt_step} / {_rt_total}"
+                    _step_label += f"  ·  {_base_clean}"
+                    if _phase_id.strip().lower().startswith("phase_") and _phase_id not in _step_label:
+                        _step_label += f"  ·  {_phase_id}"
+                    self._phase_step_label.setText(_step_label)
+                    self._phase_step_label.setVisible(True)
                 self._sync_runtime_display_state(
                     live_hint={
                         "phase_id": str(_phase_state.get("phase_id", "") or ""),

@@ -332,6 +332,19 @@ def test_phase_step_label_has_no_audio_callback_fallback() -> None:
 
 
 @pytest.mark.normative
+def test_runtime_status_surfaces_share_current_phase_text() -> None:
+    src = _read_gui_source()
+    i18n_src = Path("Aurik910/i18n/__init__.py").read_text(encoding="utf-8")
+    assert "Analyse und Vorbereitung laufen" in i18n_src
+    assert "Passende Korrekturen werden ausgewählt" not in i18n_src
+    assert "Analysis and preparation running" in i18n_src
+    assert "Selecting suitable corrections" not in i18n_src
+    assert "_runtime_state = self._runtime_display_state" in src
+    assert "_base_clean = re.sub" in src
+    assert "self._phase_step_label.setText(_step_label)" in src
+
+
+@pytest.mark.normative
 def test_heartbeat_progress_forecast_keeps_long_phases_smooth() -> None:
     src = _read_gui_source()
     assert "def _apply_heartbeat_progress_forecast" in src
@@ -341,6 +354,16 @@ def test_heartbeat_progress_forecast_keeps_long_phases_smooth() -> None:
     assert "self.progress_bar.setValue(min(target_overall_bp, current_bp + step_bp))" in src
     assert "self.phase_progress_bar.setValue(phase_target_bp)" in src
     assert "set_stage_progress(phase_target_bp / 10000.0)" in src
+
+
+@pytest.mark.normative
+def test_main_progress_cannot_drift_past_pre_pipeline_range() -> None:
+    src = _read_gui_source()
+    assert "Vor Pipeline-Start (UV3 pct < 20 → UI < 19 %)" in src
+    assert "if tgt < 19.0:" in src
+    assert "_overshoot_cap = min(tgt + 1.5, 18.9)" in src
+    assert "if tgt >= 19.0:" in src
+    assert "_overshoot_cap = max(_overshoot_cap, _phase_follow_cap)" in src
 
 
 @pytest.mark.normative
