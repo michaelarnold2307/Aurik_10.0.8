@@ -1,6 +1,6 @@
 """[RELEASE_MUST] Batch-Contract fuer Worldclass-/Hybrid-Metadaten.
 
-Sichert, dass der Batch-Pfad die 9.12.10-Metadaten
+Sichert, dass der Batch-Pfad die Worldclass-/Hybrid-Metadaten
 `quality_gate_worldclass_score` und `quality_gate_hybrid_engineer_vector`
 im Ergebnisobjekt fuehrt.
 """

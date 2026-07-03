@@ -1223,7 +1223,7 @@ if panns_singing >= 0.25:
 
 **Pflicht-Telemetrie**: `micro_dynamic_correlation` MUSS ueber `_update_vocal_quality_metrics(...)` in `_restoration_context["vocal_quality_check"]` und `_phase_metadata_accumulator` geschrieben werden. Finale WCS-/Psychoakustik-Gates duerfen nicht auf phasenlokale `metadata` beschraenkt bleiben.
 
-## §2.75a Vocal-Guard-Runtime-Bridge [RELEASE_MUST v9.12.10]
+## §2.75a Vocal-Guard-Runtime-Bridge [RELEASE_MUST v9.20.3]
 
 **Problem**: Phase-lokale Guard-Metadaten sind fuer das End-Gate wertlos, wenn sie nur in `result.metadata` leben. UV3-Final-Gates (WCS, HTEV, Psychoakustik, Spec-Upgrade-Entscheidung) lesen aggregierte Werte aus `_restoration_context["vocal_quality_check"]` und `_phase_metadata_accumulator`.
 

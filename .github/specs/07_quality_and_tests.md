@@ -1214,7 +1214,7 @@ Bei Änderungen an Kernphasen, PMGG, DefectScanner oder heavy ML-Fallbacks:
 - ≤ 1960: `N(0.75, 0.08)`
 - ≥ 1970: `N(0.50, 0.10)`
 
-### §8.6 [RELEASE_MUST] Worldclass Hybrid-Engineer Protocol (v9.12.10)
+### §8.6 [RELEASE_MUST] Worldclass Hybrid-Engineer Protocol (v9.20.3)
 
 Rolle Aurik: hybrider Restaurierungstoningenieur fuer Musik mit Gesang.
 Diese Rolle ist nur erfuellt, wenn menschlich nachbildbare Spitzenfaehigkeiten

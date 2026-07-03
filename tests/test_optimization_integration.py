@@ -275,7 +275,7 @@ def test_cli_export_helper_applies_mono_guard_and_forwards_musiclover_metadata(m
 
 
 def test_batch_processor_forwards_worldclass_and_hybrid_metadata(monkeypatch, tmp_path):
-    """Batch-Results sollen den 9.12.10-Weltklasse-Contract in metadata weiterreichen."""
+    """Batch-Results sollen den aktuellen Weltklasse-Contract in metadata weiterreichen."""
     import batch_processor as bp
 
     class _FakeSf:

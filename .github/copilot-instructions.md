@@ -535,4 +535,4 @@ Subtraktive Stufe 4 (NR) **vor** additiver Stufe 5 (Harmonik/BW-Erweiterung). �
 
 > Era-Erkennung: `EraClassifier.classify(audio, sr)` → era_decade, genre_label, carrier_chain
 
-*Stand: Mai 2026 — Aurik 9.12.10 — instructions_version 9.6*
+*Stand: Juli 2026 — Aurik 9.20.3 — instructions_version 9.9*
