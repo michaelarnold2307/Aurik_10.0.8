@@ -235,22 +235,63 @@ def real_audio_gate_case() -> dict[str, object]:
     The fixture prefers local real-world media and returns a compact, centered
     clip to keep functional gate tests deterministic and runtime-bounded.
     """
-    candidates = [
+    candidates = _real_audio_candidate_paths()
+    preferred = [
         Path(project_root)
         / "test_audio"
         / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
-        Path(project_root)
-        / "audio_examples"
-        / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
-        Path(project_root) / "audio_examples" / "Elke_Best_Freund.mp3",
-        Path(project_root) / "temp_repro" / "repro_input.mp3",
+        *candidates,
     ]
-    audio_path = next((p for p in candidates if p.exists()), None)
+    audio_path = next((p for p in preferred if p.exists()), None)
     if audio_path is None:
         pytest.skip(
-            "Keine reale Audio-Fixture gefunden. Erwartet eine Datei in: " + ", ".join(str(p) for p in candidates)
+            "Keine reale Audio-Fixture gefunden. Erwartet eine Datei in: " + ", ".join(str(p) for p in preferred)
         )
 
+    return _load_real_audio_clip(audio_path, max_seconds=8.0)
+
+
+@pytest.fixture(scope="session")
+def real_audio_corpus_cases() -> list[dict[str, object]]:
+    """Provide a compact multi-file real-audio corpus for broad gates."""
+    limit = max(1, int(float(os.environ.get("AURIK_REAL_AUDIO_CORPUS_LIMIT", "8") or 8)))
+    cases: list[dict[str, object]] = []
+    for audio_path in _real_audio_candidate_paths():
+        if not audio_path.exists():
+            continue
+        try:
+            cases.append(_load_real_audio_clip(audio_path, max_seconds=4.0))
+        except pytest.skip.Exception:
+            continue
+        except Exception:
+            continue
+        if len(cases) >= limit:
+            break
+    if not cases:
+        pytest.skip("Keine ladbaren Real-Audio-Korpusdateien gefunden.")
+    return cases
+
+
+def _real_audio_candidate_paths() -> list[Path]:
+    root = Path(project_root)
+    return [
+        root / "test_audio" / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
+        root / "test_audio" / "Elke Best - 30 Sekunden.mp3",
+        root / "test_audio" / "tape" / "cassette_1980s_wow.wav",
+        root / "test_audio" / "tape" / "reel_1940s_dropout.wav",
+        root / "test_audio" / "vinyl" / "jazz_1950s_scratched.wav",
+        root / "test_audio" / "vinyl" / "rock_1970s_worn.wav",
+        root / "test_audio" / "digital" / "mp3_64kbps_artifacts.wav",
+        root / "test_audio" / "digital" / "cd_clipped_2000s.wav",
+        root / "test_audio" / "vocals" / "opera_sibilance.wav",
+        root / "test_audio" / "vocals" / "choir_breaths.wav",
+        root / "audio_examples" / "Elke Best - Du wolltest nur ein Abenteuer, aber ich suchte einen Freund.mp3",
+        root / "audio_examples" / "Elke_Best_Freund.mp3",
+        root / "temp_repro" / "repro_input.mp3",
+    ]
+
+
+def _load_real_audio_clip(audio_path: Path, *, max_seconds: float) -> dict[str, object]:
     from backend.file_import import load_audio_file
 
     loaded = load_audio_file(str(audio_path), target_sr=None, mono=False, do_carrier_analysis=False)
@@ -271,7 +312,7 @@ def real_audio_gate_case() -> dict[str, object]:
     elif audio.ndim == 2 and audio.shape[1] == 1:
         audio = np.repeat(audio, 2, axis=1)
 
-    clip_len = min(audio.shape[0], int(sr * 8.0))
+    clip_len = min(audio.shape[0], int(sr * float(max_seconds)))
     if clip_len < int(sr * 2.0):
         pytest.skip(f"Reale Audio-Fixture ist zu kurz für Gate-Tests: {audio_path}")
     start = max(0, (audio.shape[0] - clip_len) // 2)
@@ -282,6 +323,7 @@ def real_audio_gate_case() -> dict[str, object]:
         import librosa
 
         clip = librosa.resample(clip.T, orig_sr=sr, target_sr=48_000).T.astype(np.float32)
+        clip = np.clip(np.nan_to_num(clip, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
         sr = 48_000
 
     return {

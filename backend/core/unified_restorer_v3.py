@@ -2767,6 +2767,24 @@ class UnifiedRestorerV3:
         return _ordered or None
 
     @staticmethod
+    def _with_inferred_analog_ancestor_chain(
+        current_chain: list[str] | tuple[str, ...] | None,
+        *,
+        inferred_ancestor: str,
+        primary_material: str,
+    ) -> list[str]:
+        """Ergänzt eine erkannte Analogstufe vor dem terminalen Codec."""
+        _chain = [str(stage).strip().lower() for stage in (current_chain or []) if str(stage).strip()]
+        _ancestor = str(inferred_ancestor).strip().lower()
+        _primary = str(primary_material).strip().lower()
+        _terminal_codecs = {"mp3_low", "mp3_high", "aac", "streaming", "minidisc"}
+        if _ancestor and _ancestor not in _chain:
+            _chain = [_ancestor, *_chain]
+        if _primary in _terminal_codecs and _primary not in _chain:
+            _chain = [*_chain, _primary]
+        return UnifiedRestorerV3._normalize_transfer_chain_order(_chain) or []
+
+    @staticmethod
     def _infer_tape_speed_ips(
         material_type: Any,
         era_decade: int | None,
@@ -9000,11 +9018,11 @@ class UnifiedRestorerV3:
                                         if isinstance(getattr(self, "_restoration_context", None), dict)
                                         else []
                                     )
-                                    if _best_ancestor not in _ctx_chain:
-                                        _ctx_chain = [_best_ancestor, *_ctx_chain]
-                                    if _old_mat_str in _TERMINAL_LOSSY_CODECS and _old_mat_str not in _ctx_chain:
-                                        _ctx_chain = [*_ctx_chain, _old_mat_str]
-                                    _ctx_chain = self._normalize_transfer_chain_order(_ctx_chain) or []
+                                    _ctx_chain = self._with_inferred_analog_ancestor_chain(
+                                        _ctx_chain,
+                                        inferred_ancestor=_best_ancestor,
+                                        primary_material=_old_mat_str,
+                                    )
                                     if isinstance(getattr(self, "_restoration_context", None), dict):
                                         self._restoration_context["transfer_chain"] = _ctx_chain
 

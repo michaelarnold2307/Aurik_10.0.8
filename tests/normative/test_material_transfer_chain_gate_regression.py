@@ -47,6 +47,18 @@ def test_extract_transfer_chain_moves_terminal_codec_after_physical_stage() -> N
 
 @pytest.mark.normative
 @pytest.mark.timeout(20)
+def test_inferred_cassette_ancestor_preserves_terminal_mp3_primary_chain_direction() -> None:
+    chain = UnifiedRestorerV3._with_inferred_analog_ancestor_chain(
+        [],
+        inferred_ancestor="cassette",
+        primary_material="mp3_low",
+    )
+
+    assert chain == ["cassette", "mp3_low"]
+
+
+@pytest.mark.normative
+@pytest.mark.timeout(20)
 def test_extract_transfer_chain_from_object_list() -> None:
     class _Forensics:
         transfer_chain = ["Vinyl", "Tape", "MP3_LOW"]
