@@ -434,8 +434,38 @@ class RestaurierDenker:
             if denker_policy_input:
                 _uv3_kwargs["denker_policy_input"] = dict(denker_policy_input)
             try:
+                # §v10 HPE Baseline vor UV3
+                _hpe_pre = 0.5
+                try:
+                    from backend.core.human_pleasantness_estimator import compute_pleasantness
+                    _hpe_pre = compute_pleasantness(audio, sr).score
+                except Exception: pass
+
                 raw = restorer.restore(audio, **_uv3_kwargs)
-                return self._konvertiere(raw, material=material)
+                result = self._konvertiere(raw, material=material)
+
+                # §v10 HPE Check: Hat UV3 den Klang verbessert?
+                try:
+                    from backend.core.human_pleasantness_estimator import compute_pleasantness, compare_pleasantness
+                    from backend.core.pleasantness_registry import get_pleasantness_registry
+                    _restored = result.audio
+                    if _restored.ndim == 2: _restored = _restored.mean(axis=1)
+                    _hpe_post = compute_pleasantness(_restored.astype(np.float32), sr).score
+                    _cmp = compare_pleasantness(
+                        np.asarray(audio, dtype=np.float32),
+                        np.asarray(_restored, dtype=np.float32), sr)
+                    _delta = float(_cmp.get("delta_score", 0.0))
+                    _reg = get_pleasantness_registry()
+                    _reg.report_post("UV3", _hpe_post, delta=_delta)
+                    result.quality_delta = _delta
+                    if _delta < -0.02:
+                        logger.warning("RestaurierDenker: HPE %+.3f — UV3 hat KLANG VERSCHLECHTERT!", _delta)
+                    else:
+                        logger.info("RestaurierDenker: HPE %.3f->%.3f (%+.3f) %s",
+                                   _hpe_pre, _hpe_post, _delta, _cmp.get("verdict",""))
+                except Exception: pass
+
+                return result
             except Exception as uv3_exc:
                 logger.warning("UV3 Direkt-Pfad fehlgeschlagen: %s — Fallback.", uv3_exc, exc_info=True)
                 return self._fallback(audio, material or "unknown", str(uv3_exc))
