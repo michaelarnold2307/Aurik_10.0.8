@@ -434,35 +434,66 @@ class RestaurierDenker:
             if denker_policy_input:
                 _uv3_kwargs["denker_policy_input"] = dict(denker_policy_input)
             try:
-                # §v10 HPE Baseline vor UV3
+                # §v10 HPE Baseline + Inviting VOR UV3
                 _hpe_pre = 0.5
+                _inv_pre = 0.5
                 try:
                     from backend.core.human_pleasantness_estimator import compute_pleasantness
+                    from backend.core.inviting_sound_checker import check_inviting_sound
                     _hpe_pre = compute_pleasantness(audio, sr).score
+                    _inv_pre = check_inviting_sound(audio, sr).score
                 except Exception: pass
 
                 raw = restorer.restore(audio, **_uv3_kwargs)
                 result = self._konvertiere(raw, material=material)
 
-                # §v10 HPE Check: Hat UV3 den Klang verbessert?
+                # §v10 HPE + Inviting Check: Hat UV3 versagt?
                 try:
                     from backend.core.human_pleasantness_estimator import compute_pleasantness, compare_pleasantness
+                    from backend.core.inviting_sound_checker import check_inviting_sound
                     from backend.core.pleasantness_registry import get_pleasantness_registry
+
                     _restored = result.audio
                     if _restored.ndim == 2: _restored = _restored.mean(axis=1)
-                    _hpe_post = compute_pleasantness(_restored.astype(np.float32), sr).score
+                    _restored_f32 = _restored.astype(np.float32)
+                    _hpe_post = compute_pleasantness(_restored_f32, sr).score
+                    _inv_post = check_inviting_sound(_restored_f32, sr).score
                     _cmp = compare_pleasantness(
                         np.asarray(audio, dtype=np.float32),
-                        np.asarray(_restored, dtype=np.float32), sr)
+                        _restored_f32, sr)
                     _delta = float(_cmp.get("delta_score", 0.0))
+
                     _reg = get_pleasantness_registry()
                     _reg.report_post("UV3", _hpe_post, delta=_delta)
                     result.quality_delta = _delta
-                    if _delta < -0.02:
-                        logger.warning("RestaurierDenker: HPE %+.3f — UV3 hat KLANG VERSCHLECHTERT!", _delta)
+
+                    # §v10 FAILSAFE: Wenn HPE oder Inviting VERSCHLECHTERT wurde,
+                    # ist Aurik GESCHEITERT. Original zurückgeben.
+                    _inv_delta = _inv_post - _inv_pre
+                    _failed_hpe = _delta < -0.03
+                    _failed_inv = _inv_delta < -0.05
+
+                    if _failed_hpe or _failed_inv:
+                        _reasons = []
+                        if _failed_hpe: _reasons.append(f"HPE {_delta:+.3f}")
+                        if _failed_inv: _reasons.append(f"Inviting {_inv_delta:+.3f}")
+                        _fail_msg = f"AURIK VERBESSERUNG GESCHEITERT: {', '.join(_reasons)} — gebe Original zurück"
+                        logger.error("RestaurierDenker: %s", _fail_msg)
+                        result.quality_delta = _delta
+                        result.processing_note = _fail_msg
+                        # NICHT return result — wir versuchen es leichter!
+                        _retry = self._retry_lighter(audio, sr, restorer, _uv3_kwargs, material)
+                        if _retry is not None:
+                            return _retry
+                        # Auch Retry gescheitert → Original zurück
+                        logger.error("RestaurierDenker: Auch leichterer Versuch gescheitert — Original unverändert")
+                        fallback = self._fallback(audio, material or "unknown", _fail_msg)
+                        fallback.audio = audio.copy()
+                        return fallback
                     else:
-                        logger.info("RestaurierDenker: HPE %.3f->%.3f (%+.3f) %s",
-                                   _hpe_pre, _hpe_post, _delta, _cmp.get("verdict",""))
+                        logger.info("RestaurierDenker: HPE %.3f->%.3f (%+.3f) Inviting %.3f->%.3f (%+.3f) %s",
+                                   _hpe_pre, _hpe_post, _delta, _inv_pre, _inv_post, _inv_delta,
+                                   _cmp.get("verdict",""))
                 except Exception: pass
 
                 return result
@@ -758,6 +789,42 @@ class RestaurierDenker:
             warnings=[f"Restaurierung fehlgeschlagen — Original unverändert. Grund: {reason}"],
             material=material,
         )
+
+    @staticmethod
+    def _retry_lighter(
+        audio: np.ndarray, sr: int, restorer: Any, uv3_kwargs: dict, material: str | None
+    ) -> RestaurierErgebnis | None:
+        """§v10 FAILSAFE: Wiederholt UV3 mit reduzierter Intensität.
+
+        Wenn der erste Durchlauf den Klang verschlechtert hat, versucht
+        Aurik es mit SANFTEREN Parametern — nicht aufgeben, nachsteuern.
+        """
+        try:
+            logger.info("RestaurierDenker: RETRY_LIGHTER — versuche mit reduzierter Intensität")
+            _lighter_kwargs = dict(uv3_kwargs)
+            _lighter_kwargs["mode"] = "balanced"  # Weniger aggressiv als "quality"
+            raw2 = restorer.restore(audio, **_lighter_kwargs)
+            from denker.restaurier_denker import RestaurierDenker
+            result2 = RestaurierDenker._konvertiere.__func__(None, raw2, material=material)
+
+            # Prüfe ob der Retry besser ist
+            from backend.core.human_pleasantness_estimator import compare_pleasantness
+            _r2 = result2.audio
+            if _r2.ndim == 2: _r2 = _r2.mean(axis=1)
+            _cmp2 = compare_pleasantness(
+                np.asarray(audio, dtype=np.float32),
+                np.asarray(_r2, dtype=np.float32), sr)
+            _delta2 = float(_cmp2.get("delta_score", 0.0))
+            if _delta2 > -0.02:
+                logger.info("RestaurierDenker RETRY_LIGHTER erfolgreich: HPE %+.3f", _delta2)
+                result2.quality_delta = _delta2
+                return result2
+            else:
+                logger.warning("RestaurierDenker RETRY_LIGHTER gescheitert: HPE %+.3f", _delta2)
+                return None
+        except Exception as e:
+            logger.warning("RestaurierDenker RETRY_LIGHTER Fehler: %s", e)
+            return None
 
 
 # ---------------------------------------------------------------------------
