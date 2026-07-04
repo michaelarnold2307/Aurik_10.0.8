@@ -1882,6 +1882,28 @@ class AdaptiveProcessingPipelineV2(AdaptiveProcessingPipeline):
         current_audio = audio
         step_counter = 0
 
+        # §v10 Team-Initialisierung: PleasantnessRegistry Baseline + Inviting Check
+        try:
+            from backend.core.pleasantness_registry import get_pleasantness_registry
+            from backend.core.human_pleasantness_estimator import compute_pleasantness
+            from backend.core.goosebumps_factor import compute_goosebumps
+            from backend.core.inviting_sound_checker import check_inviting_sound
+
+            _reg = get_pleasantness_registry()
+            _reg.reset()
+            _hpe_base = compute_pleasantness(audio, sr)
+            _goose_base = compute_goosebumps(audio, sr)
+            _inv_base = check_inviting_sound(audio, sr)
+
+            _reg.set_baseline(_hpe_base.score, label=_hpe_base.label, goosebumps=_goose_base.score)
+            _reg.set_inviting_check(_inv_base.score >= 0.5, _inv_base.rejection_factors)
+            self.logger.info(
+                "Team initialisiert: HPE=%.3f (%s) | Goosebumps=%.3f | Inviting=%.3f (%s)",
+                _hpe_base.score, _hpe_base.label, _goose_base.score, _inv_base.score, _inv_base.label,
+            )
+        except Exception as e:
+            self.logger.debug("Team-Init übersprungen: %s", e)
+
         # Context analysis for pipeline decisions
         context = self.context_analyzer.analyze(audio)
         goal = self.goal_engine.define_goal(context)
@@ -2026,6 +2048,35 @@ class AdaptiveProcessingPipelineV2(AdaptiveProcessingPipeline):
             final_cas,
             final_cas - initial_cas,
         )
+
+        # §v10 Team-Verdict in Quality Report
+        try:
+            from backend.core.pleasantness_registry import get_pleasantness_registry
+            from backend.core.inviting_sound_checker import check_inviting_sound
+
+            _reg = get_pleasantness_registry()
+            _status = _reg.get_status()
+
+            # Abschließender Inviting-Check
+            _inv_final = check_inviting_sound(current_audio, sr)
+            _reg.set_inviting_check(_inv_final.score >= 0.5, _inv_final.rejection_factors)
+
+            if quality_report is None:
+                quality_report = {}
+            quality_report["team_verdict"] = _status.global_verdict
+            quality_report["team_baseline_hpe"] = _status.baseline_pleasantness
+            quality_report["team_final_hpe"] = _status.current_pleasantness
+            quality_report["team_best_hpe"] = _status.best_pleasantness
+            quality_report["team_steps_improved"] = _status.steps_improved
+            quality_report["team_steps_declined"] = _status.steps_declined
+            quality_report["team_inviting_score"] = _inv_final.score
+            quality_report["team_inviting_label"] = _inv_final.label
+            quality_report["team_active_modules"] = list(_status.active_modules)
+
+            self.logger.info("Team-Verdict: %s", _status.global_verdict)
+            self.logger.info("Team Inviting: %.3f (%s)", _inv_final.score, _inv_final.label)
+        except Exception as e:
+            self.logger.debug("Team-Verdict übersprungen: %s", e)
 
         return job
 
