@@ -78,6 +78,20 @@ def apply_human_hearing_comfort_guard(
     hf_before = _median_band_delta_db(ref, out, sr, band=(6000.0, 16000.0), support_band=(500.0, 4000.0))
     hf_lift = 0.0
     noise_floor_lift = 0.0
+
+    # v9.20.3-Fix: Second peak overshoot attenuation moved BEFORE HF lift.
+    # Previously the second _attenuate_peak_overshoot ran after _boost_candidate_hf,
+    # undoing the HF enhancement because peak energy gained in 6-16 kHz was treated
+    # as overshoot. Now overshoot is fully resolved before the deliberate HF lift,
+    # so the lift survives for the listener.
+    out, residual_overshoot_frames, _ = _attenuate_peak_overshoot(
+        ref,
+        out,
+        sr,
+        max_peak_overshoot_db=max_peak_overshoot_db,
+    )
+    overshoot_frames = max(int(overshoot_frames), int(residual_overshoot_frames))
+
     if hf_before < -float(max_hf_loss_db):
         target_loss = -0.25
         hf_lift = float(np.clip(target_loss - hf_before, 0.0, max_hf_lift_db))
@@ -100,14 +114,6 @@ def apply_human_hearing_comfort_guard(
                     noise_floor_lift = max(0.0, _noise_floor_p5_dbfs(out) - floor_before)
                 else:
                     hf_lift = 0.0
-
-    out, residual_overshoot_frames, _ = _attenuate_peak_overshoot(
-        ref,
-        out,
-        sr,
-        max_peak_overshoot_db=max_peak_overshoot_db,
-    )
-    overshoot_frames = max(int(overshoot_frames), int(residual_overshoot_frames))
 
     out, noise_floor_clamp = _limit_relative_noise_floor(
         ref,

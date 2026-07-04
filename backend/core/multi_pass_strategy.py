@@ -322,6 +322,16 @@ class ObjectiveScore:
     composite_score: float = 0.0
     """Weighted composite score (0.0-1.0, higher=better)."""
 
+    # === §v10 HPE: Psychoakustische Angenehmheit ===
+    pleasantness_score: float = 0.0
+    """HPE Pleasantness Score (0.0-1.0). DAS ist, worauf es für menschliche Ohren ankommt."""
+    pleasantness_active: bool = False
+    """True wenn HPE tatsächlich berechnet wurde."""
+    pleasantness_label: str = ""
+    """Mensch-lesbare Bewertung: 'Sehr angenehm', 'Angenehm', 'Neutral', 'Anstrengend'."""
+    pleasantness_delta_vs_original: float = 0.0
+    """Veränderung der Angenehmheit gegenüber dem Original."""
+
     confidence: float = 0.0
     """Confidence in this score (0.0-1.0, based on consistency)."""
 
@@ -346,17 +356,72 @@ class ObjectiveScore:
 
     def __str__(self) -> str:
         """Human-readable representation."""
+        hpe_str = f" HPE={self.pleasantness_score:.3f}({self.pleasantness_label})" if self.pleasantness_active else ""
         return (
             f"ObjectiveScore(variant='{self.variant_name}', "
-            f"composite={self.composite_score:.3f}, "
-            f"confidence={self.confidence:.2f}, "
+            f"composite={self.composite_score:.3f},"
+            f"{hpe_str}"
+            f" confidence={self.confidence:.2f}, "
             f"VERSA={self.versa_score:.3f}, "
-            f"DNSMOS={self.dnsmos_score:.2f}, "
             f"MG_avg={self.musical_goals_avg:.2f}, "
             f"SNR={self.snr_db:.1f}dB)"
         )
 
 
+
+
+class IntrinsicAudioQualityScorer:
+    """§v10 Leichtgewichtiger Scorer für Multi-Pass-Varianten-Evaluation.
+
+    Berechnet einen einfachen Composite-Score aus:
+    - RMS-Erhalt (keine Pegel-Explosion)
+    - Peak-Erhalt (kein Clipping)
+    - SNR-Verbesserung (Signal/Rausch-Abstand)
+    - Spektrale Ähnlichkeit (keine drastische Klangfarben-Änderung)
+    """
+
+    def score(self, original: np.ndarray, processed: np.ndarray, sr: int) -> float:
+        import numpy as np
+        orig = np.asarray(original, dtype=np.float64)
+        proc = np.asarray(processed, dtype=np.float64)
+        # Mono für Vergleich
+        if orig.ndim > 1:
+            orig = orig.mean(axis=-1) if orig.shape[-1] <= 2 else orig.mean(axis=0)
+        if proc.ndim > 1:
+            proc = proc.mean(axis=-1) if proc.shape[-1] <= 2 else proc.mean(axis=0)
+        min_len = min(len(orig), len(proc))
+        orig, proc = orig[:min_len], proc[:min_len]
+
+        # 1. RMS-Erhalt (Score 0-25)
+        rms_orig = float(np.sqrt(np.mean(orig**2)) + 1e-12)
+        rms_proc = float(np.sqrt(np.mean(proc**2)) + 1e-12)
+        rms_ratio = min(rms_proc, rms_orig) / max(rms_proc, rms_orig, 1e-12)
+        rms_score = 25.0 * rms_ratio
+
+        # 2. Peak-Erhalt (Score 0-25)
+        peak_orig = float(np.max(np.abs(orig)))
+        peak_proc = float(np.max(np.abs(proc)))
+        peak_ok = 1.0 if peak_proc < 0.99 else 0.5 if peak_proc < 1.0 else 0.0
+        peak_score = 25.0 * peak_ok
+
+        # 3. SNR-Verbesserung (Score 0-25)
+        noise = proc - orig
+        noise_power = float(np.mean(noise**2)) + 1e-12
+        signal_power = float(np.mean(orig**2)) + 1e-12
+        snr_db = 10.0 * np.log10(signal_power / noise_power)
+        snr_score = 25.0 * min(1.0, max(0.0, (snr_db + 10.0) / 40.0))
+
+        # 4. Spektrale Ähnlichkeit (Score 0-25)
+        n_fft = min(2048, min_len // 4)
+        if n_fft >= 64:
+            spec_orig = np.abs(np.fft.rfft(orig[:n_fft*10] * np.hanning(n_fft*10)))[:n_fft//2]
+            spec_proc = np.abs(np.fft.rfft(proc[:n_fft*10] * np.hanning(n_fft*10)))[:n_fft//2]
+            spec_corr = float(np.corrcoef(spec_orig, spec_proc)[0, 1]) if len(spec_orig) > 1 else 1.0
+            spec_score = 25.0 * max(0.0, spec_corr)
+        else:
+            spec_score = 25.0
+
+        return rms_score + peak_score + snr_score + spec_score
 class ObjectiveScorer:
     """
     Bewertet Audio via objektive Metriken.
@@ -529,73 +594,90 @@ class ObjectiveScorer:
                 score.snr_db = 20.0
                 score.thd_percent = 1.0
 
-        # === 5. Composite Score (weighted) ===
+        # === 5. §v10 HPE: Psychoakustische Angenehmheit (PRIMÄR) ===
+        try:
+            from backend.core.human_pleasantness_estimator import (
+                compute_pleasantness,
+            )
+
+            hpe_result = compute_pleasantness(audio, sample_rate)
+            score.pleasantness_score = float(hpe_result.score)
+            score.pleasantness_active = True
+            score.pleasantness_label = hpe_result.label
+            # Wenn Referenz-Audio verfügbar, berechne Delta
+            # (reference_audio wird als Parameter durchgereicht, kann None sein)
+            logger.debug(
+                "HPE: Score=%.3f Label=%s", score.pleasantness_score, score.pleasantness_label
+            )
+        except Exception as e:
+            logger.debug("HPE nicht verfügbar: %s", e)
+            score.pleasantness_score = 0.5
+            score.pleasantness_active = False
+
+        # === 6. Composite Score (weighted) ===
         score.composite_score = self._calculate_composite(score)
 
-        # === 6. Confidence (placeholder - wird später von ConfidenceCalculator gesetzt) ===
+        # === 7. Confidence (placeholder - wird später von ConfidenceCalculator gesetzt) ===
         score.confidence = 0.8  # Default medium confidence
 
         return score
 
     def _calculate_composite(self, score: ObjectiveScore) -> float:
         """
-        Berechne weighted composite score aus allen Metriken.
+        §v10 Berechne weighted composite score — HPE als PRIMÄRE Dimension.
 
-        Adaptive Gewichtung:
-        - IAQS-Gesamt (immer): 35%
-        - Musical Goals Average: 25%
-        - DNSMOS (normalized, wenn aktiv): 20% — sonst 0%
-        - VERSA (normiert, wenn aktiv): 10% — sonst 0%
-        - SNR (normalized): 7%
-        - THD (inverted, normalized): 3%
+        Gewichtung:
+        - HPE Pleasantness (wenn aktiv):       35%  ← PRIMÄR: Menschlicher Wohlklang
+        - Musical Goals Average:               20%
+        - VERSA (normiert, wenn aktiv):        15%
+        - IAQS-Gesamt (wenn aktiv):            15%
+        - SNR (normalisiert):                   8%
+        - THD (invertiert, normalisiert):       7%
 
-        Wenn DNSMOS/VERSA deaktiviert: ihr Gewicht wird
-        anteilig auf IAQS und Musical Goals umverteilt,
-        damit die Summe immer 100% ergibt.
+        Wenn HPE nicht verfügbar: Gewicht wird umverteilt.
 
         Result: 0.0-1.0, higher=better
         """
-        # Basis: immer verfügbare Metriken
-        base_iaqs = 0.35
-        base_mg = 0.25
-        base_snr = 0.07
-        base_thd = 0.03
-        # §10.2: pool_dnsmos entfernt — DNSMOS P.835 verboten als Musik-Qualitätsmetrik
-        # Das ehemals 20%-Gewicht wird vollständig auf VERSA-Pool (10%) und freie
-        # Umverteilung (restliche 10%) aufgeteilt, damit die Summe 100% ergibt.
-        pool_versa = 0.30  # erhöht von 0.10 auf 0.30 (kompensiert entfallenes DNSMOS-Gewicht)
-        pool_iaqs = base_iaqs  # Umverteilungspool wenn IAQS nicht aktiv
+        base_hpe = 0.35
+        base_mg = 0.20
+        base_iaqs = 0.15
+        base_versa = 0.15
+        base_snr = 0.08
+        base_thd = 0.07
 
-        # Nicht genutzte Pools umverteilen
         freed = 0.0
         if not score.versa_active:
-            freed += pool_versa
+            freed += base_versa
         if not score.iaqs_active:
-            freed += pool_iaqs
+            freed += base_iaqs
+        if not score.pleasantness_active:
+            freed += base_hpe
 
-        # Freed weight → 60% auf Musical Goals, 30% auf SNR, 10% auf THD
+        w_hpe = base_hpe if score.pleasantness_active else 0.0
         w_iaqs = base_iaqs if score.iaqs_active else 0.0
-        w_mg = base_mg + freed * 0.60
-        w_snr = base_snr + freed * 0.30
-        w_thd = base_thd + freed * 0.10
+        w_mg = base_mg + freed * 0.45
+        w_snr = base_snr + freed * 0.35
+        w_thd = base_thd + freed * 0.20
 
         composite = 0.0
 
-        # IAQS Gesamt (0.0-1.0) — nur wenn aktiv
+        # §v10 HPE — das wichtigste Kriterium
+        if score.pleasantness_active:
+            composite += w_hpe * score.pleasantness_score
+
+        # IAQS Gesamt (0.0-1.0)
         if score.iaqs_active:
             composite += w_iaqs * score.iaqs_total
 
         # Musical Goals (0.0-1.0)
         composite += w_mg * score.musical_goals_avg
 
-        # §10.2: DNSMOS-Block entfernt — Sprach-Metrik verboten für Musikrestaurierung
-
-        # VERSA (normiert 0.0–1.0) — höherer MOS = bessere Variante (§4.4)
+        # VERSA (normiert 0.0–1.0)
         if score.versa_active:
             versa_norm = min(score.versa_score, 1.0)
-            composite += pool_versa * versa_norm
+            composite += base_versa * versa_norm
 
-        # SNR (typ. 10-40 dB → 0.0-1.0) — Gewicht inkl. umverteilter Anteile
+        # SNR (typ. 10-40 dB → 0.0-1.0)
         snr_norm = min(max((score.snr_db - 10.0) / 30.0, 0.0), 1.0)
         composite += w_snr * snr_norm
 

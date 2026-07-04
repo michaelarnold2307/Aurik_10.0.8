@@ -1941,6 +1941,36 @@ class AdaptiveProcessingPipelineV2(AdaptiveProcessingPipeline):
             genre_confidence=analysis_profile.musical_context.genre_confidence,
         )
 
+        # ── §v10 HPE: Psychoakustische Angenehmheit vor/nach Restaurierung ──
+        pleasantness_original = None
+        pleasantness_restored = None
+        pleasantness_delta = 0.0
+        pleasantness_verdict = ""
+        try:
+            from backend.core.human_pleasantness_estimator import (
+                compute_pleasantness,
+                compare_pleasantness,
+            )
+
+            hpe_cmp = compare_pleasantness(
+                np.asarray(audio, dtype=np.float32),
+                np.asarray(current_audio, dtype=np.float32),
+                sr,
+            )
+            pleasantness_original = float(hpe_cmp.get("original", 0.0))
+            pleasantness_restored = float(hpe_cmp.get("restored", 0.0))
+            pleasantness_delta = float(hpe_cmp.get("delta_score", 0.0))
+            pleasantness_verdict = str(hpe_cmp.get("verdict", ""))
+            self.logger.info(
+                "HPE: Original=%.3f → Restored=%.3f (Δ%+.3f) — %s",
+                pleasantness_original,
+                pleasantness_restored,
+                pleasantness_delta,
+                pleasantness_verdict,
+            )
+        except Exception as e:
+            self.logger.warning("HPE evaluation failed: %s", e)
+
         # Create quality report with constraint checking
         quality_report = self.ajm.evaluate(
             audio,
@@ -1951,6 +1981,13 @@ class AdaptiveProcessingPipelineV2(AdaptiveProcessingPipeline):
             analysis_profile.musical_context.genre,
             analysis_profile.musical_context.genre_confidence,
         )
+
+        # HPE-Ergebnisse ins Quality Report eintragen
+        if pleasantness_original is not None:
+            quality_report["pleasantness_original"] = pleasantness_original
+            quality_report["pleasantness_restored"] = pleasantness_restored
+            quality_report["pleasantness_delta"] = pleasantness_delta
+            quality_report["pleasantness_verdict"] = pleasantness_verdict
 
         job.quality_report = quality_report
 
@@ -2054,6 +2091,25 @@ class AdaptiveProcessingPipelineV2(AdaptiveProcessingPipeline):
             analysis_after,
             genre=job.analysis_profile.musical_context.genre,
         )
+
+        # ── §v10 HPE: Pleasantness delta für diesen Schritt ──
+        step_pleasantness_delta = 0.0
+        try:
+            from backend.core.human_pleasantness_estimator import compare_pleasantness
+            hpe_step = compare_pleasantness(
+                np.asarray(audio, dtype=np.float32),
+                np.asarray(processed_audio, dtype=np.float32),
+                sr,
+            )
+            step_pleasantness_delta = float(hpe_step.get("delta_score", 0.0))
+            if abs(step_pleasantness_delta) > 0.01:
+                logger.info(
+                    "HPE step %s: ΔP=%+.3f — %s",
+                    step_id, step_pleasantness_delta,
+                    hpe_step.get("verdict", ""),
+                )
+        except Exception:
+            pass
 
         # Create ProcessingStep
         step = ProcessingStep(

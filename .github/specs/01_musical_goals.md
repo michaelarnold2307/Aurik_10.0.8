@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 01: 15 Musikalische Ziele
+# Aurik 10 — Spec 01: 15 Musikalische Ziele
 
 > **Einzige normative Quelle** für alle Goal-Schwellwerte, Prioritäten, Adaptive Thresholds
 > und Applicability-Regeln. Alle anderen Dateien **referenzieren** hierher.

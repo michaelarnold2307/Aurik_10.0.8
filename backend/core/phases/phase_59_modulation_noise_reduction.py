@@ -17,6 +17,16 @@ Scientific basis: Esquef & Biscainho (2006), Czyzewski et al. (2020).
 """
 
 from __future__ import annotations
+        # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "mod_noise_nr",
+                default_nr=0.55, default_de_ess=0.2, default_comp=1.0)
+            for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
+                if _key in kwargs:
+                    kwargs[_key] = _pim["nr_strength"]
+        except Exception:
+            pass
 
 import logging
 import time as _time

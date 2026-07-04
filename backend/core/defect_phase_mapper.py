@@ -1525,6 +1525,137 @@ _PHASE_MAP: dict[DefectType, PhaseAssignment] = {
             "preserve_analog_character": True,
         },
     ),
+    # ------------------------------------------------------------------
+    # Tier 2: MPEG_FRAME_LOSS — MP3/AAC-Frame-Verluste
+    # ------------------------------------------------------------------
+    DefectType.MPEG_FRAME_LOSS: PhaseAssignment(
+        defect_type=DefectType.MPEG_FRAME_LOSS,
+        primary_phases=[
+            "phase_23_spectral_repair",
+            "phase_06_frequency_restoration",
+        ],
+        secondary_phases=[
+            "phase_39_air_band_enhancement",
+        ],
+        description=(
+            "Repariert MPEG-Frame-Verluste durch spektrale Inpainting der Brickwall-Cutoff-Zonen "
+            "und Wiederherstellung verlorener Hochfrequenz-Anteile."
+        ),
+        config_delta={
+            "enable_spectral_repair": True,
+            "spectral_repair_strength": 0.65,
+            "preserve_analog_character": False,  # Digital → keine analoge Patina
+        },
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2: STEREO_FIELD_COLLAPSE — progressiver Stereofeld-Kollaps
+    # ------------------------------------------------------------------
+    DefectType.STEREO_FIELD_COLLAPSE: PhaseAssignment(
+        defect_type=DefectType.STEREO_FIELD_COLLAPSE,
+        primary_phases=[
+            "phase_13_stereo_enhancement",
+            "phase_34_mid_side_processing",
+        ],
+        secondary_phases=[
+            "phase_15_stereo_balance",
+        ],
+        description=(
+            "Stellt kollabiertes Stereofeld wieder her durch MS-Dekorrelation und selektive "
+            "Stereobreiten-Erweiterung in kollabierten Passagen."
+        ),
+        config_delta={
+            "stereo_width": 1.35,
+            "mid_side_balance": 0.60,
+            "preserve_analog_character": True,
+        },
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2: PHASE_ROTATION — unnatürliche Allpass-Filter-Phasenrotation
+    # ------------------------------------------------------------------
+    DefectType.PHASE_ROTATION: PhaseAssignment(
+        defect_type=DefectType.PHASE_ROTATION,
+        primary_phases=[
+            "phase_14_phase_correction",
+            "phase_23_spectral_repair",
+        ],
+        secondary_phases=[
+            "phase_08_transient_preservation",
+        ],
+        description=(
+            "Korrigiert unnatürliche Phasenrotation durch adaptive Allpass-Filter-Inversion. "
+            "Stellt kohärente Gruppenlaufzeit über Frequenzbänder wieder her."
+        ),
+        config_delta={
+            "phase_correction_strength": 0.55,
+            "enable_spectral_repair": True,
+            "preserve_analog_character": True,
+        },
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2: DROPOUT_OXIDE — kurzer Oxid-Dropout (2–20 ms)
+    # ------------------------------------------------------------------
+    DefectType.DROPOUT_OXIDE: PhaseAssignment(
+        defect_type=DefectType.DROPOUT_OXIDE,
+        primary_phases=[
+            "phase_24_dropout_repair",
+        ],
+        secondary_phases=[
+            "phase_55_diffusion_inpainting",
+        ],
+        description=(
+            "Repariert kurze Oxid-Dropouts (2–20 ms, 30–70% Pegelverlust) per Waveform-Interpolation. "
+            "Bewahrt transiente Musik-Pegel durch zeitlich begrenzte Rekonstruktion."
+        ),
+        config_delta={
+            "dropout_repair_mode": "interpolation",
+            "interpolation_window_ms": 10.0,
+            "preserve_analog_character": True,
+        },
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2: DROPOUT_HEAD_CONTACT — längerer Kopf-Kontakt-Dropout (50–200 ms)
+    # ------------------------------------------------------------------
+    DefectType.DROPOUT_HEAD_CONTACT: PhaseAssignment(
+        defect_type=DefectType.DROPOUT_HEAD_CONTACT,
+        primary_phases=[
+            "phase_24_dropout_repair",
+            "phase_56_head_wear_compensation",
+        ],
+        secondary_phases=[
+            "phase_55_diffusion_inpainting",
+        ],
+        description=(
+            "Kompensiert längere Kopf-Kontakt-Dropouts (50–200 ms, modulierter Pegelverlauf) "
+            "durch Gain-Kompensation mit adaptivem Envelope-Tracking."
+        ),
+        config_delta={
+            "dropout_repair_mode": "gain_compensation",
+            "gain_smooth_ms": 50.0,
+            "preserve_analog_character": True,
+        },
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2: DROPOUT_SPLICE — abrupter Band-Spleiß-Dropout (>95% Pegelverlust)
+    # ------------------------------------------------------------------
+    DefectType.DROPOUT_SPLICE: PhaseAssignment(
+        defect_type=DefectType.DROPOUT_SPLICE,
+        primary_phases=[
+            "phase_64_tape_splice_repair",
+            "phase_23_spectral_repair",
+        ],
+        secondary_phases=[
+            "phase_24_dropout_repair",
+        ],
+        description=(
+            "Repariert abrupter Band-Spleiß-Dropouts (>95% Pegelverlust) mit spektralem Inpainting. "
+            "Rekonstruiert fehlendes Signal aus umliegenden Spektralregionen."
+        ),
+        config_delta={
+            "dropout_repair_mode": "spectral_inpainting",
+            "spectral_repair_strength": 0.85,
+            "preserve_analog_character": True,
+        },
+    ),
 }
 
 # ---------------------------------------------------------------------------

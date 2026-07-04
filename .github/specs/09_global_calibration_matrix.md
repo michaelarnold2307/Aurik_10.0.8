@@ -1,6 +1,6 @@
 # Spec §09 — Globale Kalibrierungs-Matrix für reproduzierbare Optimalwerte
 
-**Aurik 9.11.14+ | Gültig ab: 18. April 2026 | Stand: 19. April 2026 (v9.11.14+) | Normativ übergeordnet über einzelne Phase-Konfigurationen**
+**Aurik 10.11.14+ | Gültig ab: 18. April 2026 | Stand: 19. April 2026 (v9.11.14+) | Normativ übergeordnet über einzelne Phase-Konfigurationen**
 
 ---
 

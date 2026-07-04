@@ -200,7 +200,7 @@ class GacelaPlugin:
             for fname in _CKPT_ORDER:
                 path = os.path.join(_CKPT_DIR, fname)
                 if os.path.isfile(path):
-                    ckpt = torch.load(path, map_location="cpu")  # nosec B614 — lokales Modell aus models/
+                    ckpt = torch.load(path, map_location="cpu", weights_only=True)  # nosec B614 — lokaler Tensor-Checkpoint
                     logger.info("GACELA: Checkpoint geladen — %s", fname)
                     break
 

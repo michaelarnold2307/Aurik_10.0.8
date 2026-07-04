@@ -345,3 +345,142 @@ def compute_loudness_delta_sone(
     n_after = compute_specific_loudness_zwicker(audio_after, sr)
     delta = n_after - n_before
     return (float(delta), float(n_before), float(n_after))
+
+
+# ── Moore/Glasberg (2007) Dynamic Loudness Model ──────────────────────
+# ERB-Skala statt Bark, 40 ERB-Bänder von 1.8 bis 38.9 ERB
+# (~50 Hz bis ~15 kHz), spezifische Lautheit per ERB.
+# Referenz: Moore, B.C.J. & Glasberg, B.R. (2007).
+# "Modeling binaural loudness", JASA 121(3), 1604–1612.
+
+
+def _erb_number(freq_khz: float) -> float:
+    """ERB-Rate (Cam) nach Glasberg & Moore (1990) Eq. 4.
+
+    erb_number = 21.4 * log10(4.37 * freq_khz + 1)
+    """
+    return float(21.4 * np.log10(4.37 * freq_khz + 1.0))
+
+
+def _erb_bandwidth_hz(freq_khz: float) -> float:
+    """ERB-Bandbreite in Hz nach Glasberg & Moore (1990) Eq. 3.
+
+    erb_hz = 24.7 * (4.37 * freq_khz + 1)
+    """
+    return float(24.7 * (4.37 * freq_khz + 1.0))
+
+
+def _ath_at_freq_spl(freq_hz: float) -> float:
+    """ATH in dB SPL an Frequenz *freq_hz* nach ISO 226:2023 0-Phon-Kontur.
+
+    Verwendet die gleiche Näherungsformel wie
+    PsychoacousticMaskingModel._ath_threshold_db().
+    """
+    f_khz = freq_hz / 1000.0
+    ath_spl_db = (
+        3.64 * (f_khz ** (-0.8))
+        - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2)
+        + 1e-3 * (f_khz**4)
+    )
+    return float(ath_spl_db)
+
+
+def compute_specific_loudness_moore(
+    audio: np.ndarray, sr: int
+) -> np.ndarray:
+    """Berechnet spezifische Lautheit nach Moore/Glasberg (2007).
+
+    Approximiert das binaurale Lautheitsmodell nach Moore & Glasberg (2007)
+    mittels ERB-Skala und einer vereinfachten nichtlinearen Kompression.
+
+    Algorithmus:
+        1. 40 ERB-Bänder von ERB-Nr. 1.8 bis 38.9 (~50 Hz – ~15 kHz)
+        2. ERB-Bandbreite: ERB(f) = 24.7 * (4.37 * f_khz + 1)
+        3. ERB-Rate:      N(f) = 21.4 * log10(4.37 * f_khz + 1)
+        4. Energie pro ERB-Band via STFT → Band-Integration
+        5. Spezifische Lautheit: N' = (E / E0) ** 0.2
+           wobei E0 die ATH-basierte Ruhehörschwelle ist
+        6. ATH-Integration: Bandenergie unter ATH = keine Lautheitswirkung
+
+    Args:
+        audio: float32/float64 mono oder stereo, Werte in [-1, 1].
+        sr: Sample-Rate in Hz.
+
+    Returns:
+        np.ndarray [40] mit spezifischer Lautheit pro ERB-Band (sone).
+    """
+    # Mono downmix if stereo
+    if audio.ndim == 2:
+        audio = np.mean(audio, axis=1)
+    audio = audio.astype(np.float64)
+
+    if len(audio) < sr // 10:
+        return np.zeros(40, dtype=np.float64)
+
+    # ── 40 ERB-Bänder: ERB-Nr. 1.8 bis 38.9 (50 Hz – 15 kHz) ────────
+    n_erb = 40
+    erb_min = 1.8
+    erb_max = 38.9
+    erb_numbers = np.linspace(erb_min, erb_max, n_erb + 1)
+
+    # ERB-Raten → Frequenzen in Hz (obere Kante der Bänder)
+    erb_edges_hz = np.array(
+        [(10.0 ** (n / 21.4) - 1.0) / 0.00437 for n in erb_numbers],
+        dtype=np.float64,
+    )
+    erb_centers_hz = 0.5 * (erb_edges_hz[:-1] + erb_edges_hz[1:])
+
+    # ── STFT für Frequenzanalyse ─────────────────────────────────────
+    n_fft = max(256, 2 ** int(np.ceil(np.log2(sr / 10))))
+    hop = n_fft // 2
+    # Nutze kurzen Ausschnitt (max 5 s)
+    max_samples = 5 * sr
+    if len(audio) > max_samples:
+        start = (len(audio) - max_samples) // 2
+        audio = audio[start : start + max_samples]
+
+    # STFT
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+
+    n_frames = max(1, (len(audio) - n_fft) // hop + 1)
+    specific_loudness = np.zeros(n_erb, dtype=np.float64)
+
+    # Frame-by-frame accumulation
+    for f in range(n_frames):
+        start_samp = f * hop
+        frame_audio = audio[start_samp : start_samp + n_fft]
+        if len(frame_audio) < n_fft:
+            frame_audio = np.pad(frame_audio, (0, n_fft - len(frame_audio)))
+        # Hann-Fenster
+        window = np.hanning(n_fft)
+        spec = np.abs(np.fft.rfft(frame_audio * window)) / (n_fft / 2)
+        power = spec**2
+
+        for b in range(n_erb):
+            # Frequenz-Bin-Maske für dieses ERB-Band
+            lo = erb_edges_hz[b]
+            hi = erb_edges_hz[b + 1]
+            in_band = (freqs >= lo) & (freqs < hi)
+            if not np.any(in_band):
+                continue
+            # Mittlere Energie in diesem ERB-Band
+            band_energy = float(np.mean(power[in_band])) + 1e-20
+
+            # ATH-Schwelle: Energie, die der Hörschwelle entspricht
+            fc = float(erb_centers_hz[b])
+            ath_spl = _ath_at_freq_spl(fc)
+            ath_dbfs = ath_spl - 100.0
+            ath_energy = 10.0 ** (ath_dbfs / 10.0)
+
+            # Spezifische Lautheit (vereinfacht): N' = (E / E0) ** 0.2
+            if band_energy > ath_energy:
+                # Normiert auf ATH-Energie → überschwellige Kompression
+                excess = band_energy / ath_energy
+                specific_loudness[b] += excess**0.2
+            # Energie unter ATH: Beitrag = 0
+
+    # Normierung über Frames
+    if n_frames > 0:
+        specific_loudness /= n_frames
+
+    return specific_loudness

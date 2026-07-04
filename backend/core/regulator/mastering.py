@@ -35,11 +35,11 @@ def lufs_normalize(audio: np.ndarray, sr: int, target_lufs: float = -14.0) -> np
     gain = target_lufs - loudness
     gain_linear = 10 ** (gain / 20)
     if gain_linear > 1.0005:
+        # §2.45a-II v10: Soft-knee defaults (200 ms crossfade, 6 dB knee).
         normalized = apply_musical_gain_envelope(
             audio,
             gain_linear,
             gate_dbfs=-36.0,
-            crossfade_ms=10.0,
             sr=sr,
             reference_for_gate=audio,
         )

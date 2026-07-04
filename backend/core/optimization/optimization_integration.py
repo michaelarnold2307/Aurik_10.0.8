@@ -483,6 +483,7 @@ class OptimizationIntegration:
                     torch.load(  # nosec B614 — interner Checkpoint aus models/
                         weights_path,
                         map_location=self.device,
+                        weights_only=True,
                     )
                 )
                 logger.info("Loaded pretrained NAS network for %s", material_type)

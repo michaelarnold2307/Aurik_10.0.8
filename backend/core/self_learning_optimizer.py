@@ -56,8 +56,8 @@ _DEFAULT_STATE_PATH = "logs/self_learning_state.json"
 class ArmStats:
     """Statistik für einen (Material, Variante)-Arm."""
 
-    count: int = 0
-    """Anzahl der bisherigen Pulls."""
+    count: float = 0.0
+    """Anzahl der bisherigen Pulls (float via Decay)."""
     mean_delta: float = 0.0
     """Gleitender Mittelwert der quality_delta-Werte."""
     sum_sq: float = 0.0
@@ -66,23 +66,41 @@ class ArmStats:
 
     def update(self, delta: float) -> None:
         """Inkrementelles Update mit exponentiell gerichtetem Glättungsfaktor."""
-        self.count += 1
-        alpha = 1.0 / self.count  # Klassisches inkrementelles Mittel
+        self.count += 1.0
+        alpha = 1.0 / max(0.5, self.count)  # Klassisches inkrementelles Mittel
         self.mean_delta += alpha * (delta - self.mean_delta)
-        self.sum_sq += delta**2
+        self.sum_sq += delta ** 2
         self.last_updated = time.time()
+
+    def apply_decay(self, decay_factor: float) -> None:
+        """Wendet einen exponentiellen Decay auf alle Statistiken an.
+
+        Args:
+            decay_factor: Faktor im [0, 1]-Bereich. 1.0 = kein Decay.
+                         0.99 = 1 % Decay pro Aufruf.
+        """
+        if decay_factor >= 1.0:
+            return
+        self.count = max(0.0, self.count * decay_factor)
+        self.sum_sq *= decay_factor
+        # mean_delta bleibt, aber effektives Gewicht sinkt mit count.
+        # Bei count → 0 wird mean_delta unsicherer, was UCB1 via
+        # Exploration-Term automatisch berücksichtigt.
 
     def ucb1_score(self, total_pulls: int, exploration_factor: float = 1.4) -> float:
         """
         UCB1-Score: mean + C * sqrt(ln(N) / n)
-        Nicht-gezogene Arme haben Score = +∞ (werden zuerst ausprobiert).
+        Nicht-gezogene oder vollständig verfallene Arme haben Score = +∞
+        (werden zuerst ausprobiert).
         """
-        if self.count == 0:
+        if self.count < 0.5:  # Weniger als 0.5 effektive Pulls → unerprobt
             return float("inf")
         if total_pulls <= 1:
             return self.mean_delta
         exploitation = self.mean_delta
-        exploration = exploration_factor * math.sqrt(math.log(total_pulls) / self.count)
+        exploration = exploration_factor * math.sqrt(
+            math.log(max(2, total_pulls)) / max(0.5, self.count)
+        )
         return exploitation + exploration
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,10 +130,12 @@ class SelfLearningOptimizer:
         mode: ProcessingMode = ProcessingMode.RESTORATION,
         state_path: str = _DEFAULT_STATE_PATH,
         exploration_factor: float = 1.4,
+        decay_factor: float = 0.99,
     ):
         self.mode = mode
         self.state_path = state_path
         self.exploration_factor = exploration_factor
+        self.decay_factor = max(0.0, min(1.0, decay_factor))
         self._lock = threading.RLock()
 
         # Kern-Datenstruktur: {(material_str, variant_str): ArmStats}
@@ -130,10 +150,11 @@ class SelfLearningOptimizer:
         # Zustand laden
         self._load_state()
         logger.info(
-            "SelfLearningOptimizer geladen | Modus=%s | Arme=%d | Gesamt-Pulls=%d",
+            "SelfLearningOptimizer geladen | Modus=%s | Arme=%d | Gesamt-Pulls=%d | Decay=%.3f",
             mode.value,
             len(self._arms),
             self._total_pulls,
+            self.decay_factor,
         )
 
     # ------------------------------------------------------------------
@@ -150,6 +171,9 @@ class SelfLearningOptimizer:
         """
         Registriert das Ergebnis eines Processing-Durchlaufs.
 
+        Wendet vor dem Update den decay_factor auf ALLE Arme an,
+        sodass ältere Ergebnisse graduell an Gewicht verlieren.
+
         Args:
             material:       Erkanntes Material (MaterialType oder str).
             variant:        Name der verwendeten Variante (z. B. 'balanced').
@@ -160,6 +184,11 @@ class SelfLearningOptimizer:
         key = (mat_str, variant)
 
         with self._lock:
+            # Apply decay to all existing arms before recording new result
+            if self.decay_factor < 1.0:
+                for arm in self._arms.values():
+                    arm.apply_decay(self.decay_factor)
+
             if key not in self._arms:
                 self._arms[key] = ArmStats()
             self._arms[key].update(quality_delta)
@@ -248,6 +277,25 @@ class SelfLearningOptimizer:
     # Persistenz
     # ------------------------------------------------------------------
 
+    def save_state(self) -> None:
+        """Öffentliche Methode: Persistiert den aktuellen UCB1-State nach
+        ``logs/self_learning_state.json``.
+
+        Kann jederzeit aufgerufen werden, z. B. vor Pipeline-Shutdown.
+        """
+        self._save_state()
+
+    def load_state(self) -> bool:
+        """Öffentliche Methode: Lädt den zuvor persistierten State.
+
+        Kann nach einem Pipeline-Neustart aufgerufen werden, um das
+        Lernen aus der vorherigen Session fortzusetzen.
+
+        Returns:
+            True wenn State erfolgreich geladen wurde, False sonst.
+        """
+        return self._load_state()
+
     def _save_state(self) -> None:
         """Speichert den aktuellen Zustand in JSON."""
         os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
@@ -256,6 +304,8 @@ class SelfLearningOptimizer:
                 state = {
                     "mode": self.mode.value,
                     "total_pulls": self._total_pulls,
+                    "decay_factor": self.decay_factor,
+                    "exploration_factor": self.exploration_factor,
                     "arms": {f"{m}|{v}": stats.to_dict() for (m, v), stats in self._arms.items()},
                 }
             with open(self.state_path, "w", encoding="utf-8") as f:
@@ -263,21 +313,29 @@ class SelfLearningOptimizer:
         except (OSError, TypeError) as exc:
             logger.warning("SLO: Zustand konnte nicht gespeichert werden: %s", exc)
 
-    def _load_state(self) -> None:
-        """Lädt gespeicherten Zustand aus JSON (falls vorhanden)."""
+    def _load_state(self) -> bool:
+        """Lädt gespeicherten Zustand aus JSON (falls vorhanden).
+
+        Returns:
+            True wenn erfolgreich geladen, False sonst.
+        """
         if not os.path.isfile(self.state_path):
-            return
+            return False
         try:
             with open(self.state_path, encoding="utf-8") as f:
                 state = json.load(f)
             with self._lock:
                 self._total_pulls = int(state.get("total_pulls", 0))
+                self.decay_factor = float(state.get("decay_factor", self.decay_factor))
+                self.exploration_factor = float(state.get("exploration_factor", self.exploration_factor))
                 for key_str, arm_dict in state.get("arms", {}).items():
                     parts = key_str.split("|", 1)
                     if len(parts) == 2:
                         self._arms[(parts[0], parts[1])] = ArmStats.from_dict(arm_dict)
+            return True
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("SLO: Zustand konnte nicht geladen werden: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Legacy-API (rückwärtskompatibel, deprecated)

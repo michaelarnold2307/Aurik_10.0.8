@@ -261,16 +261,45 @@ class SegmentAdaptiveProcessor:
                 out_seg = np.clip(seg_audio, -1.0, 1.0)
                 fallback_used = True
 
-            # Schreiben mit OLA-Crossfade (vereinfacht)
-            if arr.ndim == 2:
-                n = min(out_seg.shape[-1], seg.duration_samples)
-                if out_seg.ndim == 2:
-                    processed[:, seg.start_sample : seg.start_sample + n] = out_seg[:, :n]
+            # ── §v10 OLA-Crossfade: Hanning-Fenster an Segmentgrenzen ──
+            cf_samples = int(CROSSFADE_MS * sr / 1000.0)  # 20 ms → 960 samples @ 48 kHz
+            cf_samples = max(1, min(cf_samples, seg.duration_samples // 3))
+            fade_in = np.hanning(2 * cf_samples)[:cf_samples].astype(np.float32)
+            fade_out = np.hanning(2 * cf_samples)[cf_samples:].astype(np.float32)
+
+            n = min(out_seg.shape[-1] if out_seg.ndim == 2 else len(out_seg), seg.duration_samples)
+            seg_start = seg.start_sample
+
+            if cf_samples >= 2 and n > 2 * cf_samples:
+                if arr.ndim == 2:
+                    if out_seg.ndim == 2:
+                        seg_processed = out_seg[:, :n].copy()
+                    else:
+                        seg_processed = np.tile(out_seg[:n], (arr.shape[0], 1))
+                    for ch in range(arr.shape[0]):
+                        seg_processed[ch, :cf_samples] *= fade_in
+                        seg_processed[ch, -cf_samples:] *= fade_out
+                    # OLA: add to existing, normalize overlap
+                    processed[:, seg_start : seg_start + n] += seg_processed
+                    if seg_start > 0:
+                        overlap = min(cf_samples, n)
+                        processed[:, seg_start : seg_start + overlap] *= 0.5
                 else:
-                    processed[:, seg.start_sample : seg.start_sample + n] = out_seg[:n]
+                    seg_processed = out_seg[:n].copy()
+                    seg_processed[:cf_samples] *= fade_in
+                    seg_processed[-cf_samples:] *= fade_out
+                    processed[seg_start : seg_start + n] += seg_processed
+                    if seg_start > 0:
+                        overlap = min(cf_samples, n)
+                        processed[seg_start : seg_start + overlap] *= 0.5
             else:
-                n = min(len(out_seg), seg.duration_samples)
-                processed[seg.start_sample : seg.start_sample + n] = out_seg[:n]
+                if arr.ndim == 2:
+                    if out_seg.ndim == 2:
+                        processed[:, seg_start : seg_start + n] = out_seg[:, :n]
+                    else:
+                        processed[:, seg_start : seg_start + n] = out_seg[:n]
+                else:
+                    processed[seg_start : seg_start + n] = out_seg[:n]
 
         processed = np.clip(processed, -1.0, 1.0)
         return AdaptiveProcessingResult(

@@ -170,7 +170,8 @@ class BigVGANv2Plugin:
                 _raw = torch.load(
                     str(checkpoint),
                     map_location=_dev,
-                )  # nosec B614 — lokales Modell aus models/
+                    weights_only=True,
+                )  # nosec B614 — lokaler Tensor-Checkpoint aus models/
                 # State-Dict-Format erkennen (Training-Checkpoint {'generator': sd})
                 if isinstance(_raw, dict) and "generator" in _raw and not hasattr(_raw, "eval"):
                     # Architektur via bigvgan-Paket instanziieren

@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 02: Pipeline-Architektur
+# Aurik 10 — Spec 02: Pipeline-Architektur
 
 > Kanonischer Pipeline-Ablauf, RestorationResult-Spec, Restaurierungs-Modi,
 > StemRemixBalancer, Studio-2026-Verarbeitungskette.
@@ -4538,3 +4538,8 @@ def test_ssip_reassembly_bit_exact_silence():
             err_msg=f"Stille-Zone [{start}:{end}] ist nicht bit-identisch nach Reassembly"
         )
 ```
+
+
+## v10: PIM & RLP
+
+Der **Perceptual Intensity Mapper (PIM)** wird VOR dem Phasen-Loop ausgeführt und kalibriert 10 Frequenzbänder × N Song-Sektionen. Der **Reflective Listening Pass (RLP)** läuft NACH dem Loop und bessert Restprobleme nach.

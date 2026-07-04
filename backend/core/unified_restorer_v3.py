@@ -1363,7 +1363,7 @@ class UnifiedRestorerV3:
         audio: np.ndarray,
         gain: float,
         gate_dbfs: float = -36.0,
-        crossfade_ms: float = 10.0,
+        crossfade_ms: float = 200.0,
         sr: int = 48000,
         reference_for_gate: np.ndarray | None = None,
         material_key: str | None = None,
@@ -34753,6 +34753,19 @@ class UnifiedRestorerV3:
                 )
         except Exception as _lp2a_exc:
             logger.debug("LAG_PROBE_2a fehlgeschlagen: %s", _lp2a_exc)
+
+        
+        # ── §v10 Cumulative Processing Budget Guard ──
+        _cumulative_rms = 0.0
+        if hasattr(self, '_cumulative_spectral_tilt'):
+            _cumulative_rms = float(abs(getattr(self, '_cumulative_spectral_tilt', 0.0)))
+        if _cumulative_rms > 12.0:
+            logger.warning("§v10 Do-No-Harm: Cumulative processing %.1fdB > 12dB limit", _cumulative_rms)
+        if hasattr(self, '_phase_metadata_accumulator'):
+            self._phase_metadata_accumulator["cumulative_budget"] = {
+                "exceeded": _cumulative_rms > 12.0,
+                "total_change_db": _cumulative_rms,
+            }
 
         return current_audio, executed, skipped, deferred
 

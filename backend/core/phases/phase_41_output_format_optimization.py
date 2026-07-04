@@ -405,12 +405,11 @@ class OutputFormatOptimization(PhaseInterface):
         # Apply gain — §2.45a-II: musical-frame-only when amplifying to avoid
         # boosting analog surface noise in silent/fade-out sections.
         if gain_linear > 1.0005:
-            # §2.45a-II v9.12.2: reference_for_gate=audio → signal-relative gate (P15+9 dB)
+            # §2.45a-II v10: Soft-knee defaults (crossfade_ms=200, knee_width_db=6).
             audio_normalized = apply_musical_gain_envelope(
                 audio,
                 gain_linear,
                 gate_dbfs=-36.0,
-                crossfade_ms=10.0,
                 sr=sample_rate,
                 reference_for_gate=audio,
             )

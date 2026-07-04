@@ -1,6 +1,19 @@
-# Aurik 9 — Weltklasse-Audio-Restaurierung
+# Aurik 10 — Weltklasse-Audio-Restaurierung
 
 **Ziel:** Intelligente Musikwiederherstellung mit psychoakustischer Präzision und deterministischer Reproduzierbarkeit.
+
+
+
+## 🚀 v10 Invarianten
+
+- **Bridge-Bypass-Verbot**: Kein Frontend-Code importiert `backend/core/` direkt. Nur über `backend/api/bridge.py`.
+- **Soft-Knee-Gate**: `apply_musical_gain_envelope()` arbeitet mit Sigmoid-Soft-Knee (6dB), 200ms Hanning-Crossfade. KEIN Hard-Clamp.
+- **PIM-first**: Vor jedem Phasen-Loop wird die PIM-Intensitäts-Map berechnet und in `restoration_context` gespeichert.
+- **RLP-last**: Nach jedem Phasen-Loop wird der RLP ausgeführt. Korrekturen werden nur bei objektiver Verbesserung übernommen.
+- **ML-Fallback-Logging**: JEDER ML→DSP-Fallback MUSS mit `logger.warning()` protokolliert werden. Silent-Failures sind VERBOTEN.
+- **Artistic Intent vor Defect-Scan**: `get_artistic_intent()` wird VOR dem Defect-Scan aufgerufen.
+- **Glue Stage immer**: Die Glue-Stage läuft in ALLEN Modi als vorletzte Phase.
+- **62 DefectTypes**: Keine willkürlichen neuen DefectTypes ohne Phase-Mapping und Material-Sensitivity.
 
 ## 🎯 Kernwerte
 

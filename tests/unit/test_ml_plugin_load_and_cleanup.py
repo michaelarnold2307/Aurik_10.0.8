@@ -46,22 +46,26 @@ def _sine(dur_s: float = 2.0, freq: float = 440.0) -> np.ndarray:
     """440-Hz-Sinus, float32, mono."""
     n = int(SR * dur_s)
     t = np.linspace(0, dur_s, n, endpoint=False, dtype=np.float32)
-    return (0.4 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    out: np.ndarray = (0.4 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    return out
 
 
 def _noise(dur_s: float = 2.0, amp: float = 0.05) -> np.ndarray:
     """Weißes Rauschen, float32."""
-    return (_rng.standard_normal(int(SR * dur_s)) * amp).astype(np.float32)
+    out: np.ndarray = (_rng.standard_normal(int(SR * dur_s)) * amp).astype(np.float32)
+    return out
 
 
 def _signal(dur_s: float = 2.0) -> np.ndarray:
     """Sinus + Rauschen — realistischeres Test-Signal."""
-    return (_sine(dur_s) + _noise(dur_s)).astype(np.float32)
+    out: np.ndarray = (_sine(dur_s) + _noise(dur_s)).astype(np.float32)
+    return out
 
 
 def _stereo(mono: np.ndarray) -> np.ndarray:
     """Mono → Stereo [N, 2]."""
-    return np.stack([mono, mono * 0.9], axis=-1).astype(np.float32)
+    out: np.ndarray = np.stack([mono, mono * 0.9], axis=-1).astype(np.float32)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +663,24 @@ class TestPannsPlugin:
 class TestLaionClapPlugin:
     """LAION-CLAP: Zero-Shot-Tagging, finite Embeddings, Budget sauber."""
 
+    def test_00_trusted_local_checkpoint_disables_weights_only(self, monkeypatch, tmp_path):
+        from plugins import laion_clap_plugin
+
+        calls = []
+
+        def _fake_load(path, **kwargs):
+            calls.append((path, kwargs))
+            return {"state_dict": {}}
+
+        monkeypatch.setattr("torch.load", _fake_load)
+
+        result = laion_clap_plugin._load_trusted_local_torch_checkpoint(tmp_path / "local.pt")
+
+        assert result == {"state_dict": {}}
+        assert calls
+        assert calls[0][1]["map_location"] == "cpu"
+        assert calls[0][1]["weights_only"] is False
+
     def test_01_loads_without_crash(self):
         _reset_budget()
         from plugins.laion_clap_plugin import get_laion_clap
@@ -743,7 +765,7 @@ class TestApolloPlugin:
         fake_plm = _FakePLM()
         plugin = ApolloPlugin.__new__(ApolloPlugin)
         plugin._model_loaded = True
-        plugin._torch_model = object()
+        monkeypatch.setattr(plugin, "_torch_model", object())
         plugin._device = "cpu"
         plugin._fallback_active = False
 
@@ -756,11 +778,11 @@ class TestApolloPlugin:
             assert fake_plm.active is True, "Apollo muss waehrend repair() im PLM aktiv sein"
             return np.asarray(audio, dtype=np.float32)
 
-        plugin._repair_apollo = _fake_repair_apollo
-        plugin._repair_dsp_fallback = lambda audio, sr, material: np.asarray(audio, dtype=np.float32)
-        plugin._measure_hf_gain = lambda before, after, sr: 0.0
-        plugin._estimate_brillanz = lambda audio, sr: 0.9
-        plugin._estimate_waerme = lambda audio, sr: 0.9
+        monkeypatch.setattr(plugin, "_repair_apollo", _fake_repair_apollo)
+        monkeypatch.setattr(plugin, "_repair_dsp_fallback", lambda audio, sr, material: np.asarray(audio, dtype=np.float32))
+        monkeypatch.setattr(plugin, "_measure_hf_gain", lambda original, restored, sr: 0.0)
+        monkeypatch.setattr(plugin, "_estimate_brillanz", lambda audio, sr: 0.9)
+        monkeypatch.setattr(plugin, "_estimate_waerme", lambda audio, sr: 0.9)
 
         result = plugin.repair(_signal(0.25), SR, material="mp3_low")
 
@@ -931,7 +953,7 @@ class TestUtmosPlugin:
 
         _signal(3.0)
         result = estimate_mos(_sine(3.0, 440.0), SR)
-        score = result.mos if hasattr(result, "mos") else float(result)
+        score = result.mos
         assert np.isfinite(score), f"UTMOS MOS nicht finite: {score}"
         assert 1.0 <= score <= 5.0, f"UTMOS MOS außerhalb [1,5]: {score:.4f}"
         _cleanup(["UTMOSv2"], "plugins.utmos_plugin")

@@ -81,6 +81,22 @@ class AiDecrackler:
         self.model = None
 
     def _process_channel(self, x: np.ndarray, sr: int) -> np.ndarray:
+        """Remove crackle events via AR-predicted gap interpolation.
+
+        v9.20.3-Fix: Linear interpolation over gaps up to 5 ms (240 samples at
+        48 kHz) created audible "holes" — the human ear perceives a straight-line
+        ramp >1 ms as a signal dropout. Replaced with forward-backward Burg AR
+        prediction that preserves the local spectral envelope of the surrounding
+        signal, making the repair inaudible.
+
+        Algorithm:
+            1. Burg AR model fit on pre-gap context (order = min(16, context_len/4))
+            2. Forward-predict from left context into gap
+            3. Burg AR model fit on post-gap context (reversed)
+            4. Backward-predict from right context into gap
+            5. Crossfade (Hanning) forward↔backward predictions
+            6. Soft Hanning-blend at gap edges with original signal
+        """
         x = np.nan_to_num(x.astype(np.float64), nan=0.0, posinf=1.0, neginf=-1.0)
         n = len(x)
         win = max(3, int(self._WIN_MS * sr / 1000))
@@ -103,14 +119,31 @@ class AiDecrackler:
                     if abs(x[j] - med_j) <= self._THRESHOLD * mad_j:
                         break
                     j += 1
-                # Interpoliere Lücke [i, j)
-                l_val = out[i - 1] if i > 0 else 0.0
-                r_val = out[j] if j < n else 0.0
                 gap = j - i
                 if gap > 0:
-                    interp = np.linspace(l_val, r_val, gap + 2)[1:-1]
+                    # ── AR-basierte Lückenfüllung (v9.20.3) ──
+                    # Kontext vor und nach der Lücke für AR-Modellierung
+                    ctx_left = max(32, min(gap * 4, i))
+                    ctx_right = max(32, min(gap * 4, n - j))
+
+                    # Linksseitiger Kontext für Forward-Prediction
+                    left_segment = out[max(0, i - ctx_left) : i]
+                    # Rechtsseitiger Kontext für Backward-Prediction (reversed)
+                    right_segment = out[j : min(n, j + ctx_right)][::-1]
+
+                    forward_pred = self._ar_predict_forward(left_segment, gap)
+                    backward_pred = self._ar_predict_forward(right_segment, gap)[::-1]
+
+                    # Crossfade: Hanning-Blend forward↔backward
+                    if gap >= 4:
+                        cf = np.hanning(gap * 2)[:gap]
+                        interp = cf * forward_pred + (1.0 - cf) * backward_pred
+                    else:
+                        interp = (forward_pred + backward_pred) * 0.5
+
                     out[i:j] = interp
-                    # Hanning-Blend an Rändern
+
+                    # Hanning-Blend an Rändern (soft transition to original)
                     fl = min(self._FADE, gap // 2)
                     if fl > 0:
                         hw = np.hanning(fl * 2)[:fl]
@@ -121,6 +154,133 @@ class AiDecrackler:
                 i += 1
 
         return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def _ar_predict_forward(context: np.ndarray, n_predict: int) -> np.ndarray:
+        """Forward AR prediction using Burg's method.
+
+        Fits a Burg AR model to the context signal and iteratively predicts
+        n_predict samples forward. If the context is too short or degenerate,
+        falls back to cubic spline interpolation.
+
+        Args:
+            context: Pre-gap signal segment (1-D float array).
+            n_predict: Number of samples to predict forward.
+
+        Returns:
+            Predicted samples as 1-D float array of length n_predict.
+        """
+        if len(context) < 8 or n_predict <= 0:
+            return np.zeros(n_predict, dtype=np.float64)
+
+        try:
+            from scipy.signal import lfilter
+
+            # Adaptive AR order: higher order for longer contexts, capped
+            order = min(16, max(2, len(context) // 4))
+            order = min(order, len(context) - 1)
+
+            # Burg AR coefficient estimation via reflection coefficients
+            ar_coeffs = AiDecrackler._burg_ar(context, order)
+
+            if ar_coeffs is None or len(ar_coeffs) < 1:
+                # AR fit failed — fall back to cubic interpolation
+                return AiDecrackler._cubic_fallback(context, n_predict)
+
+            # Iterative forward prediction
+            pred = np.zeros(n_predict, dtype=np.float64)
+            # Use last 'order' samples from context as initial state
+            state = context[-order:].copy()[::-1]  # reversed for lfilter convention
+
+            for k in range(n_predict):
+                # Predict next sample: y[n] = -sum(a[i] * y[n-i-1])
+                pred[k] = -np.dot(ar_coeffs, state[:order])
+                # Shift state: new sample in, oldest out
+                state = np.roll(state, 1)
+                state[0] = pred[k]
+
+            return pred
+
+        except Exception:
+            return AiDecrackler._cubic_fallback(context, n_predict)
+
+    @staticmethod
+    def _cubic_fallback(context: np.ndarray, n_predict: int) -> np.ndarray:
+        """Cubic spline fallback when AR fitting fails."""
+        if len(context) < 4:
+            last_val = float(context[-1]) if len(context) > 0 else 0.0
+            return np.full(n_predict, last_val, dtype=np.float64)
+        try:
+            from scipy.interpolate import CubicSpline
+
+            t = np.arange(len(context), dtype=np.float64)
+            cs = CubicSpline(t, context.astype(np.float64), bc_type="natural")
+            t_pred = np.linspace(len(context) - 1, len(context) + n_predict - 1, n_predict)
+            return cs(t_pred).astype(np.float64)
+        except Exception:
+            last_val = float(context[-1])
+            return np.full(n_predict, last_val, dtype=np.float64)
+
+    @staticmethod
+    def _burg_ar(signal: np.ndarray, order: int) -> np.ndarray | None:
+        """Estimate AR coefficients using Burg's method (harmonic mean of
+        forward and backward prediction errors).
+
+        Numerically stable implementation using reflection coefficients.
+        Returns AR coefficients a[0..order-1] such that:
+            x[n] = -sum_{i=1}^{order} a[i-1] * x[n-i]
+        Returns None if the signal is degenerate.
+        """
+        try:
+            signal = np.asarray(signal, dtype=np.float64)
+            n = len(signal)
+            if n < order + 1:
+                return None
+
+            # Remove mean for numerical stability
+            signal = signal - np.mean(signal)
+
+            # Initialize forward and backward prediction errors
+            ef = signal.copy()
+            eb = signal.copy()
+
+            a = np.ones(order + 1, dtype=np.float64)
+            k = np.zeros(order, dtype=np.float64)  # reflection coefficients
+
+            for m in range(order):
+                # Numerator and denominator for reflection coefficient
+                num = -2.0 * np.sum(ef[m + 1 :] * eb[m : n - 1])
+                den = np.sum(ef[m + 1 :] ** 2 + eb[m : n - 1] ** 2)
+
+                if abs(den) < 1e-15:
+                    return None
+
+                k[m] = num / den
+
+                # Clamp reflection coefficient for stability
+                k[m] = np.clip(k[m], -0.999, 0.999)
+
+                # Update AR coefficients via Levinson recursion
+                a_new = a.copy()
+                for i in range(1, m + 2):
+                    a_new[i] = a[i] + k[m] * a[m + 1 - i]
+                a = a_new
+
+                # Update prediction errors
+                if m < order - 1:
+                    ef_new = ef.copy()
+                    eb_new = eb.copy()
+                    for i in range(m + 1, n):
+                        ef_new[i] = ef[i] + k[m] * eb[i - 1]
+                        eb_new[i] = eb[i - 1] + k[m] * ef[i]
+                    ef = ef_new
+                    eb = eb_new
+
+            # Return AR coefficients a[1..order]
+            return a[1:].astype(np.float64)
+
+        except Exception:
+            return None
 
     def process(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """Entfernt Click/Crackle. ML-Primär (falls geladen), sonst DSP-Fallback."""

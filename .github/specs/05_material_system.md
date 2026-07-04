@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 05: Material-System
+# Aurik 10 — Spec 05: Material-System
 
 > Definiert alle 15 Materialtypen (+ 2 Multichannel → Downmix), defektdichte-adaptive Verarbeitungsregeln,
 > GP-Gedächtnis, Export, Sample-Rate-Strategie, Tonträgerketten-Erkennung.
@@ -8,7 +8,7 @@
 ## §6.1 Unterstützte Materialien (15 Typen)
 
 ```python
-# Aurik 9: ausschließlich MONO und STEREO — kein Mehrkanalformat.
+# Aurik 10: ausschließlich MONO und STEREO — kein Mehrkanalformat.
 # > 2 Kanäle → PANNs-gewichteter Stereo-Downmix (automatisch, kein eigenständiger Materialtyp).
 SUPPORTED_MATERIALS = [
     "tape",          # Kassette: Dropout, Hiss, Wow/Flutter

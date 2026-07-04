@@ -332,38 +332,40 @@ class ExzellenzDenker:
                 logger.debug("ExzellenzDenker: VERSA post-repair Messung fehlgeschlagen: %s", _ve)
 
         # §2.53 Frisson-Index (Gänsehaut-Propensity) aus Goals-Proxy
-        # Literature: Blood & Zatorre 2001, Grewe 2007, Harrison & Loui 2014
-        # Proxy-Gewichte analog UV3 _compute_joy_runtime_index() fallback-Pfad
-        _fi_micro = float(goals.get("micro_dynamics", 0.0)) if goals else 0.0
-        _fi_emo = float(goals.get("emotionalitaet", 0.0)) if goals else 0.0
-        # emotional_arc ≈ Mittel aus emotionalitaet + micro_dynamics (kein direkter Goal)
-        _fi_arc = 0.5 * _fi_emo + 0.5 * _fi_micro
-        _fi_art = float(goals.get("artikulation", 0.0)) if goals else 0.0
-        _fi_spa = float(goals.get("spatial_depth", 0.0)) if goals else 0.0
-        _fi_trans = float(goals.get("transparenz", 0.0)) if goals else 0.0
-        _fi_tonal = float(goals.get("tonal_center", 0.0)) if goals else 0.0
-        frisson_index = float(
-            np.clip(
-                0.26 * _fi_arc
-                + 0.18 * _fi_micro
-                + 0.14 * _fi_emo
-                + 0.14 * _fi_art
-                + 0.10 * _fi_spa
-                + 0.08 * _fi_trans
-                + 0.10 * _fi_tonal,
-                0.0,
-                1.0,
+        # ── §v10 Gänsehaut-Faktor aus psychoakustischem Modell ──
+        # Ersetzt den alten frisson_index (Musical-Goal-Proxy), der nur technische
+        # Metriken kombinierte. Jetzt: echtes psychoakustisches Modell mit
+        # Dynamic Contrast, Harmonic Surprise, Spectral Shimmer, Temporal Breath,
+        # Frequency Warmth — basierend auf Sloboda 1991, Blood & Zatorre 2001.
+        frisson_index = 0.0
+        _goose_label = ""
+        try:
+            from backend.core.goosebumps_factor import compute_goosebumps
+            _goose_r = compute_goosebumps(optimiertes_audio, sr)
+            frisson_index = float(_goose_r.score)
+            _goose_label = _goose_r.label
+            logger.info(
+                "ExzellenzDenker frisson_index (Goosebumps)=%.3f (%s): "
+                "dynamic=%.2f harmonic=%.2f shimmer=%.2f breath=%.2f warmth=%.2f",
+                frisson_index, _goose_label,
+                _goose_r.dynamic_contrast, _goose_r.harmonic_surprise,
+                _goose_r.spectral_shimmer, _goose_r.temporal_breath,
+                _goose_r.frequency_warmth,
             )
-        )
-        logger.info(
-            "ExzellenzDenker frisson_index=%.3f (arc=%.2f micro=%.2f emo=%.2f art=%.2f spa=%.2f)",
-            frisson_index,
-            _fi_arc,
-            _fi_micro,
-            _fi_emo,
-            _fi_art,
-            _fi_spa,
-        )
+        except Exception:
+            # Fallback: Musical-Goal-Proxy (alt, aber besser als 0.0)
+            _fi_micro = float(goals.get("micro_dynamics", 0.0)) if goals else 0.0
+            _fi_emo = float(goals.get("emotionalitaet", 0.0)) if goals else 0.0
+            _fi_arc = 0.5 * _fi_emo + 0.5 * _fi_micro
+            _fi_art = float(goals.get("artikulation", 0.0)) if goals else 0.0
+            _fi_spa = float(goals.get("spatial_depth", 0.0)) if goals else 0.0
+            _fi_trans = float(goals.get("transparenz", 0.0)) if goals else 0.0
+            _fi_tonal = float(goals.get("tonal_center", 0.0)) if goals else 0.0
+            frisson_index = float(np.clip(
+                0.26 * _fi_arc + 0.18 * _fi_micro + 0.14 * _fi_emo
+                + 0.14 * _fi_art + 0.10 * _fi_spa + 0.08 * _fi_trans + 0.10 * _fi_tonal,
+                0.0, 1.0,
+            ))
 
         note = (
             f"Exzellenz-Optimierung abgeschlossen: Score {score:.3f}, "

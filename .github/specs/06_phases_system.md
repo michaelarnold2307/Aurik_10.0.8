@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 06: Phasen-System
+# Aurik 10 — Spec 06: Phasen-System
 
 > Vollständige Phase-Liste (Phase 01–64), CAUSE_TO_PHASES-Mapping,
 > PhaseInterface-Pattern, Namenskonvention für neue Phasen.

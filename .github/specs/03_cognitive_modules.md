@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 03: Kognitive Module
+# Aurik 10 — Spec 03: Kognitive Module
 
 > Alle Modul-Specs §2.1–§2.43 + Plugin-Richtlinie.
 > Verzeichnis-Konvention: `core/` = physisch `backend/core/`.

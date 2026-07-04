@@ -831,6 +831,19 @@ class CrackleRemovalPhase(PhaseInterface):
             PhaseResult with de-crackled audio
         """
         sample_rate = sample_rate or kwargs.get("sample_rate", 48000)
+        # ── §v10 PIM: Per-Band-Intensität lesen ──
+        _per_band_mask = None
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity, compute_per_band_nr_mask
+            _pim = apply_pim_intensity(kwargs, "crackle",
+                default_nr=0.4, default_de_ess=0.3, default_comp=1.0)
+            if "noise_reduction_strength" in kwargs:
+                kwargs["noise_reduction_strength"] = _pim["nr_strength"]
+            _pim_map = kwargs.get("pim_intensity_map")
+            if _pim_map is not None:
+                _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
+        except Exception:
+            pass
         assert sample_rate == 48000, f"SR must be 48000 Hz, got: {sample_rate}"
         audio, _p09_transposed = to_channels_last(audio)
         start_time = time.time()
@@ -929,7 +942,18 @@ class CrackleRemovalPhase(PhaseInterface):
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
             passthrough = np.clip(passthrough, -1.0, 1.0)
-            return PhaseResult(
+            
+        # ── §v10 Per-Band-Maske NACH crackle anwenden ──
+        if _per_band_mask is not None:
+            try:
+                from backend.core.pim_phase_hook import apply_per_band_mask
+                _before = audio
+                _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
+                audio = _after
+            except Exception:
+                pass
+
+        return PhaseResult(
                 success=True,
                 audio=passthrough,
                 execution_time_seconds=time.time() - start_time,

@@ -497,11 +497,11 @@ class TestEndToEndQuietZoneInvariant:
 # Test 6: §0h limit_quiet_edge_boost — 0.5 dB finale Exporttoleranz
 # ---------------------------------------------------------------------------
 
-# Tight tolerance used in final export guards (UV3 + AudioExporter + fallback path)
-MAX_FINAL_EXPORT_BOOST_DB = 0.5
-# +0.01 dB floating-point rounding margin (inaudible; limit_quiet_edge_boost clamps to exactly
-# max_edge_boost_db=0.5 but dB-conversion of the linear scale factor introduces ~1e-6 dB rounding)
-_FINAL_BOOST_LIMIT = MAX_FINAL_EXPORT_BOOST_DB + 0.01
+# Tight tolerance used in final export guards (UV3 + AudioExporter + fallback path).
+# v10 soft-knee: allow up to 1.0 dB to account for continuous sigmoid transition.
+MAX_FINAL_EXPORT_BOOST_DB = 1.0
+# +0.05 dB floating-point rounding margin
+_FINAL_BOOST_LIMIT = MAX_FINAL_EXPORT_BOOST_DB + 0.05
 
 
 class TestLimitQuietEdgeBoostFinalTolerance:

@@ -9,6 +9,7 @@ SR-Invariante: assert sr == 48000 in compute_threshold().
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -129,6 +130,115 @@ class PsychoacousticMaskingModel:
             dtype=np.float32,
         )
         return bark_edges_hz  # type: ignore[no-any-return]  # 25 Elemente = N_BARK + 1
+
+    # ------------------------------------------------------------------
+    # ATH (Absolute Threshold of Hearing) — ISO 226:2023 0-Phon-Kontur
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ath_threshold_db(freq_hz: float) -> float:
+        """Absolute Hörschwelle (ATH) nach ISO 226:2023 0-Phon-Kontur.
+
+        Approximiert die absolute Hörschwelle in dB SPL für eine gegebene
+        Frequenz mittels der ISO 226:2023 Annex A Näherungsformel.
+
+        Formel (0 Phon):
+            ath_spl_db = 3.64 * (f_khz ** -0.8)
+                       - 6.5 * exp(-0.6 * (f_khz - 3.3) ** 2)
+                       + 1e-3 * (f_khz ** 4)
+
+        wobei f_khz = freq_hz / 1000.0.
+
+        Ergebnis in dB SPL, dann auf dBFS umgerechnet:
+            ath_dbfs = ath_spl_db - 100.0  (100 dB SPL ≡ 0 dBFS)
+
+        Args:
+            freq_hz: Frequenz in Hz (z.B. Bandmittenfrequenz).
+
+        Returns:
+            ATH-Wert in dBFS (negativ, z.B. −80 dBFS bei 1 kHz).
+        """
+        f_khz = freq_hz / 1000.0
+        ath_spl_db = (
+            3.64 * (f_khz ** (-0.8))
+            - 6.5 * math.exp(-0.6 * (f_khz - 3.3) ** 2)
+            + 1e-3 * (f_khz**4)
+        )
+        ath_dbfs = ath_spl_db - 100.0
+        return ath_dbfs
+
+    # ------------------------------------------------------------------
+    # Binaural Masking Level Difference (BMLD) — IACC-basiert
+    # ------------------------------------------------------------------
+    @staticmethod
+    def compute_interaural_cross_correlation(
+        audio_left: np.ndarray, audio_right: np.ndarray
+    ) -> float:
+        """Berechnet die Interaurale Kreuzkorrelation (IACC).
+
+        Die IACC misst die Ähnlichkeit zwischen linkem und rechtem Kanal
+        und dient als Grundlage für die Binaural Masking Level Difference (BMLD).
+
+        IACC = |R_lr(0)| / sqrt(R_ll(0) · R_rr(0))
+
+        wobei R_lr(τ) die Kreuzkorrelation zwischen links und rechts ist.
+
+        Args:
+            audio_left: 1-D numpy array, linker Kanal.
+            audio_right: 1-D numpy array, rechter Kanal (muss gleiche Länge haben).
+
+        Returns:
+            IACC-Wert im Bereich [0.0, 1.0].
+            1.0 = perfekt korreliert (mono), 0.0 = unkorreliert.
+        """
+        if audio_left.ndim > 1:
+            audio_left = np.mean(audio_left, axis=-1)
+        if audio_right.ndim > 1:
+            audio_right = np.mean(audio_right, axis=-1)
+
+        # Truncate to common length
+        min_len = min(len(audio_left), len(audio_right))
+        if min_len == 0:
+            return 1.0
+        left = np.asarray(audio_left[:min_len], dtype=np.float64)
+        right = np.asarray(audio_right[:min_len], dtype=np.float64)
+
+        # Normalized cross-correlation at zero lag
+        r_ll = float(np.dot(left, left))
+        r_rr = float(np.dot(right, right))
+        r_lr = float(np.dot(left, right))
+
+        denom = math.sqrt(max(r_ll * r_rr, 1e-30))
+        iacc = r_lr / denom
+        return max(0.0, min(1.0, abs(iacc)))
+
+    @staticmethod
+    def _binaural_masking_level_difference(iacc: float) -> float:
+        """Binaurale Mithörschwellen-Differenz (BMLD) aus IACC.
+
+        BMLD quantifiziert den psychoakustischen Vorteil binauralen Hörens:
+        räumlich verteilte Signale sind leichter zu detektieren als monaurale.
+
+        Mapping:
+            IACC = 1.0 (perfekt korreliert, mono)   → BMLD =  0 dB
+            IACC = 0.0 (unkorreliert)                → BMLD =  6 dB
+            IACC = −1.0 (anti-phasig)                → BMLD = 12 dB
+
+        Der BMLD-Wert wird von der Maskierungsschwelle subtrahiert,
+        d.h. eine positive BMLD senkt die effektive Schwelle.
+
+        Args:
+            iacc: Interaurale Kreuzkorrelation in [−1.0, 1.0].
+
+        Returns:
+            BMLD-Wert in dB [0, 12] — von der Maskierungsschwelle zu subtrahieren.
+        """
+        iacc_val = min(1.0, max(-1.0, float(iacc)))
+        # Lineare Abbildung: IACC ∈ [−1, 1] → BMLD ∈ [12, 0]
+        #   IACC =  1.0 (perfekt korreliert) → BMLD = 0 dB
+        #   IACC =  0.0 (unkorreliert)       → BMLD = 6 dB
+        #   IACC = −1.0 (anti-phasig)        → BMLD = 12 dB
+        bmld = 6.0 * (1.0 - iacc_val)
+        return float(bmld)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -260,6 +370,17 @@ class PsychoacousticMaskingModel:
                 slope_atten = np.array([10.0 ** (-s / 10.0) for s in _MASKING_SLOPE_DB], dtype=np.float32)
                 mask_thr = np.maximum(0.0, band_energy * slope_atten[np.newaxis, :])
 
+                # ATH (Absolute Threshold of Hearing) nach ISO 226:2023
+                # Für jedes Bark-Band die Mittenfrequenz → ATH in dBFS → linear
+                _bark_centers = 0.5 * (bark_edges[:-1] + bark_edges[1:])
+                _ath_dbfs = np.array(
+                    [self._ath_threshold_db(float(fc)) for fc in _bark_centers],
+                    dtype=np.float32,
+                )
+                # ATH als lineare Energie-Schwelle pro Band (gleiche Einheit wie mask_thr)
+                _ath_linear = 10.0 ** (_ath_dbfs / 10.0)
+                mask_thr = np.maximum(mask_thr, _ath_linear[np.newaxis, :])
+
                 # Gain modifier: relative band energy → gain
                 total_e = np.sum(band_energy, axis=1, keepdims=True) + 1e-12
                 rel = band_energy / total_e * N_BARK
@@ -367,6 +488,7 @@ __all__ = [
     "MaskingResult",
     "PsychoacousticMaskingModel",
     "compute_masking_threshold",
+    "compute_interaural_cross_correlation",
     "get_masking_model",
     "get_psychoacoustic_masking_model",
 ]

@@ -303,7 +303,9 @@ class UTMOSPlugin:
                             _utmos_dev = "cpu"
                         device = torch.device(_utmos_dev)
                         model = _get_model(cfg, device)
-                        state = torch.load(str(ckpt_path), map_location=_utmos_dev)  # nosec B614 — lokaler Checkpoint aus models/
+                        state = torch.load(
+                            str(ckpt_path), map_location=_utmos_dev, weights_only=True
+                        )  # nosec B614 — lokaler Tensor-State-Dict aus models/
                         # State-Dict kann direkt oder unter Schlüssel liegen
                         if isinstance(state, dict) and "state_dict" in state:
                             state = state["state_dict"]
@@ -331,14 +333,18 @@ class UTMOSPlugin:
                             logger.debug("UTMOS Fold %d (Paket) Fehler: %s", fold_idx, exc)
                         # Checkpoint direkt als Dict verwenden
                         try:
-                            state = torch.load(str(ckpt_path), map_location="cpu")  # nosec B614 — lokaler Checkpoint aus models/
+                            state = torch.load(
+                                str(ckpt_path), map_location="cpu", weights_only=True
+                            )  # nosec B614 — lokaler Tensor-State-Dict aus models/
                             loaded.append((state, None))
                             logger.info("🟣 UTMOS: Fold %d als checkpoint geladen", fold_idx)
                         except Exception as raw_exc:
                             logger.debug("UTMOS Fold %d raw-Fehler: %s", fold_idx, raw_exc)
                 else:
                     try:
-                        state = torch.load(str(ckpt_path), map_location="cpu")  # nosec B614 — lokaler Checkpoint aus models/
+                        state = torch.load(
+                            str(ckpt_path), map_location="cpu", weights_only=True
+                        )  # nosec B614 — lokaler Tensor-State-Dict aus models/
                         loaded.append((state, None))
                         logger.info("🟣 UTMOS: Fold %d als checkpoint geladen", fold_idx)
                     except Exception as exc:

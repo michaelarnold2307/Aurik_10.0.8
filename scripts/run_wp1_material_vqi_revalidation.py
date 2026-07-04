@@ -508,7 +508,11 @@ def main() -> None:
         for row in updates.values()
         if row.get("status") in {"recovered", "degraded"}
     ]
-    baseline_keys = {key for row in baseline_rows if (key := _generated_input_baseline_key(row)) is not None}
+    baseline_keys: set[tuple[str, str, str]] = set()
+    for row in baseline_rows:
+        baseline_key = _generated_input_baseline_key(row)
+        if baseline_key is not None:
+            baseline_keys.add(baseline_key)
     if baseline_keys:
         merged = [row for row in merged if _generated_input_baseline_key(row) not in baseline_keys]
         merged.extend(baseline_rows)

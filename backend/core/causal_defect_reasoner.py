@@ -1303,6 +1303,108 @@ for _mat, _prior in _VOCAL_STEM_NOISE_MATERIAL_PRIORS.items():
 for _priors in MATERIAL_PRIORS.values():
     _priors.setdefault("vocal_stem_noise", 0.05)
 
+# --- Tier 2: Neue Ursachen-Priors (MPEG / Stereo / Phase / Dropout-Subtypen) ---
+
+_MPEG_FRAME_LOSS_MATERIAL_PRIORS: dict[str, float] = {
+    "mp3_low": 0.18,  # Stark komprimiert → Brickwall hörbar
+    "mp3_high": 0.12,  # Mittel → weniger auffällig
+    "aac": 0.10,
+    "minidisc": 0.08,  # ATRAC: eigene Artefakte
+    "streaming": 0.14,
+    "cd_digital": 0.02,  # CD: nur als Transcode
+    "cassette": 0.0,  # Analog
+    "tape": 0.0,
+    "reel_tape": 0.0,
+    "shellac": 0.0,
+    "vinyl": 0.0,
+    "wax_cylinder": 0.0,
+    "dat": 0.05,
+    "unknown": 0.05,
+}
+for _mat, _prior in _MPEG_FRAME_LOSS_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("mpeg_frame_loss", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("mpeg_frame_loss", 0.02)
+
+_STEREO_COLLAPSE_MATERIAL_PRIORS: dict[str, float] = {
+    "shellac": 0.10,  # Meist Mono → fake Stereo
+    "wax_cylinder": 0.10,
+    "cassette": 0.08,
+    "tape": 0.06,
+    "mp3_low": 0.07,  # Joint Stereo MS
+    "lacquer_disc": 0.08,
+    "vinyl": 0.04,
+    "cd_digital": 0.02,
+    "unknown": 0.05,
+}
+for _mat, _prior in _STEREO_COLLAPSE_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("stereo_field_collapse", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("stereo_field_collapse", 0.03)
+
+_PHASE_ROTATION_MATERIAL_PRIORS: dict[str, float] = {
+    "cassette": 0.10,  # Dolby NR + EQ
+    "tape": 0.08,
+    "reel_tape": 0.07,
+    "wire_recording": 0.09,
+    "shellac": 0.05,
+    "wax_cylinder": 0.05,
+    "mp3_low": 0.06,
+    "unknown": 0.04,
+}
+for _mat, _prior in _PHASE_ROTATION_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("phase_rotation", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("phase_rotation", 0.03)
+
+_DROPOUT_OXIDE_MATERIAL_PRIORS: dict[str, float] = {
+    "cassette": 0.18,  # Kassette: häufigste Oxid-Dropouts
+    "tape": 0.14,
+    "reel_tape": 0.10,
+    "wire_recording": 0.12,
+    "shellac": 0.0,
+    "vinyl": 0.0,
+    "unknown": 0.05,
+}
+for _mat, _prior in _DROPOUT_OXIDE_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("dropout_oxide", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("dropout_oxide", 0.02)
+
+_DROPOUT_HEAD_CONTACT_MATERIAL_PRIORS: dict[str, float] = {
+    "cassette": 0.15,
+    "tape": 0.14,
+    "reel_tape": 0.12,
+    "wire_recording": 0.10,
+    "shellac": 0.0,
+    "vinyl": 0.0,
+    "unknown": 0.04,
+}
+for _mat, _prior in _DROPOUT_HEAD_CONTACT_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("dropout_head_contact", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("dropout_head_contact", 0.02)
+
+_DROPOUT_SPLICE_MATERIAL_PRIORS: dict[str, float] = {
+    "reel_tape": 0.15,  # Profi-Band = Schnitte
+    "tape": 0.10,
+    "cassette": 0.05,
+    "wire_recording": 0.05,
+    "shellac": 0.0,
+    "vinyl": 0.0,
+    "unknown": 0.03,
+}
+for _mat, _prior in _DROPOUT_SPLICE_MATERIAL_PRIORS.items():
+    if _mat in MATERIAL_PRIORS:
+        MATERIAL_PRIORS[_mat].setdefault("dropout_splice", _prior)
+for _priors in MATERIAL_PRIORS.values():
+    _priors.setdefault("dropout_splice", 0.01)
+
 # Phase-Empfehlungen pro Ursache (kanonische phase_id = Dateiname ohne .py)
 CAUSE_TO_PHASES: dict[str, list[str]] = {
     # ── Magnetband ────────────────────────────────────────────────────────────

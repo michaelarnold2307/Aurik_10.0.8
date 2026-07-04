@@ -394,6 +394,16 @@ class ClickRemovalPhase(PhaseInterface):
             PhaseResult with click-free audio
         """
         sample_rate = kwargs.get("sample_rate", 48000)
+        # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "click_removal",
+                default_nr=0.3, default_de_ess=0.1, default_comp=1.0)
+            for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
+                if _key in kwargs:
+                    kwargs[_key] = _pim["nr_strength"]
+        except Exception:
+            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         progress_sub_callback = kwargs.get("progress_sub_callback")

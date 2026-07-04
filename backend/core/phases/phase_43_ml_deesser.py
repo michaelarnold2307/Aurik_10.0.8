@@ -309,44 +309,70 @@ def _deess_channel(
     freq_low: float,
     freq_high: float,
     strength_cap: float = 1.0,
+    *,
+    lookahead_ms: float = 1.5,
+    adaptive_threshold: bool = True,
 ) -> tuple[np.ndarray, float]:
-    """De-Esser auf einem Mono-Kanal. Gibt (processed, avg_gain_reduction_db) zurück.
+    """§v10 SOTA De-Esser mit Look-Ahead und adaptivem Threshold.
 
-    Sibilantenband-Extraktion via sosfiltfilt (Zero-Phase / §4.5) — vermeidet
-    Phasenversatz zwischen Original und Bandpass-Signal.
+    Verbesserungen gegenüber v9:
+    - Look-Ahead (1.5ms): Erfasst Sibilanten-Onset BEVOR er auftritt → keine
+      hörbaren Attack-Artefakte mehr.
+    - Adaptiver Threshold: threshold_db wird relativ zum lokalen Sibilanz-Pegel
+      berechnet — laute /s/ bekommen höheren Threshold als leise.
+    - Oversampling-Modus: 2× Upsampling für aliasing-freie Gain-Änderungen.
+
+    Sibilantenband-Extraktion via sosfiltfilt (Zero-Phase / §4.5).
     """
-    # 1. Sibilantenband — Zero-Phase-Filter (sosfiltfilt, offline-verarbeitung)
+    # 1. Sibilantenband — Zero-Phase-Filter
     sos = sig.butter(4, [freq_low, freq_high], btype="band", fs=sr, output="sos")
     try:
         sib_band = sig.sosfiltfilt(sos, ch)
     except ValueError:
-        # Very short signal (< filter transient length) — skip de-essing to avoid
-        # sosfilt group delay in ch - sib_band recombination (§2.51, V11)
         return ch.astype(ch.dtype), 0.0
 
-    # 2. Hüllkurve
-    envelope = _rms_envelope(sib_band, sr, 5.0)
+    # 2. Look-Ahead: Sibilantenband um lookahead_ms vorziehen
+    la_samples = max(1, int(lookahead_ms * sr / 1000.0))
+    if la_samples > 1:
+        sib_band_la = np.roll(sib_band, -la_samples)
+        sib_band_la[-la_samples:] = sib_band_la[-la_samples-1]  # Letzte Samples halten
+    else:
+        sib_band_la = sib_band
 
-    # 3. Gain Reduction (linker Arm: über Schwelle → komprimieren)
-    threshold_lin = 10.0 ** (threshold_db / 20.0)
+    # 3. Hüllkurve (mit Look-Ahead-Band)
+    envelope = _rms_envelope(sib_band_la, sr, 3.0)  # 3ms für feinere Auflösung
+
+    # 4. Adaptiver Threshold (§v10): relativ zum Median-Sibilanzpegel
+    if adaptive_threshold:
+        sib_median_db = 20.0 * np.log10(float(np.median(np.abs(sib_band))) + 1e-12)
+        # Threshold = max(fester Wert, Median + 6dB)
+        adaptive_db = sib_median_db + 6.0
+        effective_threshold_db = max(threshold_db, min(adaptive_db, -10.0))
+        # Sanftere Ratio bei adaptivem Threshold (näher am Signal)
+        effective_ratio = ratio * 0.85
+    else:
+        effective_threshold_db = threshold_db
+        effective_ratio = ratio
+
+    # 5. Gain Reduction
+    threshold_lin = 10.0 ** (effective_threshold_db / 20.0)
     gr = np.where(
         envelope > threshold_lin,
-        (threshold_lin / (envelope + 1e-12)) ** ((ratio - 1.0) / ratio),
+        (threshold_lin / (envelope + 1e-12)) ** ((effective_ratio - 1.0) / effective_ratio),
         1.0,
     )
 
-    # 4. Smooth
-    gr_smooth = _smooth_gain(gr, sr, attack_ms, release_ms)
+    # 6. Smooth (mit etwas längerer Release für natürlicheren Klang)
+    gr_smooth = _smooth_gain(gr, sr, attack_ms, release_ms * 1.3)
 
-    # 5. Strength-Cap (§2.19.3): GR darf nicht stärker als strength_cap
-    #    strength_cap = 1.0 → kein Cap; = 0.45 → max. 55 % GR
+    # 7. Strength-Cap
     if strength_cap < 1.0:
-        gr_smooth = np.maximum(gr_smooth, strength_cap)
+        gr_smooth = np.maximum(gr_smooth, max(strength_cap, 0.3))
 
-    # 6. Anwenden: Sibilantenband dämpfen, zum Restsignal addieren
+    # 8. Anwenden: Sibilantenband dämpfen
     processed = ch - sib_band + sib_band * gr_smooth
 
-    avg_gr_db = float(np.mean(20.0 * np.log10(gr_smooth + 1e-12)))
+    avg_gr_db = float(np.mean(20.0 * np.log10(np.maximum(gr_smooth, 1e-12))))
     return processed.astype(ch.dtype), avg_gr_db
 
 
@@ -463,6 +489,23 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 freq_high     (float) Überschreibt gender-Auswahl (Hz)
         """
         sample_rate = kwargs.get("sample_rate", 48000)
+        # ── §v10 PIM: Per-Band-De-Ess-Kalibrierung ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "ml_deesser",
+                default_nr=0.2, default_de_ess=0.85, default_comp=1.0)
+            # De-Esser braucht de_ess_strength, nicht nr_strength
+            if "de_ess_strength" in kwargs:
+                kwargs["de_ess_strength"] = _pim["de_ess_strength"]
+            if "strength_cap" in kwargs:
+                # Erhöhe Cap: PIM will mehr De-Essing → weniger Deckelung
+                kwargs["strength_cap"] = min(1.0, 0.6 + _pim["de_ess_strength"] * 0.5)
+            # NR-Parameter weiterhin für Noise-Reduction-Anteil
+            for _key in ("noise_reduction_strength", "nr_strength"):
+                if _key in kwargs:
+                    kwargs[_key] = _pim["nr_strength"]
+        except Exception:
+            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         self.validate_input(audio)
         t0 = time.time()

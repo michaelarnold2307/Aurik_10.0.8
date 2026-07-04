@@ -542,6 +542,17 @@ class DeEsserPhase(PhaseInterface):
             PhaseResult with enhanced audio + comprehensive metrics
         """
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
+        # ── §v10 PIM: De-Ess-Stärke aus Per-Band-Intensität ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "de_esser",
+                default_nr=0.2, default_de_ess=0.85, default_comp=1.0)
+            if "strength" in kwargs:
+                kwargs["strength"] = _pim["de_ess_strength"]
+            if "correction_strength" in kwargs:
+                kwargs["correction_strength"] = _pim["de_ess_strength"]
+        except Exception:
+            pass
         material = material_type  # alias: method body uses 'material' throughout
         start_time = time.time()
         self.validate_input(audio)

@@ -375,6 +375,16 @@ class FrequencyRestorationPhase(PhaseInterface):
             PhaseResult with extended bandwidth audio
         """
         enable_sbr: bool = bool(kwargs.get("enable_sbr", True))
+        # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "freq_restore",
+                default_nr=0.4, default_de_ess=0.2, default_comp=1.0)
+            for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
+                if _key in kwargs:
+                    kwargs[_key] = _pim["nr_strength"]
+        except Exception:
+            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 

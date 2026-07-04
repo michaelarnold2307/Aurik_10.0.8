@@ -123,6 +123,27 @@ _DEVICE_CURVES: dict[str, list[tuple[float, float]]] = {
         (16000.0, -3.0),
         (20000.0, -5.0),
     ],
+    # ── §v10 Car Audio & Bluetooth Profiles ──
+    "car_sedan_avg": [
+        (60.0, +6.0), (80.0, +5.0), (100.0, +3.0), (200.0, +1.0), (500.0, 0.0),
+        (1000.0, 0.0), (2000.0, -1.0), (3000.0, -3.0), (5000.0, -4.0),
+        (8000.0, -2.0), (10000.0, -3.0), (15000.0, -6.0), (20000.0, -8.0),
+    ],
+    "car_suv_avg": [
+        (60.0, +8.0), (80.0, +6.0), (100.0, +4.0), (200.0, +1.5), (500.0, 0.0),
+        (1000.0, 0.0), (2000.0, -0.5), (3000.0, -2.0), (5000.0, -3.0),
+        (8000.0, -3.0), (10000.0, -4.0), (15000.0, -8.0), (20000.0, -10.0),
+    ],
+    "bluetooth_speaker_avg": [
+        (80.0, -6.0), (100.0, -4.0), (150.0, -2.0), (200.0, -1.0), (500.0, 0.0),
+        (1000.0, +1.0), (2000.0, +2.0), (3000.0, +2.0), (5000.0, +1.0),
+        (8000.0, -2.0), (10000.0, -5.0), (15000.0, -12.0), (20000.0, -15.0),
+    ],
+    "club_pa_system": [
+        (40.0, +3.0), (60.0, +4.0), (80.0, +3.0), (100.0, +2.0), (200.0, +1.0), (500.0, 0.0),
+        (1000.0, 0.0), (2000.0, 0.0), (3000.0, +0.5), (5000.0, +1.0),
+        (8000.0, +0.5), (10000.0, 0.0), (15000.0, -2.0), (20000.0, -4.0),
+    ],
 }
 
 # Alias mapping: alternative device identifiers
@@ -142,6 +163,21 @@ _DEVICE_ALIASES: dict[str, str] = {
     "hifi": "hifi_speaker",
     "hi_fi": "hifi_speaker",
     "default": "consumer_headphone_avg",
+    "car": "car_sedan_avg",
+    "auto": "car_sedan_avg",
+    "suv": "car_suv_avg",
+    "bluetooth": "bluetooth_speaker_avg",
+    "bt_speaker": "bluetooth_speaker_avg",
+    "club": "club_pa_system",
+    "pa": "club_pa_system",
+    "car": "car_sedan_avg",
+    "auto": "car_sedan_avg",
+    "suv": "car_suv_avg",
+    "bluetooth": "bluetooth_speaker_avg",
+    "bt_speaker": "bluetooth_speaker_avg",
+    "club": "club_pa_system",
+    "pa": "club_pa_system",
+
 }
 
 # Maximum correction strength per band (prevents overly aggressive intervention)
@@ -309,9 +345,6 @@ def list_device_ids() -> list[str]:
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
-
-_instance: dict[str, PlaybackDeviceProfile] = {}
-_lock = threading.Lock()
 
 
 def get_cached_profile(device_id: str) -> PlaybackDeviceProfile:

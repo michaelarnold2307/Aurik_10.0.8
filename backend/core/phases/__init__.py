@@ -65,6 +65,7 @@ from .phase_39_air_band_enhancement import AirBandEnhancement
 # Phase 40-42: Final Output Processing
 from .phase_40_loudness_normalization import LoudnessNormalizationPhase
 from .phase_41_output_format_optimization import OutputFormatOptimization
+from .phase_glue_stage import GlueStagePhase
 from .phase_42_vocal_enhancement import VocalEnhancement
 from .phase_43_ml_deesser import AdaptiveDeEsserPhase, MLDeEsserPhase
 from .phase_44_guitar_enhancement import GuitarEnhancementPhase
@@ -157,6 +158,7 @@ __all__ = [
     "Exciter",
     "FinalEQ",
     "FrequencyRestorationPhase",
+    "GlueStagePhase",
     "GuitarEnhancementPhase",
     "HarmonicRestorationPhase",
     "HumRemovalPhase",

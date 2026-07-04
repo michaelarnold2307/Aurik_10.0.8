@@ -130,39 +130,104 @@ class PANNsPlugin:
 
     def __init__(self) -> None:
         self._session: object | None = None
+        self._torch_model: object | None = None  # PyTorch fallback model
+        self._device: str = "cpu"
+        self._use_fp16: bool = False
         self._load_onnx()
+
+    # ------------------------------------------------------------------
+    # GPU-Erkennung
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_gpu() -> tuple[str, bool]:
+        """Erkennt verfügbare GPU (CUDA oder ROCm).
+
+        Returns:
+            (device_name, fp16_supported)
+        """
+        try:
+            import torch  # pylint: disable=import-outside-toplevel
+
+            if torch.cuda.is_available():
+                device = "cuda"
+                # Prüfe auf fp16-Unterstützung (ab Compute Capability 5.3 bzw. Volta+)
+                fp16_ok = torch.cuda.get_device_capability(0)[0] >= 7
+                logger.info("PANNs GPU: CUDA erkannt (Compute Capability %s), fp16=%s",
+                            torch.cuda.get_device_capability(0), fp16_ok)
+                return device, fp16_ok
+        except Exception:
+            pass
+
+        try:
+            import torch  # pylint: disable=import-outside-toplevel
+
+            # ROCm: torch.cuda.is_available() returns True for AMD GPUs too
+            # but we also check for MIOpen/ROCm via HIP
+            if hasattr(torch, 'hip') and torch.hip.is_available():
+                logger.info("PANNs GPU: ROCm/HIP erkannt")
+                return "cuda", True  # ROCm GPUs support fp16 well
+        except Exception:
+            pass
+
+        logger.info("PANNs GPU: Keine GPU erkannt — CPU-Inferenz")
+        return "cpu", False
 
     # ------------------------------------------------------------------
     # ONNX-Laden
     # ------------------------------------------------------------------
 
     def _load_onnx(self) -> None:
-        """Lädt ONNX-Session einmalig lazy; warnt bei Fehler, kein Absturz."""
+        """Lädt ONNX-Session einmalig lazy; GPU-beschleunigt wenn verfügbar; warnt bei Fehler, kein Absturz."""
         try:
             import onnxruntime as ort
 
             try:
                 from backend.core.ml_memory_budget import try_allocate as _try_alloc
 
-                if not _try_alloc("PANNs", size_gb=0.66):
+                budget_gb = 0.66
+                if not _try_alloc("PANNs", size_gb=budget_gb):
                     logger.warning("PANNs: ML-Budget erschöpft — Spektral-Fallback.")
                     return
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
+
+            # GPU-Provider-Präferenz: CUDA > ROCm > CPU
+            device, fp16_ok = self._detect_gpu()
+            self._device = device
+            self._use_fp16 = fp16_ok
 
             try:
                 from backend.core.ml_device_manager import get_ort_providers as _get_prov
 
                 _providers = _get_prov("PANNs")
             except Exception:
-                _providers = ["CPUExecutionProvider"]
+                # Build provider list with GPU preference
+                _providers = []
+                if device == "cuda":
+                    _providers.append("CUDAExecutionProvider")
+                _providers.append("CPUExecutionProvider")
+
+            # ONNX Session options for GPU optimization
+            sess_options = ort.SessionOptions()
+            if device == "cuda":
+                # Enable graph optimization for GPU
+                sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                logger.info("PANNs ONNX: GPU-Inferenz aktiviert (CUDAExecutionProvider)")
+            else:
+                sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+                logger.info("PANNs ONNX: CPU-Inferenz")
+
             self._session = ort.InferenceSession(
                 str(self._ONNX_PATH),
+                sess_options=sess_options,
                 providers=_providers,
             )
             logger.info(
-                "panns_plugin: CNN14 ONNX model loaded (%s, §4.4 primary genre/tagging)",
+                "panns_plugin: CNN14 ONNX model loaded (%s, device=%s, fp16=%s, §4.4 primary genre/tagging)",
                 self._ONNX_PATH.name,
+                self._device,
+                self._use_fp16,
             )
             try:
                 from backend.core.plugin_lifecycle_manager import register_plugin as _reg_plm
@@ -172,16 +237,61 @@ class PANNsPlugin:
                 logger.debug("Operation failed (non-critical): %s", _exc)
         except Exception as exc:
             logger.warning(
-                "PANNs ONNX nicht verfügbar — Instrument-Gate inaktiv (alle Phasen sind aktiv): %s",
+                "PANNs ONNX nicht verfügbar — versuche PyTorch-Fallback: %s",
                 exc,
             )
             self._session = None
+            self._try_load_torch_panns()
             try:
                 from backend.core.ml_memory_budget import release as _rel
 
                 _rel("PANNs")
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
+
+    def _try_load_torch_panns(self) -> None:
+        """Versucht PANNs CNN14 als PyTorch-Modell zu laden (GPU-Fallback).
+
+        Nutzt `torch.hub.load` für das pretrained CNN14-Modell von
+        qiuqiangkong/audioset_tagging_cnn. Bei Erfolg wird das Modell
+        auf GPU geschoben (falls verfügbar).
+        """
+        try:
+            import torch  # pylint: disable=import-outside-toplevel
+
+            device, fp16_ok = self._detect_gpu()
+            self._device = device
+            self._use_fp16 = fp16_ok
+
+            # Load pretrained CNN14 from torch hub
+            self._torch_model = torch.hub.load(
+                'qiuqiangkong/audioset_tagging_cnn',
+                'Cnn14',
+                pretrained=True,
+                trust_repo=True,
+            )
+            self._torch_model.eval()
+
+            # Move to GPU if available
+            if device == "cuda":
+                self._torch_model = self._torch_model.to(device)
+                if fp16_ok:
+                    self._torch_model = self._torch_model.half()
+                    logger.info("PANNs PyTorch: GPU fp16-Inferenz aktiviert")
+                else:
+                    logger.info("PANNs PyTorch: GPU fp32-Inferenz aktiviert")
+            else:
+                logger.info("PANNs PyTorch: CPU-Inferenz")
+
+            logger.info("PANNs PyTorch CNN14 geladen (device=%s, fp16=%s)", self._device, self._use_fp16)
+        except Exception as exc:
+            logger.warning(
+                "PANNs auch als PyTorch-Modell nicht verfügbar — Instrument-Gate inaktiv: %s",
+                exc,
+            )
+            self._torch_model = None
+            self._device = "cpu"
+            self._use_fp16 = False
 
     # ------------------------------------------------------------------
     # Audio-Aufbereitung

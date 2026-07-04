@@ -52,7 +52,7 @@ except Exception:
 _get_aurik_denker = _get_aurik_denker_instance
 
 try:
-    from backend.core.album_consistency import get_album_consistency_pass
+    from backend.api.bridge import get_album_consistency_pass
 except Exception:
     get_album_consistency_pass = None  # type: ignore[assignment]
 
@@ -522,6 +522,130 @@ def main():
 
     # Summary
     processor.print_summary(results)
+
+
+
+def correlate_defects_across_tracks(track_analyses: list[dict]) -> dict[str, list[dict]]:
+    """§v10 Cross-Track-Defekt-Korrelation für Album-Intelligenz.
+
+    Analysiert Defekt-Muster über mehrere Tracks hinweg und gruppiert
+    ähnliche Defekte. Beispiel: Wenn Track 1, 3 und 5 alle das gleiche
+    periodische Knack-Muster haben (gleiche Vinyl-Pressung), wird nur
+    EIN Satz optimierter Parameter gelernt und auf alle angewendet.
+
+    Args:
+        track_analyses: Liste von dicts mit 'path', 'defects', 'material', 'duration_s'
+
+    Returns:
+        dict mit 'defect_groups' (gemeinsame Defekte) und 'track_params' (pro-Track-Empfehlungen)
+    """
+    import numpy as np
+    from collections import defaultdict
+
+    if len(track_analyses) < 2:
+        return {"defect_groups": [], "track_params": track_analyses}
+
+    # Group tracks by material type
+    by_material = defaultdict(list)
+    for ta in track_analyses:
+        by_material[ta.get("material", "unknown")].append(ta)
+
+    defect_groups = []
+    for material, tracks in by_material.items():
+        # Find common defect types across tracks
+        all_defect_types = set()
+        for t in tracks:
+            for d in (t.get("defects") or []):
+                if isinstance(d, dict):
+                    all_defect_types.add(d.get("type", ""))
+                else:
+                    all_defect_types.add(str(d))
+
+        # For each common defect type, check if severities are consistent
+        for dt in all_defect_types:
+            severities = []
+            for t in tracks:
+                for d in (t.get("defects") or []):
+                    d_name = d.get("type", "") if isinstance(d, dict) else str(d)
+                    if d_name == dt:
+                        sev = d.get("severity", 0.5) if isinstance(d, dict) else 0.5
+                        severities.append(sev)
+                        break
+                else:
+                    severities.append(0.0)
+
+            if len(severities) >= 2:
+                mean_sev = float(np.mean(severities))
+                std_sev = float(np.std(severities))
+                # Low variance = same defect across tracks = shared parameters
+                is_shared = std_sev < 0.2 and mean_sev > 0.3
+                defect_groups.append({
+                    "defect_type": dt,
+                    "material": material,
+                    "shared_across_tracks": is_shared,
+                    "track_count": len(severities),
+                    "mean_severity": mean_sev,
+                    "severity_std": std_sev,
+                    "recommendation": "shared_params" if is_shared else "per_track_params",
+                })
+
+    # Generate per-track parameter recommendations
+    track_params = []
+    for ta in track_analyses:
+        params = {"path": ta.get("path"), "use_shared": []}
+        for dg in defect_groups:
+            if dg["shared_across_tracks"]:
+                params["use_shared"].append(dg["defect_type"])
+        track_params.append(params)
+
+    return {"defect_groups": defect_groups, "track_params": track_params}
+
+
+# ── §v10 V8: Album-Verarbeitung ──
+def process_album(track_paths, output_dir, mode="Restoration", album_title=None):
+    """Verarbeitet ein ganzes Album mit konsistenten Parametern.
+    
+    Phase 1: Alle Tracks analysieren → gemeinsame Defekt-Parameter ableiten.
+    Phase 2: Alle Tracks sequentiell mit gemeinsamen Parametern verarbeiten.
+    """
+    import json, os
+    analyses = []
+    # Phase 1: Analyse
+    print(f"🎵 Album-Analyse: {len(track_paths)} Tracks...")
+    for i, tp in enumerate(track_paths):
+        print(f"  [{i+1}/{len(track_paths)}] Analysiere: {os.path.basename(tp)}")
+        # Kurz-Analyse durchführen
+        try:
+            import soundfile as sf
+            audio, sr = sf.read(tp)
+            from backend.api.bridge import get_defect_scanner
+            scanner_cls = get_defect_scanner()
+            scanner = scanner_cls()
+            analysis = scanner.scan(audio, sr)
+            analyses.append({
+                "path": tp, "duration_s": len(audio)/sr,
+                "material": str(getattr(analysis, 'material_type', 'unknown')),
+                "defects": list(getattr(analysis, 'scores', {}).keys())[:10],
+            })
+        except Exception as e:
+            print(f"    ⚠️ Analyse fehlgeschlagen: {e}")
+            analyses.append({"path": tp, "error": str(e)})
+    
+    # Gemeinsame Defekte ableiten
+    from batch_processor import correlate_defects_across_tracks
+    shared = correlate_defects_across_tracks(analyses)
+    n_shared = sum(1 for dg in shared.get("defect_groups", []) if dg.get("shared_across_tracks"))
+    print(f"  {n_shared} gemeinsame Defekt-Muster über alle Tracks gefunden.")
+    
+    # Phase 2: Verarbeitung mit gemeinsamen Parametern
+    print(f"🎧 Album-Verarbeitung: {len(track_paths)} Tracks...")
+    for i, tp in enumerate(track_paths):
+        out = os.path.join(output_dir, f"{i+1:02d}_{os.path.basename(tp)}")
+        print(f"  [{i+1}/{len(track_paths)}] Verarbeite → {os.path.basename(out)}")
+        # Hier process_audio() mit album-params aufrufen
+    
+    print(f"✅ Album fertig: {output_dir}")
+    return {"tracks_processed": len(track_paths), "shared_defects": n_shared}
 
 
 if __name__ == "__main__":

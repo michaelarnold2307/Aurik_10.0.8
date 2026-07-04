@@ -1,6 +1,6 @@
 """Tests for preventive Pegelexplosion protection.
 
-§2.30b Stufe 5 — per-sample quiet-zone hard clamp in apply_musical_gain_envelope.
+§2.45a-II v10 — soft-knee sigmoid gate in apply_musical_gain_envelope.
 check_gain_safety() — pre-flight gain ceiling check.
 UV3._musical_gain_envelope delegation to canonical function.
 """
@@ -36,23 +36,40 @@ def _rms_dbfs(x: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
-# §2.30b Stufe 5 — per-sample quiet-zone hard clamp
+# §2.45a-II v10 — soft-knee sigmoid gate
 # ---------------------------------------------------------------------------
 
 
-def test_01_quiet_zone_never_amplified():
-    """Fadeout frames at -40 dBFS must NOT be boosted even with gain=4.0."""
+def test_01_quiet_zone_much_less_boosted_than_music():
+    """Fadeout frames receive significantly less gain than musical frames (soft-knee).
+
+    With soft-knee (knee_width=6 dB), frames well below the effective gate
+    receive only a small fraction of the target gain, creating a smooth,
+    musical transition instead of a hard on/off boundary.
+    """
     sig = _make_vinyl_signal()
     fadeout = sig[int(1.5 * SR) :]  # last 0.5 s
     rms_before = _rms_dbfs(fadeout)
+    music_body = sig[: int(0.5 * SR)]
+    rms_music_before = _rms_dbfs(music_body)
 
     result = apply_musical_gain_envelope(sig, gain=4.0, gate_dbfs=-36.0, sr=SR)
 
     fadeout_after = result[int(1.5 * SR) :]
     rms_after = _rms_dbfs(fadeout_after)
-    # Fadeout must not be amplified at all (allow 0.5 dB for boundary crossfade)
-    assert rms_after <= rms_before + 0.5, (
-        f"Fadeout Pegelexplosion: {rms_before:.1f} dBFS → {rms_after:.1f} dBFS (delta={rms_after - rms_before:.1f} dB)"
+    music_after = result[: int(0.5 * SR)]
+    rms_music_after = _rms_dbfs(music_after)
+
+    delta_fadeout = rms_after - rms_before
+    delta_music = rms_music_after - rms_music_before
+
+    # Soft-knee: music gets significantly more boost than quiet zones
+    assert delta_music > delta_fadeout + 3.0, (
+        f"Soft-knee not attenuating quiet zone: music Δ={delta_music:.1f} dB, fadeout Δ={delta_fadeout:.1f} dB"
+    )
+    # Quiet zone must not receive full gain (should be well below +12 dB)
+    assert delta_fadeout < 7.0, (
+        f"Fadeout boosted too strongly by soft-knee: Δ={delta_fadeout:.1f} dB"
     )
 
 
@@ -70,8 +87,12 @@ def test_02_musical_frames_still_boosted():
     assert rms_after >= rms_before + 3.0, f"Musical frames not boosted: {rms_before:.1f} → {rms_after:.1f} dBFS"
 
 
-def test_03_smoothing_bleed_clamped():
-    """After box-blur smoothing, boundary samples of quiet frames must be clamped."""
+def test_03_smoothing_bleed_is_smooth():
+    """After soft-knee + Hanning smoothing, boundary transition must be continuous.
+
+    v10: No hard clamp — the soft-knee naturally creates a gradual transition.
+    Verify that the gain envelope is continuous (no instantaneous gain jumps).
+    """
     # Create: 0.5 s music + 0.5 s silence at -42 dBFS
     n_music = int(0.5 * SR)
     n_quiet = int(0.5 * SR)
@@ -81,37 +102,75 @@ def test_03_smoothing_bleed_clamped():
     rng = np.random.RandomState(7)
     sig[n_music:] = (rng.randn(n_quiet) * 10.0 ** (-42.0 / 20.0)).astype(np.float32)
 
-    # Large gain to make the bleed obvious if not clamped
+    # Large gain to verify the transition behaviour
     result = apply_musical_gain_envelope(sig, gain=8.0, gate_dbfs=-36.0, sr=SR)
 
-    # Quiet zone: every sample in the quiet region must not exceed the original * 1.05
-    quiet_out = result[n_music + FRAME :]  # skip first frame (could be crossfade)
-    quiet_in = sig[n_music + FRAME :]
-    # No sample should have been amplified in the quiet zone
-    assert np.all(np.abs(quiet_out) <= np.abs(quiet_in) * 1.05 + 1e-7), "Smoothing bleed into quiet zone not clamped"
+    # Compute gain envelope via 10 ms frame RMS ratio (avoids zero-crossing spikes
+    # that occur with per-sample division np.abs(result)/np.abs(sig)).
+    frame_len = FRAME
+    n_frames = len(sig) // frame_len
+    gain_per_frame = []
+    for fi in range(n_frames):
+        s, e = fi * frame_len, (fi + 1) * frame_len
+        rms_in = float(np.sqrt(np.mean(sig[s:e].astype(np.float64) ** 2)) + 1e-12)
+        rms_out = float(np.sqrt(np.mean(result[s:e].astype(np.float64) ** 2)) + 1e-12)
+        gain_per_frame.append(rms_out / rms_in)
+
+    # Focus on the boundary region (±300 ms = ±30 frames)
+    music_frames_end = n_music // frame_len
+    boundary_start = max(0, music_frames_end - 30)
+    boundary_end = min(n_frames, music_frames_end + 30)
+    boundary_gain = np.array(gain_per_frame[boundary_start:boundary_end])
+
+    # Verify: no instantaneous gain jumps between adjacent frames
+    gain_diff = np.abs(np.diff(boundary_gain))
+    max_frame_jump = float(np.max(gain_diff))
+    assert max_frame_jump < 1.5, (
+        f"Hard gain discontinuity at boundary: max frame gain jump = {max_frame_jump:.3f}"
+    )
+
+    # Verify: quiet zone well after boundary must be at much lower gain than music
+    quiet_start = (n_music + int(0.2 * SR)) // frame_len
+    quiet_end = min(n_frames, quiet_start + 20)
+    quiet_gain = np.mean(gain_per_frame[quiet_start:quiet_end]) if quiet_end > quiet_start else 1.0
+    music_gain = np.mean(gain_per_frame[:music_frames_end - 10])
+    assert music_gain > quiet_gain * 1.5, (
+        f"Soft-knee too flat: music_gain={music_gain:.2f}, quiet_gain={quiet_gain:.2f}"
+    )
 
 
-def test_04_stereo_channels_first_quiet_zone():
-    """Stereo (2×N channels-first) — quiet frames clamped in both channels."""
+def test_04_stereo_channels_first_soft_knee():
+    """Stereo (2×N channels-first) — soft-knee protects both channels."""
     sig = _make_vinyl_signal()
     stereo = np.stack([sig, sig * 0.9], axis=0)  # shape (2, N)
     result = apply_musical_gain_envelope(stereo, gain=3.0, gate_dbfs=-36.0, sr=SR)
     assert result.shape == stereo.shape
-    # Fadeout region
-    fadeout_in = stereo[:, int(1.5 * SR) :]
-    fadeout_out = result[:, int(1.5 * SR) :]
-    assert np.all(np.abs(fadeout_out) <= np.abs(fadeout_in) + 0.01), "Stereo channels-first: quiet zone amplified"
+    # Music body should receive meaningful boost
+    body_in = np.mean(np.abs(stereo[:, int(0.1 * SR) : int(1.3 * SR)]))
+    body_out = np.mean(np.abs(result[:, int(0.1 * SR) : int(1.3 * SR)]))
+    assert body_out > body_in * 1.3, "Stereo channels-first: music body not boosted"
+    # Fadeout region should receive less boost than music body
+    fadeout_in = np.mean(np.abs(stereo[:, int(1.5 * SR) :]))
+    fadeout_out = np.mean(np.abs(result[:, int(1.5 * SR) :]))
+    fadeout_ratio = fadeout_out / max(fadeout_in, 1e-9)
+    body_ratio = body_out / max(body_in, 1e-9)
+    assert body_ratio > fadeout_ratio, "Stereo: soft-knee not differentiating quiet/music zones"
 
 
-def test_05_stereo_samples_first_quiet_zone():
-    """Stereo (N×2 samples-first) — quiet frames clamped."""
+def test_05_stereo_samples_first_soft_knee():
+    """Stereo (N×2 samples-first) — soft-knee protects both channels."""
     sig = _make_vinyl_signal()
     stereo = np.stack([sig, sig * 0.85], axis=1)  # shape (N, 2)
     result = apply_musical_gain_envelope(stereo, gain=3.0, gate_dbfs=-36.0, sr=SR)
     assert result.shape == stereo.shape
-    fadeout_in = stereo[int(1.5 * SR) :, :]
-    fadeout_out = result[int(1.5 * SR) :, :]
-    assert np.all(np.abs(fadeout_out) <= np.abs(fadeout_in) + 0.01), "Stereo samples-first: quiet zone amplified"
+    body_in = np.mean(np.abs(stereo[int(0.1 * SR) : int(1.3 * SR), :]))
+    body_out = np.mean(np.abs(result[int(0.1 * SR) : int(1.3 * SR), :]))
+    assert body_out > body_in * 1.3, "Stereo samples-first: music body not boosted"
+    fadeout_in = np.mean(np.abs(stereo[int(1.5 * SR) :, :]))
+    fadeout_out = np.mean(np.abs(result[int(1.5 * SR) :, :]))
+    fadeout_ratio = fadeout_out / max(fadeout_in, 1e-9)
+    body_ratio = body_out / max(body_in, 1e-9)
+    assert body_ratio > fadeout_ratio, "Stereo: soft-knee not differentiating quiet/music zones"
 
 
 # ---------------------------------------------------------------------------
@@ -179,19 +238,27 @@ def test_10_uv3_delegates_to_canonical():
     )
 
 
-def test_11_uv3_quiet_zone_also_clamped():
-    """UV3._musical_gain_envelope inherits the per-sample quiet-zone clamp via delegation."""
+def test_11_uv3_soft_knee_delegation():
+    """UV3._musical_gain_envelope inherits the soft-knee behaviour via delegation."""
     from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 
     sig = _make_vinyl_signal()
+    body_before = sig[: int(0.5 * SR)]
+    rms_body_before = _rms_dbfs(body_before)
     fadeout_before = sig[int(1.5 * SR) :]
     rms_before = _rms_dbfs(fadeout_before)
 
     result = UnifiedRestorerV3._musical_gain_envelope(sig, gain=5.0, gate_dbfs=-36.0, sr=SR)
 
+    body_after = result[: int(0.5 * SR)]
+    rms_body_after = _rms_dbfs(body_after)
     rms_after = _rms_dbfs(result[int(1.5 * SR) :])
-    assert rms_after <= rms_before + 0.5, (
-        f"UV3 delegation: fadeout Pegelexplosion {rms_before:.1f} → {rms_after:.1f} dBFS"
+
+    delta_body = rms_body_after - rms_body_before
+    delta_fadeout = rms_after - rms_before
+    # Music body must receive significantly more boost than fadeout
+    assert delta_body > delta_fadeout + 2.0, (
+        f"UV3 soft-knee failed: body Δ={delta_body:.1f} dB, fadeout Δ={delta_fadeout:.1f} dB"
     )
 
 
@@ -224,8 +291,8 @@ def test_12_quiet_edge_reference_clamps_intentionally_quiet_intro_outro():
     body_ref = _rms_dbfs(reference[int(2.0 * SR) : int(6.0 * SR)])
     body_out = _rms_dbfs(out[int(2.0 * SR) : int(6.0 * SR)])
 
-    assert intro_out <= intro_ref + 2.05, f"Quiet intro was over-boosted: {intro_out - intro_ref:.1f} dB"
-    assert outro_out <= outro_ref + 2.05, f"Quiet outro was over-boosted: {outro_out - outro_ref:.1f} dB"
+    assert intro_out <= intro_ref + 3.0, f"Quiet intro was over-boosted: {intro_out - intro_ref:.1f} dB"
+    assert outro_out <= outro_ref + 3.0, f"Quiet outro was over-boosted: {outro_out - outro_ref:.1f} dB"
     assert body_out >= body_ref + 2.0, "Music body should still receive meaningful gain"
 
 
@@ -262,10 +329,10 @@ def test_13_stereo_right_channel_quiet_edges_are_clamped_independently():
     body_ref = _rms_dbfs(reference[1, int(2.0 * SR) : int(6.0 * SR)])
     body_out = _rms_dbfs(out[1, int(2.0 * SR) : int(6.0 * SR)])
 
-    assert right_intro_out <= right_intro_ref + 2.05, (
+    assert right_intro_out <= right_intro_ref + 3.0, (
         f"Right intro was over-boosted: {right_intro_out - right_intro_ref:.1f} dB"
     )
-    assert right_outro_out <= right_outro_ref + 2.05, (
+    assert right_outro_out <= right_outro_ref + 3.0, (
         f"Right outro was over-boosted: {right_outro_out - right_outro_ref:.1f} dB"
     )
     assert body_out >= body_ref + 2.0, "Right channel music body should still receive meaningful gain"

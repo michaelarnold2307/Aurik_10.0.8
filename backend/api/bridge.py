@@ -1196,6 +1196,24 @@ def record_goal_feedback(
         logger.warning("§C10 record_goal_feedback failed: %s", _fb_exc)
 
 
+def get_reflective_listening_pass():
+    """§v10 Gibt ReflectiveListeningPass-Klasse zurück (lazy import)."""
+    from backend.core.reflective_listening_pass import ReflectiveListeningPass
+    return ReflectiveListeningPass
+
+
+def apply_reflective_listening(audio, sr, *, original_audio=None, artistic_intent=None, material='unknown'):
+    """§v10 Führt den Reflective Listening Pass aus (lazy, convenience)."""
+    from backend.core.reflective_listening_pass import ReflectiveListeningPass
+    rlp = ReflectiveListeningPass()
+    return rlp.process(audio, sr, original_audio=original_audio,
+                        artistic_intent=artistic_intent, material=material)
+
+def get_album_consistency_pass():
+    """§v10 Gibt AlbumConsistencyPass-Klasse zurück (lazy import, §1.4)."""
+    from backend.core.album_consistency import AlbumConsistencyPass
+    return AlbumConsistencyPass
+
 def get_stem_remix_balancer_fn():
     """Gibt ``StemRemixBalancer.balance_remix``-Funktion zurück (lazy import, §1.4).
 
@@ -1270,7 +1288,7 @@ def get_mushra_evaluator():
     """Gibt den ``MushraEvaluator``-Singleton zurück (lazy import, §8.1.1 OQS).
 
     OQS = algorithmische PEAQ-Approximation (kein ITU-R-MUSHRA).
-    In externen Berichten stets „OQS (algorithmisch)" schreiben.
+    In externen Berichten stets "OQS (algorithmisch)" schreiben.
 
     Schwellwerte::
 
@@ -2244,6 +2262,172 @@ def run_album_consistency_pass(
     }
 
 
+
+
+def _get_ml_availability() -> dict[str, Any]:
+    """§v10 Prüft welche ML-Modelle verfügbar sind (nicht auf DSP fallbacken)."""
+    models = {}
+    # ECAPA-TDNN (Speaker Identity)
+    try:
+        import speechbrain
+        models["speaker_identity"] = "ecapa_tdnn"
+    except ImportError:
+        models["speaker_identity"] = "mfcc_dsp"
+    # PANNs (Genre/Audio tagging)
+    try:
+        import onnxruntime
+        models["panns"] = "onnx"
+    except ImportError:
+        models["panns"] = "dsp"
+    # LAION-CLAP
+    try:
+        import torch
+        models["laion_clap"] = "torch"
+    except ImportError:
+        models["laion_clap"] = "unavailable"
+    # SGMSE+ Dereverb
+    try:
+        import torch
+        models["sgmse_dereverb"] = "torchscript" if torch else "dsp_wpe"
+    except ImportError:
+        models["sgmse_dereverb"] = "dsp_wpe"
+    # RMVPE Pitch
+    try:
+        import onnxruntime
+        models["rmvpe_pitch"] = "onnx"
+    except ImportError:
+        models["rmvpe_pitch"] = "pyin_dsp"
+    
+    any_ml = any(v not in ("dsp", "dsp_wpe", "pyin_dsp", "mfcc_dsp", "unavailable") for v in models.values())
+    return {"any_ml_available": any_ml, "models": models}
+
+def get_layman_summary(result: Any) -> dict[str, Any]:
+    """§v10 Laien-verständliche Ergebnis-Zusammenfassung.
+
+    Übersetzt die technischen Metriken in einfache, menschlich lesbare
+    Status-Texte, die ein Laie versteht — ohne DSP-Fachbegriffe.
+
+    Returns:
+        dict mit 'headline', 'body', 'quality_label', 'quality_detail',
+        'recommendation', 'icon'
+    """
+    insights = get_experience_insights(result)
+    
+    joy = insights.get("joy_index", 0.5)
+    fatigue = insights.get("fatigue_index", 0.5)
+    degradation = insights.get("quality_gate", {}).get("degradation_status", "ok")
+    profile = insights.get("quality_gate", {}).get("profile", "neutral")
+    preserve = insights.get("quality_gate", {}).get("preserve_signal", 0.5)
+    recs = insights.get("recommendations", [])
+    rec_count = insights.get("recommendation_count", 0)
+    cluster = insights.get("cluster_key", "")
+    fqf = insights.get("fallback_quality_floor", {})
+    fqf_triggered = fqf.get("triggered", False)
+    fqf_recovered = fqf.get("recovered", False)
+    
+    # ── Qualität in Schulnoten ──
+    if degradation == "ok" and joy >= 0.75 and fatigue <= 0.30:
+        quality_label = "Hervorragend"
+        quality_detail = "Deine Aufnahme klingt jetzt klar und ausgewogen — wie ein professionelles Master."
+        icon = "✨"
+    elif degradation == "ok" and joy >= 0.55:
+        quality_label = "Sehr gut"
+        quality_detail = "Die Restaurierung ist gelungen. Leichte Verbesserungen sind hörbar."
+        icon = "👍"
+    elif degradation == "ok":
+        quality_label = "Gut"
+        quality_detail = "Die Aufnahme wurde restauriert. Die wichtigsten Störungen sind behoben."
+        icon = "✅"
+    elif degradation in ("recovered",):
+        quality_label = "In Ordnung"
+        quality_detail = "Die Aufnahme war schwierig zu restaurieren. Wir haben das bestmögliche Ergebnis erzielt — leichte Unreinheiten können geblieben sein."
+        icon = "⚠️"
+    elif degradation in ("degraded", "critical_degraded"):
+        quality_label = "Verbesserungswürdig"
+        quality_detail = "Die Aufnahme ist stark beschädigt. Wir konnten einige, aber nicht alle Probleme beheben. Ein erneuter Versuch mit anderen Einstellungen könnte helfen."
+        icon = "🔧"
+    else:
+        quality_label = "Fehlgeschlagen"
+        quality_detail = "Die Restaurierung konnte nicht abgeschlossen werden. Bitte versuche es erneut oder wähle eine andere Datei."
+        icon = "❌"
+
+    # ── Laien-Headline ──
+    if fqf_triggered and fqf_recovered:
+        headline = "Restaurierung mit Schutzpriorität — Ergebnis gesichert"
+    elif joy >= 0.7:
+        headline = "Deine Musik erstrahlt in neuem Glanz!"
+    elif joy >= 0.5:
+        headline = "Restaurierung erfolgreich abgeschlossen"
+    else:
+        headline = "Restaurierung mit Einschränkungen abgeschlossen"
+
+    # ── Laien-Body ──
+    body_parts = []
+    
+    # Was wurde gefunden?
+    if cluster:
+        body_parts.append(f'Deine Aufnahme wurde als "{cluster}" eingeordnet.')
+    
+    # Was wurde verbessert?
+    if degradation == "ok" and joy >= 0.55:
+        body_parts.append("Störende Geräusche wie Knistern, Rauschen oder Kratzer wurden reduziert.")
+        body_parts.append("Die Klangfarbe wurde auf natürliche Weise verbessert.")
+    elif degradation == "ok":
+        body_parts.append("Die wichtigsten Störungen wurden behoben.")
+    
+    # Fatigue-Warnung
+    if fatigue >= 0.45:
+        body_parts.append("In leisen Passagen könnte ein leichtes Grundrauschen hörbar sein — das ist normal für historische Aufnahmen.")
+    
+    # Signal-Preserve
+    if preserve >= 0.55:
+        body_parts.append("Die Bearbeitung war besonders vorsichtig, um den Original-Charakter zu erhalten.")
+    
+    body = " ".join(body_parts) if body_parts else quality_detail
+
+    # ── Empfehlung ──
+    if degradation == "ok" and joy >= 0.7:
+        recommendation = "✅ Diese Version kannst Du bedenkenlos verwenden."
+    elif degradation == "ok":
+        recommendation = "✅ Diese Version ist bereit zum Anhören."
+    elif fqf_recovered:
+        recommendation = "⚠️ Das Ergebnis ist brauchbar, aber nicht perfekt. Für beste Ergebnisse: bessere Quellqualität verwenden."
+    else:
+        recommendation = "🔄 Wir empfehlen einen erneuten Versuch mit der Original-Datei in höherer Qualität."
+
+
+    # ── §v10 V7: LUFS-Ist/Soll-Vergleich ──
+    lufs_target = None
+    lufs_actual = None
+    try:
+        _meta_raw = getattr(result, "metadata", None)
+        _meta = _coerce_dict_str_any(_meta_raw) if _meta_raw else {}
+        _exp_meta = _coerce_dict_str_any(_meta.get("export_metrics", {}))
+        lufs_target = _exp_meta.get("target_lufs")
+        lufs_actual = _exp_meta.get("integrated_lufs_after") or _exp_meta.get("output_integrated_lufs")
+    except Exception:
+        pass
+
+    # ── ML-Modell-Status für GUI ──
+    ml_status = _get_ml_availability()
+
+    return {
+        "headline": headline,
+        "body": body,
+        "quality_label": quality_label,
+        "quality_detail": quality_detail,
+        "recommendation": recommendation,
+        "icon": icon,
+        "joy_index": joy,
+        "fatigue_index": fatigue,
+        "lufs_target": lufs_target,
+        "lufs_actual": lufs_actual,
+        "lufs_ok": (abs(lufs_actual - lufs_target) < 0.5) if (lufs_target is not None and lufs_actual is not None) else None,
+        "ml_available": ml_status["any_ml_available"],
+        "ml_models": ml_status["models"],
+        "technical": insights,
+    }
+
 def get_pipeline_trace(result: Any) -> dict[str, Any]:
     """Gibt vollständigen Pipeline-Trace als Dict zurück (für Frontend/CLI/Debug).
 
@@ -2288,3 +2472,77 @@ def limit_quiet_edge_boost(
     except Exception as _e:
         logger.debug("limit_quiet_edge_boost bridge fallback: %s", _e)
         return candidate_audio
+
+
+def get_pipeline_ab_snapshots(*, include_audio: bool = True, max_duration_s: float = 5.0) -> list[dict]:
+    """§v10 A/B-Vergleichs-Snapshots für den GUI-Player.
+
+    Liefert Vorher/Nachher-Audio-Snippets pro Phase als Base64-kodiertes WAV.
+    Der GUI-Player kann diese direkt dekodieren und abspielen.
+
+    Args:
+        include_audio: Wenn True, Base64-WAV-Audio einbetten (größer aber direkt abspielbar)
+        max_duration_s: Maximale Dauer pro Snippet in Sekunden (Default 5s)
+
+    Returns:
+        Liste von dicts mit phase, pre_audio_b64, post_audio_b64, sample_rate, duration_s
+    """
+    try:
+        from backend.core.sota_improvements import get_ab_comparison_state
+        import base64, io, numpy as np
+        ab = get_ab_comparison_state()
+        if not ab.ab_snippets:
+            return []
+        
+        snippets = []
+        for s in ab.ab_snippets[-10:]:
+            pre = np.asarray(s.get("pre", s.get("pre_phase_audio", np.zeros(1))), dtype=np.float32)
+            post = np.asarray(s.get("post", s.get("post_phase_audio", np.zeros(1))), dtype=np.float32)
+            phase = str(s.get("phase", "unknown"))
+            
+            # Limit duration
+            sr = 48000
+            max_samples = int(max_duration_s * sr)
+            if pre.ndim >= 1 and len(pre) > max_samples:
+                mid = len(pre) // 2
+                pre = pre[mid - max_samples//2 : mid + max_samples//2]
+            if post.ndim >= 1 and len(post) > max_samples:
+                mid = len(post) // 2
+                post = post[mid - max_samples//2 : mid + max_samples//2]
+            
+            # Ensure mono for smaller payload
+            if pre.ndim > 1 and pre.shape[-1] <= 2:
+                pre = pre.mean(axis=-1) if pre.shape[-1] == 2 else pre
+            if post.ndim > 1 and post.shape[-1] <= 2:
+                post = post.mean(axis=-1) if post.shape[-1] == 2 else post
+            
+            entry = {
+                "phase": phase,
+                "sample_rate": sr,
+                "duration_s": float(min(len(pre), len(post))) / sr if len(pre) > 0 and len(post) > 0 else 0.0,
+            }
+            
+            if include_audio:
+                # Encode as 16-bit PCM WAV → Base64
+                import struct, wave as _wave
+                for key, arr in [("pre_audio_b64", pre), ("post_audio_b64", post)]:
+                    if len(arr) == 0:
+                        entry[key] = ""
+                        continue
+                    arr_16 = np.clip(arr * 32767, -32768, 32767).astype(np.int16)
+                    buf = io.BytesIO()
+                    with _wave.open(buf, 'wb') as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)  # 16-bit
+                        wf.setframerate(sr)
+                        wf.writeframes(arr_16.tobytes())
+                    entry[key] = base64.b64encode(buf.getvalue()).decode('ascii')
+            else:
+                entry["pre_shape"] = list(pre.shape) if hasattr(pre, 'shape') else [len(pre)]
+                entry["post_shape"] = list(post.shape) if hasattr(post, 'shape') else [len(post)]
+            
+            snippets.append(entry)
+        
+        return snippets
+    except Exception:
+        return []

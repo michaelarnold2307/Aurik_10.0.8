@@ -333,6 +333,16 @@ class NoiseGate(PhaseInterface):
         Returns:
             PhaseResult with gated audio
         """
+
+        # ── §v10 PIM: Per-Band-Intensität lesen ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim_params = apply_pim_intensity(kwargs, "noise_gate",
+                default_nr=0.3, default_de_ess=0.2, default_comp=1.0)
+            if "noise_reduction_strength" in kwargs:
+                kwargs["noise_reduction_strength"] = _pim_params["nr_strength"]
+        except Exception:
+            pass
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()

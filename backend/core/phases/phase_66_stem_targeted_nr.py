@@ -221,6 +221,16 @@ class StemTargetedNRPhase(PhaseInterface):
                 vfa_result (dict): VocalFocusAnalyzer-Ergebnis
         """
         assert sample_rate == 48000, f"Phase66 SR MUSS 48000 Hz sein, erhalten: {sample_rate}"
+        # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity
+            _pim = apply_pim_intensity(kwargs, "stem_nr",
+                default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
+            for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
+                if _key in kwargs:
+                    kwargs[_key] = _pim["nr_strength"]
+        except Exception:
+            pass
         audio, _p66_transposed = to_channels_last(audio)
         self.validate_input(audio)
         t0 = time.time()

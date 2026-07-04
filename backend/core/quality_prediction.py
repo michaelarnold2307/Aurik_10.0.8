@@ -37,6 +37,7 @@ class QualityMetric(Enum):
     BRIGHTNESS = "brightness"  # High Frequency Energy (0-1)
     NATURALNESS = "naturalness"  # Natural Sound (0-1)
     AUTHENTICITY = "authenticity"  # Period Authenticity (0-1)
+    PLEASANTNESS = "pleasantness"  # §v10 Human Pleasantness (0-1) — PRIMÄR
 
 
 class QualityLevel(Enum):

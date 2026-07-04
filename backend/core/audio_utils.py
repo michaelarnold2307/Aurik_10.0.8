@@ -401,10 +401,52 @@ def _scale_audio_region(
     end: int,
     scale: float,
     channel_index: int | None = None,
+    *,
+    crossfade_samples: int = 480,
 ) -> np.ndarray:
     if scale >= 0.9999 or end <= start:
         return audio
     out = np.array(audio, dtype=np.float32, copy=True)
+    # §2.45a-II v10: Crossfade at region boundaries prevents hard clicks
+    # when the gain change creates a discontinuity between the scaled
+    # edge region and the unscaled music body.
+    cf = min(crossfade_samples, (end - start) // 4, 4800)  # max 100 ms @ 48 kHz
+    if cf >= 2:
+        ramp = np.linspace(1.0, float(scale), cf, dtype=np.float32)
+        iramp = np.linspace(float(scale), 1.0, cf, dtype=np.float32)
+        ramp = np.clip(ramp, 0.0, 1.0)
+        iramp = np.clip(iramp, 0.0, 1.0)
+
+        def _apply(ch: np.ndarray) -> None:
+            ch[start : start + cf] *= ramp
+            ch[start + cf : end - cf] *= np.float32(scale)
+            ch[end - cf : end] *= iramp
+
+        if out.ndim == 1:
+            _apply(out)
+            return out
+        ch_first = out.shape[0] <= 2 and out.shape[1] > out.shape[0]
+        if ch_first:
+            if channel_index is None:
+                for c in range(out.shape[0]):
+                    ch = out[c]
+                    ch[start : start + cf] *= ramp
+                    ch[start + cf : end - cf] *= np.float32(scale)
+                    ch[end - cf : end] *= iramp
+            else:
+                _apply(out[channel_index])
+            return out
+        if channel_index is None:
+            for c in range(out.shape[1]):
+                ch = out[:, c]
+                ch[start : start + cf] *= ramp
+                ch[start + cf : end - cf] *= np.float32(scale)
+                ch[end - cf : end] *= iramp
+        else:
+            _apply(out[:, channel_index])
+        return out
+
+    # Fallback: no crossfade (region too short)
     if out.ndim == 1:
         out[start:end] *= np.float32(scale)
         return out  # type: ignore[no-any-return]
@@ -496,51 +538,76 @@ def apply_musical_gain_envelope(  # pylint: disable=too-many-positional-argument
     audio: np.ndarray,
     gain: float,
     gate_dbfs: float = -36.0,
-    crossfade_ms: float = 10.0,
+    crossfade_ms: float = 200.0,
     sr: int = 48000,
     reference_for_gate: np.ndarray | None = None,
     material_key: str | None = None,
+    *,
+    knee_width_db: float = 6.0,
+    small_gain_bypass_db: float = 2.0,
 ) -> np.ndarray:
-    """§2.45a-II: Apply makeup gain ONLY to musical frames, leaving silence at gain=1.0.
+    """§2.45a-II v10: Apply makeup gain with soft-knee continuous envelope.
 
-    Silence frames (frame RMS <= effective_gate_dbfs) remain at unity gain.
-    A short crossfade (box-blur on the gate envelope) prevents hard clicks at
-    music/silence boundaries.
+    Uses a sigmoid soft-knee instead of a binary gate to create musically
+    transparent gain transitions.  Frames near the noise-floor threshold
+    receive partial gain, eliminating the audible pumping/jumping caused
+    by hard on/off gate switching in earlier versions.
 
-    Adaptive gate (§2.45a noise-floor-aware, v9.12.2 — CEDAR/iZotope RX approach):
+    Architecture (§2.45a-II v10):
+        1. Compute per-frame RMS (10 ms frames @ 48 kHz).
+        2. Determine adaptive gate threshold via CEDAR/iZotope RX approach
+           (P15 + margin from reference signal, bounded by material floor).
+        3. Build soft-knee envelope: sigmoid((rms_db - effective_gate) / knee_width_db)
+           → continuous gain factor between 0.0 (silence) and 1.0 (music).
+        4. Apply long crossfade (default 200 ms) for additional temporal smoothing.
+        5. Small-gain bypass: when gain ≤ small_gain_bypass_db, apply uniform gain
+           — the risk of amplifying noise by ≤ 2 dB is negligible compared to
+           the risk of gate-induced audible artefacts.
+
+    Design rationale:
+        - Soft knee (6 dB default) = industry-standard compressor knee width.
+          Frames 6 dB above effective_gate → ~88 % of target gain.
+          Frames at effective_gate → 50 % of target gain.
+          Frames 6 dB below effective_gate → ~12 % of target gain.
+        - 200 ms crossfade = musically meaningful transition (≈ 1/16 note @ 120 BPM),
+          replacing the old 10 ms click-avoidance window that was acoustically
+          transparent for singular transients but created audible pumping when the
+          gate repeatedly opened/closed at musical phrase boundaries.
+        - No hard clamp: the soft knee naturally handles quiet-zone protection;
+          the old §2.30b hard clamp created sharp gain discontinuities at the
+          boundary between quiet and musical frames.
+
+    Adaptive gate (CEDAR/iZotope RX approach, unchanged from v9.12.2):
         effective_gate = max(gate_dbfs, compute_signal_relative_gate_dbfs(reference, material_key))
-
-        ``compute_signal_relative_gate_dbfs`` uses P15+9 dB from the reference signal
-        (CEDAR minimum-statistics: gate = measured_noise_floor + margin).  This replaces
-        the old P5+10 heuristic which failed when songs have short quiet sections (P5 falls
-        into the music region → P5+10 < -36 → gate stays at -36 → vinyl noise at -33 passes).
-
-        When ``reference_for_gate`` is provided (pre-phase audio), the gate is estimated
-        from the ORIGINAL signal's noise floor — critical for partially-denoised audio
-        where the processed audio's P15 drops to -55+ dBFS (noise removed), making the
-        gate too low and letting residual noise at -35 dBFS be amplified → Pegelexplosion.
-
-        When ``reference_for_gate`` is None, ``audio`` itself is used as reference
-        (self-adaptive: dirty audio → high gate; clean audio → gate ≈ gate_dbfs).
+        When reference_for_gate is provided, the gate is estimated from the
+        ORIGINAL signal's noise floor.  When None, audio itself is used.
 
     Args:
-        audio:              Input audio (1D or 2D float32).
-        gain:               Linear gain factor (>= 1.0; values <= 1.0005 are skipped).
-        gate_dbfs:          Floor threshold — effective gate can only be equal to or HIGHER.
-                            Acts as the hard minimum (material floor guarantee).
-        crossfade_ms:       Width of the smoothing window at music/silence transitions.
-        sr:                 Sample rate used to convert crossfade_ms to samples.
-        reference_for_gate: Optional pre-phase audio for noise-floor estimation.
-                            When set, the gate is derived from this signal (not from audio).
-        material_key:       Optional material type (e.g. "vinyl", "shellac").
-                            Used as minimum floor in compute_signal_relative_gate_dbfs.
+        audio:                Input audio (1D or 2D float32).
+        gain:                 Linear gain factor (>= 1.0; values <= 1.0005 are skipped).
+        gate_dbfs:            Floor threshold — effective gate can only be equal to or HIGHER.
+        crossfade_ms:         Width of the temporal smoothing window (default 200 ms).
+        sr:                   Sample rate used to convert crossfade_ms to samples.
+        reference_for_gate:   Optional pre-phase audio for noise-floor estimation.
+        material_key:         Optional material type (e.g. "vinyl", "shellac").
+        knee_width_db:        Soft-knee transition width in dB (default 6.0).
+        small_gain_bypass_db: Gains ≤ this value skip the gate entirely (default 2.0 dB).
 
     Returns:
-        Audio with gain applied only on musical frames, same shape and dtype.
+        Audio with gain applied via soft-knee envelope, same shape and dtype.
     """
     # Scalar early-exit only — array gain passes through (broadcast in per_sample_gain)
     if np.ndim(gain) == 0 and float(gain) <= 1.0005:
         return audio
+
+    # §2.45a-II v10: Small-gain bypass — for gains ≤ small_gain_bypass_db, apply
+    # uniform gain.  The risk of amplifying noise by ≤ 2 dB is negligible, and
+    # avoiding the gate entirely eliminates any risk of audible artefacts.
+    _gain_db = float(20.0 * np.log10(float(gain)))
+    if np.ndim(gain) == 0 and _gain_db <= small_gain_bypass_db:
+        arr = np.asarray(audio, dtype=np.float32)
+        return (arr * gain).astype(np.float32)
+
     arr = np.asarray(audio, dtype=np.float32)
     was_2d = arr.ndim == 2
     # Build mono energy signal for gate detection (from audio being amplified)
@@ -568,9 +635,6 @@ def apply_musical_gain_envelope(  # pylint: disable=too-many-positional-argument
         frame_rms_db.append(tail_rms_db)
 
     # --- Adaptive gate: compute signal-relative threshold (CEDAR/iZotope RX approach) ---
-    # §2.45a v9.12.2: effective_gate = max(gate_dbfs, compute_signal_relative_gate_dbfs(...))
-    # Uses P15+9 dB from the reference signal (more robust than P5+10 for loud songs with
-    # short quiet sections).  Reference priority: reference_for_gate > audio itself.
     _gate_ref = reference_for_gate if reference_for_gate is not None else audio
     effective_gate = compute_signal_relative_gate_dbfs(
         _gate_ref,
@@ -580,44 +644,45 @@ def apply_musical_gain_envelope(  # pylint: disable=too-many-positional-argument
     # gate_dbfs is the hard floor — signal-relative gate can only raise it, never lower.
     effective_gate = max(gate_dbfs, effective_gate)
 
-    # --- Pass 2: build gate envelope using adaptive threshold ---
+    # --- Pass 2: build soft-knee envelope using sigmoid ---
+    # §2.45a-II v10: Replace binary gate (0 or 1) with continuous sigmoid soft knee.
+    # soft_gate = 1 / (1 + exp(-(rms_db - effective_gate) / knee_width_db))
+    # This creates a smooth, musical transition: frames well above the threshold
+    # get near-full gain, frames well below get near-unity, and frames near the
+    # threshold get proportional partial gain.
+    _knee = max(knee_width_db, 0.5)  # prevent division by zero / near-zero
     gate_env = np.zeros(n, dtype=np.float32)
     full_rms = frame_rms_db[:n_full] if tail_rms_db is not None else frame_rms_db
     for fi, rms_db in enumerate(full_rms):
-        if rms_db > effective_gate:
-            s = fi * frame_len
-            e = min(s + frame_len, n)
-            gate_env[s:e] = 1.0
-    if tail_rms_db is not None and tail_rms_db > effective_gate:
-        gate_env[tail_s:] = 1.0
+        # Sigmoid: maps (-inf, +inf) → (0, 1), centered at effective_gate
+        _z = (rms_db - effective_gate) / _knee
+        # Clamp _z for numerical stability; exp(±15) is already saturated
+        _z = float(np.clip(_z, -15.0, 15.0))
+        _soft = float(1.0 / (1.0 + np.exp(-_z)))
+        s = fi * frame_len
+        e = min(s + frame_len, n)
+        gate_env[s:e] = _soft
+    if tail_rms_db is not None:
+        _z_tail = (tail_rms_db - effective_gate) / _knee
+        _z_tail = float(np.clip(_z_tail, -15.0, 15.0))
+        _soft_tail = float(1.0 / (1.0 + np.exp(-_z_tail)))
+        gate_env[tail_s:] = _soft_tail
 
-    # Smooth transitions
+    # Smooth transitions with longer crossfade (default 200 ms)
     cf_samples = max(1, int(crossfade_ms * sr / 1000.0))
     if cf_samples > 1:
-        kernel = np.ones(cf_samples, dtype=np.float32) / cf_samples
-        gate_env = np.convolve(gate_env, kernel, mode="same")
+        # Use Hanning window for smoother temporal response than box-blur
+        _kernel = np.hanning(min(cf_samples, n)).astype(np.float32)
+        _kernel /= float(np.sum(_kernel) + 1e-12)
+        gate_env = np.convolve(gate_env, _kernel, mode="same")
         gate_env = np.clip(gate_env, 0.0, 1.0)
     per_sample_gain = (1.0 + (gain - 1.0) * gate_env).astype(np.float32)
 
-    # §2.30b Stufe 5 — Per-sample quiet-zone hard clamp (AFTER smoothing)
-    # Box-blur/crossfade smoothing bleeds positive gain into frames bordering
-    # quiet zones (fadeout, intro hiss).  Any 10 ms frame whose pre-smoothing
-    # RMS was ≤ effective_gate MUST NOT receive a per-sample gain > 1.0,
-    # regardless of what the smoothed gate_env says.
-    # v9.12.1: Use effective_gate (adaptive) instead of hardcoded -36 dBFS.
-    # For real vinyl: effective_gate ≈ -28 dBFS → vinyl surface noise (-35 dBFS)
-    # is correctly clamped.  With -36 dBFS, noise at -35 dBFS was NOT clamped
-    # (−35 > −36) → Pegelexplosion after boundary crossfade.
-    # Floor at gate_dbfs (−36) so we never clamp more aggressively than -36 on
-    # non-vinyl material where effective_gate might be lower than gate_dbfs.
-    _QUIET_ZONE_DB = max(gate_dbfs, effective_gate)
-    for _fi, _rdb in enumerate(full_rms):
-        if _rdb <= _QUIET_ZONE_DB:
-            _fs = _fi * frame_len
-            _fe = min(_fs + frame_len, n)
-            per_sample_gain[_fs:_fe] = np.minimum(per_sample_gain[_fs:_fe], 1.0)
-    if tail_rms_db is not None and tail_rms_db <= _QUIET_ZONE_DB:
-        per_sample_gain[tail_s:] = np.minimum(per_sample_gain[tail_s:], 1.0)
+    # §2.30b removed in v10: the old hard clamp destroyed the smooth transition
+    # created by the crossfade, reintroducing sharp gain discontinuities at
+    # quiet/music boundaries.  The soft-knee sigmoid naturally handles quiet-zone
+    # protection — frames well below the gate get near-unity gain, and the
+    # transition is continuous.
 
     def _render(gain_env: np.ndarray) -> np.ndarray:
         if was_2d:

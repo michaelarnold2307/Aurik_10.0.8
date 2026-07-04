@@ -1,5 +1,5 @@
 
-# Aurik 9 — Spec 04: DSP-Standards & SOTA-Algorithmen
+# Aurik 10 — Spec 04: DSP-Standards & SOTA-Algorithmen
 >
 > Psychoakustische Fundierung, SOTA-Entscheidungsmatrix, Pflicht-Algorithmen.
 >
@@ -1485,15 +1485,15 @@ Crossfade: Hanning 10 ms. Modul: `backend/core/adaptive_chunk_processor.py`
 
 | Modell | Version | Eingebunden seit |
 | --- | --- | --- |
-| DeepFilterNet | v3.II | Aurik 9.0 |
-| MelBandRoformer | 860 MB ONNX | Aurik 9.10.x |
-| MDX23C | Kim_Vocal_2 / Kim_Inst | Aurik 9.0 (Fallback) |
-| Apollo | v1 TorchScript | Aurik 9.0 |
-| FCPE | ONNX | Aurik 9.10.x |
-| Vocos | 48 kHz nativ ONNX | Aurik 9.10.x |
-| BEATs | iter3 ONNX 90 MB | Aurik 9.10.x |
-| VERSA | PyTorch Checkpoint (Huang et al. 2024) | Aurik 9.10.x |
-| SGMSE+ | TorchScript 251 MB | Aurik 9.10.x |
-| Flow Matching | ONNX/PT | Aurik 9.10.x |
-| Whisper-Tiny | ONNX 39 MB | Aurik 9.10.46b |
-| Resemble-Enhance | ONNX 722 MB | Aurik 9.0 (Fallback) |
+| DeepFilterNet | v3.II | Aurik 10.0 |
+| MelBandRoformer | 860 MB ONNX | Aurik 10.10.x |
+| MDX23C | Kim_Vocal_2 / Kim_Inst | Aurik 10.0 (Fallback) |
+| Apollo | v1 TorchScript | Aurik 10.0 |
+| FCPE | ONNX | Aurik 10.10.x |
+| Vocos | 48 kHz nativ ONNX | Aurik 10.10.x |
+| BEATs | iter3 ONNX 90 MB | Aurik 10.10.x |
+| VERSA | PyTorch Checkpoint (Huang et al. 2024) | Aurik 10.10.x |
+| SGMSE+ | TorchScript 251 MB | Aurik 10.10.x |
+| Flow Matching | ONNX/PT | Aurik 10.10.x |
+| Whisper-Tiny | ONNX 39 MB | Aurik 10.10.46b |
+| Resemble-Enhance | ONNX 722 MB | Aurik 10.0 (Fallback) |

@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 08: Architektur, Code-Standards & Distribution
+# Aurik 10 — Spec 08: Architektur, Code-Standards & Distribution
 
 > Softwareschichten, Code-Konventionen, Frontend-Regeln, Plugin-Policy,
 > CLI, Distribution (AppImage/NSIS), Out-of-the-Box-Pflicht.
@@ -958,7 +958,7 @@ Era-Badge-Block (nach Pfad C)
 
 ## §13 Distribution & Out-of-the-Box-Pflicht
 
-> Aurik 9 muss auf einem frischen Linux- oder Windows-System **ohne Python,
+> Aurik 10 muss auf einem frischen Linux- oder Windows-System **ohne Python,
 > ohne Terminal, ohne Vorkenntnisse** sofort lauffähig sein.
 
 ### Installer-Ziele

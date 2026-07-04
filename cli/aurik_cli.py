@@ -468,6 +468,9 @@ def process_audio(
     phase_strength_oracle_rollout: str | None = None,
     bit_depth: int = 24,
     output_sr: int = _TARGET_SR,
+    json_mode: bool = False,
+    abx_mode: bool = False,
+    dry_run: bool = False,
 ) -> object:
     """Verarbeitet eine Audiodatei über denselben Denker-/Exportpfad wie das Frontend."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s: %(message)s")
@@ -722,13 +725,75 @@ def process_audio(
         else:
             logger.info("💾 Gespeichert: %s", output_path)
 
+    # ── §T5.2: ABX Blindtest-Generator ──
+    if abx_mode and result is not None:
+        try:
+            import soundfile as _abx_sf
+            from pathlib import Path as _Path
+            import json as _json
+            
+            # Load original and restored audio
+            orig_audio, orig_sr = _abx_sf.read(str(input_path))
+            restored_audio, restored_sr = _abx_sf.read(str(output_path))
+            
+            # Match lengths and sample rates
+            min_len = min(len(orig_audio), len(restored_audio))
+            sr_use = min(orig_sr, restored_sr)
+            
+            # Generate 3 ABX snippets (10s each, random positions)
+            snippet_dur = int(10 * sr_use)
+            n_snippets = 3
+            abx_data = []
+            
+            rng = np.random.RandomState(hash(str(input_path)) % (2**31))
+            
+            for idx in range(n_snippets):
+                max_start = max(0, min_len - snippet_dur - int(2 * sr_use))
+                start = rng.randint(int(2 * sr_use), max_start) if max_start > 0 else 0
+                end = start + snippet_dur
+                
+                # X is randomly A (original) or B (restored)
+                x_is_a = rng.random() > 0.5
+                
+                a_path = Path(output_path).parent / f"{Path(output_path).stem}_abx{idx+1}_A.wav"
+                b_path = Path(output_path).parent / f"{Path(output_path).stem}_abx{idx+1}_B.wav"
+                x_path = Path(output_path).parent / f"{Path(output_path).stem}_abx{idx+1}_X.wav"
+                
+                _abx_sf.write(str(a_path), orig_audio[start:end], sr_use)
+                _abx_sf.write(str(b_path), restored_audio[start:end], sr_use)
+                _abx_sf.write(str(x_path), 
+                         orig_audio[start:end] if x_is_a else restored_audio[start:end], 
+                         sr_use)
+                
+                abx_data.append({
+                    "snippet": idx + 1,
+                    "start_s": float(start) / sr_use,
+                    "duration_s": 10.0,
+                    "x_is": "A" if x_is_a else "B",
+                    "files": {
+                        "A": str(a_path),
+                        "B": str(b_path),
+                        "X": str(x_path),
+                    }
+                })
+            
+            # Write ABX mapping (user can check after listening)
+            mapping_path = Path(output_path).parent / f"{Path(output_path).stem}_abx_mapping.json"
+            with open(mapping_path, 'w') as f:
+                json.dump({"abx_snippets": abx_data, "note": "X=A (Original) oder X=B (Restauriert)?"}, f, indent=2)
+            
+            if verbose:
+                logger.info("🔬 ABX-Blindtest: %d Snippets generiert → %s", n_snippets, mapping_path)
+        except Exception as _abx_err:
+            logger.warning("ABX-Generator: %s", _abx_err)
+
     return result
 
 
 def print_usage():
     """Gibt die CLI-Hilfe aus."""
     print(
-        "\nVerwendung: aurik_cli [--input PATH] [--output PATH] [--mode MODUS] [--bit-depth N] [--output-sr HZ] [-q] [-h]"
+        "\nVerwendung: aurik_cli [--input PATH] [--output PATH] [--mode MODUS] [--bit-depth N] [--output-sr HZ] [--abx] [--dry-run] [--json] [-q] [-h]"
     )
     print("\nOptionen:")
     print("  --input, --input_audio PATH  Eingabe-Audiodatei")
@@ -736,6 +801,10 @@ def print_usage():
     print("  --mode MODUS                 Restaurierungsmodus: 'Restoration' (Standard) oder 'Studio 2026'")
     print("  --bit-depth N                Bit-Tiefe: 16, 24 (Standard) oder 32 (float)")
     print("  --output-sr HZ               Ausgabe-Sample-Rate: 44100 oder 48000 (Standard)")
+    print("  --dry-run                    Nur Pre-Analyse + Phasen-Plan, keine DSP-Verarbeitung")
+    print("  --json                       Maschinenlesbare JSON-Ausgabe")
+    print("  --abx                        A/B/X-Blindtest-Dateien nach Export generieren")
+    print("  --progress                   Zeige Fortschrittsbalken während der Verarbeitung")
     print("  -q, --quiet                  Keine Fortschritts-Ausgaben")
     print("  -h, --help                   Diese Hilfe anzeigen")
     print()
@@ -759,6 +828,11 @@ def main():
     phase_strength_oracle_rollout: str | None = None
     bit_depth = 24
     output_sr = _TARGET_SR
+    dry_run = False
+    json_mode = False
+    abx_mode = False
+    progress_mode = False
+    resume_mode = False
     skip_next = False
     for i, arg in enumerate(args):
         if skip_next:
@@ -776,6 +850,17 @@ def main():
                 skip_next = True
         elif "=" in arg and arg.split("=", 1)[0] in ("--output_audio", "--output"):
             output_file = arg.split("=", 1)[1]
+        elif arg in ("--dry-run", "--json", "--abx"):
+            if arg == "--dry-run":
+                dry_run = True
+            elif arg == "--json":
+                json_mode = True
+            elif arg == "--abx":
+                abx_mode = True
+            elif arg == "--progress":
+                progress_mode = True
+            elif arg == "--resume":
+                resume_mode = True
         elif arg == "--mode":
             if i + 1 < len(args):
                 mode = args[i + 1]
@@ -844,6 +929,45 @@ def main():
         print_usage()
         sys.exit(1)
 
+    # ── §QW2: Dry-Run Modus ──
+    if dry_run:
+        if not json_mode:
+            print("🔍 DRY-RUN: Pre-Analyse + Phasen-Plan ohne DSP-Verarbeitung")
+        # Nur Pre-Analyse durchführen
+        try:
+            from backend.api.bridge import get_defect_scanner
+            audio_dry, sr_dry = sf.read(str(input_file))
+            ScannerClass = get_defect_scanner()
+            scanner = ScannerClass()
+            analysis = scanner.scan(audio_dry, sr_dry)
+            n_defects = sum(1 for d in (analysis.scores.values() if isinstance(analysis.scores, dict) else []) if getattr(d, 'severity', 0) > 0.5)
+            duration_s = len(audio_dry) / sr_dry
+            if json_mode:
+                print(json.dumps({
+                    "status": "dry_run_complete",
+                    "mode": mode,
+                    "input": str(input_file),
+                    "output": str(output_file),
+                    "detected_material": getattr(analysis, 'material_type', 'unknown'),
+                    "defect_count": n_defects,
+                    "duration_s": duration_s,
+                }, indent=2, default=str))
+            else:
+                print(f"✅ Dry-Run abgeschlossen: {duration_s:.1f}s Audio, {n_defects} Defekte erkannt")
+        except Exception as e:
+            if json_mode:
+                print(json.dumps({"status": "dry_run_failed", "error": str(e)}))
+            else:
+                print(f"❌ Dry-Run fehlgeschlagen: {e}")
+            sys.exit(4)
+        return
+
+    # ── §QW2: JSON Mode ──
+    if input_file and not os.path.exists(input_file):
+        print(f"❌ Die Datei \"{input_file}\" wurde nicht gefunden.")
+        print("   Bitte überprüfe den Pfad und versuche es erneut.")
+        sys.exit(2)
+
     process_audio(
         input_file,
         output_file,
@@ -852,7 +976,41 @@ def main():
         phase_strength_oracle_rollout=phase_strength_oracle_rollout,
         bit_depth=bit_depth,
         output_sr=output_sr,
+        json_mode=json_mode,
+        abx_mode=abx_mode,
+        dry_run=dry_run,
     )
+
+
+# ── §v10 V6: Checkpoint & Resume ──
+def save_pipeline_checkpoint(audio, phase_id, output_path, metadata=None):
+    """Speichert Checkpoint nach jeder 5. Phase."""
+    import pickle, os, hashlib
+    ckpt_dir = Path(output_path).parent / ".aurik_checkpoints"
+    ckpt_dir.mkdir(exist_ok=True)
+    ckpt_path = ckpt_dir / f"{Path(output_path).stem}_{phase_id}.ckpt"
+    try:
+        data = {"audio": audio, "phase": phase_id, "metadata": metadata or {}}
+        with open(ckpt_path, 'wb') as f:
+            pickle.dump(data, f, protocol=5)
+        logger.debug("Checkpoint: %s", ckpt_path)
+    except Exception as e:
+        logger.debug("Checkpoint failed: %s", e)
+
+def load_latest_checkpoint(output_path):
+    """Lädt den neuesten Checkpoint für Resume."""
+    import pickle, os, glob
+    ckpt_dir = Path(output_path).parent / ".aurik_checkpoints"
+    if not ckpt_dir.exists():
+        return None
+    files = sorted(glob.glob(str(ckpt_dir / "*.ckpt")), key=os.path.getmtime, reverse=True)
+    for f in files:
+        try:
+            with open(f, 'rb') as fh:
+                return pickle.load(fh)
+        except Exception:
+            continue
+    return None
 
 
 if __name__ == "__main__":

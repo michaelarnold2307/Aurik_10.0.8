@@ -403,6 +403,33 @@ class DenoisePhase(PhaseInterface):
         Returns:
             PhaseResult with denoised audio
         """
+
+        # ── §v10 PIM: Echte Per-Band-Intensität ──
+
+        # ── §v10 #6: Transienten-Schutz vor NR ──
+        _transient_mask = None
+        try:
+            from backend.core.dsp.transient_guard import compute_transient_mask
+            _transient_mask = compute_transient_mask(audio, sample_rate)
+        except Exception:
+            pass
+        _pim = kwargs.get("pim_intensity_map")
+        _per_band_mask = None
+        if _pim is not None:
+            # 1. Skalare NR-Stärke aus PIM (wie zuvor)
+            _nr_presence = _pim.get_nr_strength("presence", "verse")
+            _nr_air = _pim.get_nr_strength("air", "verse")
+            _nr_global = _pim.global_modifiers.get("nr_global", 1.0)
+            if "noise_reduction_strength" in kwargs:
+                kwargs["noise_reduction_strength"] = float(np.clip(
+                    kwargs["noise_reduction_strength"] * _nr_global, 0.05, 0.95
+                ))
+            # 2. NEU: Per-Band-Spektral-Maske für echte Frequenz-selektive NR
+            try:
+                from backend.core.pim_phase_hook import compute_per_band_nr_mask
+                _per_band_mask = compute_per_band_nr_mask(_pim, sample_rate)
+            except Exception:
+                pass
         start_time = time.time()
         _progress_cb = kwargs.get("progress_sub_callback")
 
@@ -984,6 +1011,29 @@ class DenoisePhase(PhaseInterface):
                     material_type,
                     _panns_singing,
                 )
+            # §2.28 HPG: Bin-genaue harmonische Schutzmaske via FCPE/CREPE/pYIN
+            # Extrahiert harmonische Partials und hebt G_floor an diesen Positionen
+            # auf 0.85 an — statt pauschalem +0.05 für alle Bins.
+            try:
+                from backend.core.harmonic_preservation_guard import get_harmonic_preservation_guard as _get_hpg
+
+                _hpg = _get_hpg()
+                _audio_for_hpg = audio if audio.ndim == 1 else audio
+                _protected_mask, _h_ref = _hpg.extract_harmonic_mask(
+                    _audio_for_hpg.astype(np.float32), int(sr)
+                )
+                params = dict(params)
+                params["_hpg_protected_mask"] = _protected_mask
+                params["_hpg_h_ref"] = _h_ref
+                logger.info(
+                    "§2.28 HPG: harmonic mask extracted — protected_bins=%.1f%% "
+                    "(material=%s, panns_singing=%.2f)",
+                    100.0 * float(np.mean(_protected_mask)),
+                    material_type,
+                    _panns_singing,
+                )
+            except Exception as _hpg_exc:
+                logger.debug("§2.28 HPG: non-blocking fallback — %s", _hpg_exc)
 
         # §4.5 / §2.47 DeepFilterNet Tier-0 PRIMARY: Vocal broadband noise
         # DeepFilterNet v3.II is the primary model for broadband noise with vocal content
@@ -2955,6 +3005,53 @@ class DenoisePhase(PhaseInterface):
         G_omlsa = G_FLOOR + (G_omlsa - G_FLOOR) * STRENGTH
         G_omlsa = np.clip(G_omlsa, G_FLOOR, 1.0)
         G_omlsa = np.nan_to_num(G_omlsa, nan=G_FLOOR_BASE)  # nan= requires scalar
+
+        # §2.28 HPG: Harmonic Preservation Guard — bin-genaue Oberton-Schutz-Maske.
+        # Wenn HPG in process() eine protected_mask extrahiert hat, wird an
+        # Harmonik-Positionen G_floor auf 0.85 angehoben. Dies verhindert, dass
+        # OMLSA Streicher-/Bläser-/Klavier-Obertöne als Rauschen klassifiziert.
+        _hpg_mask = params.get("_hpg_protected_mask")
+        if _hpg_mask is not None and isinstance(_hpg_mask, np.ndarray):
+            try:
+                _hpg_floor = 0.85  # §2.28 G_FLOOR_HARMONIC
+                # Interpoliere HPG-Maske auf aktuelle STFT-Auflösung falls nötig
+                if _hpg_mask.shape[0] == G_omlsa.shape[0] and _hpg_mask.shape[1] == G_omlsa.shape[1]:
+                    _mask_aligned = _hpg_mask.astype(np.float64)
+                elif _hpg_mask.ndim == 2:
+                    # Resample time axis via linear interpolation
+                    _n_orig = _hpg_mask.shape[1]
+                    _n_targ = G_omlsa.shape[1]
+                    _t_orig = np.linspace(0, 1, _n_orig)
+                    _t_targ = np.linspace(0, 1, _n_targ)
+                    _mask_aligned = np.zeros((G_omlsa.shape[0], _n_targ), dtype=np.float64)
+                    for _f in range(min(_hpg_mask.shape[0], G_omlsa.shape[0])):
+                        _mask_aligned[_f, :] = np.interp(
+                            _t_targ, _t_orig, _hpg_mask[_f, :].astype(np.float64)
+                        )
+                else:
+                    _mask_aligned = None
+                if _mask_aligned is not None:
+                    # Blend: G = max(G_omlsa, hpg_floor) an geschützten Bins
+                    _hpg_gain = np.where(_mask_aligned > 0.5, _hpg_floor, G_omlsa)
+                    # Weicher Crossfade an Maskenrändern (3-Bin-Hanning-Fenster)
+                    _edge_kernel = np.array([0.25, 0.50, 0.75], dtype=np.float64)
+                    _edge_weight = np.zeros_like(_mask_aligned, dtype=np.float64)
+                    for _k in range(3):
+                        _shifted = np.roll(_mask_aligned, _k - 1, axis=0)
+                        _edge_weight += _edge_kernel[_k] * (_mask_aligned != _shifted).astype(np.float64)
+                    _edge_weight = np.clip(_edge_weight, 0.0, 0.5)
+                    # An Maskenrändern: lineare Interpolation zwischen hpg_floor und normalem Gain
+                    _blend = np.clip(_mask_aligned + _edge_weight, 0.0, 1.0)
+                    G_omlsa = _blend * _hpg_gain + (1.0 - _blend) * G_omlsa
+                    logger.debug(
+                        "§2.28 HPG: OMLSA gain protected — "
+                        "protected_bins=%.1f%%, μ_G=%.3f (w/ HPG) vs %.3f (raw)",
+                        100.0 * float(np.mean(_mask_aligned > 0.5)),
+                        float(np.mean(G_omlsa)),
+                        float(np.mean(_hpg_gain)),
+                    )
+            except Exception as _hpg_gain_exc:
+                logger.debug("§2.28 HPG gain integration: non-blocking — %s", _hpg_gain_exc)
 
         logger.debug(
             "OMLSA: μ_G=%.3f σ_G=%.3f μ_p=%.3f (salience_adaptive=%s)",

@@ -283,6 +283,19 @@ class ReverbReduction(PhaseInterface):
             PhaseResult with reverb-reduced audio
         """
         self.validate_input(audio)
+        # ── §v10 PIM: Per-Band-Intensität lesen ──
+        _per_band_mask = None
+        try:
+            from backend.core.pim_phase_hook import apply_pim_intensity, compute_per_band_nr_mask
+            _pim = apply_pim_intensity(kwargs, "reverb",
+                default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
+            if "noise_reduction_strength" in kwargs:
+                kwargs["noise_reduction_strength"] = _pim["nr_strength"]
+            _pim_map = kwargs.get("pim_intensity_map")
+            if _pim_map is not None:
+                _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
+        except Exception:
+            pass
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p20_transposed = to_channels_last(audio)
@@ -1162,6 +1175,17 @@ class ReverbReduction(PhaseInterface):
                     )
             except Exception as _vib20_exc:
                 logger.debug("Phase20 §2.72 Vibrato-Guard (non-blocking): %s", _vib20_exc)
+
+        
+        # ── §v10 Per-Band-Maske NACH reverb anwenden ──
+        if _per_band_mask is not None:
+            try:
+                from backend.core.pim_phase_hook import apply_per_band_mask
+                _before = audio
+                _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
+                audio = _after
+            except Exception:
+                pass
 
         return PhaseResult(
             success=True,

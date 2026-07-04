@@ -81,6 +81,13 @@ class StrategiePlan:
     human_hearing_comfort_profile: dict[str, float] = field(default_factory=dict)
     """Songindividuelle Hoerkomfort-Parameter fuer das zentrale restoration_policy_profile."""
 
+    # ── §v10 Pleasantness-First ──
+    pleasantness_baseline: float = 0.0
+    """HPE-Baseline vor der Verarbeitung — misst, wie angenehm das Original klingt."""
+
+    goosebumps_baseline: float = 0.0
+    """Gänsehaut-Baseline vor der Verarbeitung — misst emotionale Wirkung."""
+
     budget_note: str = ""
     """Hinweis auf Budget-Engpässe (Deutsch, laienverständlich)."""
 
@@ -98,6 +105,8 @@ class StrategiePlan:
             "listening_experience_targets": dict(self.listening_experience_targets),
             "human_hearing_risk_map": dict(self.human_hearing_risk_map),
             "human_hearing_comfort_profile": dict(self.human_hearing_comfort_profile),
+            "pleasantness_baseline": self.pleasantness_baseline,
+            "goosebumps_baseline": self.goosebumps_baseline,
             "budget_note": self.budget_note,
         }
 
@@ -328,6 +337,24 @@ class StrategieDenker:
             intervention_budget=_intervention_budget,
         )
 
+        # ── §v10 HPE & Gänsehaut-Baseline ──
+        _hpe_base = 0.5
+        _goose_base = 0.5
+        try:
+            from backend.core.human_pleasantness_estimator import compute_pleasantness
+            _hpe_r = compute_pleasantness(audio, sr)
+            _hpe_base = float(_hpe_r.score)
+            logger.info("StrategieDenker: HPE-Baseline = %.3f (%s)", _hpe_base, _hpe_r.label)
+        except Exception:
+            pass
+        try:
+            from backend.core.goosebumps_factor import compute_goosebumps
+            _goose_r = compute_goosebumps(audio, sr)
+            _goose_base = float(_goose_r.score)
+            logger.info("StrategieDenker: Goosebumps-Baseline = %.3f (%s)", _goose_base, _goose_r.label)
+        except Exception:
+            pass
+
         note = ""
         if audio_dur > 300:
             note = (
@@ -349,6 +376,8 @@ class StrategieDenker:
             listening_experience_targets=_listening_targets,
             human_hearing_risk_map=_hearing_risks,
             human_hearing_comfort_profile=_comfort_profile,
+            pleasantness_baseline=_hpe_base,  # §v10
+            goosebumps_baseline=_goose_base,  # §v10
             budget_note=note,
         )
         self._current_plan = plan

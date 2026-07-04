@@ -150,6 +150,16 @@ _instance: LAIONCLAPPlugin | None = None
 _lock = threading.Lock()
 
 
+def _load_trusted_local_torch_checkpoint(checkpoint_path: Path) -> Any:
+    """Laedt einen lokal gebuendelten Aurik-Checkpoint mit Torch-2.6+-Kompatibilitaet."""
+    import torch  # pylint: disable=import-outside-toplevel
+
+    try:
+        return torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    except TypeError:
+        return torch.load(str(checkpoint_path), map_location="cpu")
+
+
 class LAIONCLAPPlugin:
     """LAION-CLAP Text-Audio-Kontrastives Tagging für Aurik 9.
 
@@ -436,24 +446,24 @@ class LAIONCLAPPlugin:
                     else:
                         os.environ["HF_HOME"] = _hf_home_orig
             # Load checkpoint with shape-mismatch tolerance.
-            # strict=False alone does not suppress size mismatches in PyTorch —
-            # we must remove the incompatible text-branch embedding tensors
-            # (position_embeddings [514,768] vs model [512,768]) before loading.
-            # Only the audio-branch weights are used for audio embeddings.
+            # Torch 2.6+ defaults to weights_only=True; this trusted checkpoint
+            # is bundled locally with Aurik and contains optimizer metadata, so
+            # it must be loaded with weights_only=False instead of falling back
+            # to the DSP path.
             try:
-                from laion_clap.clap_module.factory import load_state_dict as _load_sd  # type: ignore[import-untyped]  # pylint: disable=import-outside-toplevel  # noqa: I001
-
-                _state = _load_sd(str(ckpt_path), skip_params=True)
-                # Drop keys whose shapes differ from the current model so that
-                # load_state_dict(..., strict=False) can proceed without errors.
-                _shape_incompat = {
-                    "text_branch.embeddings.position_embeddings.weight",
-                    "text_branch.embeddings.token_type_embeddings.weight",
-                }
-                for _k in _shape_incompat:
-                    _state.pop(_k, None)
+                _checkpoint = _load_trusted_local_torch_checkpoint(ckpt_path)
+                _state = _checkpoint.get("state_dict", _checkpoint) if isinstance(_checkpoint, dict) else _checkpoint
+                if isinstance(_state, dict) and _state:
+                    if next(iter(_state.items()))[0].startswith("module"):
+                        _state = {_k[7:]: _v for _k, _v in _state.items()}
+                    _model_state = model.model.state_dict()
+                    _state = {
+                        _k: _v
+                        for _k, _v in _state.items()
+                        if _k in _model_state and getattr(_model_state[_k], "shape", None) == getattr(_v, "shape", None)
+                    }
                 model.model.load_state_dict(_state, strict=False)
-                logger.debug("LAION-CLAP: Checkpoint geladen (shape-inkompatible Text-Keys übersprungen)")
+                logger.debug("LAION-CLAP: Checkpoint geladen (shape-inkompatible Keys übersprungen)")
             except Exception:
                 # Fallback: bibliothekseigener Load
                 model.load_ckpt(str(ckpt_path))

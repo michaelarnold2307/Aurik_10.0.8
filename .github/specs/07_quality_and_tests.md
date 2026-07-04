@@ -1,4 +1,4 @@
-# Aurik 9 — Spec 07: Qualitätsziele & Tests
+# Aurik 10 — Spec 07: Qualitätsziele & Tests
 
 > PQS-Metriken, AMRB-Benchmark, universelle Garantien, Test-Standards,
 > E2E-Assertions, Performance-Budget.
@@ -1214,7 +1214,7 @@ Bei Änderungen an Kernphasen, PMGG, DefectScanner oder heavy ML-Fallbacks:
 - ≤ 1960: `N(0.75, 0.08)`
 - ≥ 1970: `N(0.50, 0.10)`
 
-### §8.6 [RELEASE_MUST] Worldclass Hybrid-Engineer Protocol (v9.20.3)
+### §8.6 [RELEASE_MUST] Worldclass Hybrid-Engineer Protocol (v10.0.0)
 
 Rolle Aurik: hybrider Restaurierungstoningenieur fuer Musik mit Gesang.
 Diese Rolle ist nur erfuellt, wenn menschlich nachbildbare Spitzenfaehigkeiten
@@ -1390,3 +1390,11 @@ Fehlt einer dieser Nachweise, ist der Weltspitzen-Claim fuer den Patch nicht gue
 Fuer psychoakustische Kern-Changes ist die konsolidierte Engineering-Basis in
 `docs/PSYCHOACOUSTIC_ENGINEERING_INSIGHTS_2026-05-21.md` normativ zu nutzen
 (Architektur, Telemetrie, DoD, offene Risiken).
+
+
+## v10 Test-Status
+
+- 358 Unit-Tests bestehen
+- 37 neue v10-Tests in `test_v10_worldclass_modules.py`
+- Bridge-Compliance: 0 Bypasses in CLI und Batch
+- ML-Fallback-Audit: 54 Module, 3 Silent-Failures behoben

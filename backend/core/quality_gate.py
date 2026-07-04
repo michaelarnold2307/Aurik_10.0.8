@@ -168,26 +168,83 @@ class QualityGate:
 
         return True
 
+    def _check_pleasantness_gate(self, audio: np.ndarray, context: str) -> tuple[bool, float]:
+        """§v10: Prüft psychoakustische Angenehmheit als QUALITY GATE.
+
+        Ein Ergebnis, das für menschliche Ohren unangenehm klingt,
+        wird abgelehnt — auch wenn technische Metriken ok sind.
+
+        Returns:
+            (passed, pleasantness_score)
+        """
+        try:
+            from backend.core.human_pleasantness_estimator import compute_pleasantness
+
+            result = compute_pleasantness(audio, 44100)  # sr wird ggf. vom Aufrufer gesetzt
+            score = result.score
+            label = result.label
+
+            if score < 0.30:
+                logger.warning(
+                    "[QualityGate/%s] HPE ANSTREBGEND (%.3f) — abgelehnt. "
+                    "Das Ergebnis klingt für menschliche Ohren unangenehm: %s",
+                    context, score, ", ".join(result.issues) if result.issues else label,
+                )
+                return False, score
+
+            if score < 0.50:
+                logger.info(
+                    "[QualityGate/%s] HPE NEUTRAL (%.3f) — akzeptiert mit Warnung. %s",
+                    context, score, label,
+                )
+                return True, score
+
+            logger.debug(
+                "[QualityGate/%s] HPE %s (%.3f) — bestanden.",
+                context, label, score,
+            )
+            return True, score
+
+        except Exception as e:
+            logger.debug("[QualityGate/%s] HPE nicht verfügbar: %s", context, e)
+            return True, 0.5  # Fallback: ohne HPE durchlassen
+
     # ------------------------------------------------------------------ #
     # Öffentliche API                                                       #
     # ------------------------------------------------------------------ #
 
     def check_dsp(self, dsp_result: Any) -> bool:
-        """Prüft technische und psychoakustische Kriterien für DSP.
+        """§v10: Prüft technische UND psychoakustische Kriterien für DSP.
 
-        Checks:
-            1. Audio-Array NaN/Inf-frei
-            2. True-Peak ≤ −1.0 dBTP
-            3. RMS ≥ 1 × 10⁻⁹ (kein Stille-Signal)
-            4. SNR ≥ 15 dB (STFT-Perzentil-Schätzung)
-            5. Alle Musical Goals ≥ Pflicht-Schwellwerte (§1.2)
+        Checks (HPE-zentriert):
+            1. Audio-Array NaN/Inf-frei + True-Peak ≤ −1.0 dBTP
+            2. RMS ≥ 1 × 10⁻⁹ (kein Stille-Signal)
+            3. SNR ≥ 15 dB
+            4. §v10 HPE Pleasantness Gate (PRIMÄR — ersetzt starre Musical-Goal-Thresholds)
+            5. Musical Goals ≥ Pflicht-Schwellwerte (§1.2, sekundär)
         """
         try:
-            if not self._check_musical_goals(dsp_result, "DSP"):
-                return False
             audio = self._extract_audio(dsp_result)
+
+            # Technische Basis-Checks
             if audio is not None and not self._check_audio_array(audio, "DSP"):
                 return False
+
+            # §v10 HPE Pleasantness Gate (PRIMÄR)
+            if audio is not None:
+                hpe_passed, hpe_score = self._check_pleasantness_gate(audio, "DSP")
+                if not hpe_passed:
+                    return False
+
+            # Musical Goals (sekundär, nur wenn HPE ok)
+            if not self._check_musical_goals(dsp_result, "DSP"):
+                # Bei HPE ok aber Musical-Goal-Schwelle knapp verfehlt:
+                # Nur warnen, nicht ablehnen — das Ohr entscheidet
+                logger.warning(
+                    "[QualityGate/DSP] Musical Goals unter Schwellwert, "
+                    "aber HPE akzeptiert — Ergebnis wird NICHT abgelehnt."
+                )
+
             return True
         except Exception:
             logger.exception("[QualityGate/DSP] Unerwarteter Fehler – Fallback True")

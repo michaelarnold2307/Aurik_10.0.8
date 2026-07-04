@@ -31,6 +31,110 @@ from backend.core.psychoacoustic_metrics import PsychoAcousticMetrics
 logger = logging.getLogger(__name__)
 
 
+# ── §v10 Steering-Regel (ersetzt Stop-Regel) ──
+# Ziel ist nicht Abbruch, sondern VERBESSERUNG.
+# Wenn Angenehmheit sinkt → Parameter anpassen, nicht aufgeben.
+
+_PMGG_CONSECUTIVE_NO_IMPROVEMENT: int = 0
+_PLEASANTNESS_DECLINING_COUNT: int = 0
+_BEST_PLEASANTNESS: float = 0.0
+
+class SteerAction:
+    """§v10 Steering-Aktionen — wie ein Toningenieur reagiert."""
+    CONTINUE = "continue"           # Alles gut, weitermachen
+    RETRY_LIGHTER = "retry_lighter" # Gleicher Schritt mit reduzierter Intensität
+    RETRY_DIFFERENT = "retry_different" # Alternativer Ansatz versuchen
+    SKIP = "skip"                   # Schritt überspringen (würde nur verschlechtern)
+    ROLLBACK = "rollback"           # Zurück zum besten Zustand
+    STOP_GRACEFUL = "stop_graceful" # Keine weitere Verbesserung möglich
+
+
+def steer_pipeline(pmgg_delta: float, pleasantness_delta: float, phase_id: str,
+                   step_index: int, total_steps: int,
+                   pmgg_threshold: float = 0.01, max_pmgg_noop: int = 3,
+                   max_pleasantness_drops: int = 2) -> tuple[str, str]:
+    """§v10 Steering: Nicht stoppen, sondern nachsteuern.
+
+    Wie ein Toningenieur: „Das klang nicht gut — ich versuch's mit weniger."
+    Nicht: „Das klang nicht gut — ich hör auf."
+
+    Returns: (Aktion, Begründung)
+    """
+    global _PMGG_CONSECUTIVE_NO_IMPROVEMENT, _PLEASANTNESS_DECLINING_COUNT, _BEST_PLEASANTNESS
+
+    # Track best pleasantness
+    if pleasantness_delta > 0:
+        _BEST_PLEASANTNESS = max(_BEST_PLEASANTNESS, pleasantness_delta)
+
+    # ── Angenehmheit STEIGT → weitermachen ──
+    if pleasantness_delta > 0.02:
+        _PLEASANTNESS_DECLINING_COUNT = max(0, _PLEASANTNESS_DECLINING_COUNT - 1)
+        _PMGG_CONSECUTIVE_NO_IMPROVEMENT = 0
+        return SteerAction.CONTINUE, f"HPE ↑ (ΔP=+{pleasantness_delta:.3f})"
+
+    # ── Angenehmheit fällt LEICHT → RETRY_LIGHTER ──
+    if -0.05 < pleasantness_delta <= -0.02:
+        _PLEASANTNESS_DECLINING_COUNT += 1
+        return SteerAction.RETRY_LIGHTER, (
+            f"HPE ↓ (ΔP={pleasantness_delta:+.3f}) — versuche reduzierte Intensität"
+        )
+
+    # ── Angenehmheit fällt STARK → SKIP ──
+    if pleasantness_delta <= -0.05:
+        _PLEASANTNESS_DECLINING_COUNT += 1
+        if _PLEASANTNESS_DECLINING_COUNT >= max_pleasantness_drops:
+            return SteerAction.ROLLBACK, (
+                f"HPE ↓↓ seit {_PLEASANTNESS_DECLINING_COUNT} Schritten "
+                f"— ROLLBACK zum besten Zustand (max ΔP=+{_BEST_PLEASANTNESS:.3f})"
+            )
+        return SteerAction.SKIP, (
+            f"HPE ↓↓ (ΔP={pleasantness_delta:+.3f}) — Schritt {phase_id} überspringen"
+        )
+
+    # ── PMGG konvergiert → STOP_GRACEFUL ──
+    if abs(pmgg_delta) < pmgg_threshold:
+        _PMGG_CONSECUTIVE_NO_IMPROVEMENT += 1
+        if _PMGG_CONSECUTIVE_NO_IMPROVEMENT >= max_pmgg_noop:
+            return SteerAction.STOP_GRACEFUL, (
+                f"PMGG konvergiert — Bearbeitung optimal abgeschlossen."
+            )
+
+    # ── Pipeline-Ende erreicht ──
+    if step_index >= total_steps - 1:
+        return SteerAction.STOP_GRACEFUL, "Pipeline vollständig — Ergebnis optimal."
+
+    return SteerAction.CONTINUE, "Weitermachen."
+
+
+def reset_steer_state():
+    """Setzt alle Steering-Zähler zurück."""
+    global _PMGG_CONSECUTIVE_NO_IMPROVEMENT, _PLEASANTNESS_DECLINING_COUNT, _BEST_PLEASANTNESS
+    _PMGG_CONSECUTIVE_NO_IMPROVEMENT = 0
+    _PLEASANTNESS_DECLINING_COUNT = 0
+    _BEST_PLEASANTNESS = 0.0
+
+
+# ── Legacy-Kompatibilität ──
+def should_stop_pipeline(pmgg_delta, phase_id, threshold=0.01, max_consecutive=3,
+                         pleasantness_delta=0.0, max_pleasantness_drops=2):
+    """§v10 Legacy-Wrapper: Verwende steer_pipeline() für intelligentes Nachsteuern."""
+    action, reason = steer_pipeline(
+        pmgg_delta, pleasantness_delta, phase_id,
+        step_index=0, total_steps=max_consecutive,
+        pmgg_threshold=threshold,
+        max_pleasantness_drops=max_pleasantness_drops,
+    )
+    if action in (SteerAction.STOP_GRACEFUL, SteerAction.ROLLBACK):
+        return True, reason
+    return False, ""
+
+
+def reset_stop_rule_state():
+    """Legacy-Wrapper für reset_steer_state."""
+    reset_steer_state()
+
+
+
 class QualityFeedbackLoop:
     """
     Adaptive Quality Control with Real-Time Metrics.

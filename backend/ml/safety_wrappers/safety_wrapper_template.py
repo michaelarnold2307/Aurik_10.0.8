@@ -408,30 +408,47 @@ class BaseSafetyWrapper:
         self, original: np.ndarray, processed: np.ndarray, sr: int, post_check: PostCheckResult
     ) -> float:
         """
-        Berechnet overall quality score for processed audio.
+        §v10 Berechnet quality score — HPE-basiert statt rein technisch.
 
-        MUST IMPLEMENT in subclass with module-specific metrics:
-        - Artifact scores
-        - Preservation of musical content
-        - Achievement of processing goal
+        Früher: 60% energy preservation + 40% SNR ratio (technisch)
+        Jetzt:   50% HPE-Vergleich + 30% Energy preservation + 20% SNR
 
         Returns:
             Quality score (0.0-1.0)
         """
-        self.logger.debug("_compute_quality_score: sr=%d (Basisimplementierung)", sr)
+        self.logger.debug("_compute_quality_score: sr=%d", sr)
         if not post_check.passed:
             return 0.0
+
         # Component 1: post_check quality score (energy preservation)
         struct_score = float(np.clip(post_check.quality_score, 0.0, 1.0))
-        # Component 2: proxy SNR improvement (signal vs. diff residual)
-        if original.size == 0 or processed.size == 0:
-            return struct_score
-        n_common = min(original.size, processed.size)
-        diff = processed[:n_common] - original[:n_common]
-        orig_rms = float(np.sqrt(np.mean(original[:n_common] ** 2))) + 1e-12
-        diff_rms = float(np.sqrt(np.mean(diff**2))) + 1e-12
-        snr_ratio = float(np.clip(orig_rms / diff_rms, 0.0, 100.0)) / 100.0
-        return float(np.clip(0.6 * struct_score + 0.4 * snr_ratio, 0.0, 1.0))
+
+        # Component 2: proxy SNR improvement
+        snr_ratio = 0.5
+        if original.size > 0 and processed.size > 0:
+            n_common = min(original.size, processed.size)
+            diff = processed[:n_common] - original[:n_common]
+            orig_rms = float(np.sqrt(np.mean(original[:n_common] ** 2))) + 1e-12
+            diff_rms = float(np.sqrt(np.mean(diff**2))) + 1e-12
+            snr_ratio = float(np.clip(orig_rms / diff_rms, 0.0, 100.0)) / 100.0
+
+        # §v10 Component 3: HPE pleasantness comparison
+        hpe_score = 0.5
+        try:
+            from backend.core.human_pleasantness_estimator import compare_pleasantness
+            hpe_cmp = compare_pleasantness(
+                np.asarray(original, dtype=np.float32),
+                np.asarray(processed, dtype=np.float32),
+                sr,
+            )
+            hpe_delta = float(hpe_cmp.get("delta_score", 0.0))
+            # Map delta [-1,1] to score [0,1] where positive delta = high score
+            hpe_score = float(np.clip(0.5 + hpe_delta * 0.5, 0.0, 1.0))
+        except Exception:
+            pass
+
+        # §v10: 50% HPE + 30% structure + 20% SNR
+        return float(np.clip(0.50 * hpe_score + 0.30 * struct_score + 0.20 * snr_ratio, 0.0, 1.0))
 
     def _log_audit_trail(self, report: ProcessingReport) -> None:
         """
