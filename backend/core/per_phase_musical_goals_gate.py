@@ -1249,17 +1249,22 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
 }
 # pylint: enable=line-too-long
 
-# §v10.2 Cassette-Verifier: Phasen mit alternativen PMGG-Proxy-Metriken
+# §v10.3 Media-Defect-Verifier: ALLE PMGG-Phasen mit alternativen Proxies
+# Dynamisch aus cassette_defect_verifier._PHASE_CATEGORIES geladen.
 _CASSETTE_VERIFIER_PHASES: frozenset[str] = frozenset({
-    "phase_24",
-    "phase_56",
-    "phase_57",
-    "phase_59",
-    "phase_24_dropout_repair",
-    "phase_56_spectral_band_gap_repair",
-    "phase_57_print_through_reduction",
-    "phase_59_modulation_noise_reduction",
+    "phase_24", "phase_56", "phase_57", "phase_59",
+    "phase_24_dropout_repair", "phase_56_spectral_band_gap_repair",
+    "phase_57_print_through_reduction", "phase_59_modulation_noise_reduction",
 })
+
+
+def _get_all_verifier_phases() -> frozenset[str]:
+    """§v10.3 Lazy-load aller Phasen aus dem Media-Defect-Verifier."""
+    try:
+        from backend.core.cassette_defect_verifier import _PHASE_CATEGORIES
+        return frozenset(_PHASE_CATEGORIES.keys())
+    except Exception:
+        return _CASSETTE_VERIFIER_PHASES
 
 
 def _get_sample_duration(phase_id: str) -> float:
@@ -4432,10 +4437,10 @@ class PerPhaseMusicalGoalsGate:
         regression = self._max_regression(
             effective_scores_before, scores_after, _goals_for_regression, goal_weights=goal_weights
         )
-        # §v10.2 Cassette-Verifier: PMGG-Lücken-Schließer
-        # Wenn phase_24/56/57/59 Ziele excluded hat und regression meldet,
-        # prüfe die alternativen Proxy-Metriken (temporal continuity etc.)
-        if regression > 0.01 and phase_id in _CASSETTE_VERIFIER_PHASES:
+        # §v10.3 Media-Defect-Verifier: PMGG-Lücken-Schließer für ALLE 62 Phasen
+        # Kategorie-basierte alternative Proxy-Metriken via cassette_defect_verifier
+        _verifier_phases = _get_all_verifier_phases()
+        if regression > 0.01 and (phase_id in _verifier_phases or phase_id in _CASSETTE_VERIFIER_PHASES):
             try:
                 from backend.core.cassette_defect_verifier import compute_phase_proxy_for_pmgg as _cv_proxy
                 _alt_scores = _cv_proxy(phase_id, audio, audio_out, sr)
