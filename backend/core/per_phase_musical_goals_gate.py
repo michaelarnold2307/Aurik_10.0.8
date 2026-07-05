@@ -3982,8 +3982,22 @@ class PerPhaseMusicalGoalsGate:
             if self._best_effort_count > 3 and not self._user_warned:
                 self._user_warned = True
                 logger.warning(
-                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, um den Klang zu schützen."
+                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, "
+                    "um den Klang zu schützen."
                 )
+            # §v10.5 Guard Effectiveness Auditor: Paralysis-Event registrieren
+            try:
+                from backend.core.guard_effectiveness_auditor import get_effectiveness_auditor as _get_ga
+                _ga = _get_ga()
+                _ga.track_phase_decision(
+                    phase_id=phase_id,
+                    initial_strength=initial_strength,
+                    final_strength=strength,
+                    retries_exhausted=5 if action.startswith("best_effort") else 0,
+                    pmgg_action=action,
+                )
+            except Exception as _gae:
+                logger.debug("Guard-Auditor nicht verfügbar: %s", _gae)
 
         goal_regressions = {
             g: scores_after.get(g, 0.5) - scores_before.get(g, 0.5)
