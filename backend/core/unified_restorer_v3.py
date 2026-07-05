@@ -9007,15 +9007,14 @@ class UnifiedRestorerV3:
                             _best_ancestor = max(_ancestor_scores, key=lambda k: _ancestor_scores[k])
                             _best_score = _ancestor_scores[_best_ancestor]
 
-                            # §v10 Guard: Ancestor-Inferenz nur bei eindeutig analogen Charakteristika
-                            # Verhindert dass MP3-Artefakte als "crackle" fehlinterpretiert werden
-                            _has_non_crackle_analog = any(
-                                _defect_sev_map.get(d, 0.0) >= 0.15
-                                for d in ("hum", "hiss", "wow", "flutter", "dropout", "rumble")
+                            # §v10 Guard: Ancestor-Inferenz inkl. crackle + niedrigere Schwelle
+                            _has_analog_defects = any(
+                                _defect_sev_map.get(d, 0.0) >= 0.10
+                                for d in ("hum", "hiss", "wow", "flutter", "dropout", "rumble", "crackle")
                             )
                             _score_is_decisive = _best_score >= 0.50
 
-                            if _best_score >= 0.20 and (_score_is_decisive or _has_non_crackle_analog):
+                            if _best_score >= 0.20 and (_score_is_decisive or _has_analog_defects):
                                 # MaterialType-Instanz für den inferierten Träger
                                 _ancestor_mat_type: object = None
                                 try:
