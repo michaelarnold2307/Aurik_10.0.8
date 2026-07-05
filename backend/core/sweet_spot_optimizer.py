@@ -70,6 +70,10 @@ GREEN_ZONE = {
     "spectral_color": 0.85,
     "microdynamics": 0.80,
 }
+GREEN_ZONE_RESTORATION = {"hpe":0.55,"inviting":0.70,"transparency":0.70,"goosebumps":0.15,"comb_filter":0.85,"musical_compression":0.55,"masking_health":0.75,"spectral_color":0.90,"microdynamics":0.85}
+GREEN_ZONE_STUDIO2026 = {"hpe":0.65,"inviting":0.60,"transparency":0.50,"goosebumps":0.30,"comb_filter":0.75,"musical_compression":0.40,"masking_health":0.60,"spectral_color":0.75,"microdynamics":0.65}
+def get_mode_green_zone(mode=''): m=str(mode or 'restoration').lower(); return dict(GREEN_ZONE_STUDIO2026) if 'studio' in m or '2026' in m else dict(GREEN_ZONE_RESTORATION)
+
 
 
 def find_sweet_spot(
