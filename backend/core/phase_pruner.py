@@ -187,6 +187,10 @@ class IntelligentPhasePruner:
         # Material-spezifische Skips
         material_skips = set(_MATERIAL_SKIP_PHASES.get(material, []))
 
+        logger.debug(
+            "PhasePruner: pruning %d phases | material=%s defects_available=%s",
+            len(phases), material, sorted(defects_lower)[:25] if defects_lower else "[]"
+        )
         for phase_id in phases:
             # 1. Material-basierter Skip
             if phase_id in material_skips:
@@ -204,6 +208,10 @@ class IntelligentPhasePruner:
                     # Defekt nicht vorhanden → Skip
                     result.skipped_phases.append(phase_id)
                     result.reasons[phase_id] = f"Kein {'/'.join(required)} detektiert"
+                    logger.debug(
+                        "PhasePruner SKIP %s: no defect match (needs=%s, have=%s)",
+                        phase_id, required, sorted(defects_lower)[:15]
+                    )
                     continue
 
                 # 3. Psychoakustische Hörschwelle: sehr schwache Defekte → reduzierte Stärke

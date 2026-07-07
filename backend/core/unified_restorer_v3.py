@@ -2533,7 +2533,12 @@ class UnifiedRestorerV3:
         #   dann Loudness-Normalisierung. Kein Transient Shaping, kein De-Essing
         #   (kein HF-Inhalt), kein Dynamics Processing.
         # Dies verhindert Groove-Verlust, Echo-Artefakte und TQC-Fehlschläge.
-        _preservation_mode = float(_bw_loss_sev) >= 0.90 and float(_snr_val_for_fragile) < 16.0
+        _eff_bw_hz = float(self._restoration_context.get("source_fidelity_bandwidth_hz", 0.0))
+        _preservation_mode = (
+            float(_bw_loss_sev) >= 0.97
+            and float(_snr_val_for_fragile) < 16.0
+            and (_eff_bw_hz <= 0.0 or _eff_bw_hz < 6000.0)
+        )
         if _preservation_mode:
             self._restoration_context["preservation_mode"] = True
             self._restoration_context["preservation_reason"] = (
