@@ -943,20 +943,8 @@ class CrackleRemovalPhase(PhaseInterface):
         passthrough = np.clip(passthrough, -1.0, 1.0)
 
         if _effective_strength <= 0.0:
-            # Passthrough bereits initialisiert — keine weitere Verarbeitung nötig
-            pass
-            
-        # ── §v10 Per-Band-Maske NACH crackle anwenden ──
-        if _per_band_mask is not None:
-            try:
-                from backend.core.pim_phase_hook import apply_per_band_mask
-                _before = audio
-                _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
-                audio = _after
-            except Exception:
-                pass
-
-        return PhaseResult(
+            # Keine effektive Stärke → Passthrough mit Warnung
+            return PhaseResult(
                 success=True,
                 audio=passthrough,
                 execution_time_seconds=time.time() - start_time,
@@ -969,6 +957,16 @@ class CrackleRemovalPhase(PhaseInterface):
                 },
                 warnings=["Crackle removal skipped due to zero effective strength"],
             )
+            
+        # ── §v10 Per-Band-Maske NACH crackle anwenden ──
+        if _per_band_mask is not None:
+            try:
+                from backend.core.pim_phase_hook import apply_per_band_mask
+                _before = audio
+                _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
+                audio = _after
+            except Exception:
+                pass
 
         # ML-Hybrid Decision: BANQUET for Vinyl only
         # §2.45a-I: Gated-RMS — only musical frames (> −50 dBFS) contribute (prevents fadeout-explosion)
