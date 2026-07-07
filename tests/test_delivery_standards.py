@@ -17,12 +17,6 @@ Date: 2026-02-10
 import numpy as np
 import pytest
 
-try:
-    import pyloudnorm
-    _HAS_PYLOUDNORM = True
-except ImportError:
-    _HAS_PYLOUDNORM = False
-
 from backend.core.delivery_standards import (
     STANDARD_CONFIGS,
     BWFMetadataWriter,
@@ -110,8 +104,6 @@ class TestStandardConfig:
         assert len(standards) >= 5
 
 
-
-@pytest.mark.skipif(not _HAS_PYLOUDNORM, reason="pyloudnorm not installed")
 class TestLoudnessAnalyzer:
     """Test LoudnessAnalyzer für LUFS measurement."""
 
@@ -274,8 +266,6 @@ class TestBWFMetadataWriter:
         # Sollte True zurückgeben (BEXT-Chunk erfolgreich eingefügt)
 
 
-
-@pytest.mark.skipif(not _HAS_PYLOUDNORM, reason="pyloudnorm not installed")
 class TestDeliveryStandardsManager:
     """Test DeliveryStandardsManager End-to-End."""
 
@@ -393,8 +383,6 @@ class TestDeliveryStandardsManager:
         manager.process_for_standard(audio, sr, DeliveryStandard.SPOTIFY)
 
 
-
-@pytest.mark.skipif(not _HAS_PYLOUDNORM, reason="pyloudnorm not installed")
 class TestIntegrationScenarios:
     """Integration tests für realistic scenarios."""
 
@@ -477,8 +465,6 @@ class TestIntegrationScenarios:
         assert spotify_peak > ebu_peak
 
 
-
-@pytest.mark.skipif(not _HAS_PYLOUDNORM, reason="pyloudnorm not installed")
 class TestEdgeCases:
     """Test edge cases."""
 

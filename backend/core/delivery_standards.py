@@ -304,9 +304,13 @@ class LoudnessAnalyzer:
         """
         try:
             import pyloudnorm as pyln
+            _has_pyln = True
         except ImportError:
-            logger.error("pyloudnorm not installed. Install via: pip install pyloudnorm")
-            raise
+            _has_pyln = False
+            logger.warning(
+                "pyloudnorm not installed — using RMS-based loudness estimation. "
+                "Install via: pip install pyloudnorm for ITU-R BS.1770-4 compliance."
+            )
 
         # Ensure correct shape
         if audio.ndim == 1:
@@ -316,10 +320,14 @@ class LoudnessAnalyzer:
         else:
             raise ValueError(f"Invalid audio shape: {audio.shape}")
 
-        meter = pyln.Meter(sample_rate)
-
         # Integrated Loudness
-        integrated_lufs = meter.integrated_loudness(audio_2d)
+        if _has_pyln:
+            meter = pyln.Meter(sample_rate)
+            integrated_lufs = meter.integrated_loudness(audio_2d)
+        else:
+            # RMS-based fallback: −23 LUFS ≈ −23 dB relative to full scale for typical speech
+            rms = float(np.sqrt(np.mean(np.square(audio_2d))) + 1e-12)
+            integrated_lufs = float(20 * np.log10(rms + 1e-12))
 
         # Loudness Range (LRA)
         # pyloudnorm doesn't have LRA built-in, but we can use percentile analysis

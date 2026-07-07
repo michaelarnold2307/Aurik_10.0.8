@@ -397,12 +397,26 @@ def load_audio_file(
             audio_work = audio_work.mean(axis=-1)
         # Resampling NACH Downmix (1-2 Kanäle) — verhindert soxr-Hänger bei 3-Kanal-MP3.
         if target_sr and sr != target_sr:
-            import resampy
+            try:
+                import resampy
+                _use_resampy = True
+            except ImportError:
+                _use_resampy = False
+                logger.warning("resampy not installed — falling back to scipy.signal.resample")
+                from scipy.signal import resample as _scipy_resample
 
             if audio_work.ndim == 1:
-                audio_work = np.asarray(resampy.resample(audio_work, sr, target_sr), dtype=np.float32)
+                if _use_resampy:
+                    audio_work = np.asarray(resampy.resample(audio_work, sr, target_sr), dtype=np.float32)
+                else:
+                    n_out = int(len(audio_work) * target_sr / sr)
+                    audio_work = np.asarray(_scipy_resample(audio_work, n_out), dtype=np.float32)
             else:
-                audio_work = np.asarray(resampy.resample(audio_work.T, sr, target_sr, axis=-1).T, dtype=np.float32)
+                if _use_resampy:
+                    audio_work = np.asarray(resampy.resample(audio_work.T, sr, target_sr, axis=-1).T, dtype=np.float32)
+                else:
+                    n_out = int(audio_work.shape[0] * target_sr / sr)
+                    audio_work = np.asarray(_scipy_resample(audio_work, n_out, axis=0), dtype=np.float32)
             sr = target_sr
         audio_arr = np.asarray(audio_work, dtype=np.float32)
         audio_work = np.asarray(
