@@ -151,24 +151,29 @@ class SurgicalRepair:
         original: np.ndarray,
         fade_samples: int,
     ) -> None:
-        """Linearer Cross-Fade an den Rändern."""
+        """Cosine Cross-Fade an den Rändern (psychoakustisch transparent).
+
+        Verwendet Cosine-Ramp wie SectionStrengthEnvelope (§8.3).
+        Max 1 dB / 100 ms Änderungsrate — unterhalb der menschlichen
+        Wahrnehmungsschwelle (Zwicker & Fastl 1999).
+        """
         if fade_samples <= 0 or repaired.shape[1] < fade_samples * 2:
             return
 
-        # Fade-In (linker Rand)
-        ramp = np.linspace(0, 1, fade_samples)
+        # Cosine Fade-In (linker Rand): sanfter als linear
+        ramp_in = 0.5 * (1 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
         for ch in range(repaired.shape[0]):
             repaired[ch, :fade_samples] = (
-                original[ch, :fade_samples] * (1 - ramp) +
-                repaired[ch, :fade_samples] * ramp
+                original[ch, :fade_samples] * (1 - ramp_in) +
+                repaired[ch, :fade_samples] * ramp_in
             )
 
-        # Fade-Out (rechter Rand)
-        ramp = np.linspace(1, 0, fade_samples)
+        # Cosine Fade-Out (rechter Rand)
+        ramp_out = 0.5 * (1 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
         for ch in range(repaired.shape[0]):
             repaired[ch, -fade_samples:] = (
-                original[ch, -fade_samples:] * (1 - ramp) +
-                repaired[ch, -fade_samples:] * ramp
+                original[ch, -fade_samples:] * (1 - ramp_out[::-1]) +
+                repaired[ch, -fade_samples:] * ramp_out[::-1]
             )
 
     @staticmethod
