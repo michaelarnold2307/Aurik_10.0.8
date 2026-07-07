@@ -280,6 +280,10 @@ class PhasePlan:
     Advisory — wird von UV3 für zukünftige per-Phase-Algorithmus-Selektion genutzt."""
 
     policy_hints: dict[str, Any] = field(default_factory=dict)
+
+    surgical_routing: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    """§2.59: phase_id → [(start_s, end_s), ...] für chirurgische Verarbeitung.
+    Leerer Eintrag = Phase läuft global über das gesamte Audio."""
     """Hörbezogene Hinweise für das zentrale restoration_policy_profile."""
 
     # ── §v10.2 Repair-Policy (zentrale Entscheidung, vom AurikDenker konsumiert) ──
