@@ -91,3 +91,40 @@ class IntroDefectAnalyzer:
                              z.start_s, z.end_s, z.defect_type, z.severity)
 
         return zones
+
+
+# ── Universelle Defekt-Klassifikation ───────────────────────────────────
+
+# §2.59: 24 von 66 Defekten sind ZEITLICH LOKALISIERT.
+# Sie sollten per-Instance chirurgisch behandelt werden, nicht global.
+SURGICAL_DEFECT_TYPES: frozenset[str] = frozenset({
+    # Transienten (ms-Bereich)
+    "clicks", "crackle", "click_pop",
+    # Dropouts (ms-s)
+    "dropouts", "dropout_oxide", "dropout_head_contact", "dropout_splice",
+    # Transport (ereignisbasiert)
+    "transport_bump", "tape_splice_artifact",
+    # Zeitliche Artefakte
+    "pre_echo", "print_through", "groove_echo", "mpeg_frame_loss",
+    # Kopf/Kontakt (transient)
+    "tape_head_clog", "sticky_shed_residue",
+    # Lokalisierte Bandfehler (Sektionen)
+    "wow", "flutter", "scrape_flutter", "multiband_wow_flutter",
+    "modulation_noise",
+    # Positionsabhängig
+    "inner_groove_distortion", "dc_offset",
+    "motor_interference", "sibilance", "transient_smearing",
+})
+
+# Defekte die GLOBAL behandelt werden (39 Typen):
+# bandwidth_loss, high_freq_noise, quantization_noise, compression_artifacts,
+# clipping, dynamic_compression_excess, reverb_excess, stereo_imbalance,
+# soft_saturation, digital_artifacts, aliasing, jitter_artifacts, bias_error,
+# dolby_nr_mismatch, hf_remanence_loss, generation_loss, nr_breathing_artifact,
+# phase_issues, stereo_field_collapse, phase_rotation, pitch_drift,
+# speed_calibration_error, hum, low_freq_rumble, overload_distortion,
+# intermodulation_distortion, crosstalk, vocal_harshness, riaa_curve_error,
+# azimuth_error, head_wear, tape_head_level_dip, amplitude_drift,
+# proximity_effect_excess, room_mode_resonance, lacquer_disc_degradation,
+# stylus_damage, flutter_spectral_sidebands
+# → Diese werden weiterhin global durch die Phasen behandelt.
