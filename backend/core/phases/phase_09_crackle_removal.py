@@ -968,12 +968,21 @@ class CrackleRemovalPhase(PhaseInterface):
             except Exception:
                 pass
 
-        # ML-Hybrid Decision: BANQUET for Vinyl only
-        # §2.45a-I: Gated-RMS — only musical frames (> −50 dBFS) contribute (prevents fadeout-explosion)
+        # ML-Hybrid Decision: BANQUET for Vinyl (auch via Transferkette)
+        # §2.45a-I: Gated-RMS — only musical frames (> −50 dBFS) contribute
+        # §Chain-Aware: Aktiviert BANQUET wenn Vinyl IRGENDWO in der Kette ist
+        # (z. B. Vinyl→Cassette→MP3), nicht nur bei primary_material.
         _rms_in_09_db = _gated_rms_dbfs_09(np.asarray(audio, dtype=np.float32))
         _rms_in_09 = float(10.0 ** (_rms_in_09_db / 20.0))
 
-        use_banquet = QUALITY_MODE_AVAILABLE and material_type == "vinyl" and is_phase_ml_enabled(9)
+        _is_vinyl = material_type == "vinyl"
+        if not _is_vinyl:
+            _chain = kwargs.get("transfer_chain") or kwargs.get("chain") or []
+            _is_vinyl = any(
+                "vinyl" in str(m).lower() or "shellac" in str(m).lower()
+                for m in (_chain if isinstance(_chain, (list, tuple)) else [])
+            )
+        use_banquet = QUALITY_MODE_AVAILABLE and _is_vinyl and is_phase_ml_enabled(9)
 
         if use_banquet:
             # ----------------------------------------------------------------
