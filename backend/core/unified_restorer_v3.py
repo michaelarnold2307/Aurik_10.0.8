@@ -11565,7 +11565,7 @@ class UnifiedRestorerV3:
                     if material_type
                     else "unknown",
                     genre=str(getattr(self, "_restoration_context", {}).get("genre_label", "")),
-                    defect_types=list(getattr(self, "_active_defekt_hint", {}) or {}),
+                    defect_types=_defekt_hint.get("defect_types", []) if isinstance(_defekt_hint, dict) else [],
                 )
                 _match = _fm.find_match(_fp)
                 if _match and isinstance(self._restoration_context, dict):
@@ -11584,7 +11584,7 @@ class UnifiedRestorerV3:
                 _precision_hints = _dpe.analyze_defects(
                     audio,
                     sample_rate,
-                    defect_types=list(getattr(self, "_active_defekt_hint", {}) or {}),
+                    defect_types=_defekt_hint.get("defect_types", []) if isinstance(_defekt_hint, dict) else [],
                 )
                 if _precision_hints and isinstance(self._restoration_context, dict):
                     self._restoration_context["precision_hints"] = _precision_hints

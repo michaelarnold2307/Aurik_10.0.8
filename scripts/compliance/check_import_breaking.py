@@ -122,7 +122,37 @@ def main() -> None:
         print("aktualisiere CRITICAL_EXPORTS in scripts/compliance/check_import_breaking.py")
         sys.exit(1)
 
-    print("Import-Check: ✅ alle kritischen Exports vorhanden")
+    # §2.59: Strukturelle Validierung — defekt_hint Datenfluss
+    structural_violations = []
+    for fp in changed_files:
+        try:
+            with open(fp) as f:
+                content = f.read()
+        except Exception:
+            continue
+        import re
+        if '_defekt_hint' in content or 'defekt_hint' in content:
+            # Check: does file have _defekt_hint = { but no defect_types?
+            has_hint = bool(re.search(r'_defekt_hint\s*=\s*\{', content))
+            has_types = '"defect_types"' in content
+            has_sevs = '"defect_severities"' in content
+            if has_hint and (not has_types or not has_sevs):
+                structural_violations.append(
+                    f"{fp}: _defekt_hint dict present but MISSING " +
+                    ("defect_types " if not has_types else "") +
+                    ("defect_severities" if not has_sevs else "")
+                )
+        if 'list(getattr(self, "_active_defekt_hint"' in content:
+            structural_violations.append(
+                f"{fp}: PhasePruner reads defect_types via list(dict) — use .get('defect_types', [])"
+            )
+    if structural_violations:
+        print(f"❌ Structural violations: {len(structural_violations)}")
+        for v in structural_violations:
+            print(f"  🚫 {v}")
+        sys.exit(1)
+
+    print("Import-Check: ✅ alle kritischen Exports vorhanden, Struktur validiert")
     sys.exit(0)
 
 
