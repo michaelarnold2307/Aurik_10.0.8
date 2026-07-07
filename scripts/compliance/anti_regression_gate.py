@@ -200,6 +200,44 @@ def check_defect_classification(filepath: str) -> list[str]:
             pass
     return issues
 
+
+
+def check_surgical_architecture(filepath: str) -> list[str]:
+    """Surgical repair architecture must be intact."""
+    issues = []
+    try:
+        with open(filepath) as f:
+            content = f.read()
+    except Exception:
+        return issues
+
+    # Check 1: PhasePlan must have surgical_routing
+    if 'class PhasePlan' in content:
+        if 'surgical_routing' not in content:
+            issues.append(f"{filepath}: PhasePlan missing surgical_routing field")
+
+    # Check 2: PhasePruner must protect surgical phases
+    if 'def prune(' in content and 'IntelligentPhasePruner' in content:
+        if 'surgical_defect_types' not in content:
+            issues.append(f"{filepath}: PhasePruner missing surgical phase protection")
+
+    # Check 3: PhaseResult must have time_range
+    if 'class PhaseResult' in content:
+        if 'time_range' not in content:
+            issues.append(f"{filepath}: PhaseResult missing time_range field")
+
+    # Check 4: restoration_context must propagate surgical_defect_types
+    if '_active_defekt_hint = _defekt_hint_kwarg' in content:
+        if 'surgical_defect_types' not in content:
+            issues.append(f"{filepath}: UV3 not propagating surgical_defect_types to restoration_context")
+
+    # Check 5: ExzellenzDenker must know surgical zones
+    if 'class ExzellenzDenker' in content or 'def messe_und_repariere' in content:
+        if 'surgical' not in content.lower():
+            issues.append(f"{filepath}: ExzellenzDenker missing surgical zone awareness")
+
+    return issues
+
 def main() -> None:
     changed = sys.argv[1:]
     if not changed:
@@ -219,6 +257,7 @@ def main() -> None:
         all_issues.extend(check_magic_numbers(fp))
         all_issues.extend(check_absolute_bw_loss(fp))
         all_issues.extend(check_defect_classification(fp))
+        all_issues.extend(check_surgical_architecture(fp))
 
     if all_issues:
         print(f"🛡️ Anti-Regression-Gate: {len(all_issues)} Verletzung(en)\n")

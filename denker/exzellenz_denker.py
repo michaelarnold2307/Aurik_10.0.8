@@ -979,6 +979,7 @@ class ExzellenzDenker:
                     risk["natuerlichkeit"] = noise_risk
                     risk["authentizitaet"] = round(noise_risk * 0.80, 3)
             except Exception:
+                logger.debug("prognostiziere: silent except suppressed", exc_info=True)
                 pass
 
             # ── HF-Verlust → Brillanz / Timbre ───────────────────────────
@@ -998,6 +999,7 @@ class ExzellenzDenker:
                     risk["brillanz"] = hf_risk
                     risk["timbre"] = round(hf_risk * 0.70, 3)
             except Exception:
+                logger.debug("prognostiziere: silent except suppressed", exc_info=True)
                 pass
 
             # ── Transient-Armut → Groove / MicroDynamics ─────────────────
@@ -1018,6 +1020,7 @@ class ExzellenzDenker:
                     risk["groove"] = round(transient_risk * 0.70, 3)
                     risk["micro_dynamics"] = round(transient_risk * 0.80, 3)
             except Exception:
+                logger.debug("prognostiziere: silent except suppressed", exc_info=True)
                 pass
 
             # ── Dropout-Schwere → Artikulation ──────────────────────────
@@ -1033,6 +1036,7 @@ class ExzellenzDenker:
                     if dropout_sev > 0.0:
                         risk["artikulation"] = float(np.clip(dropout_sev, 0.0, 1.0))
             except Exception:
+                logger.debug("prognostiziere: silent except suppressed", exc_info=True)
                 pass
 
             logger.debug(

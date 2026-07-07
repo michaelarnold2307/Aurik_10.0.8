@@ -690,6 +690,7 @@ class PhaseInteractionDenker:
                 _ph = set(defekt_hint.get("recommended_phases", []) or [])
                 _surgical_defects = list(defekt_hint.get("surgical_defect_types", []) or [])
             except Exception:
+                logger.debug("_determine_repair_policy: silent except suppressed", exc_info=True)
                 pass
         if _surgical_defects:
             logger.info(
@@ -703,6 +704,7 @@ class PhaseInteractionDenker:
             try:
                 _ph = set(getattr(defect_result, "recommended_phases", None) or [])
             except Exception:
+                logger.debug("_determine_repair_policy: silent except suppressed", exc_info=True)
                 pass
 
         # ── overall_severity ────────────────────────────────────────────
@@ -790,6 +792,7 @@ class PhaseInteractionDenker:
                 if _terminal_codec:
                     policy["clicks"] = "mild"
             except Exception:
+                logger.debug("_decide: silent except suppressed", exc_info=True)
                 pass
 
         return policy
@@ -1094,6 +1097,7 @@ class PhaseInteractionDenker:
                 if wf < 0.5:
                     penalties.append((max(0.5, wf), 0.40))
             except Exception:
+                logger.debug("resolve_guard_modulation: silent except suppressed", exc_info=True)
                 pass
 
         # ── GuardWisdom (50 %) ──
