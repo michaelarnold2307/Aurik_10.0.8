@@ -679,11 +679,21 @@ class PhaseInteractionDenker:
         """
         # ── recommended_phases aus defekt_hint extrahieren ──────────────
         _ph: set[str] = set()
+        # §2.59: Chirurgische Defekte — Phasen die NUR lokal arbeiten müssen
+        _surgical_defects: list[str] = []
         if defekt_hint is not None:
             try:
                 _ph = set(defekt_hint.get("recommended_phases", []) or [])
+                _surgical_defects = list(defekt_hint.get("surgical_defect_types", []) or [])
             except Exception:
                 pass
+        if _surgical_defects:
+            logger.info(
+                "PhaseInteractionDenker: %d chirurgische Defekte erkannt — "
+                "diese Phasen werden PRIORISIERT und NICHT supprimiert: %s",
+                len(_surgical_defects),
+                ", ".join(_surgical_defects[:5]),
+            )
         # Fallback: aus defect_result extrahieren
         if not _ph and defect_result is not None:
             try:
