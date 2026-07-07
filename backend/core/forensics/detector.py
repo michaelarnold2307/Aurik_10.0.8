@@ -481,15 +481,24 @@ class MediaForensicsEngine:
         # vinyl-typische Artefakte (clicks, hum, surface noise) vorhanden sind,
         # dann war die Quelle sehr wahrscheinlich Vinyl.
         # Dies erkennt den häufigen Fall: Vinyl → Cassette-Dub → Digital.
+        #
+        # §Robust: Prüft sowohl self.evidence (Rohdaten, unberührt von
+        # _generate_hypotheses) als auch hypotheses[0].evidence.
+        # self.evidence überlebt file_ext-basierte Nullierung (z.B. .mp3),
+        # die hypotheses[0].evidence zurücksetzen kann.
         vinyl_ghost = False
-        if m in analog_media and hasattr(hypotheses[0], 'evidence'):
-            for ev in hypotheses[0].evidence:
+        for _ev_source in (self.evidence, getattr(hypotheses[0], 'evidence', []) if hypotheses else []):
+            for ev in (_ev_source if isinstance(_ev_source, list) else []):
                 label = str(getattr(ev, 'label', '')).lower()
-                # Vinyl-Indikatoren: clicks, crackle, hum, surface noise, RIAA
-                if any(kw in label for kw in ['click', 'crackle', 'hum', 'surface_noise',
-                                                'vinyl', 'riaa', 'groove', 'stylus']):
+                feature = str(getattr(ev, 'feature', '')).lower()
+                desc = str(getattr(ev, 'description', '')).lower()
+                combined = f"{label} {feature} {desc}"
+                if any(kw in combined for kw in ['click', 'crackle', 'hum', 'surface_noise',
+                                                   'vinyl', 'riaa', 'groove', 'stylus']):
                     vinyl_ghost = True
                     break
+            if vinyl_ghost:
+                break
         if vinyl_ghost and MediaType.VINYL_LP_STEREO not in chain:
             # Füge Vinyl als Originalquelle VOR dem aktuellen Medium ein
             chain.insert(0, MediaType.VINYL_LP_STEREO)

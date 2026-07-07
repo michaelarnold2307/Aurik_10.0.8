@@ -229,36 +229,6 @@ def run_pre_analysis(
             result.medium = _medium_result
             _medium_result_any = cast(Any, _medium_result)
 
-            # §Chain-Preserve: Der MediumDetector kann Vinyl in der physikalischen
-            # Inferenz erkennen (chain=['vinyl', 'cassette']), verwirft es aber
-            # bei .mp3-Dateiendung wieder. Wir stellen sicher, dass Disc-Evidenz
-            # (crackle, clicks, surface_noise) in der finalen Kette erhalten bleibt.
-            _chain_attr = getattr(_medium_result_any, "transfer_chain", None)
-            _evidence_attr = getattr(_medium_result_any, "all_evidence", None) or []
-            if isinstance(_chain_attr, list) and _chain_attr:
-                _disc_keywords = ("vinyl", "shellac", "lacquer", "crackle", "click", "surface_noise", "stylus", "groove", "riaa")
-                _has_disc_evidence = any(
-                    any(kw in str(getattr(ev, "label", "")).lower() or
-                        kw in str(getattr(ev, "description", "")).lower() or
-                        kw in str(getattr(ev, "feature", "")).lower()
-                        for kw in _disc_keywords)
-                    for ev in (_evidence_attr if isinstance(_evidence_attr, list) else [])
-                )
-                _has_disc_in_chain = any(
-                    any(kw in str(m).lower() for kw in ("vinyl", "shellac", "lacquer"))
-                    for m in _chain_attr
-                )
-                if _has_disc_evidence and not _has_disc_in_chain:
-                    # Vinyl wurde vom Detector erkannt, aber nicht in die Kette
-                    # übernommen. Wir fügen es als Originalquelle ein.
-                    _chain_attr.insert(0, "vinyl")
-                    logger.info(
-                        "pre_analysis: §Chain-Preserve — Vinyl als Originalquelle in Kette eingefügt "
-                        "(Disc-Evidenz vorhanden: crackle/click/surface_noise). "
-                        "Kette jetzt: %s",
-                        _chain_attr,
-                    )
-
             logger.info(
                 "pre_analysis: medium=%s conf=%.2f chain=%s",
                 _medium_result_any.primary_material,

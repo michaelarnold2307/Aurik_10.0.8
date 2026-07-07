@@ -23234,12 +23234,7 @@ class UnifiedRestorerV3:
             str(m).lower() in ("vinyl", "shellac", "lacquer_disc", "lacquer")
             for m in (transfer_chain or [])
         )
-        # §Crackle-as-Evidence: Wenn crackle severity > 0.50, ist das selbst bei
-        # fehlendem Chain-Eintrag ein starkes Indiz für Disc-Ursprung.
-        # Der MediumDetector kann Vinyl in der Kette übersehen (file_ext=.mp3
-        # zeroed analog posteriors), aber das Crackle-Signal lügt nicht.
-        _crackle_is_evidence = sev(DefectType.CRACKLE) > 0.50
-        _is_disc = material in _DISC_MATERIALS_CRACKLE or _has_disc_in_chain or _crackle_is_evidence
+        _is_disc = material in _DISC_MATERIALS_CRACKLE or _has_disc_in_chain
 
         if sev(DefectType.CRACKLE) > 0.15 and _is_disc:
             selected.append("phase_09_crackle_removal")
