@@ -393,7 +393,7 @@ class AurikDenker:
             sr,
             _dur_s,
             audio.shape,
-            cached_cached_era_result is not None,
+            cached_era_result is not None,
             cached_genre_result is not None,
             cached_defect_result is not None,
             cached_medium_result is not None,
@@ -1769,7 +1769,7 @@ class AurikDenker:
                         elif defekt is not None:
                             _repair_defect_scores = dict(getattr(defekt, "defect_scores", {}) or {})
                         # Era-Dekade aus cached Era-Ergebnis
-                        if cached_cached_era_result is not None:
+                        if cached_era_result is not None:
                             _repair_era_decade = int(getattr(cached_era_result, "decade", 0) or 0) or None
 
                         # §0c Codec-Chain-IQR-Floor: Ketten-Liste aus chain_info extrahieren,
