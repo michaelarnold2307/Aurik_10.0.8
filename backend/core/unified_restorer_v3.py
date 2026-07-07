@@ -2536,20 +2536,20 @@ class UnifiedRestorerV3:
         _eff_bw_hz = float(self._restoration_context.get("source_fidelity_bandwidth_target_hz", 0.0))
         _preservation_mode = (
             float(_bw_loss_sev) >= 0.97
-            and float(_snr_val_for_fragile) < 16.0
+            and float(_input_snr_db) < 16.0 if _input_snr_db is not None else True
             and (_eff_bw_hz <= 0.0 or _eff_bw_hz < 6000.0)
         )
         if _preservation_mode:
             self._restoration_context["preservation_mode"] = True
             self._restoration_context["preservation_reason"] = (
-                f"bw_loss={_bw_loss_sev:.2f} SNR={_snr_val_for_fragile:.1f}dB"
+                f"bw_loss={_bw_loss_sev:.2f} SNR={_input_snr_db:.1f}dB" if _input_snr_db is not None else f"bw_loss={_bw_loss_sev:.2f}"
             )
             logger.warning(
                 "§2.16 PRESERVATION MODE: bw_loss=%.2f SNR=%.1fdB — "
                 "nur essentielle Cleanup-Phasen. Enhancements werden übersprungen. "
                 "Das Material ist zu degradiert für aktive Restaurierung.",
                 float(_bw_loss_sev),
-                float(_snr_val_for_fragile),
+                float(_input_snr_db) if _input_snr_db is not None else 0.0,
             )
 
         # §2.13 Uncertainty-from-Disagreement: Wenn zwei Klassifikatoren
