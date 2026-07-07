@@ -1367,8 +1367,15 @@ class MediumDetector:
         if _ext_lower and not _ext_lower.startswith("."):
             _ext_lower = f".{_ext_lower}"
         if _ext_lower in _DIGITAL_FILE_EXTS:
+            # §FIX: Statt analoge Posteriors auf 0.0 zu nullen (falsch — .mp3 kann
+            # von Vinyl stammen), wenden wir einen Penalty-Faktor an (×0.25).
+            # Die physikalischen Features (crackle, wow, flutter, rotation) sind
+            # stärkere Evidenz als die Dateiendung. Ein rip von Vinyl→Cassette→.mp3
+            # hat echte analoge Defekte, die nicht ignoriert werden dürfen.
+            _ANALOG_PENALTY = 0.25
             _adjusted: dict[str, float] = {
-                mat: (0.0 if mat in self._ANALOG_MATERIALS else score) for mat, score in posteriors.items()
+                mat: (score * _ANALOG_PENALTY if mat in self._ANALOG_MATERIALS else score)
+                for mat, score in posteriors.items()
             }
             _total = sum(_adjusted.values()) + 1e-12
             posteriors = dict(
