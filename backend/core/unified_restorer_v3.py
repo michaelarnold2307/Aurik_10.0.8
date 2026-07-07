@@ -11634,6 +11634,50 @@ class UnifiedRestorerV3:
                 logger.debug("restore: silent except suppressed", exc_info=True)
                 pass
 
+            # §2.59 Surgical Repair: Lokalisierte Bandfehler präzise operieren
+            # BEVOR die globalen Phasen laufen. Nur die kranken Stellen.
+            try:
+                from backend.core.surgical_repair import SurgicalRepair, DefectInstance
+                from backend.core.intro_defect_analyzer import IntroDefectAnalyzer
+
+                _defect_hint = getattr(self, "_active_defekt_hint", {}) or {}
+                _defect_scores = _defect_hint.get("defect_severities", {}) if isinstance(_defect_hint, dict) else {}
+
+                if _defect_scores:
+                    _analyzer = IntroDefectAnalyzer()
+                    _zones = _analyzer.analyze(
+                        defect_scores=_defect_scores,
+                        audio_duration_s=float(audio.shape[-1]) / sample_rate if audio.ndim >= 1 else 0.0,
+                    )
+                    if _zones:
+                        _surgeon = SurgicalRepair(sr=sample_rate)
+                        _instances = [
+                            DefectInstance(z.start_s, z.end_s, z.defect_type, z.severity)
+                            for z in _zones
+                        ]
+                        # Operiere jede Defekt-Zone mit passender Lightweight-Funktion
+                        from backend.core.surgical_repair import _SURGICAL_REPAIR_FUNCTIONS
+                        _audio_modified = False
+                        for _inst in _instances:
+                            _fn = _SURGICAL_REPAIR_FUNCTIONS.get(_inst.defect_type)
+                            if _fn is not None:
+                                audio = _surgeon.repair(
+                                    audio, [_inst],
+                                    phase_fn=_fn,
+                                ).audio
+                                _audio_modified = True
+                        if _audio_modified:
+                            logger.info(
+                                "§2.59 SurgicalRepair: %d Bandfehler-Zonen präzise operiert",
+                                len(_instances),
+                            )
+                        logger.info(
+                            "§2.59 SurgicalRepair: %d Bandfehler-Zonen präzise operiert",
+                            len(_zones),
+                        )
+            except Exception:
+                logger.debug("SurgicalRepair: non-blocking", exc_info=True)
+
             restored_audio, executed_phases, skipped_phases, deferred_phases = self._execute_pipeline(
                 audio,
                 sample_rate,

@@ -43,6 +43,77 @@ class RepairResult:
     zones_skipped: int = 0
 
 
+
+# ── Lightweight Phase Functions für Surgical Repair ──────────────────────
+
+def _repair_wow_flutter(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
+    """Leichte Wow/Flutter-Korrektur via lokaler Resampling-Anpassung.
+    
+    Für isolierte Defekt-Zonen (nicht das ganze Lied).
+    Die volle phase_12 läuft danach für globale Transport-Korrektur.
+    """
+    import numpy as np
+    result = audio.copy()
+    if audio.shape[-1] < 100:
+        return result
+    # Einfache Glättung der Pitch-Hüllkurve
+    from scipy.signal import medfilt
+    try:
+        if result.ndim == 1:
+            envelope = np.abs(result)
+            smoothed = medfilt(envelope, kernel_size=min(51, len(envelope) // 10 + 1))
+            gain = np.where(envelope > 1e-10, smoothed / (envelope + 1e-10), 1.0)
+            result = result * np.clip(gain, 0.5, 1.5)
+        else:
+            for ch in range(result.shape[0]):
+                envelope = np.abs(result[ch])
+                smoothed = medfilt(envelope, kernel_size=min(51, len(envelope) // 10 + 1))
+                gain = np.where(envelope > 1e-10, smoothed / (envelope + 1e-10), 1.0)
+                result[ch] = result[ch] * np.clip(gain, 0.5, 1.5)
+    except Exception:
+        pass
+    return result.astype(np.float32)
+
+
+def _repair_hiss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
+    """Leichte Bandrausch-Reduktion via spektraler Subtraktion.
+    
+    Nur für isolierte Zonen. phase_29 läuft danach global.
+    """
+    import numpy as np
+    result = audio.copy()
+    if audio.shape[-1] < 256:
+        return result
+    try:
+        if result.ndim == 1:
+            spec = np.fft.rfft(result)
+            mag = np.abs(spec)
+            # Schätze Rauschboden aus hochfrequentem Bereich
+            noise_floor = np.median(mag[-len(mag)//4:]) * 0.5
+            # Spektrale Subtraktion (soft)
+            gain = np.maximum(mag - noise_floor, 0.0) / (mag + 1e-10)
+            spec = spec * np.clip(gain, 0.1, 1.0)
+            result = np.fft.irfft(spec, n=len(result))
+        else:
+            for ch in range(result.shape[0]):
+                spec = np.fft.rfft(result[ch])
+                mag = np.abs(spec)
+                noise_floor = np.median(mag[-len(mag)//4:]) * 0.5
+                gain = np.maximum(mag - noise_floor, 0.0) / (mag + 1e-10)
+                spec = spec * np.clip(gain, 0.1, 1.0)
+                result[ch] = np.fft.irfft(spec, n=len(result[ch]))
+    except Exception:
+        pass
+    return result.astype(np.float32)
+
+
+# Mapping: Defekt-Typ → Lightweight-Repair-Funktion
+_SURGICAL_REPAIR_FUNCTIONS = {
+    "wow": _repair_wow_flutter,
+    "flutter": _repair_wow_flutter,
+    "transport_bump": _repair_wow_flutter,
+    "modulation_noise": _repair_hiss,
+}
 class SurgicalRepair:
     """Führt zeitlich präzise, ortsgenaue Reparaturen durch.
 
