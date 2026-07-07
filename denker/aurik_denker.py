@@ -393,7 +393,7 @@ class AurikDenker:
             sr,
             _dur_s,
             audio.shape,
-            cached_era_result is not None,
+            cached_cached_era_result is not None,
             cached_genre_result is not None,
             cached_defect_result is not None,
             cached_medium_result is not None,
@@ -1294,6 +1294,13 @@ class AurikDenker:
                 cached_medium_result=cached_medium_result,
             )
             chain_info = kette.as_dict()
+            # §6.8: Era-Precursor (reel_tape) der physikalischen Chain voranstellen
+            _era_mp = str(getattr(cached_era_result, "material_prior", "") or "").lower() if cached_era_result is not None else ""
+            _phys_chain = getattr(kette, "chain", []) or []
+            if _era_mp in ("reel_tape", "tape") and _era_mp not in _phys_chain:
+                _phys_chain = [_era_mp] + list(_phys_chain)
+                kette.chain = _phys_chain
+                kette.chain_string = " → ".join(_phys_chain)
             stage_notes["kette"] = kette.chain_string
             phases_executed.extend(kette.combined_phases)
             logger.info(
@@ -1762,7 +1769,7 @@ class AurikDenker:
                         elif defekt is not None:
                             _repair_defect_scores = dict(getattr(defekt, "defect_scores", {}) or {})
                         # Era-Dekade aus cached Era-Ergebnis
-                        if cached_era_result is not None:
+                        if cached_cached_era_result is not None:
                             _repair_era_decade = int(getattr(cached_era_result, "decade", 0) or 0) or None
 
                         # §0c Codec-Chain-IQR-Floor: Ketten-Liste aus chain_info extrahieren,
