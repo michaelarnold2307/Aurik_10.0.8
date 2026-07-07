@@ -13124,7 +13124,7 @@ class ModernMainWindow(QMainWindow):
         ab_row_layout.addWidget(self.btn_play_restored)
 
         # §14.9 Delta-Mode: Differenzsignal abhören
-        self.btn_delta = ModernButton(f"Δ  {t('action.listen_delta', 'Differenz')}")
+        self.btn_delta = ModernButton(f"Δ  {t('action.listen_delta')}")
         self.btn_delta.setAccessibleName("Differenzsignal abhören (Restauriert − Original)")
         self.btn_delta.setAccessibleDescription(
             "Hört nur die Änderungen: was Aurik hinzugefügt oder entfernt hat."
