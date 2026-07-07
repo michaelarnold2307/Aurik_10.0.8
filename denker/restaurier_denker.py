@@ -531,6 +531,7 @@ class RestaurierDenker:
                         _profile.optimal_eq_presence,
                     )
             except Exception:
+                logger.debug("restauriere: silent except suppressed", exc_info=True)
                 pass
 
             # §v10 Bitrate-Erkennung
@@ -557,6 +558,7 @@ class RestaurierDenker:
                     _hpe_pre = compute_pleasantness(audio, sr).score
                     _inv_pre = check_inviting_sound(audio, sr).score
                 except Exception:
+                    logger.debug("restauriere: silent except suppressed", exc_info=True)
                     pass
 
                 raw = restorer.restore(audio, **_uv3_kwargs)
@@ -608,6 +610,7 @@ class RestaurierDenker:
                                     _trans.artifacts,
                                 )
                         except Exception:
+                            logger.debug("restauriere: silent except suppressed", exc_info=True)
                             pass
 
                         # §v10 SWEET SPOT OPTIMIERUNG: Alle 20 Metriken gleichzeitig
@@ -647,6 +650,7 @@ class RestaurierDenker:
                                 _mat = material or "unknown"
                                 update_song_profile("unknown", _mat, _delta)
                             except Exception:
+                                logger.debug("restauriere: silent except suppressed", exc_info=True)
                                 pass
                             result.quality_delta = _delta
                             return result
@@ -682,6 +686,7 @@ class RestaurierDenker:
                             _cmp.get("verdict", ""),
                         )
                 except Exception:
+                    logger.debug("restauriere: silent except suppressed", exc_info=True)
                     pass
 
                 return result
@@ -1321,6 +1326,7 @@ def get_restaurier_denker() -> RestaurierDenker:
                             details={"conflict": conf},
                         )
         except Exception:
+            logger.debug("_check_undo_provenance: silent except suppressed", exc_info=True)
             pass
         return None
 
@@ -1361,6 +1367,7 @@ def get_restaurier_denker() -> RestaurierDenker:
                             },
                         )
             except Exception:
+                logger.debug("_check_paralysis: silent except suppressed", exc_info=True)
                 pass
         return None
 
@@ -1382,6 +1389,7 @@ def get_restaurier_denker() -> RestaurierDenker:
                             alt_reg = max(alt_reg, b - a)
                 return alt_reg if alt_reg > 0 else None
         except Exception:
+            logger.debug("_get_alternative_regression: silent except suppressed", exc_info=True)
             pass
         return None
 

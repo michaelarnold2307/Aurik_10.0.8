@@ -307,6 +307,7 @@ class ClickRemovalPhase(PhaseInterface):
                 try:
                     start, end = int(zone[0]), int(zone[1])
                 except Exception:
+                    logger.debug("_resolve_silence_mask: silent except suppressed", exc_info=True)
                     continue
                 start = max(0, min(n_samples, start))
                 end = max(start, min(n_samples, end))
@@ -366,8 +367,10 @@ class ClickRemovalPhase(PhaseInterface):
             try:
                 progress_callback(float(pct), label)
             except Exception:
+                logger.debug("_emit_progress: silent except suppressed", exc_info=True)
                 pass
         except Exception:
+            logger.debug("_emit_progress: silent except suppressed", exc_info=True)
             pass
 
     def process(
@@ -403,6 +406,7 @@ class ClickRemovalPhase(PhaseInterface):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
@@ -767,6 +771,7 @@ class ClickRemovalPhase(PhaseInterface):
                 try:
                     _plm01_dfn.set_active("DeepFilterNetV3", False)
                 except Exception:
+                    logger.debug("_repair_click_patch_ml: silent except suppressed", exc_info=True)
                     pass
 
     @staticmethod
@@ -1159,6 +1164,7 @@ class ClickRemovalPhase(PhaseInterface):
             _plm01_dfn = get_plugin_lifecycle_manager()
             _plm01_dfn.set_active("DeepFilterNetV3", True)
         except Exception:
+            logger.debug("_repair_clicks_ml: silent except suppressed", exc_info=True)
             pass
 
         try:
@@ -1188,6 +1194,7 @@ class ClickRemovalPhase(PhaseInterface):
                 try:
                     _plm01_dfn.set_active("DeepFilterNetV3", False)
                 except Exception:
+                    logger.debug("_repair_clicks_ml: silent except suppressed", exc_info=True)
                     pass
 
     def _detect_clicks_multiscale(self, audio: np.ndarray, thresholds: dict[str, float]) -> list[tuple[int, int]]:

@@ -158,6 +158,7 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
         _plm56_fcpe = _get_plm56f()
         _plm56_fcpe.set_active("FCPE", True)
     except Exception:
+        logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
         pass
     try:
         from plugins.fcpe_plugin import get_fcpe_plugin
@@ -174,6 +175,7 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
             try:
                 _plm56_fcpe.set_active("FCPE", False)
             except Exception:
+                logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
                 pass
 
     # Tier-2: RMVPE
@@ -184,6 +186,7 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
         _plm56_rmvpe = _get_plm56r()
         _plm56_rmvpe.set_active("RMVPE", True)
     except Exception:
+        logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
         pass
     try:
         from plugins.rmvpe_plugin import get_rmvpe_plugin
@@ -200,6 +203,7 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
             try:
                 _plm56_rmvpe.set_active("RMVPE", False)
             except Exception:
+                logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
                 pass
 
     # Tier-3: PESTO
@@ -648,6 +652,7 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                     if end_s > start_s:
                         protected_zones.append((start_s, end_s, cap))
                 except Exception:
+                    logger.debug("_collect_protected_zones: silent except suppressed", exc_info=True)
                     continue
         return protected_zones
 
@@ -694,6 +699,7 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                     s = int(max(0.0, float(loc[0])) * sample_rate)
                     e = int(max(0.0, float(loc[1])) * sample_rate)
                 except Exception:
+                    logger.debug("_build_locality_profile: silent except suppressed", exc_info=True)
                     continue
                 if e <= s:
                     continue
@@ -746,6 +752,7 @@ class SpectralBandGapRepairPhase(PhaseInterface):
 
             _get_plm_evict56().evict_for_phase("phase_56_spectral_band_gap_repair")
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
@@ -1040,6 +1047,7 @@ class SpectralBandGapRepairPhase(PhaseInterface):
                 _, _, Zxx_in_z = signal.stft(audio_in, sr, nperseg=win_z, noverlap=win_z - hop_z)
                 _, _, Zxx_out_z = signal.stft(audio_out, sr, nperseg=win_z, noverlap=win_z - hop_z)
             except Exception:
+                logger.debug("_mrsa_gain_refinement: silent except suppressed", exc_info=True)
                 continue
 
             n_freq_z = Zxx_in_z.shape[0]

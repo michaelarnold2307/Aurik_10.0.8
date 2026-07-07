@@ -423,6 +423,7 @@ class CrackleRemovalPhase(PhaseInterface):
                         local_strength = min(local_strength, _cap)
                         break
                 except Exception:
+                    logger.debug("_compute_crackle_local_strength: silent except suppressed", exc_info=True)
                     pass
         return float(np.clip(local_strength, 0.10, 1.0))
 
@@ -693,6 +694,7 @@ class CrackleRemovalPhase(PhaseInterface):
                 try:
                     _plm.set_active("BanquetVinyl", False)
                 except Exception:
+                    logger.debug("_remove_crackle_onnx_direct: silent except suppressed", exc_info=True)
                     pass
 
         # --- Resample back to original SR ---
@@ -843,6 +845,7 @@ class CrackleRemovalPhase(PhaseInterface):
             if _pim_map is not None:
                 _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
         assert sample_rate == 48000, f"SR must be 48000 Hz, got: {sample_rate}"
         audio, _p09_transposed = to_channels_last(audio)
@@ -856,6 +859,7 @@ class CrackleRemovalPhase(PhaseInterface):
 
             _get_plm_evict09().evict_for_phase("phase_09_crackle_removal")
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
 
         # Get material-specific parameters
@@ -914,6 +918,7 @@ class CrackleRemovalPhase(PhaseInterface):
             try:
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("frisson_zones") or []:
             try:
@@ -921,16 +926,19 @@ class CrackleRemovalPhase(PhaseInterface):
                 _fz_e = float(getattr(_z, "end_s", None) or _z[1])
                 _p09_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("whisper_zones") or []:
             try:
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("passaggio_zones") or []:
             try:
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         if _p09_protected_zones:
             logger.debug(
@@ -966,6 +974,7 @@ class CrackleRemovalPhase(PhaseInterface):
                 _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
                 audio = _after
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
 
         # ML-Hybrid Decision: BANQUET for Vinyl (auch via Transferkette)

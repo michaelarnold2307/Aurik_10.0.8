@@ -386,6 +386,7 @@ class WowFlutterFix(PhaseInterface):
                 try:
                     _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
 
         _original_audio = np.asarray(audio, dtype=np.float32).copy()
@@ -992,6 +993,7 @@ class WowFlutterFix(PhaseInterface):
                 try:
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
             for _z in kwargs.get("frisson_zones") or []:
                 try:
@@ -999,16 +1001,19 @@ class WowFlutterFix(PhaseInterface):
                     _fz_e = float(getattr(_z, "end_s", None) or _z[1])
                     _p12_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
             for _z in kwargs.get("whisper_zones") or []:
                 try:
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
             for _z in kwargs.get("passaggio_zones") or []:
                 try:
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
             restored, n_bumps_repaired = self._repair_transport_bumps(
                 restored,
@@ -1781,6 +1786,7 @@ class WowFlutterFix(PhaseInterface):
                         local_strength = min(local_strength, pz_cap)
                         break
                 except Exception:
+                    logger.debug("_compute_bump_local_strength: silent except suppressed", exc_info=True)
                     continue
         if base_strength < 1e-6:
             return 0.0
@@ -1794,6 +1800,7 @@ class WowFlutterFix(PhaseInterface):
             try:
                 protected_zones.append((float(zone[0]), float(zone[1]), 0.20))
             except Exception:
+                logger.debug("_collect_vfa_protected_zones: silent except suppressed", exc_info=True)
                 continue
         for zone in phase_kwargs.get("frisson_zones") or []:
             try:
@@ -1801,16 +1808,19 @@ class WowFlutterFix(PhaseInterface):
                 end_s = float(getattr(zone, "end_s", None) or zone[1])
                 protected_zones.append((start_s, end_s, 0.30))
             except Exception:
+                logger.debug("_collect_vfa_protected_zones: silent except suppressed", exc_info=True)
                 continue
         for zone in phase_kwargs.get("whisper_zones") or []:
             try:
                 protected_zones.append((float(zone[0]), float(zone[1]), 0.25))
             except Exception:
+                logger.debug("_collect_vfa_protected_zones: silent except suppressed", exc_info=True)
                 continue
         for zone in phase_kwargs.get("passaggio_zones") or []:
             try:
                 protected_zones.append((float(zone[0]), float(zone[1]), 0.35))
             except Exception:
+                logger.debug("_collect_vfa_protected_zones: silent except suppressed", exc_info=True)
                 continue
         return protected_zones
 
@@ -2965,6 +2975,7 @@ class WowFlutterFix(PhaseInterface):
                     start_s = max(0.0, float(loc[0]))
                     end_s = max(start_s, float(loc[1]))
                 except Exception:
+                    logger.debug("_apply_defect_locality_to_stretch_factors: silent except suppressed", exc_info=True)
                     continue
                 merged_locations.append((start_s, end_s))
 

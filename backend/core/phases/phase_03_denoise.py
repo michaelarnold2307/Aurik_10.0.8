@@ -412,6 +412,7 @@ class DenoisePhase(PhaseInterface):
             from backend.core.dsp.transient_guard import compute_transient_mask
             _transient_mask = compute_transient_mask(audio, sample_rate)
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
         _pim = kwargs.get("pim_intensity_map")
         _per_band_mask = None
@@ -429,6 +430,7 @@ class DenoisePhase(PhaseInterface):
                 from backend.core.pim_phase_hook import compute_per_band_nr_mask
                 _per_band_mask = compute_per_band_nr_mask(_pim, sample_rate)
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         start_time = time.time()
         _progress_cb = kwargs.get("progress_sub_callback")
@@ -439,6 +441,7 @@ class DenoisePhase(PhaseInterface):
 
             _get_plm_evict().evict_for_phase("phase_03_denoise")
         except Exception:
+            logger.debug("process: silent except suppressed", exc_info=True)
             pass
 
         def _report_progress(pct: float, label: str) -> None:
@@ -446,6 +449,7 @@ class DenoisePhase(PhaseInterface):
                 try:
                     _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
                 except Exception:
+                    logger.debug("_report_progress: silent except suppressed", exc_info=True)
                     pass
 
         _primary_material = str(kwargs.get("primary_material", "")).lower()
@@ -857,6 +861,7 @@ class DenoisePhase(PhaseInterface):
 
                 _bsrof_ram_ok = float(_psutil_bsr.virtual_memory().available / (1024**3)) >= 8.0
             except Exception:
+                logger.debug("_trim: silent except suppressed", exc_info=True)
                 pass
             if _bsrof_ram_ok:
                 try:
@@ -1312,6 +1317,7 @@ class DenoisePhase(PhaseInterface):
                     try:
                         _plm03_dfn.set_active("DeepFilterNetV3", False)
                     except Exception:
+                        logger.debug("_trim: silent except suppressed", exc_info=True)
                         pass
 
         _report_progress(38.0 if _dfn_applied else 10.0, "Entrauschung: Vokal-Stufe (DeepFilterNet) abgeschlossen")
@@ -1368,6 +1374,7 @@ class DenoisePhase(PhaseInterface):
                     try:
                         _plm03_sgmse.touch_plugin("SGMSE+")  # type: ignore[attr-defined]
                     except Exception:
+                        logger.debug("_trim: silent except suppressed", exc_info=True)
                         pass
                 # §2.46f Context-Padding for SGMSE+: reflect-pad 1 s to prevent boundary artefacts
                 _ctx_n03_sg = min(int(1.0 * sample_rate), (audio.shape[-1] if audio.ndim == 2 else len(audio)) // 4)
@@ -1411,6 +1418,7 @@ class DenoisePhase(PhaseInterface):
                     try:
                         _plm03_sgmse.set_active("SGMSE+", False)
                     except Exception:
+                        logger.debug("_trim: silent except suppressed", exc_info=True)
                         pass
 
         # ML-Hybrid only if resources available and quality mode permits

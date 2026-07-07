@@ -384,6 +384,7 @@ class DropoutRepairPhase(PhaseInterface):
                     if start_s < _ze and end_s > _zs:
                         local_strength = min(local_strength, _cap)
                 except Exception:
+                    logger.debug("_compute_dropout_local_strength: silent except suppressed", exc_info=True)
                     pass
 
         return float(np.clip(local_strength, 0.0, 1.0))
@@ -1026,6 +1027,7 @@ class DropoutRepairPhase(PhaseInterface):
             try:
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("frisson_zones") or []:
             try:
@@ -1033,16 +1035,19 @@ class DropoutRepairPhase(PhaseInterface):
                 _fz_e = float(getattr(_z, "end_s", None) or _z[1])
                 _p24_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("whisper_zones") or []:
             try:
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         for _z in kwargs.get("passaggio_zones") or []:
             try:
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
             except Exception:
+                logger.debug("process: silent except suppressed", exc_info=True)
                 pass
         if _p24_protected_zones:
             logger.debug(
@@ -1881,6 +1886,7 @@ class DropoutRepairPhase(PhaseInterface):
             _plm24_asr = _get_plm24()
             _plm24_asr.set_active("AudioSR", True)
         except Exception:
+            logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
             pass
 
         for drop_idx, (start, end) in enumerate(dropouts):
@@ -1967,6 +1973,7 @@ class DropoutRepairPhase(PhaseInterface):
                 try:
                     _plm24_asr.set_active("AudioSR", False)
                 except Exception:
+                    logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
                     pass
             return True
 
@@ -1975,6 +1982,7 @@ class DropoutRepairPhase(PhaseInterface):
             try:
                 _plm24_asr.set_active("AudioSR", False)
             except Exception:
+                logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
                 pass
         return False
 
@@ -2079,6 +2087,7 @@ class DropoutRepairPhase(PhaseInterface):
                 _, _, Z_bef = _stft_fn(ctx_bef, sr, nperseg=eff_win, noverlap=eff_win - eff_hop, boundary="even")
                 _, _, Z_aft = _stft_fn(ctx_aft, sr, nperseg=eff_win, noverlap=eff_win - eff_hop, boundary="even")
             except Exception:
+                logger.debug("_mrsa_tonal_fill_refine: silent except suppressed", exc_info=True)
                 continue
 
             n_freq = Z_bef.shape[0]
@@ -2104,6 +2113,7 @@ class DropoutRepairPhase(PhaseInterface):
 
                 _, _, Zxx_fill = _stft_fn(audio_fill, sr, nperseg=eff_win, noverlap=eff_win - eff_hop, boundary="even")
             except Exception:
+                logger.debug("_mrsa_tonal_fill_refine: silent except suppressed", exc_info=True)
                 continue
 
             n_fill_frames = Zxx_fill.shape[1]
@@ -2130,6 +2140,7 @@ class DropoutRepairPhase(PhaseInterface):
                     np.asarray(Zxx_refined, dtype=np.complex64), sr, nperseg=eff_win, noverlap=eff_win - eff_hop
                 )
             except Exception:
+                logger.debug("_mrsa_tonal_fill_refine: silent except suppressed", exc_info=True)
                 continue
 
             if len(seg) < gap_len:

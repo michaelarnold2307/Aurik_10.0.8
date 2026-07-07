@@ -92,6 +92,7 @@ class DynamicsGuardIntegration:
             try:
                 guard_wisdom.record(phase_id, "dynamics_guard", wisdom_metrics, verdict)
             except Exception:
+                logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
                 pass
             report.wisdom_strength_mod = getattr(guard_wisdom, "_strength_mod", 1.0)
 
@@ -113,6 +114,7 @@ class DynamicsGuardIntegration:
                     for g in ["waerme", "brillanz", "punch"]
                 }
             except Exception:
+                logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
                 pass
 
         # 4. CrossGuardCoordinator: dynamics_arc Kategorie
@@ -130,6 +132,7 @@ class DynamicsGuardIntegration:
                     evaluation = cross_guard_coordinator.evaluate()
                     report.cross_guard_verdict = evaluation.get("verdict", "ok")
             except Exception:
+                logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
                 pass
 
         # 5. EmotionalArcPreserver: Arousal/Valence prüfen
@@ -147,6 +150,7 @@ class DynamicsGuardIntegration:
                                 f"EmotionalArc degraded: arousal_corr={arousal_corr:.3f}, valence_corr={valence_corr:.3f}"
                             )
             except Exception:
+                logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
                 pass
 
         # 6. PMGG: Dynamics-Score aktualisieren
@@ -157,6 +161,7 @@ class DynamicsGuardIntegration:
                 if hasattr(pmgg_instance, "_set_dynamics_score"):
                     pmgg_instance._set_dynamics_score(pmgg_score)
             except Exception:
+                logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
                 pass
 
         # 7. restoration_context injizieren
@@ -206,6 +211,7 @@ class DynamicsGuardIntegration:
                     for g in ["waerme", "brillanz", "punch"]
                 }
             except Exception:
+                logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
                 pass
 
         # Wisdom-Feedback
@@ -217,6 +223,7 @@ class DynamicsGuardIntegration:
                     f"GuardWisdom: {snapshot.get('rollbacks', 0)} rollbacks total"
                 ])
             except Exception:
+                logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
                 pass
 
         # CrossGuard finale Auswertung
@@ -226,6 +233,7 @@ class DynamicsGuardIntegration:
                     evaluation = cross_guard_coordinator.evaluate()
                     report.cross_guard_verdict = evaluation.get("verdict", "ok")
             except Exception:
+                logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
                 pass
 
         # restoration_context abschließend
