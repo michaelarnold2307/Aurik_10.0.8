@@ -60,6 +60,21 @@ class SurgicalRepair:
         self._context_samples = int(context_ms * sr / 1000)
         self._crossfade_samples = int(crossfade_ms * sr / 1000)
 
+    def _detect_transients(
+        self, audio: np.ndarray, sr: int
+    ) -> np.ndarray:
+        """Erkennt Transienten für Crossfade-Vermeidung."""
+        if audio.ndim == 1:
+            signal = audio
+        else:
+            signal = np.mean(audio, axis=0)
+        energy = signal ** 2
+        window = max(1, int(sr * 0.005))
+        kernel = np.ones(window) / window
+        smooth = np.convolve(energy, kernel, mode='same')
+        threshold = np.convolve(smooth, kernel, mode='same') * 3.0 + 1e-10
+        return energy > threshold
+
     def repair(
         self,
         audio: np.ndarray,
@@ -115,6 +130,9 @@ class SurgicalRepair:
             except Exception:
                 skipped += 1
                 continue
+
+            # Phasen-Ausrichtung vor Crossfade (verhindert Kammfilter)
+            segment = self._align_phase(segment, original_segment)
 
             # Cross-Fade: nur an den Rändern, Mitte bleibt Reparatur
             if segment.shape[1] >= self._crossfade_samples * 2:
@@ -175,6 +193,32 @@ class SurgicalRepair:
                 original[ch, -fade_samples:] * (1 - ramp_out[::-1]) +
                 repaired[ch, -fade_samples:] * ramp_out[::-1]
             )
+
+    @staticmethod
+    def _align_phase(repaired: np.ndarray, original: np.ndarray) -> np.ndarray:
+        """Phasen-Ausrichtung: verhindert Kammfilter im Crossfade.
+
+        Findet die optimale Phasenrotation, die die Differenz
+        zwischen repariertem und originalem Signal minimiert.
+        """
+        if repaired.shape[1] < 100 or original.shape[1] < 100:
+            return repaired
+        # Kreuzkorrelation an den Rändern
+        result = repaired.copy()
+        for ch in range(repaired.shape[0]):
+            # Linker Rand: aligne erste 100 Samples
+            edge_orig = original[ch, :100]
+            edge_rep = repaired[ch, :100]
+            if np.std(edge_orig) > 1e-8 and np.std(edge_rep) > 1e-8:
+                # Einfache Phasenkorrektur: Vorzeichen-Anpassung
+                corr = np.correlate(edge_orig, edge_rep, mode='full')
+                shift = np.argmax(corr) - 99
+                if abs(shift) <= 5 and shift != 0:
+                    if shift > 0:
+                        result[ch, :-shift] = repaired[ch, shift:]
+                    else:
+                        result[ch, -shift:] = repaired[ch, :shift]
+        return result
 
     @staticmethod
     def _match_rms(repaired: np.ndarray, original: np.ndarray) -> np.ndarray:
