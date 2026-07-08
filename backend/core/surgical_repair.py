@@ -989,12 +989,22 @@ class SurgicalRepair:
         skipped = 0
 
         for inst in sorted(instances, key=lambda x: x.start_s):
-            s0 = max(0, int(inst.start_s * self.sr) - self._context_samples)
-            s1 = min(total_samples, int(inst.end_s * self.sr) + self._context_samples)
+            # §2.59.10: Adaptiver Kontext — kurze Events (clicks < 5ms)
+            # brauchen weniger Kontext als lange (dropouts, tape_head_clog)
+            _zone_dur_ms = (inst.end_s - inst.start_s) * 1000
+            if _zone_dur_ms < 5:
+                _ctx = min(self._context_samples, int(self.sr * 0.005))  # 5ms
+            elif _zone_dur_ms < 50:
+                _ctx = min(self._context_samples, int(self.sr * 0.020))  # 20ms
+            else:
+                _ctx = self._context_samples  # 50ms
+            s0 = max(0, int(inst.start_s * self.sr) - _ctx)
+            s1 = min(total_samples, int(inst.end_s * self.sr) + _ctx)
 
-            if s1 - s0 < self._crossfade_samples * 3:
+            # Minimum: mindestens crossfade_samples für sauberes Fade
+            if s1 - s0 < self._crossfade_samples:
                 skipped += 1
-                continue  # Zu kurz für sinnvolle Reparatur
+                continue
 
             # Extrahiere Fenster mit Kontext
             segment = audio[:, s0:s1].copy()

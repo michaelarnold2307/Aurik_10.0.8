@@ -11644,19 +11644,76 @@ class UnifiedRestorerV3:
                 logger.debug("restore: silent except suppressed", exc_info=True)
                 pass
 
-            # §2.59.9 Surgical Repair DEFERRED: Zonen-Span (0.0–duration)
-            # sind Platzhalter ohne per-Instance-Lokalisierung.
-            # Chirurgische Reparatur ist deaktiviert bis der DefectScanner
-            # echte per-Instance-Positionen liefert.
-            # Globale Phasen (phase_01, phase_09, etc.) übernehmen.
-            logger.info(
-                "🔬 CHIRURGIE-DEFERRED: Keine per-Instance-Lokalisierung — "
-                "globale Phasen übernehmen alle Defekte"
-            )
-            _surgical_plan = {}
-            _surgical_done = {}
-            _surgical_skip = {}
-            
+            # §2.59.10 Surgical Repair: ECHTE per-Instance-Lokalisierung
+            # DefectScanner liefert .locations pro Defekt mit (start_s, end_s).
+            # Nur Defekte mit echten Positionen werden chirurgisch behandelt.
+            _surgical_plan: dict[str, int] = {}
+            _surgical_done: dict[str, int] = {}
+            _surgical_skip: dict[str, int] = {}
+            try:
+                from backend.core.surgical_repair import SurgicalRepair, DefectInstance
+                from backend.core.surgical_defect_analyzer import SurgicalDefectAnalyzer
+
+                _defect_hint = getattr(self, "_active_defekt_hint", {}) or {}
+                _defect_scores = _defect_hint.get("defect_severities", {}) if isinstance(_defect_hint, dict) else {}
+                # §2.59.10: Extrahiere per-Instance-Locations aus DefectResult
+                _defect_locations: dict[str, list[tuple[float, float]]] = {}
+                if defect_result is not None and hasattr(defect_result, "scores"):
+                    for _dt, _ds in defect_result.scores.items():
+                        _dt_key = _dt.value if hasattr(_dt, "value") else str(_dt)
+                        if hasattr(_ds, "locations") and _ds.locations:
+                            _defect_locations[_dt_key] = list(_ds.locations)
+
+                if _defect_scores and _defect_locations:
+                    _analyzer = SurgicalDefectAnalyzer()
+                    _zones = _analyzer.analyze(
+                        defect_scores=_defect_scores,
+                        audio_duration_s=float(audio.shape[-1]) / sample_rate if audio.ndim >= 1 else 0.0,
+                        defect_locations=_defect_locations,
+                    )
+                    if _zones:
+                        for z in _zones:
+                            _surgical_plan[z.defect_type] = _surgical_plan.get(z.defect_type, 0) + 1
+                        _surgeon = SurgicalRepair(sr=sample_rate)
+                        _instances = [
+                            DefectInstance(z.start_s, z.end_s, z.defect_type, z.severity)
+                            for z in _zones
+                        ]
+                        from backend.core.surgical_repair import _SURGICAL_REPAIR_FUNCTIONS
+                        _by_type: dict[str, list] = {}
+                        for _inst in _instances:
+                            _by_type.setdefault(_inst.defect_type, []).append(_inst)
+                        _total_planned = len(_instances)
+                        _total_repaired = 0
+                        _total_failed = 0
+                        for _defect_type, _type_instances in sorted(_by_type.items()):
+                            _fn = _SURGICAL_REPAIR_FUNCTIONS.get(_defect_type)
+                            if _fn is None:
+                                _total_failed += len(_type_instances)
+                                continue
+                            _result = _surgeon.repair(audio, _type_instances, phase_fn=_fn)
+                            audio = _result.audio
+                            _total_repaired += _result.zones_repaired
+                            _total_failed += _result.zones_skipped
+                            _surgical_done[_defect_type] = _result.zones_repaired
+                            _surgical_skip[_defect_type] = _result.zones_skipped
+                        _plan_types = ", ".join(f"{t}={c}" for t, c in sorted(_surgical_plan.items()))
+                        if _total_repaired > 0 and _total_failed == 0:
+                            logger.info("✅ CHIRURGIE-ERFOLG: %d/%d Zonen in %d Typen → %s", _total_repaired, _total_planned, len(_surgical_done), _plan_types)
+                        elif _total_repaired > 0:
+                            logger.warning("⚠️ CHIRURGIE-TEILERFOLG: %d/%d Zonen, %d failed → %s", _total_repaired, _total_planned, _total_failed, _plan_types)
+                        else:
+                            logger.warning("❌ CHIRURGIE-GESCHEITERT: 0/%d → globale Phasen übernehmen", _total_planned)
+                        self._restoration_context["surgical_repair_planned"] = dict(_surgical_plan)
+                        self._restoration_context["surgical_repair_done"] = dict(_surgical_done)
+                        self._restoration_context["surgical_repair_skipped"] = dict(_surgical_skip)
+                    else:
+                        logger.info("🔬 CHIRURGIE: Keine lokalisierten Zonen — globale Phasen übernehmen")
+                else:
+                    logger.info("🔬 CHIRURGIE: Keine per-Instance-Daten — globale Phasen übernehmen")
+            except Exception:
+                logger.debug("SurgicalRepair: non-blocking", exc_info=True)
+
             restored_audio, executed_phases, skipped_phases, deferred_phases = self._execute_pipeline(
                 audio,
                 sample_rate,

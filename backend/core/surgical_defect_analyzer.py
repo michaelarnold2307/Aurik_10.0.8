@@ -80,38 +80,51 @@ class SurgicalDefectAnalyzer:
         self,
         defect_scores: dict[str, float],
         audio_duration_s: float = 0.0,
+        *,
+        defect_locations: dict[str, list[tuple[float, float]]] | None = None,
     ) -> list[DefectZone]:
-        """Findet alle chirurgisch behandelbaren Defekt-Zonen.
+        """Findet alle chirurgisch behandelbaren Defekt-Zonen mit ECHTEN Positionen.
 
-        Für jeden Defekt in SURGICAL_DEFECT_TYPES mit severity >= MIN_SEVERITY
-        wird eine Zone markiert. Die exakten Grenzen (start_s, end_s) werden
-        vom DefectScanner geliefert, der bereits per-Instance analysiert.
+        §2.59.10: Wenn defect_locations übergeben wird, werden daraus präzise
+        Zonen erstellt. Defekte OHNE per-Instance-Positionen (kontinuierliche
+        Defekte wie wow/flutter/modulation_noise) werden NICHT chirurgisch
+        behandelt — dafür sind die globalen Phasen zuständig.
 
         Args:
             defect_scores: DefectType → severity mapping
             audio_duration_s: Gesamtdauer des Songs
+            defect_locations: Per-Instance-Positionen vom DefectScanner
 
         Returns:
-            Liste von DefectZone, sortiert nach Startzeit
+            Liste von DefectZone mit echten Zeitgrenzen, sortiert nach Startzeit
         """
         zones: list[DefectZone] = []
+        _loc_data = defect_locations or {}
+        _loc_types_with_data: set[str] = set()
 
         for defect_type in SURGICAL_DEFECT_TYPES:
             sev = defect_scores.get(defect_type, 0.0)
             if sev < self.MIN_SEVERITY:
                 continue
 
-            # Zone erstreckt sich über den gesamten Song — der SurgicalRepair
-            # wird per-Instance vom DefectScanner verfeinert. Für jetzt:
-            # markiere den gesamten Song als potenziell betroffen.
-            # Die tatsächliche Instanz-Lokalisierung erfolgt im SurgicalRepair
-            # via DefectScanner per-instance Daten.
-            zones.append(DefectZone(
-                0.0,
-                audio_duration_s if audio_duration_s > 0 else 30.0,
-                defect_type,
-                sev,
-            ))
+            # Prüfe ob wir per-Instance-Positionen haben
+            _locs = _loc_data.get(defect_type, [])
+            if _locs:
+                # Echte lokalisierte Zonen aus DefectScanner-Daten
+                for _t0, _t1 in _locs:
+                    _dur = _t1 - _t0
+                    # Skip zones that span >50% of song (Platzhalter)
+                    if audio_duration_s > 0 and _dur > audio_duration_s * 0.5:
+                        continue
+                    zones.append(DefectZone(
+                        float(_t0),
+                        float(_t1),
+                        defect_type,
+                        sev,
+                    ))
+                _loc_types_with_data.add(defect_type)
+            # Defekte ohne Locations (kontinuierlich: wow, flutter, etc.)
+            # werden NICHT chirurgisch behandelt — globale Phasen übernehmen
 
         if zones:
             # Gruppiere nach Defekt-Typ für transparente Planungs-Logs
@@ -123,8 +136,9 @@ class SurgicalDefectAnalyzer:
             _type_summary = ", ".join(
                 f"{t}={c}×" for t, c in sorted(_by_type.items())
             )
+            _total_instances = sum(len(_loc_data.get(t, [])) for t in _by_type)
             logger.info(
-                "🔬 CHIRURGIE-PLAN: %d Defekt-Zonen in %d Typen markiert "
+                "🔬 CHIRURGIE-PLAN: %d echte Defekt-Instanzen in %d Typen "
                 "(%d s Audio) → %s",
                 len(zones),
                 len(_by_type),
