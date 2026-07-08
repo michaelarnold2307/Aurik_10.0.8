@@ -194,6 +194,8 @@ def calibrate_phase_intensity(
     restorability: float = 0.5,
     pipeline_confidence: float = 0.75,
     defect_count_total: int = 0,
+    terminal_codec: str | None = None,
+    codec_avg_discount: float = 1.0,
 ) -> float:
     """§2.60: Kalibriert die Phasen-Intensität proaktiv.
 
@@ -268,6 +270,23 @@ def calibrate_phase_intensity(
     # 10. Transfer-Kette: MP3 in der Kette → ML-Phasen vorsichtiger
     if chain_has_mp3 and "ml_artifact" in profile.risks:
         strength *= 0.7  # MP3-Artefakte + ML = Gefahr
+
+    # 13. §CODEC: Terminal-Codec-Kalibrierung — Denker entscheidet dynamisch
+    # Je nach Codec-Typ werden analog-spezifische Phasen gedämpft,
+    # weil ihre Defekt-Signatur durch Kompressionsartefakte maskiert ist.
+    # Aber: Tape-Level-Dips (phase_12) und Kassetten-Hiss (phase_29) sind ECHT!
+    if terminal_codec and codec_avg_discount < 0.90:
+        _codec_factor = max(0.35, codec_avg_discount)
+        # ML-Phasen: stärker dämpfen (MP3 + ML = doppeltes Risiko)
+        if "ml_artifact" in profile.risks:
+            strength *= _codec_factor
+        # Analog-spezifische Phasen ohne echte Defekte: deutlich dämpfen
+        if phase_id in ("phase_28_surface_noise_profiling", "phase_20_reverb_reduction",
+                         "phase_49_advanced_dereverb", "phase_60_inner_groove_distortion_repair"):
+            strength *= _codec_factor * 0.7
+        # Wow/Flutter-Detektor: Codec-Artefakte → false positives, aber Tape-Dips sind real
+        if phase_id == "phase_12_wow_flutter_fix":
+            strength *= max(0.55, _codec_factor)  # Nicht unter 0.55 — Tape-Dips müssen leben
 
     # 11. Restorability: schlechte Ausgangslage → weniger invasive Eingriffe
     if restorability < 0.4:
@@ -356,6 +375,8 @@ class _CatalogHelper:
                 restorability=float(audio_ctx.get("restorability", 0.5)),
                 pipeline_confidence=float(audio_ctx.get("pipeline_confidence", 0.75)),
                 defect_count_total=int(audio_ctx.get("defect_count_total", 0)),
+                terminal_codec=audio_ctx.get("terminal_codec"),
+                codec_avg_discount=float(audio_ctx.get("codec_avg_discount", 1.0)),
             )
             result[pid] = calibrated
         return result
