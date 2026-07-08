@@ -80,6 +80,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _coerce_dict_str_any(raw: Any) -> dict[str, Any]:
+    """Normalisiert optionale Metadaten auf ein dict[str, Any]."""
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _coerce_list_any(raw: Any) -> list[Any]:
+    """Normalisiert optionale Metadaten auf eine Liste."""
+    return list(raw) if isinstance(raw, list) else []
+
+
 # ---------------------------------------------------------------------------
 # Öffentliche API — explizite Export-Liste
 # ---------------------------------------------------------------------------
@@ -135,6 +146,7 @@ __all__ = [
     "get_plugin_lifecycle_manager",
     "get_processing_mode_enum",
     # Enums / Konfigurationsklassen
+    "normalize_user_mode",
     "get_quality_mode",
     "get_restorability_estimator_class",
     # Kern-Einstiegspunkte
@@ -535,21 +547,43 @@ def get_quality_mode() -> type:
     """Gibt die ``QualityMode``-Enum zurück (lazy import)."""
     from backend.core.performance_guard import QualityMode  # type: ignore[import]
 
-    return QualityMode
+    return QualityMode  # type: ignore[no-any-return]
 
 
 def get_medium_type_enum() -> type:
     """Gibt die ``MediumType``-Enum zurück (lazy import)."""
     from backend.core.enums import MediumType  # type: ignore[import]
 
-    return MediumType
+    return MediumType  # type: ignore[no-any-return]
 
 
 def get_processing_mode_enum() -> type:
     """Gibt die ``ProcessingMode``-Enum zurück (lazy import)."""
     from backend.core.enums import ProcessingMode  # type: ignore[import]
 
-    return ProcessingMode
+    return ProcessingMode  # type: ignore[no-any-return]
+
+
+def normalize_user_mode(mode: str | None) -> str:
+    """Normalisiert Nutzer-Mode-Aliase auf die kanonischen Release-Modi.
+
+    Canonical Contract:
+      - ``"Restoration"``
+      - ``"Studio 2026"``
+
+    Unbekannte Eingaben fallen fail-safe auf ``"Restoration"`` zurück.
+    """
+    raw = str(mode or "Restoration").strip().lower().replace("_", "").replace(" ", "")
+    aliases = {
+        "restoration": "Restoration",
+        "fast": "Restoration",
+        "balanced": "Restoration",
+        "quality": "Restoration",
+        "maximum": "Studio 2026",
+        "studio2026": "Studio 2026",
+        "studio": "Studio 2026",
+    }
+    return aliases.get(raw, "Restoration")
 
 
 def get_restorer_classes() -> tuple[type, type]:
@@ -575,7 +609,7 @@ def get_aurik_denker_class() -> type:
     """
     from denker.aurik_denker import AurikDenker  # type: ignore[import]
 
-    return AurikDenker
+    return AurikDenker  # type: ignore[no-any-return]
 
 
 def get_aurik_denker_instance():
@@ -594,7 +628,7 @@ def get_defect_scanner() -> type:
     """Gibt die ``DefectScanner``-Klasse zurück (lazy import)."""
     from backend.core.defect_scanner import DefectScanner  # type: ignore[import]
 
-    return DefectScanner
+    return DefectScanner  # type: ignore[no-any-return]
 
 
 def get_audio_file_validator():
@@ -616,7 +650,7 @@ def get_defect_type() -> type:
     """
     from backend.core.defect_scanner import DefectType  # type: ignore[import]
 
-    return DefectType
+    return DefectType  # type: ignore[no-any-return]
 
 
 def get_medium_classifier_fn():
@@ -677,7 +711,7 @@ def get_restorability_estimator_class() -> type:
     """
     from backend.core.restorability_estimator import RestorabilityEstimator  # type: ignore[import]
 
-    return RestorabilityEstimator
+    return RestorabilityEstimator  # type: ignore[no-any-return]
 
 
 def get_medium_detector():
@@ -736,7 +770,7 @@ def get_audio_exporter_class() -> type | None:
             _audio_exporter_status["available"] = True
             _audio_exporter_status["last_error"] = ""
 
-        return AudioExporter
+        return AudioExporter  # type: ignore[no-any-return]
     except ImportError as exc:
         _err = f"{type(exc).__name__}: {exc}"
         with _audio_exporter_status_lock:
@@ -778,7 +812,7 @@ def get_pipeline_health_state_enum() -> type:
     """Gibt ``PipelineHealthState``-Enum zurück (lazy import)."""
     from backend.core.pipeline_health_state import PipelineHealthState  # type: ignore[import]
 
-    return PipelineHealthState
+    return PipelineHealthState  # type: ignore[no-any-return]
 
 
 def normalize_pipeline_health_state(raw):
@@ -798,7 +832,7 @@ def resolve_pipeline_fail_reason(
     """Löst ``fail_reason`` aus typed Feld, Metadata und Stage-Notes auf (lazy import)."""
     from backend.core.pipeline_health_state import resolve_fail_reason as _resolve  # type: ignore[import]
 
-    return _resolve(
+    return _resolve(  # type: ignore[no-any-return]
         typed_fail_reason=typed_fail_reason,
         metadata=metadata,
         stage_notes=stage_notes,
@@ -812,33 +846,16 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     Frontend-safe helper for AurikErgebnis/RestorationResult-like objects.
     Returns stable keys even if metadata is partially missing.
     """
-    _meta = getattr(result, "metadata", None)
-    if not isinstance(_meta, dict):
-        _meta = {}
+    _meta_raw = getattr(result, "metadata", None)
+    _meta: dict[str, Any] = _coerce_dict_str_any(_meta_raw)
 
-    _joy: dict[str, Any] = (  # type: ignore[assignment]
-        _meta.get("joy_runtime_index") if isinstance(_meta.get("joy_runtime_index"), dict) else {}
-    )
-    _auto: dict[str, Any] = (
-        _meta.get("auto_improvement_recommendations")  # type: ignore[assignment]
-        if isinstance(_meta.get("auto_improvement_recommendations"), dict)
-        else {}
-    )
-    _song_cal: dict[str, Any] = (  # type: ignore[assignment]
-        _meta.get("song_calibration") if isinstance(_meta.get("song_calibration"), dict) else {}
-    )
-    _cluster: dict[str, Any] = (
-        _song_cal.get("cluster_policy") if isinstance(_song_cal.get("cluster_policy"), dict) else {}
-    )  # type: ignore[assignment]
-    _fqf: dict[str, Any] = (
-        _meta.get("fallback_quality_floor") if isinstance(_meta.get("fallback_quality_floor"), dict) else {}
-    )  # type: ignore[assignment]
-    _rc: dict[str, Any] = (  # type: ignore[assignment]
-        _meta.get("recovery_certainty") if isinstance(_meta.get("recovery_certainty"), dict) else {}
-    )
-    _stage_notes = getattr(result, "stage_notes", None)
-    if not isinstance(_stage_notes, dict):
-        _stage_notes = {}
+    _joy = _coerce_dict_str_any(_meta.get("joy_runtime_index"))
+    _auto = _coerce_dict_str_any(_meta.get("auto_improvement_recommendations"))
+    _song_cal = _coerce_dict_str_any(_meta.get("song_calibration"))
+    _cluster = _coerce_dict_str_any(_song_cal.get("cluster_policy"))
+    _fqf = _coerce_dict_str_any(_meta.get("fallback_quality_floor"))
+    _rc = _coerce_dict_str_any(_meta.get("recovery_certainty"))
+    _stage_notes: dict[str, Any] = _coerce_dict_str_any(getattr(result, "stage_notes", None))
 
     _rec_raw = _auto.get("recommendations")
     _recommendations: list[Any] = list(_rec_raw) if isinstance(_rec_raw, list) else []
@@ -881,9 +898,7 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
         _cnt = len(_normalized_recommendations)
     _cnt = max(_cnt, len(_normalized_recommendations), 0)
 
-    _tc: dict[str, Any] = (  # type: ignore[assignment]
-        _meta.get("team_coordination") if isinstance(_meta.get("team_coordination"), dict) else {}
-    )
+    _tc = _coerce_dict_str_any(_meta.get("team_coordination"))
     _tc_events_raw_val = _tc.get("events")
     _tc_events_raw: list[Any] = list(_tc_events_raw_val) if isinstance(_tc_events_raw_val, list) else []
     _tc_events: list[dict[str, Any]] = []
@@ -918,7 +933,7 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
             }
         )
 
-    _fail_reasons = _meta.get("fail_reasons") if isinstance(_meta.get("fail_reasons"), list) else []
+    _fail_reasons: list[Any] = _coerce_list_any(_meta.get("fail_reasons"))
     if not _fail_reasons and isinstance(_stage_notes.get("fail_reasons"), list):
         _fail_reasons = list(_stage_notes.get("fail_reasons") or [])
 
@@ -940,15 +955,11 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     _fqf_attempts = int(_fqf.get("attempts", 0)) if isinstance(_fqf.get("attempts", 0), (int, float)) else 0
     _exp_profile = str(_meta.get("export_gate_profile", "") or "").strip()
     _exp_material = str(_meta.get("export_gate_material", "") or "").strip()
-    _exp_thresholds = (
-        _meta.get("export_gate_thresholds") if isinstance(_meta.get("export_gate_thresholds"), dict) else {}
-    )
-    _exp_signature = (
-        _meta.get("export_gate_signal_signature") if isinstance(_meta.get("export_gate_signal_signature"), dict) else {}
-    )
+    _exp_thresholds = _coerce_dict_str_any(_meta.get("export_gate_thresholds"))
+    _exp_signature = _coerce_dict_str_any(_meta.get("export_gate_signal_signature"))
     _exp_preserve_signal = _safe01(_meta.get("export_gate_preserve_signal", 0.0))
-    _xp_stage_profile = _stage_notes.get("exzellenz_recovery_profile") if isinstance(_stage_notes, dict) else {}
-    if isinstance(_xp_stage_profile, dict):
+    _xp_stage_profile = _coerce_dict_str_any(_stage_notes.get("exzellenz_recovery_profile"))
+    if _xp_stage_profile:
         _exp_preserve_signal = max(_exp_preserve_signal, _safe01(_xp_stage_profile.get("preserve_signal", 0.0)))
     if not _exp_profile:
         if _exp_preserve_signal >= 0.55:
@@ -968,10 +979,8 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     _primary_error_code = ""
     if _fail_reasons and isinstance(_fail_reasons[0], dict):
         _primary_error_code = str(_fail_reasons[0].get("error_code", "") or "")
-    _wcs_gate = (
-        _meta.get("worldclass_composite_gate") if isinstance(_meta.get("worldclass_composite_gate"), dict) else {}
-    )
-    _threshold_evidence = _meta.get("threshold_evidence") if isinstance(_meta.get("threshold_evidence"), dict) else {}
+    _wcs_gate = _coerce_dict_str_any(_meta.get("worldclass_composite_gate"))
+    _threshold_evidence = _coerce_dict_str_any(_meta.get("threshold_evidence"))
     _qe_threshold = _safe_float(_exp_thresholds.get("quality_estimate", 0.0), 0.0)
     _root_cause = str(_primary_fail_reason or "").strip()
     _root_cause_l = _root_cause.lower()
@@ -1187,6 +1196,24 @@ def record_goal_feedback(
         logger.warning("§C10 record_goal_feedback failed: %s", _fb_exc)
 
 
+def get_reflective_listening_pass():
+    """§v10 Gibt ReflectiveListeningPass-Klasse zurück (lazy import)."""
+    from backend.core.reflective_listening_pass import ReflectiveListeningPass
+    return ReflectiveListeningPass
+
+
+def apply_reflective_listening(audio, sr, *, original_audio=None, artistic_intent=None, material='unknown'):
+    """§v10 Führt den Reflective Listening Pass aus (lazy, convenience)."""
+    from backend.core.reflective_listening_pass import ReflectiveListeningPass
+    rlp = ReflectiveListeningPass()
+    return rlp.process(audio, sr, original_audio=original_audio,
+                        artistic_intent=artistic_intent, material=material)
+
+def get_album_consistency_pass():
+    """§v10 Gibt AlbumConsistencyPass-Klasse zurück (lazy import, §1.4)."""
+    from backend.core.album_consistency import AlbumConsistencyPass
+    return AlbumConsistencyPass
+
 def get_stem_remix_balancer_fn():
     """Gibt ``StemRemixBalancer.balance_remix``-Funktion zurück (lazy import, §1.4).
 
@@ -1233,7 +1260,7 @@ def get_musical_goals_checker() -> type:
     """
     from backend.core.musical_goals.musical_goals_metrics import MusicalGoalsChecker  # type: ignore[import]
 
-    return MusicalGoalsChecker
+    return MusicalGoalsChecker  # type: ignore[no-any-return]
 
 
 def get_adaptive_goals_fn():
@@ -1261,7 +1288,7 @@ def get_mushra_evaluator():
     """Gibt den ``MushraEvaluator``-Singleton zurück (lazy import, §8.1.1 OQS).
 
     OQS = algorithmische PEAQ-Approximation (kein ITU-R-MUSHRA).
-    In externen Berichten stets „OQS (algorithmisch)" schreiben.
+    In externen Berichten stets "OQS (algorithmisch)" schreiben.
 
     Schwellwerte::
 
@@ -1362,7 +1389,7 @@ def get_ml_memory_budget_status() -> dict:
         with _ml_memory_budget_status_lock:
             _ml_memory_budget_import_status["available"] = True
             _ml_memory_budget_import_status["last_error"] = ""
-        return _status
+        return _status  # type: ignore[no-any-return]
     except Exception as _e:
         _err = f"{type(_e).__name__}: {_e}"
         with _ml_memory_budget_status_lock:
@@ -1412,7 +1439,7 @@ def validate_export_quality(result: object) -> tuple[bool, list[str]]:
     try:
         from backend.exporter import validate_export_quality as _veq
 
-        return _veq(result)
+        return _veq(result)  # type: ignore[no-any-return]
     except Exception as exc:
         logger.warning("validate_export_quality unavailable -> fail-closed: %s", exc)
         return False, ["Bridge-Export-Gate nicht verfügbar (fail-closed)"]
@@ -1425,28 +1452,19 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     before calling ``backend.core.export_workflow.export_audio``.
     """
     passed, warnings = validate_export_quality(result)
-    meta = getattr(result, "metadata", None)
-    if not isinstance(meta, dict):
-        meta = {}
+    meta_raw = getattr(result, "metadata", None)
+    meta: dict[str, Any] = _coerce_dict_str_any(meta_raw)
 
-    fail_reasons: list[Any] = (  # type: ignore[assignment]
-        meta.get("fail_reasons") if isinstance(meta.get("fail_reasons"), list) else []
-    )
+    fail_reasons: list[Any] = _coerce_list_any(meta.get("fail_reasons"))
     primary_fail_reason = str(meta.get("fail_reason", "") or "")
     degradation_status = str(meta.get("degradation_status", "") or "")
-    fqf: dict[str, Any] = (
-        meta.get("fallback_quality_floor") if isinstance(meta.get("fallback_quality_floor"), dict) else {}
-    )  # type: ignore[assignment]
+    fqf = _coerce_dict_str_any(meta.get("fallback_quality_floor"))
     export_gate_profile = str(meta.get("export_gate_profile", "") or "")
     export_gate_material = str(meta.get("export_gate_material", "") or "")
     _export_gate_thresholds_raw = meta.get("export_gate_thresholds")
-    export_gate_thresholds: dict[str, Any] = (
-        _export_gate_thresholds_raw if isinstance(_export_gate_thresholds_raw, dict) else {}
-    )
+    export_gate_thresholds = _coerce_dict_str_any(_export_gate_thresholds_raw)
     _export_gate_signal_signature_raw = meta.get("export_gate_signal_signature")
-    export_gate_signal_signature: dict[str, Any] = (
-        _export_gate_signal_signature_raw if isinstance(_export_gate_signal_signature_raw, dict) else {}
-    )
+    export_gate_signal_signature = _coerce_dict_str_any(_export_gate_signal_signature_raw)
     export_gate_preserve_signal = float(np.clip(float(meta.get("export_gate_preserve_signal", 0.0) or 0.0), 0.0, 1.0))
 
     _degradation_norm = degradation_status.strip().lower()
@@ -1482,9 +1500,9 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
 
     # Music-Lover Telemetrie: liefert musikalisch relevante Exportindikatoren
     # für UI/Reporter, ohne bestehende Gate-Semantik zu verändern.
-    _goals_meta = meta.get("musical_goals") if isinstance(meta.get("musical_goals"), dict) else {}
-    _goal_scores = _goals_meta.get("scores") if isinstance(_goals_meta.get("scores"), dict) else {}
-    _goal_thresholds = _goals_meta.get("thresholds") if isinstance(_goals_meta.get("thresholds"), dict) else {}
+    _goals_meta: dict[str, Any] = _coerce_dict_str_any(meta.get("musical_goals"))
+    _goal_scores: dict[str, Any] = _coerce_dict_str_any(_goals_meta.get("scores"))
+    _goal_thresholds: dict[str, Any] = _coerce_dict_str_any(_goals_meta.get("thresholds"))
     _goal_gaps: list[dict[str, Any]] = []
     for _goal_name, _thr_val in _goal_thresholds.items():
         try:
@@ -1495,7 +1513,7 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
             _goal_gaps.append({"goal": str(_goal_name), "gap": round(float(_gap), 4)})
     _goal_gaps.sort(key=lambda e: float(e.get("gap", 0.0)), reverse=True)
 
-    _temporal_cont = meta.get("temporal_continuity") if isinstance(meta.get("temporal_continuity"), dict) else {}
+    _temporal_cont: dict[str, Any] = _coerce_dict_str_any(meta.get("temporal_continuity"))
     _temporal_hotspots: list[dict[str, Any]] = []
     for _phase_id, _entry in _temporal_cont.items():
         if not isinstance(_entry, dict):
@@ -1523,18 +1541,18 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     _chroma_val = float(getattr(result, "chroma_correlation", 0.0) or 0.0)
     _lufs_delta_val = float(getattr(result, "lufs_delta", 0.0) or 0.0)
 
-    _mcg = meta.get("model_capability_report") if isinstance(meta.get("model_capability_report"), dict) else {}
-    _mcg_summary = _mcg.get("summary") if isinstance(_mcg, dict) else {}
-    _all_sota_raw = _mcg_summary.get("all_sota_real") if isinstance(_mcg_summary, dict) else None
+    _mcg: dict[str, Any] = _coerce_dict_str_any(meta.get("model_capability_report"))
+    _mcg_summary: dict[str, Any] = _coerce_dict_str_any(_mcg.get("summary"))
+    _all_sota_raw = _mcg_summary.get("all_sota_real")
     _vocal_cap_status = str(meta.get("vocal_restoration_capability_status", "") or "")
     _all_sota_real = True
     if isinstance(_all_sota_raw, bool):
         _all_sota_real = bool(_all_sota_raw)
     if _vocal_cap_status and _vocal_cap_status != "sota_real":
         _all_sota_real = False
-    _degraded_caps = _mcg_summary.get("degraded_capabilities") if isinstance(_mcg_summary, dict) else []
-    _wcs_gate = meta.get("worldclass_composite_gate") if isinstance(meta.get("worldclass_composite_gate"), dict) else {}
-    _threshold_evidence = meta.get("threshold_evidence") if isinstance(meta.get("threshold_evidence"), dict) else {}
+    _degraded_caps = _coerce_list_any(_mcg_summary.get("degraded_capabilities"))
+    _wcs_gate = _coerce_dict_str_any(meta.get("worldclass_composite_gate"))
+    _threshold_evidence = _coerce_dict_str_any(meta.get("threshold_evidence"))
     _qe_threshold = float(export_gate_thresholds.get("quality_estimate", 0.0) or 0.0)
     _root_cause = str(primary_fail_reason or "").strip()
     _root_cause_l = _root_cause.lower()
@@ -1554,7 +1572,25 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
     if _root_cause_l.startswith("pipeline_blocked:"):
         _root_cause = _root_cause.split(":", 1)[1].strip() or _root_cause
 
-    return {
+    _manual_action_required = False
+    _allowed_user_decisions = ["mode_selection"]
+    _export_policy = "normal_export"
+    _confidence_level = "hoch"
+    _listener_message = "Aurik hat die Restaurierung autonom als gehoersicher freigegeben."
+    if degradation_status in {"blocked", "critical_degraded", "degraded"}:
+        _export_policy = "input_or_best_safe_checkpoint"
+        _confidence_level = "geschuetzt"
+        _listener_message = (
+            "Aurik hat ein Hoerrisiko erkannt und schuetzt den Nutzer mit dem besten sicheren Checkpoint."
+        )
+    elif degradation_status == "recovered" or fqf_status == "recovered":
+        _export_policy = "best_available_restoration"
+        _confidence_level = "begrenzt"
+        _listener_message = (
+            "Aurik hat die bestmoegliche Restaurierung erreicht und verbleibende Grenzen transparent markiert."
+        )
+
+    payload = {
         "passed": bool(passed),
         "fail_reason": primary_fail_reason,
         "root_cause": _root_cause,
@@ -1586,6 +1622,18 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
             "passed": bool(_wcs_gate.get("passed", False)),
         },
         "threshold_evidence": dict(_threshold_evidence) if _threshold_evidence else {},
+        "user_confidence_summary": {
+            "confidence_level": _confidence_level,
+            "listener_message": _listener_message,
+            "manual_action_required": _manual_action_required,
+            "allowed_user_decisions": list(_allowed_user_decisions),
+            "export_policy": _export_policy,
+            "why_user_can_trust": [
+                "Export-Gates pruefen Hoerschutz, Musical Goals und Fallback Quality Floor.",
+                "Aurik faellt bei Risiko auf den besten sicheren Zustand zurueck.",
+                "Der Nutzer muss keine Klangparameter setzen; nur die Moduswahl ist erlaubt.",
+            ],
+        },
         "musiclover": {
             "vocal_integrity": {
                 "vqi": _vqi_val,
@@ -1614,6 +1662,7 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
                 "fail_reason": str(primary_fail_reason),
                 "fail_reason_count": int(len(fail_reasons)),
                 "recovery_attempted": bool(fqf_attempts > 0),
+                "export_policy": _export_policy,
                 "all_sota_real": bool(_all_sota_real),
                 "vocal_restoration_capability_status": _vocal_cap_status,
                 "degraded_capabilities": list(_degraded_caps) if isinstance(_degraded_caps, list) else [],
@@ -1621,6 +1670,28 @@ def build_export_quality_gate_payload(result: object) -> dict[str, Any]:
         },
         "warnings": [str(w) for w in warnings],
     }
+
+    try:
+        meta_obj = getattr(result, "metadata", None)
+        if isinstance(meta_obj, dict):
+            meta_obj.setdefault("fail_reason", primary_fail_reason)
+            meta_obj.setdefault("degradation_status", degradation_status)
+            if fail_reasons and not isinstance(meta_obj.get("fail_reasons"), list):
+                meta_obj["fail_reasons"] = list(fail_reasons)
+            meta_obj["quality_gate_payload"] = payload
+            meta_obj["export_quality_gate_payload"] = payload
+        elif meta_obj is None and hasattr(result, "metadata"):
+            result.metadata = {  # type: ignore[attr-defined]
+                "fail_reason": primary_fail_reason,
+                "degradation_status": degradation_status,
+                "fail_reasons": list(fail_reasons),
+                "quality_gate_payload": payload,
+                "export_quality_gate_payload": payload,
+            }
+    except Exception as exc:
+        logger.debug("build_export_quality_gate_payload mirror skipped: %s", exc)
+
+    return payload
 
 
 def build_export_metadata(result: object, **tag_kwargs):
@@ -1758,7 +1829,7 @@ def get_deferred_refinement_job_class() -> type:
     """
     from backend.core.deferred_refinement_job import DeferredRefinementJob  # type: ignore[import]
 
-    return DeferredRefinementJob
+    return DeferredRefinementJob  # type: ignore[no-any-return]
 
 
 def get_save_checkpoint_fn():
@@ -2191,6 +2262,172 @@ def run_album_consistency_pass(
     }
 
 
+
+
+def _get_ml_availability() -> dict[str, Any]:
+    """§v10 Prüft welche ML-Modelle verfügbar sind (nicht auf DSP fallbacken)."""
+    models = {}
+    # ECAPA-TDNN (Speaker Identity)
+    try:
+        import speechbrain
+        models["speaker_identity"] = "ecapa_tdnn"
+    except ImportError:
+        models["speaker_identity"] = "mfcc_dsp"
+    # PANNs (Genre/Audio tagging)
+    try:
+        import onnxruntime
+        models["panns"] = "onnx"
+    except ImportError:
+        models["panns"] = "dsp"
+    # LAION-CLAP
+    try:
+        import torch
+        models["laion_clap"] = "torch"
+    except ImportError:
+        models["laion_clap"] = "unavailable"
+    # SGMSE+ Dereverb
+    try:
+        import torch
+        models["sgmse_dereverb"] = "torchscript" if torch else "dsp_wpe"
+    except ImportError:
+        models["sgmse_dereverb"] = "dsp_wpe"
+    # RMVPE Pitch
+    try:
+        import onnxruntime
+        models["rmvpe_pitch"] = "onnx"
+    except ImportError:
+        models["rmvpe_pitch"] = "pyin_dsp"
+    
+    any_ml = any(v not in ("dsp", "dsp_wpe", "pyin_dsp", "mfcc_dsp", "unavailable") for v in models.values())
+    return {"any_ml_available": any_ml, "models": models}
+
+def get_layman_summary(result: Any) -> dict[str, Any]:
+    """§v10 Laien-verständliche Ergebnis-Zusammenfassung.
+
+    Übersetzt die technischen Metriken in einfache, menschlich lesbare
+    Status-Texte, die ein Laie versteht — ohne DSP-Fachbegriffe.
+
+    Returns:
+        dict mit 'headline', 'body', 'quality_label', 'quality_detail',
+        'recommendation', 'icon'
+    """
+    insights = get_experience_insights(result)
+    
+    joy = insights.get("joy_index", 0.5)
+    fatigue = insights.get("fatigue_index", 0.5)
+    degradation = insights.get("quality_gate", {}).get("degradation_status", "ok")
+    profile = insights.get("quality_gate", {}).get("profile", "neutral")
+    preserve = insights.get("quality_gate", {}).get("preserve_signal", 0.5)
+    recs = insights.get("recommendations", [])
+    rec_count = insights.get("recommendation_count", 0)
+    cluster = insights.get("cluster_key", "")
+    fqf = insights.get("fallback_quality_floor", {})
+    fqf_triggered = fqf.get("triggered", False)
+    fqf_recovered = fqf.get("recovered", False)
+    
+    # ── Qualität in Schulnoten ──
+    if degradation == "ok" and joy >= 0.75 and fatigue <= 0.30:
+        quality_label = "Hervorragend"
+        quality_detail = "Deine Aufnahme klingt jetzt klar und ausgewogen — wie ein professionelles Master."
+        icon = "✨"
+    elif degradation == "ok" and joy >= 0.55:
+        quality_label = "Sehr gut"
+        quality_detail = "Die Restaurierung ist gelungen. Leichte Verbesserungen sind hörbar."
+        icon = "👍"
+    elif degradation == "ok":
+        quality_label = "Gut"
+        quality_detail = "Die Aufnahme wurde restauriert. Die wichtigsten Störungen sind behoben."
+        icon = "✅"
+    elif degradation in ("recovered",):
+        quality_label = "In Ordnung"
+        quality_detail = "Die Aufnahme war schwierig zu restaurieren. Wir haben das bestmögliche Ergebnis erzielt — leichte Unreinheiten können geblieben sein."
+        icon = "⚠️"
+    elif degradation in ("degraded", "critical_degraded"):
+        quality_label = "Verbesserungswürdig"
+        quality_detail = "Die Aufnahme ist stark beschädigt. Wir konnten einige, aber nicht alle Probleme beheben. Ein erneuter Versuch mit anderen Einstellungen könnte helfen."
+        icon = "🔧"
+    else:
+        quality_label = "Fehlgeschlagen"
+        quality_detail = "Die Restaurierung konnte nicht abgeschlossen werden. Bitte versuche es erneut oder wähle eine andere Datei."
+        icon = "❌"
+
+    # ── Laien-Headline ──
+    if fqf_triggered and fqf_recovered:
+        headline = "Restaurierung mit Schutzpriorität — Ergebnis gesichert"
+    elif joy >= 0.7:
+        headline = "Deine Musik erstrahlt in neuem Glanz!"
+    elif joy >= 0.5:
+        headline = "Restaurierung erfolgreich abgeschlossen"
+    else:
+        headline = "Restaurierung mit Einschränkungen abgeschlossen"
+
+    # ── Laien-Body ──
+    body_parts = []
+    
+    # Was wurde gefunden?
+    if cluster:
+        body_parts.append(f'Deine Aufnahme wurde als "{cluster}" eingeordnet.')
+    
+    # Was wurde verbessert?
+    if degradation == "ok" and joy >= 0.55:
+        body_parts.append("Störende Geräusche wie Knistern, Rauschen oder Kratzer wurden reduziert.")
+        body_parts.append("Die Klangfarbe wurde auf natürliche Weise verbessert.")
+    elif degradation == "ok":
+        body_parts.append("Die wichtigsten Störungen wurden behoben.")
+    
+    # Fatigue-Warnung
+    if fatigue >= 0.45:
+        body_parts.append("In leisen Passagen könnte ein leichtes Grundrauschen hörbar sein — das ist normal für historische Aufnahmen.")
+    
+    # Signal-Preserve
+    if preserve >= 0.55:
+        body_parts.append("Die Bearbeitung war besonders vorsichtig, um den Original-Charakter zu erhalten.")
+    
+    body = " ".join(body_parts) if body_parts else quality_detail
+
+    # ── Empfehlung ──
+    if degradation == "ok" and joy >= 0.7:
+        recommendation = "✅ Diese Version kannst Du bedenkenlos verwenden."
+    elif degradation == "ok":
+        recommendation = "✅ Diese Version ist bereit zum Anhören."
+    elif fqf_recovered:
+        recommendation = "⚠️ Das Ergebnis ist brauchbar, aber nicht perfekt. Für beste Ergebnisse: bessere Quellqualität verwenden."
+    else:
+        recommendation = "🔄 Wir empfehlen einen erneuten Versuch mit der Original-Datei in höherer Qualität."
+
+
+    # ── §v10 V7: LUFS-Ist/Soll-Vergleich ──
+    lufs_target = None
+    lufs_actual = None
+    try:
+        _meta_raw = getattr(result, "metadata", None)
+        _meta = _coerce_dict_str_any(_meta_raw) if _meta_raw else {}
+        _exp_meta = _coerce_dict_str_any(_meta.get("export_metrics", {}))
+        lufs_target = _exp_meta.get("target_lufs")
+        lufs_actual = _exp_meta.get("integrated_lufs_after") or _exp_meta.get("output_integrated_lufs")
+    except Exception:
+        pass
+
+    # ── ML-Modell-Status für GUI ──
+    ml_status = _get_ml_availability()
+
+    return {
+        "headline": headline,
+        "body": body,
+        "quality_label": quality_label,
+        "quality_detail": quality_detail,
+        "recommendation": recommendation,
+        "icon": icon,
+        "joy_index": joy,
+        "fatigue_index": fatigue,
+        "lufs_target": lufs_target,
+        "lufs_actual": lufs_actual,
+        "lufs_ok": (abs(lufs_actual - lufs_target) < 0.5) if (lufs_target is not None and lufs_actual is not None) else None,
+        "ml_available": ml_status["any_ml_available"],
+        "ml_models": ml_status["models"],
+        "technical": insights,
+    }
+
 def get_pipeline_trace(result: Any) -> dict[str, Any]:
     """Gibt vollständigen Pipeline-Trace als Dict zurück (für Frontend/CLI/Debug).
 
@@ -2200,7 +2437,7 @@ def get_pipeline_trace(result: Any) -> dict[str, Any]:
     try:
         from backend.api.debug_api import get_debug_summary, get_goal_fails, get_goals_timeline, get_worst_phases
 
-        summary = get_debug_summary(result)
+        summary = _coerce_dict_str_any(get_debug_summary(result))
         summary["goal_timeline"] = get_goals_timeline(result)
         summary["worst_phases"] = get_worst_phases(result, n=5)
         summary["goal_fails"] = get_goal_fails(result)
@@ -2235,3 +2472,77 @@ def limit_quiet_edge_boost(
     except Exception as _e:
         logger.debug("limit_quiet_edge_boost bridge fallback: %s", _e)
         return candidate_audio
+
+
+def get_pipeline_ab_snapshots(*, include_audio: bool = True, max_duration_s: float = 5.0) -> list[dict]:
+    """§v10 A/B-Vergleichs-Snapshots für den GUI-Player.
+
+    Liefert Vorher/Nachher-Audio-Snippets pro Phase als Base64-kodiertes WAV.
+    Der GUI-Player kann diese direkt dekodieren und abspielen.
+
+    Args:
+        include_audio: Wenn True, Base64-WAV-Audio einbetten (größer aber direkt abspielbar)
+        max_duration_s: Maximale Dauer pro Snippet in Sekunden (Default 5s)
+
+    Returns:
+        Liste von dicts mit phase, pre_audio_b64, post_audio_b64, sample_rate, duration_s
+    """
+    try:
+        from backend.core.sota_improvements import get_ab_comparison_state
+        import base64, io, numpy as np
+        ab = get_ab_comparison_state()
+        if not ab.ab_snippets:
+            return []
+        
+        snippets = []
+        for s in ab.ab_snippets[-10:]:
+            pre = np.asarray(s.get("pre", s.get("pre_phase_audio", np.zeros(1))), dtype=np.float32)
+            post = np.asarray(s.get("post", s.get("post_phase_audio", np.zeros(1))), dtype=np.float32)
+            phase = str(s.get("phase", "unknown"))
+            
+            # Limit duration
+            sr = 48000
+            max_samples = int(max_duration_s * sr)
+            if pre.ndim >= 1 and len(pre) > max_samples:
+                mid = len(pre) // 2
+                pre = pre[mid - max_samples//2 : mid + max_samples//2]
+            if post.ndim >= 1 and len(post) > max_samples:
+                mid = len(post) // 2
+                post = post[mid - max_samples//2 : mid + max_samples//2]
+            
+            # Ensure mono for smaller payload
+            if pre.ndim > 1 and pre.shape[-1] <= 2:
+                pre = pre.mean(axis=-1) if pre.shape[-1] == 2 else pre
+            if post.ndim > 1 and post.shape[-1] <= 2:
+                post = post.mean(axis=-1) if post.shape[-1] == 2 else post
+            
+            entry = {
+                "phase": phase,
+                "sample_rate": sr,
+                "duration_s": float(min(len(pre), len(post))) / sr if len(pre) > 0 and len(post) > 0 else 0.0,
+            }
+            
+            if include_audio:
+                # Encode as 16-bit PCM WAV → Base64
+                import struct, wave as _wave
+                for key, arr in [("pre_audio_b64", pre), ("post_audio_b64", post)]:
+                    if len(arr) == 0:
+                        entry[key] = ""
+                        continue
+                    arr_16 = np.clip(arr * 32767, -32768, 32767).astype(np.int16)
+                    buf = io.BytesIO()
+                    with _wave.open(buf, 'wb') as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)  # 16-bit
+                        wf.setframerate(sr)
+                        wf.writeframes(arr_16.tobytes())
+                    entry[key] = base64.b64encode(buf.getvalue()).decode('ascii')
+            else:
+                entry["pre_shape"] = list(pre.shape) if hasattr(pre, 'shape') else [len(pre)]
+                entry["post_shape"] = list(post.shape) if hasattr(post, 'shape') else [len(post)]
+            
+            snippets.append(entry)
+        
+        return snippets
+    except Exception:
+        return []
