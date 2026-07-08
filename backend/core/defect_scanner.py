@@ -2523,7 +2523,11 @@ class DefectScanner:
             "streaming": 0.50,
             "minidisc": 0.65,
         }
-        discount = float(os.environ.get("AURIK_CODEC_DISCOUNT", _DISCOUNT_MAP.get(_terminal, 0.60)))
+        # Data-driven: discount = f(chain_length, terminal_type)
+        # mp3_low ×4-stage chain → 0.45; mp3_high ×2-stage → 0.65
+        _base_discount = _DISCOUNT_MAP.get(_terminal, 0.60)
+        _chain_bonus = max(0, (len(_chain_lower) - 1) * 0.05)  # +0.05 pro Kettenstufe
+        discount = float(np.clip(_base_discount + _chain_bonus, 0.30, 0.80))
 
         # Analog-Defekte die von Codec-Artefakten imitiert werden
         _ANALOG_MIMICABLE: set[DefectType] = {

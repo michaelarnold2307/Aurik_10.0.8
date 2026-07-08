@@ -321,7 +321,11 @@ class ReparaturDenker:
         if defect_locations:
             _n_click_locs = len(defect_locations.get("click", []))
             if _n_click_locs > 5000:
-                self._CLICK_IQR_MULTIPLIER = float(os.environ.get("AURIK_CLICK_IQR_CODEC", 12.0))
+                # Data-driven: IQR = f(click_density, codec_type)
+                # 15k clicks/225s=67/s → IQR 8.5+67/20×2=15.2 → cap 14.0
+                _click_rate = _n_click_locs / max(len(audio) / sr, 1.0)
+                _density_iqr = 8.5 + min(_click_rate / 20.0 * 2.0, 5.5)
+                self._CLICK_IQR_MULTIPLIER = float(np.clip(_density_iqr, 8.5, 14.0))
                 logger.info(
                     "ReparaturDenker: %d clicks → click_iqr %.1f (Denker-Schutzstufe 2)",
                     _n_click_locs, self._CLICK_IQR_MULTIPLIER,
