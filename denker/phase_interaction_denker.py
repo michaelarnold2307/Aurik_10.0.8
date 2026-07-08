@@ -558,7 +558,6 @@ class PhaseInteractionDenker:
         _ANALOG_ONLY_PHASES: frozenset[str] = frozenset({
             "phase_12_wow_flutter_fix",
             "phase_28_surface_noise_profiling",
-            "phase_29_tape_hiss_reduction",
             "phase_20_reverb_reduction",
             "phase_49_advanced_dereverb",
             "phase_60_inner_groove_distortion_repair",
@@ -567,6 +566,7 @@ class PhaseInteractionDenker:
             "phase_03_denoise": 0.30,
             "phase_02_hum_removal": 0.40,
             "phase_05_rumble_filter": 0.40,
+            "phase_29_tape_hiss_reduction": 0.40,  # ECHTES Kassetten-Hiss, nicht MP3-Artefakt
         }
         _codec_meta_raw = getattr(defect_result, "metadata", {}) or {}
         # §BUGFIX: chain_threshold_override_applied ist true für JEDE Ketten-Override,

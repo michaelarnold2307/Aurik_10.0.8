@@ -310,6 +310,15 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                             ddim_steps=50,
                             duration=_asr_duration,
                         )
+                    # §AUDIOSR-NANFIX: generate_batch kann NaN in der Waveform-Rekonstruktion
+                    # produzieren (vocoder/interne valid_audio-Prüfung). Clean vor Weiterverarbeitung.
+                    if hasattr(z_result_raw, 'detach'):
+                        _z_tmp = z_result_raw.detach().cpu().numpy()
+                    else:
+                        _z_tmp = np.asarray(z_result_raw, dtype=np.float32)
+                    _z_tmp = np.nan_to_num(_z_tmp, nan=0.0, posinf=0.0, neginf=0.0)
+                    if not np.isfinite(_z_tmp).all():
+                        logger.debug('AudioSR Zone %d: NaN/Inf nach generate_batch, cleaned', z_idx + 1)
                     logger.debug(
                         "AudioSR: Zone %d/%d direkt-Waveform-Inferenz (%.1f s)",
                         z_idx + 1,
