@@ -11693,6 +11693,18 @@ class UnifiedRestorerV3:
                     if _zones:
                         for z in _zones:
                             _surgical_plan[z.defect_type] = _surgical_plan.get(z.defect_type, 0) + 1
+                        # §2.59.14: SurgicalPlan für Denker→Phasen-Kommunikation
+                        try:
+                            from backend.core.surgical_plan import SurgicalPlan, SURGICAL_DEFECT_TO_PHASE
+                            _sp = SurgicalPlan(audio_duration_s=float(audio.shape[-1]) / max(sample_rate, 1))
+                            for z in _zones:
+                                _phase_id = SURGICAL_DEFECT_TO_PHASE.get(z.defect_type)
+                                if _phase_id:
+                                    _sp.add(z.defect_type, _phase_id, z.start_s, z.end_s, z.severity)
+                            self._restoration_context["surgical_plan"] = _sp
+                            logger.debug("SurgicalPlan: %d Instruktionen für %d Phasen", len(_sp), len(_sp.by_phase()))
+                        except Exception:
+                            pass
                         _surgeon = SurgicalRepair(sr=sample_rate)
                         _instances = [
                             DefectInstance(z.start_s, z.end_s, z.defect_type, z.severity)
