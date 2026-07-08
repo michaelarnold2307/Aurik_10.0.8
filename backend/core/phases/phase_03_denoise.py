@@ -854,23 +854,17 @@ class DenoisePhase(PhaseInterface):
         _bsrof_original_audio: np.ndarray | None = None
 
         # §CODEC+VOCAL: MP3/AAC + Gesang → kein MIIPHER/BS-RoFormer, nur Spectral-Gate
-        # BS-RoFormer+MIIPHER zerreißen Vocal-Textur bei bereits komprimiertem Material.
-        # Kassetten-Grundrauschen ist psychoakustisch vertraut — nicht entfernen.
-        _chain_hint_codec = kwargs.get("transfer_chain") or kwargs.get("effective_chain") or kwargs.get("chain_info") or []
-        logger.debug("§CODEC+VOCAL DEBUG: effective_chain=%s panns_singing=%.2f use_lightweight=%s",
-                     _chain_hint_codec, _panns_singing, use_lightweight)
-        if isinstance(_chain_hint_codec, dict):
-            _chain_list_codec = _chain_hint_codec.get("chain_str", "") or _chain_hint_codec.get("chain", "")
-        elif isinstance(_chain_hint_codec, (list, tuple)):
-            _chain_list_codec = " → ".join(str(s) for s in _chain_hint_codec)
-        else:
-            _chain_list_codec = str(_chain_hint_codec or "")
-        _is_codec_chain = any(t in _chain_list_codec.lower() for t in ("mp3_low", "mp3_high", "aac", "streaming"))
+        # transfer_chain wird von _prepare_profiled_phase_context aus _restoration_context injiziert.
+        # Einzige Quelle — keine Fallbacks, kein String-Matching.
+        _chain = kwargs.get("transfer_chain")
+        _is_codec_chain = isinstance(_chain, (list, tuple)) and any(
+            str(s).lower() in ("mp3_low", "mp3_high", "aac", "streaming") for s in _chain
+        )
         if _is_codec_chain and _panns_singing > 0.25 and not use_lightweight:
             use_lightweight = True
             logger.info(
-                "§CODEC+VOCAL Phase 03: Codec-Kette (%s) + Gesang (%.2f) → Spectral-Gate statt MIIPHER (Vocal-Textur-Schutz)",
-                _chain_list_codec[:80], _panns_singing,
+                "§CODEC+VOCAL Phase 03: %s + Gesang (%.2f) → Spectral-Gate statt MIIPHER",
+                " → ".join(str(s) for s in _chain), _panns_singing,
             )
 
         _bsrof_gate = _panns_singing >= 0.35 and not use_lightweight and (_est_snr_db is None or _est_snr_db < 20.0)
