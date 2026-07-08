@@ -28287,6 +28287,14 @@ class UnifiedRestorerV3:
             except Exception:
                 pass
 
+        # §CODEC+VOCAL: effective_chain an Phase 03 weitergeben (für Codec-Guard)
+        if "effective_chain" not in kwargs:
+            _rctx = getattr(self, "_restoration_context", None)
+            if isinstance(_rctx, dict):
+                _ec = _rctx.get("effective_chain", [])
+                if _ec:
+                    kwargs["effective_chain"] = list(_ec) if isinstance(_ec, (list, tuple)) else _ec
+
         try:
             if _use_per_segment:
                 from backend.core.per_segment_executor import run_phase_per_segment

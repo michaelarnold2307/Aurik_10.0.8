@@ -856,7 +856,7 @@ class DenoisePhase(PhaseInterface):
         # §CODEC+VOCAL: MP3/AAC + Gesang → kein MIIPHER/BS-RoFormer, nur Spectral-Gate
         # BS-RoFormer+MIIPHER zerreißen Vocal-Textur bei bereits komprimiertem Material.
         # Kassetten-Grundrauschen ist psychoakustisch vertraut — nicht entfernen.
-        _chain_hint_codec = kwargs.get("chain_info") or kwargs.get("restoration_context", {}).get("effective_chain", [])
+        _chain_hint_codec = kwargs.get("effective_chain") or kwargs.get("chain_info") or []
         if isinstance(_chain_hint_codec, dict):
             _chain_list_codec = _chain_hint_codec.get("chain_str", "") or _chain_hint_codec.get("chain", "")
         elif isinstance(_chain_hint_codec, (list, tuple)):
