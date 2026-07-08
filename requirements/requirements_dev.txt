@@ -13,6 +13,10 @@ starlette==0.50.0
 # --- Wissenschaftliche Bibliotheken (für CI-Tests: benchmarks, normative) ---
 numpy==1.26.4
 scipy>=1.12.0
+soundfile>=0.12.1
+librosa==0.11.0
+resampy==0.4.3
+numba==0.63.1
 
 # --- Testing ---
 pytest>=8.0.0
