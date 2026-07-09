@@ -173,7 +173,8 @@ def _restore_microdynamics(
         rst_rms = np.sqrt(np.convolve(rst_mono ** 2, kernel, mode='same') + 1e-12)
 
         # Wo wurde das Signal komprimiert? (Restauriert-RMS < Referenz-RMS)
-        compressed = (rst_rms < ref_rms * 0.95) & (ref_rms > 0.005)
+        # Mindest-RMS: −40 dBFS — verhindert Expansion von Stille/Intros
+        compressed = (rst_rms < ref_rms * 0.95) & (ref_rms > 0.01)
 
         if not np.any(compressed):
             return restored

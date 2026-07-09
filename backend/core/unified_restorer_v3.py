@@ -11883,34 +11883,6 @@ class UnifiedRestorerV3:
         if isinstance(getattr(self, "_restoration_context", None), dict):
             self._restoration_context["_cross_guard_results"] = dict(_kg_result)
 
-        # §2.72 VitalityRestorer: Stereo-Breite, Mikrodynamik, Transienten-Punch
-        if hasattr(self, "_pre_pipeline_ref") and self._pre_pipeline_ref is not None:
-            try:
-                from backend.core.dsp.vitality_restorer import restore_vitality
-                _vr_pre = np.asarray(restored_audio, dtype=np.float32)
-                restored_audio = restore_vitality(
-                    processed=restored_audio, original=self._pre_pipeline_ref,
-                    sample_rate=sample_rate,
-                )
-                _vr_delta = float(np.mean(np.abs(restored_audio - _vr_pre)))
-                if _vr_delta > 0.0005:
-                    logger.info("§2.72 VitalityRestorer: Δ=%.4f RMS — Atem zurück", _vr_delta)
-            except Exception as _vr_exc:
-                logger.debug("§2.72 VitalityRestorer: %s", _vr_exc)
-
-        # §2.73 FinalPolish: Era-EQ + Noise-Texture + Dithering
-        try:
-            from backend.core.dsp.final_polish import apply_final_polish
-            _era_decade = int(getattr(self, "_restoration_context", {}).get("decade", 1970))
-            _is_studio = bool(self.is_studio_mode())
-            _mat = str(getattr(self, "_restoration_context", {}).get("primary_material", "vinyl"))
-            restored_audio = apply_final_polish(
-                restored_audio, sample_rate,
-                era_decade=_era_decade, is_studio=_is_studio, material=_mat,
-            )
-        except Exception as _fp_exc:
-            logger.debug("§2.73 FinalPolish: %s", _fp_exc)
-
         # §AF-MAX: DynamicsGuardIntegration — Post-Pipeline Teamwork
         try:
             from backend.core.dynamics_guard_integration import DynamicsGuardIntegration as _AF_Int
