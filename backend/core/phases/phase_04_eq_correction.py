@@ -784,6 +784,22 @@ class EQCorrectionPhase(PhaseInterface):
         except Exception as _opm_exc_p04:
             logger.debug("§V26 phase_04 onset_guard non-blocking: %s", _opm_exc_p04)
 
+        # §2.71 Strength-Envelope: Chirurgische EQ nur in Defekt-Regionen
+        _strength_env = kwargs.get("strength_envelope")
+        if _strength_env is not None:
+            try:
+                from backend.core.strength_envelope import apply_strength_envelope
+                _env_pre = np.asarray(result_audio, dtype=np.float32)
+                result_audio = apply_strength_envelope(
+                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env, sample_rate=sample_rate,
+                    base_strength=_effective_strength,
+                )
+                if float(np.mean(np.abs(result_audio - _env_pre))) > 0.001:
+                    logger.info("§2.71 Envelope-Blending Phase 04: Δ=%.4f RMS", float(np.mean(np.abs(result_audio - _env_pre))))
+            except Exception as _se_exc:
+                logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
+
         return create_phase_result(
             audio=result_audio,
             modifications={
