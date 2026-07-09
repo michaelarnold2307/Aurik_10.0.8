@@ -7414,6 +7414,8 @@ class UnifiedRestorerV3:
             )
         else:
             original_audio_for_goals: np.ndarray = audio.copy()  # type: ignore[no-redef]
+        # §2.72: Für Post-Pipeline Vitality-Restoration vorhalten
+        self._pre_pipeline_ref = original_audio_for_goals.copy()
 
         _cb(5, "Restaurierbarkeit wird geprüft…")
         # §2.26 RestorabilityEstimator — Vor-Assessment der Restaurierbarkeit (DSP-only, < 5 s)
@@ -11880,6 +11882,22 @@ class UnifiedRestorerV3:
             pass  # Method may not exist yet
         if isinstance(getattr(self, "_restoration_context", None), dict):
             self._restoration_context["_cross_guard_results"] = dict(_kg_result)
+
+        # §2.72 VitalityRestorer: Stereo-Breite, Mikrodynamik, Transienten-Punch
+        if hasattr(self, "_pre_pipeline_ref") and self._pre_pipeline_ref is not None:
+            try:
+                from backend.core.dsp.vitality_restorer import restore_vitality
+                _vr_pre = np.asarray(restored_audio, dtype=np.float32)
+                restored_audio = restore_vitality(
+                    processed=restored_audio, original=self._pre_pipeline_ref,
+                    sample_rate=sample_rate,
+                )
+                _vr_delta = float(np.mean(np.abs(restored_audio - _vr_pre)))
+                if _vr_delta > 0.0005:
+                    logger.info("§2.72 VitalityRestorer: Δ=%.4f RMS — Atem zurück", _vr_delta)
+            except Exception as _vr_exc:
+                logger.debug("§2.72 VitalityRestorer: %s", _vr_exc)
+
         # §AF-MAX: DynamicsGuardIntegration — Post-Pipeline Teamwork
         try:
             from backend.core.dynamics_guard_integration import DynamicsGuardIntegration as _AF_Int
