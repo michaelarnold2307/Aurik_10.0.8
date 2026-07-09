@@ -153,6 +153,12 @@ def compute_strength_envelope(
             gauss = np.exp(-0.5 * (dist / total_sigma) ** 2)
             envelope[f_min:f_max] = np.maximum(envelope[f_min:f_max], weight * gauss)
 
+    # ── Stage 1.5: Temporal masking (forward 200ms, backward 20ms) ──
+    # Laute Transienten maskieren leise Defekte in ihrer zeitlichen Nähe.
+    # Psychoakustisch korrekt: Vorwärtsmaskierung (laut→leise) >> Rückwärts.
+    if audio is not None and audio.size > 0:
+        envelope = _apply_temporal_masking(envelope, audio, sample_rate, envelope_hop)
+
     # ── Stage 2: Asymmetric attack/release smoothing ─────────────────
     envelope = _apply_asymmetric_smoothing(envelope, sample_rate, envelope_hop)
 
@@ -349,6 +355,103 @@ def _smooth_segment(segment: np.ndarray) -> np.ndarray:
     if len(segment) < 3:
         return segment
     return ndimage.median_filter(segment, size=3)
+
+
+def _apply_temporal_masking(
+    envelope: np.ndarray,
+    audio: np.ndarray,
+    sample_rate: int,
+    hop: int,
+) -> np.ndarray:
+    """Psychoakustische Temporal Masking: Transienten maskieren nahe Defekte.
+
+    Forward masking (200ms, exponentielle Dämpfung τ=50ms):
+      Nach einem lauten Transienten sind leise Defekte bis zu 200ms
+      lang weniger hörbar → Envelope wird reduziert.
+
+    Backward masking (20ms, τ=5ms):
+      Kurz VOR einem Transienten sind Defekte ebenfalls maskiert.
+
+    Referenz: Moore (2003), Zwicker & Fastl (1999), ISO 532-1.
+    """
+    try:
+        n_frames = len(envelope)
+        if n_frames < 3:
+            return envelope
+
+        # 1. Transient-Detektion (Duxbury-Energie-Ratio)
+        if audio.ndim > 1:
+            mono = np.mean(audio, axis=0) if audio.shape[0] <= 2 else audio[0]
+        else:
+            mono = audio
+
+        win_short_s = 0.008
+        win_short = max(4, int(win_short_s * sample_rate))
+        win_long = win_short * 4
+
+        if len(mono) < win_long:
+            return envelope
+
+        energy = mono.astype(np.float64) ** 2
+        e_short = np.convolve(energy, np.ones(win_short) / win_short, mode='same')
+        e_long = np.convolve(energy, np.ones(win_long) / win_long, mode='same')
+        ratio = e_short / (e_long + 1e-10)
+
+        frame_indices = np.arange(0, len(mono), hop)[:n_frames]
+        ratio_frames = ratio[frame_indices]
+        transients = ratio_frames > 2.5
+
+        if not np.any(transients):
+            return envelope
+
+        # 2. Forward-Masking-Profil (exponentiell, 200ms)
+        tau_fwd_frames = max(1.0, 0.050 * sample_rate / hop)  # τ=50ms
+        fwd_frames = int(0.200 * sample_rate / hop)            # 200ms max
+        fwd_mask = np.zeros(fwd_frames, dtype=np.float64)
+        for i in range(fwd_frames):
+            fwd_mask[i] = np.exp(-i / tau_fwd_frames)
+        fwd_mask = 1.0 - fwd_mask * 0.6  # Max 60% Reduktion
+
+        # 3. Backward-Masking-Profil (exponentiell, 20ms)
+        tau_bwd_frames = max(1.0, 0.005 * sample_rate / hop)   # τ=5ms
+        bwd_frames = int(0.020 * sample_rate / hop)             # 20ms max
+        bwd_mask = np.zeros(bwd_frames, dtype=np.float64)
+        for i in range(bwd_frames):
+            bwd_mask[bwd_frames - 1 - i] = np.exp(-i / tau_bwd_frames)
+        bwd_mask = 1.0 - bwd_mask * 0.4  # Max 40% Reduktion
+
+        # 4. Anwenden: Für jeden Transienten Maske auf Envelope
+        mask_accum = np.ones(n_frames, dtype=np.float64)
+        transient_positions = np.where(transients)[0]
+
+        for pos in transient_positions:
+            # Forward (nach dem Transienten)
+            end_fwd = min(n_frames, pos + fwd_frames)
+            length = end_fwd - pos
+            if length > 0:
+                mask_accum[pos:end_fwd] = np.minimum(
+                    mask_accum[pos:end_fwd], fwd_mask[:length]
+                )
+            # Backward (vor dem Transienten)
+            start_bwd = max(0, pos - bwd_frames)
+            length = pos - start_bwd
+            if length > 0:
+                mask_accum[start_bwd:pos] = np.minimum(
+                    mask_accum[start_bwd:pos], bwd_mask[bwd_frames - length:]
+                )
+
+        envelope_masked = envelope * mask_accum
+        n_reduced = int(np.sum(mask_accum < 0.95))
+        if n_reduced > 0:
+            logger.debug(
+                "§2.71 TemporalMasking: %d/%d Frames reduziert (μ=%.3f)",
+                n_reduced, n_frames, float(np.mean(mask_accum)),
+            )
+
+        return np.asarray(envelope_masked, dtype=np.float64)
+
+    except Exception:
+        return envelope
 
 
 def _resample_1d(data: np.ndarray, target_len: int) -> np.ndarray:
