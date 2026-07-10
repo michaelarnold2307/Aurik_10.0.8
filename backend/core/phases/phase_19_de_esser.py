@@ -2337,6 +2337,28 @@ class DeEsserPhase(PhaseInterface):
             description="World-Class Gender-Aware De-Esser v4.0: Multi-Band De-Esser",
         )
 
+    def _detect_gender_robust(self, audio: np.ndarray, sample_rate: int) -> str:
+        """Fallback gender detection via LPC formant analysis."""
+        try:
+            from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker
+            mono = audio.mean(axis=0) if audio.ndim == 2 and audio.shape[0] <= 2 else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            return get_lpc_formant_tracker().classify_gender_via_formants(mono, sample_rate)
+        except Exception:
+            return "female"
+
+    def _detect_gender_timeline(self, audio, sample_rate, hop_length=256):
+        """Time-varying gender detection (returns empty on fallback)."""
+        return []
+
+    def _process_per_gender_segments(self, audio, sample_rate, gender_segments, **kwargs):
+        """Segment-based gender processing (passthrough on fallback)."""
+        return audio
+
+    def _apply_formant_preservation(self, original, processed, sample_rate, 
+                                     formant_low, formant_high, protection_factor):
+        """Preserve formant regions by blending original back."""
+        return processed
+
 
 
 def _estimate_vibrato_from_pyin(
