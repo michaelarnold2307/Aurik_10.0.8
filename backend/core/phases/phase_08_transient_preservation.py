@@ -437,6 +437,95 @@ class TransientPreservationPhase(PhaseInterface):
         except Exception as _hg_exc_08:
             logger.debug("Phase08 §2.46e Hallucination-Guard (non-blocking): %s", _hg_exc_08)
 
+        # ── §Transport-Bump-Repair: Chirurgische Amplituden-Korrektur ──
+        # Transport-Bumps und Tape-Head-Level-Dips sind kurze Pegel-Einbrüche.
+        # Für JEDES Event wird individuell gemessen: Dauer, Tiefe, lokaler Kontext.
+        # Die Reparatur passt sich pro Event an — kurze Dips (30ms) bekommen
+        # einen schnellen Gain-Push, längere (200ms+) einen sanften Hüllkurven-Boost.
+        _bump_count = 0
+        _bump_total_db = 0.0
+        try:
+            _defect_locs = kwargs.get("defect_locations", {}) or {}
+            _bump_locs = _defect_locs.get("transport_bump", [])
+            if not _bump_locs:
+                _bump_locs = _defect_locs.get("tape_head_level_dip", [])
+
+            if _bump_locs:
+                _channels = enhanced if enhanced.ndim == 2 else enhanced[np.newaxis, :]
+                _n_samples = _channels.shape[1]
+                _bump_repaired = _channels.copy()
+
+                for _t_start, _t_end in _bump_locs:
+                    _s = max(0, int(_t_start * sample_rate))
+                    _e = min(_n_samples, int(_t_end * sample_rate))
+                    if _e <= _s + 2:
+                        continue
+
+                    _dur_s = (_e - _s) / sample_rate
+                    _segment = _channels[:, _s:_e]
+
+                    # ── Individuelle Messung: RMS-Verlauf des Events ──
+                    _win_sm = max(32, int(sample_rate * 0.005))  # 5ms Fenster
+                    _seg_mono = np.mean(np.abs(_segment), axis=0)
+                    _env = np.zeros(len(_seg_mono), dtype=np.float64)
+                    for _k in range(0, len(_seg_mono), _win_sm // 2):
+                        _ke = min(_k + _win_sm, len(_seg_mono))
+                        _env[_k:_ke] = float(np.sqrt(np.mean(_seg_mono[_k:_ke]**2) + 1e-12))
+
+                    # ── Referenz: RMS im umgebenden Kontext (150ms vorher + nachher) ──
+                    _ctx_before_s = max(0, _s - int(sample_rate * 0.150))
+                    _ctx_after_e = min(_n_samples, _e + int(sample_rate * 0.150))
+                    _ctx_before = _channels[:, _ctx_before_s:_s] if _s > _ctx_before_s else _channels[:, :1]
+                    _ctx_after = _channels[:, _e:_ctx_after_e] if _ctx_after_e > _e else _channels[:, -1:]
+                    _ref_rms = float(np.sqrt(np.mean(np.concatenate([
+                        _ctx_before.ravel(), _ctx_after.ravel()
+                    ])**2) + 1e-12))
+
+                    if _ref_rms < 1e-8:
+                        continue
+
+                    # ── Per-Event-Gain-Kurve: Tiefe + Dauer-adaptiv ──
+                    _env_norm = _env / _ref_rms
+                    # Gain = Referenz / aktuell, begrenzt auf max 6dB Recovery
+                    _gain = np.clip(1.0 / np.maximum(_env_norm, 0.05), 0.5, 2.0)
+                    # Längere Dips → weichere Recovery (langsamere Gain-Änderung)
+                    _smooth_ms = float(np.clip(_dur_s * 0.3 * 1000, 5.0, 50.0))
+                    _smooth_win = max(3, int(_smooth_ms / 1000 * sample_rate / (_win_sm // 2)))
+                    if _smooth_win > 2 and len(_gain) > _smooth_win:
+                        _gain = np.convolve(_gain, np.ones(_smooth_win) / _smooth_win, mode="same")
+
+                    # ── Hanning-Fade an den Rändern (unhörbare Übergänge) ──
+                    _fade_n = min(int(sample_rate * 0.010), len(_gain) // 4)  # 10ms
+                    if _fade_n > 1:
+                        _fade_in = 0.5 - 0.5 * np.cos(np.pi * np.arange(_fade_n) / _fade_n)
+                        _fade_out = 0.5 + 0.5 * np.cos(np.pi * np.arange(_fade_n) / _fade_n)
+                        _gain[:_fade_n] = 1.0 + (_gain[:_fade_n] - 1.0) * _fade_in
+                        _gain[-_fade_n:] = 1.0 + (_gain[-_fade_n:] - 1.0) * _fade_out
+
+                    # Gain auf Segment-Länge interpolieren
+                    _gain_full = np.interp(
+                        np.arange(len(_seg_mono)),
+                        np.linspace(0, len(_seg_mono) - 1, len(_gain)),
+                        _gain,
+                    ).astype(np.float32)
+
+                    # Applizieren
+                    for _ch in range(_channels.shape[0]):
+                        _bump_repaired[_ch, _s:_e] = _channels[_ch, _s:_e] * _gain_full
+
+                    _bump_count += 1
+                    _bump_total_db += float(20 * np.log10(np.max(_gain)))
+
+                if _bump_count > 0:
+                    enhanced = _bump_repaired if enhanced.ndim == 2 else _bump_repaired[0]
+                    enhanced = np.clip(enhanced, -1.0, 1.0)
+                    logger.info(
+                        "Phase08 §Transport-Bump-Repair: %d Events chirurgisch korrigiert "
+                        "(mean=%.1fdB Gain)", _bump_count,
+                        _bump_total_db / max(_bump_count, 1))
+        except Exception as _tb_exc:
+            logger.debug("Phase08 §Transport-Bump-Repair non-blocking: %s", _tb_exc)
+
         return create_phase_result(
             audio=enhanced,
             modifications={
@@ -448,6 +537,8 @@ class TransientPreservationPhase(PhaseInterface):
                 "band_splits_hz": self.BAND_SPLITS,
                 "phase_locality_factor": phase_locality_factor,
                 "effective_strength": _effective_strength,
+                "transport_bumps_repaired": _bump_count,
+                "transport_bump_mean_gain_db": round(_bump_total_db / max(_bump_count, 1), 1) if _bump_count else 0.0,
                 "material_type": material_type,
             },
             warnings=[f"High transient density: {transient_density:.1f}/sec"] if transient_density > 10 else [],
