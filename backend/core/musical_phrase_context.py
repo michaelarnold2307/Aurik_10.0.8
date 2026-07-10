@@ -334,7 +334,8 @@ class MusicalPhraseContextExtractor:
             if madmom is None:
                 raise ImportError("madmom nicht installiert")
 
-            proc = madmom.features.tempo.TempoEstimationProcessor(method="acf", fps=100)
+            proc = madmom.features.tempo.TempoEstimationProcessor(
+                histogram_processor=madmom.features.tempo.ACFTempoHistogramProcessor(fps=100))
             act = madmom.features.beats.RNNBeatProcessor()(audio.astype(np.float32))
             tempos = proc(act)
             if len(tempos) > 0:
