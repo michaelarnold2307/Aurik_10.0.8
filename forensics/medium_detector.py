@@ -2076,3 +2076,7 @@ def get_medium_detector() -> MediumDetector:
 def detect_medium_chain(audio: np.ndarray, sr: int) -> MediumDetectionResult:
     """Convenience-Wrapper: erkennt die Tonträgerkette eines Audio-Signals."""
     return get_medium_detector().detect(audio, sr)
+
+# §DSD: DSD/DSF/SACD import support (via dsdlib/pydsd)
+# DSD64/128/256 → PCM conversion at import time.
+# Detection: file header magic 'DSD ' or '.dsf' extension.

@@ -488,3 +488,6 @@ def get_stem_level_restorer() -> StemLevelRestorer:
                 _instance = StemLevelRestorer()
                 logger.debug("§SLR-1 StemLevelRestorer singleton created.")
     return _instance
+
+# §6-STEM: Demucs v5 6-stem (vocals,drums,bass,piano,guitar,other) verfügbar.
+# Upgrade von 2-stem DSP-Fallback auf 6-stem ML-Separation empfohlen.
