@@ -36,8 +36,8 @@ PERCEPTUAL_BUDGET: dict[str, float] = {
 
 # §2.60.1 Phasen-Substitutionen: Wenn Risk-Guard eine Phase entfernt, wählt der Fahrplan Ersatz.
 PHASE_SUBSTITUTIONS: dict[str, str] = {
-    "phase_07_harmonic_exciter": "phase_23_harmonic_enhancement",
-    "phase_23_harmonic_enhancement": "phase_07_harmonic_exciter",
+    "phase_07_harmonic_restoration": "phase_23_spectral_repair",
+    "phase_23_spectral_repair": "phase_07_harmonic_restoration",
     "phase_02_hum_removal": "phase_03_denoise",
     "phase_03_denoise": "phase_02_hum_removal",
 }

@@ -45,7 +45,7 @@ STEM_PHASE_CONFIG: dict[str, dict[str, float]] = {
         "phase_04_eq_correction": 0.0,          # SKIP – Drums brauchen keinen EQ
         "phase_21_exciter": 0.0,                # SKIP
         "phase_38_presence_boost": 0.0,         # SKIP
-        "phase_07_harmonic_exciter": 0.0,       # SKIP
+        "phase_07_harmonic_restoration": 0.0,       # SKIP
         "phase_22_stereo_enhancement": 0.0,     # SKIP – Drums Mono-kompatibel halten
         "phase_54_drum_transient_recovery": 0.80, # Spezifische Drum-Phase
         "_default": 0.0,
@@ -53,8 +53,8 @@ STEM_PHASE_CONFIG: dict[str, dict[str, float]] = {
     # ── Bass: Rumble, Harmonics, kein Exciter ────────────────────
     "bass": {
         "phase_05_rumble_filter": 0.80,         # Subsonisches Rauschen filtern
-        "phase_07_harmonic_exciter": 0.0,       # SKIP – künstliche Obertöne
-        "phase_23_harmonic_enhancement": 0.60,  # Natürliche Obertöne verstärken
+        "phase_07_harmonic_restoration": 0.0,       # SKIP – künstliche Obertöne
+        "phase_23_spectral_repair": 0.60,  # Natürliche Obertöne verstärken
         "phase_04_eq_correction": 0.70,         # Bass-Frequenzen korrigieren
         "phase_03_denoise": 0.20,               # Minimal
         "phase_21_exciter": 0.0,                # SKIP
@@ -92,14 +92,14 @@ PHASE_SHORT_TO_FULL: dict[str, str] = {
     "phase_03": "phase_03_denoise",
     "phase_04": "phase_04_eq_correction",
     "phase_05": "phase_05_rumble_filter",
-    "phase_07": "phase_07_harmonic_exciter",
+    "phase_07": "phase_07_harmonic_restoration",
     "phase_08": "phase_08_transient_preservation",
     "phase_09": "phase_09_crackle_removal",
     "phase_19": "phase_19_de_esser",
     "phase_20": "phase_20_reverb_reduction",
     "phase_21": "phase_21_exciter",
     "phase_22": "phase_22_stereo_enhancement",
-    "phase_23": "phase_23_harmonic_enhancement",
+    "phase_23": "phase_23_spectral_repair",
     "phase_26": "phase_26_dynamic_range_expansion",
     "phase_29": "phase_29_tape_hiss_reduction",
     "phase_38": "phase_38_presence_boost",
