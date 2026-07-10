@@ -1550,7 +1550,8 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
     # ── Transport-Bump (v9.10.57b — Kassetten-Holpern) ───────────────────────
     "transport_bump": [
         "phase_12_wow_flutter_fix",  # Primär: lokale PSOLA-Korrektur der Pitch-Sprünge
-        "phase_24_dropout_repair",  # Fallback: Amplitude-Reparatur bei Signal-Einbruch
+        "phase_08_transient_preservation",  # Amplitude: Attack-Restoration der Pegel-Dips
+        "phase_24_dropout_repair",  # Fallback: Amplitude-Reparatur bei tiefem Signal-Einbruch
         "phase_31_speed_pitch_correction",  # Zusätzlich: globale Speed-Stabilisierung
     ],
     # ── Tape-Start-Instability (v9.10.97 — Kassettenkopf-Einrastfehler) ─────
@@ -1664,7 +1665,7 @@ CAUSE_TO_PHASES: dict[str, list[str]] = {
         "phase_03_denoise",  # Tertiary: residual noise after HF correction
     ],
     "tape_head_level_dip": [
-        "phase_12_wow_flutter_fix",  # Primary: Tape Level Stabilizer (Step 6c) handles level dips
+        "phase_54_transparent_dynamics",  # Primary: Envelope-Re-Smoothing für graduelle Dips
         "phase_24_dropout_repair",  # Deep dips cross dropout threshold
         "phase_40_loudness_normalization",  # Slow level drift correction
     ],

@@ -1016,7 +1016,7 @@ _PHASE_MAP: dict[DefectType, PhaseAssignment] = {
     DefectType.TAPE_HEAD_LEVEL_DIP: PhaseAssignment(
         defect_type=DefectType.TAPE_HEAD_LEVEL_DIP,
         primary_phases=[
-            "phase_12_wow_flutter_fix",
+            "phase_54_transparent_dynamics",
             "phase_24_dropout_repair",
         ],
         secondary_phases=[
