@@ -35,6 +35,8 @@ class PhaseEffectProfile:
     time_profile: str = "medium"
     # Minimale Defekt-Schwere damit Phase sinnvoll ist (0-1)
     min_severity: float = 0.0
+    # Default-Stärke (1.0 = volle Stärke, vom Joint-Calibrator überschreibbar)
+    base_strength: float = 1.0
     # Kommentar für Debugging
     note: str = ""
 
@@ -404,7 +406,7 @@ class _CatalogHelper:
                 continue
             calibrated = calibrate_phase_intensity(
                 pid,
-                profile.max_strength_by_material.get(audio_ctx.get("material_type", "vinyl"), 1.0),
+                profile.base_strength,
                 defect_severity=float(audio_ctx.get("defect_severity", 0)),
                 material=str(audio_ctx.get("material_type", "vinyl")),
                 panns_singing=float(audio_ctx.get("panns_singing", 0)),
