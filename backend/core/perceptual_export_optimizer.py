@@ -164,12 +164,22 @@ class PerceptualExportOptimizer:
         try:
             import scipy.signal as sp_sig
             for filter_type, freq, gain_db, q in profile:
-                if filter_type == "highshelf":
-                    sos = sp_sig.iirfilter(2, freq / (sr / 2), btype="high", ftype="shelf", output="sos")
-                elif filter_type == "lowshelf":
-                    sos = sp_sig.iirfilter(2, freq / (sr / 2), btype="low", ftype="shelf", output="sos")
-                else:
-                    continue
+                # §scipy-1.10: iirfilter(ftype='shelf') erst ab scipy 1.12.
+                # Fallback: butter + Gain-Skalierung der SOS-Koeffizienten.
+                try:
+                    if filter_type == "highshelf":
+                        sos = sp_sig.iirfilter(2, freq / (sr / 2), btype="high", ftype="shelf", output="sos")
+                    elif filter_type == "lowshelf":
+                        sos = sp_sig.iirfilter(2, freq / (sr / 2), btype="low", ftype="shelf", output="sos")
+                    else:
+                        continue
+                except (ValueError, KeyError):
+                    if filter_type == "highshelf":
+                        sos = sp_sig.butter(2, freq / (sr / 2), btype="high", output="sos")
+                    elif filter_type == "lowshelf":
+                        sos = sp_sig.butter(2, freq / (sr / 2), btype="low", output="sos")
+                    else:
+                        continue
                 gain = 10 ** (gain_db / 40.0)
                 sos[:, :3] *= gain
                 if result.ndim == 2:
