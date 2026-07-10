@@ -237,12 +237,12 @@ def optimize_naturalness(
             arr, _ = _guarded_stage("stereo_focus", _r13c, arr)
             applied.append("stereo_focus")
 
-        # 13d. Bandbreiten-Extension: Fehlende Höhen rekonstruieren (nur Vintage-Material)
-        if _needs_bandwidth_extension(material):
-            _r13d = arr.copy()
-            arr = _bandwidth_extend(arr, sr, material)
-            arr, _ = _guarded_stage("bandwidth_extend", _r13d, arr)
-            applied.append("bandwidth_extend")
+    # ── 13d. Bandbreiten-Extension: Vintage-Material (beide Modi) ─────
+    if _needs_bandwidth_extension(material):
+        _r13d = arr.copy()
+        arr = _bandwidth_extend(arr, sr, material)
+        arr, _ = _guarded_stage("bandwidth_extend", _r13d, arr)
+        applied.append("bandwidth_extend")
 
     # ── 14. Studio 2026 Re-Production Chain (§v10.5) ───────────────────
     if mode == "STUDIO_2026":
