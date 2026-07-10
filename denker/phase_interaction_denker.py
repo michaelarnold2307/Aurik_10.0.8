@@ -729,6 +729,17 @@ class PhaseInteractionDenker:
             logger.warning("phase_interaction_denker.py::unknown fallback", exc_info=True)
             pass
 
+        # ── §ROADMAP-4: Dynamic Phase Ordering (DAG) ──
+        # Sortiert Phasen topologisch nach Frequenzbereich-Überlappungen,
+        # material-abhängig: EQ vor Denoise bei bandbreitenbegrenztem Material
+        # (Shellac), Denoise vor EQ bei rauschdominiertem Material (Tape).
+        try:
+            ordered = self._dag_reorder(ordered, material=material)
+            ordering_applied = ["dag_reorder"] + (ordering_applied or [])
+            conflict_notes.append(f"§ROADMAP-4 DAG-Reorder: {len(ordered)} Phasen topologisch sortiert")
+        except Exception as _dag_exc:
+            logger.debug("§ROADMAP-4 DAG-Reorder non-blocking: %s", _dag_exc)
+
         return PhasePlan(
             phases=ordered,
             suppressed=suppressed,
@@ -1143,6 +1154,64 @@ class PhaseInteractionDenker:
         # vinyl, shellac, digital: static order
 
         return stages
+
+    # ── Guard-Modulation (zentrale Entscheidungs-Intelligenz) ─────────────
+
+    def _dag_reorder(self, phases: list[str], *, material: str = "unknown") -> list[str]:
+        """§ROADMAP-4: Topologische Sortierung nach Frequenzbereich.
+
+        Regeln:
+        1. Subtractive (NR) vor additive (EQ) bei rauschdominiertem Material (tape)
+        2. Additive vor subtractive bei bandbreitenbegrenztem Material (shellac)
+        3. Breitband-Phasen vor schmalbandigen Phasen
+        4. Defekt-Reparatur vor Enhancement
+
+        Nutzt die PHASE_FREQ_PROFILES aus dem CrossPhaseCoordinator für
+        Frequenzbereich-Information jeder Phase.
+        """
+        if len(phases) <= 1:
+            return list(phases)
+
+        try:
+            from denker.cross_phase_coordinator import PHASE_FREQ_PROFILES
+        except ImportError:
+            return list(phases)
+
+        # ── Klassifiziere Phasen ──
+        subtractive: list[str] = []
+        additive: list[str] = []
+        dynamics: list[str] = []
+        other: list[str] = []
+
+        for pid in phases:
+            profile = PHASE_FREQ_PROFILES.get(pid, {})
+            cat = profile.get("category", "")
+            if cat == "subtractive":
+                subtractive.append(pid)
+            elif cat == "additive":
+                additive.append(pid)
+            elif cat == "dynamics":
+                dynamics.append(pid)
+            else:
+                other.append(pid)
+
+        mat = str(material).lower()
+
+        # ── Material-adaptive Reihenfolge ──
+        if mat in ("shellac", "wax_cylinder", "lacquer_disc"):
+            # Bandbreitenbegrenzt: EQ/Enhancement VOR NR
+            # (erst Frequenzen restoren, dann entrauschen)
+            result = additive + dynamics + subtractive + other
+        elif mat in ("cassette", "tape", "reel_tape"):
+            # Rauschdominiert: NR VOR EQ/Enhancement
+            # (erst entrauschen, dann restliche Frequenzen formen)
+            result = subtractive + dynamics + additive + other
+        else:
+            # Default (vinyl, digital): Defekt-Reparatur vor Enhancement
+            result = subtractive + dynamics + additive + other
+
+        return result
+
 
     # ── Guard-Modulation (zentrale Entscheidungs-Intelligenz) ─────────────
 

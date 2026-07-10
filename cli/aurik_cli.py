@@ -835,6 +835,8 @@ def main():
     abx_mode = False
     progress_mode = False
     resume_mode = False
+    album_mode = False
+    album_dir = None
     skip_next = False
     for i, arg in enumerate(args):
         if skip_next:
@@ -863,6 +865,11 @@ def main():
                 progress_mode = True
             elif arg == "--resume":
                 resume_mode = True
+        elif arg == "--album":
+            if i + 1 < len(args):
+                album_dir = args[i + 1]
+                album_mode = True
+                skip_next = True
         elif arg == "--mode":
             if i + 1 < len(args):
                 mode = args[i + 1]
