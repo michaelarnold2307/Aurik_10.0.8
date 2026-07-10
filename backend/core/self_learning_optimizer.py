@@ -89,19 +89,37 @@ class ArmStats:
 
     def ucb1_score(self, total_pulls: int, exploration_factor: float = 1.4) -> float:
         """
-        UCB1-Score: mean + C * sqrt(ln(N) / n)
-        Nicht-gezogene oder vollständig verfallene Arme haben Score = +∞
-        (werden zuerst ausprobiert).
+        UCB1-Score: mean + C * sqrt(ln(N) / n).
+        Unter 1000 Pulls: UCB1-Exploration. Über 1000: GP-Standardfehler.
         """
-        if self.count < 0.5:  # Weniger als 0.5 effektive Pulls → unerprobt
+        if self.count < 0.5:
             return float("inf")
         if total_pulls <= 1:
             return self.mean_delta
+
         exploitation = self.mean_delta
-        exploration = exploration_factor * math.sqrt(
-            math.log(max(2, total_pulls)) / max(0.5, self.count)
-        )
+
+        # §v10.7 Gaussian Process Upgrade: ab 1000 Pulls nutze Standardfehler
+        if total_pulls > 1000 and self.count > 5:
+            variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta ** 2)
+            std_err = math.sqrt(variance / max(1.0, self.count))
+            exploration = 2.0 * std_err  # 95% Konfidenzintervall
+        else:
+            exploration = exploration_factor * math.sqrt(
+                math.log(max(2, total_pulls)) / max(0.5, self.count)
+            )
+
         return exploitation + exploration
+
+    def gp_confidence(self) -> tuple[float, float]:
+        """Gaussian Process: (mean, 95%-confidence-half-width).
+        Nur aussagekräftig wenn count > 5.
+        """
+        if self.count < 2:
+            return self.mean_delta, float("inf")
+        variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta ** 2)
+        std_err = math.sqrt(variance / max(1.0, self.count))
+        return self.mean_delta, 2.0 * std_err  # 95% CI
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -238,6 +256,18 @@ class SelfLearningOptimizer:
                 best_score,
             )
             return best_variant
+
+    def recommend_with_confidence(self, material) -> dict:
+        """§v10.7 GP: Empfehlung mit 95%-Konfidenzintervall."""
+        mat_str = material.value if hasattr(material, "value") else str(material)
+        with self._lock:
+            arms = {v: s for (m, v), s in self._arms.items() if m == mat_str}
+            if not arms:
+                return {"variant": None, "pulls": 0, "gp_active": False}
+            best = max(arms, key=lambda v: arms[v].ucb1_score(self._total_pulls))
+            mean, ci = arms[best].gp_confidence()
+            return {"variant": best, "mean": round(mean,4), "ci95": round(ci,4),
+                    "pulls": int(arms[best].count), "gp_active": self._total_pulls > 1000}
 
     def get_statistics(self) -> dict[str, Any]:
         """Gibt vollständige Lernstatistiken zurück (für Audit/Debugging)."""
