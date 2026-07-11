@@ -370,6 +370,39 @@ def run_pre_analysis(
 
     _cb(90, "Analyse abgeschlossen — Ergebnisse werden gespeichert…")
 
+    # ── §Original-Medium-Chain-Injection ────────────────────────────────
+    # Wenn der MediumDetector nur digitale Stufen erkannt hat (z.B. ['mp3_low']),
+    # die EraClassifier aber ein analoges Original-Medium für die Ära ermittelt
+    # hat (z.B. decade=1980 → 'tape'), wird die Transferkette um den
+    # ursprünglichen analogen Tonträger erweitert.
+    # Beispiel: ['mp3_low'] → ['tape', 'mp3_low'], is_multi=True
+    if result.medium is not None and result.era is not None:
+        try:
+            _chain = list(getattr(result.medium, "transfer_chain", []) or [])
+            _era_material = str(getattr(result.era, "material_prior", "") or "")
+            _analog_materials = {"shellac", "wax_cylinder", "vinyl", "tape", "reel_tape", "cassette", "lacquer_disc", "wire_recording"}
+            _has_analog = any(m in _analog_materials for m in _chain)
+
+            if not _has_analog and _era_material in _analog_materials and _chain:
+                _chain.insert(0, _era_material)
+                _md_result = result.medium
+                _md_result.transfer_chain = _chain
+                _md_result.is_multi_generation = len(_chain) > 1
+                _md_result.primary_material = _era_material
+                if hasattr(_md_result, "evidence"):
+                    _md_result.evidence.append(
+                        f"Original-Medium-Inference: EraClassifier → {_era_material} "
+                        f"(ursprünglicher Tonträger der Veröffentlichung)"
+                    )
+                logger.info(
+                    "pre_analysis: Original-Medium-Chain-Injection: %s → %s (era=%s)",
+                    " → ".join(_chain[1:]) if len(_chain) > 1 else _chain[0],
+                    " → ".join(_chain),
+                    _era_material,
+                )
+        except Exception as _inj_exc:
+            logger.debug("Original-Medium-Chain-Injection skipped: %s", _inj_exc)
+
     # ------------------------------------------------------------------
     # Store in bridge cache so UV3 never re-runs classifiers
     # ------------------------------------------------------------------
