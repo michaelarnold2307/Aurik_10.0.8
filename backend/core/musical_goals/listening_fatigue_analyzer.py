@@ -34,10 +34,6 @@ import librosa
 import numpy as np
 from scipy import signal
 
-def _load_with_sf(filepath):
-    """Wrapper for sf.read — use load_audio_file() for production pipelines."""
-    import soundfile as sf
-    return sf.read(filepath)
 
 
 logger = logging.getLogger(__name__)
@@ -554,8 +550,8 @@ def analyze_listening_fatigue(audio: np.ndarray, sr: int, threshold: float = 0.9
     Examples
     --------
     >>> import numpy as np
-    >>> import soundfile as sf
-    >>> audio, sr = _load_with_sf("audio.wav")
+    >>>     >>> result = load_audio_file("audio.wav")
+    audio, sr = result["audio"], result["sr"]
     >>> analysis = analyze_listening_fatigue(audio, sr)
     logger.debug("Fatigue Score: %.2f", analysis.fatigue_score)
     logger.debug("Passed: %s", analysis.passed)

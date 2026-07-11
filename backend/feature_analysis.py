@@ -3,14 +3,11 @@ from typing import Any
 
 import librosa
 import numpy as np
+from backend.file_import import load_audio_file
 
 # Qualitätsmechanismen importieren
 from .quality_control import QualityControl
 
-def _load_with_sf(filepath):
-    """Wrapper for sf.read — use load_audio_file() for production pipelines."""
-    import soundfile as sf
-    return sf.read(filepath)
 
 
 logger = logging.getLogger(__name__)
@@ -19,9 +16,9 @@ logger = logging.getLogger(__name__)
 def extract_features(audio_bytes: bytes) -> dict[str, Any]:
     import io
 
-    import soundfile as sf
-
-    audio, sr = _load_with_sf(io.BytesIO(audio_bytes))
+    
+    result = load_audio_file(io.BytesIO(audio_bytes)
+    audio, sr = result["audio"], result["sr"])
     if audio.ndim > 1:
         channels = audio.shape[1]
         audio_mono = np.mean(audio, axis=1)
