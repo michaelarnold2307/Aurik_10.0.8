@@ -18,8 +18,6 @@ print("=" * 80)
 
 # Import phase
 from backend.core.phases.phase_01_click_removal import ClickRemovalPhase
-@pytest.mark.unit
-
 # Create test phase
 phase = ClickRemovalPhase()
 print(f"\n✅ Phase instantiated: {phase.get_metadata().name}")

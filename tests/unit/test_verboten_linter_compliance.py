@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 """Compliance-Auto-Verifikation [RELEASE_MUST] — Aurik VERBOTEN-Linter (V01–V33 Zielstand) im CI.
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 """tests/unit/test_adaptive_goal_thresholds.py
 

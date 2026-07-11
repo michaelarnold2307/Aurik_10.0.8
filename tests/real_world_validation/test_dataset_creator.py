@@ -21,8 +21,6 @@ from pathlib import Path
 import librosa
 import numpy as np
 import soundfile as sf
-@pytest.mark.unit
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

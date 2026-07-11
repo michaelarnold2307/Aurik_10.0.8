@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.phases import (
-@pytest.mark.unit
     AirBandEnhancement,
     AzimuthCorrectionPhaseV2,
     BassEnhancement,
