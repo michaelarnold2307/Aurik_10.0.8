@@ -184,6 +184,7 @@ class MetadataPreserver:
         *,
         aurik_version: str = "",
         original_hash: str = "",
+        transfer_chain: list[str] | None = None,
     ) -> bool:
         """Wendet an: metadata tags to an exported audio file.
 
@@ -197,6 +198,8 @@ class MetadataPreserver:
             Aurik version string for provenance tag.
         original_hash : str
             SHA-256 hex digest of original audio for provenance.
+        transfer_chain : list[str] | None
+            Carrier chain for provenance embedding (§2.46a).
 
         Returns
         -------
@@ -213,13 +216,13 @@ class MetadataPreserver:
         ext = tgt.suffix.lower()
         try:
             if ext == ".mp3":
-                return self._apply_id3(tgt, metadata, aurik_version, original_hash)
+                return self._apply_id3(tgt, metadata, aurik_version, original_hash, transfer_chain)
             elif ext == ".flac":
-                return self._apply_flac(tgt, metadata, aurik_version, original_hash)
+                return self._apply_flac(tgt, metadata, aurik_version, original_hash, transfer_chain)
             elif ext in (".ogg", ".oga"):
-                return self._apply_vorbis(tgt, metadata, aurik_version, original_hash)
+                return self._apply_vorbis(tgt, metadata, aurik_version, original_hash, transfer_chain)
             elif ext in (".aiff", ".aif"):
-                return self._apply_aiff(tgt, metadata, aurik_version, original_hash)
+                return self._apply_aiff(tgt, metadata, aurik_version, original_hash, transfer_chain)
             else:
                 logger.debug("metadata apply: unsupported format %s", ext)
                 return False
@@ -233,10 +236,13 @@ class MetadataPreserver:
         target_path: str | Path,
         *,
         aurik_version: str = "",
+        transfer_chain: list[str] | None = None,
     ) -> bool:
         """Extrahiert metadata from source and apply to target in one call.
 
         Also computes SHA-256 provenance hash of the source file.
+        Stores the last transferred metadata in ``_last_metadata`` for
+        downstream consumers (e.g. the BWF chain-metadata writer).
         """
         meta = self.extract(source_path)
         if not meta.has_content() and meta.cover_art is None:
@@ -244,11 +250,23 @@ class MetadataPreserver:
             # Still write provenance even without original tags
             if aurik_version:
                 orig_hash = self._file_hash(source_path)
-                return self.apply(target_path, AudioMetadata(), aurik_version=aurik_version, original_hash=orig_hash)
+                result = self.apply(target_path, AudioMetadata(), aurik_version=aurik_version, original_hash=orig_hash, transfer_chain=transfer_chain)
+                self._last_metadata = {"aurik_version": aurik_version, "original_hash": orig_hash}
+                return result
             return False
 
         orig_hash = self._file_hash(source_path) if aurik_version else ""
-        return self.apply(target_path, meta, aurik_version=aurik_version, original_hash=orig_hash)
+        result = self.apply(target_path, meta, aurik_version=aurik_version, original_hash=orig_hash, transfer_chain=transfer_chain)
+        # Store for downstream access (e.g. chain metadata injection)
+        self._last_metadata: dict[str, object] = {
+            "title": meta.title,
+            "artist": meta.artist,
+            "album": meta.album,
+            "aurik_version": aurik_version,
+            "original_hash": orig_hash,
+            "transfer_chain": transfer_chain or [],
+        }
+        return result
 
     # ── Private: format-specific writers ──────────────────────────────────
 
@@ -263,7 +281,7 @@ class MetadataPreserver:
             parts.append(f"Chain: {' → '.join(transfer_chain)}")
         return " | ".join(parts)
 
-    def _apply_id3(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str) -> bool:
+    def _apply_id3(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str, transfer_chain: list[str] | None = None) -> bool:
         try:
             tags = ID3(str(path))
         except ID3NoHeaderError:
@@ -286,7 +304,7 @@ class MetadataPreserver:
         if version:
             tags.add(
                 COMM(
-                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash)]
+                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash, transfer_chain)]
                 )
             )
 
@@ -294,14 +312,14 @@ class MetadataPreserver:
         logger.info("metadata applied (ID3): %s", path.name)
         return True
 
-    def _apply_flac(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str) -> bool:
+    def _apply_flac(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str, transfer_chain: list[str] | None = None) -> bool:
         mf = FLAC(str(path))
         for internal_key, (_id3_frame, vorbis_key) in _TAG_MAP.items():
             val = getattr(meta, internal_key, "")
             if val:
                 mf[vorbis_key] = [val]
         if version:
-            mf["COMMENT"] = [self._provenance_comment(version, orig_hash)]
+            mf["COMMENT"] = [self._provenance_comment(version, orig_hash, transfer_chain)]
         if meta.cover_art:
             pic = Picture()
             pic.data = meta.cover_art
@@ -312,19 +330,19 @@ class MetadataPreserver:
         logger.info("metadata applied (FLAC): %s", path.name)
         return True
 
-    def _apply_vorbis(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str) -> bool:
+    def _apply_vorbis(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str, transfer_chain: list[str] | None = None) -> bool:
         mf = OggVorbis(str(path))
         for internal_key, (_id3_frame, vorbis_key) in _TAG_MAP.items():
             val = getattr(meta, internal_key, "")
             if val:
                 mf[vorbis_key] = [val]
         if version:
-            mf["COMMENT"] = [self._provenance_comment(version, orig_hash)]
+            mf["COMMENT"] = [self._provenance_comment(version, orig_hash, transfer_chain)]
         mf.save()
         logger.info("metadata applied (Vorbis): %s", path.name)
         return True
 
-    def _apply_aiff(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str) -> bool:
+    def _apply_aiff(self, path: Path, meta: AudioMetadata, version: str, orig_hash: str, transfer_chain: list[str] | None = None) -> bool:
         mf = AIFF(str(path))
         if mf.tags is None:
             mf.add_tags()
@@ -349,7 +367,7 @@ class MetadataPreserver:
         if version:
             tags.add(
                 COMM(
-                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash)]
+                    encoding=3, lang="eng", desc="Aurik Provenance", text=[self._provenance_comment(version, orig_hash, transfer_chain)]
                 )
             )
         mf.save()

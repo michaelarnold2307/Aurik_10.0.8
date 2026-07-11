@@ -33,14 +33,59 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def _transfer_metadata(source_path: str, target_path: str) -> None:
-    """Best-effort metadata transfer from source to target audio file."""
+def _transfer_metadata(source_path: str, target_path: str, *, transfer_chain: list[str] | None = None) -> None:
+    """Best-effort metadata transfer from source to target audio file.
+
+    Embeds Aurik provenance + optional carrier-chain metadata (§2.46a).
+    """
     if not source_path:
         return
     try:
-        get_metadata_preserver().transfer(source_path, target_path, aurik_version=_AURIK_VERSION)
+        get_metadata_preserver().transfer(
+            source_path, target_path,
+            aurik_version=_AURIK_VERSION,
+            transfer_chain=transfer_chain,
+        )
     except Exception as exc:
         logger.debug("metadata transfer skipped: %s", exc)
+
+
+# ── Transferkette / Carrier-Chain Metadata (§2.46a) ─────────────────────
+# Thread-safe module-level storage for the carrier chain metadata discovered
+# during forensics analysis.  Populated by the denker layer before export.
+
+import threading as _threading
+
+_chain_lock: _threading.Lock = _threading.Lock()
+_chain_metadata: dict[str, object] = {}
+
+
+def set_chain_metadata(data: dict[str, object]) -> None:
+    """Store carrier-chain metadata for the current export session.
+
+    Called by the denker/forensics layer after Tonträgerketten-Analyse.
+    Thread-safe – uses a lock so concurrent pipeline runs don't interfere.
+
+    Parameters
+    ----------
+    data : dict
+        Chain metadata dict with keys such as ``carriers``, ``chain_depth``,
+        ``degradation_level``, ``phase_recommendations``.
+    """
+    global _chain_metadata
+    with _chain_lock:
+        _chain_metadata = dict(data)
+
+
+def _build_chain_metadata() -> dict[str, object]:
+    """Return the carrier-chain metadata snapshot for embedding in export tags.
+
+    Returns an empty dict when no chain analysis has been performed.
+    Called by :func:`export_audio` during the export phase (§2.46a).
+    """
+    global _chain_metadata
+    with _chain_lock:
+        return dict(_chain_metadata)
 
 
 # True-Peak threshold: > -0.5 dBTP triggers a warning, > 0 dBTP triggers clipping guard
@@ -603,17 +648,15 @@ def export_audio(
                 write_kwargs["subtype"] = subtype
             sf.write(tmp_path, audio, sr, **write_kwargs)
             os.replace(tmp_path, export_path)
-            _transfer_metadata(source_path, export_path)
-            # §2.46a: Transferkette in Export-Metadaten
+            # §2.46a: Transferkette in Export-Metadaten – vor Metadata-Transfer bauen
+            _chain_list: list[str] | None = None
             try:
-                _chain_meta = _build_chain_metadata()
-                if _chain_meta:
-                    _meta = getattr(get_metadata_preserver(), '_last_metadata', None)
-                    if _meta is None:
-                        _meta = {}
-                    _meta['aurik_transfer_chain'] = _chain_meta
+                _chain_dict = _build_chain_metadata()
+                if _chain_dict:
+                    _chain_list = [str(v) for v in _chain_dict.values() if v]
             except Exception:
-                pass  # Chain metadata is best-effort
+                pass
+            _transfer_metadata(source_path, export_path, transfer_chain=_chain_list)
             # BWF-Metadaten für WAV/RF64 schreiben
             if export_format.lower() in ("wav", "rf64"):
                 try:
@@ -655,17 +698,15 @@ def export_audio(
                 out_args["q:a"] = "0"
             (ffmpeg.input(tmp_wav).output(tmp_out, **out_args).run(overwrite_output=True, quiet=True))
             os.replace(tmp_out, export_path)
-            _transfer_metadata(source_path, export_path)
-            # §2.46a: Transferkette in Export-Metadaten
+            # §2.46a: Transferkette in Export-Metadaten – vor Metadata-Transfer bauen
+            _chain_list2: list[str] | None = None
             try:
-                _chain_meta = _build_chain_metadata()
-                if _chain_meta:
-                    _meta = getattr(get_metadata_preserver(), '_last_metadata', None)
-                    if _meta is None:
-                        _meta = {}
-                    _meta['aurik_transfer_chain'] = _chain_meta
+                _chain_dict2 = _build_chain_metadata()
+                if _chain_dict2:
+                    _chain_list2 = [str(v) for v in _chain_dict2.values() if v]
             except Exception:
-                pass  # Chain metadata is best-effort
+                pass
+            _transfer_metadata(source_path, export_path, transfer_chain=_chain_list2)
             _size_mb = os.path.getsize(export_path) / (1024 * 1024)
             logger.info("Export abgeschlossen: %s (%.1f MB, %s)", export_path, _size_mb, export_format.upper())
             return True
