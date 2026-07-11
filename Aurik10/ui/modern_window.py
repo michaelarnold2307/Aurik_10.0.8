@@ -16662,6 +16662,8 @@ class ModernMainWindow(QMainWindow):
                 _med_updated = getattr(_result, "medium", None)
                 if _med_updated is not None:
                     _inj_chain = list(getattr(_med_updated, "transfer_chain", []) or [])
+                    _is_multi_gen = bool(getattr(_med_updated, "is_multi_generation", False))
+                    _chain_label = " → ".join(str(m) for m in _inj_chain) if _inj_chain else ""
                     if len(_inj_chain) > len(_chain_keys):
                         _chain_keys = _inj_chain
                         _raw_medium = getattr(_med_updated, "primary_material", None) or _raw_medium
@@ -16673,6 +16675,8 @@ class ModernMainWindow(QMainWindow):
                     _lbl=_lbl,
                     _sc=_score,
                     _raw_med=_raw_medium,
+                    _chain_lbl=_chain_label,
+                    _is_multi=_is_multi_gen,
                     _badge=badge,
                     _tip_e=tip_era,
                     _era_decade=decade_label,
@@ -16700,6 +16704,9 @@ class ModernMainWindow(QMainWindow):
                     self._carrier_bg_score = _sc
                     self._raw_medium_type = _raw_med
                     self._update_carrier_display(_lbl, _sc, _file_key, load_token=_token)
+                    # §2.46b: Prognose-Widget mit vollständiger Tonträgerkette aktualisieren
+                    if getattr(self, "prognose_widget", None) is not None and _chain_lbl:
+                        self.prognose_widget.update_chain(_chain_lbl, _is_multi)  # type: ignore[union-attr]
 
                     # -- Era/Genre badge appended to carrier label --
                     _ampel_c = self._render_ampel_html(_sc)
