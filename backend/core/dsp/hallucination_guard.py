@@ -141,6 +141,24 @@ def check_hallucination(
     requires_rollback = False
     score_penalty = 0.0
 
+    # §2.46b Adaptive-Threshold: Je schmaler die Eingangs-Bandbreite,
+    # desto mehr "neue" Spektralenergie ist legitime Restauration.
+    _pre_bw = float(meta.get("pre_effective_bandwidth_hz", 20000.0) or 20000.0)
+    # Fallback: estimate from pre audio if meta doesn't have bandwidth
+    if _pre_bw >= 20000.0 and pre_arr.size > 0:
+        try:
+            _pre_fft = np.abs(np.fft.rfft(pre_arr[:min(len(pre_arr), sr)]))
+            _cumsum = np.cumsum(_pre_fft)
+            _total = _cumsum[-1] + 1e-12
+            _bw_idx = int(np.searchsorted(_cumsum, 0.95 * _total))
+            _pre_bw = float(_bw_idx * sr / len(_pre_fft))
+        except Exception:
+            pass
+    if _pre_bw < 1000.0:
+        _ROLLBACK_THRESHOLD = 0.30
+    elif _pre_bw < 4000.0:
+        _ROLLBACK_THRESHOLD = 0.20
+
     # BW-extension context: carrier-inverse HF restoration is expected to add new
     # spectral content below the material ceiling — raise rollback threshold.
     # harmonic_ceiling_violation (above-ceiling energy growth) veto remains absolute.
