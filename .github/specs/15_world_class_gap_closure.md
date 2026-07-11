@@ -245,7 +245,7 @@ ErrorGuard wurde spät eingeführt und nicht systematisch auf alle Phasen angewe
 ### Erfolgskriterien
 - `audit_error_guard_coverage.py` läuft und identifiziert alle ungeschützten Phasen
 - ≥50% aller Phasen haben ErrorGuard (von geschätzt ~10% derzeit)
-- `test_phase_error_guard.py` validiert Graceful-Degradation für ≥5 Phasen
+- `test_phase_error_guard.py` [ROADMAP] validiert Graceful-Degradation für ≥5 Phasen
 
 ---
 
