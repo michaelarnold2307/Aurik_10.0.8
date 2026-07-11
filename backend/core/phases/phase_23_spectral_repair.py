@@ -46,7 +46,12 @@ import time
 from typing import Any
 
 import numpy as np
-import psutil
+try:
+    import psutil
+    _PSUTIL_OK = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+    _PSUTIL_OK = False
 from scipy import interpolate, ndimage, signal
 
 from backend.core.clipping_detection import ClippingType, classify_clipping
@@ -516,7 +521,7 @@ class SpectralRepair(PhaseInterface):
         # Note: n_channels multiplier removed — _repair_with_audiosr processes mono channels
         # individually (M/S in _repair_channel), so each call is always mono.
 
-        available_gb = float(psutil.virtual_memory().available / (1024**3))
+        available_gb = float(psutil.virtual_memory().available / (1024**3)) if _PSUTIL_OK else 4.0
         if available_gb < required_gb + 1.5:
             try:
                 evict_stale_plugins(required_mb=int(required_gb * 1024))
@@ -527,7 +532,7 @@ class SpectralRepair(PhaseInterface):
                 ctypes.CDLL("libc.so.6").malloc_trim(0)
             except Exception as _exc:
                 logger.debug("Operation failed (non-critical): %s", _exc)
-            available_gb = float(psutil.virtual_memory().available / (1024**3))
+            available_gb = float(psutil.virtual_memory().available / (1024**3)) if _PSUTIL_OK else 4.0
 
         if available_gb < required_gb:
             self._ml_guard_events.append(
@@ -560,8 +565,8 @@ class SpectralRepair(PhaseInterface):
         forcing immediate Single-STFT fallback on every transient pressure spike.
         """
         try:
-            vm = psutil.virtual_memory()
-            swap = psutil.swap_memory()
+            vm = psutil.virtual_memory() if _PSUTIL_OK else None
+            swap = psutil.swap_memory() if _PSUTIL_OK else None
             avail_gb = float(vm.available / (1024**3))
             avail_ratio = float(vm.available / max(vm.total, 1))
             swap_pct = float(getattr(swap, "percent", 100.0))
@@ -834,7 +839,7 @@ class SpectralRepair(PhaseInterface):
             # Swap-Prozent auf wenn nach großen Vorphasen (SGMSE+/MDX) wenig RAM verfügbar ist.
             if not _apollo_swap_blocked:
                 try:
-                    _avail_ram_p23 = psutil.virtual_memory().available / (1024**3)
+                    _avail_ram_p23 = psutil.virtual_memory().available / (1024**3) if _PSUTIL_OK else 4.0
                     if _avail_ram_p23 < 6.0:
                         logger.warning(
                             "phase_23: Apollo TorchScript übersprungen — nur %.1f GB RAM verfügbar "
@@ -947,7 +952,7 @@ class SpectralRepair(PhaseInterface):
             # Only abort to inpainting as a last resort when < 1.5 GB free (hard-crash zone).
             _admm_ram_ok = True
             try:
-                _admm_avail_gb = psutil.virtual_memory().available / (1024**3)
+                _admm_avail_gb = psutil.virtual_memory().available / (1024**3) if _PSUTIL_OK else 4.0 if _PSUTIL_OK else 4.0
                 if _admm_avail_gb < 1.5:
                     logger.warning(
                         "phase_23: ADMM-OOM-Guard (Notfall) — nur %.1f GB frei, < 1.5 GB "
@@ -1853,7 +1858,7 @@ class SpectralRepair(PhaseInterface):
                 )
             try:
                 if _mrsa_ok:
-                    _avail_gb = psutil.virtual_memory().available / (1024**3)
+                    _avail_gb = psutil.virtual_memory().available / (1024**3) if _PSUTIL_OK else 4.0
                     if _avail_gb < 4.0:
                         logger.warning(
                             "phase_23: MRSA-OOM-Preflight fehlgeschlagen (%.1f GB < 4.0 GB) — Single-STFT-Fallback",
@@ -2100,7 +2105,7 @@ class SpectralRepair(PhaseInterface):
             # If RAM is critically low, treat zone as passthrough rather than risk a crash.
             if not _mrsa_budget_exceeded:
                 try:
-                    _mrsa_avail_gb = psutil.virtual_memory().available / (1024**3)
+                    _mrsa_avail_gb = psutil.virtual_memory().available / (1024**3) if _PSUTIL_OK else 4.0 if _PSUTIL_OK else 4.0
                     if _mrsa_avail_gb < 1.0:
                         logger.warning(
                             "phase_23 MRSA: OOM-Guard — nur %.1f GB frei (< 1.0 GB) — Zone %d/%d als Passthrough",
