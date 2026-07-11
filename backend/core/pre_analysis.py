@@ -370,38 +370,63 @@ def run_pre_analysis(
 
     _cb(90, "Analyse abgeschlossen — Ergebnisse werden gespeichert…")
 
-    # ── §Original-Medium-Chain-Injection ────────────────────────────────
-    # Wenn der MediumDetector nur digitale Stufen erkannt hat (z.B. ['mp3_low']),
-    # die EraClassifier aber ein analoges Original-Medium für die Ära ermittelt
-    # hat (z.B. decade=1980 → 'tape'), wird die Transferkette um den
-    # ursprünglichen analogen Tonträger erweitert.
-    # Beispiel: ['mp3_low'] → ['tape', 'mp3_low'], is_multi=True
-    if result.medium is not None and result.era is not None:
+    # ── §2.46a Deep-Transfer-Chain-Injection [RELEASE_MUST] ───────────
+    # Spec §2.46a: Importsongs mit 3+ Tonträgerstufen müssen vollständig
+    # modelliert werden. Drei Quellen für die Ketten-Rekonstruktion:
+    #   1. EraClassifier → inhaltsbasiertes Original-Medium
+    #   2. DefectScanner → physikalische Defekte → Material
+    #   3. MediumDetector → physical_analog_sources
+    if result.medium is not None:
         try:
-            _chain = list(getattr(result.medium, "transfer_chain", []) or [])
-            _era_material = str(getattr(result.era, "material_prior", "") or "")
-            _analog_materials = {"shellac", "wax_cylinder", "vinyl", "tape", "reel_tape", "cassette", "lacquer_disc", "wire_recording"}
-            _has_analog = any(m in _analog_materials for m in _chain)
+            _md = result.medium
+            _chain = list(getattr(_md, "transfer_chain", []) or [])
 
-            if not _has_analog and _era_material in _analog_materials and _chain:
-                _chain.insert(0, _era_material)
-                _md_result = result.medium
-                _md_result.transfer_chain = _chain
-                _md_result.is_multi_generation = len(_chain) > 1
-                _md_result.primary_material = _era_material
-                if hasattr(_md_result, "evidence"):
-                    _md_result.evidence.append(
-                        f"Original-Medium-Inference: EraClassifier → {_era_material} "
-                        f"(ursprünglicher Tonträger der Veröffentlichung)"
-                    )
+            _era_material = None
+            if result.era is not None:
+                _era_material = str(getattr(result.era, "material_prior", "") or "")
+
+            _defect_material = None
+            if result.defects is not None and hasattr(result.defects, "material_type"):
+                _dm = str(getattr(result.defects, "material_type", "")).lower()
+                _defmap = {"cassette": "cassette", "vinyl": "vinyl", "shellac": "shellac",
+                           "tape": "tape", "reel_tape": "reel_tape", "reel": "reel_tape",
+                           "cd_digital": "cd_digital", "dat": "dat"}
+                _defect_material = _defmap.get(_dm)
+
+            _physical = list(getattr(_md, "physical_analog_sources", []) or [])
+            _analog = {"shellac", "wax_cylinder", "vinyl", "tape", "reel_tape",
+                       "cassette", "lacquer_disc", "wire_recording"}
+
+            # Kette bauen: neue Stufen VOR der digitalen Stufe einfügen
+            _injected = []
+            for _src in [_era_material, _defect_material]:
+                if _src and _src in _analog and _src not in _chain:
+                    _injected.append(_src)
+            for _ps_mat, _ps_conf in _physical:
+                _k = str(_ps_mat).lower().replace(" ", "_")
+                if _k in _analog and _k not in _chain and _k not in _injected:
+                    _injected.append(_k)
+
+            if _injected:
+                _dpos = len(_chain)
+                for i, m in enumerate(_chain):
+                    if m in {"mp3_low", "mp3_high", "cd_digital", "streaming", "aac", "unknown"}:
+                        _dpos = i; break
+                for _m in reversed(_injected):
+                    _chain.insert(_dpos, _m)
+                _md.transfer_chain = _chain
+                _md.is_multi_generation = len(_chain) > 1
+                _analog_in = [m for m in _chain if m in _analog]
+                if _analog_in:
+                    _md.primary_material = _analog_in[-1]
                 logger.info(
-                    "pre_analysis: Original-Medium-Chain-Injection: %s → %s (era=%s)",
-                    " → ".join(_chain[1:]) if len(_chain) > 1 else _chain[0],
+                    "pre_analysis: Deep-Transfer-Chain: %s (injected=%s, era=%s, defect=%s)",
                     " → ".join(_chain),
-                    _era_material,
+                    ",".join(_injected) if _injected else "none",
+                    _era_material or "none", _defect_material or "none",
                 )
         except Exception as _inj_exc:
-            logger.debug("Original-Medium-Chain-Injection skipped: %s", _inj_exc)
+            logger.debug("Deep-Transfer-Chain-Injection skipped: %s", _inj_exc)
 
     # ------------------------------------------------------------------
     # Store in bridge cache so UV3 never re-runs classifiers
