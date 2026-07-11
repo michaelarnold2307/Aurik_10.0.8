@@ -1,4 +1,5 @@
 import pytest
+
 """Regression tests for medium detector deduplication in DefectScanner.scan()."""
 
 from __future__ import annotations

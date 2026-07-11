@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for the productive DSP phoneme boundary detector."""
 
 import numpy as np
@@ -12,7 +13,7 @@ def _fricative_noise(sr: int = 48000, duration: float = 0.25) -> np.ndarray:
 
         sos = butter(4, 3000.0, btype="highpass", fs=sr, output="sos")
         return sosfiltfilt(sos, noise).astype(np.float32)
-    except Exception as e:
+    except Exception:
         logger.warning("test fallback", exc_info=True)
         return noise
 

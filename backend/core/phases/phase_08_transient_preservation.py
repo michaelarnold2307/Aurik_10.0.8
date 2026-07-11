@@ -312,10 +312,7 @@ class TransientPreservationPhase(PhaseInterface):
                 pass  # Non-blocking
             if _frisson_cap < 1.0:
                 _effective_strength = float(_effective_strength * _frisson_cap)
-                logger.debug(
-                    "§v10 Phase 08 Frisson-Protect: cap=%.2f strength=%.2f",
-                    _frisson_cap, _effective_strength
-                )
+                logger.debug("§v10 Phase 08 Frisson-Protect: cap=%.2f strength=%.2f", _frisson_cap, _effective_strength)
 
         if _effective_strength <= 0.0:
             passthrough = np.nan_to_num(audio.copy(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -373,8 +370,7 @@ class TransientPreservationPhase(PhaseInterface):
         shaped_bands = []
         for band_idx, band_audio in enumerate(bands):
             shaped = self._shape_transients_per_band(
-                band_audio, onset_times, onset_strengths, params, band_idx,
-                frisson_zones=_frisson_zones
+                band_audio, onset_times, onset_strengths, params, band_idx, frisson_zones=_frisson_zones
             )
             shaped_bands.append(shaped)
 
@@ -481,6 +477,7 @@ class TransientPreservationPhase(PhaseInterface):
 
             if _bump_locs:
                 import scipy.signal as _sps
+
                 _channels = enhanced if enhanced.ndim == 2 else enhanced[np.newaxis, :]
                 _n_samples = _channels.shape[1]
                 _bump_repaired = _channels.copy()
@@ -493,9 +490,11 @@ class TransientPreservationPhase(PhaseInterface):
 
                 # ── Ebene 1: Multi-Band-Crossover-Filter ──
                 _c1, _c2 = 200.0, 3000.0  # Hz
-                _sos_lo = _sps.butter(2, _c1 / (sample_rate / 2), btype='low', output='sos')
-                _sos_mid = _sps.butter(2, [_c1 / (sample_rate / 2), _c2 / (sample_rate / 2)], btype='band', output='sos')
-                _sos_hi = _sps.butter(2, _c2 / (sample_rate / 2), btype='high', output='sos')
+                _sos_lo = _sps.butter(2, _c1 / (sample_rate / 2), btype="low", output="sos")
+                _sos_mid = _sps.butter(
+                    2, [_c1 / (sample_rate / 2), _c2 / (sample_rate / 2)], btype="band", output="sos"
+                )
+                _sos_hi = _sps.butter(2, _c2 / (sample_rate / 2), btype="high", output="sos")
 
                 for _t_start, _t_end in _bump_locs:
                     _s = max(0, int(_t_start * sample_rate))
@@ -517,11 +516,12 @@ class TransientPreservationPhase(PhaseInterface):
                     _hi = _sps.sosfiltfilt(_sos_hi, _seg_mono)
 
                     _win_sm = max(32, int(sample_rate * 0.005))
+
                     def _band_env(band):
                         _env = np.zeros(len(band), dtype=np.float64)
                         for _k in range(0, len(band), _win_sm // 2):
                             _ke = min(_k + _win_sm, len(band))
-                            _env[_k:_ke] = float(np.sqrt(np.mean(band[_k:_ke]**2) + 1e-12))
+                            _env[_k:_ke] = float(np.sqrt(np.mean(band[_k:_ke] ** 2) + 1e-12))
                         return _env
 
                     _env_lo = _band_env(_lo)
@@ -531,10 +531,12 @@ class TransientPreservationPhase(PhaseInterface):
                     # Referenz pro Band aus Kontext
                     _ctx_before_s = max(0, _s - int(sample_rate * 0.150))
                     _ctx_after_e = min(_n_samples, _e + int(sample_rate * 0.150))
-                    _ctx_mono = np.concatenate([
-                        np.mean(_channels[:, _ctx_before_s:_s], axis=0) if _s > _ctx_before_s else _channels[0, :1],
-                        np.mean(_channels[:, _e:_ctx_after_e], axis=0) if _ctx_after_e > _e else _channels[0, -1:],
-                    ])
+                    _ctx_mono = np.concatenate(
+                        [
+                            np.mean(_channels[:, _ctx_before_s:_s], axis=0) if _s > _ctx_before_s else _channels[0, :1],
+                            np.mean(_channels[:, _e:_ctx_after_e], axis=0) if _ctx_after_e > _e else _channels[0, -1:],
+                        ]
+                    )
                     _ctx_lo = _sps.sosfiltfilt(_sos_lo, _ctx_mono)
                     _ctx_mid = _sps.sosfiltfilt(_sos_mid, _ctx_mono)
                     _ctx_hi = _sps.sosfiltfilt(_sos_hi, _ctx_mono)
@@ -558,7 +560,7 @@ class TransientPreservationPhase(PhaseInterface):
                     _smooth_ms = float(np.clip(_dur_s * 0.3 * 1000, 5.0, 50.0))
                     _smooth_win = max(3, int(_smooth_ms / 1000 * sample_rate / (_win_sm // 2)))
                     if _smooth_win > 2 and len(_gain) > _smooth_win:
-                        _gain = np.convolve(_gain, np.ones(_smooth_win) / _smooth_win, mode='same')
+                        _gain = np.convolve(_gain, np.ones(_smooth_win) / _smooth_win, mode="same")
 
                     _fade_n = min(int(sample_rate * 0.010), len(_gain) // 4)
                     if _fade_n > 1:
@@ -568,8 +570,7 @@ class TransientPreservationPhase(PhaseInterface):
                         _gain[-_fade_n:] = 1.0 + (_gain[-_fade_n:] - 1.0) * _fo
 
                     _gain_full = np.interp(
-                        np.arange(len(_seg_mono)),
-                        np.linspace(0, len(_seg_mono) - 1, len(_gain)), _gain
+                        np.arange(len(_seg_mono)), np.linspace(0, len(_seg_mono) - 1, len(_gain)), _gain
                     ).astype(np.float32)
 
                     # ── Ebene 3: Pre-Repair-Qualitäts-Snapshot ──
@@ -601,8 +602,10 @@ class TransientPreservationPhase(PhaseInterface):
                     logger.info(
                         "Phase08 §SOTA-Bump-Repair: %d Events (3-Band + Onset-Guard + Validation), "
                         "%d rolled back, mean=%.1fdB Gain",
-                        _bump_count, _bump_rolled_back,
-                        _bump_total_db / max(_bump_count, 1))
+                        _bump_count,
+                        _bump_rolled_back,
+                        _bump_total_db / max(_bump_count, 1),
+                    )
         except Exception as _tb_exc:
             logger.debug("Phase08 §SOTA-Bump-Repair non-blocking: %s", _tb_exc)
 

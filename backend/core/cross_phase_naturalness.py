@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
 
 import numpy as np
 
@@ -22,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 # Frequenzbänder (Bark-Skala, vereinfacht)
 BANDS = {
-    "sub_bass":   (20, 100, "Sub-Bass"),
-    "bass":       (100, 250, "Bass"),
-    "low_mid":    (250, 800, "Untere Mitten / Wärme"),
-    "mid":        (800, 2500, "Mitten / Präsenz"),
-    "high_mid":   (2500, 6000, "Obere Mitten / Sibilanz"),
-    "presence":   (6000, 10000, "Präsenz / Brillanz"),
-    "air":        (10000, 20000, "Luftband"),
+    "sub_bass": (20, 100, "Sub-Bass"),
+    "bass": (100, 250, "Bass"),
+    "low_mid": (250, 800, "Untere Mitten / Wärme"),
+    "mid": (800, 2500, "Mitten / Präsenz"),
+    "high_mid": (2500, 6000, "Obere Mitten / Sibilanz"),
+    "presence": (6000, 10000, "Präsenz / Brillanz"),
+    "air": (10000, 20000, "Luftband"),
 }
 
 
@@ -36,8 +35,8 @@ class CrossPhaseTracker:
     """Trackt kumulative Verarbeitung pro Frequenzband."""
 
     def __init__(self):
-        self._gain: dict[str, float] = {b: 0.0 for b in BANDS}
-        self._count: dict[str, int] = {b: 0 for b in BANDS}
+        self._gain: dict[str, float] = dict.fromkeys(BANDS, 0.0)
+        self._count: dict[str, int] = dict.fromkeys(BANDS, 0)
         self._history: list[dict] = []
         self._lock = threading.Lock()
 
@@ -105,8 +104,8 @@ class CrossPhaseTracker:
     def reset(self):
         """Setzt den Tracker zurück (neue Datei)."""
         with self._lock:
-            self._gain = {b: 0.0 for b in BANDS}
-            self._count = {b: 0 for b in BANDS}
+            self._gain = dict.fromkeys(BANDS, 0.0)
+            self._count = dict.fromkeys(BANDS, 0)
             self._history.clear()
 
 
@@ -133,6 +132,7 @@ def reset_tracker():
 
 # ── NaturalnessOptimizer Integration ─────────────────────────────────────
 
+
 def estimate_band_effects(
     audio_before: np.ndarray,
     audio_after: np.ndarray,
@@ -155,7 +155,7 @@ def estimate_band_effects(
                 high = nyq * 0.95
             if low >= high:
                 continue
-            sos = butter(2, [low/nyq, high/nyq], btype="band", output="sos")
+            sos = butter(2, [low / nyq, high / nyq], btype="band", output="sos")
             rms_before = float(np.sqrt(np.mean(sosfiltfilt(sos, mono_before) ** 2)) + 1e-12)
             rms_after = float(np.sqrt(np.mean(sosfiltfilt(sos, mono_after) ** 2)) + 1e-12)
             if rms_before > 1e-10:
@@ -166,7 +166,7 @@ def estimate_band_effects(
         return effects
     except Exception as e:
         logger.warning("cross_phase_naturalness.py::estimate_band_effects fallback: %s", e)
-        return {b: 0.0 for b in BANDS}
+        return dict.fromkeys(BANDS, 0.0)
 
 
 def guard_stage(

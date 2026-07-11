@@ -1,4 +1,5 @@
 import pytest
+
 """Core tests for §2.36 LyricsGuidedEnhancement production path.
 
 This test file intentionally validates only the authoritative production module:

@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import scipy.signal as signal
 
 from backend.core.causal_defect_reasoner import CAUSE_PARAMS, CAUSE_TO_PHASES, CAUSES, LIKELIHOOD_FNS, MATERIAL_PRIORS

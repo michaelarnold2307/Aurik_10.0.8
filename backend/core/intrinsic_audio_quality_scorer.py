@@ -48,10 +48,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import numpy as np
-from backend.core.multi_pass_strategy import IntrinsicAudioQualityScorer  # canonical (§dedup)
 
-import scipy.signal as sp_signal
+from backend.core.multi_pass_strategy import IntrinsicAudioQualityScorer  # canonical (§dedup)
 
 logger = logging.getLogger(__name__)
 

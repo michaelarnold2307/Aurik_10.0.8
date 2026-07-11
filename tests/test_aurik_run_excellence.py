@@ -1,10 +1,10 @@
-import pytest
 from __future__ import annotations
 
 import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 @pytest.mark.unit

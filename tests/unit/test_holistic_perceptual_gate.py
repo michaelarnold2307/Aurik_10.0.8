@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_holistic_perceptual_gate.py — §2.44 HolisticPerceptualGate Test-Suite (≥ 25 Tests)
 Alle Tests synthetisch, kein ML-Modell erforderlich.

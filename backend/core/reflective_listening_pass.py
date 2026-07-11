@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RLPIssue:
     """Ein vom RLP erkanntes Problem."""
@@ -67,6 +68,7 @@ class RLPResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class ReflectiveListeningPass:
     """§v10 Zweite-Hörrunde — analysiert V1 und bessert gezielt nach."""
@@ -127,9 +129,7 @@ class ReflectiveListeningPass:
                 break
 
             # Schritt 2: Priorisiere Top-2
-            top_issues = sorted(issues, key=lambda i: i.severity, reverse=True)[
-                : self.MAX_ISSUES_PER_ITERATION
-            ]
+            top_issues = sorted(issues, key=lambda i: i.severity, reverse=True)[: self.MAX_ISSUES_PER_ITERATION]
 
             # Schritt 3: Wende Mikro-Korrekturen an
             corrected = self._apply_corrections(current, sr, top_issues, material)
@@ -170,9 +170,7 @@ class ReflectiveListeningPass:
         if n_issues == 0:
             summary_parts.append("Keine hörbaren Restprobleme gefunden.")
         elif n_fixed > 0:
-            summary_parts.append(
-                f"{n_fixed} von {n_issues} erkannten Restproblemen gezielt korrigiert."
-            )
+            summary_parts.append(f"{n_fixed} von {n_issues} erkannten Restproblemen gezielt korrigiert.")
         else:
             summary_parts.append(
                 f"{n_issues} Restprobleme erkannt — aber keine automatische Korrektur "
@@ -214,7 +212,7 @@ class ReflectiveListeningPass:
         # 1. Spectral Tilt
         tilt = self._measure_spectral_tilt(audio, sr)
         tilt_target = 0.0  # Flaches Spektrum ideal
-        if intent and hasattr(intent, 'brilliance_target'):
+        if intent and hasattr(intent, "brilliance_target"):
             # Je brillianter das Ziel, desto weniger negativer Tilt toleriert
             tilt_target = (intent.brilliance_target - 0.5) * 3.0
 
@@ -222,12 +220,14 @@ class ReflectiveListeningPass:
         if tilt_error > 1.5:  # >1.5 dB/Oktave Abweichung
             direction = "hell" if tilt > tilt_target else "dunkel"
             eq_correction = -0.8 if tilt > tilt_target else 0.8
-            issues.append(RLPIssue(
-                category="spectral_tilt",
-                severity=min(1.0, tilt_error / 5.0),
-                detail=f"Spektrum zu {direction} ({tilt:+.1f} dB/Oktave, Ziel: {tilt_target:+.1f})",
-                correction={"eq_high_shelf_db": eq_correction, "eq_freq_hz": 8000.0},
-            ))
+            issues.append(
+                RLPIssue(
+                    category="spectral_tilt",
+                    severity=min(1.0, tilt_error / 5.0),
+                    detail=f"Spektrum zu {direction} ({tilt:+.1f} dB/Oktave, Ziel: {tilt_target:+.1f})",
+                    correction={"eq_high_shelf_db": eq_correction, "eq_freq_hz": 8000.0},
+                )
+            )
 
         # 2. Sibilanz (5-10 kHz Energie relativ zu 1-4 kHz)
         sib_ratio = self._measure_sibilance_ratio(audio, sr)
@@ -235,12 +235,14 @@ class ReflectiveListeningPass:
         sib_error = sib_ratio - sib_target
         if sib_error > 0.10:  # Zu viel Sibilanz
             severity = min(1.0, sib_error * 5.0)
-            issues.append(RLPIssue(
-                category="sibilance",
-                severity=severity,
-                detail=f"Sibilanz zu präsent (Ratio={sib_ratio:.3f}, Ziel={sib_target:.3f})",
-                correction={"de_ess_strength": severity * 0.5, "de_ess_freq_hz": 7000.0},
-            ))
+            issues.append(
+                RLPIssue(
+                    category="sibilance",
+                    severity=severity,
+                    detail=f"Sibilanz zu präsent (Ratio={sib_ratio:.3f}, Ziel={sib_target:.3f})",
+                    correction={"de_ess_strength": severity * 0.5, "de_ess_freq_hz": 7000.0},
+                )
+            )
 
         # 3. Bass-Druck (Energie unter 150 Hz relativ zu 200-2000 Hz)
         bass_ratio = self._measure_bass_presence(audio, sr)
@@ -249,12 +251,14 @@ class ReflectiveListeningPass:
         if abs(bass_error) > 0.06:
             direction = "wenig" if bass_error > 0 else "viel"
             eq_correction = min(bass_error * 5.0, 1.5) if bass_error > 0 else max(bass_error * 5.0, -1.5)
-            issues.append(RLPIssue(
-                category="bass_loss",
-                severity=min(1.0, abs(bass_error) * 8.0),
-                detail=f"Bass-Druck zu {direction} (Ratio={bass_ratio:.3f}, Ziel={bass_target:.3f})",
-                correction={"eq_low_shelf_db": eq_correction, "eq_freq_hz": 150.0},
-            ))
+            issues.append(
+                RLPIssue(
+                    category="bass_loss",
+                    severity=min(1.0, abs(bass_error) * 8.0),
+                    detail=f"Bass-Druck zu {direction} (Ratio={bass_ratio:.3f}, Ziel={bass_target:.3f})",
+                    correction={"eq_low_shelf_db": eq_correction, "eq_freq_hz": 150.0},
+                )
+            )
 
         # 4. Stereo-Breite (Side/Mid Energie-Verhältnis)
         stereo_width = self._measure_stereo_width(audio)
@@ -262,42 +266,44 @@ class ReflectiveListeningPass:
         stereo_error = abs(stereo_width - stereo_target)
         if stereo_error > 0.15:
             direction = "schmal" if stereo_width < stereo_target else "breit"
-            issues.append(RLPIssue(
-                category="stereo_collapse",
-                severity=min(1.0, stereo_error * 3.0),
-                detail=f"Stereo-Bild zu {direction} (Width={stereo_width:.3f}, Ziel={stereo_target:.3f})",
-                correction={
-                    "stereo_width_adjust": 0.03 if stereo_width < stereo_target else -0.03
-                },
-            ))
+            issues.append(
+                RLPIssue(
+                    category="stereo_collapse",
+                    severity=min(1.0, stereo_error * 3.0),
+                    detail=f"Stereo-Bild zu {direction} (Width={stereo_width:.3f}, Ziel={stereo_target:.3f})",
+                    correction={"stereo_width_adjust": 0.03 if stereo_width < stereo_target else -0.03},
+                )
+            )
 
         # 5. Dynamik-Verlust (LRA-Prüfung)
         if reference is not None:
             lra_v1 = self._estimate_lra(audio, sr)
             lra_ref = self._estimate_lra(reference, sr)
             if lra_v1 < lra_ref * 0.5 and lra_v1 < 3.0:  # Starke Kompression
-                issues.append(RLPIssue(
-                    category="dynamic_loss",
-                    severity=min(1.0, (lra_ref - lra_v1) / lra_ref),
-                    detail=f"Dynamik komprimiert (LRA: {lra_v1:.1f} → Ziel: {lra_ref:.1f} LU)",
-                    correction={"compression_ratio": 1.0},  # Keine weitere Kompression!
-                ))
+                issues.append(
+                    RLPIssue(
+                        category="dynamic_loss",
+                        severity=min(1.0, (lra_ref - lra_v1) / lra_ref),
+                        detail=f"Dynamik komprimiert (LRA: {lra_v1:.1f} → Ziel: {lra_ref:.1f} LU)",
+                        correction={"compression_ratio": 1.0},  # Keine weitere Kompression!
+                    )
+                )
 
         # 6. Rausch-Modulation (Varianz des Noise-Floors)
         nf_modulation = self._measure_noise_floor_modulation(audio, sr)
         if nf_modulation > 3.0:  # >3 dB Modulation
-            issues.append(RLPIssue(
-                category="noise_modulation",
-                severity=min(1.0, nf_modulation / 10.0),
-                detail=f"Rauschboden moduliert ({nf_modulation:.1f} dB) — mögliches Gate-Pumpen",
-                correction={"nr_strength": 0.05, "nr_freq_hz": 14000.0},  # Sanftes HF-NR
-            ))
+            issues.append(
+                RLPIssue(
+                    category="noise_modulation",
+                    severity=min(1.0, nf_modulation / 10.0),
+                    detail=f"Rauschboden moduliert ({nf_modulation:.1f} dB) — mögliches Gate-Pumpen",
+                    correction={"nr_strength": 0.05, "nr_freq_hz": 14000.0},  # Sanftes HF-NR
+                )
+            )
 
         return issues
 
-    def _apply_corrections(
-        self, audio: np.ndarray, sr: int, issues: list[RLPIssue], material: str
-    ) -> np.ndarray:
+    def _apply_corrections(self, audio: np.ndarray, sr: int, issues: list[RLPIssue], material: str) -> np.ndarray:
         """Wendet Mikro-Korrekturen an — kumulativ, aber mit strengen Limits."""
         arr = np.asarray(audio, dtype=np.float64).copy()
         mono = arr.mean(axis=0) if arr.ndim == 2 else arr
@@ -307,6 +313,7 @@ class ReflectiveListeningPass:
 
             if "eq_high_shelf_db" in corr:
                 from scipy import signal as scipy_signal
+
                 gain_db = float(np.clip(corr["eq_high_shelf_db"], -self.MAX_EQ_DB, self.MAX_EQ_DB))
                 freq_hz = float(corr.get("eq_freq_hz", 8000.0))
                 if abs(gain_db) > 0.1:
@@ -321,6 +328,7 @@ class ReflectiveListeningPass:
 
             if "eq_low_shelf_db" in corr:
                 from scipy import signal as scipy_signal
+
                 gain_db = float(np.clip(corr["eq_low_shelf_db"], -self.MAX_EQ_DB, self.MAX_EQ_DB))
                 freq_hz = float(corr.get("eq_freq_hz", 150.0))
                 if abs(gain_db) > 0.1:
@@ -344,7 +352,7 @@ class ReflectiveListeningPass:
                 if abs(adj) > 0.001:
                     mid = (arr[:, 0] + arr[:, 1]) / 2
                     side = (arr[:, 0] - arr[:, 1]) / 2
-                    side *= (1.0 + adj * 5.0)  # Skaliere Side-Kanal
+                    side *= 1.0 + adj * 5.0  # Skaliere Side-Kanal
                     arr[:, 0] = mid + side
                     arr[:, 1] = mid - side
                     logger.debug("RLP: Stereo-Breite %+.1f%%", adj * 100)
@@ -358,9 +366,7 @@ class ReflectiveListeningPass:
 
         return np.clip(arr, -1.0, 1.0)
 
-    def _is_improvement(
-        self, v1: np.ndarray, v2: np.ndarray, sr: int
-    ) -> tuple[bool, dict[str, float]]:
+    def _is_improvement(self, v1: np.ndarray, v2: np.ndarray, sr: int) -> tuple[bool, dict[str, float]]:
         """Objektiver Vergleich V1 vs V2 mit psychoakustischer Angenehmheits-Prüfung.
 
         §v10 HPE: V2 wird nur akzeptiert wenn es für menschliche Ohren
@@ -399,8 +405,8 @@ class ReflectiveListeningPass:
         # Spektrale Korrelation (Klangfarbe erhalten?)
         n_fft = min(2048, min_len // 4)
         if n_fft >= 64:
-            spec1 = np.abs(np.fft.rfft(v1_mono[:n_fft*4] * np.hanning(n_fft*4)))[:n_fft//2]
-            spec2 = np.abs(np.fft.rfft(v2_mono[:n_fft*4] * np.hanning(n_fft*4)))[:n_fft//2]
+            spec1 = np.abs(np.fft.rfft(v1_mono[: n_fft * 4] * np.hanning(n_fft * 4)))[: n_fft // 2]
+            spec2 = np.abs(np.fft.rfft(v2_mono[: n_fft * 4] * np.hanning(n_fft * 4)))[: n_fft // 2]
             spectral_corr = float(np.corrcoef(spec1, spec2)[0, 1]) if len(spec1) > 1 else 1.0
         else:
             spectral_corr = 1.0
@@ -408,12 +414,10 @@ class ReflectiveListeningPass:
         # ── §v10 HPE: Psychoakustische Angenehmheit ──
         try:
             from backend.core.human_pleasantness_estimator import (
-                compute_pleasantness,
                 compare_pleasantness,
             )
-            hpe_cmp = compare_pleasantness(
-                v1m.astype(np.float32), v2m.astype(np.float32), sr
-            )
+
+            hpe_cmp = compare_pleasantness(v1m.astype(np.float32), v2m.astype(np.float32), sr)
             pleasantness_delta = float(hpe_cmp.get("delta_score", 0.0))
             pleasantness_improved = hpe_cmp.get("improved", False)
         except Exception:
@@ -456,37 +460,43 @@ class ReflectiveListeningPass:
         n_fft = 4096
         if len(mono) < n_fft * 2:
             return 0.0
-        spec = np.abs(np.fft.rfft(mono[:n_fft*10] * np.hanning(n_fft*10)))
-        freqs = np.fft.rfftfreq(n_fft*10, 1.0/sr)
+        spec = np.abs(np.fft.rfft(mono[: n_fft * 10] * np.hanning(n_fft * 10)))
+        freqs = np.fft.rfftfreq(n_fft * 10, 1.0 / sr)
         mask = (freqs > 100) & (freqs < 10000)
         if mask.sum() > 10:
-            spec_db = 20.0 * np.log10(np.maximum(spec[:len(freqs)], 1e-10))
+            spec_db = 20.0 * np.log10(np.maximum(spec[: len(freqs)], 1e-10))
             coeffs = np.polyfit(freqs[mask], spec_db[mask], 1)
             return float(coeffs[0] * 1000)  # dB/kHz
         return 0.0
 
     def _measure_sibilance_ratio(self, audio: np.ndarray, sr: int) -> float:
         from scipy import signal as scipy_signal
-        arr = np.asarray(audio,dtype=np.float64)
-        if arr.ndim==2:mono=arr.mean(axis=1) if arr.shape[1]<=2 else arr.mean(axis=0)
-        else:mono=arr
-        mono=np.atleast_1d(mono).ravel()
-        sos_sib = scipy_signal.butter(4, [5000, 10000], 'bandpass', fs=sr, output='sos')
-        sos_voice = scipy_signal.butter(4, [1000, 4000], 'bandpass', fs=sr, output='sos')
-        sib_energy = float(np.sum(scipy_signal.sosfilt(sos_sib, mono)**2))
-        voice_energy = float(np.sum(scipy_signal.sosfilt(sos_voice, mono)**2))
+
+        arr = np.asarray(audio, dtype=np.float64)
+        if arr.ndim == 2:
+            mono = arr.mean(axis=1) if arr.shape[1] <= 2 else arr.mean(axis=0)
+        else:
+            mono = arr
+        mono = np.atleast_1d(mono).ravel()
+        sos_sib = scipy_signal.butter(4, [5000, 10000], "bandpass", fs=sr, output="sos")
+        sos_voice = scipy_signal.butter(4, [1000, 4000], "bandpass", fs=sr, output="sos")
+        sib_energy = float(np.sum(scipy_signal.sosfilt(sos_sib, mono) ** 2))
+        voice_energy = float(np.sum(scipy_signal.sosfilt(sos_voice, mono) ** 2))
         return sib_energy / (voice_energy + 1e-12)
 
     def _measure_bass_presence(self, audio: np.ndarray, sr: int) -> float:
         from scipy import signal as scipy_signal
-        arr = np.asarray(audio,dtype=np.float64)
-        if arr.ndim==2:mono=arr.mean(axis=1) if arr.shape[1]<=2 else arr.mean(axis=0)
-        else:mono=arr
-        mono=np.atleast_1d(mono).ravel()
-        sos_bass = scipy_signal.butter(4, [20, 150], 'bandpass', fs=sr, output='sos')
-        sos_mid = scipy_signal.butter(4, [200, 2000], 'bandpass', fs=sr, output='sos')
-        bass_energy = float(np.sum(scipy_signal.sosfilt(sos_bass, mono)**2))
-        mid_energy = float(np.sum(scipy_signal.sosfilt(sos_mid, mono)**2))
+
+        arr = np.asarray(audio, dtype=np.float64)
+        if arr.ndim == 2:
+            mono = arr.mean(axis=1) if arr.shape[1] <= 2 else arr.mean(axis=0)
+        else:
+            mono = arr
+        mono = np.atleast_1d(mono).ravel()
+        sos_bass = scipy_signal.butter(4, [20, 150], "bandpass", fs=sr, output="sos")
+        sos_mid = scipy_signal.butter(4, [200, 2000], "bandpass", fs=sr, output="sos")
+        bass_energy = float(np.sum(scipy_signal.sosfilt(sos_bass, mono) ** 2))
+        mid_energy = float(np.sum(scipy_signal.sosfilt(sos_mid, mono) ** 2))
         return bass_energy / (mid_energy + 1e-12)
 
     def _measure_stereo_width(self, audio: np.ndarray) -> float:
@@ -501,15 +511,17 @@ class ReflectiveListeningPass:
         return side_rms / (mid_rms + 1e-12)
 
     def _estimate_lra(self, audio: np.ndarray, sr: int) -> float:
-        arr = np.asarray(audio,dtype=np.float64)
-        if arr.ndim==2:mono=arr.mean(axis=1) if arr.shape[1]<=2 else arr.mean(axis=0)
-        else:mono=arr
-        mono=np.atleast_1d(mono).ravel()
+        arr = np.asarray(audio, dtype=np.float64)
+        if arr.ndim == 2:
+            mono = arr.mean(axis=1) if arr.shape[1] <= 2 else arr.mean(axis=0)
+        else:
+            mono = arr
+        mono = np.atleast_1d(mono).ravel()
         win = int(3.0 * sr)
         hop = int(1.0 * sr)
         st_vals = []
         for i in range(0, len(mono) - win, hop):
-            chunk = mono[i:i+win]
+            chunk = mono[i : i + win]
             rms = np.sqrt(np.mean(chunk**2)) + 1e-12
             st_vals.append(20.0 * np.log10(rms))
         if len(st_vals) >= 4:
@@ -521,28 +533,30 @@ class ReflectiveListeningPass:
         return 10.0
 
     def _measure_noise_floor_modulation(self, audio: np.ndarray, sr: int) -> float:
-        arr = np.asarray(audio,dtype=np.float64)
-        if arr.ndim==2:mono=arr.mean(axis=1) if arr.shape[1]<=2 else arr.mean(axis=0)
-        else:mono=arr
-        mono=np.atleast_1d(mono).ravel()
+        arr = np.asarray(audio, dtype=np.float64)
+        if arr.ndim == 2:
+            mono = arr.mean(axis=1) if arr.shape[1] <= 2 else arr.mean(axis=0)
+        else:
+            mono = arr
+        mono = np.atleast_1d(mono).ravel()
         win = int(0.1 * sr)
         rms_vals = []
         for i in range(0, len(mono) - win, win):
-            chunk = mono[i:i+win]
+            chunk = mono[i : i + win]
             rms_vals.append(20.0 * np.log10(np.sqrt(np.mean(chunk**2)) + 1e-12))
         rms_vals = np.array(rms_vals)
         # Nur leise Abschnitte betrachten
         quiet_mask = rms_vals < (np.mean(rms_vals) - 6)
         if quiet_mask.sum() >= 4:
-            quiet_nf = np.percentile(rms_vals[quiet_mask], 10)
+            np.percentile(rms_vals[quiet_mask], 10)
             # Varianz der leisen Abschnitte
             quiet_stds = []
-            for i in range(0, len(mono) - int(2*sr), int(2*sr)):
+            for i in range(0, len(mono) - int(2 * sr), int(2 * sr)):
                 chunk_rms = []
-                for j in range(0, int(2*sr), win):
-                    if i+j+win <= len(mono):
-                        c = mono[i+j:i+j+win]
-                        chunk_rms.append(20.0*np.log10(np.sqrt(np.mean(c**2))+1e-12))
+                for j in range(0, int(2 * sr), win):
+                    if i + j + win <= len(mono):
+                        c = mono[i + j : i + j + win]
+                        chunk_rms.append(20.0 * np.log10(np.sqrt(np.mean(c**2)) + 1e-12))
                 if chunk_rms:
                     quiet_chunks = [v for v in chunk_rms if v < (np.mean(chunk_rms) - 3)]
                     if len(quiet_chunks) >= 3:
@@ -555,6 +569,7 @@ class ReflectiveListeningPass:
 
     def _make_high_shelf(self, sr: int, freq: float, gain_db: float):
         from scipy import signal as scipy_signal
+
         w0 = 2.0 * np.pi * freq / sr
         A = 10.0 ** (gain_db / 40.0)
         alpha = np.sin(w0) / (2.0 * 0.7)
@@ -565,8 +580,7 @@ class ReflectiveListeningPass:
         a1 = 2 * ((A - 1) - (A + 1) * np.cos(w0))
         a2 = (A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
         return scipy_signal.sosfiltfilt(
-            scipy_signal.tf2sos([b0, b1, b2], [a0, a1, a2]),
-            np.zeros(100)
+            scipy_signal.tf2sos([b0, b1, b2], [a0, a1, a2]), np.zeros(100)
         )  # noop — just return filter coefficients
         # Actually, return the SOS directly
         # return np.array([[b0/a0, b1/a0, b2/a0, 1.0, a1/a0, a2/a0]])
@@ -575,18 +589,21 @@ class ReflectiveListeningPass:
     @staticmethod
     def _make_high_shelf(sr: int, freq: float, gain_db: float):
         from scipy import signal as scipy_signal
-        return scipy_signal.butter(2, freq, 'highshelf', fs=sr, output='sos')
+
+        return scipy_signal.butter(2, freq, "highshelf", fs=sr, output="sos")
 
     @staticmethod
     def _make_low_shelf(sr: int, freq: float, gain_db: float):
         from scipy import signal as scipy_signal
-        return scipy_signal.butter(2, freq, 'lowshelf', fs=sr, output='sos')
+
+        return scipy_signal.butter(2, freq, "lowshelf", fs=sr, output="sos")
 
     @staticmethod
     def _gentle_de_ess(audio: np.ndarray, sr: int, freq: float, strength: float) -> np.ndarray:
         from scipy import signal as scipy_signal
+
         # Einfaches De-Essing: Low-Pass-Filter oberhalb der Zielfrequenz mit sanfter Stärke
-        sos = scipy_signal.butter(2, freq, 'lowpass', fs=sr, output='sos')
+        sos = scipy_signal.butter(2, freq, "lowpass", fs=sr, output="sos")
         filtered = scipy_signal.sosfiltfilt(sos, audio, axis=0)
         mix = 1.0 - strength * 0.8  # Max 40% Mix des gefilterten Signals
         return audio * mix + filtered * (1.0 - mix)
@@ -594,8 +611,9 @@ class ReflectiveListeningPass:
     @staticmethod
     def _gentle_hf_noise_reduction(audio: np.ndarray, sr: int, freq: float, strength: float) -> np.ndarray:
         from scipy import signal as scipy_signal
+
         # Sanfte Hochton-Rauschunterdrückung via Low-Pass + Mix
-        sos = scipy_signal.butter(2, freq, 'lowpass', fs=sr, output='sos')
+        sos = scipy_signal.butter(2, freq, "lowpass", fs=sr, output="sos")
         filtered = scipy_signal.sosfiltfilt(sos, audio, axis=0)
         mix = 1.0 - strength  # Sanftes Blending
         return audio * mix + filtered * (1.0 - mix)

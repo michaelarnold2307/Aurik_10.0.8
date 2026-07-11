@@ -365,7 +365,6 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
                         break
                 except Exception as e:
                     logger.warning("phase_65_vocal_naturalness_restoration.py::unknown fallback: %s", e)
-                    pass
             for _pz in _p65_passaggio_zones:
                 try:
                     _pzs = float(getattr(_pz, "start_sample", getattr(_pz, "start_s", 0)) or 0)
@@ -378,7 +377,6 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
                         break
                 except Exception as e:
                     logger.warning("phase_65_vocal_naturalness_restoration.py::unknown fallback: %s", e)
-                    pass
             if _p65_vib_cap < effective_strength:
                 effective_strength = _p65_vib_cap
                 _p65_meta["vibrato_zone_cap_applied"] = True
@@ -401,15 +399,21 @@ class VocalNaturalnessRestorationPhase(PhaseInterface):
                     kwargs.setdefault("vibrato_zones_preserve", True)
                 # HNR-Schutz: bei bereits rauer Stimme HNR-Blend konservativer
                 if _svm65_hnr < 18.0:
-                    effective_strength = float(np.clip(
-                        effective_strength * (0.65 + 0.35 * _svm65_hnr / 18.0), 0.0, 1.0))
+                    effective_strength = float(
+                        np.clip(effective_strength * (0.65 + 0.35 * _svm65_hnr / 18.0), 0.0, 1.0)
+                    )
                     _p65_meta["effective_strength"] = round(effective_strength, 4)
                 # Formant-Ziele als Referenz für Tilt-Korrektur
                 if _svm65_formants and _svm65_tilt != 0:
                     _p65_meta["formant_targets_from_svm"] = True
                 logger.debug(
                     "Phase65 §SVM-1 SVM: hnr=%.1fdB vibrato=%.1fHz/%.1fcent formants=%d → eff=%.3f",
-                    _svm65_hnr, _svm65_vr, _svm65_vd, len(_svm65_formants), effective_strength)
+                    _svm65_hnr,
+                    _svm65_vr,
+                    _svm65_vd,
+                    len(_svm65_formants),
+                    effective_strength,
+                )
             except Exception as _svm_exc_65:
                 logger.debug("Phase65 §SVM-1 non-blocking: %s", _svm_exc_65)
 

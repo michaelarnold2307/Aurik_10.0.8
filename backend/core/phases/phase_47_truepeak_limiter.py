@@ -138,13 +138,16 @@ class TruePeakLimiterPhase(PhaseInterface):
         # ohne den hörbaren Bass (>30 Hz) anzutasten.
         try:
             from scipy.signal import butter, sosfiltfilt
+
             _hp_freq = 20.0
-            _hp_sos = butter(4, _hp_freq / (sample_rate / 2), btype='high', output='sos')
+            _hp_sos = butter(4, _hp_freq / (sample_rate / 2), btype="high", output="sos")
             if is_stereo:
-                audio_hp = np.column_stack([
-                    sosfiltfilt(_hp_sos, audio[:, 0]),
-                    sosfiltfilt(_hp_sos, audio[:, 1]),
-                ])
+                audio_hp = np.column_stack(
+                    [
+                        sosfiltfilt(_hp_sos, audio[:, 0]),
+                        sosfiltfilt(_hp_sos, audio[:, 1]),
+                    ]
+                )
             else:
                 audio_hp = sosfiltfilt(_hp_sos, audio)
             audio = audio_hp.astype(np.float32)

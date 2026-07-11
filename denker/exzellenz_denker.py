@@ -403,15 +403,19 @@ class ExzellenzDenker:
         _goose_label = ""
         try:
             from backend.core.goosebumps_factor import compute_goosebumps
+
             _goose_r = compute_goosebumps(optimiertes_audio, sr)
             frisson_index = float(_goose_r.score)
             _goose_label = _goose_r.label
             logger.info(
                 "ExzellenzDenker frisson_index (Goosebumps)=%.3f (%s): "
                 "dynamic=%.2f harmonic=%.2f shimmer=%.2f breath=%.2f warmth=%.2f",
-                frisson_index, _goose_label,
-                _goose_r.dynamic_contrast, _goose_r.harmonic_surprise,
-                _goose_r.spectral_shimmer, _goose_r.temporal_breath,
+                frisson_index,
+                _goose_label,
+                _goose_r.dynamic_contrast,
+                _goose_r.harmonic_surprise,
+                _goose_r.spectral_shimmer,
+                _goose_r.temporal_breath,
                 _goose_r.frequency_warmth,
             )
         except Exception:
@@ -423,11 +427,19 @@ class ExzellenzDenker:
             _fi_spa = float(goals.get("spatial_depth", 0.0)) if goals else 0.0
             _fi_trans = float(goals.get("transparenz", 0.0)) if goals else 0.0
             _fi_tonal = float(goals.get("tonal_center", 0.0)) if goals else 0.0
-            frisson_index = float(np.clip(
-                0.26 * _fi_arc + 0.18 * _fi_micro + 0.14 * _fi_emo
-                + 0.14 * _fi_art + 0.10 * _fi_spa + 0.08 * _fi_trans + 0.10 * _fi_tonal,
-                0.0, 1.0,
-            ))
+            frisson_index = float(
+                np.clip(
+                    0.26 * _fi_arc
+                    + 0.18 * _fi_micro
+                    + 0.14 * _fi_emo
+                    + 0.14 * _fi_art
+                    + 0.10 * _fi_spa
+                    + 0.08 * _fi_trans
+                    + 0.10 * _fi_tonal,
+                    0.0,
+                    1.0,
+                )
+            )
 
         note = (
             f"Exzellenz-Optimierung abgeschlossen: Score {score:.3f}, "
@@ -980,7 +992,6 @@ class ExzellenzDenker:
                     risk["authentizitaet"] = round(noise_risk * 0.80, 3)
             except Exception:
                 logger.debug("prognostiziere: silent except suppressed", exc_info=True)
-                pass
 
             # ── HF-Verlust → Brillanz / Timbre ───────────────────────────
             # Welch-PSD: Energie 8 kHz+ / Breitband-Energie.
@@ -1000,7 +1011,6 @@ class ExzellenzDenker:
                     risk["timbre"] = round(hf_risk * 0.70, 3)
             except Exception:
                 logger.debug("prognostiziere: silent except suppressed", exc_info=True)
-                pass
 
             # ── Transient-Armut → Groove / MicroDynamics ─────────────────
             # Onset-Rate in 10-ms-Fenstern. Referenz: lebendige Musik ≥ 1.5 Onsets/s.
@@ -1021,7 +1031,6 @@ class ExzellenzDenker:
                     risk["micro_dynamics"] = round(transient_risk * 0.80, 3)
             except Exception:
                 logger.debug("prognostiziere: silent except suppressed", exc_info=True)
-                pass
 
             # ── Dropout-Schwere → Artikulation ──────────────────────────
             # Dropout-Severity direkt aus DefectResult (falls verfügbar).
@@ -1037,7 +1046,6 @@ class ExzellenzDenker:
                         risk["artikulation"] = float(np.clip(dropout_sev, 0.0, 1.0))
             except Exception:
                 logger.debug("prognostiziere: silent except suppressed", exc_info=True)
-                pass
 
             logger.debug(
                 "ExzellenzDenker.prognostiziere(): material=%s %d Risikofelder: %s",

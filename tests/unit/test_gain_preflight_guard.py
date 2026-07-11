@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for preventive Pegelexplosion protection.
 
 §2.45a-II v10 — soft-knee sigmoid gate in apply_musical_gain_envelope.
@@ -70,9 +71,7 @@ def test_01_quiet_zone_much_less_boosted_than_music():
         f"Soft-knee not attenuating quiet zone: music Δ={delta_music:.1f} dB, fadeout Δ={delta_fadeout:.1f} dB"
     )
     # Quiet zone must not receive full gain (should be well below +12 dB)
-    assert delta_fadeout < 7.0, (
-        f"Fadeout boosted too strongly by soft-knee: Δ={delta_fadeout:.1f} dB"
-    )
+    assert delta_fadeout < 7.0, f"Fadeout boosted too strongly by soft-knee: Δ={delta_fadeout:.1f} dB"
 
 
 def test_02_musical_frames_still_boosted():
@@ -127,15 +126,13 @@ def test_03_smoothing_bleed_is_smooth():
     # Verify: no instantaneous gain jumps between adjacent frames
     gain_diff = np.abs(np.diff(boundary_gain))
     max_frame_jump = float(np.max(gain_diff))
-    assert max_frame_jump < 1.5, (
-        f"Hard gain discontinuity at boundary: max frame gain jump = {max_frame_jump:.3f}"
-    )
+    assert max_frame_jump < 1.5, f"Hard gain discontinuity at boundary: max frame gain jump = {max_frame_jump:.3f}"
 
     # Verify: quiet zone well after boundary must be at much lower gain than music
     quiet_start = (n_music + int(0.2 * SR)) // frame_len
     quiet_end = min(n_frames, quiet_start + 20)
     quiet_gain = np.mean(gain_per_frame[quiet_start:quiet_end]) if quiet_end > quiet_start else 1.0
-    music_gain = np.mean(gain_per_frame[:music_frames_end - 10])
+    music_gain = np.mean(gain_per_frame[: music_frames_end - 10])
     assert music_gain > quiet_gain * 1.5, (
         f"Soft-knee too flat: music_gain={music_gain:.2f}, quiet_gain={quiet_gain:.2f}"
     )

@@ -26,7 +26,6 @@ Autor: Aurik 10 — 11. Juli 2026
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -126,8 +125,7 @@ class InferenceSessionManager:
             total_mb = self._total_memory_mb()
             if total_mb > self.memory_limit_mb:
                 logger.warning(
-                    "ONNX-Session-Memory > %.0f MB: %.1f MB (Modelle: %s). "
-                    "Erwäge max_sessions zu reduzieren.",
+                    "ONNX-Session-Memory > %.0f MB: %.1f MB (Modelle: %s). Erwäge max_sessions zu reduzieren.",
                     self.memory_limit_mb,
                     total_mb,
                     list(self._cache.keys()),
@@ -204,8 +202,7 @@ class InferenceSessionManager:
             import onnxruntime as ort
         except ImportError as exc:
             raise RuntimeError(
-                "onnxruntime ist nicht installiert. "
-                "pip install onnxruntime (oder onnxruntime-gpu für CUDA)."
+                "onnxruntime ist nicht installiert. pip install onnxruntime (oder onnxruntime-gpu für CUDA)."
             ) from exc
 
         # Provider-Präferenz: CUDA > ROCm > CoreML > CPU
@@ -213,9 +210,7 @@ class InferenceSessionManager:
         logger.debug("ONNX-Provider verfügbar: %s", providers)
 
         sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = (
-            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        )
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         sess_options.enable_mem_pattern = True
         sess_options.enable_cpu_mem_arena = True
 

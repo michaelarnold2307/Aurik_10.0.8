@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_02_hum_removal._compute_hum_removal_profile (§2.56)."""
 
 import numpy as np

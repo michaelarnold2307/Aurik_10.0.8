@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -29,15 +28,14 @@ SYNTHETIC_OK: set[str] = {"wow_flutter", "tape_hiss"}
 GET_PATTERN = re.compile(r'\.get\(\s*["\']([a-z_]+)["\']')
 IN_PATTERN = re.compile(r'in\s*\(\s*["\']([a-z_]+)["\']')
 
-SKIP_DIRS = {"tests", "docs", "__pycache__", ".git", "models", "venv",
-             "golden_samples", "scripts/compliance"}
+SKIP_DIRS = {"tests", "docs", "__pycache__", ".git", "models", "venv", "golden_samples", "scripts/compliance"}
 
 
 def scan_file(filepath: Path) -> list[tuple[int, str, str]]:
     """Returns [(line, found_name, suggested_canonical), ...]."""
     try:
         lines = filepath.read_text(encoding="utf-8").split("\n")
-    except Exception as e:
+    except Exception:
         logger.warning("check_defect_name_strings.py::scan_file fallback", exc_info=True)
         return []
 
@@ -67,25 +65,67 @@ def scan_file(filepath: Path) -> list[tuple[int, str, str]]:
 
 def _looks_like_defect(s: str) -> bool:
     """Nur Strings, die tatsächlich Defekt-Namen sein könnten."""
-    keywords = {"click", "pop", "crackle", "hum", "buzz", "hiss", "rumble",
-                "wow", "flutter", "dropout", "clipping", "distortion",
-                "noise", "bandwidth", "azimuth", "sibilance", "reverb",
-                "pitch", "speed", "phase", "transient", "surface",
-                "subsonic", "tape_hiss", "wow_flutter", "hf_loss",
-                "broadband"}
+    keywords = {
+        "click",
+        "pop",
+        "crackle",
+        "hum",
+        "buzz",
+        "hiss",
+        "rumble",
+        "wow",
+        "flutter",
+        "dropout",
+        "clipping",
+        "distortion",
+        "noise",
+        "bandwidth",
+        "azimuth",
+        "sibilance",
+        "reverb",
+        "pitch",
+        "speed",
+        "phase",
+        "transient",
+        "surface",
+        "subsonic",
+        "tape_hiss",
+        "wow_flutter",
+        "hf_loss",
+        "broadband",
+    }
     return any(kw in s for kw in keywords) and s not in _NON_DEFECT
 
 
 _NON_DEFECT = {
-    "description", "transient_ratio", "transient_rich", "noise_type",
-    "phase_id", "phase_type", "phase_gate", "phases_guarded",
-    "pre_phase_audio", "post_phase_audio", "phase_hotspots",
-    "worst_phases", "phases_executed", "phases_skipped",
-    "phase_type_summary", "denoise", "ml_denoise", "sgmse_dereverb",
-    "rmvpe_pitch", "get_clipping_classifier", "get_noise_reducer",
-    "sub_threshold_phases", "has_reverb", "has_clipping",
-    "hf_loss_db", "get_per_phase_musical_goals_gate",
-    "description", "destination",
+    "description",
+    "transient_ratio",
+    "transient_rich",
+    "noise_type",
+    "phase_id",
+    "phase_type",
+    "phase_gate",
+    "phases_guarded",
+    "pre_phase_audio",
+    "post_phase_audio",
+    "phase_hotspots",
+    "worst_phases",
+    "phases_executed",
+    "phases_skipped",
+    "phase_type_summary",
+    "denoise",
+    "ml_denoise",
+    "sgmse_dereverb",
+    "rmvpe_pitch",
+    "get_clipping_classifier",
+    "get_noise_reducer",
+    "sub_threshold_phases",
+    "has_reverb",
+    "has_clipping",
+    "hf_loss_db",
+    "get_per_phase_musical_goals_gate",
+    "description",
+    "destination",
 }
 
 
@@ -128,7 +168,7 @@ def main() -> None:
         items = by_file[fname]
         print(f"  {fname}:")
         for line_no, found, suggestion in sorted(items):
-            print(f"    L{line_no}: \"{found}\" → {suggestion}")
+            print(f'    L{line_no}: "{found}" → {suggestion}')
         print()
 
     print(f"Gesamt: {len(all_findings)} Mismatches.")

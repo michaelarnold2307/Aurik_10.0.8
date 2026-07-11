@@ -14,7 +14,6 @@ Kein ONNX, kein PyTorch, kein Download. Nur scipy + numpy.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 
@@ -122,8 +121,8 @@ def _spectral_extend(
     extended_hi = sosfiltfilt(sos_shape, extended_hi)
 
     # 4. Begrenzung: Max 10% der Gesamtenergie
-    rms_total = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
-    rms_ext = float(np.sqrt(np.mean(extended_hi ** 2)) + 1e-12)
+    rms_total = float(np.sqrt(np.mean(mono**2)) + 1e-12)
+    rms_ext = float(np.sqrt(np.mean(extended_hi**2)) + 1e-12)
     if rms_ext > rms_total * 0.3 and rms_ext > 1e-10:
         extended_hi *= (rms_total * 0.3) / rms_ext
 

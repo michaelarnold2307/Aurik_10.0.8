@@ -1,8 +1,9 @@
-import pytest
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from audit.build_voice_first_audit_snapshot import build_snapshot
 

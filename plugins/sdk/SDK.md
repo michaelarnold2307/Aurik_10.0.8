@@ -97,6 +97,7 @@ def test_mein_plugin():
 ## Distribution
 
 Plugins können als:
+
 1. **Lokales Verzeichnis**: `plugins/mein_plugin/`
 2. **Python-Paket**: `pip install aurik-plugin-mein-plugin`
 3. **Git-Repository**: `git clone ... plugins/mein_plugin`

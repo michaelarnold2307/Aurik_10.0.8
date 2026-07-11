@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -23,17 +22,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RefinedDefect:
     """Präzise lokalisierter Defekt mit sub-sample Genauigkeit."""
+
     start_sample: int
     end_sample: int
-    start_sub: float        # Sub-sample offset (0.0-1.0)
-    end_sub: float          # Sub-sample offset (0.0-1.0)
+    start_sub: float  # Sub-sample offset (0.0-1.0)
+    end_sub: float  # Sub-sample offset (0.0-1.0)
     defect_type: str
-    sub_type: str = ""      # Feindifferenzierung
+    sub_type: str = ""  # Feindifferenzierung
     severity: float = 0.0
     peak_db: float = -60.0
     confidence: float = 0.7
     overlap_group: int = -1
-    priority: int = 0       # Höhere Zahl = höhere Priorität
+    priority: int = 0  # Höhere Zahl = höhere Priorität
 
 
 @dataclass
@@ -50,11 +50,21 @@ class PrecisionDefectLocator:
 
     # Prioritäten für Overlap-Resolution (höher = wichtiger)
     PRIORITY = {
-        "CLIPS": 10, "DROPOUTS": 9, "TAPE_SPLICE_ARTIFACT": 9,
-        "CLICKS": 8, "CRACKLE": 7, "HUM": 6, "WOW": 6, "FLUTTER": 6,
-        "HIGH_FREQ_NOISE": 4, "LOW_FREQ_RUMBLE": 4, "HISS": 3,
-        "DIGITAL_ARTIFACTS": 5, "COMPRESSION_ARTIFACTS": 5,
-        "NOISE": 3, "SURFACE_NOISE": 3,
+        "CLIPS": 10,
+        "DROPOUTS": 9,
+        "TAPE_SPLICE_ARTIFACT": 9,
+        "CLICKS": 8,
+        "CRACKLE": 7,
+        "HUM": 6,
+        "WOW": 6,
+        "FLUTTER": 6,
+        "HIGH_FREQ_NOISE": 4,
+        "LOW_FREQ_RUMBLE": 4,
+        "HISS": 3,
+        "DIGITAL_ARTIFACTS": 5,
+        "COMPRESSION_ARTIFACTS": 5,
+        "NOISE": 3,
+        "SURFACE_NOISE": 3,
     }
 
     def __init__(self) -> None:
@@ -83,12 +93,12 @@ class PrecisionDefectLocator:
         refined = []
 
         for d in defects:
-            s0 = int(d.get('start_s', 0) * sr)
-            s1 = int(d.get('end_s', 0) * sr)
-            dtype = str(d.get('type', 'UNKNOWN'))
-            sev = float(d.get('severity', 0.5))
-            peak = float(d.get('peak_db', -60))
-            conf = float(d.get('confidence', 0.7))
+            s0 = int(d.get("start_s", 0) * sr)
+            s1 = int(d.get("end_s", 0) * sr)
+            dtype = str(d.get("type", "UNKNOWN"))
+            sev = float(d.get("severity", 0.5))
+            peak = float(d.get("peak_db", -60))
+            conf = float(d.get("confidence", 0.7))
 
             # ── Edge Refinement ──
             # Suche ±5ms um die Original-Grenze
@@ -96,7 +106,7 @@ class PrecisionDefectLocator:
             s0_ref, s0_sub = self._refine_edge(mono, s0, -1, search_win)
             s1_ref, s1_sub = self._refine_edge(mono, s1, 1, search_win)
 
-            if (s0_ref != s0 or s1_ref != s1):
+            if s0_ref != s0 or s1_ref != s1:
                 report.edges_refined += 1
 
             # ── Sub-Type Classification ──
@@ -105,14 +115,20 @@ class PrecisionDefectLocator:
             # ── Confidence Calibration ──
             calib_conf = self._calibrate_confidence(mono, s0_ref, s1_ref, sr, dtype, conf)
 
-            refined.append(RefinedDefect(
-                start_sample=s0_ref, end_sample=s1_ref,
-                start_sub=s0_sub, end_sub=s1_sub,
-                defect_type=dtype, sub_type=sub_type,
-                severity=sev, peak_db=peak,
-                confidence=calib_conf,
-                priority=self.PRIORITY.get(dtype, 5)
-            ))
+            refined.append(
+                RefinedDefect(
+                    start_sample=s0_ref,
+                    end_sample=s1_ref,
+                    start_sub=s0_sub,
+                    end_sub=s1_sub,
+                    defect_type=dtype,
+                    sub_type=sub_type,
+                    severity=sev,
+                    peak_db=peak,
+                    confidence=calib_conf,
+                    priority=self.PRIORITY.get(dtype, 5),
+                )
+            )
 
         # ── Overlap Resolution ──
         refined = self._resolve_overlaps(refined, report)
@@ -120,9 +136,7 @@ class PrecisionDefectLocator:
         self._reports.append(report)
         return refined
 
-    def _refine_edge(
-        self, audio: np.ndarray, sample: int, direction: int, window: int
-    ) -> tuple[int, float]:
+    def _refine_edge(self, audio: np.ndarray, sample: int, direction: int, window: int) -> tuple[int, float]:
         """Verfeinert eine Defekt-Grenze via Zero-Crossing + Envelope.
 
         direction: -1 = Start-Grenze (rückwärts suchen)
@@ -151,13 +165,13 @@ class PrecisionDefectLocator:
         # Prüfe ob RMS in 5ms Fenster stabil ist
         check_win = min(window // 2, int(len(audio) * 0.001))
         if check_win >= 4 and best_sample == sample:
-            best_rms_var = float('inf')
+            best_rms_var = float("inf")
             for offset in range(-window, window):
                 idx = sample + offset
                 if idx < check_win or idx > n - check_win:
                     continue
-                pre = audio[idx - check_win:idx]
-                post = audio[idx:idx + check_win]
+                pre = audio[idx - check_win : idx]
+                post = audio[idx : idx + check_win]
                 pre_rms = float(np.sqrt(np.mean(pre**2) + 1e-12))
                 post_rms = float(np.sqrt(np.mean(post**2) + 1e-12))
                 rms_jump = abs(post_rms - pre_rms)
@@ -167,9 +181,7 @@ class PrecisionDefectLocator:
 
         return best_sample, best_sub
 
-    def _classify_subtype(
-        self, audio: np.ndarray, s0: int, s1: int, sr: int, dtype: str
-    ) -> str:
+    def _classify_subtype(self, audio: np.ndarray, s0: int, s1: int, sr: int, dtype: str) -> str:
         """Feindifferenzierung von Defekt-Untertypen."""
         seg = audio[s0:s1]
         if len(seg) < 8:
@@ -179,22 +191,22 @@ class PrecisionDefectLocator:
             # Click-Subtypen nach Dauer + Spektrum
             duration_ms = (s1 - s0) / sr * 1000
             if duration_ms < 0.5:
-                return "impulse"      # Extrem kurzer Impuls
+                return "impulse"  # Extrem kurzer Impuls
             elif duration_ms < 2.0:
-                return "tick"         # Kurzer Tick
+                return "tick"  # Kurzer Tick
             elif duration_ms < 5.0:
                 # Prüfe ob Oberflächen-Knistern (breitbandig)
                 fft = np.abs(np.fft.rfft(seg))
                 spectral_flatness = float(np.exp(np.mean(np.log(fft + 1e-10))) / (np.mean(fft) + 1e-10))
                 if spectral_flatness > 0.6:
                     return "surface_click"  # Vinyl-Oberfläche
-                return "pop"           # Längerer Pop
+                return "pop"  # Längerer Pop
             return "scratch"
 
         if dtype in ("CRACKLE",):
             # Crackle-Subtypen
             fft = np.abs(np.fft.rfft(seg))
-            ratio_high = float(np.sum(fft[len(fft)//2:])) / (float(np.sum(fft)) + 1e-10)
+            ratio_high = float(np.sum(fft[len(fft) // 2 :])) / (float(np.sum(fft)) + 1e-10)
             if ratio_high > 0.4:
                 return "vinyl_crackle"
             return "tape_crackle"
@@ -202,19 +214,17 @@ class PrecisionDefectLocator:
         if dtype in ("HUM",):
             # Hum-Subtypen
             fft = np.abs(np.fft.rfft(seg))
-            freqs = np.fft.rfftfreq(len(seg), d=1.0/sr)
+            freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
             # Prüfe ob 50Hz oder 60Hz dominant
             for hz, label in [(50, "hum_50hz"), (60, "hum_60hz"), (100, "hum_100hz"), (120, "hum_120hz")]:
-                band = (freqs >= hz-2) & (freqs <= hz+2)
+                band = (freqs >= hz - 2) & (freqs <= hz + 2)
                 if np.any(band) and np.mean(fft[band]) > np.mean(fft) * 3:
                     return label
             return "hum_broadband"
 
         return ""
 
-    def _calibrate_confidence(
-        self, audio: np.ndarray, s0: int, s1: int, sr: int, dtype: str, raw_conf: float
-    ) -> float:
+    def _calibrate_confidence(self, audio: np.ndarray, s0: int, s1: int, sr: int, dtype: str, raw_conf: float) -> float:
         """Kalibriert Confidence via Signal-Qualität im Defekt-Bereich."""
         seg = audio[s0:s1]
         if len(seg) < 8:
@@ -236,9 +246,7 @@ class PrecisionDefectLocator:
 
         return raw_conf
 
-    def _resolve_overlaps(
-        self, defects: list[RefinedDefect], report: LocatorReport
-    ) -> list[RefinedDefect]:
+    def _resolve_overlaps(self, defects: list[RefinedDefect], report: LocatorReport) -> list[RefinedDefect]:
         """Löst überlappende Defekte auf — priorisiert nach Schwere/Seltenheit."""
         if len(defects) < 2:
             return defects

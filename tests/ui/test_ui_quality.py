@@ -1,5 +1,6 @@
-import pytest
 from pathlib import Path
+
+import pytest
 
 GUI_FILE = Path("Aurik10/ui/modern_window.py")
 I18N_FILE = Path("Aurik10/i18n/__init__.py")

@@ -304,6 +304,7 @@ class LoudnessAnalyzer:
         """
         try:
             import pyloudnorm as pyln
+
             _has_pyln = True
         except ImportError:
             _has_pyln = False

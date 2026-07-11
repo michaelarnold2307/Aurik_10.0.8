@@ -42,8 +42,13 @@ _PHASE_DEFECT_REQUIREMENTS: dict[str, list[str]] = {
     "phase_11_limiting": ["clipping"],
     # --- Transport / Wow & Flutter ---
     "phase_12_wow_flutter_fix": [
-        "wow", "flutter", "multiband_wow_flutter", "scrape_flutter",
-        "speed_calibration_error", "transport_bump", "pitch_drift",
+        "wow",
+        "flutter",
+        "multiband_wow_flutter",
+        "scrape_flutter",
+        "speed_calibration_error",
+        "transport_bump",
+        "pitch_drift",
     ],
     # --- Stereo / Phase ---
     "phase_13_stereo_enhancement": [],  # fast immer
@@ -138,18 +143,15 @@ _ANALOG_ONLY_PHASES: list[str] = [
     "phase_64_tape_splice_repair",
 ]
 
-_MATERIAL_SKIP_PHASES: dict[str, list[str]] = {
-    m: _ANALOG_ONLY_PHASES
-    for m in (
-        "aac", "cd_digital", "dat", "minidisc",
-        "mp3_high", "mp3_low", "streaming",
-    )
-}
+_MATERIAL_SKIP_PHASES: dict[str, list[str]] = dict.fromkeys(
+    ("aac", "cd_digital", "dat", "minidisc", "mp3_high", "mp3_low", "streaming"), _ANALOG_ONLY_PHASES
+)
 
 
 @dataclass
 class PruningResult:
     """Ergebnis der Phase-Pruning-Analyse."""
+
     kept_phases: list[str] = field(default_factory=list)
     skipped_phases: list[str] = field(default_factory=list)
     reduced_phases: dict[str, float] = field(default_factory=dict)  # phase → reduzierte Stärke
@@ -193,12 +195,15 @@ class IntelligentPhasePruner:
         _era = _ctx.get("decade")
         _genre = _ctx.get("genre_label", "")
         _is_vintage = _era is not None and _era <= 1980
-        _has_vocals = _ctx.get("vocal_detected", False)
+        _ctx.get("vocal_detected", False)
 
         logger.debug(
             "PhasePruner: pruning %d phases | material=%s era=%s genre=%s defects=%s",
-            len(phases), material, _era, _genre,
-            sorted(defects_lower)[:25] if defects_lower else "[]"
+            len(phases),
+            material,
+            _era,
+            _genre,
+            sorted(defects_lower)[:25] if defects_lower else "[]",
         )
         for phase_id in phases:
             # 1. Material-basierter Skip
@@ -212,9 +217,7 @@ class IntelligentPhasePruner:
             _surgical_defects = _ctx.get("surgical_defect_types", [])
             if _surgical_defects and required:
                 # Prüfe ob diese Phase chirurgische Defekte behandelt
-                _surgical_match = any(
-                    req in defect for req in required for defect in _surgical_defects
-                )
+                _surgical_match = any(req in defect for req in required for defect in _surgical_defects)
                 if _surgical_match:
                     result.kept_phases.append(phase_id)
                     logger.debug("PhasePruner KEEP %s: surgical defect protection", phase_id)
@@ -223,24 +226,21 @@ class IntelligentPhasePruner:
             # 2. Defekt-Präsenz-Check
             required = _PHASE_DEFECT_REQUIREMENTS.get(phase_id, [])
             if required:
-                matching_defects = [d for d in required if any(
-                    d in defect for defect in defects_lower
-                )]
+                matching_defects = [d for d in required if any(d in defect for defect in defects_lower)]
                 if not matching_defects:
                     # Defekt nicht vorhanden → Skip
                     result.skipped_phases.append(phase_id)
                     result.reasons[phase_id] = f"Kein {'/'.join(required)} detektiert"
                     logger.debug(
                         "PhasePruner SKIP %s: no defect match (needs=%s, have=%s)",
-                        phase_id, required, sorted(defects_lower)[:15]
+                        phase_id,
+                        required,
+                        sorted(defects_lower)[:15],
                     )
                     continue
 
                 # 3. Psychoakustische Hörschwelle: sehr schwache Defekte → reduzierte Stärke
-                min_sev = min(
-                    sevs.get(d, 1.0) for d in matching_defects
-                    if d in sevs
-                ) if sevs else 1.0
+                min_sev = min(sevs.get(d, 1.0) for d in matching_defects if d in sevs) if sevs else 1.0
                 if min_sev < 0.15:
                     result.reduced_phases[phase_id] = max(0.1, min_sev * 2.0)
                     result.reasons[phase_id] = f"Defekt sehr schwach (sev={min_sev:.2f})"
@@ -248,8 +248,6 @@ class IntelligentPhasePruner:
             # Phase wird behalten
             result.kept_phases.append(phase_id)
 
-        result.reduction_pct = (
-            1.0 - len(result.kept_phases) / max(1, len(phases))
-        ) * 100.0
+        result.reduction_pct = (1.0 - len(result.kept_phases) / max(1, len(phases))) * 100.0
 
         return result

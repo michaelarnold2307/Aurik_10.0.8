@@ -10,7 +10,7 @@ Stellt sicher, dass:
 import numpy as np
 import pytest
 
-from forensics.medium_detector import MediumDetector, MediumDetectionResult
+from forensics.medium_detector import MediumDetectionResult, MediumDetector
 
 
 @pytest.mark.unit
@@ -24,9 +24,7 @@ class TestFileExtDigitalPrior:
         t = np.arange(int(sr * duration_s), dtype=np.float32) / sr
         # Sinus mit Obertönen + Rauschen → realistischeres Spektrum
         audio = (
-            0.4 * np.sin(2 * np.pi * 440 * t)
-            + 0.2 * np.sin(2 * np.pi * 880 * t)
-            + 0.1 * np.sin(2 * np.pi * 1320 * t)
+            0.4 * np.sin(2 * np.pi * 440 * t) + 0.2 * np.sin(2 * np.pi * 880 * t) + 0.1 * np.sin(2 * np.pi * 1320 * t)
         ).astype(np.float32)
         audio += rng.randn(len(audio)).astype(np.float32) * 0.002
         return audio
@@ -52,12 +50,8 @@ class TestFileExtDigitalPrior:
         analog_mats = detector2._ANALOG_MATERIALS
 
         # Analog-Posterior-Summe MIT file_ext muss ≤ Summe OHNE file_ext sein
-        sum_analog_no_ext = sum(
-            s for m, s in result_no_ext.bayesian_scores.items() if m in analog_mats
-        )
-        sum_analog_with_ext = sum(
-            s for m, s in result_with_ext.bayesian_scores.items() if m in analog_mats
-        )
+        sum_analog_no_ext = sum(s for m, s in result_no_ext.bayesian_scores.items() if m in analog_mats)
+        sum_analog_with_ext = sum(s for m, s in result_with_ext.bayesian_scores.items() if m in analog_mats)
 
         assert sum_analog_with_ext <= sum_analog_no_ext + 0.001, (
             f"Analog sum with file_ext ({sum_analog_with_ext:.6f}) "
@@ -100,9 +94,7 @@ class TestFileExtDigitalPrior:
         result_dot = detector.detect(audio, sr=48000, file_ext=".mp3")
         result_no_dot = detector.detect(audio, sr=48000, file_ext="mp3")
 
-        assert (
-            result_dot.primary_material == result_no_dot.primary_material
-        ), (
+        assert result_dot.primary_material == result_no_dot.primary_material, (
             f"'.mp3' → '{result_dot.primary_material}' vs "
             f"'mp3' → '{result_no_dot.primary_material}' — sollten gleich sein"
         )
@@ -117,6 +109,5 @@ class TestFileExtDigitalPrior:
 
         # .wav ist neutraler Container — sollte gleiches Ergebnis wie ohne file_ext liefern
         assert result_wav.primary_material == result_empty.primary_material, (
-            f".wav sollte neutral sein: '{result_wav.primary_material}' "
-            f"vs '{result_empty.primary_material}'"
+            f".wav sollte neutral sein: '{result_wav.primary_material}' vs '{result_empty.primary_material}'"
         )

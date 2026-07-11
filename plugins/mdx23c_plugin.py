@@ -101,9 +101,8 @@ class MDX23CModel:
                     if not _try_alloc(f"MDX23C_{self.stem_key}", size_gb=0.55):
                         try:
                             _rel(f"MDX23C_{self.stem_key}")
-                        except Exception as e:
+                        except Exception:
                             logger.warning("mdx23c_plugin.py::_load fallback", exc_info=True)
-                            pass
                         if not _try_alloc(f"MDX23C_{self.stem_key}", size_gb=0.55):
                             logger.warning("MDX23C [%s]: ML-Budget erschöpft — NMF-β-Fallback", self.stem_key)
                             return
@@ -483,7 +482,7 @@ class MDX23CModel:
                     sig[s:e] += frame[: e - s] * win[: e - s]
                 result.append(sig)
             return np.stack(result)
-        except Exception as e:
+        except Exception:
             logger.warning("mdx23c_plugin.py::_hpss_fallback fallback", exc_info=True)
             return audio.copy()
 
@@ -500,7 +499,7 @@ class MDX23CModel:
             up, dn = tgt // g, src // g
             out = np.stack([resample_poly(ch, up, dn).astype(np.float32) for ch in audio])
             return out, tgt
-        except Exception as e:
+        except Exception:
             logger.warning("mdx23c_plugin.py::_resample fallback", exc_info=True)
             return audio, src
 

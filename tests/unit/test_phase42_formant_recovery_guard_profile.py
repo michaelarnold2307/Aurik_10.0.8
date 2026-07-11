@@ -1,5 +1,6 @@
-import pytest
 from __future__ import annotations
+
+import pytest
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.phases.phase_42_vocal_enhancement import VocalEnhancement as VocalEnhancementPhase

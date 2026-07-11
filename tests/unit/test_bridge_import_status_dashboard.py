@@ -1,8 +1,9 @@
-import pytest
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from audit.bridge_import_status_dashboard import (
     build_bridge_import_status_summary,

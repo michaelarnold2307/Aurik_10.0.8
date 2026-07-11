@@ -425,7 +425,6 @@ class CrackleRemovalPhase(PhaseInterface):
                         break
                 except Exception:
                     logger.debug("_compute_crackle_local_strength: silent except suppressed", exc_info=True)
-                    pass
         return float(np.clip(local_strength, 0.10, 1.0))
 
     @staticmethod
@@ -696,7 +695,6 @@ class CrackleRemovalPhase(PhaseInterface):
                     _plm.set_active("BanquetVinyl", False)
                 except Exception:
                     logger.debug("_remove_crackle_onnx_direct: silent except suppressed", exc_info=True)
-                    pass
 
         # --- Resample back to original SR ---
         if need_resample:
@@ -838,8 +836,8 @@ class CrackleRemovalPhase(PhaseInterface):
         _per_band_mask = None
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity, compute_per_band_nr_mask
-            _pim = apply_pim_intensity(kwargs, "crackle",
-                default_nr=0.4, default_de_ess=0.3, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "crackle", default_nr=0.4, default_de_ess=0.3, default_comp=1.0)
             if "noise_reduction_strength" in kwargs:
                 kwargs["noise_reduction_strength"] = _pim["nr_strength"]
             _pim_map = kwargs.get("pim_intensity_map")
@@ -847,7 +845,6 @@ class CrackleRemovalPhase(PhaseInterface):
                 _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
         assert sample_rate == 48000, f"SR must be 48000 Hz, got: {sample_rate}"
         audio, _p09_transposed = to_channels_last(audio)
         start_time = time.time()
@@ -861,7 +858,6 @@ class CrackleRemovalPhase(PhaseInterface):
             _get_plm_evict09().evict_for_phase("phase_09_crackle_removal")
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
 
         # Get material-specific parameters
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
@@ -920,7 +916,6 @@ class CrackleRemovalPhase(PhaseInterface):
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("frisson_zones") or []:
             try:
                 _fz_s = float(getattr(_z, "start_s", None) or _z[0])
@@ -928,19 +923,16 @@ class CrackleRemovalPhase(PhaseInterface):
                 _p09_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("whisper_zones") or []:
             try:
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("passaggio_zones") or []:
             try:
                 _p09_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         if _p09_protected_zones:
             logger.debug(
                 "§V38 phase_09: %d VFA-Schutzzone(n) aktiv (Vibrato/Frisson/Flüster/Passaggio)",
@@ -966,17 +958,17 @@ class CrackleRemovalPhase(PhaseInterface):
                 },
                 warnings=["Crackle removal skipped due to zero effective strength"],
             )
-            
+
         # ── §v10 Per-Band-Maske NACH crackle anwenden ──
         if _per_band_mask is not None:
             try:
                 from backend.core.pim_phase_hook import apply_per_band_mask
+
                 _before = audio
                 _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
                 audio = _after
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
 
         # ML-Hybrid Decision: BANQUET for Vinyl (auch via Transferkette)
         # §2.45a-I: Gated-RMS — only musical frames (> −50 dBFS) contribute
@@ -1233,14 +1225,19 @@ class CrackleRemovalPhase(PhaseInterface):
         if _strength_env is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(restored, dtype=np.float32)
                 restored = apply_strength_envelope(
-                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
-                    envelope=_strength_env, sample_rate=sample_rate,
+                    processed=_env_pre,
+                    original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env,
+                    sample_rate=sample_rate,
                     base_strength=_effective_strength,
                 )
                 if float(np.mean(np.abs(restored - _env_pre))) > 0.001:
-                    logger.info("§2.71 Envelope-Blending Phase 09: Δ=%.4f RMS", float(np.mean(np.abs(restored - _env_pre))))
+                    logger.info(
+                        "§2.71 Envelope-Blending Phase 09: Δ=%.4f RMS", float(np.mean(np.abs(restored - _env_pre)))
+                    )
             except Exception as _se_exc:
                 logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
 

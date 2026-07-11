@@ -251,9 +251,5 @@ class TestPhase05LoudnessGuard:
         intro_boost = out_intro_peak - in_intro_peak
         outro_boost = out_outro_peak - in_outro_peak
 
-        assert intro_boost <= 3.0, (
-            f"Intro peak explosion after phase_05: +{intro_boost:.2f} dB (limit +3.0 dB)"
-        )
-        assert outro_boost <= 3.0, (
-            f"Outro peak explosion after phase_05: +{outro_boost:.2f} dB (limit +3.0 dB)"
-        )
+        assert intro_boost <= 3.0, f"Intro peak explosion after phase_05: +{intro_boost:.2f} dB (limit +3.0 dB)"
+        assert outro_boost <= 3.0, f"Outro peak explosion after phase_05: +{outro_boost:.2f} dB (limit +3.0 dB)"

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for BigVGAN-v2 productive fallback chain."""
 
 import types

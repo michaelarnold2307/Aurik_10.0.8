@@ -1,7 +1,8 @@
-import pytest
 from __future__ import annotations
 
 from types import SimpleNamespace
+
+import pytest
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.unified_restorer_v3 import UnifiedRestorerV3

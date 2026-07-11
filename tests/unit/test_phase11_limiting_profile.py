@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_11_limiting._compute_limiting_profile (§2.56)."""
 
 from backend.core.phases.phase_11_limiting import LimitingPhase

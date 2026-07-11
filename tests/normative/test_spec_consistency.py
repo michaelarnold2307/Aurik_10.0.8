@@ -1,4 +1,5 @@
 import pytest
+
 """[RELEASE_MUST] Automatischer Spec-Konsistenz-Validator (v9.12.0)
 
 CI-Gate das DAUERHAFT und AUTOMATISCH folgende Invarianten prüft:

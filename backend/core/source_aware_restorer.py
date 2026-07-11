@@ -46,6 +46,7 @@ def _get_ort_session(model_path: str) -> Any:
     _ort_session_cache[model_path] = sess
     return sess
 
+
 def restore_per_source(
     audio: np.ndarray,
     sample_rate: int,
@@ -93,7 +94,7 @@ def restore_per_source(
     active_stems = [s for s in AVAILABLE_STEMS if s in stems and s not in skip]
     n_stems = max(len(active_stems), 1)
 
-    from backend.core.source_aware_fahrplan import get_stem_config, filter_phases_for_stem, STEM_REMIX_GAINS
+    from backend.core.source_aware_fahrplan import STEM_REMIX_GAINS, get_stem_config
 
     for i, stem_name in enumerate(active_stems):
         stem_audio = stems[stem_name]
@@ -112,10 +113,7 @@ def restore_per_source(
             _orig_phase_plan = restore_kwargs.get("precomputed_phase_plan")
             if _orig_phase_plan and isinstance(_orig_phase_plan, list) and stem_cfg.phase_strengths:
                 _default_str = stem_cfg.phase_strengths.get("_default", 0.0 if stem_cfg.skip_all_default else 1.0)
-                _filtered = [
-                    p for p in _orig_phase_plan
-                    if stem_cfg.phase_strengths.get(p, _default_str) > 0.0
-                ]
+                _filtered = [p for p in _orig_phase_plan if stem_cfg.phase_strengths.get(p, _default_str) > 0.0]
                 stem_kwargs["precomputed_phase_plan"] = _filtered
 
             # Injiziere Stem-Info in denker_policy_input (für Logging/Fahrplan)
@@ -172,7 +170,7 @@ def _separate_sources(audio: np.ndarray, sr: int) -> dict[str, np.ndarray]:
     Modell: models/demucs/htdemucs_6s.onnx (6-Source: drums,bass,other,vocals,guitar,piano)
     """
     import os as _os
-    import onnxruntime as ort
+
 
     _mono = audio.ndim == 1
     audio = np.atleast_2d(audio).astype(np.float32)
@@ -180,17 +178,22 @@ def _separate_sources(audio: np.ndarray, sr: int) -> dict[str, np.ndarray]:
     # Resample auf 44100 Hz (Demucs ONNX native SR)
     if sr != 44100:
         import librosa
-        audio_441 = np.stack([
-            librosa.resample(audio[ch].astype(np.float64), orig_sr=sr, target_sr=44100)
-            for ch in range(audio.shape[0])
-        ]).astype(np.float32)
+
+        audio_441 = np.stack(
+            [
+                librosa.resample(audio[ch].astype(np.float64), orig_sr=sr, target_sr=44100)
+                for ch in range(audio.shape[0])
+            ]
+        ).astype(np.float32)
     else:
         audio_441 = audio.copy()
 
     # Modell-Pfad relativ zum Projekt-Root (3x dirname: core → backend → .)
     model_path = _os.path.join(
         _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
-        "models", "demucs", "htdemucs_6s.onnx",
+        "models",
+        "demucs",
+        "htdemucs_6s.onnx",
     )
     if not _os.path.exists(model_path):
         raise FileNotFoundError(f"Demucs ONNX nicht gefunden: {model_path}")
@@ -234,11 +237,14 @@ def _separate_sources(audio: np.ndarray, sr: int) -> dict[str, np.ndarray]:
     # Resample zurück auf originale SR
     if sr != 44100:
         import librosa
+
         for k in list(stems):
-            stems[k] = np.stack([
-                librosa.resample(stems[k][ch].astype(np.float64), orig_sr=44100, target_sr=sr)
-                for ch in range(stems[k].shape[0])
-            ]).astype(np.float32)
+            stems[k] = np.stack(
+                [
+                    librosa.resample(stems[k][ch].astype(np.float64), orig_sr=44100, target_sr=sr)
+                    for ch in range(stems[k].shape[0])
+                ]
+            ).astype(np.float32)
 
     if _mono:
         for k in stems:
@@ -301,4 +307,3 @@ def _emit_progress(cb: Any, pct: float, msg: str) -> None:
             cb(pct, msg, 0.0)
         except Exception as e:
             logger.warning("source_aware_restorer.py::_emit_progress fallback: %s", e)
-            pass

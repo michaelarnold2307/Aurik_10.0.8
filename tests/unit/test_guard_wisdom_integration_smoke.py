@@ -4,10 +4,10 @@ Verifies the strength-modulation pattern used in _profiled_phase_call
 during pipeline runs, without requiring the full pipeline.
 """
 
-import numpy as np
 import pytest
-from backend.core.klang_guards import GuardWisdom, CrossGuardCoordinator
+
 from backend.core.goal_budget import GoalBudget
+from backend.core.klang_guards import CrossGuardCoordinator, GuardWisdom
 
 
 @pytest.mark.unit

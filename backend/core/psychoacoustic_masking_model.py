@@ -158,11 +158,7 @@ class PsychoacousticMaskingModel:
             ATH-Wert in dBFS (negativ, z.B. −80 dBFS bei 1 kHz).
         """
         f_khz = freq_hz / 1000.0
-        ath_spl_db = (
-            3.64 * (f_khz ** (-0.8))
-            - 6.5 * math.exp(-0.6 * (f_khz - 3.3) ** 2)
-            + 1e-3 * (f_khz**4)
-        )
+        ath_spl_db = 3.64 * (f_khz ** (-0.8)) - 6.5 * math.exp(-0.6 * (f_khz - 3.3) ** 2) + 1e-3 * (f_khz**4)
         ath_dbfs = ath_spl_db - 100.0
         return ath_dbfs
 
@@ -170,9 +166,7 @@ class PsychoacousticMaskingModel:
     # Binaural Masking Level Difference (BMLD) — IACC-basiert
     # ------------------------------------------------------------------
     @staticmethod
-    def compute_interaural_cross_correlation(
-        audio_left: np.ndarray, audio_right: np.ndarray
-    ) -> float:
+    def compute_interaural_cross_correlation(audio_left: np.ndarray, audio_right: np.ndarray) -> float:
         """Berechnet die Interaurale Kreuzkorrelation (IACC).
 
         Die IACC misst die Ähnlichkeit zwischen linkem und rechtem Kanal

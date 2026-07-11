@@ -466,12 +466,21 @@ class MediaForensicsEngine:
         # Prüfung auf Digitalisierungsstufen: analoge Medien haben fast immer
         # eine digitale Kopie am Ende der Kette
         analog_media = {
-            MediaType.VINYL_LP_STEREO, MediaType.VINYL_LP_MONO,
-            MediaType.VINYL_45_STEREO, MediaType.VINYL_45_MONO, MediaType.SHELLAC_ACOUSTIC, MediaType.SHELLAC_ELECTRIC,
-            MediaType.TAPE_7_5IPS, MediaType.TAPE_15IPS,
-            MediaType.TAPE_3_75IPS, MediaType.CASSETTE_TYPE_I,
-            MediaType.CASSETTE_TYPE_II, MediaType.CASSETTE_TYPE_IV,
-            MediaType.CYLINDER_EDISON, MediaType.CYLINDER_PATHE, MediaType.WIRE_RECORDING,
+            MediaType.VINYL_LP_STEREO,
+            MediaType.VINYL_LP_MONO,
+            MediaType.VINYL_45_STEREO,
+            MediaType.VINYL_45_MONO,
+            MediaType.SHELLAC_ACOUSTIC,
+            MediaType.SHELLAC_ELECTRIC,
+            MediaType.TAPE_7_5IPS,
+            MediaType.TAPE_15IPS,
+            MediaType.TAPE_3_75IPS,
+            MediaType.CASSETTE_TYPE_I,
+            MediaType.CASSETTE_TYPE_II,
+            MediaType.CASSETTE_TYPE_IV,
+            MediaType.CYLINDER_EDISON,
+            MediaType.CYLINDER_PATHE,
+            MediaType.WIRE_RECORDING,
         }
 
         if m in analog_media:
@@ -487,14 +496,16 @@ class MediaForensicsEngine:
         # self.evidence überlebt file_ext-basierte Nullierung (z.B. .mp3),
         # die hypotheses[0].evidence zurücksetzen kann.
         vinyl_ghost = False
-        for _ev_source in (self.evidence, getattr(hypotheses[0], 'evidence', []) if hypotheses else []):
-            for ev in (_ev_source if isinstance(_ev_source, list) else []):
-                label = str(getattr(ev, 'label', '')).lower()
-                feature = str(getattr(ev, 'feature', '')).lower()
-                desc = str(getattr(ev, 'description', '')).lower()
+        for _ev_source in (self.evidence, getattr(hypotheses[0], "evidence", []) if hypotheses else []):
+            for ev in _ev_source if isinstance(_ev_source, list) else []:
+                label = str(getattr(ev, "label", "")).lower()
+                feature = str(getattr(ev, "feature", "")).lower()
+                desc = str(getattr(ev, "description", "")).lower()
                 combined = f"{label} {feature} {desc}"
-                if any(kw in combined for kw in ['click', 'crackle', 'hum', 'surface_noise',
-                                                   'vinyl', 'riaa', 'groove', 'stylus']):
+                if any(
+                    kw in combined
+                    for kw in ["click", "crackle", "hum", "surface_noise", "vinyl", "riaa", "groove", "stylus"]
+                ):
                     vinyl_ghost = True
                     break
             if vinyl_ghost:
@@ -505,10 +516,12 @@ class MediaForensicsEngine:
 
         # MP3/Codec-Erkennung: prüfe Evidenz auf digitale Artefakte
         codec_evidence = [
-            ev for ev in (hypotheses[0].evidence if hasattr(hypotheses[0], 'evidence') else [])
-            if hasattr(ev, 'label') and any(
+            ev
+            for ev in (hypotheses[0].evidence if hasattr(hypotheses[0], "evidence") else [])
+            if hasattr(ev, "label")
+            and any(
                 kw in str(ev.label).lower()
-                for kw in ['mp3', 'mpeg', 'codec', 'aac', 'compression', 'lossy', 'quantization']
+                for kw in ["mp3", "mpeg", "codec", "aac", "compression", "lossy", "quantization"]
             )
         ]
 

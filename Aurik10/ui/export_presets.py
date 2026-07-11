@@ -7,7 +7,8 @@ Integration: wird vor dem technischen ExportConfigDialog gezeigt.
 
 from __future__ import annotations
 
-from PyQt5 import QtCore, QtWidgets, QtGui
+from PyQt5 import QtCore, QtGui, QtWidgets
+
 from Aurik10.i18n import t
 
 
@@ -17,27 +18,70 @@ class ExportPresetDialog(QtWidgets.QDialog):
     preset_selected = QtCore.pyqtSignal(dict)
 
     PRESETS = [
-        {"id": "whatsapp", "icon": "\U0001F4F1", "title_key": "export.preset.whatsapp",
-         "desc_key": "export.preset.whatsapp_desc",
-         "fmt": "mp3", "bitrate": "192k", "sr": 44100, "bits": 16},
-        {"id": "cd", "icon": "\U0001F4BF", "title_key": "export.preset.cd",
-         "desc_key": "export.preset.cd_desc",
-         "fmt": "wav", "sr": 44100, "bits": 16},
-        {"id": "email", "icon": "\U0001F4E7", "title_key": "export.preset.email",
-         "desc_key": "export.preset.email_desc",
-         "fmt": "mp3", "bitrate": "V2", "sr": 44100, "bits": 16},
-        {"id": "mobile", "icon": "\U0001F3A7", "title_key": "export.preset.mobile",
-         "desc_key": "export.preset.mobile_desc",
-         "fmt": "aac", "bitrate": "256k", "sr": 48000, "bits": 16},
-        {"id": "archive", "icon": "\U0001F3DB", "title_key": "export.preset.archive",
-         "desc_key": "export.preset.archive_desc",
-         "fmt": "flac", "sr": 48000, "bits": 24},
-        {"id": "youtube", "icon": "\U0001F3AC", "title_key": "export.preset.youtube",
-         "desc_key": "export.preset.youtube_desc",
-         "fmt": "wav", "sr": 48000, "bits": 24},
-        {"id": "custom", "icon": "\U0001F527", "title_key": "export.preset.custom",
-         "desc_key": "export.preset.custom_desc",
-         "fmt": None},
+        {
+            "id": "whatsapp",
+            "icon": "\U0001f4f1",
+            "title_key": "export.preset.whatsapp",
+            "desc_key": "export.preset.whatsapp_desc",
+            "fmt": "mp3",
+            "bitrate": "192k",
+            "sr": 44100,
+            "bits": 16,
+        },
+        {
+            "id": "cd",
+            "icon": "\U0001f4bf",
+            "title_key": "export.preset.cd",
+            "desc_key": "export.preset.cd_desc",
+            "fmt": "wav",
+            "sr": 44100,
+            "bits": 16,
+        },
+        {
+            "id": "email",
+            "icon": "\U0001f4e7",
+            "title_key": "export.preset.email",
+            "desc_key": "export.preset.email_desc",
+            "fmt": "mp3",
+            "bitrate": "V2",
+            "sr": 44100,
+            "bits": 16,
+        },
+        {
+            "id": "mobile",
+            "icon": "\U0001f3a7",
+            "title_key": "export.preset.mobile",
+            "desc_key": "export.preset.mobile_desc",
+            "fmt": "aac",
+            "bitrate": "256k",
+            "sr": 48000,
+            "bits": 16,
+        },
+        {
+            "id": "archive",
+            "icon": "\U0001f3db",
+            "title_key": "export.preset.archive",
+            "desc_key": "export.preset.archive_desc",
+            "fmt": "flac",
+            "sr": 48000,
+            "bits": 24,
+        },
+        {
+            "id": "youtube",
+            "icon": "\U0001f3ac",
+            "title_key": "export.preset.youtube",
+            "desc_key": "export.preset.youtube_desc",
+            "fmt": "wav",
+            "sr": 48000,
+            "bits": 24,
+        },
+        {
+            "id": "custom",
+            "icon": "\U0001f527",
+            "title_key": "export.preset.custom",
+            "desc_key": "export.preset.custom_desc",
+            "fmt": None,
+        },
     ]
 
     def __init__(self, parent=None):

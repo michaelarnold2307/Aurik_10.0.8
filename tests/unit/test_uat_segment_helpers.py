@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for vocal-focused UAT segment helpers."""
 
 from __future__ import annotations

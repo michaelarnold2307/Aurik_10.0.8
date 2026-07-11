@@ -80,11 +80,7 @@ def spec_to_log_mel(y: np.ndarray, sr: int, n_mels: int = 256) -> np.ndarray:
     elif len(y) > target_samples:
         y = y[:target_samples]
 
-    spec = np.abs(
-        np.lib.stride_tricks.sliding_window_view(
-            y, n_fft, axis=0
-        )[::hop]
-    )
+    spec = np.abs(np.lib.stride_tricks.sliding_window_view(y, n_fft, axis=0)[::hop])
     spec = spec[:, : n_fft // 2 + 1] ** 2
 
     mel_fb = _mel_filterbank(sr, n_fft, n_mels)
@@ -109,13 +105,9 @@ def _mel_filterbank(sr: int, n_fft: int, n_mels: int) -> np.ndarray:
     for m in range(n_mels):
         f_prev, f_curr, f_next = bin_points[m], bin_points[m + 1], bin_points[m + 2]
         if f_curr > f_prev:
-            filters[m, f_prev:f_curr] = (
-                np.arange(f_prev, f_curr) - f_prev
-            ) / (f_curr - f_prev)
+            filters[m, f_prev:f_curr] = (np.arange(f_prev, f_curr) - f_prev) / (f_curr - f_prev)
         if f_next > f_curr:
-            filters[m, f_curr:f_next] = (
-                f_next - np.arange(f_curr, f_next)
-            ) / (f_next - f_curr)
+            filters[m, f_curr:f_next] = (f_next - np.arange(f_curr, f_next)) / (f_next - f_curr)
 
     return filters
 
@@ -213,10 +205,7 @@ def generate_from_audio_dir(
                 generated += 1
 
                 if generated % 100 == 0:
-                    print(
-                        f"   Generiert: {generated}/{target_segments} "
-                        f"({100 * generated / target_segments:.0f}%)"
-                    )
+                    print(f"   Generiert: {generated}/{target_segments} ({100 * generated / target_segments:.0f}%)")
 
         except Exception as e:
             print(f"   ⚠️ Fehler bei {audio_path.name}: {e}")
@@ -287,9 +276,7 @@ def generate_synthetic(
             target=mel_orig,
             cutoff_hz=cutoff,
         )
-        manifest.append(
-            {"id": sample_id, "source": "synthetic", "cutoff_hz": round(cutoff, 1)}
-        )
+        manifest.append({"id": sample_id, "source": "synthetic", "cutoff_hz": round(cutoff, 1)})
 
         if (idx + 1) % 100 == 0:
             print(f"   Generiert: {idx + 1}/{target_segments}")

@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.core.phases.phase_15_stereo_balance import StereoBalancePhaseV2
 

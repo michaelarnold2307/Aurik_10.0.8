@@ -54,15 +54,9 @@ class TestFrissonPreservationInRepairPhases:
         import backend.core.phases.phase_08_transient_preservation as p08_mod
 
         src = open(p08_mod.__file__, encoding="utf-8").read()
-        assert "frisson" in src.lower(), (
-            "Phase 08: Frisson-Schutz fehlt — Attack-Boost in Gänsehaut-Passagen"
-        )
-        assert "_frisson_cap" in src, (
-            "Phase 08: _frisson_cap-Mechanismus fehlt"
-        )
-        assert "0.30" in src, (
-            "Phase 08: Frisson-Cap 0.30 nicht definiert (§VFA)"
-        )
+        assert "frisson" in src.lower(), "Phase 08: Frisson-Schutz fehlt — Attack-Boost in Gänsehaut-Passagen"
+        assert "_frisson_cap" in src, "Phase 08: _frisson_cap-Mechanismus fehlt"
+        assert "0.30" in src, "Phase 08: Frisson-Cap 0.30 nicht definiert (§VFA)"
 
     def test_05_frisson_cap_consistency(self):
         """Alle Phasen verwenden denselben Frisson-Cap (0.30 gemäß §VFA)."""
@@ -74,23 +68,17 @@ class TestFrissonPreservationInRepairPhases:
         for name, path in phases:
             with open(path, encoding="utf-8") as f:
                 src = f.read()
-            assert "0.30" in src, (
-                f"{name}: Frisson-Cap 0.30 nicht gefunden — inkonsistent mit §VFA"
-            )
+            assert "0.30" in src, f"{name}: Frisson-Cap 0.30 nicht gefunden — inkonsistent mit §VFA"
 
     def test_06_emotional_arc_in_hpi_formula(self):
         """emotional_arc_preservation ist Multiplikator im HPI."""
         src = open(".github/instructions/pipeline.instructions.md", encoding="utf-8").read()
-        assert "emotional_arc_preservation" in src, (
-            "emotional_arc_preservation fehlt in HPI-Formel"
-        )
+        assert "emotional_arc_preservation" in src, "emotional_arc_preservation fehlt in HPI-Formel"
 
     def test_07_frisson_zones_in_verboten_md(self):
         """Frisson-Zonen sind in VERBOTEN.md als geschützt dokumentiert."""
         src = open(".github/VERBOTEN.md", encoding="utf-8").read()
-        assert "frisson_zones" in src, (
-            "frisson_zones fehlt in VERBOTEN.md — nicht als Invariante dokumentiert"
-        )
+        assert "frisson_zones" in src, "frisson_zones fehlt in VERBOTEN.md — nicht als Invariante dokumentiert"
 
 
 @pytest.mark.unit
@@ -106,6 +94,4 @@ class TestFrissonSoftVeto:
     def test_11_frisson_not_hard_veto(self):
         """Frisson ist KEIN Hard-Veto (kein Export-Block)."""
         src = open(".github/instructions/pipeline.instructions.md", encoding="utf-8").read()
-        assert "kein eigenständiger Hard-Veto" in src, (
-            "Frisson fälschlich als Hard-Veto dokumentiert"
-        )
+        assert "kein eigenständiger Hard-Veto" in src, "Frisson fälschlich als Hard-Veto dokumentiert"

@@ -50,7 +50,7 @@ if [ -d "dist/AURIK_Professional" ]; then
     echo "To run:"
     echo "  ./dist/AURIK_Professional/AURIK_Professional"
     echo ""
-    
+
     # Get size
     SIZE=$(du -sh dist/AURIK_Professional | cut -f1)
     echo "Package size: $SIZE"

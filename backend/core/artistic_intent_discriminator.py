@@ -385,7 +385,6 @@ class ArtisticIntentDiscriminator:
                     covered += max(0, min(b_s, n_samples) - max(0, a_s))
             except Exception as e:
                 logger.warning("artistic_intent_discriminator.py::_fraction_in_zones fallback: %s", e)
-                pass
         return float(np.clip(covered / max(1, n_samples), 0.0, 1.0))
 
     @staticmethod

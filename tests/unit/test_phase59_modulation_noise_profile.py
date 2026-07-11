@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: ModulationNoiseReductionPhase._compute_modulation_noise_profile() (§2.56)."""
 
 import numpy as np

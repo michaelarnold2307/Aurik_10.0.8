@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +102,7 @@ class ABXSession:
 class ABXListener:
     """ABX-Hör-Test-Manager (Singleton)."""
 
-    _instance: "ABXListener | None" = None
+    _instance: ABXListener | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -111,7 +110,7 @@ class ABXListener:
         self._init_db()
 
     @classmethod
-    def get_instance(cls) -> "ABXListener":
+    def get_instance(cls) -> ABXListener:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -169,13 +168,15 @@ class ABXListener:
             x_is_a = rng.choice([True, False])
             stimulus_x = stimuli_a[i] if x_is_a else stimuli_b[i]
 
-            trials.append(ABXTrial(
-                trial_index=i,
-                stimulus_a=stimuli_a[i],
-                stimulus_b=stimuli_b[i],
-                stimulus_x=stimulus_x,
-                x_is_a=x_is_a,
-            ))
+            trials.append(
+                ABXTrial(
+                    trial_index=i,
+                    stimulus_a=stimuli_a[i],
+                    stimulus_b=stimuli_b[i],
+                    stimulus_x=stimulus_x,
+                    x_is_a=x_is_a,
+                )
+            )
 
         # Trials randomisieren
         rng.shuffle(trials)

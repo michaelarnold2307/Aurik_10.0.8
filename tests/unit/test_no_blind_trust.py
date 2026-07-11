@@ -12,6 +12,7 @@ Spec: §v10 Pleasantness-First, §0g Autonome Entscheidungen
 from __future__ import annotations
 
 import importlib.util
+
 import pytest
 
 
@@ -30,45 +31,45 @@ class TestNoBlindTrust:
 
     def test_01_defect_scanner_has_snr_measurement(self):
         """defect_scanner.py enthält _estimate_local_snr()."""
-        assert _module_has_symbol(
-            "backend.core.defect_scanner", "_estimate_local_snr"
-        ), "defect_scanner.py: _estimate_local_snr() fehlt — SNR wird nicht gemessen"
+        assert _module_has_symbol("backend.core.defect_scanner", "_estimate_local_snr"), (
+            "defect_scanner.py: _estimate_local_snr() fehlt — SNR wird nicht gemessen"
+        )
 
     def test_02_defect_scanner_snr_adaptive_in_click_detection(self):
         """Click-Detection verwendet _snr_est (SNR-adaptiv)."""
-        assert _module_has_symbol(
-            "backend.core.defect_scanner", "_snr_est"
-        ), "defect_scanner.py: _snr_est nicht in Click-Detection — statischer Outlier-Faktor"
+        assert _module_has_symbol("backend.core.defect_scanner", "_snr_est"), (
+            "defect_scanner.py: _snr_est nicht in Click-Detection — statischer Outlier-Faktor"
+        )
 
     def test_03_defect_scanner_material_sensitivity_has_snr_scale(self):
         """MATERIAL_SENSITIVITY wird SNR-adaptiv skaliert (_snr_scale)."""
-        assert _module_has_symbol(
-            "backend.core.defect_scanner", "_snr_scale"
-        ), "defect_scanner.py: _snr_scale fehlt — MATERIAL_SENSITIVITY nicht SNR-adaptiv"
+        assert _module_has_symbol("backend.core.defect_scanner", "_snr_scale"), (
+            "defect_scanner.py: _snr_scale fehlt — MATERIAL_SENSITIVITY nicht SNR-adaptiv"
+        )
 
     def test_04_phase_16_has_spectrum_measurement(self):
         """phase_16_final_eq.py enthält _measure_spectral_deviation()."""
-        assert _module_has_symbol(
-            "backend.core.phases.phase_16_final_eq", "_measure_spectral_deviation"
-        ), "phase_16: _measure_spectral_deviation() fehlt — EQ ohne Spektrum-Messung"
+        assert _module_has_symbol("backend.core.phases.phase_16_final_eq", "_measure_spectral_deviation"), (
+            "phase_16: _measure_spectral_deviation() fehlt — EQ ohne Spektrum-Messung"
+        )
 
     def test_05_phase_17_has_spectrum_measurement(self):
         """phase_17_mastering_polish.py enthält _measure_spectral_balance()."""
-        assert _module_has_symbol(
-            "backend.core.phases.phase_17_mastering_polish", "_measure_spectral_balance"
-        ), "phase_17: _measure_spectral_balance() fehlt — EQ ohne Spektrum-Messung"
+        assert _module_has_symbol("backend.core.phases.phase_17_mastering_polish", "_measure_spectral_balance"), (
+            "phase_17: _measure_spectral_balance() fehlt — EQ ohne Spektrum-Messung"
+        )
 
     def test_06_phase_17_has_harmonic_measurement(self):
         """phase_17_mastering_polish.py enthält _measure_harmonic_density()."""
-        assert _module_has_symbol(
-            "backend.core.phases.phase_17_mastering_polish", "_measure_harmonic_density"
-        ), "phase_17: _measure_harmonic_density() fehlt — Saturation ohne Messung"
+        assert _module_has_symbol("backend.core.phases.phase_17_mastering_polish", "_measure_harmonic_density"), (
+            "phase_17: _measure_harmonic_density() fehlt — Saturation ohne Messung"
+        )
 
     def test_07_tape_splice_has_dynamic_threshold(self):
         """Tape-Splice verwendet _local_dyn_range_db (dynamisch)."""
-        assert _module_has_symbol(
-            "backend.core.defect_scanner", "_local_dyn_range_db"
-        ), "defect_scanner.py: _local_dyn_range_db fehlt — Tape-Splice mit festem 6dB"
+        assert _module_has_symbol("backend.core.defect_scanner", "_local_dyn_range_db"), (
+            "defect_scanner.py: _local_dyn_range_db fehlt — Tape-Splice mit festem 6dB"
+        )
 
 
 class TestNoSourceGrepRegression:

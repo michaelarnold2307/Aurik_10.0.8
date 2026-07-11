@@ -1,5 +1,6 @@
-import pytest
 from __future__ import annotations
+
+import pytest
 
 from backend.core.defect_detection_quality_gate import (
     DefectBenchmarkCaseResult,

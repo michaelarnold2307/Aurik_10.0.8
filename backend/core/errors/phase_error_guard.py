@@ -22,7 +22,8 @@ from __future__ import annotations
 import functools
 import logging
 import traceback
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 
@@ -104,8 +105,7 @@ def phase_error_guard(
                 if input_audio is None:
                     # Kein Input-Audio verfügbar → leeres Array als Notlösung
                     logger.error(
-                        "Phase '%s': Kein Input-Audio für Fallback verfügbar. "
-                        "Leeres Array zurückgegeben (1 s Stille).",
+                        "Phase '%s': Kein Input-Audio für Fallback verfügbar. Leeres Array zurückgegeben (1 s Stille).",
                         name,
                     )
                     input_audio = np.zeros(input_sr, dtype=np.float32)
@@ -123,8 +123,7 @@ def phase_error_guard(
                 )
 
                 logger.warning(
-                    "Phase '%s': Graceful Degradation aktiviert. "
-                    "Audio unverändert durchgereicht. Fehler: %s",
+                    "Phase '%s': Graceful Degradation aktiviert. Audio unverändert durchgereicht. Fehler: %s",
                     name,
                     error_msg,
                 )

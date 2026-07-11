@@ -1,4 +1,5 @@
 import pytest
+
 """Pflicht-Tests für StereoAuthenticitiyInvariant (§2.18).
 
 Testkonventionen:

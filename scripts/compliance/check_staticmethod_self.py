@@ -48,10 +48,7 @@ class StaticMethodSelfChecker(ast.NodeVisitor):
 
     def _check_method(self, class_name: str, func: ast.FunctionDef) -> None:
         # Prüfe: ist @staticmethod?
-        is_static = any(
-            isinstance(d, ast.Name) and d.id == "staticmethod"
-            for d in func.decorator_list
-        )
+        is_static = any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in func.decorator_list)
         if not is_static:
             return
 
@@ -125,7 +122,7 @@ def main() -> None:
         print(f"  {rel}:{line}  {method}")
         print(f"    → Zugriffe auf: {accesses}")
         if show_fix:
-            print(f"    → FIX: Entferne '@staticmethod' und füge 'self' als ersten Parameter ein.")
+            print("    → FIX: Entferne '@staticmethod' und füge 'self' als ersten Parameter ein.")
         print()
 
     print(

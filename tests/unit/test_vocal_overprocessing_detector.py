@@ -18,13 +18,11 @@ from backend.core.vocal_overprocessing_detector import (
     VocalOverprocessingDetector,
     VocalOverprocessingResult,
     _band_energy,
-    _band_variance_db,
     _burg_lpc,
     _extract_f1_f2,
     _lpc_to_formants,
     _to_mono,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -210,7 +208,7 @@ class TestVocalOverprocessingDetector:
     def test_check_de_essing_lisp(self, detector, sibilant_audio, sr):
         """Heavily boosted HF should trigger lisp detection."""
         # Boost 6-10 kHz significantly
-        from scipy.signal import sosfiltfilt, butter
+        from scipy.signal import butter, sosfiltfilt
 
         sos = butter(4, [6000.0, 10000.0], btype="bandpass", fs=sr, output="sos")
         boosted = sibilant_audio + 2.0 * sosfiltfilt(sos, sibilant_audio)
@@ -224,7 +222,7 @@ class TestVocalOverprocessingDetector:
     def test_check_de_essing_sibilance(self, detector, sibilant_audio, sr):
         """Severe sibilance reduction should trigger over-reduction."""
         # Cut HF drastically
-        from scipy.signal import sosfiltfilt, butter
+        from scipy.signal import butter, sosfiltfilt
 
         sos = butter(4, 5000.0, btype="lowpass", fs=sr, output="sos")
         dull = sosfiltfilt(sos, sibilant_audio)
@@ -251,7 +249,7 @@ class TestVocalOverprocessingDetector:
 
     def test_check_de_essing_warnings_on_detection(self, detector, sibilant_audio, sr):
         """When over-reduction detected, warnings list is populated."""
-        from scipy.signal import sosfiltfilt, butter
+        from scipy.signal import butter, sosfiltfilt
 
         sos = butter(4, 5000.0, btype="lowpass", fs=sr, output="sos")
         dull = sosfiltfilt(sos, sibilant_audio)

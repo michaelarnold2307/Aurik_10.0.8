@@ -46,11 +46,11 @@ class CrossChannelRepair:
 
     def repair_dropout(
         self,
-        audio: np.ndarray,           # (2, N) stereo
+        audio: np.ndarray,  # (2, N) stereo
         sr: int,
-        dropout_start: int,           # sample index
-        dropout_len: int,             # samples
-        affected_channel: int,        # 0=left, 1=right
+        dropout_start: int,  # sample index
+        dropout_len: int,  # samples
+        affected_channel: int,  # 0=left, 1=right
     ) -> np.ndarray:
         """Repariert einen Dropout in einem Kanal mit Material vom anderen.
 
@@ -80,7 +80,7 @@ class CrossChannelRepair:
             return result
 
         # Cross-fade Regionen: 10ms vorher und nachher
-        fade_in = min(int(sr * 0.010), n // 3)    # 10ms
+        fade_in = min(int(sr * 0.010), n // 3)  # 10ms
         fade_out = min(int(sr * 0.010), n // 3)
         repair_start = max(0, dropout_start - fade_in)
         repair_end = min(len(damaged), dropout_start + n + fade_out)
@@ -114,55 +114,48 @@ class CrossChannelRepair:
                 ramp_out = np.linspace(1, 0, fade_out) if fade_out > 0 else np.array([])
                 blend_len = len(healthy_segment) - len(ramp_in) - len(ramp_out)
                 blend = np.ones(max(0, blend_len), dtype=np.float32)
-                window = np.concatenate([ramp_in, blend, ramp_out])[:len(healthy_segment)]
+                window = np.concatenate([ramp_in, blend, ramp_out])[: len(healthy_segment)]
 
                 # Reparatur: Original (beschädigt) + Cross-Channel (gesund)
-                damaged[repair_start:repair_end] = (
-                    damaged_seg * (1 - window) +
-                    healthy_segment * window
-                )
+                damaged[repair_start:repair_end] = damaged_seg * (1 - window) + healthy_segment * window
 
                 # §AF: Envelope-Matching — Amplitude an Kontext angleichen
                 damaged = self._dynamics.match_envelope(
-                    damaged, sr, repair_start, repair_end,
-                    context_ms=40, crossfade_ms=12
+                    damaged, sr, repair_start, repair_end, context_ms=40, crossfade_ms=12
                 )
         except Exception:
             # Fallback: direkter Cross-fade ohne spektrale Anpassung
             window = np.hanning(min(n * 2, repair_end - repair_start))
-            window = window[:repair_end - repair_start]
+            window = window[: repair_end - repair_start]
             damaged[repair_start:repair_end] = (
-                damaged[repair_start:repair_end] * (1 - window) +
-                healthy[repair_start:repair_end] * window
+                damaged[repair_start:repair_end] * (1 - window) + healthy[repair_start:repair_end] * window
             )
             # §AF: Auch im Fallback Envelope matchen
             try:
                 damaged = self._dynamics.match_envelope(
-                    damaged, sr, repair_start, repair_end,
-                    context_ms=40, crossfade_ms=12
+                    damaged, sr, repair_start, repair_end, context_ms=40, crossfade_ms=12
                 )
             except Exception as e:
                 logger.warning("cross_channel_repair.py::unknown fallback: %s", e)
-                pass
 
         result[affected_channel] = damaged
 
         # §AF: Continuity-Check
-        _ct = self._dynamics.verify_continuity(
-            result[affected_channel], sr, [repair_start, repair_end]
-        )
+        _ct = self._dynamics.verify_continuity(result[affected_channel], sr, [repair_start, repair_end])
         if not _ct.continuity_ok:
-            logger.debug("Dropout-Repair: Kontinuitätswarnung bei Sample %d Kanal %d (%.1f dB)",
-                         dropout_start, affected_channel, _ct.max_envelope_deviation_db)
+            logger.debug(
+                "Dropout-Repair: Kontinuitätswarnung bei Sample %d Kanal %d (%.1f dB)",
+                dropout_start,
+                affected_channel,
+                _ct.max_envelope_deviation_db,
+            )
             # Sanfte Nachkorrektur
             try:
                 result[affected_channel] = self._dynamics.match_envelope(
-                    result[affected_channel], sr, repair_start, repair_end,
-                    context_ms=80, crossfade_ms=20
+                    result[affected_channel], sr, repair_start, repair_end, context_ms=80, crossfade_ms=20
                 )
             except Exception as e:
                 logger.warning("cross_channel_repair.py::unknown fallback: %s", e)
-                pass
 
         self._repair_boundaries.append((affected_channel, repair_start, repair_end))
         return result
@@ -202,27 +195,26 @@ class CrossChannelRepair:
             window[-fade:] = np.linspace(1, 0, fade)
 
         result[affected_channel, start:end] = (
-            result[affected_channel, start:end] * (1 - window) +
-            result[healthy_ch, start:end] * window
+            result[affected_channel, start:end] * (1 - window) + result[healthy_ch, start:end] * window
         )
 
         # §AF: Envelope-Matching — Amplitude an Kontext angleichen
         try:
             result[affected_channel] = self._dynamics.match_envelope(
-                result[affected_channel], sr, start, end,
-                context_ms=30, crossfade_ms=8
+                result[affected_channel], sr, start, end, context_ms=30, crossfade_ms=8
             )
         except Exception as e:
             logger.warning("cross_channel_repair.py::repair_click fallback: %s", e)
-            pass
 
         # §AF: Continuity-Check
-        _ct2 = self._dynamics.verify_continuity(
-            result[affected_channel], sr, [start, end]
-        )
+        _ct2 = self._dynamics.verify_continuity(result[affected_channel], sr, [start, end])
         if not _ct2.continuity_ok:
-            logger.debug("Click-Repair: Kontinuitätswarnung bei Sample %d Kanal %d (%.1f dB)",
-                         click_sample, affected_channel, _ct2.max_envelope_deviation_db)
+            logger.debug(
+                "Click-Repair: Kontinuitätswarnung bei Sample %d Kanal %d (%.1f dB)",
+                click_sample,
+                affected_channel,
+                _ct2.max_envelope_deviation_db,
+            )
 
         self._repair_boundaries.append((affected_channel, start, end))
         return result
@@ -277,15 +269,17 @@ class CrossChannelRepair:
             # Suche in 10ms-Blöcken
             block_size = int(sr * 0.010)
             for i in range(0, len(channel) - block_size, block_size // 2):
-                block = channel[i:i + block_size]
+                block = channel[i : i + block_size]
                 peak = float(np.max(np.abs(block)))
                 if peak > threshold:
-                    result[ch_name].append({
-                        "type": "click",
-                        "sample": int(i + np.argmax(np.abs(block))),
-                        "severity": float(min(1.0, peak / (threshold * 3))),
-                        "width": int(sr * 0.003),  # 3ms default
-                    })
+                    result[ch_name].append(
+                        {
+                            "type": "click",
+                            "sample": int(i + np.argmax(np.abs(block))),
+                            "severity": float(min(1.0, peak / (threshold * 3))),
+                            "width": int(sr * 0.003),  # 3ms default
+                        }
+                    )
 
         # Finde Defekte die in BEIDEN Kanälen auftreten
         both: list[dict] = []
@@ -294,8 +288,7 @@ class CrossChannelRepair:
             matched = False
             for r_def in result["right"]:
                 if abs(l_def["sample"] - r_def["sample"]) < int(sr * 0.005):
-                    both.append({**l_def, "channel": "both",
-                                 "sample": (l_def["sample"] + r_def["sample"]) // 2})
+                    both.append({**l_def, "channel": "both", "sample": (l_def["sample"] + r_def["sample"]) // 2})
                     matched = True
                     break
             if not matched:

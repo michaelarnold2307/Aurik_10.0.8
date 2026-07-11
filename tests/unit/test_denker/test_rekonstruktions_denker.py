@@ -187,7 +187,7 @@ class TestRekonstruktionsDenkerRekonstruiere:
 
                 denker = RekonstruktionsDenker()
                 return denker.rekonstruiere(audio, sr, material=material)
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
                 return None
 

@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.core.quality_feedback_loop import QualityFeedbackLoop
 

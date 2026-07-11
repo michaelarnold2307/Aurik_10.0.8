@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_goosebumps_quality_checker.py — §8.3 GoosebumpsQualityChecker Tests
 ====================================================================================

@@ -1,4 +1,6 @@
-import sys; sys.path.insert(0, ".")
+import sys
+
+sys.path.insert(0, ".")
 #!/usr/bin/env python3
 """
 §2.59 UV3 Pre-Flight Smoke Test (2026-07-09)
@@ -13,7 +15,7 @@ Exit 0 = OK, Exit 1 = Fehler gefunden
 
 import sys
 import time
-import numpy as np
+
 
 
 def test_import_chain() -> int:
@@ -50,6 +52,7 @@ def test_calibration_profile() -> int:
     """Testet _build_song_calibration_profile mit realistischen Werten."""
     try:
         from unittest.mock import MagicMock
+
         from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 
         uv3 = MagicMock(spec=UnifiedRestorerV3)
@@ -75,6 +78,7 @@ def test_calibration_profile() -> int:
     except Exception as e:
         print(f"  ❌ SongCalibration: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -83,6 +87,7 @@ def test_contract_validator() -> int:
     """Testet den ContractValidator."""
     try:
         from backend.core.defect_contract_validator import run_contract_validation
+
         result = run_contract_validation()
         if result["ok"]:
             print(f"  ✅ ContractValidator: OK ({result['violations']} violations)")
@@ -111,7 +116,7 @@ def main() -> int:
     errors += test_contract_validator()
 
     elapsed = time.monotonic() - t0
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     if errors == 0:
         print(f"✅ ALL PASSED ({elapsed:.1f}s) — UV3 bereit für den Run")
         return 0

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ── §V Reference-Track-Kalibrierung ───────────────────────────────────────────
+
 
 class ReferenceTrackMatcher:
     """Analysiert eine Referenz-Audiodatei und erstellt ein Ziel-Profil."""
@@ -38,8 +38,18 @@ class ReferenceTrackMatcher:
             mono = np.mean(audio, axis=0) if audio.ndim == 2 else np.asarray(audio, dtype=np.float32)
 
             # 1. Spektrale Balance (10-Band-Approximation)
-            bands = [(20, 60), (60, 200), (200, 500), (500, 1000), (1000, 2000),
-                     (2000, 4000), (4000, 6000), (6000, 8000), (8000, 12000), (12000, 20000)]
+            bands = [
+                (20, 60),
+                (60, 200),
+                (200, 500),
+                (500, 1000),
+                (1000, 2000),
+                (2000, 4000),
+                (4000, 6000),
+                (6000, 8000),
+                (8000, 12000),
+                (12000, 20000),
+            ]
             spectrum: dict[str, float] = {}
             fft = np.abs(np.fft.rfft(mono, n=min(65536, len(mono))))
             freqs = np.fft.rfftfreq(min(65536, len(mono)), d=1.0 / sr)
@@ -50,7 +60,7 @@ class ReferenceTrackMatcher:
 
             # 2. Dynamik (PLR: Peak-to-Loudness Ratio)
             power = np.mean(mono * mono) + 1e-12
-            rms_db = 10.0 * np.log10(power)
+            10.0 * np.log10(power)
             peak = float(np.max(np.abs(mono)))
             plr = 20.0 * np.log10(peak / np.sqrt(power) + 1e-12)
 
@@ -99,10 +109,12 @@ class ReferenceTrackMatcher:
                 adjustments["waerme"] = float(np.clip(1.0 + (ratio - 1.0) * 0.5, 0.7, 1.3))
 
             # Brillanz: 2k-8k Verhältnis
-            brill_ref = (ref_spec.get("2000-4000", 0.05) + ref_spec.get("4000-6000", 0.05)
-                         + ref_spec.get("6000-8000", 0.05))
-            brill_src = (src_spec.get("2000-4000", 0.05) + src_spec.get("4000-6000", 0.05)
-                         + src_spec.get("6000-8000", 0.05))
+            brill_ref = (
+                ref_spec.get("2000-4000", 0.05) + ref_spec.get("4000-6000", 0.05) + ref_spec.get("6000-8000", 0.05)
+            )
+            brill_src = (
+                src_spec.get("2000-4000", 0.05) + src_spec.get("4000-6000", 0.05) + src_spec.get("6000-8000", 0.05)
+            )
             if brill_src > 0:
                 ratio_b = brill_ref / max(brill_src, 0.01)
                 adjustments["brillanz"] = float(np.clip(1.0 + (ratio_b - 1.0) * 0.5, 0.7, 1.3))
@@ -147,11 +159,10 @@ class PreferenceLearner:
         try:
             _PREFERENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
             if _PREFERENCE_FILE.exists():
-                with open(_PREFERENCE_FILE, "r") as f:
+                with open(_PREFERENCE_FILE) as f:
                     return json.load(f)
         except Exception as e:
             logger.warning("preference_learner.py::_load fallback: %s", e)
-            pass
         return {"sessions": [], "genre_weights": {}, "material_weights": {}}
 
     def _save(self) -> None:
@@ -197,19 +208,22 @@ class PreferenceLearner:
             md["preference_count"] = md.get("preference_count", 0) + 1
 
         self._save()
-        logger.info("§W Preference recorded: choice=%s genre=%s material=%s (total sessions: %d)",
-                     choice, genre, material, len(self._prefs["sessions"]))
+        logger.info(
+            "§W Preference recorded: choice=%s genre=%s material=%s (total sessions: %d)",
+            choice,
+            genre,
+            material,
+            len(self._prefs["sessions"]),
+        )
 
-    def get_recommendation(
-        self, genre: str = "", material: str = ""
-    ) -> dict[str, Any]:
+    def get_recommendation(self, genre: str = "", material: str = "") -> dict[str, Any]:
         """Gibt Empfehlung basierend auf gelernten Präferenzen."""
         rec: dict[str, Any] = {"strength_bias": 0.0, "confidence": 0.0}
         gw = self._prefs.get("genre_weights", {}).get(genre, {})
         mw = self._prefs.get("material_weights", {}).get(material, {})
 
-        genre_count = gw.get("preference_count", 0)
-        mat_count = mw.get("preference_count", 0)
+        gw.get("preference_count", 0)
+        mw.get("preference_count", 0)
         total_sessions = len(self._prefs.get("sessions", []))
 
         if total_sessions > 0:
@@ -228,7 +242,9 @@ class PreferenceLearner:
             "materials_learned": len(self._prefs.get("material_weights", {})),
         }
 
+
 # ── §Z Batch-Intelligence ────────────────────────────────────────────────
+
 
 class BatchIntelligence:
     """Batch-übergreifendes Lernen: Erkenntnisse aus Song 1 → Song 2–N."""
@@ -241,16 +257,26 @@ class BatchIntelligence:
 
     def start_batch(self, bid: str = "") -> None:
         with self._lock:
-            self._songs.clear(); self._strengths.clear(); self._eq.clear()
+            self._songs.clear()
+            self._strengths.clear()
+            self._eq.clear()
             self._bid = bid or str(time.time())
         logger.info("§Z Batch gestartet: %s", self._bid)
 
-    def record(self, sid: str, genre: str, material: str,
-               defects: list, strengths: dict, eq: dict | None = None,
-               scores: dict | None = None) -> None:
+    def record(
+        self,
+        sid: str,
+        genre: str,
+        material: str,
+        defects: list,
+        strengths: dict,
+        eq: dict | None = None,
+        scores: dict | None = None,
+    ) -> None:
         with self._lock:
-            self._songs.append({"id": sid, "genre": genre, "material": material,
-                                "defects": defects, "scores": dict(scores or {})})
+            self._songs.append(
+                {"id": sid, "genre": genre, "material": material, "defects": defects, "scores": dict(scores or {})}
+            )
             for pid, s in (strengths or {}).items():
                 self._strengths.setdefault(pid, []).append(s)
             for b, v in (eq or {}).items():
@@ -259,10 +285,20 @@ class BatchIntelligence:
     def recommend(self) -> dict:
         with self._lock:
             r: dict = {}
-            if not self._songs: return r
+            if not self._songs:
+                return r
             from collections import Counter
-            r["genre"] = Counter(s["genre"] for s in self._songs if s["genre"]).most_common(1)[0][0] if any(s["genre"] for s in self._songs) else "?"
-            r["material"] = Counter(s["material"] for s in self._songs if s["material"]).most_common(1)[0][0] if any(s["material"] for s in self._songs) else "?"
+
+            r["genre"] = (
+                Counter(s["genre"] for s in self._songs if s["genre"]).most_common(1)[0][0]
+                if any(s["genre"] for s in self._songs)
+                else "?"
+            )
+            r["material"] = (
+                Counter(s["material"] for s in self._songs if s["material"]).most_common(1)[0][0]
+                if any(s["material"] for s in self._songs)
+                else "?"
+            )
             r["phase_strengths"] = {k: float(np.median(v)) for k, v in self._strengths.items() if len(v) >= 2}
             r["eq"] = {k: float(np.mean(v)) for k, v in self._eq.items() if len(v) >= 2}
             all_s = {}
@@ -271,7 +307,12 @@ class BatchIntelligence:
                     all_s.setdefault(g, []).append(v)
             r["best_scores"] = {g: float(np.max(v)) for g, v in all_s.items() if v}
             r["song_count"] = len(self._songs)
-            logger.info("§Z Batch-Empfehlung: %d Songs → %d Strengths, %d EQ", len(self._songs), len(r.get("phase_strengths", {})), len(r.get("eq", {})))
+            logger.info(
+                "§Z Batch-Empfehlung: %d Songs → %d Strengths, %d EQ",
+                len(self._songs),
+                len(r.get("phase_strengths", {})),
+                len(r.get("eq", {})),
+            )
             return r
 
     def finish(self) -> dict:
@@ -279,6 +320,8 @@ class BatchIntelligence:
         r["bid"] = getattr(self, "_bid", "")
         return r
 
-import threading, time, numpy as np, logging
-from collections import Counter
+
+import logging
+import threading
+
 logger = logging.getLogger(__name__)

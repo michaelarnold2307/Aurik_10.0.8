@@ -19,9 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -32,9 +31,8 @@ logger = logging.getLogger(__name__)
 # 1. SWEET_SPOT_FIXES — Echte Korrekturen pro Metrik
 # ═══════════════════════════════════════════════════════════════════════════
 
-def apply_sweet_spot_fix(
-    audio: np.ndarray, sr: int, metric: str, current_value: float, target: float
-) -> np.ndarray:
+
+def apply_sweet_spot_fix(audio: np.ndarray, sr: int, metric: str, current_value: float, target: float) -> np.ndarray:
     """Wendet eine METRIK-SPEZIFISCHE Korrektur an.
 
     Args:
@@ -54,6 +52,7 @@ def apply_sweet_spot_fix(
         if metric == "hpe":
             # HPE verbessern: Sanfte Loudness-Normalisierung + leichte EQ-Glättung
             from scipy.signal import butter, sosfiltfilt
+
             rms = float(np.sqrt(np.mean(arr**2)) + 1e-12)
             target_rms = 0.15  # Angenehmer Pegel
             if rms < 0.05:
@@ -61,21 +60,23 @@ def apply_sweet_spot_fix(
             elif rms > 0.4:
                 arr *= 0.85
             # Sanfte Höhenanhebung wenn dumpf
-            sos = butter(2, 6000/(sr/2), btype='high', output='sos')
+            sos = butter(2, 6000 / (sr / 2), btype="high", output="sos")
             shelf = sosfiltfilt(sos, arr) * 0.02 * gap
             arr += shelf
 
         elif metric == "inviting":
             # Inviting verbessern: Peaks dämpfen, Bass balancieren
             from scipy.signal import butter, sosfiltfilt
+
             if gap > 0.2:
                 # Frequenz-Peaks dämpfen via sanftem Lowpass
-                sos = butter(3, 12000/(sr/2), btype='low', output='sos')
+                sos = butter(3, 12000 / (sr / 2), btype="low", output="sos")
                 arr = sosfiltfilt(sos, arr)
 
         elif metric == "transparency":
             # Transparenz: Spektrale Glättung gegen wässrige Artefakte
             from scipy.ndimage import uniform_filter1d
+
             # Sehr sanfte Glättung (Fenster 3 Samples)
             arr_float = arr.astype(np.float64)
             arr = uniform_filter1d(arr_float, size=3).astype(np.float64)
@@ -103,8 +104,9 @@ def apply_sweet_spot_fix(
         elif metric in ("masking_health", "masking"):
             # Masking reduzieren: Leichte Multiband-Trennung
             from scipy.signal import butter, sosfiltfilt
-            sos_low = butter(2, 300/(sr/2), btype='low', output='sos')
-            sos_mid = butter(2, [300/(sr/2), 3000/(sr/2)], btype='bandpass', output='sos')
+
+            sos_low = butter(2, 300 / (sr / 2), btype="low", output="sos")
+            sos_mid = butter(2, [300 / (sr / 2), 3000 / (sr / 2)], btype="bandpass", output="sos")
             low = sosfiltfilt(sos_low, arr)
             mid = sosfiltfilt(sos_mid, arr)
             high = arr - low - mid
@@ -120,6 +122,7 @@ def apply_sweet_spot_fix(
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. PMGG_HPE_WRAP — HPE-Monkey-Patch für UV3-Phasen
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class PMGGHPEMonkeyPatch:
     """Wrappt PMGG-Aufrufe mit HPE-Check.
@@ -139,6 +142,7 @@ class PMGGHPEMonkeyPatch:
         """Aktiviert HPE-Monitoring für UV3-Phasen."""
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             cls._hpe_baseline = compute_pleasantness(audio, sr).score
             cls._hpe_current = cls._hpe_baseline
             cls._phase_count = 0
@@ -168,6 +172,7 @@ class PMGGHPEMonkeyPatch:
 
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             new_hpe = compute_pleasantness(audio, sr).score
             delta = new_hpe - cls._hpe_current
             cls._hpe_current = new_hpe
@@ -212,7 +217,6 @@ def load_song_profile(genre: str, medium: str) -> SongProfile:
             return SongProfile(**data)
     except Exception as e:
         logger.warning("aurik_completion_engine.py::load_song_profile fallback: %s", e)
-        pass
     return SongProfile(genre=genre, medium=medium)
 
 
@@ -223,38 +227,53 @@ def save_song_profile(profile: SongProfile) -> None:
     path = os.path.join(SONG_PROFILE_DIR, f"{key}.json")
     try:
         with open(path, "w") as f:
-            json.dump({
-                "genre": profile.genre,
-                "medium": profile.medium,
-                "optimal_nr_strength": profile.optimal_nr_strength,
-                "optimal_eq_presence": profile.optimal_eq_presence,
-                "optimal_compression_ratio": profile.optimal_compression_ratio,
-                "success_count": profile.success_count,
-                "avg_hpe_delta": profile.avg_hpe_delta,
-                "last_used": time.time(),
-            }, f, indent=2)
+            json.dump(
+                {
+                    "genre": profile.genre,
+                    "medium": profile.medium,
+                    "optimal_nr_strength": profile.optimal_nr_strength,
+                    "optimal_eq_presence": profile.optimal_eq_presence,
+                    "optimal_compression_ratio": profile.optimal_compression_ratio,
+                    "success_count": profile.success_count,
+                    "avg_hpe_delta": profile.avg_hpe_delta,
+                    "last_used": time.time(),
+                },
+                f,
+                indent=2,
+            )
     except Exception as e:
         logger.debug("Song profile save failed: %s", e)
 
 
-def update_song_profile(genre: str, medium: str, hpe_delta: float,
-                         nr_strength: float = 0.5, eq_presence: float = 0.0,
-                         comp_ratio: float = 1.5) -> None:
+def update_song_profile(
+    genre: str,
+    medium: str,
+    hpe_delta: float,
+    nr_strength: float = 0.5,
+    eq_presence: float = 0.0,
+    comp_ratio: float = 1.5,
+) -> None:
     """Aktualisiert Profil nach erfolgreicher Restaurierung."""
     profile = load_song_profile(genre, medium)
     n = profile.success_count + 1
     profile.success_count = n
-    profile.avg_hpe_delta = (profile.avg_hpe_delta * (n-1) + hpe_delta) / n
+    profile.avg_hpe_delta = (profile.avg_hpe_delta * (n - 1) + hpe_delta) / n
     # Exponentiell gleitender Mittelwert für Parameter
     alpha = 0.3
-    profile.optimal_nr_strength = profile.optimal_nr_strength * (1-alpha) + nr_strength * alpha
-    profile.optimal_eq_presence = profile.optimal_eq_presence * (1-alpha) + eq_presence * alpha
-    profile.optimal_compression_ratio = profile.optimal_compression_ratio * (1-alpha) + comp_ratio * alpha
+    profile.optimal_nr_strength = profile.optimal_nr_strength * (1 - alpha) + nr_strength * alpha
+    profile.optimal_eq_presence = profile.optimal_eq_presence * (1 - alpha) + eq_presence * alpha
+    profile.optimal_compression_ratio = profile.optimal_compression_ratio * (1 - alpha) + comp_ratio * alpha
     save_song_profile(profile)
-    logger.info("Song-Learning: %s/%s n=%d avgHPE=%.3f NR=%.2f EQ=%.2f Comp=%.2f",
-               genre, medium, profile.success_count, profile.avg_hpe_delta,
-               profile.optimal_nr_strength, profile.optimal_eq_presence,
-               profile.optimal_compression_ratio)
+    logger.info(
+        "Song-Learning: %s/%s n=%d avgHPE=%.3f NR=%.2f EQ=%.2f Comp=%.2f",
+        genre,
+        medium,
+        profile.success_count,
+        profile.avg_hpe_delta,
+        profile.optimal_nr_strength,
+        profile.optimal_eq_presence,
+        profile.optimal_compression_ratio,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -262,17 +281,19 @@ def update_song_profile(genre: str, medium: str, hpe_delta: float,
 # ═══════════════════════════════════════════════════════════════════════════
 
 ALTERNATIVE_PLUGINS_ACTIVE = {
-    "denoise+declick": [("deepfilternet", "DeepFilterNet"), ("resemble_enhance", "ResembleEnhance"),
-                         ("mp_senet", "MpSenet"), ("wpe", "WPE")],
+    "denoise+declick": [
+        ("deepfilternet", "DeepFilterNet"),
+        ("resemble_enhance", "ResembleEnhance"),
+        ("mp_senet", "MpSenet"),
+        ("wpe", "WPE"),
+    ],
     "declip": [("mdx23c", "MDX23C"), ("bs_roformer", "BSRoFormer")],
-    "source_separation": [("demucs", "HTDemucs"), ("uvr_mdxnet", "UVRMDXNet"),
-                          ("gacela", "GACELA")],
+    "source_separation": [("demucs", "HTDemucs"), ("uvr_mdxnet", "UVRMDXNet"), ("gacela", "GACELA")],
     "mastering_chain": [("matchering", "Matchering"), ("panns", "PANNs")],
 }
 
 
-def try_alternative_plugin(operation: str, retry_count: int,
-                           pipeline: Any = None) -> tuple[str, Any] | None:
+def try_alternative_plugin(operation: str, retry_count: int, pipeline: Any = None) -> tuple[str, Any] | None:
     """RETRY_DIFFERENT: Findet und initialisiert Alternativ-Plugin.
 
     Returns (plugin_name, plugin_instance) oder None.
@@ -282,8 +303,7 @@ def try_alternative_plugin(operation: str, retry_count: int,
         return None
 
     alt_name, alt_class_name = alts[retry_count]
-    logger.info("RETRY_DIFFERENT: %s -> %s (versuch %d)",
-               operation, alt_name, retry_count + 1)
+    logger.info("RETRY_DIFFERENT: %s -> %s (versuch %d)", operation, alt_name, retry_count + 1)
 
     # Versuche Plugin zu laden
     try:
@@ -302,8 +322,11 @@ def try_alternative_plugin(operation: str, retry_count: int,
 # 5. AB_COMPARE — A/B-Vergleich an Defektstellen
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def ab_compare_defect_sites(
-    original: np.ndarray, restored: np.ndarray, sr: int,
+    original: np.ndarray,
+    restored: np.ndarray,
+    sr: int,
     defect_positions: list[int] | None = None,
 ) -> dict:
     """Vergleicht Original und restauriert GEZIELT an Defektpositionen.
@@ -312,11 +335,11 @@ def ab_compare_defect_sites(
     """
     if defect_positions is None:
         # Auto-Detektion: Finde Maximal-Differenz-Stellen
-        diff = np.abs(original[:len(restored)] - restored[:len(original)])
+        diff = np.abs(original[: len(restored)] - restored[: len(original)])
         win = int(0.05 * sr)  # 50ms Fenster
         positions = []
         for i in range(win, len(diff) - win, win):
-            local_max = np.argmax(diff[i:i+win]) + i
+            local_max = np.argmax(diff[i : i + win]) + i
             if diff[local_max] > 0.01:
                 positions.append(local_max)
         # Top-10 Positionen
@@ -325,7 +348,7 @@ def ab_compare_defect_sites(
             sorted_positions = sorted(zip(positions, importance), key=lambda x: -x[1])
             defect_positions = [p for p, _ in sorted_positions[:10]]
         else:
-            defect_positions = [len(original)//2]  # Mitte als Fallback
+            defect_positions = [len(original) // 2]  # Mitte als Fallback
 
     window = int(0.05 * sr)
     results = {"improved": 0, "degraded": 0, "neutral": 0, "sites": []}
@@ -356,8 +379,11 @@ def ab_compare_defect_sites(
 # 6. BOUNDARY_ACTIVE — Grenzwert-Optimizer im DSP-Pfad
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def find_optimal_intensity(
-    audio: np.ndarray, sr: int, material: str,
+    audio: np.ndarray,
+    sr: int,
+    material: str,
     process_fn,  # Callable: fn(audio, intensity) -> audio
     intensity_range: tuple[float, float] = (0.3, 1.0),
     steps: int = 5,
@@ -394,8 +420,12 @@ def find_optimal_intensity(
             except Exception:
                 continue
 
-        logger.info("BoundaryActive: optimal intensity=%.2f HPE=%.3f (baseline=%.3f)",
-                   best_intensity, best_hpe, compute_pleasantness(audio, sr).score)
+        logger.info(
+            "BoundaryActive: optimal intensity=%.2f HPE=%.3f (baseline=%.3f)",
+            best_intensity,
+            best_hpe,
+            compute_pleasantness(audio, sr).score,
+        )
         return best_intensity, best_audio
 
     except Exception as e:
@@ -407,8 +437,10 @@ def find_optimal_intensity(
 # 7. DYNAMIC_EQ — Frequenz-Korrekturen via echten EQ
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def apply_dynamic_eq(
-    audio: np.ndarray, sr: int,
+    audio: np.ndarray,
+    sr: int,
     corrections: dict[str, float],
 ) -> np.ndarray:
     """Wendet Dynamic-EQ-Korrekturen pro Band an.
@@ -445,18 +477,22 @@ def apply_dynamic_eq(
         gain_linear = 10.0 ** (np.clip(gain_db, -3.0, 3.0) / 20.0)
 
         if eq_type == "lowshelf":
-            sos = butter(2, freq/(sr/2), btype='low', output='sos')
+            sos = butter(2, freq / (sr / 2), btype="low", output="sos")
             low = sosfiltfilt(sos, result)
             result = low * gain_linear + (result - low)
         elif eq_type == "highshelf":
-            sos = butter(2, freq/(sr/2), btype='high', output='sos')
+            sos = butter(2, freq / (sr / 2), btype="high", output="sos")
             high = sosfiltfilt(sos, result)
             result = high * gain_linear + (result - high)
         elif eq_type == "peaking":
             Q = 1.0
             bw = freq / Q
-            sos = butter(2, [max(20, freq-bw/2)/(sr/2), min(20000, freq+bw/2)/(sr/2)],
-                        btype='bandpass', output='sos')
+            sos = butter(
+                2,
+                [max(20, freq - bw / 2) / (sr / 2), min(20000, freq + bw / 2) / (sr / 2)],
+                btype="bandpass",
+                output="sos",
+            )
             band_signal = sosfiltfilt(sos, result)
             result = result + band_signal * (gain_linear - 1.0)
 
@@ -467,9 +503,9 @@ def apply_dynamic_eq(
 # 8. EARLY_STOP — Adaptiv, kein fixes Prozent-Limit
 # ═══════════════════════════════════════════════════════════════════════════
 
-EARLY_STOP_THRESHOLD = 0.008   # HPE < 0.008 = nahezu unhörbar
-EARLY_STOP_LOOKBACK = 4         # So viele Phasen rückwärts prüfen
-EARLY_STOP_MIN_PHASES = 8       # Mindestens 8 Phasen bevor Stop erlaubt
+EARLY_STOP_THRESHOLD = 0.008  # HPE < 0.008 = nahezu unhörbar
+EARLY_STOP_LOOKBACK = 4  # So viele Phasen rückwärts prüfen
+EARLY_STOP_MIN_PHASES = 8  # Mindestens 8 Phasen bevor Stop erlaubt
 
 
 def should_early_stop(
@@ -489,7 +525,7 @@ def should_early_stop(
         return False, ""
 
     recent = hpe_history[-EARLY_STOP_LOOKBACK:]
-    improvements = [recent[i] - recent[i-1] for i in range(1, len(recent))]
+    improvements = [recent[i] - recent[i - 1] for i in range(1, len(recent))]
     max_imp = max(abs(imp) for imp in improvements)
 
     # Wenn eine der letzten Phasen noch > 0.05 brachte → definitiv weitermachen

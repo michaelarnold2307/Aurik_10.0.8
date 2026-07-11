@@ -273,7 +273,6 @@ class RestorationMemory:
                         self._fingerprint_index[_fp] = key_str
             except Exception as e:
                 logger.warning("restoration_memory.py::_save_result_internal fallback: %s", e)
-                pass
 
     # ------------------------------------------------------------------
     # Internal helpers

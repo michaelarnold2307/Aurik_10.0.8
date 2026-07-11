@@ -12,9 +12,7 @@ from backend.core.audio_exporter import _apply_musiclover_export_optimizations
 
 
 def _anti_phase_stereo(n: int = 128) -> np.ndarray:
-    return np.column_stack(
-        [np.ones(n, dtype=np.float32), -np.ones(n, dtype=np.float32)]
-    )
+    return np.column_stack([np.ones(n, dtype=np.float32), -np.ones(n, dtype=np.float32)])
 
 
 @pytest.mark.unit

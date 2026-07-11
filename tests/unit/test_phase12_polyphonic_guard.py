@@ -1,9 +1,9 @@
-import pytest
 from __future__ import annotations
 
 import logging
 
 import numpy as np
+import pytest
 
 from backend.core.phases.phase_12_wow_flutter_fix import WowFlutterFix
 

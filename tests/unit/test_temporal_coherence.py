@@ -1,4 +1,5 @@
 import pytest
+
 """Pflicht-Tests für TemporalQualityCoherenceMetric (§2.16).
 
 Testkonventionen:

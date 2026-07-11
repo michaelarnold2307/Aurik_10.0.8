@@ -68,9 +68,8 @@ def _patched_profiled_phase_call(self, phase, audio: np.ndarray, **kwargs):
     phase_id = "?"
     try:
         phase_id = phase.get_metadata().phase_id
-    except Exception as e:
+    except Exception:
         logger.warning("_phase_shape_trace.py::_patched_profiled_phase_call fallback", exc_info=True)
-        pass
 
     n_before = audio.shape[0]
     stereo_before = _is_stereo(audio)

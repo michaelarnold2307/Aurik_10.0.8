@@ -226,9 +226,8 @@ class SGMSEPlusPlugin:
                         )
 
                         _rel2("SGMSE+")
-                    except Exception as e:
+                    except Exception:
                         logger.warning("sgmse_plugin.py::_try_load fallback", exc_info=True)
-                        pass
                     _budget_ok = _try_alloc is None or _try_alloc("SGMSE+", size_gb=0.12)
                 if not _budget_ok:
                     logger.warning("SGMSE+: ML-Budget erschöpft — WPE-DSP-Fallback.")
@@ -372,7 +371,7 @@ class SGMSEPlusPlugin:
             import psutil  # pylint: disable=import-outside-toplevel
 
             return float(psutil.virtual_memory().available / (1024**3))
-        except Exception as e:
+        except Exception:
             logger.warning("sgmse_plugin.py::_get_available_ram_gb fallback", exc_info=True)
             return float("inf")
 
@@ -454,9 +453,8 @@ class SGMSEPlusPlugin:
                     try:
                         if _plm is not None:
                             _plm.set_active("SGMSE+", False)
-                    except Exception as e:
+                    except Exception:
                         logger.warning("sgmse_plugin.py::process_channel fallback", exc_info=True)
-                        pass
             return self._wpe_fallback(ch, sr)
 
         if stereo:
@@ -819,9 +817,8 @@ class SGMSEPlusPlugin:
                     )
 
                     _pin_fn = _get_mdm().pin_tensor_rocm
-                except Exception as e:
+                except Exception:
                     logger.warning("sgmse_plugin.py::_identity_pin fallback", exc_info=True)
-                    pass
                 for s in starts:
                     e = min(s + target_frames, T_orig)
                     seg = x_t[:, :, :, s:e]
@@ -918,9 +915,8 @@ class SGMSEPlusPlugin:
                         from backend.core.ml_device_manager import get_ml_device_manager as _mgr  # isort: skip
 
                         _mgr().report_gpu_error("SGMSE", exc)
-                    except Exception as e:
+                    except Exception:
                         logger.warning("sgmse_plugin.py::unknown fallback", exc_info=True)
-                        pass
                 except Exception as _mv_exc:
                     logger.debug("SGMSE+ GPU→CPU move fehlgeschlagen: %s", _mv_exc)
                     self._device = "cpu"

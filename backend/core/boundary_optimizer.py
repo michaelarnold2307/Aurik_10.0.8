@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +133,11 @@ def optimize_to_boundary(
 
     logger.info(
         "BoundaryOpt %s: start=%.2f limit=%.2f step=%.2f initial_P=%.3f",
-        dimension, start_value, limit_value, step_size, best_p,
+        dimension,
+        start_value,
+        limit_value,
+        step_size,
+        best_p,
     )
 
     while steps < max_steps:
@@ -155,7 +158,11 @@ def optimize_to_boundary(
             # Verschlechterung → Peak gefunden, stopp
             logger.info(
                 "  step %d: %.2f → P=%.3f (↓) — Peak bei %.2f (P=%.3f)",
-                steps, next_value, next_p, best_value, best_p,
+                steps,
+                next_value,
+                next_p,
+                best_value,
+                best_p,
             )
             return BoundaryResult(
                 dimension=dimension,

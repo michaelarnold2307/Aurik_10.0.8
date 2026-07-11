@@ -23,14 +23,18 @@ logger = logging.getLogger(__name__)
 # §L Bass-Punch-Koordination
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_BASS_PHASES = frozenset({
-    "phase_37_bass_enhancement",
-    "phase_06_frequency_restoration",
-})
-_PUNCH_PHASES = frozenset({
-    "phase_08_transient_preservation",
-    "phase_54_transparent_dynamics",
-})
+_BASS_PHASES = frozenset(
+    {
+        "phase_37_bass_enhancement",
+        "phase_06_frequency_restoration",
+    }
+)
+_PUNCH_PHASES = frozenset(
+    {
+        "phase_08_transient_preservation",
+        "phase_54_transparent_dynamics",
+    }
+)
 
 
 class BassPunchCoupling:
@@ -45,6 +49,7 @@ class BassPunchCoupling:
         try:
             mono = np.mean(audio, axis=0) if audio.ndim == 2 else audio
             from backend.core.audio_utils import safe_to_mono
+
             mono = safe_to_mono(np.asarray(mono, dtype=np.float32))
             fft = np.abs(np.fft.rfft(mono, n=min(65536, len(mono))))
             freqs = np.fft.rfftfreq(min(65536, len(mono)), d=1.0 / sr)
@@ -78,12 +83,14 @@ class BassPunchCoupling:
 # §M Vocal-Naturalness-Monitor (Formant-Tracking light)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_VOCAL_PHASES = frozenset({
-    "phase_03_denoise",
-    "phase_49_advanced_dereverb",
-    "phase_65_vocal_naturalness_restoration",
-    "phase_66_vocal_deesser",
-})
+_VOCAL_PHASES = frozenset(
+    {
+        "phase_03_denoise",
+        "phase_49_advanced_dereverb",
+        "phase_65_vocal_naturalness_restoration",
+        "phase_66_vocal_deesser",
+    }
+)
 
 
 class VocalFormantGuard:
@@ -112,7 +119,7 @@ class VocalFormantGuard:
             for f0 in range(100, 1000, 100):
                 idx = int(f0 * len(mono) / sr)
                 if 0 < idx < len(fft) - 2:
-                    harmonic_energy += float(np.max(fft[max(0, idx - 2):idx + 3]))
+                    harmonic_energy += float(np.max(fft[max(0, idx - 2) : idx + 3]))
             return centroid, min(1.0, harmonic_energy / total)
         except Exception as e:
             logger.warning("klang_guards.py::_measure fallback: %s", e)
@@ -135,11 +142,13 @@ class VocalFormantGuard:
 # §N Stereo-Feld-Integritätswächter (ICCC)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_STEREO_PHASES = frozenset({
-    "phase_13_stereo_enhancement",
-    "phase_14_phase_correction",
-    "phase_15_stereo_balance",
-})
+_STEREO_PHASES = frozenset(
+    {
+        "phase_13_stereo_enhancement",
+        "phase_14_phase_correction",
+        "phase_15_stereo_balance",
+    }
+)
 
 
 class StereoCoherenceGuard:
@@ -180,12 +189,14 @@ class StereoCoherenceGuard:
 # §O Dynamik-Bogen-Erhalt (LUFS Arc)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_DYNAMICS_PHASES = frozenset({
-    "phase_03_denoise",
-    "phase_54_transparent_dynamics",
-    "phase_16_final_eq",
-    "phase_38_presence_boost",
-})
+_DYNAMICS_PHASES = frozenset(
+    {
+        "phase_03_denoise",
+        "phase_54_transparent_dynamics",
+        "phase_16_final_eq",
+        "phase_38_presence_boost",
+    }
+)
 
 
 class DynamicsArcGuard:
@@ -203,7 +214,7 @@ class DynamicsArcGuard:
             seg_len = max(sr // 2, n // segments)
             lufs_vals = []
             for i in range(0, n - seg_len + 1, seg_len):
-                seg = mono[i:i + seg_len]
+                seg = mono[i : i + seg_len]
                 power = np.mean(seg * seg) + 1e-12
                 lufs_vals.append(-0.691 + 10.0 * math.log10(power))
             return np.array(lufs_vals, dtype=np.float32)
@@ -229,14 +240,14 @@ class DynamicsArcGuard:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _DEFECT_EQ_BANDS: dict[str, dict[str, Any]] = {
-    "hum":           {"freqs": [(48, 52, -3.0), (148, 152, -2.5)], "comment": "50Hz-Brummen + Oberwellen"},
-    "buzz":          {"freqs": [(48, 52, -3.0), (98, 102, -3.0), (148, 152, -2.5)], "comment": "Brummen+Surren"},
-    "click":         {"freqs": [(2000, 6000, -1.0)], "comment": "Click-Reparatur-Residuen glätten"},
-    "crackle":       {"freqs": [(3000, 10000, -1.5)], "comment": "Knistern-Residuen dämpfen"},
-    "hiss":          {"freqs": [(6000, 16000, -2.0)], "comment": "Band-Höhenrauschen"},
-    "clipping":      {"freqs": [(2000, 8000, +1.5)], "comment": "Clipping: Höhen rekonstruieren"},
-    "wow_flutter":   {"freqs": [(200, 800, +0.8)], "comment": "Pitch-Korrektur-Mitten glätten"},
-    "rumble":        {"freqs": [(20, 60, -3.0)], "comment": "Sub-Bass-Rumpeln"},
+    "hum": {"freqs": [(48, 52, -3.0), (148, 152, -2.5)], "comment": "50Hz-Brummen + Oberwellen"},
+    "buzz": {"freqs": [(48, 52, -3.0), (98, 102, -3.0), (148, 152, -2.5)], "comment": "Brummen+Surren"},
+    "click": {"freqs": [(2000, 6000, -1.0)], "comment": "Click-Reparatur-Residuen glätten"},
+    "crackle": {"freqs": [(3000, 10000, -1.5)], "comment": "Knistern-Residuen dämpfen"},
+    "hiss": {"freqs": [(6000, 16000, -2.0)], "comment": "Band-Höhenrauschen"},
+    "clipping": {"freqs": [(2000, 8000, +1.5)], "comment": "Clipping: Höhen rekonstruieren"},
+    "wow_flutter": {"freqs": [(200, 800, +0.8)], "comment": "Pitch-Korrektur-Mitten glätten"},
+    "rumble": {"freqs": [(20, 60, -3.0)], "comment": "Sub-Bass-Rumpeln"},
     "surface_noise": {"freqs": [(4000, 12000, -2.0)], "comment": "Oberflächengeräusch"},
 }
 
@@ -265,8 +276,11 @@ _LISTENING_MODES: dict[str, dict[str, Any]] = {
     "headphones": {
         "label": "Kopfhörer",
         "goal_adjust": {
-            "raeumlichkeit": 1.4, "transparenz": 1.3, "mikrodynamik": 1.2,
-            "bass_praesenz": 0.7, "punch": 0.8,
+            "raeumlichkeit": 1.4,
+            "transparenz": 1.3,
+            "mikrodynamik": 1.2,
+            "bass_praesenz": 0.7,
+            "punch": 0.8,
         },
     },
     "nearfield": {
@@ -276,16 +290,23 @@ _LISTENING_MODES: dict[str, dict[str, Any]] = {
     "farfield": {
         "label": "Wohnzimmer/HiFi",
         "goal_adjust": {
-            "bass_praesenz": 1.3, "punch": 1.2, "waerme": 1.2,
-            "brillanz": 1.1, "hoehen_luft": 1.15,
+            "bass_praesenz": 1.3,
+            "punch": 1.2,
+            "waerme": 1.2,
+            "brillanz": 1.1,
+            "hoehen_luft": 1.15,
         },
     },
     "car": {
         "label": "Auto",
         "goal_adjust": {
-            "bass_praesenz": 1.5, "punch": 1.4, "hoehen_luft": 1.3,
-            "brillanz": 1.2, "textverstaendlichkeit": 1.3,
-            "raeumlichkeit": 0.6, "mikrodynamik": 0.7,
+            "bass_praesenz": 1.5,
+            "punch": 1.4,
+            "hoehen_luft": 1.3,
+            "brillanz": 1.2,
+            "textverstaendlichkeit": 1.3,
+            "raeumlichkeit": 0.6,
+            "mikrodynamik": 0.7,
         },
     },
 }
@@ -317,6 +338,7 @@ def apply_listening_mode_to_weights(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Guard-Wisdom: Akkumuliertes Wissen aus allen Guards, phasenübergreifend
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class GuardWisdom:
     """Sammelt Guard-Ergebnisse über alle Phasen und leitet Korrekturen ab."""
@@ -350,16 +372,31 @@ class GuardWisdom:
     def adaptive_threshold(self, guard_name: str, base_threshold: float) -> float:
         """Passt Schwellwerte an Material und Genre an."""
         # Material-spezifische Lockerung
-        material_factor = {"wax_cylinder": 1.5, "shellac": 1.3, "vinyl": 1.1,
-                          "tape": 1.0, "cassette": 1.15, "cd_digital": 0.8}.get(self._material, 1.0)
+        material_factor = {
+            "wax_cylinder": 1.5,
+            "shellac": 1.3,
+            "vinyl": 1.1,
+            "tape": 1.0,
+            "cassette": 1.15,
+            "cd_digital": 0.8,
+        }.get(self._material, 1.0)
         # Genre-spezifische Lockerung
-        genre_factor = {"schlager": 0.9, "classical": 0.8, "jazz": 0.85,
-                       "rock": 1.1, "metal": 1.2, "electronic": 1.15}.get(self._genre, 1.0)
+        genre_factor = {
+            "schlager": 0.9,
+            "classical": 0.8,
+            "jazz": 0.85,
+            "rock": 1.1,
+            "metal": 1.2,
+            "electronic": 1.15,
+        }.get(self._genre, 1.0)
         return base_threshold * material_factor * genre_factor
 
     def snapshot(self) -> dict:
-        return {"history_len": len(self._history), "rollbacks": self._rollback_count,
-                "strength_mod": self._strength_mod}
+        return {
+            "history_len": len(self._history),
+            "rollbacks": self._rollback_count,
+            "strength_mod": self._strength_mod,
+        }
 
 
 class CrossGuardCoordinator:
@@ -416,6 +453,7 @@ class CrossGuardCoordinator:
 # §S Emotional-Arc-Preservation (Arousal/Valence)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class EmotionalArcPreserver:
     """Misst Arousal/Valence-Kurve über den Song und prüft Erhalt.
 
@@ -437,7 +475,7 @@ class EmotionalArcPreserver:
             seg_len = max(sr // 2, n // segments)
             arousal, valence = [], []
             for i in range(0, n - seg_len + 1, seg_len):
-                seg = mono[i:i + seg_len]
+                seg = mono[i : i + seg_len]
                 fft = np.abs(np.fft.rfft(seg))
                 freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
                 # Arousal: Energie 2k–8k / Gesamt
@@ -467,13 +505,17 @@ class EmotionalArcPreserver:
         a_corr = float(np.corrcoef(self._baseline_arousal[:min_len], cur_a[:min_len])[0, 1]) if min_len > 2 else 1.0
         v_corr = float(np.corrcoef(self._baseline_valence[:min_len], cur_v[:min_len])[0, 1]) if min_len > 2 else 1.0
         ok = a_corr > 0.85 and v_corr > 0.85
-        return ok, {"arousal_corr": a_corr, "valence_corr": v_corr,
-                     "warning": "Emotionaler Bogen verändert" if not ok else ""}
+        return ok, {
+            "arousal_corr": a_corr,
+            "valence_corr": v_corr,
+            "warning": "Emotionaler Bogen verändert" if not ok else "",
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §T Hörermüdigkeits-Prävention (Humanization-Pass)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class HumanizationPass:
     """Fügt minimale, nichthörbare Variation hinzu um Listening Fatigue zu verhindern.
@@ -501,9 +543,7 @@ class HumanizationPass:
             if audio_f.ndim == 2:
                 result = audio_f.copy()
                 for ch in range(audio_f.shape[0]):
-                    result[ch] = HumanizationPass._process_channel(
-                        audio_f[ch], sr, strength
-                    )
+                    result[ch] = HumanizationPass._process_channel(audio_f[ch], sr, strength)
                 return result
             return HumanizationPass._process_channel(audio_f, sr, strength)
         except Exception as e:
@@ -520,7 +560,7 @@ class HumanizationPass:
         amp_mod = 1.0 + strength * 0.02 * np.sin(2.0 * np.pi * 0.47 * t + rng.random() * np.pi)
         # 2. Phasen-Jitter: allpass mit zufälligem, sehr kurzem Delay
         delay_samples = max(1, int(sr * 0.0003))
-        delay_frac = rng.uniform(0.3, 0.7)
+        rng.uniform(0.3, 0.7)
         # Einfacher 1. Ordnung allpass
         g = strength * 0.003
         out = np.zeros_like(channel)

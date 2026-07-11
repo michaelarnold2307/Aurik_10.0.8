@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests for Performance Profiler
 ==============================

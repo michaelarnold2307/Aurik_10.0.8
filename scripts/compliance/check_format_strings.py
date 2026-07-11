@@ -19,7 +19,7 @@ def check_file(filepath: str) -> list[str]:
     try:
         with open(filepath) as fh:
             tree = ast.parse(fh.read())
-    except Exception as e:
+    except Exception:
         logger.warning("check_format_strings.py::check_file fallback", exc_info=True)
         return issues
 
@@ -48,11 +48,7 @@ def check_file(filepath: str) -> list[str]:
             keywords = getattr(node, "keywords", []) or []
             if any(k.arg for k in keywords):
                 continue  # kwargs can supplement, skip
-            issues.append(
-                f"{filepath}:{node.lineno}: "
-                f"{placeholders} placeholders, {nargs} args — "
-                f'"{fmt[:60]}"'
-            )
+            issues.append(f'{filepath}:{node.lineno}: {placeholders} placeholders, {nargs} args — "{fmt[:60]}"')
 
     return issues
 

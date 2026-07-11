@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_artifact_freedom_gate.py — ArtifactFreedomGate §2.49 Test-Suite (≥ 25 Tests)
 Alle Tests synthetisch, kein ML-Modell erforderlich.

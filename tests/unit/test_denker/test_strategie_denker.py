@@ -116,7 +116,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert isinstance(result, StrategieErgebnis)
-        except Exception as e:
+        except Exception:
             pass
 
     def test_11_selected_phases_nonempty_on_real_defect(self):
@@ -126,7 +126,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert len(result.selected_phases) >= 0  # Darf leer sein bei low confidence
-        except Exception as e:
+        except Exception:
             pass
 
     def test_12_quality_gain_finite(self):
@@ -136,7 +136,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert math.isfinite(result.estimated_quality_gain)
-        except Exception as e:
+        except Exception:
             pass
 
     def test_13_rt_limit_respected_in_ergebnis(self):
@@ -146,7 +146,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=1.5)
             assert result.rt_limit == pytest.approx(1.5, abs=0.01)
-        except Exception as e:
+        except Exception:
             pass
 
     def test_14_low_confidence_defect_handled(self):
@@ -156,7 +156,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert result is not None
-        except Exception as e:
+        except Exception:
             pass
 
     def test_15_phase_parameters_phase_names_match(self):
@@ -167,7 +167,7 @@ class TestStrategieDenkerPlane:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             for phase in result.phase_parameters:
                 assert isinstance(phase, str)
-        except Exception as e:
+        except Exception:
             pass
 
     def test_16_clipping_defect_selects_appropriate_phase(self):
@@ -178,7 +178,7 @@ class TestStrategieDenkerPlane:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             # Kein assert auf spezifische Phase — nur no-crash
             assert result is not None
-        except Exception as e:
+        except Exception:
             pass
 
     def test_17_vinyl_material_no_crash(self):
@@ -189,7 +189,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert result is not None
-        except Exception as e:
+        except Exception:
             pass
 
     def test_18_strategy_name_nonempty(self):
@@ -199,7 +199,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert len(result.strategy_name) > 0
-        except Exception as e:
+        except Exception:
             pass
 
     def test_19_reasoning_nonempty(self):
@@ -209,7 +209,7 @@ class TestStrategieDenkerPlane:
         try:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             assert isinstance(result.reasoning, str)
-        except Exception as e:
+        except Exception:
             pass
 
     def test_20_phase_parameters_values_dicts(self):
@@ -220,7 +220,7 @@ class TestStrategieDenkerPlane:
             result = StrategieDenker().plane(defekt, rt_limit=3.0)
             for v in result.phase_parameters.values():
                 assert isinstance(v, dict)
-        except Exception as e:
+        except Exception:
             pass
 
 

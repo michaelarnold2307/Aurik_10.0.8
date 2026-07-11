@@ -165,9 +165,7 @@ def detect_phase_rotation(
     if in_anomaly:
         dur = (len(frame_dispersion) * frame_duration_s) - anomaly_start
         if dur >= 0.1:
-            locations.append(
-                (float(anomaly_start), float(len(frame_dispersion) * frame_duration_s))
-            )
+            locations.append((float(anomaly_start), float(len(frame_dispersion) * frame_duration_s)))
 
     # Confidence
     anomaly_ratio = float(np.mean(anomaly_mask)) if len(anomaly_mask) > 0 else 0.0

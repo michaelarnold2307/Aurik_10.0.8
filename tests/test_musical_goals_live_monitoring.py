@@ -1,5 +1,6 @@
-import pytest
 import unittest
+
+import pytest
 
 from backend.core.musical_goals.convergence_detector import MusicalGoalsConvergenceDetector
 from backend.core.musical_goals.deviation_corrector import MusicalGoalsDeviationCorrector

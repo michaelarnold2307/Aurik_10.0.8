@@ -335,7 +335,7 @@ def _deess_channel(
     la_samples = max(1, int(lookahead_ms * sr / 1000.0))
     if la_samples > 1:
         sib_band_la = np.roll(sib_band, -la_samples)
-        sib_band_la[-la_samples:] = sib_band_la[-la_samples-1]  # Letzte Samples halten
+        sib_band_la[-la_samples:] = sib_band_la[-la_samples - 1]  # Letzte Samples halten
     else:
         sib_band_la = sib_band
 
@@ -417,7 +417,6 @@ def _try_mp_senet_refine(audio: np.ndarray, sr: int) -> tuple[np.ndarray | None,
             _plm43_mps.set_active("MP-SENet", True)
     except Exception as e:
         logger.warning("phase_43_ml_deesser.py::_try_mp_senet_refine fallback: %s", e)
-        pass
 
     try:
         if _get_mp_senet_plugin_43 is None:
@@ -436,7 +435,6 @@ def _try_mp_senet_refine(audio: np.ndarray, sr: int) -> tuple[np.ndarray | None,
                 _plm43_mps.set_active("MP-SENet", False)
             except Exception as e:
                 logger.warning("phase_43_ml_deesser.py::_try_mp_senet_refine fallback: %s", e)
-                pass
 
 
 class AdaptiveDeEsserPhase(PhaseInterface):
@@ -494,8 +492,8 @@ class AdaptiveDeEsserPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-De-Ess-Kalibrierung ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "ml_deesser",
-                default_nr=0.2, default_de_ess=0.85, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "ml_deesser", default_nr=0.2, default_de_ess=0.85, default_comp=1.0)
             # De-Esser braucht de_ess_strength, nicht nr_strength
             if "de_ess_strength" in kwargs:
                 kwargs["de_ess_strength"] = _pim["de_ess_strength"]
@@ -508,7 +506,6 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_43_ml_deesser.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         self.validate_input(audio)
         t0 = time.time()
@@ -522,7 +519,6 @@ class AdaptiveDeEsserPhase(PhaseInterface):
                 _get_plugin_lifecycle_manager_43().evict_for_phase("phase_43_ml_deesser")
         except Exception as e:
             logger.warning("phase_43_ml_deesser.py::process fallback: %s", e)
-            pass
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))

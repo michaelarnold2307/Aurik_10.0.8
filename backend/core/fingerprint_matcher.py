@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +29,9 @@ _FINGERPRINT_DB = Path(__file__).parent.parent.parent / "data" / "fingerprints.j
 @dataclass
 class AudioFingerprint:
     """Kompakter akustischer Fingerabdruck einer Aufnahme."""
-    spectral_hash: str = ""           # SHA256 der spektralen Kontur
-    defect_signature: str = ""        # Kombination der Defekt-Typen
+
+    spectral_hash: str = ""  # SHA256 der spektralen Kontur
+    defect_signature: str = ""  # Kombination der Defekt-Typen
     material: str = ""
     genre: str = ""
     duration_s: float = 0.0
@@ -58,7 +59,6 @@ class FingerprintMatcher:
                     return json.load(f)
         except Exception as e:
             logger.warning("fingerprint_matcher.py::_load_db fallback: %s", e)
-            pass
         return {"fingerprints": {}, "parameters": {}}
 
     def _save_db(self) -> None:
@@ -68,9 +68,9 @@ class FingerprintMatcher:
         except Exception as e:
             logger.debug("§AB Fingerprint save failed: %s", e)
 
-    def compute_fingerprint(self, audio: np.ndarray, sr: int,
-                            material: str = "", genre: str = "",
-                            defect_types: list[str] | None = None) -> AudioFingerprint:
+    def compute_fingerprint(
+        self, audio: np.ndarray, sr: int, material: str = "", genre: str = "", defect_types: list[str] | None = None
+    ) -> AudioFingerprint:
         """Berechnet einen Fingerprint aus Audio + Metadaten."""
         try:
             mono = np.mean(audio, axis=0) if audio.ndim == 2 else np.asarray(audio, dtype=np.float32)
@@ -78,20 +78,24 @@ class FingerprintMatcher:
             # Spektrale Kontur (10-Band-Approximation)
             fft = np.abs(np.fft.rfft(mono, n=min(65536, len(mono))))
             freqs = np.fft.rfftfreq(min(65536, len(mono)), d=1.0 / sr)
-            bands = [(20, 60), (60, 200), (200, 500), (500, 1000), (1000, 2000),
-                     (2000, 4000), (4000, 8000), (8000, 16000)]
+            bands = [
+                (20, 60),
+                (60, 200),
+                (200, 500),
+                (500, 1000),
+                (1000, 2000),
+                (2000, 4000),
+                (4000, 8000),
+                (8000, 16000),
+            ]
             contour = [float(np.sum(fft[(freqs >= lo) & (freqs <= hi)])) for lo, hi in bands]
             total = float(np.sum(fft)) + 1e-10
             contour_norm = [c / total for c in contour]
-            spectral_hash = hashlib.sha256(
-                ",".join(f"{c:.4f}" for c in contour_norm).encode()
-            ).hexdigest()
+            spectral_hash = hashlib.sha256(",".join(f"{c:.4f}" for c in contour_norm).encode()).hexdigest()
 
             # Defekt-Signatur
             defects = sorted(defect_types or [])
-            defect_signature = hashlib.md5(
-                ",".join(defects).encode()
-            ).hexdigest()[:16]
+            defect_signature = hashlib.md5(",".join(defects).encode()).hexdigest()[:16]
 
             # Akustische Metriken
             power = np.mean(mono * mono) + 1e-12
@@ -105,9 +109,7 @@ class FingerprintMatcher:
             if audio.ndim == 2 and audio.shape[0] >= 2:
                 L, R = audio[0], audio[1]
                 M, S = (L + R) / 2, (L - R) / 2
-                stereo_width = float(np.clip(
-                    np.mean(S * S) / (np.mean(M * M) + 1e-12), 0.0, 1.0
-                ))
+                stereo_width = float(np.clip(np.mean(S * S) / (np.mean(M * M) + 1e-12), 0.0, 1.0))
 
             return AudioFingerprint(
                 spectral_hash=spectral_hash,
@@ -141,8 +143,7 @@ class FingerprintMatcher:
             "pmgg_scores": parameters.get("pmgg_scores", {}),
         }
         self._save_db()
-        logger.info("§AB Fingerprint gespeichert: %s (total: %d)",
-                     key[:40], len(self._db["fingerprints"]))
+        logger.info("§AB Fingerprint gespeichert: %s (total: %d)", key[:40], len(self._db["fingerprints"]))
 
     def find_match(self, fp: AudioFingerprint, min_similarity: float = 0.7) -> dict[str, Any] | None:
         """Sucht nach ähnlichen Fingerprints und gibt gespeicherte Parameter zurück."""

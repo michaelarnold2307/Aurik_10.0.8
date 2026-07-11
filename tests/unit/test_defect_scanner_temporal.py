@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für temporale locations in DefectScanner (§C — Aurik v9.10.45).
 
 ≥ 17 Unit-Tests: synthetische Signale, kein echtes Audio, np.random.seed(42).

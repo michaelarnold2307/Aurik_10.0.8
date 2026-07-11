@@ -23,7 +23,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from backend.core.ml.backend_router import detect_gpu_capabilities, MLEngineConfig
+from backend.core.ml.backend_router import MLEngineConfig, detect_gpu_capabilities
 
 
 def _check_library(name: str, import_path: str) -> dict:
@@ -42,7 +42,8 @@ def _estimate_vram_mb(config: MLEngineConfig) -> int | None:
         return None
     try:
         if provider == "cuda":
-            import onnxruntime as ort  # type: ignore  # noqa: F811
+            import onnxruntime as ort  # type: ignore
+
             # CUDA-VRAM via onnxruntime ist begrenzt — Fallback auf Treiber-API
             return None  # onnxruntime exponiert VRAM nicht direkt
         elif provider == "rocm":
@@ -60,6 +61,7 @@ def _get_onnxruntime_info() -> dict:
     """ONNX-Runtime-Version und verfügbare Provider."""
     try:
         import onnxruntime as ort
+
         return {
             "version": ort.__version__,
             "providers": ort.get_available_providers(),

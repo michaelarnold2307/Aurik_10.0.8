@@ -17,12 +17,7 @@ from pathlib import Path
 
 import pytest
 
-_CDR_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "backend"
-    / "core"
-    / "causal_defect_reasoner.py"
-)
+_CDR_PATH = Path(__file__).resolve().parents[2] / "backend" / "core" / "causal_defect_reasoner.py"
 
 
 def _parse_causal_defect_reasoner() -> tuple[list[str], dict[str, list[str]]]:
@@ -40,9 +35,7 @@ def _parse_causal_defect_reasoner() -> tuple[list[str], dict[str, list[str]]]:
                 if isinstance(t, ast.Name) and t.id == "CAUSES":
                     if isinstance(node.value, ast.List):
                         causes = [
-                            e.value
-                            for e in node.value.elts
-                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                            e.value for e in node.value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
                         ]
         # CAUSE_TO_PHASES: dict[str, list[str]] = {...} (annotated assignment)
         elif isinstance(node, ast.AnnAssign):
@@ -84,9 +77,7 @@ class TestCauseToPhasesBidirectionalSync:
     def test_causes_count_plausible(self, causal_data: tuple) -> None:
         """Mindestens 36 Ursachen laut Spec §2.4."""
         causes, _ = causal_data
-        assert len(causes) >= 36, (
-            f"Zu wenige CAUSES ({len(causes)}) — Spec §2.4 fordert ≥ 36 Ursachen"
-        )
+        assert len(causes) >= 36, f"Zu wenige CAUSES ({len(causes)}) — Spec §2.4 fordert ≥ 36 Ursachen"
 
     def test_all_causes_have_c2p_entry(self, causal_data: tuple) -> None:
         """V12a: Jede CAUSE muss einen CAUSE_TO_PHASES-Eintrag haben.
@@ -120,8 +111,7 @@ class TestCauseToPhasesBidirectionalSync:
         """Schnell-Check: Längen müssen übereinstimmen."""
         causes, c2p = causal_data
         assert len(causes) == len(c2p), (
-            f"CAUSES ({len(causes)}) ≠ CAUSE_TO_PHASES keys ({len(c2p)}) — "
-            "bidirektionale Sync verletzt (§2.59)."
+            f"CAUSES ({len(causes)}) ≠ CAUSE_TO_PHASES keys ({len(c2p)}) — bidirektionale Sync verletzt (§2.59)."
         )
 
     def test_each_c2p_entry_has_at_least_one_phase(self, causal_data: tuple) -> None:

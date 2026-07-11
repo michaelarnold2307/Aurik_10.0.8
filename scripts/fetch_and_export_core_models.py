@@ -386,13 +386,12 @@ def _load_model_any(pt_path: Path) -> tuple[str, Any] | tuple[None, None]:
         jit = torch.jit.load(str(pt_path), map_location="cpu")
         jit.eval()
         return "torchscript", jit
-    except Exception as e:
+    except Exception:
         logger.warning("fetch_and_export_core_models.py::_load_model_any fallback", exc_info=True)
-        pass
 
     try:
         obj = torch.load(str(pt_path), map_location="cpu")  # nosec B614
-    except Exception as e:
+    except Exception:
         logger.warning("fetch_and_export_core_models.py::_load_model_any fallback", exc_info=True)
         return None, None
 

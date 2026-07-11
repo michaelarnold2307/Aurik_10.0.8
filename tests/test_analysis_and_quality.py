@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from dsp.analysis_and_quality import RMSEnergy, SpectralCentroid, SpectralRolloff, ZeroCrossingRate
 

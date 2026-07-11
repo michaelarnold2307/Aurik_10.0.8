@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,56 +22,75 @@ logger = logging.getLogger(__name__)
 # "phase_A before phase_B" bedeutet: A sollte VOR B ausgeführt werden.
 _ACOUSTIC_COUPLING_RULES: list[tuple[str, str, str, str]] = [
     # Denoise → Dereverb: Rauschen maskiert Hall-Artefakte
-    ("phase_03_denoise", "phase_49_advanced_dereverb", "before",
-     "Rauschen maskiert Hall-Artefakte — Denoise zuerst für natürlicheren Klang"),
-
+    (
+        "phase_03_denoise",
+        "phase_49_advanced_dereverb",
+        "before",
+        "Rauschen maskiert Hall-Artefakte — Denoise zuerst für natürlicheren Klang",
+    ),
     # Dereverb → Denoise: saubere Reflexionen helfen dem Denoiser
-    ("phase_49_advanced_dereverb", "phase_03_denoise", "after",
-     "Saubere Reflexionen verbessern Denoiser-Erkennung"),
-
+    ("phase_49_advanced_dereverb", "phase_03_denoise", "after", "Saubere Reflexionen verbessern Denoiser-Erkennung"),
     # Dynamics → EQ: Kompression ändert Spektrum — EQ danach
-    ("phase_54_transparent_dynamics", "phase_16_final_eq", "before",
-     "Kompression ändert Frequenzbalance — EQ muss danach kommen"),
-
+    (
+        "phase_54_transparent_dynamics",
+        "phase_16_final_eq",
+        "before",
+        "Kompression ändert Frequenzbalance — EQ muss danach kommen",
+    ),
     # EQ → Kompression: EQ vor Kompression vermeidet Pumping
-    ("phase_16_final_eq", "phase_54_transparent_dynamics", "before",
-     "EQ vor Kompression verhindert Pumping-Artefakte"),
-
+    ("phase_16_final_eq", "phase_54_transparent_dynamics", "before", "EQ vor Kompression verhindert Pumping-Artefakte"),
     # Stereo → Bass: Breites Stereobild vor Bass-Boost = kein Matsch
-    ("phase_13_stereo_enhancement", "phase_37_bass_enhancement", "before",
-     "Stereo-Breite vor Bass-Boost — verhindert Mono-Kompatibilitäts-Probleme"),
-
+    (
+        "phase_13_stereo_enhancement",
+        "phase_37_bass_enhancement",
+        "before",
+        "Stereo-Breite vor Bass-Boost — verhindert Mono-Kompatibilitäts-Probleme",
+    ),
     # Bass → Stereo: Bass-Fundament stabilisiert Stereobild
-    ("phase_37_bass_enhancement", "phase_13_stereo_enhancement", "after",
-     "Bass-Fundament stabilisiert Stereobild"),
-
+    ("phase_37_bass_enhancement", "phase_13_stereo_enhancement", "after", "Bass-Fundament stabilisiert Stereobild"),
     # Transienten → EQ: Transienten-Shaping beeinflusst Höhenwahrnehmung
-    ("phase_08_transient_preservation", "phase_16_final_eq", "before",
-     "Transienten formen Höhenwahrnehmung — EQ danach abstimmen"),
-
+    (
+        "phase_08_transient_preservation",
+        "phase_16_final_eq",
+        "before",
+        "Transienten formen Höhenwahrnehmung — EQ danach abstimmen",
+    ),
     # De-Esser → Presence: Zischlaute erst entfernen, dann Presence boosten
-    ("phase_43_ml_deesser", "phase_38_presence_boost", "before",
-     "Erst Zischlaute entfernen, dann Präsenz anheben"),
-
+    ("phase_43_ml_deesser", "phase_38_presence_boost", "before", "Erst Zischlaute entfernen, dann Präsenz anheben"),
     # Click/Crackle → Denoise: Transiente Störer vor Breitband-Denoise
-    ("phase_01_click_removal", "phase_03_denoise", "before",
-     "Transiente Störer vor Breitband-Rauschunterdrückung entfernen"),
-    ("phase_09_crackle_removal", "phase_03_denoise", "before",
-     "Knistern vor Denoise — sonst wird Knistern als Rauschen interpretiert"),
-
+    (
+        "phase_01_click_removal",
+        "phase_03_denoise",
+        "before",
+        "Transiente Störer vor Breitband-Rauschunterdrückung entfernen",
+    ),
+    (
+        "phase_09_crackle_removal",
+        "phase_03_denoise",
+        "before",
+        "Knistern vor Denoise — sonst wird Knistern als Rauschen interpretiert",
+    ),
     # Hum → Denoise: Brummen vor Denoise entfernen
-    ("phase_02_hum_removal", "phase_03_denoise", "before",
-     "Brummen vor Denoise — Denoiser arbeitet sonst gegen stationäres Brummen"),
-
+    (
+        "phase_02_hum_removal",
+        "phase_03_denoise",
+        "before",
+        "Brummen vor Denoise — Denoiser arbeitet sonst gegen stationäres Brummen",
+    ),
     # Wow/Flutter → Speed/Pitch: Erst Geschwindigkeit korrigieren, dann Pitch
-    ("phase_12_wow_flutter_fix", "phase_31_speed_pitch_correction", "before",
-     "Erst Gleichlauf, dann Geschwindigkeit — kumulative Korrektur vermeiden"),
+    (
+        "phase_12_wow_flutter_fix",
+        "phase_31_speed_pitch_correction",
+        "before",
+        "Erst Gleichlauf, dann Geschwindigkeit — kumulative Korrektur vermeiden",
+    ),
 ]
 
 
 @dataclass
 class PhaseOrderResult:
     """Ergebnis der Phasen-Ordnungs-Optimierung."""
+
     original_order: list[str] = field(default_factory=list)
     optimized_order: list[str] = field(default_factory=list)
     changes: list[dict[str, str]] = field(default_factory=list)
@@ -121,12 +139,14 @@ class PhaseOrderIntelligence:
             if high_idx > low_idx and phase_name in optimized:
                 optimized.remove(phase_name)
                 optimized.insert(low_idx, phase_name)
-                result.changes.append({
-                    "phase": phase_name,
-                    "from_pos": str(high_idx + 1),
-                    "to_pos": str(low_idx + 1),
-                    "reason": reason,
-                })
+                result.changes.append(
+                    {
+                        "phase": phase_name,
+                        "from_pos": str(high_idx + 1),
+                        "to_pos": str(low_idx + 1),
+                        "reason": reason,
+                    }
+                )
 
         result.optimized_order = optimized
         result.score = 1.0 - (len(result.changes) / max(1, len(phases)))

@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_phase_defect_verifier.py
 PhaseDefectVerifier §7 (Ursache 7: Post-Phase Defekt-Verifikation) Test-Suite

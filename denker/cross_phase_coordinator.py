@@ -200,9 +200,9 @@ BAND_BUDGET_MAX = 1.0
 SIGNIFICANT_OVERLAP = 0.15
 
 # ── Artifact Detection Thresholds ──────────────────────────────────────
-MUSICAL_NOISE_THRESHOLD = 0.30   # NR phase count × avg strength > 0.30 → risk
+MUSICAL_NOISE_THRESHOLD = 0.30  # NR phase count × avg strength > 0.30 → risk
 METALLIC_RINGING_THRESHOLD = 0.25  # EQ phase overlap > 0.25 → risk
-ROUGHNESS_BUDGET_FLOOR = 0.70    # roughness budget fraction < 0.70 → risk
+ROUGHNESS_BUDGET_FLOOR = 0.70  # roughness budget fraction < 0.70 → risk
 
 
 @dataclass
@@ -259,7 +259,7 @@ class CrossPhaseCoordinator:
         material: str = "unknown",
         decade: int | None = None,
         restoration_context: dict[str, Any] | None = None,
-    ) -> "CrossPhaseCoordinator":
+    ) -> CrossPhaseCoordinator:
         """Klassenmethode: Analysiert Phasenplan via Singleton."""
         inst = get_cross_phase_coordinator()
         inst._current_material = str(material).lower()
@@ -307,7 +307,7 @@ class CrossPhaseCoordinator:
             ConsensusResult mit capped_strengths, band_budgets und Artifact-Risks.
         """
         if phase_strengths is None:
-            phase_strengths = {pid: 1.0 for pid in phase_ids}
+            phase_strengths = dict.fromkeys(phase_ids, 1.0)
 
         # ── Step 1: Build overlap matrix ──
         known_phases = {pid for pid in phase_ids if pid in PHASE_FREQ_PROFILES}
@@ -317,9 +317,7 @@ class CrossPhaseCoordinator:
         band_budgets = self._compute_band_budgets(known_phases, phase_strengths, overlaps)
 
         # ── Step 3: Derive capped strengths ──
-        capped = self._derive_capped_strengths(
-            known_phases, phase_strengths, band_budgets, material, decade
-        )
+        capped = self._derive_capped_strengths(known_phases, phase_strengths, band_budgets, material, decade)
 
         # ── Step 4: Detect artifact risks ──
         artifact_risks = self._detect_artifact_risks(known_phases, phase_strengths, capped, overlaps)
@@ -338,8 +336,7 @@ class CrossPhaseCoordinator:
 
         if overlaps:
             logger.info(
-                "CrossPhaseCoordinator: %d overlaps, %d bands budgeted, "
-                "naturalness_risk=%.2f",
+                "CrossPhaseCoordinator: %d overlaps, %d bands budgeted, naturalness_risk=%.2f",
                 len(overlaps),
                 len(band_budgets),
                 max(artifact_risks.values()) if artifact_risks else 0.0,
@@ -574,10 +571,7 @@ class CrossPhaseCoordinator:
         for ov in overlaps:
             profile_a = PHASE_FREQ_PROFILES.get(ov.phase_a, {})
             profile_b = PHASE_FREQ_PROFILES.get(ov.phase_b, {})
-            if (
-                profile_a.get("category") == "additive"
-                and profile_b.get("category") == "additive"
-            ):
+            if profile_a.get("category") == "additive" and profile_b.get("category") == "additive":
                 eq_overlap_intensity += ov.cumulative_intensity
         if eq_overlap_intensity > METALLIC_RINGING_THRESHOLD:
             risks["metallic_ringing"] = float(np.clip(eq_overlap_intensity / 2.0, 0.0, 1.0))
@@ -624,23 +618,15 @@ class CrossPhaseCoordinator:
 
         # Artifact risks
         if artifact_risks.get("musical_noise", 0.0) > 0.5:
-            recs.append(
-                "Musical-Noise-Risiko erkannt — NR-Phasen im Präsenzbereich kumulativ begrenzt"
-            )
+            recs.append("Musical-Noise-Risiko erkannt — NR-Phasen im Präsenzbereich kumulativ begrenzt")
         if artifact_risks.get("metallic_ringing", 0.0) > 0.5:
-            recs.append(
-                "Metallic-Ringing-Risiko — EQ-Phasen-Überlappung im 4–12 kHz Bereich reduziert"
-            )
+            recs.append("Metallic-Ringing-Risiko — EQ-Phasen-Überlappung im 4–12 kHz Bereich reduziert")
         if artifact_risks.get("roughness_regression", 0.0) > 0.5:
-            recs.append(
-                "Roughness-Regression — Bass+Präsenz-Simultan-Boost gedämpft für natürlichen Wohlklang"
-            )
+            recs.append("Roughness-Regression — Bass+Präsenz-Simultan-Boost gedämpft für natürlichen Wohlklang")
 
         # Budget constraints
         constrained_bands = [
-            name
-            for name, allocs in band_budgets.items()
-            if sum(allocs.values()) >= BAND_BUDGET_MAX * 0.95
+            name for name, allocs in band_budgets.items() if sum(allocs.values()) >= BAND_BUDGET_MAX * 0.95
         ]
         if constrained_bands:
             recs.append(
@@ -736,7 +722,7 @@ class CrossPhaseCoordinator:
                 env_rough_fft = np.abs(np.fft.rfft(env_rough))
                 # Zwicker-Max bei ~70 Hz Modulation
                 rough_idx_70 = int(70 * len(env_rough_fft) / (sample_rate / 2))
-                rough_score = float(env_rough_fft[max(0, rough_idx_70 - 2): rough_idx_70 + 3].mean())
+                rough_score = float(env_rough_fft[max(0, rough_idx_70 - 2) : rough_idx_70 + 3].mean())
                 result["metrics"]["roughness_proxy"] = rough_score
                 # Threshold kalibriert für typische Musik
                 if rough_score > 0.15:

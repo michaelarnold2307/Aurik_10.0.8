@@ -110,9 +110,8 @@ class DiffwavePlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("DiffWave", True)
-        except Exception as e:
+        except Exception:
             logger.warning("diffwave_plugin.py::_diffuse fallback", exc_info=True)
-            pass
         try:
             N = len(mono)
             chunks = []
@@ -156,9 +155,8 @@ class DiffwavePlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("DiffWave", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("diffwave_plugin.py::_diffuse fallback", exc_info=True)
-                    pass
 
 
 def _mel_spec(mono, sr, n_mels=80, n_fft=1024, hop=256, T=64):

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_05_rumble_filter._compute_rumble_filter_profile (§2.56)."""
 
 from backend.core.phases.phase_05_rumble_filter import RumbleFilterPhase

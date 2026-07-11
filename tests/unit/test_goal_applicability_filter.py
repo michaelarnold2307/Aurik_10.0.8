@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für core/goal_applicability_filter.py — Spec §2.32.
 
 ≥ 25 Unit-Tests: Shape/Bounds, NaN-Safety, Edge-Cases, Invarianten.

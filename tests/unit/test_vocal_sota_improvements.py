@@ -169,7 +169,7 @@ class TestWorldFormantCorrection:
         try:
             out = corrector.correct(stereo, SR, ff)
             assert np.all(np.isfinite(out))
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # stereo may not be implemented for WORLD path; just must not crash
 

@@ -10,13 +10,14 @@ Key improvements over V1:
   - Cosine-Warmup für besseres Fine-Tuning
 """
 
-import math, time, sys
+import time
 from pathlib import Path
 
 import numpy as np
-import torch, torchaudio
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio
 from scipy.signal import butter, sosfiltfilt
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -35,6 +36,7 @@ _NOTES = np.array([130.81, 164.81, 196.00, 220.00, 261.63, 329.63, 392.00, 523.2
 # Audio generation
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def make_synthetic(n_samples, sr):
     t = np.arange(n_samples, dtype=np.float64) / sr
     y = np.zeros(n_samples, dtype=np.float64)
@@ -42,11 +44,13 @@ def make_synthetic(n_samples, sr):
         f0 = np.random.choice(_NOTES) * np.random.uniform(0.5, 2.0)
         for h in range(1, np.random.randint(2, 7)):
             amp = 0.4 / (h ** np.random.uniform(0.6, 1.4))
-            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2*np.pi))
+            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2 * np.pi))
     noise = np.random.randn(n_samples).astype(np.float64)
     color = np.random.choice(["pink", "brown", "white"])
-    if color == "pink": noise = np.cumsum(noise)
-    elif color == "brown": noise = np.cumsum(np.cumsum(noise))
+    if color == "pink":
+        noise = np.cumsum(noise)
+    elif color == "brown":
+        noise = np.cumsum(np.cumsum(noise))
     noise /= np.abs(noise).max() + 1e-8
     y += 0.08 * noise
     y /= np.abs(y).max() + 1e-8
@@ -66,9 +70,15 @@ def butter_lp(y, cutoff, sr, order=6):
 # ═══════════════════════════════════════════════════════════════════════════
 
 mel_t = torchaudio.transforms.MelSpectrogram(
-    sample_rate=SR, n_fft=N_FFT, hop_length=HOP, n_mels=N_MELS,
-    f_min=60, f_max=SR // 2, center=False,
+    sample_rate=SR,
+    n_fft=N_FFT,
+    hop_length=HOP,
+    n_mels=N_MELS,
+    f_min=60,
+    f_max=SR // 2,
+    center=False,
 )
+
 
 def audio_to_log_mel(waveform):
     mel = mel_t(waveform)
@@ -82,8 +92,10 @@ def audio_to_log_mel(waveform):
 # FiLM Conditioning: inject cutoff frequency into the U-Net bottleneck
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class FiLMBlock(nn.Module):
     """Feature-wise Linear Modulation: generates scale & bias from cutoff Hz."""
+
     def __init__(self, condition_dim, feature_channels):
         super().__init__()
         self.scale = nn.Linear(condition_dim, feature_channels)
@@ -100,14 +112,17 @@ class ConvBlock(nn.Sequential):
     def __init__(self, in_ch, out_ch):
         super().__init__(
             nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
             nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
         )
 
 
 class CompactUNetV2(nn.Module):
     """U-Net with FiLM conditioning on cutoff frequency."""
+
     def __init__(self, base_ch=24):
         super().__init__()
         C = base_ch
@@ -145,6 +160,7 @@ class CompactUNetV2(nn.Module):
 # Multi-Resolution STFT Loss
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def multi_resolution_stft_loss(pred, target):
     """Multi-scale spectral loss on Mel spectrograms."""
     loss = 0.0
@@ -156,14 +172,20 @@ def multi_resolution_stft_loss(pred, target):
         total = 0
         for b in range(B):
             pred_spec = torch.stft(
-                pred[b, 0, :, :], n_fft=n_fft, hop_length=n_fft // 4,
+                pred[b, 0, :, :],
+                n_fft=n_fft,
+                hop_length=n_fft // 4,
                 window=torch.hann_window(n_fft, device=pred.device),
-                return_complex=True, pad_mode='reflect'
+                return_complex=True,
+                pad_mode="reflect",
             ).abs()
             target_spec = torch.stft(
-                target[b, 0, :, :], n_fft=n_fft, hop_length=n_fft // 4,
+                target[b, 0, :, :],
+                n_fft=n_fft,
+                hop_length=n_fft // 4,
                 window=torch.hann_window(n_fft, device=target.device),
-                return_complex=True, pad_mode='reflect'
+                return_complex=True,
+                pad_mode="reflect",
             ).abs()
             total += F.l1_loss(pred_spec, target_spec)
         loss += total / B
@@ -185,6 +207,7 @@ def combined_loss(pred, target, cutoff_norm):
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     device = torch.device("cpu")
     segment_samples = (N_FRAMES - 1) * HOP + N_FFT
@@ -197,15 +220,15 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
 
     # Try loading previous checkpoint for fine-tuning
     checkpoint_path = Path("models/bw_reconstructor/best_model.pt")
-    start_epoch = 0
     best_loss = float("inf")
 
     if checkpoint_path.exists():
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
         # Only load compatible weights (ignore film blocks if missing from V1)
         model_state = model.state_dict()
-        pretrained = {k: v for k, v in ckpt["model_state_dict"].items()
-                       if k in model_state and v.shape == model_state[k].shape}
+        pretrained = {
+            k: v for k, v in ckpt["model_state_dict"].items() if k in model_state and v.shape == model_state[k].shape
+        }
         model_state.update(pretrained)
         model.load_state_dict(model_state, strict=False)
         loaded = len(pretrained)
@@ -235,8 +258,8 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
                 y_lim = butter_lp(y_full, cutoff, SR)
                 start = np.random.randint(0, len(y_full) - segment_samples)
 
-                batch_x.append(torch.from_numpy(y_lim[start:start+segment_samples]))
-                batch_y.append(torch.from_numpy(y_full[start:start+segment_samples]))
+                batch_x.append(torch.from_numpy(y_lim[start : start + segment_samples]))
+                batch_y.append(torch.from_numpy(y_full[start : start + segment_samples]))
                 # Normalize cutoff to [0, 1] (max possible is ~11kHz)
                 batch_c.append(cutoff / 11025.0)
 
@@ -259,13 +282,17 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
         scheduler.step()
         elapsed = time.time() - t0
 
-        print(f"Epoch {epoch+1:3d}/{epochs} | Loss {avg_loss:.4f} | "
-              f"LR {scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s", flush=True)
+        print(
+            f"Epoch {epoch + 1:3d}/{epochs} | Loss {avg_loss:.4f} | "
+            f"LR {scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s",
+            flush=True,
+        )
 
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save({"model_state_dict": model.state_dict(), "epoch": epoch, "loss": avg_loss},
-                       out_dir / "best_model.pt")
+            torch.save(
+                {"model_state_dict": model.state_dict(), "epoch": epoch, "loss": avg_loss}, out_dir / "best_model.pt"
+            )
 
     # Export ONNX
     model.eval()
@@ -284,7 +311,9 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     onnx_path = out_dir / "bw_reconstructor_v2.onnx"
 
     torch.onnx.export(
-        export_model, (dummy_input, dummy_cutoff), str(onnx_path),
+        export_model,
+        (dummy_input, dummy_cutoff),
+        str(onnx_path),
         input_names=["input", "cutoff"],
         output_names=["output"],
         dynamic_axes={
@@ -296,6 +325,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     )
 
     import onnx
+
     onnx.checker.check_model(str(onnx_path))
     size_mb = onnx_path.stat().st_size / 1e6
     print(f"\nONNX exported: {onnx_path} ({size_mb:.1f} MB)")
@@ -305,6 +335,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--batch-size", type=int, default=6)

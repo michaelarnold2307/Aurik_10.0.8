@@ -121,6 +121,6 @@ class PerceptualEQ:
             rms_out = float(np.sqrt(np.mean(y**2))) + 1e-12
             y = y * (rms_in / rms_out)
             return np.clip(y, -1.0, 1.0).astype(audio.dtype)
-        except Exception as e:
+        except Exception:
             logger.warning("perceptual_eq.py::_perceptual_filter fallback", exc_info=True)
             return audio

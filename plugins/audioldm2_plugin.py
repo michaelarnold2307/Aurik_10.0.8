@@ -156,9 +156,8 @@ class AudioLDM2Plugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("AudioLDM2", True)
-        except Exception as e:
+        except Exception:
             logger.warning("audioldm2_plugin.py::_run_onnx fallback", exc_info=True)
-            pass
         try:
             session = self._session
             if session is None:
@@ -203,9 +202,8 @@ class AudioLDM2Plugin:
             if _plm is not None:
                 try:
                     _plm.set_active("AudioLDM2", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("audioldm2_plugin.py::_run_onnx fallback", exc_info=True)
-                    pass
 
     # ------------------------------------------------------------------
     def generate(

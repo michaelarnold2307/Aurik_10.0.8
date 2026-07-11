@@ -949,8 +949,8 @@ class TestPreventFirstQuietEdges:
         # RMS in der Mitte der Edge-Region (exkl. Crossfade-Ränder, wo der
         # Ramp von 1.0→scale→1.0 die Messung leicht verfälscht)
         _cf = 480  # Crossfade-Länge aus _scale_audio_region
-        out_intro_rms = float(np.sqrt(np.mean(clamped[_cf:SR-_cf] ** 2)))
-        out_outro_rms = float(np.sqrt(np.mean(clamped[-SR+_cf:-_cf] ** 2)))
+        out_intro_rms = float(np.sqrt(np.mean(clamped[_cf : SR - _cf] ** 2)))
+        out_outro_rms = float(np.sqrt(np.mean(clamped[-SR + _cf : -_cf] ** 2)))
         out_mid_rms = float(np.sqrt(np.mean(clamped[SR:-SR] ** 2)))
 
         assert out_intro_rms <= (ref_edge_rms * (10.0 ** (2.05 / 20.0)))

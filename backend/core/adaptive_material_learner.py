@@ -7,15 +7,31 @@ schreiben in dieselbe Instanz.
 """
 
 from __future__ import annotations
-import logging, threading, json
+
+import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-MATERIALS = ["vinyl","shellac","tape","reel_tape","cd_digital","mp3_low","mp3_high",
-             "cassette","streaming","dat","minidisc","wire_recording","wax_cylinder",
-             "lacquer_disc","unknown"]
+MATERIALS = [
+    "vinyl",
+    "shellac",
+    "tape",
+    "reel_tape",
+    "cd_digital",
+    "mp3_low",
+    "mp3_high",
+    "cassette",
+    "streaming",
+    "dat",
+    "minidisc",
+    "wire_recording",
+    "wax_cylinder",
+    "lacquer_disc",
+    "unknown",
+]
 
 
 class MaterialAdaptiveLearner:
@@ -33,6 +49,7 @@ class MaterialAdaptiveLearner:
         if mat not in self._optimizers:
             try:
                 from backend.core.self_learning_optimizer import SelfLearningOptimizer
+
                 self._optimizers[mat] = SelfLearningOptimizer()
                 logger.info("MaterialAdaptiveLearner: SLO für %s initialisiert", mat)
             except Exception as e:
@@ -52,16 +69,16 @@ class MaterialAdaptiveLearner:
     def suggest_strength(self, material: str, default: float = 0.5) -> float:
         """Schlägt optimale Stärke vor basierend auf Lernhistorie."""
         opt = self._get_optimizer(material)
-        if opt is not None and hasattr(opt, 'get_best_action'):
+        if opt is not None and hasattr(opt, "get_best_action"):
             try:
-                return float(opt.get_best_action().get('strength', default))
+                return float(opt.get_best_action().get("strength", default))
             except Exception as e:
                 logger.warning("MaterialAdaptiveLearner suggest: %s", e)
         return default
 
     def get_stats(self, material: str) -> dict:
         opt = self._get_optimizer(material)
-        if opt is not None and hasattr(opt, 'get_stats'):
+        if opt is not None and hasattr(opt, "get_stats"):
             try:
                 return opt.get_stats()
             except Exception as e:
@@ -71,6 +88,7 @@ class MaterialAdaptiveLearner:
 
 _learner: MaterialAdaptiveLearner | None = None
 _learner_lock = threading.Lock()
+
 
 def get_learner() -> MaterialAdaptiveLearner:
     global _learner

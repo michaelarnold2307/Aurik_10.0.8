@@ -6,8 +6,9 @@ Zwei finale Optimierungen:
 2. SweetSpot-Check zwischen UV3-Phasen (verhindert interne Rollbacks)
 """
 
-import numpy as np
 import logging
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def estimate_lossy_bitrate(audio: np.ndarray, sr: int) -> tuple[int, float]:
 
     spec = np.abs(np.fft.rfft(mono[:n_fft] * np.hanning(n_fft)))
     freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
-    energy = np.cumsum(spec ** 2)
+    energy = np.cumsum(spec**2)
     total = energy[-1] + 1e-12
 
     # Finde 98%-Energie-Grenzfrequenz (robuster als 99% bei Rauschen)
@@ -61,17 +62,26 @@ def estimate_lossy_bitrate(audio: np.ndarray, sr: int) -> tuple[int, float]:
     est_hz = min(cutoff_hz, brickwall_hz)
 
     # Mapping zu Bitrate
-    if est_hz > 19000:   kbps, conf = 320, 0.90
-    elif est_hz > 17500:  kbps, conf = 256, 0.85
-    elif est_hz > 15500:  kbps, conf = 192, 0.80
-    elif est_hz > 14000:  kbps, conf = 160, 0.75
-    elif est_hz > 12500:  kbps, conf = 128, 0.70
-    elif est_hz > 10500:  kbps, conf = 96, 0.65
-    elif est_hz > 8000:   kbps, conf = 64, 0.60
-    else:                 kbps, conf = 32, 0.50
+    if est_hz > 19000:
+        kbps, conf = 320, 0.90
+    elif est_hz > 17500:
+        kbps, conf = 256, 0.85
+    elif est_hz > 15500:
+        kbps, conf = 192, 0.80
+    elif est_hz > 14000:
+        kbps, conf = 160, 0.75
+    elif est_hz > 12500:
+        kbps, conf = 128, 0.70
+    elif est_hz > 10500:
+        kbps, conf = 96, 0.65
+    elif est_hz > 8000:
+        kbps, conf = 64, 0.60
+    else:
+        kbps, conf = 32, 0.50
 
-    logger.info("Bitrate estimate: %d kbps (cutoff=%.0fHz brickwall=%.0fHz conf=%.2f)",
-                kbps, cutoff_hz, brickwall_hz, conf)
+    logger.info(
+        "Bitrate estimate: %d kbps (cutoff=%.0fHz brickwall=%.0fHz conf=%.2f)", kbps, cutoff_hz, brickwall_hz, conf
+    )
 
     return kbps, conf
 
@@ -79,6 +89,7 @@ def estimate_lossy_bitrate(audio: np.ndarray, sr: int) -> tuple[int, float]:
 def get_bitrate_aware_limits(material: str, audio: np.ndarray, sr: int) -> dict:
     """Erweitert Medium-Limits mit bitrate-spezifischen Anpassungen."""
     from backend.core.boundary_optimizer import get_media_limits
+
     limits = get_media_limits(material)
 
     if "mp3" in material.lower() or "aac" in material.lower():
@@ -105,18 +116,20 @@ def measure_musical_bandwidth(audio: np.ndarray, sr: int) -> dict:
     mono = np.atleast_1d(mono).ravel()
     n_fft = 8192
     if len(mono) < n_fft:
-        return {"musical_ceiling_hz": sr/2, "energy_bandwidth_hz": sr/2, "is_bandwidth_limited": False}
+        return {"musical_ceiling_hz": sr / 2, "energy_bandwidth_hz": sr / 2, "is_bandwidth_limited": False}
 
-    hop = n_fft // 2; specs = []
+    hop = n_fft // 2
+    specs = []
     for i in range(0, len(mono) - n_fft, hop):
-        specs.append(np.abs(np.fft.rfft(mono[i:i+n_fft] * np.hanning(n_fft))))
+        specs.append(np.abs(np.fft.rfft(mono[i : i + n_fft] * np.hanning(n_fft))))
     avg_spec = np.mean(specs, axis=0)
     spec_db = 20.0 * np.log10(np.maximum(avg_spec, 1e-12))
     freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
 
-    energy = np.cumsum(avg_spec**2); total = energy[-1] + 1e-12
+    energy = np.cumsum(avg_spec**2)
+    total = energy[-1] + 1e-12
     cutoff_99_idx = np.searchsorted(energy, 0.99 * total)
-    energy_bw = freqs[min(cutoff_99_idx, len(freqs)-1)]
+    energy_bw = freqs[min(cutoff_99_idx, len(freqs) - 1)]
 
     signal_mask = (freqs >= 100) & (freqs <= 5000)
     noise_mask = (freqs >= 8000) & (freqs <= 16000)
@@ -125,11 +138,17 @@ def measure_musical_bandwidth(audio: np.ndarray, sr: int) -> dict:
     hf_snr = signal_level - noise_level
 
     musical_ceiling = sr / 2
-    for i in range(len(freqs)-1, 0, -1):
-        if freqs[i] < 5000: break
+    for i in range(len(freqs) - 1, 0, -1):
+        if freqs[i] < 5000:
+            break
         if spec_db[i] - noise_level > 12 and np.any(noise_mask):
-            musical_ceiling = freqs[i]; break
+            musical_ceiling = freqs[i]
+            break
 
     is_limited = energy_bw < 15000
-    return {"musical_ceiling_hz": float(musical_ceiling), "energy_bandwidth_hz": float(energy_bw),
-            "high_freq_snr_db": float(hf_snr), "is_bandwidth_limited": is_limited}
+    return {
+        "musical_ceiling_hz": float(musical_ceiling),
+        "energy_bandwidth_hz": float(energy_bw),
+        "high_freq_snr_db": float(hf_snr),
+        "is_bandwidth_limited": is_limited,
+    }

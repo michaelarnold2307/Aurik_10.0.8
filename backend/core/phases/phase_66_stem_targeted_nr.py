@@ -224,14 +224,13 @@ class StemTargetedNRPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "stem_nr",
-                default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "stem_nr", default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_66_stem_targeted_nr.py::process fallback: %s", e)
-            pass
         audio, _p66_transposed = to_channels_last(audio)
         self.validate_input(audio)
         t0 = time.time()

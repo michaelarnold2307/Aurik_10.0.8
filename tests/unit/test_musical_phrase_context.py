@@ -1,4 +1,5 @@
 import pytest
+
 """Pflicht-Tests für MusicalPhraseContextExtractor (§2.12).
 
 Testkonventionen:

@@ -1618,7 +1618,7 @@ class BatchProcessingThread(QThread):
                 mode=self._emergency_mode,
                 defect_result=None,
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in modern_window.py", exc_info=True)
             pass  # best-effort in signal handler — no logging
 
@@ -2883,7 +2883,7 @@ class BatchProcessingThread(QThread):
                                 _v = float(_mos_raw)
                                 _f = min(5, max(1, round(_v)))
                                 return "★" * _f + "☆" * (5 - _f)
-                            except Exception as e:
+                            except Exception:
                                 logger.debug("fallback in modern_window.py", exc_info=True)
                                 return "★★★"
 
@@ -11903,12 +11903,12 @@ class ModernMainWindow(QMainWindow):
 
         # Onboarding wizard (first run only)
         try:
-            from Aurik10.ui.onboarding import should_show_onboarding, OnboardingWizard
+            from Aurik10.ui.onboarding import OnboardingWizard, should_show_onboarding
+
             if should_show_onboarding():
                 QTimer.singleShot(800, lambda: OnboardingWizard(self).exec_())
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in modern_window.py", exc_info=True)
-            pass
 
         # Runtime-adaptive UI: reacts to resize and monitor DPI/screen changes.
         self._responsive_sig: tuple[float, int, int] | None = None
@@ -11970,7 +11970,7 @@ class ModernMainWindow(QMainWindow):
             geo = screen.availableGeometry()
             w = int(geo.width())
             h = int(geo.height())
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in modern_window.py", exc_info=True)
             return 1.0
 
@@ -13138,9 +13138,7 @@ class ModernMainWindow(QMainWindow):
         # §14.9 Delta-Mode: Differenzsignal abhören
         self.btn_delta = ModernButton("Δ  Differenz")
         self.btn_delta.setAccessibleName("Differenzsignal abhören (Restauriert − Original)")
-        self.btn_delta.setAccessibleDescription(
-            "Hört nur die Änderungen: was Aurik hinzugefügt oder entfernt hat."
-        )
+        self.btn_delta.setAccessibleDescription("Hört nur die Änderungen: was Aurik hinzugefügt oder entfernt hat.")
         self.btn_delta.setEnabled(False)
         self.btn_delta.setFixedHeight(self._sp(38))
         self.btn_delta.setStyleSheet(_ab_style_rest)
@@ -15303,6 +15301,7 @@ class ModernMainWindow(QMainWindow):
         """F1: Open the help search dialog for documentation lookup."""
         try:
             from Aurik10.ui.help_system import HelpSearchDialog
+
             HelpSearchDialog(self).exec_()
         except Exception:
             logger.debug("Help system unavailable", exc_info=True)
@@ -15986,6 +15985,7 @@ class ModernMainWindow(QMainWindow):
         # Export Preset dialog — try preset selection first
         try:
             from Aurik10.ui.export_presets import ExportPresetDialog
+
             preset_dlg = ExportPresetDialog(self)
             if preset_dlg.exec_() == QDialog.DialogCode.Accepted:
                 self._export_config = preset_dlg.get_config()
@@ -15997,9 +15997,8 @@ class ModernMainWindow(QMainWindow):
                     self.progress_bar.setValue(0)
                 self._continue_file_loaded(audio, sr, file_path, carrier_label, carrier_score, load_token=load_token)
                 return
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in modern_window.py", exc_info=True)
-            pass
         # Fall through to existing ExportConfigDialog
 
         _dlg = ExportConfigDialog(file_path, parent=self)
@@ -16048,17 +16047,15 @@ class ModernMainWindow(QMainWindow):
             # A/B Preview widget: show after file loaded, initially hidden
             try:
                 from Aurik10.ui.ab_preview import ABPreviewWidget
-                if not hasattr(self, '_ab_preview_widget') or self._ab_preview_widget is None:
+
+                if not hasattr(self, "_ab_preview_widget") or self._ab_preview_widget is None:
                     self._ab_preview_widget = ABPreviewWidget(self)
-                    self._ab_preview_widget.restoration_requested.connect(
-                        lambda mode: self._process_with_mode(mode)
-                    )
-                    if hasattr(self, '_main_area_layout'):
+                    self._ab_preview_widget.restoration_requested.connect(lambda mode: self._process_with_mode(mode))
+                    if hasattr(self, "_main_area_layout"):
                         self._main_area_layout.addWidget(self._ab_preview_widget)
                 self._ab_preview_widget.setVisible(True)
-            except Exception as e:
+            except Exception:
                 logger.debug("fallback in modern_window.py", exc_info=True)
-                pass
 
             # Playback pre-warmup: resample to device SR in background so the
             # first play-click is stutter-free.  Invalidate any previous cache.
@@ -17151,7 +17148,9 @@ class ModernMainWindow(QMainWindow):
         if self._orig_audio is None or self._rest_audio is None:
             return
         try:
-            from backend.api.bridge import get_ab_delta as _abd; compute_ab_delta = _abd()
+            from backend.api.bridge import get_ab_delta as _abd
+
+            compute_ab_delta = _abd()
             delta = compute_ab_delta(self._orig_audio, self._rest_audio)
             self._play_audio(delta, self._orig_sr or 48000)
         except Exception as e:
@@ -19106,6 +19105,7 @@ class ModernMainWindow(QMainWindow):
         # Results Summary dialog after successful processing
         try:
             from Aurik10.ui.results_summary import ResultsSummaryDialog, build_results_data
+
             _file_name = Path(item.input_file).name if item and item.input_file else ""
             data = build_results_data(
                 file_name=_file_name,
@@ -19115,13 +19115,10 @@ class ModernMainWindow(QMainWindow):
             )
             dlg = ResultsSummaryDialog(data, self)
             dlg.play_requested.connect(lambda: self._play_restored_or_preview())
-            dlg.open_folder_requested.connect(
-                lambda p: _open_with_system_default(p) if p else None
-            )
+            dlg.open_folder_requested.connect(lambda p: _open_with_system_default(p) if p else None)
             QTimer.singleShot(400, dlg.exec_)
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in modern_window.py", exc_info=True)
-            pass
 
     def _on_item_error(self, item_id, error_msg):
         """Verarbeitet item error — zeigt deutsche Fehlermeldung im UI (Spec §11.4)."""
@@ -23384,11 +23381,11 @@ class ModernMainWindow(QMainWindow):
         layout.addWidget(_updates_label)
 
         _updates_row = QHBoxLayout()
-        _updates_info = QLabel(t('settings.updates_info', default='Check for available updates.'))
+        _updates_info = QLabel(t("settings.updates_info", default="Check for available updates."))
         _updates_info.setStyleSheet("color: rgba(180,190,210,0.8); font-size: 9pt;")
         _updates_row.addWidget(_updates_info, 1)
 
-        _check_btn = QPushButton(t('settings.check_updates_btn', default='Check for updates'))
+        _check_btn = QPushButton(t("settings.check_updates_btn", default="Check for updates"))
         _check_btn.setFixedHeight(30)
         _check_btn.setStyleSheet(
             "QPushButton { background: rgba(102,126,234,0.30); border: 1px solid rgba(102,126,234,0.5);"
@@ -23396,9 +23393,7 @@ class ModernMainWindow(QMainWindow):
             " QPushButton:hover { background: rgba(102,126,234,0.55); }"
         )
         _check_btn.clicked.connect(
-            lambda: self._check_for_update_manual()
-            if hasattr(self, '_check_for_update_manual')
-            else None
+            lambda: self._check_for_update_manual() if hasattr(self, "_check_for_update_manual") else None
         )
         _updates_row.addWidget(_check_btn)
         layout.addLayout(_updates_row)

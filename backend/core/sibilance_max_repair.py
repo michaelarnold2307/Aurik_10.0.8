@@ -60,9 +60,7 @@ class SibilanceMaxRepair:
     }
 
     def __init__(self, guard_wisdom: Any = None, material: str = "unknown") -> None:
-        self._dynamics = RepairDynamicsGuard(
-            guard_wisdom=guard_wisdom, material=material
-        )
+        self._dynamics = RepairDynamicsGuard(guard_wisdom=guard_wisdom, material=material)
         self._gw = guard_wisdom
 
     def repair(
@@ -100,50 +98,36 @@ class SibilanceMaxRepair:
         s_range = self.FREQ_RANGES.get(vocal_profile, self.FREQ_RANGES["unknown"])
 
         # ── 1. Pre-Analyse ──
-        baseline_balance = self._dynamics.measure_stereo_balance(result)
-        sibilance_energy_before = self._measure_sibilance_energy(
-            result, sr, s_range[0], s_range[1]
-        )
+        self._dynamics.measure_stereo_balance(result)
+        sibilance_energy_before = self._measure_sibilance_energy(result, sr, s_range[0], s_range[1])
 
         # ── 2. Phase-19 DSP De-Esser (erster Pass) ──
         if base_strength > 0.05:
             try:
-                result = self._apply_dsp_deesser(
-                    result, sr, s_range, base_strength * 0.7
-                )
+                result = self._apply_dsp_deesser(result, sr, s_range, base_strength * 0.7)
                 report.phase19_applied = True
 
                 # §AF Dynamics-Check
-                result = self._dynamics.match_envelope(
-                    result, sr, 0, min(result.shape[-1], result.shape[-1])
-                )
+                result = self._dynamics.match_envelope(result, sr, 0, min(result.shape[-1], result.shape[-1]))
             except Exception as e:
                 logger.debug("Phase-19 De-Esser: %s", e)
 
         # ── 3. Phase-43 ML De-Esser (Feinpass, nur bei Rest-Sibilance) ──
-        sibilance_energy_mid = self._measure_sibilance_energy(
-            result, sr, s_range[0], s_range[1]
-        )
+        sibilance_energy_mid = self._measure_sibilance_energy(result, sr, s_range[0], s_range[1])
         remaining_ratio = sibilance_energy_mid / max(sibilance_energy_before, 1e-10)
 
         if remaining_ratio > 0.3 and base_strength > 0.15:
             try:
-                result = self._apply_ml_deesser(
-                    result, sr, s_range, base_strength * 0.5
-                )
+                result = self._apply_ml_deesser(result, sr, s_range, base_strength * 0.5)
                 report.phase43_applied = True
 
                 # §AF Dynamics-Check
-                result = self._dynamics.match_envelope(
-                    result, sr, 0, min(result.shape[-1], result.shape[-1])
-                )
+                result = self._dynamics.match_envelope(result, sr, 0, min(result.shape[-1], result.shape[-1]))
             except Exception as e:
                 logger.debug("Phase-43 ML De-Esser: %s", e)
 
         # ── 4. Post-Verifikation ──
-        sibilance_energy_after = self._measure_sibilance_energy(
-            result, sr, s_range[0], s_range[1]
-        )
+        sibilance_energy_after = self._measure_sibilance_energy(result, sr, s_range[0], s_range[1])
 
         if sibilance_energy_before > 1e-10:
             report.sibilance_reduction_db = float(
@@ -174,9 +158,7 @@ class SibilanceMaxRepair:
     # Internal
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _measure_sibilance_energy(
-        self, audio: np.ndarray, sr: int, lo_hz: float, hi_hz: float
-    ) -> float:
+    def _measure_sibilance_energy(self, audio: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> float:
         """Misst Energie im Sibilance-Frequenzband."""
         mono = np.mean(audio, axis=0) if audio.ndim == 2 else audio
         n = len(mono)
@@ -247,15 +229,11 @@ class SibilanceMaxRepair:
         ]
 
         for sb_lo, sb_hi in sub_bands:
-            result = self._apply_dsp_deesser(
-                result, sr, (sb_lo, sb_hi), strength * 0.6
-            )
+            result = self._apply_dsp_deesser(result, sr, (sb_lo, sb_hi), strength * 0.6)
 
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
-    def _check_vocal_formant_preservation(
-        self, before: np.ndarray, after: np.ndarray, sr: int
-    ) -> bool:
+    def _check_vocal_formant_preservation(self, before: np.ndarray, after: np.ndarray, sr: int) -> bool:
         """Prüft ob die Gesangs-Formanten (F1–F4: 200–4000 Hz) erhalten blieben."""
         mono_before = np.mean(before, axis=0) if before.ndim == 2 else before
         mono_after = np.mean(after, axis=0) if after.ndim == 2 else after
@@ -291,7 +269,8 @@ def apply_sibilance_max_repair(
     """Convenience-Funktion für UV3-Integration."""
     repair = SibilanceMaxRepair(guard_wisdom=guard_wisdom, material=material)
     result, report = repair.repair(
-        audio, sr,
+        audio,
+        sr,
         vocal_profile=vocal_profile,
         sibilance_intensity=sibilance_intensity,
     )

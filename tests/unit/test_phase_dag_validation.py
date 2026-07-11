@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests für PhaseDAG / validate_phase_order (§7.5a).
 """

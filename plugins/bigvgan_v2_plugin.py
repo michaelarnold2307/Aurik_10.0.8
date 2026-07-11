@@ -343,9 +343,8 @@ class BigVGANv2Plugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("bigvgan_v2", True)
-        except Exception as e:
+        except Exception:
             logger.warning("bigvgan_v2_plugin.py::_synthesize_bigvgan fallback", exc_info=True)
-            pass
         try:
             mel = self._compute_mel(audio, sr)  # [n_mel, T]
 
@@ -406,9 +405,8 @@ class BigVGANv2Plugin:
                         from backend.core.ml_device_manager import get_ml_device_manager as _mgr
 
                         _mgr().report_gpu_error("BigVGAN", exc)
-                    except Exception as e:
+                    except Exception:
                         logger.warning("bigvgan_v2_plugin.py::_pin_fn fallback", exc_info=True)
-                        pass
                 except Exception as _mv_exc:
                     logger.debug("BigVGAN-v2 GPU→CPU move fehlgeschlagen: %s", _mv_exc)
                     self._device = "cpu"
@@ -419,9 +417,8 @@ class BigVGANv2Plugin:
             if _plm is not None:
                 try:
                     _plm.set_active("bigvgan_v2", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("bigvgan_v2_plugin.py::_pin_fn fallback", exc_info=True)
-                    pass
 
     # ------------------------------------------------------------------
     # Fallback chain

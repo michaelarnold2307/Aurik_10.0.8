@@ -89,15 +89,12 @@ def compute_pleasantness(
     # Gewichte: Sharpness und Roughness sind die dominanten Faktoren
     # für „angenehm/unangenehm" (Zwicker & Fastl 2007, Kap. 11)
     s_sharp = max(0.0, 1.0 - (sharpness - 1.5) / 2.5)  # sharpness < 1.5 → score=1, > 4 → score=0
-    s_rough = max(0.0, 1.0 - roughness / 2.0)           # roughness < 0.5 → score=1, > 2 → score=0
+    s_rough = max(0.0, 1.0 - roughness / 2.0)  # roughness < 0.5 → score=1, > 2 → score=0
     s_loud = max(0.0, 1.0 - abs(loudness_sone - 18.0) / 15.0)  # optimal bei ~18 sone
-    s_tonal = tonalness                                   # tonalness direkt als Score
+    s_tonal = tonalness  # tonalness direkt als Score
     s_fluct = max(0.0, 1.0 - fluctuation / 2.0)
 
-    score = float(np.clip(
-        s_sharp * 0.30 + s_rough * 0.25 + s_loud * 0.15 + s_tonal * 0.20 + s_fluct * 0.10,
-        0.0, 1.0
-    ))
+    score = float(np.clip(s_sharp * 0.30 + s_rough * 0.25 + s_loud * 0.15 + s_tonal * 0.20 + s_fluct * 0.10, 0.0, 1.0))
 
     # ── Label & Issues ──
     issues = []
@@ -144,6 +141,7 @@ def compute_pleasantness(
 # Psychoakustische Messfunktionen
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _compute_zwicker_sharpness(mono: np.ndarray, sr: int) -> float:
     """Zwicker Sharpness (acum) nach ISO 532-1 / DIN 45692.
 
@@ -178,7 +176,7 @@ def _compute_zwicker_sharpness(mono: np.ndarray, sr: int) -> float:
     # Spezifische Loudness N' proportional zu E^0.23
     eps = 1e-12
     specific_loudness = (band_energy + eps) ** 0.23
-    specific_loudness /= (np.sum(specific_loudness) + eps)
+    specific_loudness /= np.sum(specific_loudness) + eps
 
     # Bark-Mitten: 0.5, 1.5, ..., 23.5
     z_centers = np.arange(0.5, 24.0, 1.0)
@@ -193,6 +191,8 @@ def _compute_zwicker_sharpness(mono: np.ndarray, sr: int) -> float:
 
     sharpness = 0.11 * numerator / denominator
     return float(np.clip(sharpness, 0.5, 5.0))
+
+
 def _compute_roughness(mono: np.ndarray, sr: int) -> float:
     """Roughness (asper): RMS-Varianz in 50ms-Fenstern.
 
@@ -205,8 +205,8 @@ def _compute_roughness(mono: np.ndarray, sr: int) -> float:
 
     rms_vals = []
     for i in range(0, len(mono) - win, win // 2):
-        chunk = mono[i:i + win]
-        rms_vals.append(float(np.sqrt(np.mean(chunk ** 2))))
+        chunk = mono[i : i + win]
+        rms_vals.append(float(np.sqrt(np.mean(chunk**2))))
 
     rms_vals = np.array(rms_vals)
     rms_db = 20.0 * np.log10(rms_vals + 1e-12)
@@ -229,7 +229,7 @@ def _estimate_loudness_sone(mono: np.ndarray, sr: int) -> float:
 
     Genauere Implementierung in dsp/psychoacoustics.py (Zwicker/ISO 532-1).
     """
-    rms = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
+    rms = float(np.sqrt(np.mean(mono**2)) + 1e-12)
     rms_db = 20.0 * np.log10(rms)
 
     # Pegel → Sone (vereinfacht: 1 sone = 40 phon bei 1 kHz)
@@ -256,7 +256,7 @@ def _compute_tonalness(mono: np.ndarray, sr: int) -> float:
         return 0.5
 
     spec = np.abs(np.fft.rfft(mono[:n_fft] * np.hanning(n_fft)))
-    spec_db = 20.0 * np.log10(np.maximum(spec, 1e-10))
+    20.0 * np.log10(np.maximum(spec, 1e-10))
 
     # Spektrale Flachheit (Spectral Flatness):
     # tonal = Energie in wenigen Bins konzentriert -> niedrige Flachheit
@@ -271,6 +271,8 @@ def _compute_tonalness(mono: np.ndarray, sr: int) -> float:
     # tonalness = 1 - SF/0.5 (clamped)
     tonalness = float(np.clip(1.0 - spectral_flatness / 0.5, 0.0, 1.0))
     return tonalness
+
+
 def _compute_fluctuation_strength(mono: np.ndarray, sr: int) -> float:
     """Fluctuation Strength (vacil): Modulation < 20 Hz.
 
@@ -283,8 +285,8 @@ def _compute_fluctuation_strength(mono: np.ndarray, sr: int) -> float:
     # RMS-Verlauf in 1s-Schritten
     rms_timeline = []
     for i in range(0, len(mono) - win, win):
-        chunk = mono[i:i + win]
-        rms_timeline.append(float(np.sqrt(np.mean(chunk ** 2))))
+        chunk = mono[i : i + win]
+        rms_timeline.append(float(np.sqrt(np.mean(chunk**2))))
 
     if len(rms_timeline) < 3:
         return 0.5
@@ -300,6 +302,7 @@ def _compute_fluctuation_strength(mono: np.ndarray, sr: int) -> float:
 # ═══════════════════════════════════════════════════════════════════════════
 # Vergleich: Original vs. Restauriert
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def compare_pleasantness(
     original: np.ndarray,

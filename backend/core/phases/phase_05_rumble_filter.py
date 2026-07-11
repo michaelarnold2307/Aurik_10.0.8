@@ -274,14 +274,13 @@ class RumbleFilterPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "rumble_filter",
-                default_nr=0.4, default_de_ess=0.1, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "rumble_filter", default_nr=0.4, default_de_ess=0.1, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_05_rumble_filter.py::process fallback: %s", e)
-            pass
         use_fir: bool = bool(kwargs.get("use_fir", False))
         self.sample_rate = int(sample_rate)
         start_time = time.time()
@@ -676,7 +675,6 @@ class RumbleFilterPhase(PhaseInterface):
             _music_proxy = signal.sosfiltfilt(_quiet_sos, _mono32).astype(np.float32)
         except Exception as e:
             logger.warning("phase_05_rumble_filter.py::_detect_transients_professional fallback: %s", e)
-            pass
         _quiet_frame_len = 4800  # 100 ms @ 48 kHz
         _quiet_n = len(_music_proxy) // _quiet_frame_len
         if _quiet_n >= 1:

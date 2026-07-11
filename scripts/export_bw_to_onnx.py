@@ -123,6 +123,7 @@ def export_to_onnx(checkpoint_path: str, output_path: str, dynamic_batch: bool =
 
     # Validierung
     import onnx
+
     onnx_model = onnx.load(output_path)
     onnx.checker.check_model(onnx_model)
     print("✅ ONNX-Validierung bestanden")

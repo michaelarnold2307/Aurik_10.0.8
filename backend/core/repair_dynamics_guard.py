@@ -24,7 +24,6 @@ Integration:
 from __future__ import annotations
 
 import logging
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,7 +32,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ── Crossover-Frequenzen ──
-LOW_CROSSOVER = 250.0    # Hz
+LOW_CROSSOVER = 250.0  # Hz
 HIGH_CROSSOVER = 4000.0  # Hz
 
 
@@ -41,21 +40,24 @@ HIGH_CROSSOVER = 4000.0  # Hz
 # Dataclasses
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class TransientMarker:
     """Ein detektierter Transient (Attack/Onset), der geschützt werden muss."""
+
     sample: int
-    strength: float = 1.0       # 0.0–1.0 relative Onset-Stärke
-    band: str = "mid"           # "low" | "mid" | "high"
+    strength: float = 1.0  # 0.0–1.0 relative Onset-Stärke
+    band: str = "mid"  # "low" | "mid" | "high"
     protected: bool = True
 
 
 @dataclass
 class BandEnvelope:
     """Multi-Band Envelope für einen Audio-Ausschnitt."""
-    low_rms: float = 0.0       # < 250 Hz
-    mid_rms: float = 0.0       # 250–4000 Hz
-    high_rms: float = 0.0      # > 4000 Hz
+
+    low_rms: float = 0.0  # < 250 Hz
+    mid_rms: float = 0.0  # 250–4000 Hz
+    high_rms: float = 0.0  # > 4000 Hz
     broadband_rms: float = 0.0
     lufs_momentary: float = -70.0  # ITU-R BS.1770-4 momentary
 
@@ -63,6 +65,7 @@ class BandEnvelope:
 @dataclass
 class StereoBalance:
     """L/R Pegel-Balance."""
+
     left_rms: float = 0.0
     right_rms: float = 0.0
     balance_db: float = 0.0  # positiv = links lauter
@@ -72,6 +75,7 @@ class StereoBalance:
 @dataclass
 class DynamicsReport:
     """Vollständiger §AF-MAX Dynamik-Report."""
+
     envelope_match_ok: bool = True
     continuity_ok: bool = True
     stereo_balance_ok: bool = True
@@ -95,6 +99,7 @@ class DynamicsReport:
 # ═══════════════════════════════════════════════════════════════════════════════
 # RepairDynamicsGuard
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class RepairDynamicsGuard:
     """Garantiert dynamisch saubere Defektreparaturen auf Maximalstufe.
@@ -125,7 +130,7 @@ class RepairDynamicsGuard:
         target = _get_channel(audio, channel)
         window = int(sr * 0.4)  # 400ms
         if len(target) < window or window < 64:
-            mean_sq = float(np.mean(target ** 2) + 1e-12)
+            mean_sq = float(np.mean(target**2) + 1e-12)
             return float(20.0 * np.log10(np.sqrt(mean_sq)) - 0.691)
 
         hops = max(1, (len(target) - window) // (window // 2))
@@ -135,7 +140,7 @@ class RepairDynamicsGuard:
             start = i * window // 2
             end = min(len(target), start + window)
             frame = target[start:end]
-            power = float(np.mean(frame ** 2) + 1e-12)
+            power = float(np.mean(frame**2) + 1e-12)
             if power > 1e-14:  # -140 dB threshold (gating)
                 loudness_sum += power
                 n_frames += 1
@@ -151,24 +156,30 @@ class RepairDynamicsGuard:
     # ────────────────────────────────────────────────────────────────────────
 
     def measure_band_envelope(
-        self, audio: np.ndarray, sr: int, start: int, end: int,
-        channel: int | None = None
+        self, audio: np.ndarray, sr: int, start: int, end: int, channel: int | None = None
     ) -> BandEnvelope:
         """Misst die Envelope in drei Frequenzbändern."""
         seg = _get_slice(audio, channel, start, end)
         n = len(seg)
         if n < 8:
-            rms = float(np.sqrt(np.mean(seg ** 2) + 1e-12))
-            return BandEnvelope(low_rms=rms, mid_rms=rms, high_rms=rms,
-                                broadband_rms=rms, lufs_momentary=self.measure_lufs(audio, sr, channel))
+            rms = float(np.sqrt(np.mean(seg**2) + 1e-12))
+            return BandEnvelope(
+                low_rms=rms,
+                mid_rms=rms,
+                high_rms=rms,
+                broadband_rms=rms,
+                lufs_momentary=self.measure_lufs(audio, sr, channel),
+            )
 
         low_rms = _band_rms(seg, sr, 0, LOW_CROSSOVER)
         mid_rms = _band_rms(seg, sr, LOW_CROSSOVER, HIGH_CROSSOVER)
         high_rms = _band_rms(seg, sr, HIGH_CROSSOVER, sr / 2)
-        broadband = float(np.sqrt(np.mean(seg ** 2) + 1e-12))
+        broadband = float(np.sqrt(np.mean(seg**2) + 1e-12))
 
         return BandEnvelope(
-            low_rms=low_rms, mid_rms=mid_rms, high_rms=high_rms,
+            low_rms=low_rms,
+            mid_rms=mid_rms,
+            high_rms=high_rms,
             broadband_rms=broadband,
             lufs_momentary=self.measure_lufs(audio, sr, channel),
         )
@@ -177,9 +188,7 @@ class RepairDynamicsGuard:
     # Transienten-Detektion
     # ────────────────────────────────────────────────────────────────────────
 
-    def detect_transients(
-        self, audio: np.ndarray, sr: int, channel: int | None = None
-    ) -> list[TransientMarker]:
+    def detect_transients(self, audio: np.ndarray, sr: int, channel: int | None = None) -> list[TransientMarker]:
         """Detektiert Onsets/Transienten die geschützt werden müssen."""
         target = _get_channel(audio, channel)
         if len(target) < 64:
@@ -190,8 +199,8 @@ class RepairDynamicsGuard:
         prev_energy = 0.0
 
         for i in range(0, len(target) - hop, hop):
-            frame = target[i:i + hop]
-            energy = float(np.sum(frame ** 2))
+            frame = target[i : i + hop]
+            energy = float(np.sum(frame**2))
 
             if prev_energy > 1e-10:
                 ratio = energy / prev_energy
@@ -205,9 +214,7 @@ class RepairDynamicsGuard:
                     elif high_e > mid_e and high_e > low_e:
                         dominant = "high"
 
-                    markers.append(TransientMarker(
-                        sample=i, strength=min(1.0, ratio / 10.0), band=dominant
-                    ))
+                    markers.append(TransientMarker(sample=i, strength=min(1.0, ratio / 10.0), band=dominant))
 
             prev_energy = energy
 
@@ -220,20 +227,22 @@ class RepairDynamicsGuard:
     def measure_stereo_balance(self, audio: np.ndarray) -> StereoBalance:
         """Misst L/R Pegel-Balance."""
         if audio.ndim < 2 or audio.shape[0] < 2:
-            rms = float(np.sqrt(np.mean(audio ** 2) + 1e-12))
+            rms = float(np.sqrt(np.mean(audio**2) + 1e-12))
             return StereoBalance(left_rms=rms, right_rms=rms, balance_db=0.0, correlation=1.0)
 
         left = np.asarray(audio[0], dtype=np.float32)
         right = np.asarray(audio[1], dtype=np.float32)
-        l_rms = float(np.sqrt(np.mean(left ** 2) + 1e-12))
-        r_rms = float(np.sqrt(np.mean(right ** 2) + 1e-12))
+        l_rms = float(np.sqrt(np.mean(left**2) + 1e-12))
+        r_rms = float(np.sqrt(np.mean(right**2) + 1e-12))
         balance = 20.0 * np.log10((l_rms + 1e-12) / (r_rms + 1e-12))
 
         # Pearson correlation
         l_centered = left - np.mean(left)
         r_centered = right - np.mean(right)
-        corr = float(np.dot(l_centered, r_centered) /
-                     (np.sqrt(np.dot(l_centered, l_centered) * np.dot(r_centered, r_centered)) + 1e-12))
+        corr = float(
+            np.dot(l_centered, r_centered)
+            / (np.sqrt(np.dot(l_centered, l_centered) * np.dot(r_centered, r_centered)) + 1e-12)
+        )
 
         return StereoBalance(left_rms=l_rms, right_rms=r_rms, balance_db=balance, correlation=corr)
 
@@ -297,9 +306,7 @@ class RepairDynamicsGuard:
             xfade_samples = 2
 
         # ── 1. Pre/Post Kontext Envelopes ──
-        pre_env = self.measure_band_envelope(
-            _flat_target(result, channel), sr, max(0, r0 - ctx_samples), r0, channel
-        )
+        pre_env = self.measure_band_envelope(_flat_target(result, channel), sr, max(0, r0 - ctx_samples), r0, channel)
         post_env = self.measure_band_envelope(
             _flat_target(result, channel), sr, r1, min(n_total, r1 + ctx_samples), channel
         )
@@ -317,14 +324,12 @@ class RepairDynamicsGuard:
         target_broadband = (pre_env.broadband_rms + post_env.broadband_rms) / 2.0
 
         # ── 4. Repair-Bereich Envelope ──
-        repair_env = self.measure_band_envelope(
-            _flat_target(result, channel), sr, r0, r1, channel
-        )
+        repair_env = self.measure_band_envelope(_flat_target(result, channel), sr, r0, r1, channel)
 
         # ── 5. Gains pro Band (auf ±6 dB begrenzt) ──
-        gain_low = _safe_gain(repair_env.low_rms, target_low)
-        gain_mid = _safe_gain(repair_env.mid_rms, target_mid)
-        gain_high = _safe_gain(repair_env.high_rms, target_high)
+        _safe_gain(repair_env.low_rms, target_low)
+        _safe_gain(repair_env.mid_rms, target_mid)
+        _safe_gain(repair_env.high_rms, target_high)
         gain_bb = _safe_gain(repair_env.broadband_rms, target_broadband)
 
         # ── 6. Gain-Kurve (graduell mit Cross-fade) ──
@@ -382,8 +387,8 @@ class RepairDynamicsGuard:
         for bs in boundary_samples:
             if bs < win or bs > n - win:
                 continue
-            pre_rms = float(np.sqrt(np.mean(target[bs - win:bs] ** 2) + 1e-12))
-            post_rms = float(np.sqrt(np.mean(target[bs:bs + win] ** 2) + 1e-12))
+            pre_rms = float(np.sqrt(np.mean(target[bs - win : bs] ** 2) + 1e-12))
+            post_rms = float(np.sqrt(np.mean(target[bs : bs + win] ** 2) + 1e-12))
             if pre_rms > 1e-10 and post_rms > 1e-10:
                 jump = abs(20.0 * np.log10(post_rms / pre_rms))
                 max_dev = max(max_dev, jump)
@@ -484,9 +489,9 @@ class RepairDynamicsGuard:
 
         # Crest factor
         bp = float(np.max(np.abs(before)))
-        br = float(np.sqrt(np.mean(before ** 2) + 1e-12))
+        br = float(np.sqrt(np.mean(before**2) + 1e-12))
         ap = float(np.max(np.abs(after)))
-        ar = float(np.sqrt(np.mean(after ** 2) + 1e-12))
+        ar = float(np.sqrt(np.mean(after**2) + 1e-12))
         report.crest_factor_before = float(bp / (br + 1e-12))
         report.crest_factor_after = float(ap / (ar + 1e-12))
 
@@ -599,13 +604,13 @@ class RepairDynamicsGuard:
                 return float(self._guard_wisdom.adaptive_threshold(guard_name, base))
             except Exception as e:
                 logger.warning("repair_dynamics_guard.py::_adaptive_threshold fallback: %s", e)
-                pass
         return base
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Hilfsfunktionen
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def _get_channel(data: np.ndarray, channel: int | None) -> np.ndarray:
     """Kanal aus 1D/2D extrahieren, ggf. Mono-Mix."""
@@ -639,7 +644,7 @@ def _band_rms(segment: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> float
     """RMS in einem Frequenzband via FFT."""
     n = len(segment)
     if n < 8:
-        return float(np.sqrt(np.mean(segment ** 2) + 1e-12))
+        return float(np.sqrt(np.mean(segment**2) + 1e-12))
     fft = np.abs(np.fft.rfft(segment))
     freqs = np.fft.rfftfreq(n, d=1.0 / sr)
     mask = (freqs >= lo_hz) & (freqs <= hi_hz)
@@ -656,12 +661,15 @@ def _safe_gain(current_rms: float, target_rms: float) -> float:
 
 
 def _apply_gain(
-    audio: np.ndarray, r0: int, r1: int,
-    gain_curve: np.ndarray, cf_window: np.ndarray,
+    audio: np.ndarray,
+    r0: int,
+    r1: int,
+    gain_curve: np.ndarray,
+    cf_window: np.ndarray,
     channel: int | None,
 ) -> None:
     """Gain-Kurve + Cross-fade auf Audio anwenden (in-place auf Kopie)."""
-    repair_len = r1 - r0
+    r1 - r0
     if audio.ndim == 2 and channel is not None:
         original = audio[channel, r0:r1].copy()
         audio[channel, r0:r1] = original * gain_curve * cf_window + original * (1.0 - cf_window)

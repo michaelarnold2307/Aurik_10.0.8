@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for universal usability improvements (v9.10.x).
 
 Covers:

@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für GENERATION_LOSS-Priors in CausalDefectReasoner.
 
 Prüft, dass die aktualisierten Prior-Werte für vinyl, mp3_low, mp3_high,

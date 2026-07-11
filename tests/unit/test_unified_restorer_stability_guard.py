@@ -1,4 +1,5 @@
 import pytest
+
 """Stability guard tests for bounded-but-non-edge behavior.
 
 Ensures calibration scalars and implicit phase strengths are pulled away from

@@ -297,9 +297,31 @@ class PsychoacousticMaskingLoss(nn.Module):
         """
         # Zwicker critical band edge frequencies (Hz) — ITU-R BS.1387-2 Table 1
         zwicker_edges_hz = [
-            0, 100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480,
-            1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300, 6400, 7700,
-            9500, 12000, 15500,
+            0,
+            100,
+            200,
+            300,
+            400,
+            510,
+            630,
+            770,
+            920,
+            1080,
+            1270,
+            1480,
+            1720,
+            2000,
+            2320,
+            2700,
+            3150,
+            3700,
+            4400,
+            5300,
+            6400,
+            7700,
+            9500,
+            12000,
+            15500,
         ]
         max_freq = self.sr / 2.0
         bins = []
@@ -477,9 +499,9 @@ def peaq_odg(nmr_db: float) -> float:
     # PEAQ mapping function: ODG = b_min + (b_max - b_min) / (1 + exp(s*(NMR - c)))
     # Parameters calibrated from ITU-R BS.1387-2 listening test data:
     b_min = -4.0  # Worst possible ODG
-    b_max = 0.0   # Best possible ODG (imperceptible)
-    c = -5.0      # NMR midpoint: where the sigmoid is steepest
-    s = 0.22      # Slope: controls the transition sharpness
+    b_max = 0.0  # Best possible ODG (imperceptible)
+    c = -5.0  # NMR midpoint: where the sigmoid is steepest
+    s = 0.22  # Slope: controls the transition sharpness
 
     # Clamp extreme values to avoid overflow
     nmr_clamped = max(-50.0, min(50.0, nmr_db))
@@ -533,7 +555,7 @@ def peaq_nmr(
     bark_error = _torch.cat(bark_errors, dim=1)  # [batch, bark_bands, frames]
 
     # NMR: ratio of error energy to masking threshold energy
-    nmr_linear = (bark_error ** 2) / (masking_threshold ** 2 + 1e-12)
+    nmr_linear = (bark_error**2) / (masking_threshold**2 + 1e-12)
     nmr_mean = nmr_linear.mean()
 
     nmr_db = 10.0 * _torch.log10(nmr_mean + 1e-12)

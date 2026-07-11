@@ -127,7 +127,7 @@ def pytest_configure(config) -> None:
         _librosa.beat.beat_track(y=_d, sr=4000)
         _ = _librosa.util.MAX_MEM_BLOCK
         _ = _librosa.util.frame
-    except Exception as e:
+    except Exception:
         logger.warning("conftest.py::pytest_configure fallback", exc_info=True)
         pass  # Kein Absturz — ist nur ein Warm-up
 
@@ -169,9 +169,8 @@ def _release_heavy_singletons() -> None:
         if mod is not None and hasattr(mod, "_instance"):
             try:
                 mod._instance = None  # type: ignore[attr-defined]
-            except Exception as e:
+            except Exception:
                 logger.warning("conftest.py::_release_heavy_singletons fallback", exc_info=True)
-                pass
 
 
 def _is_vscode_run() -> bool:
@@ -254,9 +253,8 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         )
 
         _arm.stop_monitoring()
-    except Exception as e:
+    except Exception:
         logger.warning("conftest.py::pytest_sessionfinish fallback", exc_info=True)
-        pass
 
     # 2) PLM-Monitor sicher stoppen + Pipeline-Refcount defensiv entspannen.
     try:
@@ -273,9 +271,8 @@ def pytest_sessionfinish(session, exitstatus) -> None:
             except Exception:
                 break
         _get_plm().shutdown()
-    except Exception as e:
+    except Exception:
         logger.warning("conftest.py::pytest_sessionfinish fallback", exc_info=True)
-        pass
 
     # 3) Schwere Modulsingletons freigeben + finales GC.
     _release_heavy_singletons()
@@ -310,9 +307,8 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         for _th in _rest_threads:
             try:
                 _th.join(timeout=_slice)
-            except Exception as e:
+            except Exception:
                 logger.warning("conftest.py::pytest_sessionfinish fallback", exc_info=True)
-                pass
 
     if os.environ.get("AURIK_PYTEST_THREAD_DUMP", "0") == "1":
         try:
@@ -326,9 +322,8 @@ def pytest_sessionfinish(session, exitstatus) -> None:
                     }
                 )
             print(f"AURIK_THREAD_DUMP sessionfinish exitstatus={exitstatus} threads={_alive}", file=_sys.stderr)
-        except Exception as e:
+        except Exception:
             logger.warning("conftest.py::unknown fallback", exc_info=True)
-            pass
 
 
 # ── Legacy-Testdateien ausschließen ────────────────────────────────────────

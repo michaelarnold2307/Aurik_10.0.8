@@ -159,7 +159,6 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
         _plm56_fcpe.set_active("FCPE", True)
     except Exception:
         logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
-        pass
     try:
         from plugins.fcpe_plugin import get_fcpe_plugin
 
@@ -176,7 +175,6 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
                 _plm56_fcpe.set_active("FCPE", False)
             except Exception:
                 logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
-                pass
 
     # Tier-2: RMVPE
     _plm56_rmvpe = None
@@ -187,7 +185,6 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
         _plm56_rmvpe.set_active("RMVPE", True)
     except Exception:
         logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
-        pass
     try:
         from plugins.rmvpe_plugin import get_rmvpe_plugin
 
@@ -204,7 +201,6 @@ def _estimate_f0(mono: np.ndarray, sr: int) -> float | None:
                 _plm56_rmvpe.set_active("RMVPE", False)
             except Exception:
                 logger.debug("_estimate_f0: silent except suppressed", exc_info=True)
-                pass
 
     # Tier-3: PESTO
     try:
@@ -753,7 +749,6 @@ class SpectralBandGapRepairPhase(PhaseInterface):
             _get_plm_evict56().evict_for_phase("phase_56_spectral_band_gap_repair")
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))

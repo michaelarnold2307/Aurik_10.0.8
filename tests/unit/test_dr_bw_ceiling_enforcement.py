@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für DR-Ceiling in Phase 26 + BW-Guard Integration (§6.2b, §6.2c)."""
 
 from __future__ import annotations

@@ -22,7 +22,6 @@ from backend.core.album_consistency import (
     _LUFS_OUTLIER_THRESHOLD_LU,
     _MIN_SONGS,
     _TILT_MAX_CORRECTION_DB,
-    _TILT_OUTLIER_THRESHOLD,
     AlbumConsistencyPass,
     AlbumConsistencyReport,
     SongConsistencyProfile,
@@ -192,10 +191,10 @@ def test_analyze_within_threshold_songs_not_corrected():
 
 def test_lufs_correction_capped_at_max():
     """LUFS correction is bounded by _LUFS_MAX_CORRECTION_DB regardless of deviation."""
-    acp = AlbumConsistencyPass()
+    AlbumConsistencyPass()
     rng = np.random.default_rng(2)
     # Very loud outlier (−3 LUFS) vs very quiet group (−30 LUFS)
-    loud = (rng.standard_normal(SR * 2) * 0.9).astype(np.float32)
+    (rng.standard_normal(SR * 2) * 0.9).astype(np.float32)
     quiet = np.zeros(SR * 2, dtype=np.float32)
 
     # Manually test analyze with mocked LUFS

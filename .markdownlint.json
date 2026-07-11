@@ -24,7 +24,14 @@
   "MD029": false,
   "MD030": true,
   "MD033": {
-    "allowed_elements": ["sup", "sub", "br", "details", "summary", "kbd"]
+    "allowed_elements": [
+      "sup",
+      "sub",
+      "br",
+      "details",
+      "summary",
+      "kbd"
+    ]
   },
   "MD034": true,
   "MD036": false,

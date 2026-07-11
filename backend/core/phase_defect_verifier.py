@@ -44,7 +44,6 @@ from __future__ import annotations
 import importlib
 import logging
 import threading
-from dataclasses import dataclass, field
 from types import ModuleType
 
 import numpy as np
@@ -220,7 +219,6 @@ def _proxy_hf_noise_floor(audio: np.ndarray, sr: int) -> float:
             return float(np.percentile(frame_energies, 5))
     except Exception as e:
         logger.warning("phase_defect_verifier.py::_proxy_hf_noise_floor fallback: %s", e)
-        pass
     return 0.0
 
 
@@ -505,7 +503,6 @@ def _proxy_low_freq_energy(audio: np.ndarray, sr: int) -> float:
             return float(np.mean(mag[:bin_80]))
     except Exception as e:
         logger.warning("phase_defect_verifier.py::_proxy_low_freq_energy fallback: %s", e)
-        pass
     return 0.0
 
 
@@ -601,7 +598,6 @@ def _compute_proxy(proxy_name: str, audio: np.ndarray, sr: int) -> float:
 
 # canonical import — keep for backward compatibility
 from backend.core.cassette_defect_verifier import DefectVerificationResult
-
 
 # ---------------------------------------------------------------------------
 # PhaseDefectVerifier singleton
@@ -911,7 +907,6 @@ class PhaseDefectVerifier:
                     )
                 except Exception as e:
                     logger.warning("phase_defect_verifier.py::unknown fallback: %s", e)
-                    pass
 
             return audio_before if rollback else audio_after
 
@@ -932,7 +927,6 @@ class PhaseDefectVerifier:
                 )
         except Exception as e:
             logger.warning("phase_defect_verifier.py::_record_telemetry fallback: %s", e)
-            pass
 
     def get_session_summary(self) -> dict:
         """Gibt a summary of all PDV checks in this session zurück."""

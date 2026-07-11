@@ -7,10 +7,9 @@ import numpy as np
 import pytest
 
 from backend.core.singer_voice_model import (
-    SingerVoiceModel,
+    _N_MELS,
     SingerVoiceModelResult,
     get_singer_voice_model,
-    _N_MELS,
 )
 
 
@@ -192,9 +191,7 @@ class TestSingerVoiceModelBuild:
 
         if r1 is not None and r2 is not None:
             assert r1.vibrato_rate_hz == pytest.approx(r2.vibrato_rate_hz, abs=1.0)
-            assert r1.spectral_tilt_db_per_octave == pytest.approx(
-                r2.spectral_tilt_db_per_octave, abs=3.0
-            )
+            assert r1.spectral_tilt_db_per_octave == pytest.approx(r2.spectral_tilt_db_per_octave, abs=3.0)
         # Beide sollten None oder beide nicht-None
         assert (r1 is None) == (r2 is None)
 

@@ -72,9 +72,10 @@ def test_critical_imports() -> bool:
 
 def test_phase_imports() -> bool:
     import os
+
     phase_dir = "backend/core/phases"
     phases = sorted(f for f in os.listdir(phase_dir) if f.startswith("phase_") and f.endswith(".py"))
-    
+
     all_ok = True
     for phase_file in phases:
         phase_name = phase_file.replace(".py", "")
@@ -88,16 +89,21 @@ def test_phase_imports() -> bool:
 
 def test_song_calibration_integrity() -> bool:
     from unittest.mock import MagicMock
+
     from backend.core.unified_restorer_v3 import UnifiedRestorerV3
-    
+
     uv3 = MagicMock(spec=UnifiedRestorerV3)
     uv3._restoration_context = {"source_fidelity_bandwidth_target_hz": 13006.0}
-    
+
     for material in ["vinyl", "cassette", "reel_tape", "mp3_low", "cd_digital"]:
         profile = UnifiedRestorerV3._build_song_calibration_profile(
-            uv3, material_type=material, mode="restoration",
-            restorability_score=63.5, input_snr_db=14.3,
-            max_defect_severity=0.6, pipeline_confidence=0.75,
+            uv3,
+            material_type=material,
+            mode="restoration",
+            restorability_score=63.5,
+            input_snr_db=14.3,
+            max_defect_severity=0.6,
+            pipeline_confidence=0.75,
         )
         gs = profile.get("global_scalar", -1)
         if not (0.5 <= gs <= 1.5):
@@ -109,10 +115,10 @@ def test_song_calibration_integrity() -> bool:
 def test_defect_manifest_integrity() -> bool:
     from backend.core.defect_manifest import get_defect_manifest
     from backend.core.defect_scanner import DefectType
-    
+
     dm = get_defect_manifest()
     all_defects = {e.value for e in DefectType}
-    
+
     for dv in all_defects:
         entry = dm.get(dv)
         if entry is None:
@@ -128,6 +134,7 @@ def test_defect_manifest_integrity() -> bool:
 
 def test_contract_validator() -> bool:
     from backend.core.defect_contract_validator import run_contract_validation
+
     result = run_contract_validation()
     return result["ok"]
 
@@ -155,7 +162,7 @@ def main() -> int:
     check("0 cross-module violations", test_contract_validator)
 
     elapsed = time.monotonic() - t0
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"Passed: {CHECKS_PASSED}  Failed: {CHECKS_FAILED}  ({elapsed:.1f}s)")
 
     if CHECKS_FAILED == 0:

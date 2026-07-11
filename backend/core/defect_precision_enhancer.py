@@ -16,9 +16,7 @@ ITU-R BS.1387 PEAQ perceptual evaluation.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -30,13 +28,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DefectInstance:
     """A single defect event with location and characteristics."""
+
     start_sample: int
     end_sample: int
     defect_type: str
-    severity: float          # 0.0–1.0
-    peak_db: float           # dBFS at defect peak
-    center_freq_hz: float    # dominant frequency
-    bandwidth_hz: float      # frequency spread
+    severity: float  # 0.0–1.0
+    peak_db: float  # dBFS at defect peak
+    center_freq_hz: float  # dominant frequency
+    bandwidth_hz: float  # frequency spread
     is_audible: bool = True  # above masking threshold?
     repair_strength: float = 1.0  # adaptive strength
     verified_ok: bool = False
@@ -96,11 +95,13 @@ class DefectPrecisionEnhancer:
             severity = 0.5
             optimal = self._compute_optimal_strength(defect_type, severity, is_audible)
 
-            hints[defect_type] = [{
-                "strength": float(optimal),
-                "audible": float(is_audible),
-                "severity_default": severity,
-            }]
+            hints[defect_type] = [
+                {
+                    "strength": float(optimal),
+                    "audible": float(is_audible),
+                    "severity_default": severity,
+                }
+            ]
 
         return hints
 
@@ -157,27 +158,28 @@ class DefectPrecisionEnhancer:
             sev = severities[i] if severities and i < len(severities) else min(1.0, (peak_db + 60) / 40)
 
             # Psychoakustische Hörbarkeit
-            is_audible = self._masking_model.is_audible(
-                defect_type, sev, center_freq, peak_db, sr, mono, s0, s1
-            )
+            is_audible = self._masking_model.is_audible(defect_type, sev, center_freq, peak_db, sr, mono, s0, s1)
 
             # Adaptive Stärke
             repair_strength = self._compute_optimal_strength(defect_type, sev, is_audible)
 
-            instances.append(DefectInstance(
-                start_sample=s0, end_sample=s1,
-                defect_type=defect_type,
-                severity=sev, peak_db=peak_db,
-                center_freq_hz=center_freq, bandwidth_hz=bandwidth,
-                is_audible=is_audible,
-                repair_strength=repair_strength,
-            ))
+            instances.append(
+                DefectInstance(
+                    start_sample=s0,
+                    end_sample=s1,
+                    defect_type=defect_type,
+                    severity=sev,
+                    peak_db=peak_db,
+                    center_freq_hz=center_freq,
+                    bandwidth_hz=bandwidth,
+                    is_audible=is_audible,
+                    repair_strength=repair_strength,
+                )
+            )
 
         return instances
 
-    def _compute_optimal_strength(
-        self, defect_type: str, severity: float, is_audible: bool
-    ) -> float:
+    def _compute_optimal_strength(self, defect_type: str, severity: float, is_audible: bool) -> float:
         """Compute per-instance optimal repair strength.
 
         Rules:
@@ -238,9 +240,12 @@ class DefectPrecisionEnhancer:
 
                 # §AF: DynamicsGuard — envelope matching + smooth cross-fade
                 repaired_segment = self._dynamics.match_envelope(
-                    repaired_segment, sr, 0, len(repaired_segment) if repaired_segment.ndim == 1
-                    else repaired_segment.shape[-1],
-                    context_ms=50, crossfade_ms=12
+                    repaired_segment,
+                    sr,
+                    0,
+                    len(repaired_segment) if repaired_segment.ndim == 1 else repaired_segment.shape[-1],
+                    context_ms=50,
+                    crossfade_ms=12,
                 )
 
                 # Write back
@@ -286,19 +291,16 @@ class DefectPrecisionEnhancer:
             before_seg = mono_before[s0:s1]
             after_seg = mono_after[s0:s1]
 
-            before_rms = float(np.sqrt(np.mean(before_seg ** 2) + 1e-12))
-            after_rms = float(np.sqrt(np.mean(after_seg ** 2) + 1e-12))
+            before_rms = float(np.sqrt(np.mean(before_seg**2) + 1e-12))
+            after_rms = float(np.sqrt(np.mean(after_seg**2) + 1e-12))
 
             # §AF: DynamicsGuard continuity check at repair boundaries
             boundary_ok = True
             try:
-                continuity = self._dynamics.verify_continuity(
-                    mono_after, sr, s0, s1
-                )
+                continuity = self._dynamics.verify_continuity(mono_after, sr, s0, s1)
                 boundary_ok = continuity.get("ok", True)
             except Exception as e:
                 logger.warning("defect_precision_enhancer.py::verify_repair fallback: %s", e)
-                pass
 
             if after_rms < before_rms * 0.1:
                 # Over-repair: signal removed entirely
@@ -314,7 +316,9 @@ class DefectPrecisionEnhancer:
                 d.verified_ok = False
                 logger.debug(
                     "§AF Dynamics discontinuity at sample %d (freq %.0f Hz, type %s)",
-                    d.start_sample, d.center_freq_hz, d.defect_type
+                    d.start_sample,
+                    d.center_freq_hz,
+                    d.defect_type,
                 )
             else:
                 result.repaired_instances += 1
@@ -323,9 +327,7 @@ class DefectPrecisionEnhancer:
         # Precision-Gain: how many instances were individually analyzed vs bulk
         if result.total_instances > 0:
             unneeded = sum(1 for d in instances if not d.is_audible)
-            result.precision_gain_pct = (
-                (unneeded + result.over_repaired) / result.total_instances * 100
-            )
+            result.precision_gain_pct = (unneeded + result.over_repaired) / result.total_instances * 100
 
         return result
 
@@ -333,6 +335,7 @@ class DefectPrecisionEnhancer:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Simple psychoacoustic masking model (ISO 11172-3 simplified)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class _SimpleMaskingModel:
     """Simplified simultaneous + temporal masking model."""

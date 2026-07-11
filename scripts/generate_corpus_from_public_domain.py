@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 import sys
 from pathlib import Path
@@ -158,9 +157,7 @@ def generate_manifest(directory: Path, entries: list[dict], dry_run: bool = Fals
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Public-Domain-Corpus-Generator für Aurik (§15.2)"
-    )
+    parser = argparse.ArgumentParser(description="Public-Domain-Corpus-Generator für Aurik (§15.2)")
     parser.add_argument(
         "--source",
         choices=["internet_archive", "musopen", "freesound"],

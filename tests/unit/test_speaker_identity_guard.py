@@ -21,6 +21,7 @@ from backend.ml.speaker_identity_guard import (
     extract_mfcc_voiceprint,
 )
 
+
 # cos_sim helper — cosine_similarity now a field in SpeakerIdentityResult
 def cos_sim(a, b):
     norm = np.linalg.norm(a) * np.linalg.norm(b)
@@ -267,7 +268,7 @@ class TestSpeakerIdentityGuard:
         # same vocal_mike should still pass since embedding is deterministic.
         result2 = guard.check_phase("phase_42", vocal_like, sr, threshold=0.999)
         assert result2.identity_preserved  # cos≈1.0 >= 0.999
-        
+
         # Heavily distorted signal should fail threshold 1.0
         t = np.linspace(0, 2.0, len(vocal_like), endpoint=False)
         noise = np.random.RandomState(7).randn(*vocal_like.shape) * 0.5

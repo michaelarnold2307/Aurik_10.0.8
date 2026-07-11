@@ -1,10 +1,11 @@
 import pytest
+
 """Unit tests for §MCG-1 ModelCapabilityGate."""
 
 import types
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
-from collections.abc import Mapping
 
 from backend.core.dsp.model_capability_gate import CapabilityReport, ModelCapabilityGate
 

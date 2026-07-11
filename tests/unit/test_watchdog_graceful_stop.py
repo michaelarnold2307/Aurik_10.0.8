@@ -14,12 +14,11 @@ Spec-Referenz: §0c, §11.4 (Watchdog-Timer)
 from __future__ import annotations
 
 import importlib.util
-import re
 
 import pytest
 
-
 # ── Source-Level-Verifikation (kein ML-Modell-Laden) ─────────────────────────
+
 
 def _get_uv3_source() -> str:
     spec = importlib.util.find_spec("backend.core.unified_restorer_v3")
@@ -35,6 +34,7 @@ def _get_modern_window_source() -> str:
     if spec is None:
         # Fallback: direkt aus Repository-Pfad
         from pathlib import Path
+
         p = Path("Aurik10/ui/modern_window.py")
         if p.exists():
             return p.read_text(encoding="utf-8")
@@ -60,9 +60,7 @@ class TestWatchdogGracefulStopSource:
     def test_02_request_graceful_stop_exists(self):
         """request_graceful_stop() ist definiert und setzt das Event."""
         src = _get_uv3_source()
-        assert "def request_graceful_stop" in src, (
-            "UV3.request_graceful_stop() fehlt"
-        )
+        assert "def request_graceful_stop" in src, "UV3.request_graceful_stop() fehlt"
         assert "_graceful_stop_event.set()" in src, (
             "request_graceful_stop() setzt NICHT _graceful_stop_event — Watchdog-Signal kommt nie an"
         )
@@ -104,9 +102,5 @@ class TestWatchdogGracefulStopSource:
         # Spec: _per_file_ms = max(5_400_000, audio_dur_s * 32_000 + 1_800_000)
         has_32k = "32_000" in mw_src or "32000" in mw_src
         has_1_8m = "1_800_000" in mw_src or "1800000" in mw_src
-        assert has_32k, (
-            "Watchdog: 32_000 (32xRT Faktor) fehlt — Spec §11.4 verlangt audio_dur_s * 32_000"
-        )
-        assert has_1_8m, (
-            "Watchdog: 1_800_000 (30min Offset) fehlt — Spec §11.4 verlangt + 1_800_000"
-        )
+        assert has_32k, "Watchdog: 32_000 (32xRT Faktor) fehlt — Spec §11.4 verlangt audio_dur_s * 32_000"
+        assert has_1_8m, "Watchdog: 1_800_000 (30min Offset) fehlt — Spec §11.4 verlangt + 1_800_000"

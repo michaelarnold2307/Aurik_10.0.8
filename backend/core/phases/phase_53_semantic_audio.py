@@ -48,7 +48,6 @@ try:
     _clap_factory_impl = _clap_factory_loaded
 except Exception as e:
     logger.warning("phase_53_semantic_audio.py::unknown fallback: %s", e)
-    pass
 _clap_factory: Any = _clap_factory_impl
 
 _beats_factory_impl: Any = None
@@ -58,7 +57,6 @@ try:
     _beats_factory_impl = _beats_factory_loaded
 except Exception as e:
     logger.warning("phase_53_semantic_audio.py::unknown fallback: %s", e)
-    pass
 _beats_factory: Any = _beats_factory_impl
 
 logger = logging.getLogger(__name__)

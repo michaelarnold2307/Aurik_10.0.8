@@ -1,4 +1,5 @@
 import pytest
+
 """Tests §Phase-level wall-time deadline shared across M/S MRSA sub-calls.
 
 Root cause: stereo audio caused 2× independent zone budgets (562.5s each = 1125s+),
@@ -8,7 +9,6 @@ total MRSA time is bounded by min(300s, max(90s, 1.3 × dur_s)).
 """
 
 from __future__ import annotations
-
 
 import numpy as np
 

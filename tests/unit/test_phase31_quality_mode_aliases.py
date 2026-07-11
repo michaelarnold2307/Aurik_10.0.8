@@ -1,7 +1,7 @@
-import pytest
 from typing import cast
 
 import numpy as np
+import pytest
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.phases.phase_31_speed_pitch_correction import SpeedPitchCorrectionPhase

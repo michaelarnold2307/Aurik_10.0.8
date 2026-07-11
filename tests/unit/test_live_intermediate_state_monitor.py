@@ -1,4 +1,5 @@
 import pytest
+
 from audit.live_intermediate_state_monitor import _detect_spec_gap_from_line, _has_offtrack_trigger
 
 

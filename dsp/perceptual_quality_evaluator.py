@@ -150,7 +150,7 @@ class AdaptivePerceptualQualityEvaluator:
             geo_mean = float(np.exp(np.mean(np.log(mag))))
             arith_mean = float(np.mean(mag))
             return float(np.clip(geo_mean / (arith_mean + 1e-10), 0.0, 1.0))
-        except Exception as e:
+        except Exception:
             logger.warning("perceptual_quality_evaluator.py::_spectral_flatness fallback", exc_info=True)
             return 0.5
 

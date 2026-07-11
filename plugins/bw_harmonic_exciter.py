@@ -16,6 +16,7 @@ Usage:
 """
 
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ SR_DEFAULT = 22050
 
 def _spectral_envelope(magnitude, smooth_bins=8):
     kernel = np.ones(smooth_bins) / smooth_bins
-    return np.convolve(magnitude, kernel, mode='same')
+    return np.convolve(magnitude, kernel, mode="same")
 
 
 def _extrapolate_envelope(env, cutoff_bin, order=2):
@@ -67,10 +68,11 @@ def harmonic_exciter(audio, sr, cutoff_hz, n_fft=2048, hop_length=512, blend=0.5
 
     # ── 2. Hochpass ──
     from scipy.signal import butter, sosfiltfilt
+
     nyq = sr / 2
     if cutoff_hz >= nyq * 0.95:
         return audio.astype(np.float32)
-    sos_hp = butter(4, cutoff_hz / nyq, btype='high', output='sos')
+    sos_hp = butter(4, cutoff_hz / nyq, btype="high", output="sos")
     harmonics = sosfiltfilt(sos_hp, harmonics)
 
     # ── 3. STFT + spektrale Formung ──
@@ -86,8 +88,8 @@ def harmonic_exciter(audio, sr, cutoff_hz, n_fft=2048, hop_length=512, blend=0.5
 
     for i in range(n_frames):
         start = i * n_hop
-        spec_orig[:, i] = np.abs(np.fft.rfft(audio[start:start + n_fft] * window))
-        spec_harm[:, i] = np.abs(np.fft.rfft(harmonics[start:start + n_fft] * window))
+        spec_orig[:, i] = np.abs(np.fft.rfft(audio[start : start + n_fft] * window))
+        spec_harm[:, i] = np.abs(np.fft.rfft(harmonics[start : start + n_fft] * window))
 
     cutoff_bin = int(cutoff_hz / nyq * (n_fft // 2))
     cutoff_bin = max(1, min(cutoff_bin, n_bins - 2))
@@ -109,16 +111,15 @@ def harmonic_exciter(audio, sr, cutoff_hz, n_fft=2048, hop_length=512, blend=0.5
 
     for i in range(n_frames):
         start = i * n_hop
-        orig_stft = np.fft.rfft(audio[start:start + n_fft] * window)
+        orig_stft = np.fft.rfft(audio[start : start + n_fft] * window)
         angles = np.angle(orig_stft)
         stft_mag = np.abs(orig_stft).copy()
         stft_mag[cutoff_bin:] = spec_harm[cutoff_bin:, i]
         frame = np.fft.irfft(stft_mag * np.exp(1j * angles))
-        output[start:start + n_fft] += frame * window
-        weight[start:start + n_fft] += window ** 2
+        output[start : start + n_fft] += frame * window
+        weight[start : start + n_fft] += window**2
 
-    output = np.divide(output, np.maximum(weight, 1e-8),
-                       out=np.zeros_like(output), where=weight > 1e-8)
+    output = np.divide(output, np.maximum(weight, 1e-8), out=np.zeros_like(output), where=weight > 1e-8)
     output = np.clip(output, -1.0, 1.0)
     output = np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0)
     return output.astype(np.float32)
@@ -127,6 +128,7 @@ def harmonic_exciter(audio, sr, cutoff_hz, n_fft=2048, hop_length=512, blend=0.5
 # ═══════════════════════════════════════════════════════════════════════════
 # Aurik-Plugin
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class BWHarmonicExciter:
     """DSP-basierter Bandbreiten-Erweiterer — kein ML, sofort einsatzbereit."""
@@ -173,20 +175,22 @@ class BWHarmonicExciter:
     def _process_mono(self, audio, sr, cutoff_hz):
         if sr != SR_DEFAULT:
             from scipy.signal import resample_poly
+
             audio = resample_poly(audio.astype(np.float64), SR_DEFAULT, sr)
             audio = audio.astype(np.float64)
 
-        result = harmonic_exciter(audio, SR_DEFAULT, cutoff_hz,
-                                  blend=self.blend, drive=self.drive)
+        result = harmonic_exciter(audio, SR_DEFAULT, cutoff_hz, blend=self.blend, drive=self.drive)
 
         if sr != SR_DEFAULT:
             from scipy.signal import resample_poly
+
             result = resample_poly(result.astype(np.float64), sr, SR_DEFAULT)
 
         return result.astype(np.float32)
 
 
 # ── Pipeline-Stage ────────────────────────────────────────────────────────
+
 
 class BWExciterStage:
     """Aurik-Pipeline-Stage für die BW Harmonic Exciter."""

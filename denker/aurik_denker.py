@@ -1305,7 +1305,11 @@ class AurikDenker:
             )
             chain_info = kette.as_dict()
             # §6.8: Era-Precursor (reel_tape) der physikalischen Chain voranstellen
-            _era_mp = str(getattr(cached_era_result, "material_prior", "") or "").lower() if cached_era_result is not None else ""
+            _era_mp = (
+                str(getattr(cached_era_result, "material_prior", "") or "").lower()
+                if cached_era_result is not None
+                else ""
+            )
             _phys_chain = getattr(kette, "chain", []) or []
             if _era_mp in ("reel_tape", "tape") and _era_mp not in _phys_chain:
                 _phys_chain = [_era_mp] + list(_phys_chain)
@@ -1332,6 +1336,7 @@ class AurikDenker:
         def _get_surgical_defect_types() -> frozenset[str]:
             try:
                 from backend.core.surgical_defect_analyzer import SURGICAL_DEFECT_TYPES
+
                 return SURGICAL_DEFECT_TYPES
             except ImportError:
                 return frozenset()
@@ -1362,8 +1367,7 @@ class AurikDenker:
                 "defect_severities": dict(getattr(defekt, "defect_scores", {})),
                 # §2.59: Chirurgische Klassifikation für alle Denker sichtbar
                 "surgical_defect_types": [
-                    d for d in getattr(defekt, "defect_scores", {}).keys()
-                    if d in _get_surgical_defect_types()
+                    d for d in getattr(defekt, "defect_scores", {}).keys() if d in _get_surgical_defect_types()
                 ],
             }
             # Bug-17-Fix: raw DefectAnalysisResult aus DefektErgebnis extrahieren und
@@ -1389,7 +1393,7 @@ class AurikDenker:
         # ── Song-individuelle Defekt-Meldung für den Nutzer ──────────
         if defekt is not None and hasattr(defekt, "summary"):
             _prim = str(getattr(defekt, "summary", {}).get("primary_defect", defekt_primaer_raw or ""))
-            _sev = float(getattr(defekt, "overall_severity", 0.5))
+            float(getattr(defekt, "overall_severity", 0.5))
             if _prim:
                 _emit(7, f"Hauptproblem erkannt: {_prim.replace('_', ' ').title()} — wird gezielt behandelt")
 
@@ -2555,6 +2559,7 @@ class AurikDenker:
         # ── §v10.5 PerceptualQualityCouncil: SOTA holistische Bewertung ──
         try:
             from backend.core.perceptual_quality_council import get_perceptual_council
+
             _pqc = get_perceptual_council()
             _pqc_verdict = _pqc.evaluate(
                 versa_mos=_versa_mos,
@@ -2956,8 +2961,9 @@ def _get_musical_sections(audio: Any, sr: int) -> list[tuple[float, float, str]]
     """§2.61: Musikalische Sektionen für den Fahrplan analysieren."""
     try:
         from backend.core.section_goal_adapter import get_sections
+
         return get_sections(np.asarray(audio), int(sr))
-    except Exception as e:
+    except Exception:
         logger.warning("aurik_denker.py::_get_musical_sections fallback", exc_info=True)
         return []
 

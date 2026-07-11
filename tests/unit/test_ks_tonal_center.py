@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for Krumhansl-Schmuckler Tonal Center metric (TonalCenterMetric).
 
 Verifies:

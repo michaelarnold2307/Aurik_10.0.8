@@ -30,6 +30,6 @@ try:
     import torch as _torch
 
     _torch.set_num_interop_threads(4)
-except Exception as e:
+except Exception:
     logger.warning("runtime_hook_threading.py::unknown fallback", exc_info=True)
     pass  # torch optional at hook time (not yet imported)

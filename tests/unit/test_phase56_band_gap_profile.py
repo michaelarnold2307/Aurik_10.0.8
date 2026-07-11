@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: SpectralBandGapRepairPhase._compute_band_gap_profile() (§2.56)."""
 
 import numpy as np

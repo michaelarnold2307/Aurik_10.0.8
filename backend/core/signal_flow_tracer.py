@@ -458,7 +458,6 @@ class SignalFlowTracer:
                 return wav  # type: ignore[no-any-return]
         except Exception as e:
             logger.warning("signal_flow_tracer.py::latest_output_wav fallback: %s", e)
-            pass
         # 3. Filesystem-Fallback: neueste WAV in output/
         return _find_latest_output_wav()
 

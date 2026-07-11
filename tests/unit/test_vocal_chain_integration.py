@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for §2.8 Vocal Chain Integration — Gender, PhonemeDetector, BreathDetector.
 
 Validates the integration of vocal processing modules that were previously

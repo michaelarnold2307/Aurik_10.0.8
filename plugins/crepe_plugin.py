@@ -149,9 +149,8 @@ class CrepePlugin:
                 if not _try_alloc("CREPE", size_gb=0.10):
                     try:
                         _release("CREPE")
-                    except Exception as e:
+                    except Exception:
                         logger.warning("crepe_plugin.py::_load_model fallback", exc_info=True)
-                        pass
                     if not _try_alloc("CREPE", size_gb=0.10):
                         logger.warning("CREPE: ML-Budget erschöpft — pYIN-Fallback.")
                         return
@@ -250,9 +249,8 @@ class CrepePlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("CREPE", True)
-        except Exception as e:
+        except Exception:
             logger.warning("crepe_plugin.py::_analyze_onnx fallback", exc_info=True)
-            pass
         try:
             import onnxruntime as ort
             import scipy.signal as sps
@@ -351,9 +349,8 @@ class CrepePlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("CREPE", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("crepe_plugin.py::unknown fallback", exc_info=True)
-                    pass
 
     def _analyze_pyin(self, audio: np.ndarray, sr: int) -> CrepeResult:
         """pYIN-Fallback (Mauch & Dixon 2014) — O(N²), max. 2 Sekunden.

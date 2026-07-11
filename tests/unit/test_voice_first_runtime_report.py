@@ -1,8 +1,9 @@
-import pytest
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 import audit.build_voice_first_runtime_report as runtime_report_module
 from audit.build_voice_first_runtime_report import build_guard_coverage_manifest, build_runtime_report

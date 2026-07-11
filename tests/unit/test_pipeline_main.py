@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für backend/core/pipeline_main.py.
 
 Spec §2.1: AurikAutonomousPipeline (primär).

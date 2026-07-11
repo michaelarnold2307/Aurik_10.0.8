@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für core/emotional_arc_preservation.py — EmotionalArcPreservationMetric.
 
 Spec §8.2 Punkt 12: Emotionaler Dynamik-Bogen, Arousal/Valence Pearson, Klimax-Erhalt.
@@ -199,7 +200,7 @@ class TestSignalCombinations:
         try:
             r = self.m.measure(orig, rest, SR)
             assert isinstance(r, EmotionalArcResult)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Toleriert: unterschiedliche Längen können abgelehnt werden
 

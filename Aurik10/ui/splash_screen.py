@@ -45,9 +45,8 @@ except Exception:
         _match = re.search(r'^version\s*=\s*"([^"]+)"', _content, re.MULTILINE)
         if _match:
             _VERSION = _match.group(1)
-    except Exception as e:
+    except Exception:
         logger.warning("splash_screen.py::unknown fallback", exc_info=True)
-        pass
 
 
 class AurikSplashScreen(QWidget):

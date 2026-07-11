@@ -36,7 +36,7 @@ except ImportError:
     logger.debug("onnxruntime nicht installiert — BW Reconstructor nicht verfügbar")
 
 try:
-    from scipy.signal import butter, sosfiltfilt
+    pass
 
     _SCIPY_AVAILABLE = True
 except ImportError:
@@ -430,6 +430,7 @@ class BWReconstructorPlugin:
 
 # ── Convenience-Funktion ───────────────────────────────────────────────────
 
+
 def reconstruct_bandwidth(
     audio: np.ndarray,
     sr: int,
@@ -454,6 +455,7 @@ def reconstruct_bandwidth(
 
 
 # ── Pipeline-Integration ───────────────────────────────────────────────────
+
 
 class BWReconstructorStage:
     """Aurik-Pipeline-Stage für Bandbreiten-Rekonstruktion.

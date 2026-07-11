@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für core/excellence_optimizer.py — ExcellenceOptimizer.
 
 Spec §2.x: Kontext-bewusstes Post-Processing (Spectral Continuity,

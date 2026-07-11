@@ -24,41 +24,41 @@ logger = logging.getLogger(__name__)
 # Material-adaptive Start-Budgets: wie viel Verbesserung pro Goal maximal nötig.
 # Werte sind Deltas in [0, 1] — 0.3 = das Goal kann um max 0.3 Score-Punkte steigen.
 _DEFAULT_GOAL_BUDGET: dict[str, float] = {
-    "waerme":                0.25,
-    "brillanz":              0.20,
-    "emotionalitaet":        0.15,
-    "groove":                0.08,
-    "artikulation":          0.10,
-    "natuerlichkeit":        0.12,
-    "authentizitaet":        0.05,
-    "durchschlagskraft":     0.15,
-    "raeumlichkeit":         0.18,
-    "transparenz":           0.20,
-    "dynamik":               0.10,
-    "stimmklarheit":         0.18,
-    "bassdefinition":        0.15,
-    "mikrodynamik":          0.08,
-    "klangbalance":          0.15,
+    "waerme": 0.25,
+    "brillanz": 0.20,
+    "emotionalitaet": 0.15,
+    "groove": 0.08,
+    "artikulation": 0.10,
+    "natuerlichkeit": 0.12,
+    "authentizitaet": 0.05,
+    "durchschlagskraft": 0.15,
+    "raeumlichkeit": 0.18,
+    "transparenz": 0.20,
+    "dynamik": 0.10,
+    "stimmklarheit": 0.18,
+    "bassdefinition": 0.15,
+    "mikrodynamik": 0.08,
+    "klangbalance": 0.15,
 }
 
 # Hochgradig beschädigte Materialien brauchen grössere Budgets.
 _MATERIAL_BUDGET_SCALE: dict[str, float] = {
-    "wax_cylinder":    1.8,
-    "shellac":         1.5,
-    "lacquer_disc":    1.4,
-    "wire_recording":  1.6,
-    "vinyl":           1.2,
-    "tape":            1.15,
-    "reel_tape":       1.1,
-    "cassette":        1.3,
-    "cd_digital":      0.8,
-    "streaming":       0.7,
-    "mp3_low":         1.0,
-    "mp3_high":        0.75,
-    "dat":             0.7,
-    "aac":             0.6,
-    "minidisc":        0.9,
-    "unknown":         1.0,
+    "wax_cylinder": 1.8,
+    "shellac": 1.5,
+    "lacquer_disc": 1.4,
+    "wire_recording": 1.6,
+    "vinyl": 1.2,
+    "tape": 1.15,
+    "reel_tape": 1.1,
+    "cassette": 1.3,
+    "cd_digital": 0.8,
+    "streaming": 0.7,
+    "mp3_low": 1.0,
+    "mp3_high": 0.75,
+    "dat": 0.7,
+    "aac": 0.6,
+    "minidisc": 0.9,
+    "unknown": 1.0,
 }
 
 
@@ -124,6 +124,7 @@ def create_goal_budget(
     if genre_key:
         try:
             from backend.core.genre_goal_profile import get_genre_goal_profile
+
             profile = get_genre_goal_profile(genre_key)
             # Genre-Ziele überschreiben Defaults
             for goal, weight in profile.goal_weights.items():
@@ -131,5 +132,4 @@ def create_goal_budget(
                     targets[goal] = round(0.30 * weight / 2.0, 3)  # weight 2.0 → 0.30 Budget
         except Exception as e:
             logger.warning("goal_budget.py::create_goal_budget fallback: %s", e)
-            pass
     return GoalBudget(targets, material_key=material_key)

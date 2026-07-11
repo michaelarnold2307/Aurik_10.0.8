@@ -211,9 +211,8 @@ class CompetitiveBenchmark:
             finally:
                 try:
                     Path(tmp_out_path).unlink(missing_ok=True)
-                except Exception as e:
+                except Exception:
                     logger.warning("benchmark_suite.py::benchmark_aurik fallback", exc_info=True)
-                    pass
         except Exception as e:
             logger.error(f"AURIK processing failed: {e}")
             return None

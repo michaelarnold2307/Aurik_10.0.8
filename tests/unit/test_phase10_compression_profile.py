@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_10_compression._compute_compression_profile (§2.56)."""
 
 from backend.core.phases.phase_10_compression import CompressionPhase

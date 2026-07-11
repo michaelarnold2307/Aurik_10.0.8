@@ -75,7 +75,7 @@ class AudioMetadata:
     genre: str = ""
     tracknumber: str = ""
     isrc: str = ""  # §ISRC International Standard Recording Code
-    upc: str = ""   # §UPC/EAN Universal Product Code
+    upc: str = ""  # §UPC/EAN Universal Product Code
     cover_art: bytes | None = None
     cover_mime: str = "image/jpeg"
     extra: dict[str, str] = field(default_factory=dict)

@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für LyricsSentimentAnalyzer (§LSM-1).
 
 Spec: §LSM-1 NLP-Lyrik-Sentiment-Modell

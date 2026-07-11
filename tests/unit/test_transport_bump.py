@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für TRANSPORT_BUMP – Erkennung, kausales Reasoning und Reparatur.
 
 ≥ 40 Unit-Tests: synthetische Signale, kein echtes Audio.

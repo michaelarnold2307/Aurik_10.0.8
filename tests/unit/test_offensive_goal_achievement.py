@@ -23,6 +23,7 @@ class TestAMRBGateStructure:
     def test_01_amrb_gate_file_exists(self):
         """AMRB-Gate-Test existiert."""
         from pathlib import Path
+
         assert Path("tests/normative/test_amrb_ci_gate.py").exists(), (
             "test_amrb_ci_gate.py fehlt — §8.1 AMRB-Gate nicht implementiert"
         )
@@ -36,9 +37,7 @@ class TestAMRBGateStructure:
     def test_03_amrb_gate_is_not_disabled(self):
         """AMRB-Gate ist nicht geskippt oder deaktiviert."""
         src = open("tests/normative/test_amrb_ci_gate.py", encoding="utf-8").read()
-        assert "pytest.mark.skip" not in src, (
-            "AMRB-Gate ist geskippt — §8.1 nicht aktiv"
-        )
+        assert "pytest.mark.skip" not in src, "AMRB-Gate ist geskippt — §8.1 nicht aktiv"
 
 
 @pytest.mark.goal_achievement
@@ -48,6 +47,7 @@ class TestCompetitiveGateStructure:
     def test_10_competitive_gate_file_exists(self):
         """Competitive-Gate-Test existiert."""
         from pathlib import Path
+
         assert Path("tests/normative/test_competitive_ci_gate.py").exists(), (
             "test_competitive_ci_gate.py fehlt — §8.2 Competitive-Gate nicht implementiert"
         )
@@ -61,9 +61,7 @@ class TestCompetitiveGateStructure:
     def test_12_competitive_gate_is_not_disabled(self):
         """Competitive-Gate ist nicht geskippt oder deaktiviert."""
         src = open("tests/normative/test_competitive_ci_gate.py", encoding="utf-8").read()
-        assert "pytest.mark.skip" not in src, (
-            "Competitive-Gate ist geskippt — §8.2 nicht aktiv"
-        )
+        assert "pytest.mark.skip" not in src, "Competitive-Gate ist geskippt — §8.2 nicht aktiv"
 
 
 @pytest.mark.goal_achievement

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AuraProfile:
     """Fingerabdruck der klanglichen Aura einer Aufnahme."""
+
     era_decade: int = 1970
     era_label: str = ""
     genre: str = "unknown"
@@ -46,6 +47,7 @@ class AuraProfile:
 @dataclass
 class AuraReport:
     """Bericht über Aura-Erhalt nach Verarbeitung."""
+
     aura_preserved: bool = True
     aura_drift_score: float = 0.0  # 0.0=perfekt, 1.0=komplett verloren
     warmth_drift_db: float = 0.0
@@ -102,7 +104,7 @@ class AuraPreserver:
         # ── Akustische Messungen ──
         # Crest-Faktor
         peak = float(np.max(np.abs(mono))) + 1e-10
-        rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
+        rms = float(np.sqrt(np.mean(mono**2))) + 1e-10
         profile.crest_factor = 20.0 * np.log10(peak / rms)
 
         # HF-Rolloff (Frequenz bei -20 dB vom Peak)
@@ -127,7 +129,7 @@ class AuraPreserver:
         # Noise Floor (Median der leisesten 10% der FFT-Bins)
         sorted_mags = np.sort(fft[fft > 1e-10])
         if len(sorted_mags) > 10:
-            noise_bins = sorted_mags[:max(10, len(sorted_mags) // 10)]
+            noise_bins = sorted_mags[: max(10, len(sorted_mags) // 10)]
             profile.noise_floor_db = float(20.0 * np.log10(np.median(noise_bins) + 1e-12))
 
         # Stereo Width (L/R Differenz / Summe)
@@ -162,7 +164,8 @@ class AuraPreserver:
 
         # Aktuelle Messung
         current = self.fingerprint(
-            audio, sr,
+            audio,
+            sr,
             era_decade=self._baseline.era_decade,
             era_label=self._baseline.era_label,
             genre=self._baseline.genre,
@@ -173,9 +176,7 @@ class AuraPreserver:
         # ── Drift-Berechnung ──
         # Wärme-Drift
         if self._baseline.warmth_score > 1e-10:
-            report.warmth_drift_db = float(
-                20.0 * np.log10(current.warmth_score / self._baseline.warmth_score)
-            )
+            report.warmth_drift_db = float(20.0 * np.log10(current.warmth_score / self._baseline.warmth_score))
 
         # Brillanz-Drift
         if self._baseline.brilliance_score > 1e-10:
@@ -186,20 +187,18 @@ class AuraPreserver:
         # Crest-Drift
         if self._baseline.crest_factor > 0:
             report.crest_drift_pct = float(
-                abs(current.crest_factor - self._baseline.crest_factor)
-                / self._baseline.crest_factor * 100.0
+                abs(current.crest_factor - self._baseline.crest_factor) / self._baseline.crest_factor * 100.0
             )
 
         # Emotional-Arc
         if emotional_arc is not None:
             try:
-                if hasattr(emotional_arc, 'correlation'):
+                if hasattr(emotional_arc, "correlation"):
                     report.emotional_arc_correlation = float(emotional_arc.correlation)
                 elif isinstance(emotional_arc, (int, float)):
                     report.emotional_arc_correlation = float(emotional_arc)
             except Exception as e:
                 logger.warning("aura_preserver.py::measure_drift fallback: %s", e)
-                pass
 
         # Character
         report.character_drift = 1.0 - character_score
@@ -211,9 +210,9 @@ class AuraPreserver:
 
         # ── Aura-Drift-Score (gewichteter Mittelwert) ──
         drift_components = [
-            abs(report.warmth_drift_db) / 3.0,      # max 3 dB = 1.0
+            abs(report.warmth_drift_db) / 3.0,  # max 3 dB = 1.0
             abs(report.brilliance_drift_db) / 3.0,  # max 3 dB = 1.0
-            report.crest_drift_pct / 20.0,           # max 20% = 1.0
+            report.crest_drift_pct / 20.0,  # max 20% = 1.0
             (1.0 - report.emotional_arc_correlation) * 2.0,  # corr=0.5 = 1.0
             report.character_drift,
             (1.0 - report.era_authenticity),

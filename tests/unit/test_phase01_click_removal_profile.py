@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_01_click_removal._compute_click_removal_profile (§2.56)."""
 
 import numpy as np

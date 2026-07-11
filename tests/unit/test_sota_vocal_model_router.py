@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for §SMR-1 SotaVocalModelRouter."""
 
 import types

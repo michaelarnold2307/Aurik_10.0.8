@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GoosebumpsResult:
     """Gänsehaut-Faktor Ergebnis."""
+
     score: float = 0.0
     dynamic_contrast: float = 0.0
     harmonic_surprise: float = 0.0
@@ -104,10 +105,7 @@ def compute_goosebumps(
     warmth = _measure_frequency_warmth(mono, sr)
 
     # ── Composite Score ──
-    score = float(np.clip(
-        dynamic * 0.25 + harmonic * 0.20 + shimmer * 0.20 + breath * 0.15 + warmth * 0.20,
-        0.0, 1.0
-    ))
+    score = float(np.clip(dynamic * 0.25 + harmonic * 0.20 + shimmer * 0.20 + breath * 0.15 + warmth * 0.20, 0.0, 1.0))
 
     # ── Label & Recommendation ──
     issues = []
@@ -154,6 +152,7 @@ def compute_goosebumps(
 # Messfunktionen
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _measure_dynamic_contrast(mono: np.ndarray, sr: int) -> float:
     """Dynamic Contrast: Plötzliche Lautstärke-Wechsel (6-15 dB/500ms).
 
@@ -165,8 +164,8 @@ def _measure_dynamic_contrast(mono: np.ndarray, sr: int) -> float:
 
     rms_timeline = []
     for i in range(0, len(mono) - win, win // 2):
-        chunk = mono[i:i + win]
-        rms_timeline.append(float(np.sqrt(np.mean(chunk ** 2))))
+        chunk = mono[i : i + win]
+        rms_timeline.append(float(np.sqrt(np.mean(chunk**2))))
 
     if len(rms_timeline) < 3:
         return 0.5
@@ -198,7 +197,7 @@ def _measure_harmonic_surprise(mono: np.ndarray, sr: int) -> float:
     # Vereinfachte Chroma-Extraktion: 12 Halbtöne, gemittelt über Oktaven
     chroma_sequence = []
     for i in range(0, len(mono) - n_fft, hop):
-        frame = mono[i:i + n_fft] * np.hanning(n_fft)
+        frame = mono[i : i + n_fft] * np.hanning(n_fft)
         spec = np.abs(np.fft.rfft(frame))
         chroma = np.zeros(12)
         for c in range(12):
@@ -206,7 +205,7 @@ def _measure_harmonic_surprise(mono: np.ndarray, sr: int) -> float:
             for k in range(c, len(spec), 12):
                 if k < len(spec):
                     chroma[c] += spec[k]
-        chroma /= (np.sum(chroma) + 1e-12)
+        chroma /= np.sum(chroma) + 1e-12
         chroma_sequence.append(chroma)
 
     if len(chroma_sequence) < 3:
@@ -214,10 +213,7 @@ def _measure_harmonic_surprise(mono: np.ndarray, sr: int) -> float:
 
     chroma_seq = np.array(chroma_sequence)
     # Differenz zwischen aufeinanderfolgenden Chroma-Vektoren
-    diffs = np.array([
-        np.sum(np.abs(chroma_seq[j + 1] - chroma_seq[j]))
-        for j in range(len(chroma_seq) - 1)
-    ])
+    diffs = np.array([np.sum(np.abs(chroma_seq[j + 1] - chroma_seq[j])) for j in range(len(chroma_seq) - 1)])
 
     mean_change = float(np.mean(diffs))
     variance = float(np.var(diffs))
@@ -278,8 +274,8 @@ def _measure_temporal_breath(mono: np.ndarray, sr: int) -> float:
 
     energy = []
     for i in range(0, len(mono) - win, win // 2):
-        chunk = mono[i:i + win]
-        energy.append(float(np.sum(chunk ** 2)))
+        chunk = mono[i : i + win]
+        energy.append(float(np.sum(chunk**2)))
 
     energy = np.array(energy)
     energy_db = 10.0 * np.log10(energy + 1e-12)
@@ -350,6 +346,7 @@ def _measure_frequency_warmth(mono: np.ndarray, sr: int) -> float:
 # ═══════════════════════════════════════════════════════════════════════════
 # Integration: Gesamt-Emotional-Score (HPE + Gänsehaut)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def compute_emotional_impact(
     audio: np.ndarray,

@@ -4,6 +4,7 @@ Dieser Test validiert objektive perzeptuelle Metriken (SNR, RMS) auf synthetisch
 Signalen. Für echte ABX-Blindhörtests siehe backend/core/abx_listener.py (geplant).
 Für MUSHRA-Approximation siehe backend/core/objective_mushra_estimator.py.
 """
+
 import numpy as np
 import pytest
 
@@ -17,7 +18,7 @@ def _generate_clean_audio(duration_s: float = 1.0, sr: int = 48000) -> np.ndarra
 
 
 def _add_noise(audio: np.ndarray, snr_db: float = -15.0) -> np.ndarray:
-    signal_power = np.mean(audio ** 2)
+    signal_power = np.mean(audio**2)
     noise_power = signal_power / (10 ** (snr_db / 10))
     noise = np.sqrt(noise_power) * np.random.randn(*audio.shape)
     return (audio + noise).astype(np.float32)
@@ -28,27 +29,28 @@ def _add_clicks(audio: np.ndarray, clicks_per_sec: int = 10, sr: int = 48000) ->
     n_clicks = int(len(audio) / sr * clicks_per_sec)
     for _ in range(n_clicks):
         pos = np.random.randint(0, len(audio) - 10)
-        result[pos:pos + 5] += np.random.uniform(0.3, 0.8) * np.sign(np.random.randn())
+        result[pos : pos + 5] += np.random.uniform(0.3, 0.8) * np.sign(np.random.randn())
     return result.astype(np.float32)
 
 
 def _lowpass(audio: np.ndarray, cutoff_hz: float = 8000.0, sr: int = 48000) -> np.ndarray:
     from scipy.signal import butter, filtfilt
-    b, a = butter(4, cutoff_hz / (sr / 2), btype='low')
+
+    b, a = butter(4, cutoff_hz / (sr / 2), btype="low")
     return filtfilt(b, a, audio).astype(np.float32)
 
 
 def _snr(clean: np.ndarray, degraded: np.ndarray) -> float:
     noise = degraded - clean
-    signal_power = np.mean(clean ** 2)
-    noise_power = np.mean(noise ** 2)
+    signal_power = np.mean(clean**2)
+    noise_power = np.mean(noise**2)
     if noise_power < 1e-12:
         return 100.0
     return float(10 * np.log10(signal_power / noise_power))
 
 
 def _rms(audio: np.ndarray) -> float:
-    return float(np.sqrt(np.mean(audio ** 2)))
+    return float(np.sqrt(np.mean(audio**2)))
 
 
 @pytest.mark.unit
@@ -62,7 +64,8 @@ class TestABXRegression:
         assert snr_before < 20.0
 
         from scipy.signal import butter, filtfilt
-        b, a = butter(4, 2000 / (48000 / 2), btype='low')
+
+        b, a = butter(4, 2000 / (48000 / 2), btype="low")
         denoised = filtfilt(b, a, noisy).astype(np.float32)
 
         snr_after = _snr(clean, denoised)
@@ -72,7 +75,8 @@ class TestABXRegression:
         clean = _generate_clean_audio()
         noisy = _add_noise(clean)
         from scipy.signal import butter, filtfilt
-        b, a = butter(4, 2000 / (48000 / 2), btype='low')
+
+        b, a = butter(4, 2000 / (48000 / 2), btype="low")
         denoised = filtfilt(b, a, noisy).astype(np.float32)
         assert not np.allclose(denoised, noisy, atol=1e-6)
 
@@ -80,7 +84,8 @@ class TestABXRegression:
         clean = _generate_clean_audio()
         noisy = _add_noise(clean)
         from scipy.signal import butter, filtfilt
-        b, a = butter(4, 2000 / (48000 / 2), btype='low')
+
+        b, a = butter(4, 2000 / (48000 / 2), btype="low")
         denoised = filtfilt(b, a, noisy).astype(np.float32)
         assert np.all(np.isfinite(denoised))
         assert denoised.shape == noisy.shape
@@ -92,7 +97,8 @@ class TestABXRegression:
         rms_noisy = _rms(noisy - clean)
 
         from scipy.signal import butter, filtfilt, medfilt
-        b, a = butter(4, 2000 / (48000 / 2), btype='low')
+
+        b, a = butter(4, 2000 / (48000 / 2), btype="low")
         denoised = filtfilt(b, a, noisy).astype(np.float32)
         declicked = medfilt(denoised, kernel_size=3).astype(np.float32)
 
@@ -104,9 +110,10 @@ class TestABXRegression:
         noisy = _add_noise(clean, snr_db=-12.0)
         try:
             from backend.core.intrinsic_audio_quality_scorer import IntrinsicQualityScore
+
             iqs = IntrinsicQualityScore()
             assert iqs is not None
-            score = getattr(iqs, 'overall', 0.0)
+            score = getattr(iqs, "overall", 0.0)
             assert 0.0 <= score <= 1.0
         except ImportError:
             pytest.skip("IAQS backend not available")

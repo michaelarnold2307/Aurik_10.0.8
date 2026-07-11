@@ -1,6 +1,5 @@
-import numpy as np
-
 import librosa
+import numpy as np
 
 
 def _sbr_extend(audio: np.ndarray, sr: int) -> np.ndarray:

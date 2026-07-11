@@ -11,7 +11,6 @@ Minimal-Interface: eine Funktion `adapt(audio, sr) -> list[tuple[float, float, s
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 
@@ -81,7 +80,7 @@ def _normalize_label(label: str) -> str:
         "prechorus": "chorus",
         "post-chorus": "chorus",
         "post_chorus": "chorus",
-        "solo": "bridge",       # Solo → konservativ wie Bridge
+        "solo": "bridge",  # Solo → konservativ wie Bridge
         "instrumental": "verse",
         "break": "bridge",
         "interlude": "bridge",

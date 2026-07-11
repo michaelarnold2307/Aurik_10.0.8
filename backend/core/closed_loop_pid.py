@@ -25,9 +25,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # PID-Gains (vorsichtig kalibriert für Audio-Restoration)
-KP = 0.30   # Proportional: direkte Reaktion auf Error
-KI = 0.08   # Integral: akkumulierter Error (verhindert steady-state)
-KD = 0.10   # Derivative: bremst bei schneller Änderung (verhindert overshoot)
+KP = 0.30  # Proportional: direkte Reaktion auf Error
+KI = 0.08  # Integral: akkumulierter Error (verhindert steady-state)
+KD = 0.10  # Derivative: bremst bei schneller Änderung (verhindert overshoot)
 
 # Grenzen
 STRENGTH_MIN = 0.40
@@ -41,7 +41,7 @@ class ClosedLoopPIDController:
     def __init__(self, goal_targets: dict[str, float] | None = None):
         self._targets: dict[str, float] = dict(goal_targets or {})
         # Per-Goal PID State
-        self._integral: dict[str, float] = {}    # I: accumulated error
+        self._integral: dict[str, float] = {}  # I: accumulated error
         self._last_error: dict[str, float] = {}  # D: previous error
         self._enabled: bool = bool(self._targets)
 
@@ -166,6 +166,7 @@ class ClosedLoopPIDController:
 
 # ── Phase → Goal Mapping ───────────────────────────────────────
 
+
 def _get_phase_goal_impacts(phase_id: str) -> dict[str, float]:
     """Liest PhaseEffectCatalog: welche Goals beeinflusst diese Phase?
 
@@ -182,5 +183,4 @@ def _get_phase_goal_impacts(phase_id: str) -> dict[str, float]:
             return dict(profile.goal_impact)
     except Exception as e:
         logger.warning("closed_loop_pid.py::_get_phase_goal_impacts fallback: %s", e)
-        pass
     return {}

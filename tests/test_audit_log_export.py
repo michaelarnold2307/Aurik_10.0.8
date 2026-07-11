@@ -1,4 +1,5 @@
 import pytest
+
 from audit.audit_report_generator import generate_audit_report
 
 

@@ -74,37 +74,65 @@
     "cascade_processing": {
       "benefit": "Reduziert ML-Last, verbessert Endergebnis",
       "description": "DSP Vorverarbeitung, dann ML Feintuning",
-      "phases": [1, 2, 3, 9, 18, 29],
+      "phases": [
+        1,
+        2,
+        3,
+        9,
+        18,
+        29
+      ],
       "rule": "DSP entfernt 80%, ML entfernt verbleibende 20%"
     },
     "defect_severity_routing": {
       "benefit": "ML-Power nur wo n\u00f6tig",
       "description": "ML nur bei schweren Defekten",
-      "phases": [1, 2, 9, 24, 27],
+      "phases": [
+        1,
+        2,
+        9,
+        24,
+        27
+      ],
       "rule": "Defect Score > 0.7: ML | < 0.7: DSP"
     },
     "dsp_detect_ml_repair": {
       "benefit": "Best-of-Both: Geschwindigkeit + Qualit\u00e4t",
       "description": "DSP f\u00fcr Detektion (schnell), ML f\u00fcr Reparatur (qualitativ)",
-      "phases": [1, 9, 23, 24],
+      "phases": [
+        1,
+        9,
+        23,
+        24
+      ],
       "rule": "Immer: DSP \u2192 ML Pipeline"
     },
     "material_adaptive_ml": {
       "benefit": "Optimale Modell-Wahl pro Material",
       "description": "Material-spezifische ML-Modelle",
-      "phases": [9, 28],
+      "phases": [
+        9,
+        28
+      ],
       "rule": "Vinyl: BANQUET | Tape: DeepFilterNet | CD: DSP only"
     },
     "parallel_vote": {
       "benefit": "Immer beste Qualit\u00e4t, aber langsam (2\u00d7 Processing)",
       "description": "DSP und ML parallel, w\u00e4hle besseres Ergebnis",
-      "phases": [3, 23, 29],
+      "phases": [
+        3,
+        23,
+        29
+      ],
       "rule": "Quality Metric entscheidet"
     },
     "snr_based_routing": {
       "benefit": "Geschwindigkeit bei guten Aufnahmen, Qualit\u00e4t bei schlechten",
       "description": "W\u00e4hle DSP oder ML basierend auf Signal-to-Noise Ratio",
-      "phases": [3, 29],
+      "phases": [
+        3,
+        29
+      ],
       "rule": "SNR > -30dB: DSP | SNR < -30dB: ML"
     }
   },
@@ -452,7 +480,11 @@
     "pure_dsp": {
       "performance": "0.2\u00d7 - 2.0\u00d7 RT (average: 0.7\u00d7 RT)",
       "quality": "0.83 (current)",
-      "strengths": ["Schnell", "Deterministisch", "Keine GPU ben\u00f6tigt"],
+      "strengths": [
+        "Schnell",
+        "Deterministisch",
+        "Keine GPU ben\u00f6tigt"
+      ],
       "weaknesses": [
         "Nat\u00fcrlichkeit nur 0.55",
         "Artefakte bei schweren Defekten"
@@ -466,7 +498,11 @@
         "Keine Artefakte",
         "SOTA-Qualit\u00e4t"
       ],
-      "weaknesses": ["Langsam", "GPU empfohlen", "Nicht-deterministisch"]
+      "weaknesses": [
+        "Langsam",
+        "GPU empfohlen",
+        "Nicht-deterministisch"
+      ]
     }
   }
 }

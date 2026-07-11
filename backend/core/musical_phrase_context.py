@@ -71,7 +71,7 @@ def _get_madmom_module():
     """Lädt madmom optional lazy; gibt None zurück, falls nicht verfügbar."""
     try:
         return importlib.import_module("madmom")
-    except Exception as e:
+    except Exception:
         logger.debug("musical_phrase_context: madmom nicht verfügbar — DSP-Fallback aktiv")
         return None
 
@@ -335,7 +335,8 @@ class MusicalPhraseContextExtractor:
                 raise ImportError("madmom nicht installiert")
 
             proc = madmom.features.tempo.TempoEstimationProcessor(
-                histogram_processor=madmom.features.tempo.ACFTempoHistogramProcessor(fps=100))
+                histogram_processor=madmom.features.tempo.ACFTempoHistogramProcessor(fps=100)
+            )
             act = madmom.features.beats.RNNBeatProcessor()(audio.astype(np.float32))
             tempos = proc(act)
             if len(tempos) > 0:

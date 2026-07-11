@@ -106,7 +106,7 @@ def detect_gpu_capabilities(fail_fast: bool = False) -> MLEngineConfig:
 
     # ── onnxruntime prüfen ───────────────────────────────────────────────
     try:
-        import onnxruntime as ort  # noqa: F401
+        pass
     except ImportError:
         config.warnings.append("onnxruntime nicht installiert — CPU-only")
         return config
@@ -147,7 +147,7 @@ def detect_gpu_capabilities(fail_fast: bool = False) -> MLEngineConfig:
     return config
 
 
-def get_onnx_session_options(config: MLEngineConfig) -> "onnxruntime.SessionOptions":  # noqa: F821
+def get_onnx_session_options(config: MLEngineConfig) -> onnxruntime.SessionOptions:  # noqa: F821
     """Optimierte ONNX-Session-Optionen pro Provider.
 
     Args:
@@ -215,6 +215,7 @@ def _cpu_thread_count() -> int:
 def _get_cuda_version() -> str:
     try:
         import torch  # type: ignore[import]
+
         return torch.version.cuda or "unknown"
     except Exception:
         return ""
@@ -223,6 +224,7 @@ def _get_cuda_version() -> str:
 def _get_gpu_name_cuda() -> str:
     try:
         import torch  # type: ignore[import]
+
         return torch.cuda.get_device_name(0)
     except Exception:
         return "NVIDIA GPU (CUDA)"
@@ -231,6 +233,7 @@ def _get_gpu_name_cuda() -> str:
 def _get_vram_cuda(device_id: int = 0) -> float:
     try:
         import torch  # type: ignore[import]
+
         props = torch.cuda.get_device_properties(device_id)
         return props.total_memory / (1024 * 1024)
     except Exception:
@@ -240,6 +243,7 @@ def _get_vram_cuda(device_id: int = 0) -> float:
 def _get_gpu_name_rocm() -> str:
     try:
         import torch  # type: ignore[import]
+
         return torch.cuda.get_device_name(0)
     except Exception:
         return "AMD GPU (ROCm)"
@@ -248,6 +252,7 @@ def _get_gpu_name_rocm() -> str:
 def _get_vram_rocm(device_id: int = 0) -> float:
     try:
         import torch  # type: ignore[import]
+
         props = torch.cuda.get_device_properties(device_id)
         return props.total_memory / (1024 * 1024)
     except Exception:
@@ -255,4 +260,4 @@ def _get_vram_rocm(device_id: int = 0) -> float:
 
 
 # Benötigt für _cpu_thread_count
-import os  # noqa: E402
+import os

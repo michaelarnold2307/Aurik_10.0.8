@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.phases.phase_23_spectral_repair import SpectralRepair

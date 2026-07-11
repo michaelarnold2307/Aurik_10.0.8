@@ -83,7 +83,7 @@ class PluginResult:
         error:          Fehlermeldung wenn success=False.
     """
 
-    audio: "np.ndarray"  # noqa: F821
+    audio: np.ndarray  # noqa: F821
     sample_rate: int
     warnings: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
@@ -109,10 +109,10 @@ class AurikPlugin(ABC):
     @abstractmethod
     def process_audio(
         self,
-        audio: "np.ndarray",  # noqa: F821
+        audio: np.ndarray,  # noqa: F821
         sr: int = 48000,
         **kwargs,
-    ) -> "np.ndarray":  # noqa: F821
+    ) -> np.ndarray:  # noqa: F821
         """Audio-Verarbeitung — Hauptmethode.
 
         Args:
@@ -127,23 +127,21 @@ class AurikPlugin(ABC):
 
     def on_phase_start(
         self,
-        audio: "np.ndarray",  # noqa: F821
+        audio: np.ndarray,  # noqa: F821
         sr: int = 48000,
         phase_name: str = "",
         **kwargs,
     ) -> None:
         """Hook: Wird VOR einer Phase aufgerufen (optional)."""
-        pass
 
     def on_phase_end(
         self,
-        audio: "np.ndarray",  # noqa: F821
+        audio: np.ndarray,  # noqa: F821
         sr: int = 48000,
         phase_name: str = "",
         **kwargs,
     ) -> None:
         """Hook: Wird NACH einer Phase aufgerufen (optional)."""
-        pass
 
     def validate(self) -> tuple[bool, str]:
         """Selbsttest: Prüft ob Plugin korrekt konfiguriert ist.
@@ -165,7 +163,7 @@ class AurikPlugin(ABC):
 
     def safe_process(
         self,
-        audio: "np.ndarray",  # noqa: F821
+        audio: np.ndarray,  # noqa: F821
         sr: int = 48000,
         **kwargs,
     ) -> PluginResult:

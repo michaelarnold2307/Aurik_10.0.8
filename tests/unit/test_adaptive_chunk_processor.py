@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für backend/core/adaptive_chunk_processor.py — §7.6 Severity-adaptive Chunks.
 
 ≥ 20 Tests: Chunk-Größen, Crossfade, Stereo, NaN-Guard, Silence, Edge-Cases.

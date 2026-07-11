@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_04_eq_correction._compute_eq_correction_profile (§2.56)."""
 
 from backend.core.phases.phase_04_eq_correction import EQCorrectionPhase

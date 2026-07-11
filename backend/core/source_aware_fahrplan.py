@@ -13,7 +13,6 @@ Der SourceAwareRestorer wendet diese Modifikationen vor jedem UV3-Lauf an.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 # ── Per-Stem Phasen-Selektion ───────────────────────────────────
 # Jeder Stem bekommt eine WHITELIST von Phasen + angepasste Stärken.
@@ -22,44 +21,44 @@ from typing import Any
 STEM_PHASE_CONFIG: dict[str, dict[str, float]] = {
     # ── Vocals: schonend, kein Denoise, kein Dereverb ──────────
     "vocals": {
-        "phase_19_de_esser": 0.70,              # Sibilanten mild reduzieren
-        "phase_38_presence_boost": 0.60,        # Präsenz leicht anheben
-        "phase_21_exciter": 0.0,                # SKIP – Vocal-Exciter klingt künstlich
-        "phase_03_denoise": 0.0,                # SKIP – zerstört Vocal-Textur
-        "phase_29_tape_hiss_reduction": 0.0,    # SKIP – hiss ist meist in "other"
-        "phase_20_reverb_reduction": 0.0,       # SKIP – Hall gehört zum Gesang
-        "phase_49_advanced_dereverb": 0.0,      # SKIP
-        "phase_04_eq_correction": 0.50,         # Leichte EQ-Korrektur
-        "phase_08_transient_preservation": 0.40,# Transienten für Artikulation
-        "phase_26_dynamic_range_expansion": 0.0,# SKIP – Dynamik nicht künstlich pushen
-        "phase_01_click_removal": 0.60,         # Klicks wenn nötig
-        "phase_09_crackle_removal": 0.50,       # Knackser mild
-        "_default": 0.0,                        # Alle anderen Phasen → SKIP
+        "phase_19_de_esser": 0.70,  # Sibilanten mild reduzieren
+        "phase_38_presence_boost": 0.60,  # Präsenz leicht anheben
+        "phase_21_exciter": 0.0,  # SKIP – Vocal-Exciter klingt künstlich
+        "phase_03_denoise": 0.0,  # SKIP – zerstört Vocal-Textur
+        "phase_29_tape_hiss_reduction": 0.0,  # SKIP – hiss ist meist in "other"
+        "phase_20_reverb_reduction": 0.0,  # SKIP – Hall gehört zum Gesang
+        "phase_49_advanced_dereverb": 0.0,  # SKIP
+        "phase_04_eq_correction": 0.50,  # Leichte EQ-Korrektur
+        "phase_08_transient_preservation": 0.40,  # Transienten für Artikulation
+        "phase_26_dynamic_range_expansion": 0.0,  # SKIP – Dynamik nicht künstlich pushen
+        "phase_01_click_removal": 0.60,  # Klicks wenn nötig
+        "phase_09_crackle_removal": 0.50,  # Knackser mild
+        "_default": 0.0,  # Alle anderen Phasen → SKIP
     },
     # ── Drums: Transienten, kein EQ, kein Stereo ────────────────
     "drums": {
-        "phase_08_transient_preservation": 1.0, # Maximale Transienten-Erhaltung
-        "phase_01_click_removal": 0.50,         # Klick-Entfernung (moderat)
-        "phase_09_crackle_removal": 0.30,       # Kaum nötig
-        "phase_03_denoise": 0.30,               # Leichtes Denoise (Becken-Rauschen)
-        "phase_04_eq_correction": 0.0,          # SKIP – Drums brauchen keinen EQ
-        "phase_21_exciter": 0.0,                # SKIP
-        "phase_38_presence_boost": 0.0,         # SKIP
-        "phase_07_harmonic_restoration": 0.0,       # SKIP
-        "phase_22_stereo_enhancement": 0.0,     # SKIP – Drums Mono-kompatibel halten
-        "phase_54_drum_transient_recovery": 0.80, # Spezifische Drum-Phase
+        "phase_08_transient_preservation": 1.0,  # Maximale Transienten-Erhaltung
+        "phase_01_click_removal": 0.50,  # Klick-Entfernung (moderat)
+        "phase_09_crackle_removal": 0.30,  # Kaum nötig
+        "phase_03_denoise": 0.30,  # Leichtes Denoise (Becken-Rauschen)
+        "phase_04_eq_correction": 0.0,  # SKIP – Drums brauchen keinen EQ
+        "phase_21_exciter": 0.0,  # SKIP
+        "phase_38_presence_boost": 0.0,  # SKIP
+        "phase_07_harmonic_restoration": 0.0,  # SKIP
+        "phase_22_stereo_enhancement": 0.0,  # SKIP – Drums Mono-kompatibel halten
+        "phase_54_drum_transient_recovery": 0.80,  # Spezifische Drum-Phase
         "_default": 0.0,
     },
     # ── Bass: Rumble, Harmonics, kein Exciter ────────────────────
     "bass": {
-        "phase_05_rumble_filter": 0.80,         # Subsonisches Rauschen filtern
-        "phase_07_harmonic_restoration": 0.0,       # SKIP – künstliche Obertöne
+        "phase_05_rumble_filter": 0.80,  # Subsonisches Rauschen filtern
+        "phase_07_harmonic_restoration": 0.0,  # SKIP – künstliche Obertöne
         "phase_23_spectral_repair": 0.60,  # Natürliche Obertöne verstärken
-        "phase_04_eq_correction": 0.70,         # Bass-Frequenzen korrigieren
-        "phase_03_denoise": 0.20,               # Minimal
-        "phase_21_exciter": 0.0,                # SKIP
-        "phase_38_presence_boost": 0.0,         # SKIP – Bass hat keine Präsenz
-        "phase_08_transient_preservation": 0.50, # Anschlag-Erhaltung
+        "phase_04_eq_correction": 0.70,  # Bass-Frequenzen korrigieren
+        "phase_03_denoise": 0.20,  # Minimal
+        "phase_21_exciter": 0.0,  # SKIP
+        "phase_38_presence_boost": 0.0,  # SKIP – Bass hat keine Präsenz
+        "phase_08_transient_preservation": 0.50,  # Anschlag-Erhaltung
         "phase_01_click_removal": 0.30,
         "_default": 0.0,
     },
@@ -75,10 +74,10 @@ STEM_PHASE_CONFIG: dict[str, dict[str, float]] = {
 # angehoben, Bass neutral, Other leicht gesenkt (Kompensation).
 
 STEM_REMIX_GAINS: dict[str, float] = {
-    "vocals": 1.05,   # Leichte Anhebung für Klarheit
-    "drums": 1.02,    # Transienten betonen
-    "bass": 1.00,     # Neutral
-    "other": 0.98,    # Leicht absenken (Kompensation)
+    "vocals": 1.05,  # Leichte Anhebung für Klarheit
+    "drums": 1.02,  # Transienten betonen
+    "bass": 1.00,  # Neutral
+    "other": 0.98,  # Leicht absenken (Kompensation)
 }
 
 

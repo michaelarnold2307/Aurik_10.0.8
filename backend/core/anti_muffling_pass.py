@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -26,11 +25,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AntiMufflingReport:
     muffling_detected: bool = False
-    muffling_score: float = 1.0       # 0.0=extrem dumpf, 1.0=perfekt
+    muffling_score: float = 1.0  # 0.0=extrem dumpf, 1.0=perfekt
     hf_restoration_db: float = 0.0
     tilt_correction_db: float = 0.0
-    brightness_before: float = 0.0    # HF-Ratio vorher
-    brightness_after: float = 0.0     # HF-Ratio nachher
+    brightness_before: float = 0.0  # HF-Ratio vorher
+    brightness_after: float = 0.0  # HF-Ratio nachher
     over_bright_protected: bool = True
     warmth_preserved: bool = True
     warnings: list[str] = field(default_factory=list)
@@ -44,11 +43,11 @@ class AntiMufflingPass:
     """
 
     # ── Schwellwerte ──
-    MUFFLED_HF_RATIO = 0.08       # HF-Anteil unter 8% = dumpf
-    MAX_HF_BOOST_DB = 3.0         # Maximal +3 dB HF
+    MUFFLED_HF_RATIO = 0.08  # HF-Anteil unter 8% = dumpf
+    MAX_HF_BOOST_DB = 3.0  # Maximal +3 dB HF
     TILT_CORRECTION_MAX_DB = 2.5  # Maximaler Tilt-Korrektur
-    BRIGHTNESS_TARGET = 0.12      # Ziel-HF-Ratio
-    OVER_BRIGHT_CEILING = 0.30    # HF-Ratio > 30% = zu hell
+    BRIGHTNESS_TARGET = 0.12  # Ziel-HF-Ratio
+    OVER_BRIGHT_CEILING = 0.30  # HF-Ratio > 30% = zu hell
 
     def __init__(self) -> None:
         self._reports: list[AntiMufflingReport] = []
@@ -87,7 +86,7 @@ class AntiMufflingPass:
 
         # ── 4. Muffling-Score ──
         hf_score = min(1.0, hf_ratio / self.BRIGHTNESS_TARGET)
-        tilt_score = min(1.0, (tilt_db + 20.0) / 20.0)   # tilt > -20 dB
+        tilt_score = min(1.0, (tilt_db + 20.0) / 20.0)  # tilt > -20 dB
         centroid_score = centroid_normalized
         report.muffling_score = float(np.mean([hf_score, tilt_score, centroid_score]))
         report.muffling_detected = report.muffling_score < 0.7
@@ -135,7 +134,7 @@ class AntiMufflingPass:
         # Analyse pro Block: nur dumpfe Blöcke behandeln
         block_muffling = []
         for i in range(0, n, block_samples):
-            block = mono[i:min(n, i + block_samples)]
+            block = mono[i : min(n, i + block_samples)]
             if len(block) < 64:
                 continue
             fft_b = np.abs(np.fft.rfft(block))
@@ -167,14 +166,18 @@ class AntiMufflingPass:
                 freqs_block = np.fft.rfftfreq(len(block), d=1.0 / sr)
 
                 # High-Shelf ab 8 kHz
-                hf_band = (freqs_block >= 8000)
+                hf_band = freqs_block >= 8000
                 if np.any(hf_band):
                     gain_hf = 10 ** (hf_boost_db / 20.0)
                     # Gradueller Übergang 4-8 kHz
                     transition = (freqs_block >= 4000) & (freqs_block < 8000)
                     if np.any(transition):
                         transition_ratio = (freqs_block[transition] - 4000) / 4000
-                        fft_block[transition] *= (1.0 + (gain_hf - 1.0) * transition_ratio[:, np.newaxis] if fft_block.ndim > 1 else 1.0 + (gain_hf - 1.0) * transition_ratio)
+                        fft_block[transition] *= (
+                            1.0 + (gain_hf - 1.0) * transition_ratio[:, np.newaxis]
+                            if fft_block.ndim > 1
+                            else 1.0 + (gain_hf - 1.0) * transition_ratio
+                        )
                     fft_block[hf_band] *= gain_hf
 
                 # Over-Bright-Schutz
@@ -187,9 +190,9 @@ class AntiMufflingPass:
                 ch_data[b0:b1] = np.fft.irfft(fft_block, n=len(block))
 
             if result.ndim == 2:
-                result[ch] = ch_data[:len(result[ch])]
+                result[ch] = ch_data[: len(result[ch])]
             else:
-                result = ch_data[:len(result)].astype(np.float32)
+                result = ch_data[: len(result)].astype(np.float32)
 
         # ── Sanfte Tilt-Korrektur (global, sehr dezent) ──
         if tilt_correction_db > 0.1:
@@ -200,19 +203,18 @@ class AntiMufflingPass:
                     freqs_full = np.fft.rfftfreq(len(ch_data), d=1.0 / sr)
 
                     for fhi, gain_factor in [(2000, 0.6), (4000, 0.8), (8000, 1.0)]:
-                        band = (freqs_full >= fhi)
+                        band = freqs_full >= fhi
                         if np.any(band):
                             band_gain = 10 ** (tilt_correction_db * gain_factor / 20.0)
                             fft_full[band] *= band_gain
 
                     ch_result = np.fft.irfft(fft_full, n=len(ch_data))
                     if result.ndim == 2:
-                        result[ch] = ch_result[:len(result[ch])]
+                        result[ch] = ch_result[: len(result[ch])]
                     else:
-                        result = ch_result[:len(result)].astype(np.float32)
+                        result = ch_result[: len(result)].astype(np.float32)
             except Exception as e:
                 logger.warning("anti_muffling_pass.py::unknown fallback: %s", e)
-                pass
 
         # ── Clamp ──
         result = np.clip(result, -1.0, 1.0).astype(np.float32)
@@ -226,8 +228,10 @@ class AntiMufflingPass:
         if report.over_bright_protected and report.warmth_preserved:
             logger.info(
                 "§AJ AntiMuffling: HF +%.1f dB, Tilt +%.1f dB, brightness %.3f→%.3f",
-                hf_boost_db, tilt_correction_db,
-                report.brightness_before, report.brightness_after
+                hf_boost_db,
+                tilt_correction_db,
+                report.brightness_before,
+                report.brightness_after,
             )
 
         self._reports.append(report)

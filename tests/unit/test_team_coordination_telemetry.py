@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_team_coordination_telemetry.py
 ===============================================

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests — §2.47 Phase_29 SNR > 35 dB Dry-Signal Bypass.
 
 Verifies that TapeHissReductionPhase skips OMLSA processing and returns

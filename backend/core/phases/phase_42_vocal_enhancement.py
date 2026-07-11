@@ -341,7 +341,6 @@ class VocalEnhancement(PhaseInterface):
             _get_plm_evict42().evict_for_phase("phase_42_vocal_enhancement")
         except Exception as e:
             logger.warning("phase_42_vocal_enhancement.py::process fallback: %s", e)
-            pass
 
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
         phase_locality_factor = float(np.clip(phase_locality_factor, 0.35, 1.0))
@@ -375,19 +374,23 @@ class VocalEnhancement(PhaseInterface):
                 _svm_vd = float(_svm_42.get("vibrato_depth_cents", 0.0) or 0.0)
                 # Raue Stimme (HNR < 15 dB) → konservativer enhancen
                 if _svm_hnr < 15.0:
-                    _effective_strength = float(np.clip(
-                        _effective_strength * (0.70 + 0.30 * _svm_hnr / 15.0), 0.0, 1.0))
+                    _effective_strength = float(
+                        np.clip(_effective_strength * (0.70 + 0.30 * _svm_hnr / 15.0), 0.0, 1.0)
+                    )
                 # Dunkle Stimme (tilt > 2 dB/oct) → mehr Präsenz-Boost
                 if _svm_tilt > 2.0:
-                    _effective_strength = float(np.clip(
-                        _effective_strength * (1.0 + 0.10 * _svm_conf), 0.0, 1.0))
+                    _effective_strength = float(np.clip(_effective_strength * (1.0 + 0.10 * _svm_conf), 0.0, 1.0))
                 # Vibrato-Schutz bei > 50 cent Tiefe → Formant-Lock aktivieren
                 if _svm_vd > 50.0:
                     kwargs["preserve_vibrato"] = True
                     kwargs["vibrato_depth_cents"] = _svm_vd
                 logger.debug(
                     "Phase42 §SVM-1 SVM: hnr=%.1fdB tilt=%.1f vibrato=%.1f → eff=%.3f",
-                    _svm_hnr, _svm_tilt, _svm_vd, _effective_strength)
+                    _svm_hnr,
+                    _svm_tilt,
+                    _svm_vd,
+                    _effective_strength,
+                )
             except Exception as _svm_exc_42:
                 logger.debug("Phase42 §SVM-1 non-blocking: %s", _svm_exc_42)
 
@@ -1349,7 +1352,6 @@ class VocalEnhancement(PhaseInterface):
                         _plm42_rof.touch_plugin("MelBandRoformer")  # type: ignore[attr-defined]
                     except Exception as e:
                         logger.warning("phase_42_vocal_enhancement.py::_try_stem_separation fallback: %s", e)
-                        pass
                 sep = roformer.separate(audio_mono, sr, stems=["vocals"])
                 if sep is not None and "vocals" in sep.stems:
                     _sdri_db = float(getattr(sep, "sdri_db", 0.0))
@@ -1384,7 +1386,6 @@ class VocalEnhancement(PhaseInterface):
                         _plm42_rof.set_active("MelBandRoformer", False)
                     except Exception as e:
                         logger.warning("phase_42_vocal_enhancement.py::unknown fallback: %s", e)
-                        pass
 
         # ── 2: HTDemucs 6s fallback (nur live/crowd + native Session) ───────
         if _prefer_demucs_native:
@@ -1454,7 +1455,6 @@ class VocalEnhancement(PhaseInterface):
                         _plm42_mdx.touch_plugin("MDX23C_inst")  # type: ignore[attr-defined]
                     except Exception as e:
                         logger.warning("phase_42_vocal_enhancement.py::unknown fallback: %s", e)
-                        pass
                 voc_mono = mdx.process(audio_mono, sr, stem="vocals")
                 if _plm42_mdx is not None:
                     try:
@@ -1462,7 +1462,6 @@ class VocalEnhancement(PhaseInterface):
                         _plm42_mdx.touch_plugin("MDX23C_inst")  # type: ignore[attr-defined]
                     except Exception as e:
                         logger.warning("phase_42_vocal_enhancement.py::unknown fallback: %s", e)
-                        pass
                 inst_mono = mdx.process(audio_mono, sr, stem="inst")
                 n = min(len(audio_mono), len(voc_mono), len(inst_mono))
                 if audio.ndim == 2:
@@ -1481,7 +1480,6 @@ class VocalEnhancement(PhaseInterface):
                         _plm42_mdx.set_active("MDX23C_inst", False)
                     except Exception as e:
                         logger.warning("phase_42_vocal_enhancement.py::unknown fallback: %s", e)
-                        pass
 
         # ── 4: NMF-β Fallback (§2.47 ML-Failure-Degradationskascade: NMF-β→HPSS) ──
         try:

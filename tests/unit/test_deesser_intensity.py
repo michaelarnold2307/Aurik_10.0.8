@@ -1,4 +1,5 @@
 import pytest
+
 """Regressionstests fuer gemeinsamen De-Esser-Intensitaetsrechner und Phasen-Integration."""
 
 from __future__ import annotations

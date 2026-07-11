@@ -306,7 +306,7 @@ def _oqs_proxy(audio_before: np.ndarray, audio_after: np.ndarray, sr: int) -> fl
         snr_improvement = float(10.0 * np.log10(signal_energy / noise_energy + 1e-6))
         # Normierung auf [0, 100]-Skala (Approximation)
         return float(np.clip(50.0 + snr_improvement * 2.0, 0.0, 100.0))
-    except Exception as e:
+    except Exception:
         logger.warning("sota_eval.py::_oqs_proxy fallback", exc_info=True)
         return 50.0
 
@@ -325,7 +325,7 @@ def _timbral_fidelity_proxy(ref: np.ndarray, test: np.ndarray, sr: int) -> float
         _, psd_test = _welch(test[:n].astype(np.float64), fs=sr, nperseg=nperseg)
         corr = float(np.corrcoef(psd_ref, psd_test)[0, 1])
         return float(np.clip(corr, 0.0, 1.0))
-    except Exception as e:
+    except Exception:
         logger.warning("sota_eval.py::_timbral_fidelity_proxy fallback", exc_info=True)
         return 1.0
 
@@ -338,7 +338,7 @@ def _artifact_freedom_proxy(audio_before: np.ndarray, audio_after: np.ndarray) -
         ratio = np.abs(audio_after.astype(np.float64)) / (np.abs(audio_before.astype(np.float64)) + eps)
         new_energy_fraction = float(np.mean(ratio > 1.05))
         return float(np.clip(1.0 - new_energy_fraction, 0.0, 1.0))
-    except Exception as e:
+    except Exception:
         logger.warning("sota_eval.py::_artifact_freedom_proxy fallback", exc_info=True)
         return 1.0
 

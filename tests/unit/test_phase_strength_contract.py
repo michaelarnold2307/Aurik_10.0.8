@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests fuer den zentralen Phase-Strength-Contract."""
 
 from backend.core.phase_strength_contract import resolve_phase_strength_contract

@@ -40,9 +40,9 @@ from backend.core.defect_phase_mapper import DefectPhaseMapper
 from backend.core.defect_quality_report import DefectQualityReport, DefectQualityReporter
 from backend.core.defect_scanner import DefectAnalysisResult, DefectScanner, DefectType, MaterialType
 from backend.core.gap_reconstructor import GapReconstructor
-from backend.core.multi_pass_strategy import IntrinsicAudioQualityScorer
 from backend.core.medium_chain_model import PhysicalMediumChainModel
 from backend.core.multi_pass_strategy import (
+    IntrinsicAudioQualityScorer,
     ProcessingVariant,
     VariantStrategy,
 )
@@ -789,6 +789,7 @@ class AutonomousRestorationEngine:
             return audio, _name, {}
 
         import time as _time
+
         from backend.core.multi_pass_strategy import IntrinsicAudioQualityScorer
 
         # Extrahiere 10s Exzerpt aus der Song-Mitte (repräsentativ)
@@ -803,7 +804,9 @@ class AutonomousRestorationEngine:
             _excerpt = audio[_excerpt_start:_excerpt_end]
 
         if _excerpt.shape[-1] < sample_rate:
-            logger.warning("Multi-Pass: Exzerpt zu kurz (%ds) — Fallback auf Voll-Audio", _excerpt.shape[-1] / sample_rate)
+            logger.warning(
+                "Multi-Pass: Exzerpt zu kurz (%ds) — Fallback auf Voll-Audio", _excerpt.shape[-1] / sample_rate
+            )
             _excerpt = audio
 
         # Evaluiere jede Variante
@@ -816,18 +819,26 @@ class AutonomousRestorationEngine:
             _t0 = _time.perf_counter()
             try:
                 # Baue Phasen-Parameter aus Variante
-                _variant_params = _variant.to_phase_params() if hasattr(_variant, 'to_phase_params') else {}
+                _variant.to_phase_params() if hasattr(_variant, "to_phase_params") else {}
 
                 # Rufe UV3 auf dem Exzerpt mit Varianten-Parametern auf
                 # (nutzt self._uv3_restore falls verfügbar, sonst Mini-Pass)
-                _restored = self._run_mini_restore(_excerpt, sample_rate, _variant, goal_profile, progress_callback=progress_callback)
+                _restored = self._run_mini_restore(
+                    _excerpt, sample_rate, _variant, goal_profile, progress_callback=progress_callback
+                )
 
                 # Score das Ergebnis
                 _score = scorer.score(_excerpt, _restored, sample_rate)
                 _elapsed = _time.perf_counter() - _t0
                 results.append((_variant.name, _score))
-                logger.debug("Multi-Pass [%d/%d]: %s → score=%.3f (%.1fs)",
-                            _i + 1, len(variants), _variant.name, _score, _elapsed)
+                logger.debug(
+                    "Multi-Pass [%d/%d]: %s → score=%.3f (%.1fs)",
+                    _i + 1,
+                    len(variants),
+                    _variant.name,
+                    _score,
+                    _elapsed,
+                )
 
                 if _score > best_score:
                     best_score = _score
@@ -838,14 +849,17 @@ class AutonomousRestorationEngine:
 
         # Beste Variante auswählen
         _winner_params = {}
-        if hasattr(best_variant, 'to_phase_params'):
+        if hasattr(best_variant, "to_phase_params"):
             _winner_params = best_variant.to_phase_params()
-        elif hasattr(best_variant, 'parameters'):
+        elif hasattr(best_variant, "parameters"):
             _winner_params = dict(best_variant.parameters)
 
         logger.info(
             "Multi-Pass: %d Varianten evaluiert → Winner: %s (score=%.3f, params=%d)",
-            len(results), best_variant.name, best_score, len(_winner_params),
+            len(results),
+            best_variant.name,
+            best_score,
+            len(_winner_params),
         )
 
         if progress_callback is not None:
@@ -853,7 +867,6 @@ class AutonomousRestorationEngine:
                 progress_callback(88, f"Beste Strategie: {best_variant.name}", 0.0)
             except Exception as e:
                 logger.warning("autonomous_restoration_engine.py::unknown fallback: %s", e)
-                pass
 
         # Audio unverändert zurückgeben (Parameter werden downstream angewandt)
         _all_scores: dict[str, float] = {name: score for name, score in results}
@@ -870,15 +883,16 @@ class AutonomousRestorationEngine:
         """Führt einen Mini-Restore auf einem Exzerpt mit Varianten-Parametern aus."""
         try:
             from backend.core.unified_restorer_v3 import UnifiedRestorerV3
+
             _uv3 = UnifiedRestorerV3()
-            _mode = getattr(variant, 'quality_mode', 'balanced')
+            _mode = getattr(variant, "quality_mode", "balanced")
             _kwargs: dict[str, Any] = {
-                'quality_mode': str(_mode),
-                'material_type': getattr(self, '_detected_material', 'unknown'),
-                'progress_callback': kwargs.get('progress_callback'),
+                "quality_mode": str(_mode),
+                "material_type": getattr(self, "_detected_material", "unknown"),
+                "progress_callback": kwargs.get("progress_callback"),
             }
-            if hasattr(variant, 'parameters') and variant.parameters:
-                _kwargs['variant_params'] = dict(variant.parameters)
+            if hasattr(variant, "parameters") and variant.parameters:
+                _kwargs["variant_params"] = dict(variant.parameters)
             return _uv3.restore(audio, sample_rate, **_kwargs)
         except Exception:
             # Fallback: einfache Gain-Anpassung als Baseline

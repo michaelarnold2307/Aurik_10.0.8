@@ -779,7 +779,9 @@ class TestApolloPlugin:
             return np.asarray(audio, dtype=np.float32)
 
         monkeypatch.setattr(plugin, "_repair_apollo", _fake_repair_apollo)
-        monkeypatch.setattr(plugin, "_repair_dsp_fallback", lambda audio, sr, material: np.asarray(audio, dtype=np.float32))
+        monkeypatch.setattr(
+            plugin, "_repair_dsp_fallback", lambda audio, sr, material: np.asarray(audio, dtype=np.float32)
+        )
         monkeypatch.setattr(plugin, "_measure_hf_gain", lambda original, restored, sr: 0.0)
         monkeypatch.setattr(plugin, "_estimate_brillanz", lambda audio, sr: 0.9)
         monkeypatch.setattr(plugin, "_estimate_waerme", lambda audio, sr: 0.9)

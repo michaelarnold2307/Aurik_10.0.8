@@ -108,7 +108,8 @@ ERA_PROFILES: dict[str, dict[str, tuple[float, float]]] = {
 
 
 def detect_aura(
-    audio: np.ndarray, sr: int,
+    audio: np.ndarray,
+    sr: int,
     *,
     known_era: str | None = None,
     known_medium: str | None = None,
@@ -144,16 +145,20 @@ def detect_aura(
     emotional_temp = _measure_emotional_temperature(mono, sr)
 
     # ── Composite Aura Score ──
-    aura_score = float(np.clip(
-        era_char * 0.30 + spatial * 0.20 + noise_pers * 0.15
-        + dynamic_char * 0.20 + emotional_temp * 0.15,
-        0.0, 1.0))
+    aura_score = float(
+        np.clip(
+            era_char * 0.30 + spatial * 0.20 + noise_pers * 0.15 + dynamic_char * 0.20 + emotional_temp * 0.15, 0.0, 1.0
+        )
+    )
 
     # ── Label ──
     warnings = []
-    if era_char < 0.4: warnings.append("Epochencharakter gefährdet")
-    if spatial < 0.4: warnings.append("Raumeindruck verloren")
-    if noise_pers < 0.3: warnings.append("Rauschboden-Charakter zerstört")
+    if era_char < 0.4:
+        warnings.append("Epochencharakter gefährdet")
+    if spatial < 0.4:
+        warnings.append("Raumeindruck verloren")
+    if noise_pers < 0.3:
+        warnings.append("Rauschboden-Charakter zerstört")
 
     if aura_score >= 0.80:
         label = f"Authentisch {era_label} {spatial_label}"
@@ -180,9 +185,7 @@ def detect_aura(
     )
 
 
-def compare_aura(
-    original: np.ndarray, restored: np.ndarray, sr: int
-) -> dict:
+def compare_aura(original: np.ndarray, restored: np.ndarray, sr: int) -> dict:
     """Vergleicht die Aura vor und nach der Restaurierung.
 
     Returns dict mit 'aura_preserved', 'delta', 'verdict'.
@@ -199,8 +202,7 @@ def compare_aura(
         verdict = "Aura leicht verändert, aber Charakter erkennbar."
     else:
         verdict = (
-            f"AURA-VERLUST: Die Restaurierung hat den Charakter zerstört "
-            f"(Δ={delta:+.2f}). {aura_rest.recommendation}"
+            f"AURA-VERLUST: Die Restaurierung hat den Charakter zerstört (Δ={delta:+.2f}). {aura_rest.recommendation}"
         )
 
     return {
@@ -217,8 +219,10 @@ def compare_aura(
 
 # ── Messfunktionen ──────────────────────────────────────────────────────
 
+
 def _measure_era_character(
-    mono: np.ndarray, sr: int,
+    mono: np.ndarray,
+    sr: int,
     known_era: str | None = None,
     known_medium: str | None = None,
 ) -> tuple[float, str]:
@@ -238,7 +242,7 @@ def _measure_era_character(
         total = energy[-1] + 1e-12
         # 95% Energie-Grenzfrequenz
         cutoff_idx = np.searchsorted(energy, 0.95 * total)
-        cutoff_freq = freqs[min(cutoff_idx, len(freqs)-1)]
+        cutoff_freq = freqs[min(cutoff_idx, len(freqs) - 1)]
 
         if cutoff_freq < 5000:
             era = "acoustic_78rpm"
@@ -257,7 +261,7 @@ def _measure_era_character(
     f_low, f_high = profile["freq_range"]
 
     # Prüfe Frequenzgang-Übereinstimmung
-    lf_energy = np.sum(spec[(freqs >= f_low) & (freqs < f_high)]**2)
+    lf_energy = np.sum(spec[(freqs >= f_low) & (freqs < f_high)] ** 2)
     total_energy = np.sum(spec**2)
 
     # Charakteristischer Frequenzanteil
@@ -291,9 +295,7 @@ def _measure_era_character(
     return score, era_names.get(era, era)
 
 
-def _measure_spatial_signature(
-    mono: np.ndarray, sr: int, arr: np.ndarray
-) -> tuple[float, str]:
+def _measure_spatial_signature(mono: np.ndarray, sr: int, arr: np.ndarray) -> tuple[float, str]:
     """Misst den Raumeindruck."""
     # Reverb-Detektion via Abklingzeit
     n_fft = 2048
@@ -304,7 +306,7 @@ def _measure_spatial_signature(
     energy = []
     hop = n_fft // 2
     for i in range(0, len(mono) - n_fft, hop):
-        chunk = mono[i:i + n_fft] * np.hanning(n_fft)
+        chunk = mono[i : i + n_fft] * np.hanning(n_fft)
         energy.append(float(np.sum(chunk**2)))
     energy = np.array(energy)
     energy_db = 10.0 * np.log10(energy + 1e-12)
@@ -369,8 +371,7 @@ def _measure_dynamic_character(mono: np.ndarray, sr: int) -> float:
     if len(mono) < 10 * win:
         return 0.6
 
-    rms_vals = [float(np.sqrt(np.mean(mono[i:i+win]**2)))
-                for i in range(0, len(mono)-win, win)]
+    rms_vals = [float(np.sqrt(np.mean(mono[i : i + win] ** 2))) for i in range(0, len(mono) - win, win)]
     rms_db = 20.0 * np.log10(np.array(rms_vals) + 1e-12)
 
     dr = float(np.max(rms_db) - np.percentile(rms_db, 10))
@@ -401,8 +402,8 @@ def _measure_emotional_temperature(mono: np.ndarray, sr: int) -> float:
     bass_mask = (freqs >= 60) & (freqs <= 300)
     presence_mask = (freqs >= 2000) & (freqs <= 5000)
 
-    bass_energy = np.sum(spec[bass_mask]**2) if np.any(bass_mask) else 0.0
-    presence_energy = np.sum(spec[presence_mask]**2) if np.any(presence_mask) else 0.0
+    bass_energy = np.sum(spec[bass_mask] ** 2) if np.any(bass_mask) else 0.0
+    presence_energy = np.sum(spec[presence_mask] ** 2) if np.any(presence_mask) else 0.0
     total = np.sum(spec**2) + 1e-12
 
     bass_ratio = bass_energy / total

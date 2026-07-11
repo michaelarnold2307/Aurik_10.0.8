@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from backend.core.calibration_matrix import (
     blend_targets_with_confidence,

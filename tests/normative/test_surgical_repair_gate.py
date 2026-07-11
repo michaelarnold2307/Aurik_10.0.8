@@ -1,4 +1,5 @@
 import pytest
+
 """§2.59.11: Garantiert dass chirurgische Zonen NIEMALS den gesamten Song umfassen."""
 import sys
 from pathlib import Path
@@ -26,13 +27,9 @@ def test_surgical_zones_are_localized():
     assert len(zones) == 3, f"Erwartet 3 Zonen, bekam {len(zones)}"
     for z in zones:
         dur_s = z.end_s - z.start_s
-        assert dur_s < 1.0, (
-            f"Zone {z.defect_type} ist {dur_s * 1000:.0f}ms — "
-            f"maximal 1s erlaubt. Placeholder-Verdacht!"
-        )
+        assert dur_s < 1.0, f"Zone {z.defect_type} ist {dur_s * 1000:.0f}ms — maximal 1s erlaubt. Placeholder-Verdacht!"
         assert z.start_s > 0 or z.end_s < 225.0, (
-            f"Zone {z.defect_type} spannt gesamten Song "
-            f"({z.start_s}–{z.end_s}) — das ist ein Placeholder!"
+            f"Zone {z.defect_type} spannt gesamten Song ({z.start_s}–{z.end_s}) — das ist ein Placeholder!"
         )
 
     # Test 2: Ohne Locations → KEINE Zonen
@@ -41,10 +38,7 @@ def test_surgical_zones_are_localized():
         audio_duration_s=225.0,
         defect_locations={},
     )
-    assert len(zones_no_loc) == 0, (
-        f"Ohne Locations dürfen KEINE Zonen erstellt werden, "
-        f"bekam {len(zones_no_loc)}"
-    )
+    assert len(zones_no_loc) == 0, f"Ohne Locations dürfen KEINE Zonen erstellt werden, bekam {len(zones_no_loc)}"
 
     # Test 3: Placeholder-Locations (>50% des Songs) → ignoriert
     zones_placeholder = analyzer.analyze(
@@ -53,15 +47,15 @@ def test_surgical_zones_are_localized():
         defect_locations={"modulation_noise": [(0.0, 225.0)]},
     )
     assert len(zones_placeholder) == 0, (
-        f"Placeholder-Zonen (0–225s) müssen ignoriert werden, "
-        f"bekam {len(zones_placeholder)}"
+        f"Placeholder-Zonen (0–225s) müssen ignoriert werden, bekam {len(zones_placeholder)}"
     )
 
 
 def test_surgical_repair_accepts_short_zones():
     """Stellt sicher dass der SurgicalRepair kurze Events nicht ablehnt."""
     import numpy as np
-    from backend.core.surgical_repair import SurgicalRepair, DefectInstance, _repair_clicks
+
+    from backend.core.surgical_repair import DefectInstance, SurgicalRepair, _repair_clicks
 
     surgeon = SurgicalRepair(sr=48000)
     audio = np.random.randn(2, 48000).astype(np.float32) * 0.1  # 1s Stereo

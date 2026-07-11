@@ -413,7 +413,6 @@ class PerceptualValidator:
                 _plm_ast.set_active("ASTPerceptualONNX", True)
             except Exception as e:
                 logger.warning("perceptual_validator.py::_predict_psychoacoustic_score fallback: %s", e)
-                pass
             try:
                 _inp = self._prepare_ast_onnx_input(audio, sr)
                 _res = self.onnx_session.run([self._onnx_output_name], {self._onnx_input_name: _inp})[0]
@@ -427,7 +426,6 @@ class PerceptualValidator:
                         _plm_ast.set_active("ASTPerceptualONNX", False)
                     except Exception as e:
                         logger.warning("perceptual_validator.py::_predict_psychoacoustic_score fallback: %s", e)
-                        pass
 
         if self.model is None:
             # Fallback: Heuristic-based scoring

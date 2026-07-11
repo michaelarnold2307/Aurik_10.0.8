@@ -22,12 +22,11 @@ Ref: §v10 Pleasantness-First, §3.0 Cross-Phase Consensus, §2.64 FeedbackChain
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -38,17 +37,19 @@ logger = logging.getLogger(__name__)
 # Enums & Data
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class SteerAction(Enum):
-    CONTINUE = "continue"           # ΔP ≥ 0 → normal weiter
-    RETRY_LIGHTER = "retry_lighter" # −0.03 < ΔP < 0 → mit 70% Intensität wiederholen
-    SKIP = "skip"                   # ΔP < −0.05 → Phase überspringen
-    ROLLBACK = "rollback"           # Mehrere Drops → zurück zum besten Stand
-    STOP_GRACEFUL = "stop"          # PMGG > 0.92 + HPE stabil → aufhören
+    CONTINUE = "continue"  # ΔP ≥ 0 → normal weiter
+    RETRY_LIGHTER = "retry_lighter"  # −0.03 < ΔP < 0 → mit 70% Intensität wiederholen
+    SKIP = "skip"  # ΔP < −0.05 → Phase überspringen
+    ROLLBACK = "rollback"  # Mehrere Drops → zurück zum besten Stand
+    STOP_GRACEFUL = "stop"  # PMGG > 0.92 + HPE stabil → aufhören
 
 
 @dataclass
 class SteeringState:
     """Trackt den Steering-Zustand über alle Phasen."""
+
     best_audio: np.ndarray | None = None
     best_hpe: float = 0.0
     best_phase_idx: int = -1
@@ -77,6 +78,7 @@ class SteeringDecision:
 # Steering Engine
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class PhaseSteeringEngine:
     """HPE-gesteuerter Steering-Entscheider pro Phase."""
 
@@ -87,6 +89,7 @@ class PhaseSteeringEngine:
         self._enabled = True  # §v10.4: immer aktiv
         try:
             from backend.core.cross_phase_naturalness import get_tracker, reset_tracker
+
             reset_tracker()
             self._tracker = get_tracker()
         except Exception as e:
@@ -103,11 +106,12 @@ class PhaseSteeringEngine:
     def _compute_hpe(audio: np.ndarray, sr: int = 48000) -> float:
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             return float(compute_pleasantness(audio, sr).score)
         except Exception as e:
             logger.debug("_compute_hpe fallback: %s", e)
             mono = audio.mean(axis=1) if audio.ndim == 2 and audio.shape[1] <= 2 else audio.ravel()
-            rms = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
+            rms = float(np.sqrt(np.mean(mono**2)) + 1e-12)
             return float(np.clip(0.3 + rms * 2.0, 0.0, 1.0))
 
     @staticmethod
@@ -115,18 +119,25 @@ class PhaseSteeringEngine:
         """Vereinfachter PMGG-Proxy (0-1). Echter PMGG wäre zu teuer pro Phase."""
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             r = compute_pleasantness(audio, sr)
-            return float(np.mean([r.score, r.tonalness,
-                                  1.0 - min(r.roughness_asper / 3.0, 1.0),
-                                  1.0 - abs(r.sharpness_zwicker - 1.5) / 3.0]))
+            return float(
+                np.mean(
+                    [
+                        r.score,
+                        r.tonalness,
+                        1.0 - min(r.roughness_asper / 3.0, 1.0),
+                        1.0 - abs(r.sharpness_zwicker - 1.5) / 3.0,
+                    ]
+                )
+            )
         except Exception as e:
             logger.warning("_compute_pmgg: %s", e)
             return 0.5
 
     # ── Entscheidungslogik ────────────────────────────────────────────────
 
-    def decide(self, hpe_before: float, hpe_after: float, phase_name: str,
-               phase_strength: float) -> SteeringDecision:
+    def decide(self, hpe_before: float, hpe_after: float, phase_name: str, phase_strength: float) -> SteeringDecision:
         """Trifft Steering-Entscheidung basierend auf HPE-Änderung."""
         with self._lock:
             s = self._state
@@ -136,64 +147,76 @@ class PhaseSteeringEngine:
             if delta > 0.02:
                 s.consecutive_stable = 0
                 self._update_best(hpe_after, phase_name)
-                return SteeringDecision(SteerAction.CONTINUE,
-                                        f"HPE +{delta:+.3f} → weiter",
-                                        delta_hpe=delta)
+                return SteeringDecision(SteerAction.CONTINUE, f"HPE +{delta:+.3f} → weiter", delta_hpe=delta)
 
             # Case 2: HPE stabil (±0.02) → prüfe Stop
             if delta >= -0.02:
                 s.consecutive_stable += 1
                 self._update_best(hpe_after, phase_name)
                 if s.consecutive_stable >= s.STOP_STABLE_THRESHOLD and hpe_after > 0.68:
-                    return SteeringDecision(SteerAction.STOP_GRACEFUL,
-                                            f"HPE stabil ({s.consecutive_stable} Phasen) + gut → STOP",
-                                            delta_hpe=delta)
-                return SteeringDecision(SteerAction.CONTINUE,
-                                        f"HPE stabil (Δ{delta:+.3f})",
-                                        delta_hpe=delta)
+                    return SteeringDecision(
+                        SteerAction.STOP_GRACEFUL,
+                        f"HPE stabil ({s.consecutive_stable} Phasen) + gut → STOP",
+                        delta_hpe=delta,
+                    )
+                return SteeringDecision(SteerAction.CONTINUE, f"HPE stabil (Δ{delta:+.3f})", delta_hpe=delta)
 
             # Case 3: Leichte Verschlechterung → RETRY_LIGHTER
             if delta > -0.05:
                 if s.retry_count < s.MAX_RETRIES:
                     s.retry_count += 1
                     new_str = max(0.3, phase_strength * 0.7)
-                    logger.info("Steering %s: RETRY_LIGHTER (Δ%+.3f, str %.2f→%.2f, retry %d/%d)",
-                                phase_name, delta, phase_strength, new_str,
-                                s.retry_count, s.MAX_RETRIES)
-                    return SteeringDecision(SteerAction.RETRY_LIGHTER,
-                                            f"Leichte Verschlechterung → leiser wiederholen",
-                                            new_strength=new_str, delta_hpe=delta)
+                    logger.info(
+                        "Steering %s: RETRY_LIGHTER (Δ%+.3f, str %.2f→%.2f, retry %d/%d)",
+                        phase_name,
+                        delta,
+                        phase_strength,
+                        new_str,
+                        s.retry_count,
+                        s.MAX_RETRIES,
+                    )
+                    return SteeringDecision(
+                        SteerAction.RETRY_LIGHTER,
+                        "Leichte Verschlechterung → leiser wiederholen",
+                        new_strength=new_str,
+                        delta_hpe=delta,
+                    )
                 else:
                     s.retry_count = 0
                     s.skipped_phases.append(phase_name)
                     logger.info("Steering %s: Max Retries erreicht → SKIP", phase_name)
-                    return SteeringDecision(SteerAction.SKIP,
-                                            f"Max Retries ({s.MAX_RETRIES}) → überspringe {phase_name}",
-                                            delta_hpe=delta)
+                    return SteeringDecision(
+                        SteerAction.SKIP, f"Max Retries ({s.MAX_RETRIES}) → überspringe {phase_name}", delta_hpe=delta
+                    )
 
             # Case 4: Deutliche Verschlechterung → SKIP
             if delta > -0.10:
                 s.skipped_phases.append(phase_name)
                 logger.info("Steering %s: SKIP (Δ%+.3f, zu starke Verschlechterung)", phase_name, delta)
-                return SteeringDecision(SteerAction.SKIP,
-                                        f"Deutliche Verschlechterung → überspringe {phase_name}",
-                                        delta_hpe=delta)
+                return SteeringDecision(
+                    SteerAction.SKIP, f"Deutliche Verschlechterung → überspringe {phase_name}", delta_hpe=delta
+                )
 
             # Case 5: Massive Verschlechterung + beste Version existiert → ROLLBACK
             if s.best_audio is not None and s.rollback_count < s.MAX_ROLLBACKS:
                 s.rollback_count += 1
                 s.retry_count = 0
-                logger.warning("Steering %s: ROLLBACK #%d (Δ%+.3f, restore best HPE %.3f)",
-                               phase_name, s.rollback_count, delta, s.best_hpe)
-                return SteeringDecision(SteerAction.ROLLBACK,
-                                        f"Massive Verschlechterung → Rollback zu bestem Stand",
-                                        delta_hpe=delta)
+                logger.warning(
+                    "Steering %s: ROLLBACK #%d (Δ%+.3f, restore best HPE %.3f)",
+                    phase_name,
+                    s.rollback_count,
+                    delta,
+                    s.best_hpe,
+                )
+                return SteeringDecision(
+                    SteerAction.ROLLBACK, "Massive Verschlechterung → Rollback zu bestem Stand", delta_hpe=delta
+                )
 
             # Case 6: Nichts hilft → SKIP
             s.skipped_phases.append(phase_name)
-            return SteeringDecision(SteerAction.SKIP,
-                                    f"Keine Verbesserung möglich → überspringe {phase_name}",
-                                    delta_hpe=delta)
+            return SteeringDecision(
+                SteerAction.SKIP, f"Keine Verbesserung möglich → überspringe {phase_name}", delta_hpe=delta
+            )
 
     def _update_best(self, hpe: float, phase_name: str):
         s = self._state
@@ -206,13 +229,15 @@ class PhaseSteeringEngine:
     def record_phase(self, phase_name: str, audio: np.ndarray, hpe: float, pmgg: float):
         """Zeichnet Phase in History auf."""
         s = self._state
-        s.phase_history.append({
-            "phase": phase_name,
-            "idx": s.current_phase_idx,
-            "hpe": round(hpe, 4),
-            "pmgg": round(pmgg, 4),
-            "time": time.monotonic(),
-        })
+        s.phase_history.append(
+            {
+                "phase": phase_name,
+                "idx": s.current_phase_idx,
+                "hpe": round(hpe, 4),
+                "pmgg": round(pmgg, 4),
+                "time": time.monotonic(),
+            }
+        )
         # Update best audio referenz
         if s.best_audio is None or hpe >= s.best_hpe:
             s.best_audio = audio.copy()
@@ -295,36 +320,36 @@ def install_steering() -> PhaseSteeringEngine:
             elif decision.action == SteerAction.RETRY_LIGHTER:
                 new_kwargs = dict(kwargs)
                 new_kwargs["strength"] = decision.new_strength
-                logger.info("Steering %s: RETRY_LIGHTER (str %.2f→%.2f)",
-                            phase_name, strength, decision.new_strength)
+                logger.info("Steering %s: RETRY_LIGHTER (str %.2f→%.2f)", phase_name, strength, decision.new_strength)
                 result2 = _orig_fn(self, phase, audio, **new_kwargs)
                 result2_audio = result2.audio if hasattr(result2, "audio") else result2
                 hpe2 = _engine._compute_hpe(result2_audio, sr)
                 if hpe2 > hpe_before - 0.02:
-                    _engine.record_phase(phase_name + "_retry", result2_audio, hpe2, _engine._compute_pmgg(result2_audio, sr))
+                    _engine.record_phase(
+                        phase_name + "_retry", result2_audio, hpe2, _engine._compute_pmgg(result2_audio, sr)
+                    )
                     return result2
                 # RETRY half nicht → SKIP
                 _engine.record_phase(phase_name + "_retry_failed", audio, hpe_before, _engine._compute_pmgg(audio, sr))
                 return type(result)(audio=audio) if hasattr(result, "audio") else audio
 
             elif decision.action == SteerAction.SKIP:
-                logger.info("Steering %s: SKIP (HPE %.3f→%.3f Δ%+.3f)",
-                            phase_name, hpe_before, hpe_after, decision.delta_hpe)
+                logger.info(
+                    "Steering %s: SKIP (HPE %.3f→%.3f Δ%+.3f)", phase_name, hpe_before, hpe_after, decision.delta_hpe
+                )
                 _engine.record_phase(phase_name + "_skipped", audio, hpe_before, _engine._compute_pmgg(audio, sr))
                 return type(result)(audio=audio) if hasattr(result, "audio") else audio
 
             elif decision.action == SteerAction.ROLLBACK:
                 best = _engine.get_best_audio()
                 if best is not None:
-                    logger.warning("Steering %s: ROLLBACK to best (HPE %.3f)",
-                                   phase_name, _engine._state.best_hpe)
+                    logger.warning("Steering %s: ROLLBACK to best (HPE %.3f)", phase_name, _engine._state.best_hpe)
                     return type(result)(audio=best) if hasattr(result, "audio") else best
                 _engine.record_phase(phase_name + "_rollback_fallback", audio, hpe_before, pmgg_after)
                 return result
 
             elif decision.action == SteerAction.STOP_GRACEFUL:
-                logger.info("Steering: STOP_GRACEFUL — %s (HPE %.3f stabil)",
-                            phase_name, hpe_after)
+                logger.info("Steering: STOP_GRACEFUL — %s (HPE %.3f stabil)", phase_name, hpe_after)
                 _engine.record_phase(phase_name, result_audio, hpe_after, pmgg_after)
                 return result
 
@@ -344,11 +369,11 @@ def uninstall_steering():
     if _original_profiled_phase_call is not None:
         try:
             from backend.core.unified_restorer_v3 import UnifiedRestorerV3 as _UV3
+
             _UV3._profiled_phase_call = _original_profiled_phase_call
             logger.info("PhaseSteeringGuard: UNINSTALLED")
         except Exception as e:
             logger.warning("unknown: %s", e)
-            pass
     _engine = None
     _original_profiled_phase_call = None
 

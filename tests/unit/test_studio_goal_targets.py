@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from backend.core.studio_goal_targets import estimate_song_goal_targets
 

@@ -457,9 +457,8 @@ class UndoRedoManager:
         try:
             if self.backup_dir.exists() and not any(self.backup_dir.iterdir()):
                 self.backup_dir.rmdir()
-        except Exception as e:
+        except Exception:
             logger.warning("workflow_manager.py::cleanup_all fallback", exc_info=True)
-            pass
 
 
 # ===== GAP #28: Session Management Integration =====

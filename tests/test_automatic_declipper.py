@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from dsp.automatic_declipper import AutomaticDeclipper
 

@@ -178,11 +178,12 @@ class PerceptualSalienceEstimator:
                     _binaural_factor = float(np.clip(0.90 + 0.10 * _iacc, 0.90, 1.0))
                     result.mean_salience *= _binaural_factor
                     logger.debug(
-                        "§SOTA #10 Binaural: IACC=%.3f → salience ×%.2f", _iacc, _binaural_factor,
+                        "§SOTA #10 Binaural: IACC=%.3f → salience ×%.2f",
+                        _iacc,
+                        _binaural_factor,
                     )
             except Exception as e:
                 logger.warning("perceptual_salience.py::unknown fallback: %s", e)
-                pass
 
         return result
 

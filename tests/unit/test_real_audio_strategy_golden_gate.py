@@ -1,10 +1,10 @@
-import pytest
 from __future__ import annotations
 
 import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import backend.core.real_audio_strategy_golden_gate as _strategy_gate
 from backend.core.real_audio_strategy_golden_gate import run_real_audio_strategy_golden_gate

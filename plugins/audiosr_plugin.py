@@ -146,9 +146,9 @@ def _get_ml_model() -> object | None:
             try:
                 from backend.core.ml_device_manager import get_torch_device as _get_dev
 
-                _asr_device = _get_dev("AudioSR")
+                _get_dev("AudioSR")
             except Exception:
-                _asr_device = "cpu"
+                pass
             model = build_model(model_name="basic", device="cpu")  # §ROCm: CPU-first, GPU fallback
             # §ROCm-Fix v2: HiFi-GAN vocoder + first_stage_model produzieren NaN auf ROCm.
             # Der alte Fix (nur vocoder.cpu()) deckt nicht alle Code-Pfade ab —
@@ -159,16 +159,20 @@ def _get_ml_model() -> object | None:
             _fsm.cpu()
             # Patch: alle Mel→Waveform-Pfade zwingen Input auf CPU
             _orig_mel2wav = model.mel_spectrogram_to_waveform
+
             def _patched_mel2wav(self, mel, savepath=".", bs=None, name="outwav", save=True):
-                mel_cpu = mel.cpu() if hasattr(mel, 'cpu') else mel
+                mel_cpu = mel.cpu() if hasattr(mel, "cpu") else mel
                 return _orig_mel2wav(mel_cpu, savepath, bs, name, save)
+
             model.mel_spectrogram_to_waveform = _patched_mel2wav.__get__(model)
             # Zusätzlich: decode-Methode patchen (generate_batch ruft diese direkt)
-            if hasattr(_fsm, 'decode'):
+            if hasattr(_fsm, "decode"):
                 _orig_decode = _fsm.decode
+
                 def _patched_decode(self, z, **kw):
-                    z_cpu = z.cpu() if hasattr(z, 'cpu') else z
+                    z_cpu = z.cpu() if hasattr(z, "cpu") else z
                     return _orig_decode(z_cpu, **kw)
+
                 _fsm.decode = _patched_decode.__get__(_fsm)
             _ml_model = model
             logger.info("AudioSR: ML-Modell bereit (device=cpu, ddim_steps=50).")
@@ -268,6 +272,7 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
         # GPU: 900 s (15 min). CPU-only: 3600 s (60 min, DDIM ist CPU-intensiv).
         try:
             from backend.core.ml_device_manager import get_device_manager
+
             _is_gpu = get_device_manager().gpu_available
         except Exception:
             _is_gpu = False
@@ -320,7 +325,7 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                     # §ROCm-NaN-Fix: generate_batch auf ROCm GPU → NaN im Vocoder.
                     # Force gesamtes Modell + Batch auf CPU vor Inference.
                     model.cpu()
-                    if hasattr(batch, 'cpu'):
+                    if hasattr(batch, "cpu"):
                         batch = batch.cpu()
                     with _asr_torch.no_grad():
                         z_result_raw = model.generate_batch(  # type: ignore[attr-defined]
@@ -331,13 +336,13 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                         )
                     # §AUDIOSR-NANFIX: generate_batch kann NaN in der Waveform-Rekonstruktion
                     # produzieren (vocoder/interne valid_audio-Prüfung). Clean vor Weiterverarbeitung.
-                    if hasattr(z_result_raw, 'detach'):
+                    if hasattr(z_result_raw, "detach"):
                         _z_tmp = z_result_raw.detach().cpu().numpy()
                     else:
                         _z_tmp = np.asarray(z_result_raw, dtype=np.float32)
                     _z_tmp = np.nan_to_num(_z_tmp, nan=0.0, posinf=0.0, neginf=0.0)
                     if not np.isfinite(_z_tmp).all():
-                        logger.debug('AudioSR Zone %d: NaN/Inf nach generate_batch, cleaned', z_idx + 1)
+                        logger.debug("AudioSR Zone %d: NaN/Inf nach generate_batch, cleaned", z_idx + 1)
                     logger.debug(
                         "AudioSR: Zone %d/%d direkt-Waveform-Inferenz (%.1f s)",
                         z_idx + 1,
@@ -357,7 +362,9 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                     _wav_bytes = os.path.getsize(tmp_path)
                     if _wav_bytes < 44:
                         raise OSError(f"AudioSR WAV zu klein: {_wav_bytes} B")
-                    z_result_raw = super_resolution(model, tmp_path, seed=42, ddim_steps=_audiosr_ddim_steps, guidance_scale=3.5)
+                    z_result_raw = super_resolution(
+                        model, tmp_path, seed=42, ddim_steps=_audiosr_ddim_steps, guidance_scale=3.5
+                    )
                 finally:
                     Path(tmp_path).unlink(missing_ok=True)
             del zone_wav  # Freigabe vor GC
@@ -371,13 +378,16 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                 try:
                     _fb_mono = _fallback_zone.mean(axis=0) if _fallback_zone.ndim > 1 else _fallback_zone
                     from backend.core.dsp.sbr_extend import _sbr_extend
+
                     _fb_result = _sbr_extend(_fb_mono, sample_rate)
                     if _fallback_zone.ndim > 1:
                         _fb_stereo = np.stack([_fb_result, _fb_result], axis=0)
                         zone_results.append(np.ascontiguousarray(_fb_stereo.astype(np.float32)))
                     else:
                         zone_results.append(np.ascontiguousarray(_fb_result.astype(np.float32)))
-                    logger.debug('AudioSR Zone %d: SBR-DSP-Fallback (%.1f s)', z_idx + 1, len(_fb_mono) / max(1, sample_rate))
+                    logger.debug(
+                        "AudioSR Zone %d: SBR-DSP-Fallback (%.1f s)", z_idx + 1, len(_fb_mono) / max(1, sample_rate)
+                    )
                 except Exception:
                     zone_results.append(np.ascontiguousarray(_fallback_zone))
                 del _fallback_zone

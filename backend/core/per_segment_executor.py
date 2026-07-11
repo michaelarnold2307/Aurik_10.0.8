@@ -64,9 +64,7 @@ def run_phase_per_segment(
         if segment_strengths:
             phase_kwargs_copy["strength"] = segment_strengths[0]
         result = phase_callable(audio, **phase_kwargs_copy)
-        return _SegResult(
-            np.asarray(getattr(result, "audio", result) if hasattr(result, "audio") else result)
-        )
+        return _SegResult(np.asarray(getattr(result, "audio", result) if hasattr(result, "audio") else result))
 
     # Sample-Indizes der Grenzen
     bound_samples = [int(b * sr) for b in bounds_s]
@@ -138,8 +136,7 @@ def run_phase_per_segment(
                 xf_len = min(xfade_samples, s_start - xf_start)
                 if xf_len > 0:
                     output[xf_start:s_start] = (
-                        output[xf_start:s_start] * fade_out[-xf_len:]
-                        + seg_result[:xf_len] * fade_in[:xf_len]
+                        output[xf_start:s_start] * fade_out[-xf_len:] + seg_result[:xf_len] * fade_in[:xf_len]
                     )
         else:
             if core_len > 0 and s_start < n_total:

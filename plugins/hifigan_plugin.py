@@ -118,9 +118,8 @@ class HifiGanPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("HiFiGAN", True)
-        except Exception as e:
+        except Exception:
             logger.warning("hifigan_plugin.py::_vocode_onnx fallback", exc_info=True)
-            pass
         try:
             T = mel.shape[1]
             chunks = []
@@ -146,9 +145,8 @@ class HifiGanPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("HiFiGAN", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("hifigan_plugin.py::_vocode_onnx fallback", exc_info=True)
-                    pass
 
     @staticmethod
     def _pghi_istft(mel: np.ndarray, sr_out: int) -> np.ndarray:

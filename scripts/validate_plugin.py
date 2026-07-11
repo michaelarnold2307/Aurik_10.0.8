@@ -26,7 +26,6 @@ def validate_plugin_dir(plugin_dir: Path, strict: bool = False) -> tuple[bool, l
     """
     messages: list[str] = []
     checks_passed = 0
-    checks_total = 5
 
     # 1. manifest.json existiert und ist valide
     manifest_path = plugin_dir / "manifest.json"

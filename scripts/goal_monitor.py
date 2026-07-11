@@ -733,9 +733,8 @@ def _watch_mode(log_path: Path, args: argparse.Namespace) -> None:
     try:
         for r in parse_log(log_path):
             seen_scorecards.add(r.timestamp)
-    except Exception as e:
+    except Exception:
         logger.warning("goal_monitor.py::_watch_mode fallback", exc_info=True)
-        pass
 
     try:
         while True:

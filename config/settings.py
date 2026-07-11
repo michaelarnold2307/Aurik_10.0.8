@@ -49,7 +49,9 @@ class MLConfig(BaseModel):
     # §4.4: versa_plugin ersetzt cdpam_plugin als non-reference MOS-Metrik (April 2026)
     feature_plugins: list[str] = Field(default_factory=lambda: ["panns_integration", "versa_plugin"])
     model_cache_dir: Path = Field(default=Path("models/"), description="ML model cache directory")
-    use_gpu: bool = Field(default=True, description="GPU acceleration (True=auto-detect GPU, CPU fallback always active)")
+    use_gpu: bool = Field(
+        default=True, description="GPU acceleration (True=auto-detect GPU, CPU fallback always active)"
+    )
     batch_size: int = Field(default=1, ge=1, le=128, description="Batch size for ML inference")
     precision: Literal["fp32", "fp16", "int8"] = Field(default="fp32", description="Model precision mode")
 

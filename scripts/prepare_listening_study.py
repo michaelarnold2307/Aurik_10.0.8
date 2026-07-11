@@ -17,11 +17,10 @@ Nutzung:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import random
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -30,18 +29,20 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 @dataclass
 class StimulusSet:
     """Ein komplettes Stimulus-Set für einen Trial."""
+
     trial_id: str
     scenario: str
     material: str
     conditions: dict[str, str]  # condition_name → filepath
     hidden_ref_key: str  # Welcher Key die Hidden Reference ist
-    anchor_key: str      # Welcher Key der Anchor ist
+    anchor_key: str  # Welcher Key der Anchor ist
     display_order: list[str]  # Reihenfolge für GUI
 
 
 @dataclass
 class StudySession:
     """Eine komplette Hörstudien-Session."""
+
     session_id: str
     participant_id: str
     stimuli: list[StimulusSet]
@@ -50,11 +51,11 @@ class StudySession:
 
 def _compute_anchor(audio_path: Path, output_dir: Path, cutoff_hz: float = 3500.0) -> Path:
     """Erzeugt 3.5-kHz-Tiefpass-Anchor (ITU-R BS.1534)."""
-    import numpy as np
     from scipy.signal import butter, filtfilt
 
     try:
         import soundfile as sf
+
         audio, sr = sf.read(str(audio_path))
     except Exception:
         return audio_path  # Fallback
@@ -144,15 +145,17 @@ def generate_study(
             display_order = condition_keys.copy()
             rng.shuffle(display_order)
 
-            stimuli.append(StimulusSet(
-                trial_id=f"{participant_id}_S{scenario_idx:02d}_R{rep:02d}",
-                scenario=scenario_name,
-                material="unknown",  # Kann aus Corpus-Metadaten ergänzt werden
-                conditions=conditions,
-                hidden_ref_key="reference",
-                anchor_key="anchor",
-                display_order=display_order,
-            ))
+            stimuli.append(
+                StimulusSet(
+                    trial_id=f"{participant_id}_S{scenario_idx:02d}_R{rep:02d}",
+                    scenario=scenario_name,
+                    material="unknown",  # Kann aus Corpus-Metadaten ergänzt werden
+                    conditions=conditions,
+                    hidden_ref_key="reference",
+                    anchor_key="anchor",
+                    display_order=display_order,
+                )
+            )
 
     return StudySession(
         session_id=f"study_{participant_id}_{seed}",

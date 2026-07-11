@@ -13,6 +13,7 @@ Algorithmus:
 from __future__ import annotations
 
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -44,61 +45,61 @@ class ArtifactEchoRemoval:
         """
         result = np.asarray(audio, dtype=np.float32).copy()
         mono = np.mean(result, axis=0) if result.ndim == 2 else result
-        
+
         # Autokorrelations-basierte Echo-Detektion
         max_lag = int(sr * max_lag_ms / 1000.0)
         min_lag = int(sr * 0.005)  # 5ms minimum (unterhalb = Direct-Sound)
-        
+
         if len(mono) < max_lag * 4:
             return result
 
         echoes_found = 0
         for ch in range(result.shape[0] if result.ndim == 2 else 1):
             ch_data = result[ch] if result.ndim == 2 else result
-            
+
             # Autokorrelation in Blöcken (100ms)
             block_size = int(sr * 0.100)
             hop = block_size // 2
-            
+
             for i in range(0, len(ch_data) - block_size, hop):
-                block = ch_data[i:i + block_size]
+                block = ch_data[i : i + block_size]
                 if len(block) < max_lag * 2:
                     continue
-                    
+
                 # Autokorrelation
-                acorr = np.correlate(block, block, mode='full')
-                acorr = acorr[len(acorr)//2:]  # Nur positive Lags
+                acorr = np.correlate(block, block, mode="full")
+                acorr = acorr[len(acorr) // 2 :]  # Nur positive Lags
                 acorr = acorr / (acorr[0] + 1e-12)  # Normalisieren
-                
+
                 # Suche nach Echo-Peaks im Bereich 5-50ms
                 echo_region = acorr[min_lag:max_lag]
                 if len(echo_region) == 0:
                     continue
-                    
+
                 peak_corr = float(np.max(echo_region))
                 peak_lag = int(np.argmax(echo_region)) + min_lag
-                
+
                 if peak_corr > min_correlation:
                     # Echo gefunden → unterdrücken via spektrale Subtraktion
                     echo_block = np.roll(block, -peak_lag) * peak_corr * 0.5
                     corrected = block - echo_block
-                    
+
                     # Cross-fade zum Original
                     xfade = min(int(sr * 0.005), block_size // 4)
                     if xfade >= 2:
                         win = np.ones(block_size, dtype=np.float32)
                         win[:xfade] = np.linspace(0, 1, xfade)
                         win[-xfade:] = np.linspace(1, 0, xfade)
-                        ch_data[i:i + block_size] = corrected * win + block * (1 - win)
+                        ch_data[i : i + block_size] = corrected * win + block * (1 - win)
                     else:
-                        ch_data[i:i + block_size] = corrected
-                    
+                        ch_data[i : i + block_size] = corrected
+
                     echoes_found += 1
 
             if result.ndim == 2:
-                result[ch] = ch_data[:len(result[ch])]
+                result[ch] = ch_data[: len(result[ch])]
             else:
-                result = ch_data[:len(result)].astype(np.float32)
+                result = ch_data[: len(result)].astype(np.float32)
 
         if echoes_found > 0:
             logger.info("§AR EchoRemoval: %d echo artifacts removed", echoes_found)
@@ -126,28 +127,28 @@ class ArtifactEchoRemoval:
         # Kreuzkorrelation in 1s-Blöcken für lokales Alignment
         block_size = int(sr * 1.0)
         max_shift = int(sr * 0.010)  # Max 10ms Shift
-        
+
         for i in range(0, min(len(mono_orig), len(mono_proc)) - block_size, block_size):
-            orig_block = mono_orig[i:i + block_size]
-            proc_block = mono_proc[i:i + block_size]
-            
+            orig_block = mono_orig[i : i + block_size]
+            proc_block = mono_proc[i : i + block_size]
+
             if len(orig_block) < max_shift * 2 or len(proc_block) < max_shift * 2:
                 continue
-                
+
             # Kreuzkorrelation
-            xcorr = np.correlate(proc_block, orig_block, mode='full')
+            xcorr = np.correlate(proc_block, orig_block, mode="full")
             shift = int(np.argmax(xcorr)) - len(proc_block) + 1
-            
+
             if abs(shift) > 2 and abs(shift) < max_shift:  # Nur korrigieren wenn >2 Samples
                 for ch in range(result.shape[0] if result.ndim == 2 else 1):
                     if shift > 0:
                         # Proc ist verzögert → vorziehen
-                        result[ch, i:i+block_size-shift] = result[ch, i+shift:i+block_size]
+                        result[ch, i : i + block_size - shift] = result[ch, i + shift : i + block_size]
                     elif shift < 0:
                         # Proc ist vorgezogen → verzögern
                         shift_abs = abs(shift)
-                        result[ch, i+shift_abs:i+block_size] = result[ch, i:i+block_size-shift_abs]
-        
+                        result[ch, i + shift_abs : i + block_size] = result[ch, i : i + block_size - shift_abs]
+
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
     def process(

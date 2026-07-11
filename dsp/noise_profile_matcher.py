@@ -98,6 +98,6 @@ class NoiseProfileMatcher:
             if spectrum is None or np.sum(spectrum) < 1e-12:
                 return None
             return self._classify(spectrum, sr)
-        except Exception as e:
+        except Exception:
             logger.warning("noise_profile_matcher.py::match_profile fallback", exc_info=True)
             return None

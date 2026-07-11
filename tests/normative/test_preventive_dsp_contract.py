@@ -37,8 +37,7 @@ def test_phase31_has_preventive_damage_shield_contract() -> None:
     text = _PHASE31.read_text(encoding="utf-8")
 
     assert "def _apply_preventive_damage_shield(" in text, (
-        "Phase 31 muss eine lokale Präventionsschicht besitzen "
-        "(damage shield, nicht nur downstream gate)."
+        "Phase 31 muss eine lokale Präventionsschicht besitzen (damage shield, nicht nur downstream gate)."
     )
     assert "result_audio, shield_meta = self._apply_preventive_damage_shield(" in text, (
         "Phase 31 muss den Damage-Shield im process()-Pfad aufrufen."
@@ -66,9 +65,7 @@ def test_phase42_has_preventive_alignment_and_zero_phase_contract() -> None:
     assert _PHASE42.exists(), f"Fehlt: {_PHASE42}"
     text = _PHASE42.read_text(encoding="utf-8")
 
-    assert "align_stem_to_reference(" in text, (
-        "Phase 42 muss Stem-Latenz präventiv ausrichten, bevor Re-Mix erfolgt."
-    )
+    assert "align_stem_to_reference(" in text, "Phase 42 muss Stem-Latenz präventiv ausrichten, bevor Re-Mix erfolgt."
     assert "signal.sosfiltfilt(" in text, "Phase 42 additive Bandpfade müssen zero-phase filtern."
 
 
@@ -142,8 +139,7 @@ def test_phase31_stereo_simultaneous_processing_invariant_static() -> None:
     )
     # PSOLA: Shared-period helpers müssen vorhanden sein (Stereo via Mono-Mix)
     assert "_psola_compute_periods_mono(" in text, (
-        "Phase 31 PSOLA muss _psola_compute_periods_mono() besitzen: "
-        "Period-Berechnung auf Mono-Mix, niemals pro Kanal."
+        "Phase 31 PSOLA muss _psola_compute_periods_mono() besitzen: Period-Berechnung auf Mono-Mix, niemals pro Kanal."
     )
     assert "_psola_apply_mono(" in text, (
         "Phase 31 PSOLA muss _psola_apply_mono() besitzen: "
@@ -169,9 +165,7 @@ def test_phase31_wsola_identical_channels_yield_identical_output() -> None:
     from backend.core.phases.phase_31_speed_pitch_correction import SpeedPitchCorrectionPhase
 
     phase = SpeedPitchCorrectionPhase()
-    assert phase._STEREO_SIMULTANEOUS_PROCESSING is True, (
-        "_STEREO_SIMULTANEOUS_PROCESSING muss zur Laufzeit True sein."
-    )
+    assert phase._STEREO_SIMULTANEOUS_PROCESSING is True, "_STEREO_SIMULTANEOUS_PROCESSING muss zur Laufzeit True sein."
 
     sr = 48000
     t = np.linspace(0, 0.5, int(sr * 0.5), endpoint=False, dtype=np.float32)

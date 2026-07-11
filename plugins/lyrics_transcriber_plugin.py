@@ -241,9 +241,8 @@ class LyricsTranscriber:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("WhisperTiny", True)
-        except Exception as e:
+        except Exception:
             logger.warning("lyrics_transcriber_plugin.py::_transcribe_onnx fallback", exc_info=True)
-            pass
         try:
             input_name = self._session.get_inputs()[0].name  # type: ignore[union-attr]
             outputs = self._session.run(None, {input_name: mel})  # type: ignore[union-attr]
@@ -256,9 +255,8 @@ class LyricsTranscriber:
             if _plm is not None:
                 try:
                     _plm.set_active("WhisperTiny", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("lyrics_transcriber_plugin.py::_transcribe_onnx fallback", exc_info=True)
-                    pass
 
         # 4. Segmentierung mit Encoder-Aktivierungen
         words = self._segment_with_encoder(audio_16k, encoder_out, duration_s)

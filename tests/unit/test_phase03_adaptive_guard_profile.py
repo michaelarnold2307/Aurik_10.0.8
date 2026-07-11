@@ -1,5 +1,6 @@
-import pytest
 from __future__ import annotations
+
+import pytest
 
 from backend.core.phases.phase_03_denoise import DenoisePhase
 

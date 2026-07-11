@@ -7,11 +7,10 @@ Kopiere diese Datei und passe sie an dein Plugin an.
 import numpy as np
 import pytest
 
-from plugins.sdk.aurik_plugin_base import AurikPlugin
 from plugins.sdk.testing_fixtures import (
     VirtualAurikPipeline,
-    make_test_audio,
     make_noisy_audio,
+    make_test_audio,
 )
 
 
@@ -21,6 +20,7 @@ class TestExamplePlugin:
     @pytest.fixture
     def plugin(self):
         from plugins.sdk.example_plugin.example_plugin import ExamplePlugin
+
         return ExamplePlugin()
 
     @pytest.fixture

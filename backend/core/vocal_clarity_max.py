@@ -67,7 +67,7 @@ class VocalClarityMax:
         """
         result = np.asarray(audio, dtype=np.float32).copy()
         mono = np.mean(result, axis=0) if result.ndim == 2 else result
-        n = len(mono)
+        len(mono)
         report = VocalClarityReport()
 
         # auto-detect vocal regions if no mask
@@ -95,12 +95,11 @@ class VocalClarityMax:
                     fft[mask_2k_6k] *= gain
                 ch_result = np.fft.irfft(fft, n=len(ch_data))
                 if result.ndim == 2:
-                    result[ch] = ch_result[:len(result[ch])]
+                    result[ch] = ch_result[: len(result[ch])]
                 else:
-                    result = ch_result[:len(result)].astype(np.float32)
+                    result = ch_result[: len(result)].astype(np.float32)
         except Exception as e:
             logger.warning("vocal_clarity_max.py::process fallback: %s", e)
-            pass
 
         # ── 2. Formant Enhancement (F1-F4) ──
         # Sehr sanft: max 1.5 dB, Q=6, nur auf vocal_mask
@@ -109,8 +108,8 @@ class VocalClarityMax:
         try:
             # LPC-basierte Formant-Erkennung (vereinfacht)
             formant_regions = [
-                (250, 850),    # F1
-                (850, 2500),   # F2
+                (250, 850),  # F1
+                (850, 2500),  # F2
                 (2500, 3500),  # F3
                 (3500, 4500),  # F4
             ]
@@ -121,15 +120,14 @@ class VocalClarityMax:
                 for flo, fhi in formant_regions:
                     band_mask = (freqs >= flo) & (freqs <= fhi)
                     if np.any(band_mask):
-                        fft[band_mask] *= (1.0 + (10 ** (formant_boost_db / 20.0) - 1.0) * np.mean(vocal_mask))
+                        fft[band_mask] *= 1.0 + (10 ** (formant_boost_db / 20.0) - 1.0) * np.mean(vocal_mask)
                 ch_result = np.fft.irfft(fft, n=len(ch_data))
                 if result.ndim == 2:
-                    result[ch] = ch_result[:len(result[ch])]
+                    result[ch] = ch_result[: len(result[ch])]
                 else:
-                    result = ch_result[:len(result)].astype(np.float32)
+                    result = ch_result[: len(result)].astype(np.float32)
         except Exception as e:
             logger.warning("vocal_clarity_max.py::unknown fallback: %s", e)
-            pass
 
         # ── 3. Breath Intelligence ──
         if preserve_breath:
@@ -143,7 +141,6 @@ class VocalClarityMax:
                 report.breath_preserved = breath_rms_after >= breath_rms_before * 0.85
             except Exception as e:
                 logger.warning("vocal_clarity_max.py::unknown fallback: %s", e)
-                pass
 
         # ── 4. Consonant Preservation (3-8 kHz Transienten) ──
         try:
@@ -154,15 +151,13 @@ class VocalClarityMax:
             report.consonant_preserved = len(consonants_after) >= len(consonants_before) * 0.9
         except Exception as e:
             logger.warning("vocal_clarity_max.py::unknown fallback: %s", e)
-            pass
 
         # ── 5. VQI Naturalness Check ──
         try:
             from backend.core.vocal_quality_index import compute_vqi
+
             report.vqi_before = compute_vqi(mono, sr)
-            report.vqi_after = compute_vqi(
-                np.mean(result, axis=0) if result.ndim == 2 else result, sr
-            )
+            report.vqi_after = compute_vqi(np.mean(result, axis=0) if result.ndim == 2 else result, sr)
             report.naturalness_ok = report.vqi_after >= report.vqi_before - 0.02
         except Exception:
             report.naturalness_ok = True
@@ -172,12 +167,9 @@ class VocalClarityMax:
         # §AF: Dynamics check
         if self._dynamics is not None:
             try:
-                result = self._dynamics.match_envelope(
-                    result, sr, 0, len(mono) // 10
-                )
+                result = self._dynamics.match_envelope(result, sr, 0, len(mono) // 10)
             except Exception as e:
                 logger.warning("vocal_clarity_max.py::unknown fallback: %s", e)
-                pass
 
         self._reports.append(report)
         return result
@@ -192,14 +184,14 @@ class VocalClarityMax:
 
         mask = np.zeros(n, dtype=bool)
         for i in range(0, n - win, hop):
-            frame = audio[i:i + win]
-            rms = float(np.sqrt(np.mean(frame ** 2) + 1e-12))
+            frame = audio[i : i + win]
+            rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
             fft = np.abs(np.fft.rfft(frame))
             freqs = np.fft.rfftfreq(len(frame), d=1.0 / sr)
             centroid = float(np.average(freqs, weights=fft + 1e-10))
             # Vocal: moderate RMS, centroid 400-3000 Hz
             if rms > 0.01 and 400 < centroid < 3000:
-                mask[i:i + win] = True
+                mask[i : i + win] = True
 
         return mask
 
@@ -225,7 +217,7 @@ class VocalClarityMax:
         transients: list[int] = []
         prev_energy = 0.0
         for i in range(0, len(audio) - hop, hop):
-            frame = audio[i:i + hop]
+            frame = audio[i : i + hop]
             fft = np.abs(np.fft.rfft(frame))
             freqs = np.fft.rfftfreq(len(frame), d=1.0 / sr)
             band = (freqs >= 3000) & (freqs <= 8000)

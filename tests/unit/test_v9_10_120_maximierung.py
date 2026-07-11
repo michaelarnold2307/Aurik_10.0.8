@@ -1,4 +1,5 @@
 import pytest
+
 """v9.10.120 — Harmonisierte Maximierung aller Musical-Goals-Metriken + PQS.
 
 Tests verifizieren die recalibrierten Divisoren/Multiplikatoren und die

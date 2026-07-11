@@ -150,7 +150,9 @@ def apply_glue_stage(
         arr *= gain_reduction_lin[:, np.newaxis]
 
     # Auto makeup gain (kompensiert exakt die durchschnittliche GR)
-    avg_gr_lin = float(np.mean(gain_reduction_lin[envelope > threshold_lin])) if np.any(envelope > threshold_lin) else 1.0
+    avg_gr_lin = (
+        float(np.mean(gain_reduction_lin[envelope > threshold_lin])) if np.any(envelope > threshold_lin) else 1.0
+    )
     avg_gr_db = -20.0 * np.log10(max(avg_gr_lin, 1e-12))
     makeup_lin = 10.0 ** (min(avg_gr_db, max_gr_db) / 20.0)
     arr *= makeup_lin

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: CrosstalkCancellationPhase._compute_crosstalk_profile() (§2.56)."""
 
 import numpy as np

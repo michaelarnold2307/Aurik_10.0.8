@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 
 from backend.file_import import load_audio_file

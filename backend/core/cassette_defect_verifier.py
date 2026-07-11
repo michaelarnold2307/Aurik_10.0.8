@@ -42,8 +42,8 @@ logger = logging.getLogger(__name__)
 # Conservativ: -20 dB als universelle Schwelle.
 
 MASKING_THRESHOLD_DB: float = -20.0  # dB unter lokalem Pegel = unhörbar
-MIN_SEGMENT_SAMPLES: int = 2048      # Mindest-Segmentlänge
-SEGMENT_CONTEXT_MS: float = 500.0    # Kontext vor/nach Defektstelle (ms)
+MIN_SEGMENT_SAMPLES: int = 2048  # Mindest-Segmentlänge
+SEGMENT_CONTEXT_MS: float = 500.0  # Kontext vor/nach Defektstelle (ms)
 
 
 @dataclass
@@ -56,16 +56,16 @@ class DefectVerificationResult:
     location_end_s: float
 
     # ── Per-Defect HPE ──
-    hpe_before: float = 0.0       # HPE des defekten Segments VOR Reparatur
-    hpe_after: float = 0.0        # HPE des reparierten Segments NACH Reparatur
-    hpe_delta: float = 0.0        # Verbesserung (positiv = besser)
-    segment_verdict: str = ""     # "passed", "residual_detected", "worse"
+    hpe_before: float = 0.0  # HPE des defekten Segments VOR Reparatur
+    hpe_after: float = 0.0  # HPE des reparierten Segments NACH Reparatur
+    hpe_delta: float = 0.0  # Verbesserung (positiv = besser)
+    segment_verdict: str = ""  # "passed", "residual_detected", "worse"
 
     # ── ABX Residual ──
-    residual_peak_db: float = 0.0       # Spitzen-Residual relativ zum Signal
-    residual_rms_db: float = 0.0        # RMS-Residual
-    residual_masked: bool = True        # Residual unter Maskierungsschwelle?
-    abx_confidence: float = 0.0         # 0-1: Wahrscheinlichkeit dass Residual hörbar
+    residual_peak_db: float = 0.0  # Spitzen-Residual relativ zum Signal
+    residual_rms_db: float = 0.0  # RMS-Residual
+    residual_masked: bool = True  # Residual unter Maskierungsschwelle?
+    abx_confidence: float = 0.0  # 0-1: Wahrscheinlichkeit dass Residual hörbar
 
     # ── Phase-spezifische Proxy-Metriken ──
     proxy_name: str = ""
@@ -74,7 +74,7 @@ class DefectVerificationResult:
     proxy_passed: bool = True
 
     # ── Gesamt-Urteil ──
-    overall_verdict: str = ""     # "clean", "residual_below_masking", "audible_residual"
+    overall_verdict: str = ""  # "clean", "residual_below_masking", "audible_residual"
     recommendation: str = ""
 
 
@@ -86,9 +86,9 @@ class BatchVerificationResult:
     phase_id: str
     total_segments: int
     segments_checked: int
-    clean_count: int               # Kein hörbares Residual
-    masked_count: int              # Residual unter Maskierungsschwelle
-    audible_count: int             # Hörbares Residual
+    clean_count: int  # Kein hörbares Residual
+    masked_count: int  # Residual unter Maskierungsschwelle
+    audible_count: int  # Hörbares Residual
     mean_hpe_delta: float = 0.0
     mean_residual_db: float = 0.0
     per_segment: list[DefectVerificationResult] = field(default_factory=list)
@@ -98,6 +98,7 @@ class BatchVerificationResult:
 # ═══════════════════════════════════════════════════════════════
 # MODUL 1: Per-Defect-HPE-Check
 # ═══════════════════════════════════════════════════════════════
+
 
 def verify_defect_segment(
     original: np.ndarray,
@@ -146,15 +147,11 @@ def verify_defect_segment(
 
     # ── ABX Residual ──
     residual = seg_rep - seg_orig
-    residual_peak_db, residual_rms_db, residual_masked = _compute_residual_level(
-        residual, seg_orig, sr
-    )
+    residual_peak_db, residual_rms_db, residual_masked = _compute_residual_level(residual, seg_orig, sr)
     abx_confidence = _estimate_audibility(residual, seg_orig, sr)
 
     # ── Phase-spezifische Proxy-Metrik ──
-    proxy_name, proxy_score, proxy_threshold, proxy_passed = _compute_phase_proxy(
-        phase_id, seg_orig, seg_rep, sr
-    )
+    proxy_name, proxy_score, proxy_threshold, proxy_passed = _compute_phase_proxy(phase_id, seg_orig, seg_rep, sr)
 
     # ── Verdict ──
     if hpe_delta > 0.01 and residual_masked:
@@ -215,13 +212,10 @@ def verify_defect_batch(
     results: list[DefectVerificationResult] = []
     for start_s, end_s in locations:
         try:
-            r = verify_defect_segment(
-                original, repaired, sr, defect_type, phase_id, start_s, end_s
-            )
+            r = verify_defect_segment(original, repaired, sr, defect_type, phase_id, start_s, end_s)
             results.append(r)
         except Exception as e:
-            logger.debug("Defekt-Verifikation fehlgeschlagen für %s@%.1fs: %s",
-                         defect_type, start_s, e)
+            logger.debug("Defekt-Verifikation fehlgeschlagen für %s@%.1fs: %s", defect_type, start_s, e)
 
     if not results:
         return BatchVerificationResult(
@@ -229,7 +223,9 @@ def verify_defect_batch(
             phase_id=phase_id,
             total_segments=len(locations),
             segments_checked=0,
-            clean_count=0, masked_count=0, audible_count=0,
+            clean_count=0,
+            masked_count=0,
+            audible_count=0,
             overall_verdict="no_data",
         )
 
@@ -267,6 +263,7 @@ def verify_defect_batch(
 # MODUL 2: ABX-Residual-Test (Zeitbereich)
 # ═══════════════════════════════════════════════════════════════
 
+
 def abx_residual_test(
     original_segment: np.ndarray,
     repaired_segment: np.ndarray,
@@ -290,8 +287,8 @@ def abx_residual_test(
     residual = rep - orig
 
     # Pegelberechnung
-    orig_rms = float(np.sqrt(np.mean(orig ** 2)) + 1e-10)
-    residual_rms = float(np.sqrt(np.mean(residual ** 2)) + 1e-10)
+    orig_rms = float(np.sqrt(np.mean(orig**2)) + 1e-10)
+    residual_rms = float(np.sqrt(np.mean(residual**2)) + 1e-10)
     residual_peak = float(np.max(np.abs(residual)) + 1e-10)
 
     residual_rms_db = float(20.0 * np.log10(residual_rms / orig_rms))
@@ -342,6 +339,7 @@ def abx_residual_test(
 # MODUL 3: PMGG-Alternativ-Proxy-Metriken
 # ═══════════════════════════════════════════════════════════════
 
+
 def compute_phase_proxy_for_pmgg(
     phase_id: str,
     audio_before: np.ndarray,
@@ -379,7 +377,6 @@ def compute_phase_proxy_for_pmgg(
             result.update(handler(audio_before, audio_after, sr))
         except Exception as e:
             logger.warning("cassette_defect_verifier.py::compute_phase_proxy_for_pmgg fallback: %s", e)
-            pass
 
     # Layer 3: Kategorie-basierte Universal-Proxies (v10.3)
     category = _PHASE_CATEGORIES.get(phase_id)
@@ -390,7 +387,6 @@ def compute_phase_proxy_for_pmgg(
                 result.update(cat_fn(audio_before, audio_after, sr))
             except Exception as e:
                 logger.warning("cassette_defect_verifier.py::compute_phase_proxy_for_pmgg fallback: %s", e)
-                pass
 
     # Layer 4: Universelle Fallback-Proxies
     result.update(_universal_proxies(audio_before, audio_after, sr))
@@ -405,9 +401,8 @@ _CATEGORY_PROXY_FUNCTIONS: dict[str, callable] = {}
 # Phase-spezifische Proxy-Implementierungen
 # ─────────────────────────────────────────────────────────
 
-def _proxy_phase_24_dropout(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+
+def _proxy_phase_24_dropout(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_24 Dropout Repair: Temporal Continuity statt Spektral-Flatness.
 
     PMGG schliesst 9 Ziele aus (natuerlichkeit, brillanz, authentizitaet,
@@ -425,10 +420,8 @@ def _proxy_phase_24_dropout(
     if n_blocks < 3:
         return {"natuerlichkeit": 0.5, "transparenz": 0.5}
 
-    b_en = np.array([np.mean(before[i*block_samples:(i+1)*block_samples]**2)
-                      for i in range(n_blocks)])
-    a_en = np.array([np.mean(after[i*block_samples:(i+1)*block_samples]**2)
-                      for i in range(n_blocks)])
+    b_en = np.array([np.mean(before[i * block_samples : (i + 1) * block_samples] ** 2) for i in range(n_blocks)])
+    a_en = np.array([np.mean(after[i * block_samples : (i + 1) * block_samples] ** 2) for i in range(n_blocks)])
 
     # Temporal Continuity: std(energy) sollte NIEDRIG sein (keine Sprünge)
     b_continuity = 1.0 / (1.0 + float(np.std(b_en) / (np.mean(b_en) + 1e-10)) * 10)
@@ -454,9 +447,7 @@ def _proxy_phase_24_dropout(
     }
 
 
-def _proxy_phase_56_head_wear(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_phase_56_head_wear(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_56 Head Wear Band-Gap Repair: Band-Gap Closure Metric.
 
     PMGG schliesst 4 Ziele aus (natuerlichkeit, brillanz, authentizitaet,
@@ -468,17 +459,14 @@ def _proxy_phase_56_head_wear(
     """
     n_fft = min(4096, len(before))
     if n_fft < 256:
-        return {"natuerlichkeit": 0.5, "brillanz": 0.5, "authentizitaet": 0.5,
-                "timbre_authentizitaet": 0.5}
+        return {"natuerlichkeit": 0.5, "brillanz": 0.5, "authentizitaet": 0.5, "timbre_authentizitaet": 0.5}
 
     b_fft = np.abs(np.fft.rfft(before.ravel()[:n_fft]))
     a_fft = np.abs(np.fft.rfft(after.ravel()[:n_fft]))
 
     # Spectral Smoothness = 1 / (1 + mean(|diff(spectrum)|))
-    b_smooth = 1.0 / (1.0 + float(np.mean(np.abs(np.diff(b_fft))) /
-                                     (np.mean(b_fft) + 1e-10)) * 5)
-    a_smooth = 1.0 / (1.0 + float(np.mean(np.abs(np.diff(a_fft))) /
-                                     (np.mean(a_fft) + 1e-10)) * 5)
+    b_smooth = 1.0 / (1.0 + float(np.mean(np.abs(np.diff(b_fft))) / (np.mean(b_fft) + 1e-10)) * 5)
+    a_smooth = 1.0 / (1.0 + float(np.mean(np.abs(np.diff(a_fft))) / (np.mean(a_fft) + 1e-10)) * 5)
 
     # HF-Recovery: Energie > 8 kHz
     hf_bin = int(8000 / (sr / n_fft))
@@ -495,9 +483,7 @@ def _proxy_phase_56_head_wear(
     }
 
 
-def _proxy_phase_57_print_through(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_phase_57_print_through(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_57 Print-Through Reduction: Echo Residue Detector.
 
     PMGG schliesst 2 Ziele aus (authentizitaet, emotionalitaet).
@@ -506,20 +492,20 @@ def _proxy_phase_57_print_through(
 
     Proxy: Autokorrelations-basierter Echo-Detektor.
     """
-    min_lag = int(0.05 * sr)   # 50 ms
-    max_lag = int(0.40 * sr)   # 400 ms (Pre-Echo + Post-Echo)
+    min_lag = int(0.05 * sr)  # 50 ms
+    max_lag = int(0.40 * sr)  # 400 ms (Pre-Echo + Post-Echo)
 
     if max_lag >= len(after) // 2 or max_lag <= min_lag:
         return {"authentizitaet": 0.5, "emotionalitaet": 0.5}
 
     # Autokorrelation des Residuals (before - after)
-    diff = before.ravel()[:max_lag * 3] - after.ravel()[:max_lag * 3]
+    diff = before.ravel()[: max_lag * 3] - after.ravel()[: max_lag * 3]
     if len(diff) < max_lag * 2:
         return {"authentizitaet": 0.5, "emotionalitaet": 0.5}
 
     diff_norm = diff / (float(np.std(diff)) + 1e-10)
-    ac = np.correlate(diff_norm, diff_norm, mode='full')
-    ac = ac[len(ac)//2:] / ac[len(ac)//2]  # Normalisieren
+    ac = np.correlate(diff_norm, diff_norm, mode="full")
+    ac = ac[len(ac) // 2 :] / ac[len(ac) // 2]  # Normalisieren
 
     # Echo-Peak im Print-Through-Bereich (100-300ms)
     echo_region = ac[min_lag:max_lag]
@@ -532,9 +518,7 @@ def _proxy_phase_57_print_through(
     }
 
 
-def _proxy_phase_59_modulation_noise(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_phase_59_modulation_noise(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_59 Modulation Noise Reduction: Noise Floor Delta.
 
     PMGG schliesst 2 Ziele aus (natuerlichkeit, emotionalitaet).
@@ -549,10 +533,8 @@ def _proxy_phase_59_modulation_noise(
     if n_blocks < 4:
         return {"natuerlichkeit": 0.5, "emotionalitaet": 0.5}
 
-    b_blocks = [before.ravel()[i*block_samples:(i+1)*block_samples]
-                for i in range(n_blocks)]
-    a_blocks = [after.ravel()[i*block_samples:(i+1)*block_samples]
-                for i in range(n_blocks)]
+    b_blocks = [before.ravel()[i * block_samples : (i + 1) * block_samples] for i in range(n_blocks)]
+    a_blocks = [after.ravel()[i * block_samples : (i + 1) * block_samples] for i in range(n_blocks)]
 
     # Signal-Hüllkurve vs Rausch-Hüllkurve
     b_env = np.array([float(np.sqrt(np.mean(b**2))) for b in b_blocks])
@@ -561,16 +543,21 @@ def _proxy_phase_59_modulation_noise(
     # Hochpass-gefilterte Hüllkurve (≈ Rausch-Anteil)
     if len(b_env) >= 4:
         from scipy import signal as scipy_signal
+
         try:
-            b_hp = scipy_signal.detrend(b_env, type='constant')
-            a_hp = scipy_signal.detrend(a_env, type='constant')
+            b_hp = scipy_signal.detrend(b_env, type="constant")
+            a_hp = scipy_signal.detrend(a_env, type="constant")
         except Exception:
             b_hp = b_env - np.mean(b_env)
             a_hp = a_env - np.mean(a_env)
 
         # Korrelation Signal↔Rauschen: sollte nach Reparatur NIEDRIGER sein
-        b_corr = float(np.abs(np.corrcoef(b_env, b_hp)[0, 1])) if np.std(b_env) > 1e-10 and np.std(b_hp) > 1e-10 else 0.5
-        a_corr = float(np.abs(np.corrcoef(a_env, a_hp)[0, 1])) if np.std(a_env) > 1e-10 and np.std(a_hp) > 1e-10 else 0.5
+        b_corr = (
+            float(np.abs(np.corrcoef(b_env, b_hp)[0, 1])) if np.std(b_env) > 1e-10 and np.std(b_hp) > 1e-10 else 0.5
+        )
+        a_corr = (
+            float(np.abs(np.corrcoef(a_env, a_hp)[0, 1])) if np.std(a_env) > 1e-10 and np.std(a_hp) > 1e-10 else 0.5
+        )
 
         decoupling = b_corr - a_corr  # Positiv = Rauschen besser entkoppelt
         noise_score = 0.5 + decoupling * 2.0
@@ -583,12 +570,10 @@ def _proxy_phase_59_modulation_noise(
     }
 
 
-def _universal_proxies(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _universal_proxies(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Universelle Proxy-Metriken die immer sinnvoll sind."""
-    b_rms = float(np.sqrt(np.mean(before.ravel()**2)) + 1e-10)
-    a_rms = float(np.sqrt(np.mean(after.ravel()**2)) + 1e-10)
+    b_rms = float(np.sqrt(np.mean(before.ravel() ** 2)) + 1e-10)
+    a_rms = float(np.sqrt(np.mean(after.ravel() ** 2)) + 1e-10)
 
     # Pegel-Stabilität
     level_stability = 1.0 - abs(float(20 * np.log10(a_rms / b_rms))) / 20.0
@@ -614,85 +599,136 @@ def _universal_proxies(
 # ── Phase → Kategorie Mapping ──
 _PHASE_CATEGORIES: dict[str, str] = {
     # Denoise / Noise Reduction (9 Phasen, 49 excluded goals)
-    "phase_01": "denoise", "phase_01_click_removal": "denoise",
-    "phase_02": "denoise", "phase_02_hum_removal": "denoise",
-    "phase_03": "denoise", "phase_03_denoise": "denoise",
-    "phase_05": "denoise", "phase_05_rumble_filter": "denoise",
-    "phase_09": "denoise", "phase_09_crackle_removal": "denoise",
-    "phase_28": "denoise", "phase_28_surface_noise": "denoise",
-    "phase_29": "denoise", "phase_29_tape_hiss_reduction": "denoise",
-    "phase_43": "denoise", "phase_43_ml_deesser": "denoise",
+    "phase_01": "denoise",
+    "phase_01_click_removal": "denoise",
+    "phase_02": "denoise",
+    "phase_02_hum_removal": "denoise",
+    "phase_03": "denoise",
+    "phase_03_denoise": "denoise",
+    "phase_05": "denoise",
+    "phase_05_rumble_filter": "denoise",
+    "phase_09": "denoise",
+    "phase_09_crackle_removal": "denoise",
+    "phase_28": "denoise",
+    "phase_28_surface_noise": "denoise",
+    "phase_29": "denoise",
+    "phase_29_tape_hiss_reduction": "denoise",
+    "phase_43": "denoise",
+    "phase_43_ml_deesser": "denoise",
     # EQ / Tonal Correction (6 Phasen, 30 excluded goals)
-    "phase_04": "eq_correction", "phase_04_eq_correction": "eq_correction",
-    "phase_16": "eq_correction", "phase_16_final_eq": "eq_correction",
-    "phase_37": "eq_correction", "phase_37_bass_enhancement": "eq_correction",
-    "phase_38": "eq_correction", "phase_38_air_band": "eq_correction",
-    "phase_39": "eq_correction", "phase_39_air_band_enhancement": "eq_correction",
+    "phase_04": "eq_correction",
+    "phase_04_eq_correction": "eq_correction",
+    "phase_16": "eq_correction",
+    "phase_16_final_eq": "eq_correction",
+    "phase_37": "eq_correction",
+    "phase_37_bass_enhancement": "eq_correction",
+    "phase_38": "eq_correction",
+    "phase_38_air_band": "eq_correction",
+    "phase_39": "eq_correction",
+    "phase_39_air_band_enhancement": "eq_correction",
     "phase_44": "eq_correction",
     # Synthesis / Inpainting (6 Phasen, 24 excluded goals)
-    "phase_06": "synthesis_inpaint", "phase_06_frequency_restoration": "synthesis_inpaint",
-    "phase_07": "synthesis_inpaint", "phase_07_harmonic_restoration": "synthesis_inpaint",
-    "phase_23": "synthesis_inpaint", "phase_23_spectral_repair": "synthesis_inpaint",
-    "phase_50": "synthesis_inpaint", "phase_50_spectral_repair": "synthesis_inpaint",
+    "phase_06": "synthesis_inpaint",
+    "phase_06_frequency_restoration": "synthesis_inpaint",
+    "phase_07": "synthesis_inpaint",
+    "phase_07_harmonic_restoration": "synthesis_inpaint",
+    "phase_23": "synthesis_inpaint",
+    "phase_23_spectral_repair": "synthesis_inpaint",
+    "phase_50": "synthesis_inpaint",
+    "phase_50_spectral_repair": "synthesis_inpaint",
     "phase_55": "synthesis_inpaint",
     # Dynamics (12 Phasen, 42 excluded goals)
-    "phase_10": "dynamics", "phase_11": "dynamics",
-    "phase_17": "dynamics", "phase_18": "dynamics", "phase_19": "dynamics",
-    "phase_26": "dynamics", "phase_26_dynamic_range_expansion": "dynamics",
-    "phase_34": "dynamics", "phase_35": "dynamics", "phase_36": "dynamics",
-    "phase_47": "dynamics", "phase_54": "dynamics",
+    "phase_10": "dynamics",
+    "phase_11": "dynamics",
+    "phase_17": "dynamics",
+    "phase_18": "dynamics",
+    "phase_19": "dynamics",
+    "phase_26": "dynamics",
+    "phase_26_dynamic_range_expansion": "dynamics",
+    "phase_34": "dynamics",
+    "phase_35": "dynamics",
+    "phase_36": "dynamics",
+    "phase_47": "dynamics",
+    "phase_54": "dynamics",
     "phase_54_transparent_dynamics": "dynamics",
     # Spatial / Reverb (4 Phasen, 13 excluded goals)
-    "phase_20": "spatial", "phase_20_reverb_reduction": "spatial",
-    "phase_46": "spatial", "phase_46_spatial_enhancement": "spatial",
-    "phase_48": "spatial", "phase_48_stereo_width_enhancer": "spatial",
-    "phase_49": "spatial", "phase_49_advanced_dereverb": "spatial",
+    "phase_20": "spatial",
+    "phase_20_reverb_reduction": "spatial",
+    "phase_46": "spatial",
+    "phase_46_spatial_enhancement": "spatial",
+    "phase_48": "spatial",
+    "phase_48_stereo_width_enhancer": "spatial",
+    "phase_49": "spatial",
+    "phase_49_advanced_dereverb": "spatial",
     # Speed / Pitch (2 Phasen, 12 excluded goals)
-    "phase_12": "speed_pitch", "phase_12_wow_flutter_fix": "speed_pitch",
-    "phase_31": "speed_pitch", "phase_31_speed_pitch_correction": "speed_pitch",
+    "phase_12": "speed_pitch",
+    "phase_12_wow_flutter_fix": "speed_pitch",
+    "phase_31": "speed_pitch",
+    "phase_31_speed_pitch_correction": "speed_pitch",
     # Harmonic / Saturation (2 Phasen, 4 excluded goals)
-    "phase_22": "harmonic", "phase_22_tape_saturation": "harmonic",
-    "phase_21": "harmonic", "phase_21_exciter": "harmonic",
+    "phase_22": "harmonic",
+    "phase_22_tape_saturation": "harmonic",
+    "phase_21": "harmonic",
+    "phase_21_exciter": "harmonic",
     # Transient (2 Phasen, 3 excluded goals)
-    "phase_08": "transient", "phase_08_transient_preservation": "transient",
+    "phase_08": "transient",
+    "phase_08_transient_preservation": "transient",
     # Phase Alignment (3 Phasen, 4 excluded goals)
-    "phase_14": "phase_alignment", "phase_25": "phase_alignment",
+    "phase_14": "phase_alignment",
+    "phase_25": "phase_alignment",
     "phase_25_azimuth_correction": "phase_alignment",
     # Vocal / Formant (3 Phasen, 12 excluded goals)
-    "phase_42": "vocal", "phase_42_vocal_enhancement": "vocal",
-    "phase_58": "vocal", "phase_58_lyrics_guided_enhancement": "vocal",
+    "phase_42": "vocal",
+    "phase_42_vocal_enhancement": "vocal",
+    "phase_58": "vocal",
+    "phase_58_lyrics_guided_enhancement": "vocal",
     # Legacy / Passthrough (9 Phasen, 10 excluded goals — nur timbre_authentizitaet)
-    "phase_13": "passthrough", "phase_15": "passthrough",
-    "phase_27": "passthrough", "phase_30": "passthrough",
-    "phase_32": "passthrough", "phase_33": "passthrough",
-    "phase_40": "passthrough", "phase_41": "passthrough",
-    "phase_45": "passthrough", "phase_51": "passthrough",
+    "phase_13": "passthrough",
+    "phase_15": "passthrough",
+    "phase_27": "passthrough",
+    "phase_30": "passthrough",
+    "phase_32": "passthrough",
+    "phase_33": "passthrough",
+    "phase_40": "passthrough",
+    "phase_41": "passthrough",
+    "phase_45": "passthrough",
+    "phase_51": "passthrough",
     "phase_52": "passthrough",
     # Vinyl-specific (3 Phasen, 6 excluded goals)
-    "phase_60": "vinyl_specific", "phase_60_inner_groove": "vinyl_specific",
-    "phase_61": "vinyl_specific", "phase_61_groove_echo": "vinyl_specific",
-    "phase_62": "vinyl_specific", "phase_62_crosstalk_cancellation": "vinyl_specific",
+    "phase_60": "vinyl_specific",
+    "phase_60_inner_groove": "vinyl_specific",
+    "phase_61": "vinyl_specific",
+    "phase_61_groove_echo": "vinyl_specific",
+    "phase_62": "vinyl_specific",
+    "phase_62_crosstalk_cancellation": "vinyl_specific",
     "phase_63": "vinyl_specific",
 }
 
 # P0-Prioritäts-Phasen mit spezifischen Handlern
-_SPECIFIC_HANDLER_PHASES: frozenset[str] = frozenset({
-    "phase_03", "phase_03_denoise",       # Denoise — P0
-    "phase_09", "phase_09_crackle_removal",  # Crackle — P0
-    "phase_04", "phase_04_eq_correction",   # EQ — P1
-    "phase_16", "phase_16_final_eq",        # Final EQ — P1
-    "phase_28", "phase_28_surface_noise",   # Surface Noise — P2
-    "phase_29", "phase_29_tape_hiss_reduction",  # Tape Hiss — P2
-})
+_SPECIFIC_HANDLER_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_03",
+        "phase_03_denoise",  # Denoise — P0
+        "phase_09",
+        "phase_09_crackle_removal",  # Crackle — P0
+        "phase_04",
+        "phase_04_eq_correction",  # EQ — P1
+        "phase_16",
+        "phase_16_final_eq",  # Final EQ — P1
+        "phase_28",
+        "phase_28_surface_noise",  # Surface Noise — P2
+        "phase_29",
+        "phase_29_tape_hiss_reduction",  # Tape Hiss — P2
+    }
+)
 
 
 # ─────────────────────────────────────────────────────────
 # Kategorie-basierte Universal-Proxy-Generatoren
 # ─────────────────────────────────────────────────────────
 
-def _proxy_category_denoise(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+
+def _proxy_category_denoise(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Denoise/NR: Noise-Floor-Delta + Signal-Preservation + Transient-Erhalt.
 
     Gilt für: phase_01/02/03/05/09/28/29/43
@@ -712,7 +748,7 @@ def _proxy_category_denoise(
     # Rauschboden = p5-Perzentil der FFT-Magnitude
     b_noise = float(np.percentile(b_fft, 5))
     a_noise = float(np.percentile(a_fft, 5))
-    noise_reduction = 1.0 / (1.0 + max(0, (b_noise - a_noise) / (b_noise + 1e-10)) * 3)
+    1.0 / (1.0 + max(0, (b_noise - a_noise) / (b_noise + 1e-10)) * 3)
     # Umkehren: noise_reduction = 0 wenn Rauschboden gleich, 1 wenn stark reduziert
     noise_score = 0.5 + (b_noise - a_noise) / (b_noise + a_noise + 1e-10)
 
@@ -732,8 +768,8 @@ def _proxy_category_denoise(
     trans_preservation = min(a_trans / b_trans, b_trans / a_trans)
 
     # 4. Spektrale Entropie (sollte nach NR STEIGEN)
-    b_ent = -float(np.sum(b_fft/b_fft.sum() * np.log(b_fft/b_fft.sum() + 1e-10)))
-    a_ent = -float(np.sum(a_fft/a_fft.sum() * np.log(a_fft/a_fft.sum() + 1e-10)))
+    b_ent = -float(np.sum(b_fft / b_fft.sum() * np.log(b_fft / b_fft.sum() + 1e-10)))
+    a_ent = -float(np.sum(a_fft / a_fft.sum() * np.log(a_fft / a_fft.sum() + 1e-10)))
     entropy_ok = 1.0 if a_ent >= b_ent else max(0.0, 1.0 - (b_ent - a_ent))
 
     return {
@@ -751,9 +787,7 @@ def _proxy_category_denoise(
     }
 
 
-def _proxy_category_eq_correction(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_eq_correction(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """EQ/Tonal: Spektrale Balance + Energie-Verteilung + Bass/HF-Ratio.
 
     Gilt für: phase_04/16/37/38/39/44
@@ -776,7 +810,8 @@ def _proxy_category_eq_correction(
         mid = fft[(freqs > 500) & (freqs < 4000)].mean()
         hi = fft[(freqs > 4000)].mean()
         return float(np.std([lo, mid, hi]) / (np.mean([lo, mid, hi]) + 1e-10))
-    b_bal = spectral_balance(b_fft)
+
+    spectral_balance(b_fft)
     a_bal = spectral_balance(a_fft)
     balance_improvement = 1.0 / (1.0 + a_bal)  # 0=unbalanced, 1=balanced
 
@@ -808,9 +843,7 @@ def _proxy_category_eq_correction(
     }
 
 
-def _proxy_category_synthesis_inpaint(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_synthesis_inpaint(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Synthesis/Inpainting: Temporal Continuity + Gap-Closure + HF-Recovery.
 
     Gilt für: phase_06/07/23/50/55 (+ phase_24/56 von Cassette)
@@ -826,12 +859,18 @@ def _proxy_category_synthesis_inpaint(
     block = int(0.05 * sr)
     n_blocks = min(len(b_arr), len(a_arr)) // block
     if n_blocks < 3:
-        return {"natuerlichkeit": 0.5, "authentizitaet": 0.5, "brillanz": 0.5,
-                "timbre_authentizitaet": 0.5, "artikulation": 0.5, "transparenz": 0.5,
-                "tonal_center": 0.5}
+        return {
+            "natuerlichkeit": 0.5,
+            "authentizitaet": 0.5,
+            "brillanz": 0.5,
+            "timbre_authentizitaet": 0.5,
+            "artikulation": 0.5,
+            "transparenz": 0.5,
+            "tonal_center": 0.5,
+        }
 
-    b_en = np.array([np.mean(b_arr[i*block:(i+1)*block]**2) for i in range(n_blocks)])
-    a_en = np.array([np.mean(a_arr[i*block:(i+1)*block]**2) for i in range(n_blocks)])
+    b_en = np.array([np.mean(b_arr[i * block : (i + 1) * block] ** 2) for i in range(n_blocks)])
+    a_en = np.array([np.mean(a_arr[i * block : (i + 1) * block] ** 2) for i in range(n_blocks)])
     b_cont = 1.0 / (1.0 + float(np.std(b_en) / (np.mean(b_en) + 1e-10)) * 10)
     a_cont = 1.0 / (1.0 + float(np.std(a_en) / (np.mean(a_en) + 1e-10)) * 10)
     continuity_delta = a_cont - b_cont
@@ -854,9 +893,7 @@ def _proxy_category_synthesis_inpaint(
     }
 
 
-def _proxy_category_dynamics(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_dynamics(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Dynamics: Crest-Faktor + Envelope-Korrelation + Mikrodynamik-Erhalt.
 
     Gilt für: phase_10/11/17/18/19/26/34/35/36/47/54
@@ -881,8 +918,8 @@ def _proxy_category_dynamics(
     block = int(0.025 * sr)
     n_blocks = min(len(b_arr), len(a_arr)) // block
     if n_blocks >= 4:
-        b_env = np.array([np.sqrt(np.mean(b_arr[i*block:(i+1)*block]**2)) for i in range(n_blocks)])
-        a_env = np.array([np.sqrt(np.mean(a_arr[i*block:(i+1)*block]**2)) for i in range(n_blocks)])
+        b_env = np.array([np.sqrt(np.mean(b_arr[i * block : (i + 1) * block] ** 2)) for i in range(n_blocks)])
+        a_env = np.array([np.sqrt(np.mean(a_arr[i * block : (i + 1) * block] ** 2)) for i in range(n_blocks)])
         env_corr = float(np.corrcoef(b_env, a_env)[0, 1]) if np.std(b_env) > 1e-10 and np.std(a_env) > 1e-10 else 0.5
         env_corr = max(0.0, env_corr)
     else:
@@ -900,9 +937,7 @@ def _proxy_category_dynamics(
     }
 
 
-def _proxy_category_spatial(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_spatial(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Spatial/Reverb: Kanal-Balance + Stereo-Bild-Erhalt + Raumtiefe.
 
     Gilt für: phase_20/46/48/49
@@ -915,8 +950,8 @@ def _proxy_category_spatial(
     corr = max(0.0, corr)
 
     # Energie-Erhalt (Reverb-Entfernung reduziert Energie)
-    b_energy = float(np.sqrt(np.mean(b_arr[:seg_len]**2)))
-    a_energy = float(np.sqrt(np.mean(a_arr[:seg_len]**2)))
+    b_energy = float(np.sqrt(np.mean(b_arr[:seg_len] ** 2)))
+    a_energy = float(np.sqrt(np.mean(a_arr[:seg_len] ** 2)))
     energy_preservation = min(b_energy / (a_energy + 1e-10), a_energy / (b_energy + 1e-10))
 
     return {
@@ -930,9 +965,7 @@ def _proxy_category_spatial(
     }
 
 
-def _proxy_category_speed_pitch(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_speed_pitch(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Speed/Pitch: Pitch-Stabilität + Groove-Erhalt + Timing.
 
     Gilt für: phase_12/31
@@ -967,16 +1000,14 @@ def _proxy_category_speed_pitch(
     }
 
 
-def _proxy_category_harmonic(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_harmonic(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Harmonic/Saturation: THD-Kontrolle + Wärme-Erhalt.
 
     Gilt für: phase_21/22
     """
     b_arr = before.ravel().astype(np.float64)
     a_arr = after.ravel().astype(np.float64)
-    corr = float(np.corrcoef(b_arr[:min(len(b_arr), sr*3)], a_arr[:min(len(a_arr), sr*3)])[0, 1])
+    corr = float(np.corrcoef(b_arr[: min(len(b_arr), sr * 3)], a_arr[: min(len(a_arr), sr * 3)])[0, 1])
     corr = max(0.0, corr)
     return {
         "timbre_authentizitaet": min(1.0, max(0.0, corr)),
@@ -985,9 +1016,7 @@ def _proxy_category_harmonic(
     }
 
 
-def _proxy_category_vocal(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_vocal(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Vocal/Formant: Formant-Erhalt + Artikulation + Natürlichkeit.
 
     Gilt für: phase_42/58
@@ -1008,16 +1037,14 @@ def _proxy_category_vocal(
     }
 
 
-def _proxy_category_vinyl_specific(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_vinyl_specific(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Vinyl-spezifisch: Rillen-Verzerrung + Crosstalk + Echo.
 
     Gilt für: phase_60/61/62/63
     """
     b_arr = before.ravel().astype(np.float64)
     a_arr = after.ravel().astype(np.float64)
-    corr = float(np.corrcoef(b_arr[:min(len(b_arr), sr*3)], a_arr[:min(len(a_arr), sr*3)])[0, 1])
+    corr = float(np.corrcoef(b_arr[: min(len(b_arr), sr * 3)], a_arr[: min(len(a_arr), sr * 3)])[0, 1])
     corr = max(0.0, corr)
     return {
         "authentizitaet": min(1.0, max(0.0, corr)),
@@ -1025,9 +1052,7 @@ def _proxy_category_vinyl_specific(
     }
 
 
-def _proxy_category_passthrough(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_category_passthrough(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """Passthrough/Legacy: Minimale Änderung → Struktur-Korrelation.
 
     Gilt für: phase_13/15/27/30/32/33/40/41/45/51/52
@@ -1035,7 +1060,7 @@ def _proxy_category_passthrough(
     """
     b_arr = before.ravel().astype(np.float64)
     a_arr = after.ravel().astype(np.float64)
-    corr = float(np.corrcoef(b_arr[:min(len(b_arr), sr*3)], a_arr[:min(len(a_arr), sr*3)])[0, 1])
+    corr = float(np.corrcoef(b_arr[: min(len(b_arr), sr * 3)], a_arr[: min(len(a_arr), sr * 3)])[0, 1])
     corr = max(0.0, corr)
     return {
         "timbre_authentizitaet": min(1.0, max(0.0, corr)),
@@ -1073,9 +1098,8 @@ def _get_category_for_phase(phase_id: str) -> str:
 
 # ── Spezifische Handler (P0-P2) ──
 
-def _proxy_specific_phase_03_denoise(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+
+def _proxy_specific_phase_03_denoise(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_03 Denoise: Spezifischer Handler mit SNR-Verbesserung + Sprach/Musik-Detektion.
 
     Die meistgenutzte Phase. 6 excluded goals.
@@ -1104,9 +1128,7 @@ def _proxy_specific_phase_03_denoise(
     return result
 
 
-def _proxy_specific_phase_09_crackle(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_specific_phase_09_crackle(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_09 Crackle: Impuls-Reduktion + Groove-Erhalt."""
     result = _proxy_category_denoise(before, after, sr)
     # Zusätzlich: Impuls-Dichte (Crackle = viele Mikro-Impulse)
@@ -1120,31 +1142,25 @@ def _proxy_specific_phase_09_crackle(
     return result
 
 
-def _proxy_specific_phase_04_eq(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_specific_phase_04_eq(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_04 EQ Correction: RIAA/Tape-EQ — Basis-Entzerrung."""
     result = _proxy_category_eq_correction(before, after, sr)
     # Zusätzlich: Spektrale Flachheit nach Zielkurve
     return result  # EQ-category deckt bereits alle 7 goals ab
 
 
-def _proxy_specific_phase_16_final_eq(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_specific_phase_16_final_eq(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_16 Final EQ: Letzter spektraler Feinschliff vor Ausgabe."""
     result = _proxy_category_eq_correction(before, after, sr)
     # Zusätzlich: True-Peak-Kontrolle
-    b_peak = float(np.max(np.abs(before.ravel())))
+    float(np.max(np.abs(before.ravel())))
     a_peak = float(np.max(np.abs(after.ravel())))
     peak_safety = 1.0 if a_peak < 0.99 else 0.5  # Clipping-Schutz
     result["authentizitaet"] = min(1.0, max(0.0, result.get("authentizitaet", 0.5) * 0.8 + peak_safety * 0.2))
     return result
 
 
-def _proxy_specific_phase_28_surface(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_specific_phase_28_surface(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_28 Surface Noise: Vinyl-Oberflächenrauschen-Profiling."""
     result = _proxy_category_denoise(before, after, sr)
     # Zusätzlich: Breitband-Rausch-Leistungs-Dichte
@@ -1160,9 +1176,7 @@ def _proxy_specific_phase_28_surface(
     return result
 
 
-def _proxy_specific_phase_29_hiss(
-    before: np.ndarray, after: np.ndarray, sr: int
-) -> dict[str, float]:
+def _proxy_specific_phase_29_hiss(before: np.ndarray, after: np.ndarray, sr: int) -> dict[str, float]:
     """phase_29 Tape Hiss: Hochfrequentes Bandrauschen."""
     result = _proxy_category_denoise(before, after, sr)
     # Zusätzlich: HF-Rauschleistung (8-16 kHz)
@@ -1193,6 +1207,7 @@ _SPECIFIC_HANDLERS: dict[str, callable] = {
     "phase_29": _proxy_specific_phase_29_hiss,
     "phase_29_tape_hiss_reduction": _proxy_specific_phase_29_hiss,
 }
+
 
 def _extract_segment(audio: np.ndarray, start: int, end: int) -> np.ndarray:
     """Sicheres Extrahieren eines Segments."""
@@ -1233,12 +1248,10 @@ def _compute_segment_hpe(audio: np.ndarray, sr: int) -> float:
     return float(np.clip(sharpness_ok * 0.5 + roughness_ok * 0.5, 0.0, 1.0))
 
 
-def _compute_residual_level(
-    residual: np.ndarray, original: np.ndarray, sr: int
-) -> tuple[float, float, bool]:
+def _compute_residual_level(residual: np.ndarray, original: np.ndarray, sr: int) -> tuple[float, float, bool]:
     """Berechnet Residual-Pegel relativ zum Signal."""
-    orig_rms = float(np.sqrt(np.mean(original.ravel()**2)) + 1e-12)
-    res_rms = float(np.sqrt(np.mean(residual.ravel()**2)) + 1e-12)
+    orig_rms = float(np.sqrt(np.mean(original.ravel() ** 2)) + 1e-12)
+    res_rms = float(np.sqrt(np.mean(residual.ravel() ** 2)) + 1e-12)
     res_peak = float(np.max(np.abs(residual.ravel())) + 1e-12)
 
     rms_db = float(20.0 * np.log10(res_rms / orig_rms))
@@ -1250,8 +1263,8 @@ def _compute_residual_level(
 
 def _estimate_audibility(residual: np.ndarray, original: np.ndarray, sr: int) -> float:
     """Schätzt die Hörbarkeit des Residuals (0-1)."""
-    orig_rms = float(np.sqrt(np.mean(original.ravel()**2)) + 1e-10)
-    res_rms = float(np.sqrt(np.mean(residual.ravel()**2)) + 1e-10)
+    orig_rms = float(np.sqrt(np.mean(original.ravel() ** 2)) + 1e-10)
+    res_rms = float(np.sqrt(np.mean(residual.ravel() ** 2)) + 1e-10)
     rms_db = float(20.0 * np.log10(res_rms / orig_rms))
 
     # Zwicker/Fastl: Maskierung ≈ -18 bis -28 dB je nach Frequenz
@@ -1265,9 +1278,7 @@ def _estimate_audibility(residual: np.ndarray, original: np.ndarray, sr: int) ->
         return 0.7 + float(min(-rms_db / 10.0, 1.0) * 0.3)  # 0.7 → 1.0
 
 
-def _count_affected_critical_bands(
-    residual: np.ndarray, original: np.ndarray, sr: int
-) -> int:
+def _count_affected_critical_bands(residual: np.ndarray, original: np.ndarray, sr: int) -> int:
     """Zählt kritische Bänder (Zwicker) mit hörbarem Residual."""
     # Zwicker kritische Bänder (vereinfacht): 24 Bänder, 1 Bark ≈ 1.3mm auf Basilarmembran
     n_fft = min(4096, len(residual))
@@ -1295,9 +1306,7 @@ def _count_affected_critical_bands(
     return affected
 
 
-def _per_band_residual(
-    residual: np.ndarray, original: np.ndarray, sr: int
-) -> list[float]:
+def _per_band_residual(residual: np.ndarray, original: np.ndarray, sr: int) -> list[float]:
     """Residual pro kritischem Band in dB."""
     n_fft = min(4096, len(residual))
     if n_fft < 128:
@@ -1350,26 +1359,25 @@ def _compute_phase_proxy(
     return proxy_name, proxy_score, threshold, passed
 
 
-def _build_recommendation(
-    verdict: str, defect_type: str, phase_id: str, proxy_passed: bool
-) -> str:
+def _build_recommendation(verdict: str, defect_type: str, phase_id: str, proxy_passed: bool) -> str:
     """Baut eine handlungsorientierte Empfehlung."""
     if verdict == "clean":
         return f"{defect_type}: Perfekt repariert. Kein hörbares Residual."
     elif verdict == "residual_below_masking":
-        return (f"{defect_type}: Residual vorhanden aber unter Maskierungsschwelle. "
-                f"Für menschliche Ohren unhörbar.")
+        return f"{defect_type}: Residual vorhanden aber unter Maskierungsschwelle. Für menschliche Ohren unhörbar."
     elif not proxy_passed:
-        return (f"{defect_type}: {phase_id} Proxy-Metrik nicht bestanden. "
-                f"Erwäge reduziertes Strength oder alternative Phase.")
+        return (
+            f"{defect_type}: {phase_id} Proxy-Metrik nicht bestanden. "
+            f"Erwäge reduziertes Strength oder alternative Phase."
+        )
     else:
-        return (f"{defect_type}: Hörbares Residual. {phase_id} mit "
-                f"reduziertem Strength (0.65→0.40) erneut versuchen.")
+        return f"{defect_type}: Hörbares Residual. {phase_id} mit reduziertem Strength (0.65→0.40) erneut versuchen."
 
 
 # ─────────────────────────────────────────────────────────────────
 # Integration: Automatische Post-Phase-Verifikation
 # ─────────────────────────────────────────────────────────────────
+
 
 def post_phase_verification(
     audio_before: np.ndarray,
@@ -1403,9 +1411,7 @@ def post_phase_verification(
     for defect_type, locations in defect_locations.items():
         if not locations:
             continue
-        batch = verify_defect_batch(
-            audio_before, audio_after, sr, defect_type, phase_id, locations
-        )
+        batch = verify_defect_batch(audio_before, audio_after, sr, defect_type, phase_id, locations)
         batch_results[defect_type] = batch
         all_hpe_deltas.append(batch.mean_hpe_delta)
         worst_residual = max(worst_residual, batch.mean_residual_db)
@@ -1427,12 +1433,14 @@ def post_phase_verification(
         recommendation = f"Phase {phase_id}: Alle {total_checked} Segmente sauber oder maskiert."
     elif audible_count <= total_checked * 0.05:
         phase_passed = True
-        recommendation = (f"Phase {phase_id}: {audible_count}/{total_checked} Segmente "
-                          f"mit hörbarem Residual (<5%). Akzeptabel.")
+        recommendation = (
+            f"Phase {phase_id}: {audible_count}/{total_checked} Segmente mit hörbarem Residual (<5%). Akzeptabel."
+        )
     else:
         phase_passed = False
-        recommendation = (f"Phase {phase_id}: {audible_count}/{total_checked} Segmente "
-                          f"mit hörbarem Residual. RETRY empfohlen.")
+        recommendation = (
+            f"Phase {phase_id}: {audible_count}/{total_checked} Segmente mit hörbarem Residual. RETRY empfohlen."
+        )
 
     return {
         "phase_passed": phase_passed,
@@ -1448,18 +1456,20 @@ def post_phase_verification(
 
 # ── §v10.3 Category Proxy Dispatch Table ──
 # Built after all category functions are defined above.
-_CATEGORY_PROXY_FUNCTIONS.update({
-    "denoise": _proxy_category_denoise,
-    "eq_correction": _proxy_category_eq_correction,
-    "synthesis_inpaint": _proxy_category_synthesis_inpaint,
-    "dynamics": _proxy_category_dynamics,
-    "spatial": _proxy_category_spatial,
-    "speed_pitch": _proxy_category_speed_pitch,
-    "harmonic": _proxy_category_harmonic,
-    "vocal": _proxy_category_vocal,
-    "passthrough": _proxy_category_passthrough,
-    "vinyl_specific": _proxy_category_vinyl_specific,
-    # transient & phase_alignment: use passthrough as fallback
-    "transient": _proxy_category_passthrough,
-    "phase_alignment": _proxy_category_passthrough,
-})
+_CATEGORY_PROXY_FUNCTIONS.update(
+    {
+        "denoise": _proxy_category_denoise,
+        "eq_correction": _proxy_category_eq_correction,
+        "synthesis_inpaint": _proxy_category_synthesis_inpaint,
+        "dynamics": _proxy_category_dynamics,
+        "spatial": _proxy_category_spatial,
+        "speed_pitch": _proxy_category_speed_pitch,
+        "harmonic": _proxy_category_harmonic,
+        "vocal": _proxy_category_vocal,
+        "passthrough": _proxy_category_passthrough,
+        "vinyl_specific": _proxy_category_vinyl_specific,
+        # transient & phase_alignment: use passthrough as fallback
+        "transient": _proxy_category_passthrough,
+        "phase_alignment": _proxy_category_passthrough,
+    }
+)

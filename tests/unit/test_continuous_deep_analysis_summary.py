@@ -1,9 +1,9 @@
-import pytest
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 import scripts.continuous_deep_analysis as cda_module
 from scripts.continuous_deep_analysis import ContinuousDeepAnalyzer, PhaseCheckpoint

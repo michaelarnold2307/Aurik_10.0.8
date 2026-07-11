@@ -24,12 +24,14 @@ class TestSpec09MaximalAusbaustufe:
     def test_01_calibration_functions_exist(self):
         """Calibration-Matrix-Modul enthält Kalibrierungsfunktionen."""
         import backend.core.calibration_matrix as cm
-        assert hasattr(cm, 'compute_tcci'), "compute_tcci fehlt — kein Transfer-Chain-Index"
+
+        assert hasattr(cm, "compute_tcci"), "compute_tcci fehlt — kein Transfer-Chain-Index"
         assert callable(cm.compute_tcci)
 
     def test_02_tcci_handles_all_chains(self):
         """Transfer-Chain-Complexity-Index funktioniert für alle Ketten."""
         from backend.core.calibration_matrix import compute_tcci
+
         assert 0.0 <= compute_tcci(["cd_digital"]) <= 1.0
         assert 0.0 <= compute_tcci(["vinyl", "tape", "mp3_low"]) <= 1.0
         assert compute_tcci(["vinyl", "tape", "mp3_low"]) > compute_tcci(["cd_digital"]), (
@@ -45,23 +47,20 @@ class TestSpec09GoalTargetResolver:
     def test_10_goal_targets_resolvable(self):
         """Goal-Targets werden pro Song aus Restorability+Era+Genre+Material abgeleitet."""
         from backend.core.studio_goal_targets import estimate_song_goal_targets
-        assert callable(estimate_song_goal_targets), (
-            "estimate_song_goal_targets fehlt oder ist nicht callable"
-        )
+
+        assert callable(estimate_song_goal_targets), "estimate_song_goal_targets fehlt oder ist nicht callable"
 
     def test_11_goal_targets_accepts_transfer_chain(self):
         """Goal-Target-Resolver akzeptiert material_type und transfer_chain."""
         import inspect
+
         from backend.core.studio_goal_targets import estimate_song_goal_targets
+
         sig = inspect.signature(estimate_song_goal_targets)
         params = list(sig.parameters.keys())
         # Akzeptiert material_type (statt 'material') und transfer_chain
-        assert 'material_type' in params, (
-            f"estimate_song_goal_targets akzeptiert material_type nicht: {params}"
-        )
-        assert 'transfer_chain' in params, (
-            f"estimate_song_goal_targets akzeptiert transfer_chain nicht: {params}"
-        )
+        assert "material_type" in params, f"estimate_song_goal_targets akzeptiert material_type nicht: {params}"
+        assert "transfer_chain" in params, f"estimate_song_goal_targets akzeptiert transfer_chain nicht: {params}"
 
 
 @pytest.mark.unit
@@ -72,8 +71,9 @@ class TestSpec09GoalBaselineCheck:
     def test_20_goal_baseline_module_exists(self):
         """GOAL_BASELINE_CHECK ist als Konzept im Code verankert."""
         import backend.core.unified_restorer_v3 as uv3_mod
+
         src = open(uv3_mod.__file__, encoding="utf-8").read()
-        assert 'baseline' in src.lower() or 'GOAL_BASELINE' in src, (
+        assert "baseline" in src.lower() or "GOAL_BASELINE" in src, (
             "Kein GOAL_BASELINE_CHECK in UV3 — Pre-Pipeline-Qualität nicht validiert"
         )
 
@@ -86,8 +86,9 @@ class TestSpec09SongCalibration:
     def test_30_calibration_matrix_has_scaling(self):
         """Calibration-Matrix hat songweite Skalierungsfunktionen."""
         import backend.core.calibration_matrix as cm
+
         # Mindestens eine Skalierungsfunktion muss existieren
-        scaling_funcs = [n for n in dir(cm) if 'scale' in n.lower() or 'scalar' in n.lower()]
+        scaling_funcs = [n for n in dir(cm) if "scale" in n.lower() or "scalar" in n.lower()]
         assert len(scaling_funcs) > 0, (
             "Keine Skalierungsfunktion in calibration_matrix — keine songweite Anpassung möglich"
         )

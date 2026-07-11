@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_emotional_arc.py — EmotionalArcPreservationMetric Test-Suite (≥ 15 Tests)
 Alle Tests synthetisch, kein Datei-I/O, SR = 48_000.

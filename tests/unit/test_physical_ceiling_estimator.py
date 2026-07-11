@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für core/physical_ceiling_estimator.py — Spec §2.33.
 
 ≥ 25 Unit-Tests: Ceiling-Bounds, SNR-Profil, Material-Priors,

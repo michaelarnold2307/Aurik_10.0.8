@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: GrooveEchoCancellationPhase._compute_groove_echo_profile() (§2.56)."""
 
 import numpy as np

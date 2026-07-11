@@ -98,6 +98,7 @@ def make_noisy_audio(
 @dataclass
 class MockMaterialInfo:
     """Mock für Aurik-Material-Info."""
+
     material: str = "vinyl"
     era: int = 1972
     genre: str = "Jazz"
@@ -109,6 +110,7 @@ class MockMaterialInfo:
 @dataclass
 class VirtualPipelineResult:
     """Ergebnis einer virtuellen Pipeline-Ausführung."""
+
     audio: np.ndarray
     sample_rate: int
     phase_results: list[dict] = field(default_factory=list)

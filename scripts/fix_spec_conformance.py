@@ -79,7 +79,7 @@ def fix_prints_in_file(path: Path) -> int:
     """
     try:
         content = path.read_text(encoding="utf-8")
-    except Exception as e:
+    except Exception:
         logger.warning("fix_spec_conformance.py::fix_prints_in_file fallback", exc_info=True)
         return 0
 

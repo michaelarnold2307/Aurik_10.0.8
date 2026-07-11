@@ -1,4 +1,5 @@
 import pytest
+
 """Test Quality Metrics Manager Integration."""
 
 import tempfile

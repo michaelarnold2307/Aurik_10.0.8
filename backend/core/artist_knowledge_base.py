@@ -152,7 +152,6 @@ class ArtistKnowledgeBase:
             self._init_db()
         except Exception:
             logger.debug("_get_conn: silent except suppressed", exc_info=True)
-            pass
         return self._conn
 
     # ------------------------------------------------------------------
@@ -312,7 +311,6 @@ class ArtistKnowledgeBase:
                     rows.append((0.90, ps, float(vqi), float(oqs)))
                 except Exception:
                     logger.debug("_lookup_impl: silent except suppressed", exc_info=True)
-                    pass
 
         # Tier 2: era-decade + material + label (if label known)
         if lbl:
@@ -328,7 +326,6 @@ class ArtistKnowledgeBase:
                     rows.append((0.75, ps, float(vqi), float(oqs)))
                 except Exception:
                     logger.debug("_lookup_impl: silent except suppressed", exc_info=True)
-                    pass
 
         # Tier 2b: era-decade + material + genre (genre-informed but weaker than label)
         if genre_key:
@@ -344,7 +341,6 @@ class ArtistKnowledgeBase:
                     rows.append((0.65, ps, float(vqi), float(oqs)))
                 except Exception:
                     logger.debug("_lookup_impl: silent except suppressed", exc_info=True)
-                    pass
 
         # Tier 3: era-decade + material
         cur = conn.execute(
@@ -359,7 +355,6 @@ class ArtistKnowledgeBase:
                 rows.append((0.55, ps, float(vqi), float(oqs)))
             except Exception:
                 logger.debug("_lookup_impl: silent except suppressed", exc_info=True)
-                pass
 
         # Tier 4: era-decade only (broadest fallback)
         if len(rows) < 3:
@@ -375,7 +370,6 @@ class ArtistKnowledgeBase:
                     rows.append((0.35, ps, float(vqi), float(oqs)))
                 except Exception:
                     logger.debug("_lookup_impl: silent except suppressed", exc_info=True)
-                    pass
 
         if not rows:
             return AKBPrior()

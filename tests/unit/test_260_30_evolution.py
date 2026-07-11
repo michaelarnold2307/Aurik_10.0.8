@@ -11,10 +11,10 @@ Testet:
 import numpy as np
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════
 # §2.60 Fahrplan
 # ═══════════════════════════════════════════════════════════════
+
 
 @pytest.mark.unit
 class TestFahrplan:
@@ -49,7 +49,6 @@ class TestFahrplan:
 
     def test_fahrplan_per_segment_skip_silence(self):
         from backend.core.fahrplan import build_fahrplan
-        from backend.core.fahrplan import Fahrplan
 
         fp = build_fahrplan(
             phase_ids=["phase_01_click_removal", "phase_03_denoise"],
@@ -72,6 +71,7 @@ class TestFahrplan:
 # ═══════════════════════════════════════════════════════════════
 # §2.61 SectionGoalAdapter
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestSectionGoalAdapter:
     """Testet get_sections() mit verschiedenen Audio-Längen."""
@@ -128,6 +128,7 @@ class TestSectionGoalAdapter:
 # §2.62 Per-Segment Executor
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestPerSegmentExecutor:
     """Testet run_phase_per_segment() und get_segment_strengths_from_fahrplan()."""
 
@@ -139,12 +140,16 @@ class TestPerSegmentExecutor:
         def dummy_phase(a, **kw):
             class R:
                 pass
+
             r = R()
             r.audio = a * float(kw.get("strength", 1.0))
             return r
 
         result = run_phase_per_segment(
-            audio, 48000, dummy_phase, {"strength": 0.5, "sample_rate": 48000},
+            audio,
+            48000,
+            dummy_phase,
+            {"strength": 0.5, "sample_rate": 48000},
             segment_bounds_s=[0.0, 1.0],
             segment_strengths=[0.5],
         )
@@ -161,12 +166,16 @@ class TestPerSegmentExecutor:
         def dummy_phase(a, **kw):
             class R:
                 pass
+
             r = R()
             r.audio = a * float(kw.get("strength", 1.0))
             return r
 
         result = run_phase_per_segment(
-            audio, sr, dummy_phase, {"strength": 1.0, "sample_rate": sr},
+            audio,
+            sr,
+            dummy_phase,
+            {"strength": 1.0, "sample_rate": sr},
             segment_bounds_s=[0.0, 0.5, 1.0],
             segment_strengths=[0.5, 1.5],
         )
@@ -205,7 +214,7 @@ class TestPerSegmentExecutor:
         assert len(bounds) == 4  # [0, 10, 30, 45]
         assert len(strengths) == 3
         # At least two different strengths
-        assert len(set(round(s, 2) for s in strengths)) >= 2
+        assert len({round(s, 2) for s in strengths}) >= 2
 
     def test_stereo_audio_preserved(self):
         from backend.core.per_segment_executor import run_phase_per_segment
@@ -216,12 +225,16 @@ class TestPerSegmentExecutor:
         def dummy_phase(a, **kw):
             class R:
                 pass
+
             r = R()
             r.audio = a
             return r
 
         result = run_phase_per_segment(
-            audio, sr, dummy_phase, {"strength": 1.0, "sample_rate": sr},
+            audio,
+            sr,
+            dummy_phase,
+            {"strength": 1.0, "sample_rate": sr},
             segment_bounds_s=[0.0, 0.25, 0.5],
             segment_strengths=[0.5, 1.0],
         )
@@ -233,6 +246,7 @@ class TestPerSegmentExecutor:
 # ═══════════════════════════════════════════════════════════════
 # §2.63 Closed-Loop PID
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestClosedLoopPID:
     """Testet ClosedLoopPIDController."""
@@ -304,11 +318,12 @@ class TestClosedLoopPID:
 # §3.0a Source-Aware Fahrplan
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestSourceAwareFahrplan:
     """Testet get_stem_config() und filter_phases_for_stem()."""
 
     def test_vocals_skips_denoise(self):
-        from backend.core.source_aware_fahrplan import get_stem_config, filter_phases_for_stem
+        from backend.core.source_aware_fahrplan import get_stem_config
 
         cfg = get_stem_config("vocals")
         assert cfg.phase_strengths.get("phase_03_denoise", 1.0) == 0.0

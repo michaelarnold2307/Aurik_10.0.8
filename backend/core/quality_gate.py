@@ -188,20 +188,26 @@ class QualityGate:
                 logger.warning(
                     "[QualityGate/%s] HPE ANSTREBGEND (%.3f) — abgelehnt. "
                     "Das Ergebnis klingt für menschliche Ohren unangenehm: %s",
-                    context, score, ", ".join(result.issues) if result.issues else label,
+                    context,
+                    score,
+                    ", ".join(result.issues) if result.issues else label,
                 )
                 return False, score
 
             if score < 0.50:
                 logger.info(
                     "[QualityGate/%s] HPE NEUTRAL (%.3f) — akzeptiert mit Warnung. %s",
-                    context, score, label,
+                    context,
+                    score,
+                    label,
                 )
                 return True, score
 
             logger.debug(
                 "[QualityGate/%s] HPE %s (%.3f) — bestanden.",
-                context, label, score,
+                context,
+                label,
+                score,
             )
             return True, score
 

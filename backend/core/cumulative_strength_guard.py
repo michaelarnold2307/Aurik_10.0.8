@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -117,7 +116,9 @@ class CumulativeStrengthTracker:
             "§G CumulativeStrengthGuard: %s cumulative=%.3f < %.2f — "
             "muss um Faktor %.2f angehoben werden. "
             "Reduktionen: %s",
-            self.phase_id, cum, minimum,
+            self.phase_id,
+            cum,
+            minimum,
             minimum / max(cum, 1e-6),
             {k: f"{v:.3f}" for k, v in sorted(self.reductions.items())},
         )
@@ -159,10 +160,7 @@ class GlobalCumulativeGuard:
 
     def all_reports(self) -> dict[str, StrengthReport]:
         """Reports aller getrackten Phasen."""
-        return {
-            pid: tracker.report()
-            for pid, tracker in self._trackers.items()
-        }
+        return {pid: tracker.report() for pid, tracker in self._trackers.items()}
 
     def phases_below_threshold(self, minimum: float = CUMULATIVE_MINIMUM) -> list[tuple[str, float]]:
         """Listet Phasen auf, deren kumulative Stärke unter dem Minimum liegt.
@@ -185,9 +183,11 @@ class GlobalCumulativeGuard:
             return
         logger.warning(
             "§G CumulativeStrengthGuard: %d/%d Phasen unter %.2f:\n%s",
-            len(weak), len(self._trackers), CUMULATIVE_MINIMUM,
+            len(weak),
+            len(self._trackers),
+            CUMULATIVE_MINIMUM,
             "\n".join(
-                f"  {pid}: cum={cum:.3f} (Dämpfung %{1-cum:.1%}) "
+                f"  {pid}: cum={cum:.3f} (Dämpfung %{1 - cum:.1%}) "
                 f"— stärkster Guard: "
                 f"{self._trackers[pid].strongest_reduction_guard()}"
                 for pid, cum in weak

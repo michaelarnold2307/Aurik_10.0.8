@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_19_de_esser._compute_de_esser_profile (§2.56)."""
 
 import numpy as np

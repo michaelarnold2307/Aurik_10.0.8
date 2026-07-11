@@ -1,8 +1,9 @@
 """Tests für Fallback-Resilience nach handwerklichen Fixes (resampy, pyloudnorm)."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
-from pathlib import Path
 
 
 @pytest.mark.unit
@@ -11,8 +12,9 @@ class TestFileImportResilience:
 
     def test_resample_to_different_sr(self, tmp_path: Path):
         """Resampling from 44.1k to 48k must succeed (resampy or scipy fallback)."""
-        import backend.file_import as fi
         import soundfile as sf
+
+        import backend.file_import as fi
 
         audio = np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 22050, endpoint=False)).astype(np.float32)
         test_file = tmp_path / "test.wav"
@@ -25,13 +27,16 @@ class TestFileImportResilience:
 
     def test_stereo_no_resample_passthrough(self, tmp_path: Path):
         """Stereo file without resampling must pass through unchanged in shape."""
-        import backend.file_import as fi
         import soundfile as sf
 
-        audio = np.column_stack([
-            np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, endpoint=False)),
-            np.cos(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, endpoint=False)),
-        ]).astype(np.float32)
+        import backend.file_import as fi
+
+        audio = np.column_stack(
+            [
+                np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, endpoint=False)),
+                np.cos(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, endpoint=False)),
+            ]
+        ).astype(np.float32)
         test_file = tmp_path / "stereo.wav"
         sf.write(str(test_file), audio, 48000)
 
@@ -49,8 +54,7 @@ class TestLoudnessFallback:
         from backend.core.delivery_standards import LoudnessAnalyzer, LoudnessResult
 
         analyzer = LoudnessAnalyzer()
-        audio = (np.sin(2 * np.pi * 440 * np.linspace(0, 1, 48000, endpoint=False))
-                 .astype(np.float32) * 0.5)
+        audio = np.sin(2 * np.pi * 440 * np.linspace(0, 1, 48000, endpoint=False)).astype(np.float32) * 0.5
 
         result = analyzer.analyze(audio, 48000)
         assert isinstance(result, LoudnessResult)
@@ -80,16 +84,18 @@ class TestPsychoacousticMetricsMigration:
     def test_import_from_comprehensive_metrics(self):
         """PsychoAcousticMetrics must be importable from comprehensive_metrics."""
         from backend.core.comprehensive_metrics import PsychoAcousticMetrics
+
         assert PsychoAcousticMetrics is not None
 
     def test_can_instantiate(self):
         """PsychoAcousticMetrics must be instantiable with valid defaults."""
-        from backend.core.comprehensive_metrics import PsychoAcousticMetrics
         from dataclasses import fields
+
+        from backend.core.comprehensive_metrics import PsychoAcousticMetrics
 
         kwargs = {}
         for f in fields(PsychoAcousticMetrics):
-            kwargs[f.name] = 0.5 if 'float' in str(f.type) else 0
+            kwargs[f.name] = 0.5 if "float" in str(f.type) else 0
         metrics = PsychoAcousticMetrics(**kwargs)
         assert metrics is not None
-        assert hasattr(metrics, 'snr_db')
+        assert hasattr(metrics, "snr_db")

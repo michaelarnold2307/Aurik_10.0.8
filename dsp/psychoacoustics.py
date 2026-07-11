@@ -377,17 +377,11 @@ def _ath_at_freq_spl(freq_hz: float) -> float:
     PsychoacousticMaskingModel._ath_threshold_db().
     """
     f_khz = freq_hz / 1000.0
-    ath_spl_db = (
-        3.64 * (f_khz ** (-0.8))
-        - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2)
-        + 1e-3 * (f_khz**4)
-    )
+    ath_spl_db = 3.64 * (f_khz ** (-0.8)) - 6.5 * np.exp(-0.6 * (f_khz - 3.3) ** 2) + 1e-3 * (f_khz**4)
     return float(ath_spl_db)
 
 
-def compute_specific_loudness_moore(
-    audio: np.ndarray, sr: int
-) -> np.ndarray:
+def compute_specific_loudness_moore(audio: np.ndarray, sr: int) -> np.ndarray:
     """Berechnet spezifische Lautheit nach Moore/Glasberg (2007).
 
     Approximiert das binaurale Lautheitsmodell nach Moore & Glasberg (2007)

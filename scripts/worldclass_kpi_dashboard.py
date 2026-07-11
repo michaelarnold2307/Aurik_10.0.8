@@ -360,10 +360,7 @@ def _collect_from_result_csvs(root: Path, cfg: dict[str, Any], run_dir: Path | N
             # Bei rein synthetischem Corpus (alle "unknown") → None (unzureichende Datenlage).
             "worldclass_era_diversity_ok": (
                 None  # unzureichende Datenlage: Corpus enthält keine verifizierten Ären
-                if sum(
-                    v for k, v in corpus_era_dist.items()
-                    if k not in ("unknown", "", "none")
-                ) < 5
+                if sum(v for k, v in corpus_era_dist.items() if k not in ("unknown", "", "none")) < 5
                 else len({k for k in corpus_era_dist if k not in ("unknown", "", "none")}) >= 5
             ),
             "worldclass_genre_diversity_ok": len(corpus_genre_dist) >= 4,

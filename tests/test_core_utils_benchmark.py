@@ -1,7 +1,7 @@
-import pytest
 import time
 
 import numpy as np
+import pytest
 
 from backend.core.core_utils import compute_rms
 

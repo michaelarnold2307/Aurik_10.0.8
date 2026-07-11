@@ -14,11 +14,9 @@ import itertools
 import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 
-import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("calibrate")
@@ -26,9 +24,9 @@ logger = logging.getLogger("calibrate")
 # ── Parameter-Raster ─────────────────────────────────────────
 # Jeder Parameter wird in 3 Stufen getestet (27 Kombinationen total)
 PARAM_GRID = {
-    "codec_avg_discount": [0.35, 0.45, 0.55],       # ×0.35 (stark), ×0.45 (aktuell), ×0.55 (mild)
-    "click_iqr_codec":    [8.5, 10.0, 12.0],        # IQR-Schwelle für Codec-Click-Guard
-    "phase03_dsp_threshold": [0.12, 0.20, 0.30],     # Strength ≤ X → use_lightweight
+    "codec_avg_discount": [0.35, 0.45, 0.55],  # ×0.35 (stark), ×0.45 (aktuell), ×0.55 (mild)
+    "click_iqr_codec": [8.5, 10.0, 12.0],  # IQR-Schwelle für Codec-Click-Guard
+    "phase03_dsp_threshold": [0.12, 0.20, 0.30],  # Strength ≤ X → use_lightweight
 }
 
 
@@ -91,7 +89,8 @@ def sweep() -> list[dict]:
 
         logger.info(
             "[%2d/%2d] discount=%.2f iqr=%.1f dsp_thr=%.2f → vocal=%.1f (%.1fs)",
-            i + 1, len(combinations),
+            i + 1,
+            len(combinations),
             params["codec_avg_discount"],
             params["click_iqr_codec"],
             params["phase03_dsp_threshold"],
@@ -111,16 +110,18 @@ def report(results: list[dict]) -> None:
     print("=" * 60)
     for i, r in enumerate(sorted_results[:5]):
         print(
-            f"  #{i+1}: discount={r['codec_avg_discount']:.2f} "
+            f"  #{i + 1}: discount={r['codec_avg_discount']:.2f} "
             f"iqr={r['click_iqr_codec']:.0f} "
             f"dsp_thr={r['phase03_dsp_threshold']:.2f} "
             f"→ vocal={r.get('vocal_score', 0):.1f}"
         )
 
     best = sorted_results[0]
-    print(f"\n  ★ Optimal: discount={best['codec_avg_discount']:.2f} "
-          f"iqr={best['click_iqr_codec']:.0f} "
-          f"dsp_thr={best['phase03_dsp_threshold']:.2f}")
+    print(
+        f"\n  ★ Optimal: discount={best['codec_avg_discount']:.2f} "
+        f"iqr={best['click_iqr_codec']:.0f} "
+        f"dsp_thr={best['phase03_dsp_threshold']:.2f}"
+    )
 
     # Speichere Ergebnisse
     out_path = Path("logs/calibrate_codec_params.json")
@@ -132,6 +133,7 @@ def report(results: list[dict]) -> None:
 
 if __name__ == "__main__":
     import argparse
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="Nur 2 Stufen pro Parameter (8 Kombinationen)")
     args = ap.parse_args()

@@ -1,10 +1,11 @@
-import pytest
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 def _run_gate(tmp_path: Path, payload: dict, *extra_args: str) -> subprocess.CompletedProcess[str]:

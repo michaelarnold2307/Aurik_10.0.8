@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für Genre-Restaurierungsprofile aus core.genre_classifier.
 
 Testet:

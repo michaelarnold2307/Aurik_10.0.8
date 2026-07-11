@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: MidSideProcessing._compute_mid_side_profile() (§2.56)
 
 Verifiziert dass der adaptive transient_preserve-Parameter

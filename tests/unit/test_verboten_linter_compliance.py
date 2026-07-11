@@ -38,7 +38,9 @@ class TestVerbotenlLinterZeroViolations:
     def test_linter_script_exists(self) -> None:
         assert _LINTER.exists(), f"aurik_verboten_linter.py nicht gefunden: {_LINTER}"
 
-    @pytest.mark.skip(reason="Bekannte V01/V08-Verstöße in Production-Code (np.corrcoef, np.correlate) — erfordert breites Refactoring")
+    @pytest.mark.skip(
+        reason="Bekannte V01/V08-Verstöße in Production-Code (np.corrcoef, np.correlate) — erfordert breites Refactoring"
+    )
     def test_backend_no_error_violations(self) -> None:
         """Aktuelle ERROR-Level-Regeln des VERBOTEN-Linters: 0 Verstöße in backend/."""
         result = subprocess.run(

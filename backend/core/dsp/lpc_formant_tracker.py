@@ -556,7 +556,6 @@ class _LPCFormantTracker:
                     _mono_aa = _sosfiltfilt_t(_aa_sos_t, mono_win.astype(np.float64))
                 except Exception as e:
                     logger.warning("lpc_formant_tracker.py::track fallback: %s", e)
-                    pass
             mono_ds = _mono_aa[::ds].astype(np.float64)
             sr_ds = max(1, sr // ds)
             if mono_ds.size <= (_LPC_ORDER + 1):

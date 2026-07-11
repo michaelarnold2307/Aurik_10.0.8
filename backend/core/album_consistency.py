@@ -163,7 +163,6 @@ class AlbumConsistencyPass:
                 return float(10.0 * np.log10(hi / lo) / np.log2(8000.0 / 500.0))
         except Exception as e:
             logger.warning("album_consistency.py::_measure_spectral_tilt fallback: %s", e)
-            pass
         return -4.0  # conservative neutral
 
     @staticmethod

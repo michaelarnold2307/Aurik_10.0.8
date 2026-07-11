@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_33_stereo_width_limiter._compute_width_limiter_profile (§2.56)."""
 
 from backend.core.phases.phase_33_stereo_width_limiter import StereoWidthLimiterPhaseV2

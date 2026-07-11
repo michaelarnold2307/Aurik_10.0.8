@@ -16,7 +16,7 @@ SPEC_PATH = ROOT / "SPEC.md"
 DOCUMENTED: set[str] = set()
 if SPEC_PATH.exists():
     spec_text = SPEC_PATH.read_text(encoding="utf-8")
-    for match in re.finditer(r'`(§[A-Za-z0-9._-]+)`', spec_text):
+    for match in re.finditer(r"`(§[A-Za-z0-9._-]+)`", spec_text):
         DOCUMENTED.add(match.group(1))
 
 # Extrahiere §-Referenzen aus geänderten/neuen Dateien
@@ -26,7 +26,7 @@ for fp in sys.argv[1:]:
         content = Path(fp).read_text(encoding="utf-8")
     except Exception:
         continue
-    found = set(re.findall(r'§[A-Za-z0-9._-]+', content))
+    found = set(re.findall(r"§[A-Za-z0-9._-]+", content))
     undocumented = found - DOCUMENTED
     if undocumented:
         new_refs[fp] = undocumented
@@ -35,8 +35,9 @@ if not new_refs:
     print(f"§-Check: ✅ Alle Referenzen dokumentiert ({len(DOCUMENTED)} in SPEC.md)")
     sys.exit(0)
 
-print(f"§-Check: ❌ {sum(len(v) for v in new_refs.values())} undokumentierte §-Referenzen "
-      f"in {len(new_refs)} Dateien:\n")
+print(
+    f"§-Check: ❌ {sum(len(v) for v in new_refs.values())} undokumentierte §-Referenzen in {len(new_refs)} Dateien:\n"
+)
 for fp, refs in sorted(new_refs.items()):
     print(f"  {fp}:")
     for ref in sorted(refs):

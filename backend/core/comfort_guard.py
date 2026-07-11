@@ -30,13 +30,13 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ── Psychoakustische Konstanten ─────────────────────────────────────────────
-CRITICAL_LOW_HZ: float = 2000.0   # Untergrenze kritischer Bereich
+CRITICAL_LOW_HZ: float = 2000.0  # Untergrenze kritischer Bereich
 CRITICAL_HIGH_HZ: float = 5000.0  # Obergrenze kritischer Bereich
-COMFORT_THRESHOLD: float = 0.12   # Max Sharpness-Ratio vor Korrektur (12%)
-MAX_ATTENUATION_DB: float = 3.0   # Max Shelf-Cut (konservativ — unhörbar aber wirksam)
-TARGET_SHARPNESS: float = 0.09    # Ziel-Sharpness (9% = sehr komfortabel)
-SHELF_FC_HZ: float = 2500.0       # High-Shelf Eckfrequenz
-SHELF_Q: float = 0.5              # Sanfter Shelf (kein resonantes Bell-Filter)
+COMFORT_THRESHOLD: float = 0.12  # Max Sharpness-Ratio vor Korrektur (12%)
+MAX_ATTENUATION_DB: float = 3.0  # Max Shelf-Cut (konservativ — unhörbar aber wirksam)
+TARGET_SHARPNESS: float = 0.09  # Ziel-Sharpness (9% = sehr komfortabel)
+SHELF_FC_HZ: float = 2500.0  # High-Shelf Eckfrequenz
+SHELF_Q: float = 0.5  # Sanfter Shelf (kein resonantes Bell-Filter)
 
 
 @dataclass
@@ -63,7 +63,7 @@ def _compute_sharpness(audio: np.ndarray, sr: int) -> float:
         return 0.0
 
     n_fft = min(4096, len(mono) // 2)
-    spec = np.abs(np.fft.rfft(mono[:n_fft * 2]))
+    spec = np.abs(np.fft.rfft(mono[: n_fft * 2]))
     freqs = np.fft.rfftfreq(n_fft * 2, d=1.0 / sr)
 
     mask = (freqs >= CRITICAL_LOW_HZ) & (freqs <= CRITICAL_HIGH_HZ)
@@ -88,9 +88,9 @@ def _apply_high_shelf(
 ) -> np.ndarray:
     """Wendet sanften High-Shelf-Filter an (psychoakustisch optimiert).
 
-    Nutzt scipy.signal.biquad. Gain negativ = Absenkung der Höhen.
+    Nutzt scipy.signal.lfilter. Gain negativ = Absenkung der Höhen.
     """
-    from scipy.signal import biquad
+    from scipy.signal import lfilter
 
     if abs(gain_db) < 0.1:
         return audio  # Keine hörbare Änderung — überspringen
@@ -117,7 +117,7 @@ def _apply_high_shelf(
 
     result = np.zeros_like(audio)
     for ch in range(audio.shape[0]):
-        result[ch] = biquad(b, a, audio[ch].astype(np.float64)).astype(np.float32)
+        result[ch] = lfilter(b, a, audio[ch].astype(np.float64)).astype(np.float32)
 
     if was_mono:
         result = result[0]
@@ -139,7 +139,8 @@ def apply_comfort_guard(audio: np.ndarray, sr: int = 48000) -> np.ndarray:
     if sharpness <= COMFORT_THRESHOLD:
         logger.debug(
             "ComfortGuard: Sharpness %.3f ≤ %.3f — keine Korrektur nötig",
-            sharpness, COMFORT_THRESHOLD,
+            sharpness,
+            COMFORT_THRESHOLD,
         )
         return audio
 
@@ -149,7 +150,10 @@ def apply_comfort_guard(audio: np.ndarray, sr: int = 48000) -> np.ndarray:
 
     logger.info(
         "ComfortGuard: Sharpness %.3f > %.3f → High-Shelf %.1f dB @ %.0f Hz",
-        sharpness, COMFORT_THRESHOLD, -attenuation_db, SHELF_FC_HZ,
+        sharpness,
+        COMFORT_THRESHOLD,
+        -attenuation_db,
+        SHELF_FC_HZ,
     )
 
     corrected = _apply_high_shelf(audio, sr, gain_db=-attenuation_db)
@@ -158,7 +162,9 @@ def apply_comfort_guard(audio: np.ndarray, sr: int = 48000) -> np.ndarray:
     new_sharpness = _compute_sharpness(corrected, sr)
     logger.info(
         "ComfortGuard: Sharpness %.3f → %.3f (%.1f dB Korrektur)",
-        sharpness, new_sharpness, -attenuation_db,
+        sharpness,
+        new_sharpness,
+        -attenuation_db,
     )
 
     return corrected

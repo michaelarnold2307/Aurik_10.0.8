@@ -2,7 +2,7 @@
 
 Behebt hörbare Bandkopf-Artefakte die der Scanner nicht oder zu schwach erkannt hat:
   1. Head-Clog — kurzzeitige (<10ms) Pegel-Einbrüche durch Schmutz auf dem Kopf
-  2. Head-Contact-Dropout — Amplituden-Modulation durch schwankenden Band-Kopf-Kontakt  
+  2. Head-Contact-Dropout — Amplituden-Modulation durch schwankenden Band-Kopf-Kontakt
   3. Azimuth-Misalignment — Phasen-Drift zwischen L/R bei hohen Frequenzen
   4. HF-Remanence-Loss — periodischer Verlust hoher Frequenzen (Kopf-Verschleiß)
 
@@ -16,6 +16,7 @@ Algorithmus:
 from __future__ import annotations
 
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class TapeHeadArtifactRepair:
         sr: int,
         *,
         dropout_threshold_db: float = 4.0,  # Aggressiver: Pegel-Abfall ab 4dB
-        dropout_max_ms: float = 15.0,        # Aggressiver: bis 15ms Dropout
+        dropout_max_ms: float = 15.0,  # Aggressiver: bis 15ms Dropout
         azimuth_correct: bool = True,
     ) -> np.ndarray:
         """Führt alle Bandkopf-Reparaturen durch.
@@ -59,9 +60,7 @@ class TapeHeadArtifactRepair:
 
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
-    def _repair_short_dropouts(
-        self, audio: np.ndarray, sr: int, threshold_db: float, max_ms: float
-    ) -> np.ndarray:
+    def _repair_short_dropouts(self, audio: np.ndarray, sr: int, threshold_db: float, max_ms: float) -> np.ndarray:
         """Erkennt und repariert kurze Pegel-Einbrüche (Head-Clog/Contact)."""
         result = np.asarray(audio, dtype=np.float32).copy()
         mono = np.mean(result, axis=0) if result.ndim == 2 else result
@@ -79,7 +78,7 @@ class TapeHeadArtifactRepair:
         # Gleitende RMS
         rms_env = np.zeros(n // hop + 1, dtype=np.float32)
         for i in range(0, n - rms_win, hop):
-            rms_env[i // hop] = float(np.sqrt(np.mean(mono[i:i+rms_win]**2) + 1e-12))
+            rms_env[i // hop] = float(np.sqrt(np.mean(mono[i : i + rms_win] ** 2) + 1e-12))
 
         # Median-Filter für robuste Baseline
         median_win = 10  # 10 Frames = 25ms
@@ -123,7 +122,7 @@ class TapeHeadArtifactRepair:
                 x = np.array([pre_idx, mid_idx, post_idx], dtype=np.float64)
                 y = np.array([ch_data[pre_idx], ch_data[mid_idx], ch_data[post_idx]], dtype=np.float64)
                 xi = np.arange(s0, s1, dtype=np.float64)
-                
+
                 try:
                     # Quadratische Interpolation
                     coeffs = np.polyfit(x, y, 2)
@@ -139,12 +138,11 @@ class TapeHeadArtifactRepair:
                         ch_data[s0:s1] = yi.astype(np.float32)
                 except Exception as e:
                     logger.warning("tape_head_artifact_repair.py::_repair_short_dropouts fallback: %s", e)
-                    pass
 
             if result.ndim == 2:
-                result[ch] = ch_data[:len(result[ch])]
+                result[ch] = ch_data[: len(result[ch])]
             else:
-                result = ch_data[:len(result)].astype(np.float32)
+                result = ch_data[: len(result)].astype(np.float32)
 
         return result
 
@@ -187,7 +185,7 @@ class TapeHeadArtifactRepair:
     def _smooth_hf_envelope(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """Glättet periodische HF-Energie-Einbrüche (Head-Wear)."""
         result = np.asarray(audio, dtype=np.float32).copy()
-        
+
         for ch in range(result.shape[0] if result.ndim == 2 else 1):
             ch_data = result[ch] if result.ndim == 2 else result
             n = len(ch_data)
@@ -196,11 +194,11 @@ class TapeHeadArtifactRepair:
             block = int(sr * 0.050)  # 50ms Blöcke
             hop = block // 2
             hf_energy = []
-            
+
             for i in range(0, n - block, hop):
-                frame = ch_data[i:i+block]
+                frame = ch_data[i : i + block]
                 fft = np.abs(np.fft.rfft(frame))
-                freqs_f = np.fft.rfftfreq(len(frame), d=1.0/sr)
+                freqs_f = np.fft.rfftfreq(len(frame), d=1.0 / sr)
                 hf = (freqs_f >= 8000) & (freqs_f <= 16000)
                 hf_energy.append(float(np.mean(fft[hf])) if np.any(hf) else 0.0)
 
@@ -218,18 +216,18 @@ class TapeHeadArtifactRepair:
                     s1 = min(n, s0 + block)
                     gain = median_hf / (energy + 1e-12)
                     gain = min(gain, 2.0)  # Max +6dB
-                    
+
                     # Graduelle Anhebung im HF-Bereich
                     fft_full = np.fft.rfft(ch_data[s0:s1])
-                    freqs_full = np.fft.rfftfreq(len(ch_data[s0:s1]), d=1.0/sr)
+                    freqs_full = np.fft.rfftfreq(len(ch_data[s0:s1]), d=1.0 / sr)
                     hf_band = freqs_full >= 8000
                     if np.any(hf_band):
-                        fft_full[hf_band] *= (1.0 + (gain - 1.0) * 0.5)  # 50% der Korrektur
-                        ch_data[s0:s1] = np.fft.irfft(fft_full, n=s1-s0)
+                        fft_full[hf_band] *= 1.0 + (gain - 1.0) * 0.5  # 50% der Korrektur
+                        ch_data[s0:s1] = np.fft.irfft(fft_full, n=s1 - s0)
 
             if result.ndim == 2:
-                result[ch] = ch_data[:len(result[ch])]
+                result[ch] = ch_data[: len(result[ch])]
             else:
-                result = ch_data[:len(result)].astype(np.float32)
+                result = ch_data[: len(result)].astype(np.float32)
 
         return result

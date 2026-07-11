@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_cumulative_interaction_guard.py — §2.48 Interaktions-Guard Test-Suite (≥ 25 Tests)
 Alle Tests synthetisch, kein ML-Modell erforderlich.

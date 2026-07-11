@@ -1,5 +1,6 @@
-import pytest
 from datetime import datetime
+
+import pytest
 
 from backend.core.data_models import (
     AnalysisProfile,

@@ -86,7 +86,6 @@ def _estimate_f0_median(mono: np.ndarray, sr: int) -> float | None:
                 return float(np.median(voiced))
     except Exception as e:
         logger.warning("vocal_register_detector.py::_estimate_f0_median fallback: %s", e)
-        pass
 
     # pYIN-Fallback
     try:
@@ -104,7 +103,6 @@ def _estimate_f0_median(mono: np.ndarray, sr: int) -> float | None:
             return float(np.median(voiced_f0))
     except Exception as e:
         logger.warning("vocal_register_detector.py::_estimate_f0_median fallback: %s", e)
-        pass
 
     return None
 

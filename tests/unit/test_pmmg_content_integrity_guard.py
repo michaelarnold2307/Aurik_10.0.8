@@ -1,4 +1,5 @@
 import pytest
+
 """Regression tests for PMGG content-integrity guard.
 
 Guard objective:

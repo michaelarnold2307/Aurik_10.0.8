@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from dsp.soundstage_depth_enhancer import SoundstageDepthEnhancer
 

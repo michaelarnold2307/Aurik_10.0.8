@@ -41,7 +41,7 @@
         "dynamic_range_db": 0.005366056691855192,
         "snr": 66.56314086914062,
         "spectral_centroid": 949.7335793084842,
-        "spectral_flatness": 1.1374530913599301e-5,
+        "spectral_flatness": 1.1374530913599301e-05,
         "thd": 31.069759368896484
       },
       "processed": {
@@ -68,7 +68,7 @@
         "dynamic_range_db": 0.004300147760659456,
         "snr": 66.58100891113281,
         "spectral_centroid": 1249.0084435507829,
-        "spectral_flatness": 1.0349524927733e-5,
+        "spectral_flatness": 1.0349524927733e-05,
         "thd": 44.55529022216797
       },
       "processed": {
@@ -95,14 +95,14 @@
         "dynamic_range_db": 0.0033821198157966137,
         "snr": 66.5778579711914,
         "spectral_centroid": 1720.7221917731877,
-        "spectral_flatness": 9.708765901450533e-6,
+        "spectral_flatness": 9.708765901450533e-06,
         "thd": 33.614013671875
       },
       "processed": {
         "dynamic_range_db": 0.0042794495820999146,
         "snr": 55.51140213012695,
         "spectral_centroid": 2481.2853460711904,
-        "spectral_flatness": 7.791617827024311e-5,
+        "spectral_flatness": 7.791617827024311e-05,
         "thd": 45.418094635009766
       },
       "reference_based": {
@@ -203,14 +203,14 @@
         "dynamic_range_db": 0.00037896231515333056,
         "snr": 70.6129150390625,
         "spectral_centroid": 1386.4333033861042,
-        "spectral_flatness": 8.863379662216175e-6,
+        "spectral_flatness": 8.863379662216175e-06,
         "thd": 25.867813110351562
       },
       "processed": {
         "dynamic_range_db": 0.0020840882789343596,
         "snr": 60.56267547607422,
         "spectral_centroid": 1756.174042848941,
-        "spectral_flatness": 4.7343652113340795e-5,
+        "spectral_flatness": 4.7343652113340795e-05,
         "thd": 31.313129425048828
       },
       "reference_based": {
@@ -230,14 +230,14 @@
         "dynamic_range_db": 0.0007123526884242892,
         "snr": 71.80204010009766,
         "spectral_centroid": 1910.2782147603798,
-        "spectral_flatness": 9.922170647769235e-6,
+        "spectral_flatness": 9.922170647769235e-06,
         "thd": 32.13763427734375
       },
       "processed": {
         "dynamic_range_db": 0.0015623365761712193,
         "snr": 64.17423248291016,
         "spectral_centroid": 2258.4133791549334,
-        "spectral_flatness": 3.375169399078004e-5,
+        "spectral_flatness": 3.375169399078004e-05,
         "thd": 45.23981857299805
       },
       "reference_based": {
@@ -257,14 +257,14 @@
         "dynamic_range_db": 0.0014174000825732946,
         "snr": 77.62345123291016,
         "spectral_centroid": 2664.7859115566553,
-        "spectral_flatness": 8.05923900770722e-6,
+        "spectral_flatness": 8.05923900770722e-06,
         "thd": 22.80750846862793
       },
       "processed": {
         "dynamic_range_db": 0.0007372011314146221,
         "snr": 73.47504425048828,
         "spectral_centroid": 2988.442611413755,
-        "spectral_flatness": 2.2750306015950628e-5,
+        "spectral_flatness": 2.2750306015950628e-05,
         "thd": 30.273235321044922
       },
       "reference_based": {
@@ -281,17 +281,17 @@
         "thd_change": 1.7725391387939453
       },
       "original": {
-        "dynamic_range_db": 1.3460693480737973e-5,
+        "dynamic_range_db": 1.3460693480737973e-05,
         "snr": 103.81712341308594,
         "spectral_centroid": 658.9425818021117,
-        "spectral_flatness": 1.0966512036247877e-6,
+        "spectral_flatness": 1.0966512036247877e-06,
         "thd": 31.079599380493164
       },
       "processed": {
         "dynamic_range_db": 0.0009328802116215229,
         "snr": 67.4281005859375,
         "spectral_centroid": 1217.6570277433607,
-        "spectral_flatness": 1.8039530914393254e-5,
+        "spectral_flatness": 1.8039530914393254e-05,
         "thd": 32.85213851928711
       },
       "reference_based": {
@@ -308,17 +308,17 @@
         "thd_change": 11.659561157226562
       },
       "original": {
-        "dynamic_range_db": 1.4496130461338907e-5,
+        "dynamic_range_db": 1.4496130461338907e-05,
         "snr": 104.2990951538086,
         "spectral_centroid": 976.3200008281108,
-        "spectral_flatness": 1.6006090390874306e-6,
+        "spectral_flatness": 1.6006090390874306e-06,
         "thd": 44.56258010864258
       },
       "processed": {
         "dynamic_range_db": 0.0011358020128682256,
         "snr": 68.05833435058594,
         "spectral_centroid": 1561.589323444757,
-        "spectral_flatness": 1.8143473425880075e-5,
+        "spectral_flatness": 1.8143473425880075e-05,
         "thd": 56.22214126586914
       },
       "reference_based": {
@@ -335,17 +335,17 @@
         "thd_change": 11.875762939453125
       },
       "original": {
-        "dynamic_range_db": 1.760244049364701e-5,
+        "dynamic_range_db": 1.760244049364701e-05,
         "snr": 101.96937561035156,
         "spectral_centroid": 1467.180885701275,
-        "spectral_flatness": 3.196196303179022e-6,
+        "spectral_flatness": 3.196196303179022e-06,
         "thd": 33.608882904052734
       },
       "processed": {
         "dynamic_range_db": 0.0013221546541899443,
         "snr": 75.85590362548828,
         "spectral_centroid": 2055.9773915348683,
-        "spectral_flatness": 1.7136906535597518e-5,
+        "spectral_flatness": 1.7136906535597518e-05,
         "thd": 45.48464584350586
       },
       "reference_based": {

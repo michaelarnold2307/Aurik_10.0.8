@@ -283,6 +283,7 @@ class PhaseInterface(abc.ABC):
             Audio mit chirurgisch reparierten Zonen (gleiche Shape wie Input)
         """
         import numpy as np
+
         was_mono = audio.ndim == 1
         if was_mono:
             audio = audio.reshape(1, -1)
@@ -307,7 +308,7 @@ class PhaseInterface(abc.ABC):
                 proc_result = phase.process(segment, sample_rate, material_type, **kwargs)
                 if isinstance(proc_result, np.ndarray):
                     segment = proc_result
-                elif hasattr(proc_result, 'audio'):
+                elif hasattr(proc_result, "audio"):
                     segment = proc_result.audio
             except Exception:
                 skipped += 1
@@ -315,6 +316,7 @@ class PhaseInterface(abc.ABC):
 
             # Safety-Clamp: ≤2× Original-Amplitude
             import numpy as _np
+
             abs_orig = _np.maximum(_np.abs(original), 1e-10)
             limit = abs_orig * 2.0
             _np.clip(segment, -limit, limit, out=segment)
@@ -325,12 +327,10 @@ class PhaseInterface(abc.ABC):
                 ramp_out = ramp_in[::-1]
                 for ch in range(segment.shape[0]):
                     segment[ch, :fade_samples] = (
-                        original[ch, :fade_samples] * (1 - ramp_in)
-                        + segment[ch, :fade_samples] * ramp_in
+                        original[ch, :fade_samples] * (1 - ramp_in) + segment[ch, :fade_samples] * ramp_in
                     )
                     segment[ch, -fade_samples:] = (
-                        original[ch, -fade_samples:] * (1 - ramp_out)
-                        + segment[ch, -fade_samples:] * ramp_out
+                        original[ch, -fade_samples:] * (1 - ramp_out) + segment[ch, -fade_samples:] * ramp_out
                     )
 
             result[:, s0:s1] = segment
@@ -371,6 +371,7 @@ class PhaseInterface(abc.ABC):
         # ── ComfortGuard: Automatische Hörmüdungs-Prävention ──────────
         try:
             from backend.core.comfort_guard import apply_comfort_guard
+
             result.audio = apply_comfort_guard(result.audio, sample_rate)
         except Exception as _cg_exc:
             self._logger.debug("ComfortGuard skipped: %s", _cg_exc)
@@ -380,6 +381,7 @@ class PhaseInterface(abc.ABC):
         if any(kw in phase_id for kw in ("42", "65", "vocal", "voice", "deess")):
             try:
                 from backend.core.vocal_quality_gate import get_vocal_quality_gate
+
                 gate = get_vocal_quality_gate()
                 decision = gate.evaluate(
                     pre_audio=audio,
@@ -388,9 +390,7 @@ class PhaseInterface(abc.ABC):
                     phase_name=phase_id,
                 )
                 if decision.rollback_needed:
-                    result.warnings.append(
-                        f"VocalQualityGate: Rollback empfohlen (Δ={decision.naturalness_delta:.1f})"
-                    )
+                    result.warnings.append(f"VocalQualityGate: Rollback empfohlen (Δ={decision.naturalness_delta:.1f})")
                     result.warnings.extend(decision.warnings)
                     # Leichte Qualitätsabwertung bei Rollback
                     result.quality_estimate = max(0.5, result.quality_estimate - 0.1)

@@ -82,9 +82,8 @@ class DemucsV4Plugin:
                         )
 
                         _rel2("DemucsV4")
-                    except Exception as e:
+                    except Exception:
                         logger.warning("demucs_v4_plugin.py::_try_load fallback", exc_info=True)
-                        pass
                     if not _try_alloc("DemucsV4", size_gb=0.12):
                         logger.warning("DemucsV4: ML-Budget erschöpft — HPSS-Fallback.")
                         return

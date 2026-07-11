@@ -103,9 +103,8 @@ class PresetManager:
                         data.get("params", {}),
                     )
                 )
-            except Exception as e:
+            except Exception:
                 logger.warning("preset_manager.py::get_all_presets fallback", exc_info=True)
-                pass
         return presets
 
     def get_preset(self, name: str) -> Preset | None:
@@ -166,7 +165,7 @@ class PresetManager:
             )
             self.save_preset(preset)
             return preset
-        except Exception as e:
+        except Exception:
             logger.warning("preset_manager.py::import_preset fallback", exc_info=True)
             return None
 

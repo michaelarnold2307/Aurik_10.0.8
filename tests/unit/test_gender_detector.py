@@ -1,4 +1,5 @@
 import pytest
+
 """
 Unit tests for GenderDetector.detect() / _detect_f0() / _classify_gender().
 

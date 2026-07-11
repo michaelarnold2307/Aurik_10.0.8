@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für NoiseTextureCoherenceGuard (§4.7, v9.11.14)."""
 
 from __future__ import annotations

@@ -214,9 +214,8 @@ class ResembleEnhancePlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("ResembleEnhance", True)
-        except Exception as e:
+        except Exception:
             logger.warning("resemble_enhance_plugin.py::_onnx_single fallback", exc_info=True)
-            pass
         try:
             outs = session.run(None, {"mag": inp(mag), "cos": inp(cos), "sin": inp(sin_v)})
             om, oc, os_ = outs[0][0], outs[1][0], outs[2][0]
@@ -231,9 +230,8 @@ class ResembleEnhancePlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("ResembleEnhance", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("resemble_enhance_plugin.py::_onnx_single fallback", exc_info=True)
-                    pass
         n_out = nf * _HOP + _N
         res = np.zeros(n_out, np.float32)
         ws = np.zeros(n_out, np.float32)

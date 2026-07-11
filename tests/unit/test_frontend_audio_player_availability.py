@@ -1,7 +1,8 @@
-import pytest
 from __future__ import annotations
 
 from types import SimpleNamespace
+
+import pytest
 
 import Aurik10.ui.audio_player as audio_player_mod
 from Aurik10.ui.audio_player import StreamingAudioPlayer

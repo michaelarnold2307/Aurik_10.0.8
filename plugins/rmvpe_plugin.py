@@ -261,9 +261,8 @@ class RmvpePlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("RMVPE", True)
-        except Exception as e:
+        except Exception:
             logger.warning("rmvpe_plugin.py::_analyze_onnx fallback", exc_info=True)
-            pass
         try:
             mel = self._mel_spectrogram(mono_16k)  # [T, 128]
             t_orig = mel.shape[0]
@@ -359,9 +358,8 @@ class RmvpePlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("RMVPE", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("rmvpe_plugin.py::unknown fallback", exc_info=True)
-                    pass
 
     def _analyze_pyin(self, mono_48k: np.ndarray, sr: int) -> RmvpeResult:
         """DSP-Fallback-Kette: PESTO (Riou et al. ISMIR 2023) → pYIN (Mauch & Dixon 2014).

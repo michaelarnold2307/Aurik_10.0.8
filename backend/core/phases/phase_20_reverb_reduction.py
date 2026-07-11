@@ -287,8 +287,8 @@ class ReverbReduction(PhaseInterface):
         _per_band_mask = None
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity, compute_per_band_nr_mask
-            _pim = apply_pim_intensity(kwargs, "reverb",
-                default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "reverb", default_nr=0.5, default_de_ess=0.3, default_comp=1.0)
             if "noise_reduction_strength" in kwargs:
                 kwargs["noise_reduction_strength"] = _pim["nr_strength"]
             _pim_map = kwargs.get("pim_intensity_map")
@@ -296,7 +296,6 @@ class ReverbReduction(PhaseInterface):
                 _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
         except Exception as e:
             logger.warning("phase_20_reverb_reduction.py::process fallback: %s", e)
-            pass
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p20_transposed = to_channels_last(audio)
@@ -323,7 +322,6 @@ class ReverbReduction(PhaseInterface):
                 _f1_pre_20 = float(_lfc_res_20.get("f1_mean", 0.0)) or None
             except Exception as e:
                 logger.warning("phase_20_reverb_reduction.py::process fallback: %s", e)
-                pass
 
         strength = self.REDUCTION_STRENGTH.get(material, 0.4)
         damping = self.TAIL_DAMPING.get(material, 0.6)
@@ -1013,7 +1011,6 @@ class ReverbReduction(PhaseInterface):
                     reduced = audio.copy()
             except Exception as e:
                 logger.warning("phase_20_reverb_reduction.py::unknown fallback: %s", e)
-                pass
         if _p20_panns >= 0.35:
             try:
                 from backend.core.musical_goals.era_vocal_profile import (
@@ -1179,31 +1176,35 @@ class ReverbReduction(PhaseInterface):
             except Exception as _vib20_exc:
                 logger.debug("Phase20 §2.72 Vibrato-Guard (non-blocking): %s", _vib20_exc)
 
-        
         # ── §v10 Per-Band-Maske NACH reverb anwenden ──
         if _per_band_mask is not None:
             try:
                 from backend.core.pim_phase_hook import apply_per_band_mask
+
                 _before = audio
                 _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
                 audio = _after
             except Exception as e:
                 logger.warning("phase_20_reverb_reduction.py::unknown fallback: %s", e)
-                pass
 
         # §2.71 Strength-Envelope: Chirurgische Dereverb
         _strength_env = kwargs.get("strength_envelope")
         if _strength_env is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(reduced, dtype=np.float32)
                 reduced = apply_strength_envelope(
-                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
-                    envelope=_strength_env, sample_rate=sample_rate,
+                    processed=_env_pre,
+                    original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env,
+                    sample_rate=sample_rate,
                     base_strength=_effective_strength,
                 )
                 if float(np.mean(np.abs(reduced - _env_pre))) > 0.001:
-                    logger.info("§2.71 Envelope-Blending Phase 20: Δ=%.4f RMS", float(np.mean(np.abs(reduced - _env_pre))))
+                    logger.info(
+                        "§2.71 Envelope-Blending Phase 20: Δ=%.4f RMS", float(np.mean(np.abs(reduced - _env_pre)))
+                    )
             except Exception as _se_exc:
                 logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
 
@@ -1509,7 +1510,6 @@ class ReverbReduction(PhaseInterface):
                         G_z = np.maximum(G_z, _mfloor_z20[:, np.newaxis])
                     except Exception as e:
                         logger.warning("phase_20_reverb_reduction.py::unknown fallback: %s", e)
-                        pass
 
                 # §4.8a-ii preserve_mask (§Gap8 v9.12.8): G_eff = mask*0.90 + (1-mask)*G_z
                 # Bewahrt Shellac-H2/H4-Wärme und Vinyl-Charakter während Nachhall-Reduktion.

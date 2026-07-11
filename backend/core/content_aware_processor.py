@@ -34,14 +34,15 @@ Invarianten (§2.36, §3.1, §3.2):
 
 from __future__ import annotations
 
-import logging
 import threading
-from typing import Any
-
-from backend.core.lyrics_guided_enhancement import ContentAwareProcessor, WordTimestamp, LyricsTranscriptionResult  # canonical (§dedup)
 
 import numpy as np
 
+from backend.core.lyrics_guided_enhancement import (  # canonical (§dedup)
+    ContentAwareProcessor,
+    LyricsTranscriptionResult,
+    WordTimestamp,
+)
 
 # Duck-typed Stubs: Der Processor benötigt nur diese Attribute, keine konkrete Plugin-Klasse.
 

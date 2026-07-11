@@ -402,7 +402,6 @@ def _hpss_percussive(
         return hpss_result
     except Exception as e:
         logger.warning("transient_energy_metric.py::_hpss_percussive fallback: %s", e)
-        pass
 
     # Fallback: Spektrale Median-Glättung — High-Variance-Anteile (percussive) extrahieren
     try:
@@ -466,7 +465,6 @@ def _detect_onsets(
             return [int(o) for o in onset_frames]
         except Exception as e:
             logger.warning("transient_energy_metric.py::_detect_onsets fallback: %s", e)
-            pass
 
     # Fallback: Energie-Fluss
     hop = 512

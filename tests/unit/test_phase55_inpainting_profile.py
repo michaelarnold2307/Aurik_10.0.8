@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: DiffusionInpaintingPhase._compute_inpainting_profile() (§2.56)."""
 
 import numpy as np

@@ -20,7 +20,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class HealthCheckResult:
     """Ergebnis eines einzelnen Health-Checks."""
+
     name: str
     passed: bool
     duration_ms: float = 0.0
@@ -38,6 +38,7 @@ class HealthCheckResult:
 @dataclass
 class PipelineHealthReport:
     """Gesamt-Health-Report vor Pipeline-Start."""
+
     all_passed: bool = True
     checks: list[HealthCheckResult] = field(default_factory=list)
     total_duration_ms: float = 0.0
@@ -83,7 +84,9 @@ def run_health_checks(audio_duration_s: float = 300.0) -> PipelineHealthReport:
 
     all_passed = all(c.passed for c in checks)
     if not all_passed:
-        recommendations.append("Einige Health-Checks fehlgeschlagen — Pipeline kann trotzdem starten, aber Ergebnisse können suboptimal sein.")
+        recommendations.append(
+            "Einige Health-Checks fehlgeschlagen — Pipeline kann trotzdem starten, aber Ergebnisse können suboptimal sein."
+        )
 
     return PipelineHealthReport(
         all_passed=all_passed,
@@ -100,6 +103,7 @@ def _check_ml_models() -> HealthCheckResult:
 
     try:
         import numpy as np
+
         # Prüfe numpy (Basis für alle ML-Operationen)
         _ = np.zeros(1, dtype=np.float32)
         np_status = True
@@ -110,7 +114,8 @@ def _check_ml_models() -> HealthCheckResult:
     # Prüfe scipy (Basis für DSP+ML)
     try:
         from scipy import signal
-        _ = signal.butter(2, 0.5, 'low')
+
+        _ = signal.butter(2, 0.5, "low")
         scipy_status = True
     except Exception as e:
         scipy_status = False
@@ -161,6 +166,7 @@ def _check_resources(audio_duration_s: float) -> HealthCheckResult:
 
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         available_gb = mem.available / (1024**3)
         # Faustregel: ~200 MB RAM pro Minute Audio
@@ -216,6 +222,7 @@ def _check_error_statistics() -> HealthCheckResult:
 
     try:
         from backend.core.safe_execution import get_error_statistics
+
         stats = get_error_statistics()
         total = stats["total_errors"]
         if total > 100:

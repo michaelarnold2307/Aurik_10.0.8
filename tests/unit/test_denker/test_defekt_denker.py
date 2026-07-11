@@ -1,4 +1,5 @@
 import pytest
+
 """tests/unit/test_denker/test_defekt_denker.py
 
 Tests für DefektDenker — Defekterkennung & -klassifikation.
@@ -104,9 +105,8 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR)
             assert isinstance(result, DefektErgebnis)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_11_primary_defect_nonempty(self):
         from denker.defekt_denker import DefektDenker
@@ -115,9 +115,8 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR)
             assert len(result.primary_defect) > 0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_12_confidence_finite(self):
         from denker.defekt_denker import DefektDenker
@@ -126,9 +125,8 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR)
             assert math.isfinite(result.confidence)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_13_defect_scores_all_finite(self):
         from denker.defekt_denker import DefektDenker
@@ -138,9 +136,8 @@ class TestDefektDenkerAnalysiere:
             result = DefektDenker().analysiere(audio, SR)
             for v in result.defect_scores.values():
                 assert math.isfinite(v)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_14_defect_scores_in_range(self):
         from denker.defekt_denker import DefektDenker
@@ -150,9 +147,8 @@ class TestDefektDenkerAnalysiere:
             result = DefektDenker().analysiere(audio, SR)
             for v in result.defect_scores.values():
                 assert 0.0 <= v <= 1.0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_15_silence_no_crash(self):
         from denker.defekt_denker import DefektDenker
@@ -161,9 +157,8 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR)
             assert result is not None
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_16_material_context_in_result(self):
         from denker.defekt_denker import DefektDenker
@@ -172,9 +167,8 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR, material="vinyl")
             assert isinstance(result.material_context, str)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_17_noisy_signal_detects_noise(self):
         from denker.defekt_denker import DefektDenker
@@ -186,9 +180,8 @@ class TestDefektDenkerAnalysiere:
             # hiss oder high_freq_noise sollte erhöhten Score haben
             total = sum(result.defect_scores.values())
             assert total >= 0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_18_recommended_phases_strings(self):
         from denker.defekt_denker import DefektDenker
@@ -198,9 +191,8 @@ class TestDefektDenkerAnalysiere:
             result = DefektDenker().analysiere(audio, SR)
             for p in result.recommended_phases:
                 assert isinstance(p, str)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_19_short_audio_no_crash(self):
         from denker.defekt_denker import DefektDenker
@@ -208,9 +200,8 @@ class TestDefektDenkerAnalysiere:
         audio = np.zeros(256, dtype=np.float32)
         try:
             DefektDenker().analysiere(audio, SR)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_20_confidence_bounded_on_real_signal(self):
         from denker.defekt_denker import DefektDenker
@@ -219,6 +210,5 @@ class TestDefektDenkerAnalysiere:
         try:
             result = DefektDenker().analysiere(audio, SR)
             assert 0.0 <= result.confidence <= 1.0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass

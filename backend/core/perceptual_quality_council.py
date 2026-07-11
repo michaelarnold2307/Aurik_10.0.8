@@ -12,6 +12,7 @@ Architektur:
   5. Konfidenzintervalle via Bootstrapping
   6. Comparative Scoring (Delta zum Original)
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,18 +32,20 @@ logger = logging.getLogger(__name__)
 @dataclass
 class QualityDimension:
     """Eine einzelne Qualitätsdimension mit Score, Gewicht und Konfidenz."""
+
     name: str
-    score: float                     # 0.0–1.0
-    weight: float                    # 0.0–1.0, Summe aller Weights = 1.0
-    confidence: float = 1.0          # 0.0–1.0, wie sicher ist der Score?
-    threshold_warn: float = 0.50     # Unter diesem Wert → Warnung
-    threshold_fail: float = 0.35     # Unter diesem Wert → Fehlschlag
+    score: float  # 0.0–1.0
+    weight: float  # 0.0–1.0, Summe aller Weights = 1.0
+    confidence: float = 1.0  # 0.0–1.0, wie sicher ist der Score?
+    threshold_warn: float = 0.50  # Unter diesem Wert → Warnung
+    threshold_fail: float = 0.35  # Unter diesem Wert → Fehlschlag
     details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class PerceptualVerdict:
     """Vollständiges holistisches Qualitätsurteil."""
+
     holistic_score: float = 0.0
     recommendation: str = "keep"
     recommendation_reason: str = ""
@@ -73,30 +76,30 @@ class PerceptualVerdict:
 
 # Material-adaptive Qualitäts-Erwartungswerte (empirisch kalibriert)
 _MATERIAL_QUALITY_BASELINE: dict[str, dict[str, float]] = {
-    "wax_cylinder":    {"mos": 3.0, "goals": 0.45, "temporal": 0.50, "gain": 0.60, "residual": 0.45},
-    "shellac":         {"mos": 3.3, "goals": 0.50, "temporal": 0.55, "gain": 0.55, "residual": 0.50},
-    "lacquer_disc":    {"mos": 3.3, "goals": 0.50, "temporal": 0.55, "gain": 0.55, "residual": 0.50},
-    "vinyl":           {"mos": 3.7, "goals": 0.60, "temporal": 0.65, "gain": 0.45, "residual": 0.60},
-    "tape":            {"mos": 3.9, "goals": 0.65, "temporal": 0.70, "gain": 0.40, "residual": 0.65},
-    "reel_tape":       {"mos": 4.0, "goals": 0.70, "temporal": 0.75, "gain": 0.35, "residual": 0.70},
-    "cassette":        {"mos": 3.5, "goals": 0.55, "temporal": 0.60, "gain": 0.50, "residual": 0.55},
-    "wire_recording":  {"mos": 3.2, "goals": 0.48, "temporal": 0.52, "gain": 0.58, "residual": 0.48},
-    "cd_digital":      {"mos": 4.3, "goals": 0.80, "temporal": 0.85, "gain": 0.15, "residual": 0.85},
-    "streaming":       {"mos": 4.2, "goals": 0.78, "temporal": 0.82, "gain": 0.18, "residual": 0.82},
+    "wax_cylinder": {"mos": 3.0, "goals": 0.45, "temporal": 0.50, "gain": 0.60, "residual": 0.45},
+    "shellac": {"mos": 3.3, "goals": 0.50, "temporal": 0.55, "gain": 0.55, "residual": 0.50},
+    "lacquer_disc": {"mos": 3.3, "goals": 0.50, "temporal": 0.55, "gain": 0.55, "residual": 0.50},
+    "vinyl": {"mos": 3.7, "goals": 0.60, "temporal": 0.65, "gain": 0.45, "residual": 0.60},
+    "tape": {"mos": 3.9, "goals": 0.65, "temporal": 0.70, "gain": 0.40, "residual": 0.65},
+    "reel_tape": {"mos": 4.0, "goals": 0.70, "temporal": 0.75, "gain": 0.35, "residual": 0.70},
+    "cassette": {"mos": 3.5, "goals": 0.55, "temporal": 0.60, "gain": 0.50, "residual": 0.55},
+    "wire_recording": {"mos": 3.2, "goals": 0.48, "temporal": 0.52, "gain": 0.58, "residual": 0.48},
+    "cd_digital": {"mos": 4.3, "goals": 0.80, "temporal": 0.85, "gain": 0.15, "residual": 0.85},
+    "streaming": {"mos": 4.2, "goals": 0.78, "temporal": 0.82, "gain": 0.18, "residual": 0.82},
 }
 
 # Genre-spezifische Qualitäts-Modifier (Multiplikator auf Goals-Erwartung)
 _GENRE_QUALITY_MODIFIER: dict[str, float] = {
-    "schlager":    1.05,  # Hohe Erwartung an Wärme/Emotion
-    "rock":        0.95,  # Energie > Perfektion
-    "pop":         1.00,
-    "jazz":        1.08,  # Höchste Ansprüche an Natürlichkeit
-    "classical":   1.10,  # Referenz-Qualität
-    "electronic":  0.90,  # Synthetische Quellen toleranter
-    "folk":        1.02,
-    "metal":       0.92,  # Lautstärke > Feinzeichnung
-    "hiphop":      0.93,
-    "rnb":         1.00,
+    "schlager": 1.05,  # Hohe Erwartung an Wärme/Emotion
+    "rock": 0.95,  # Energie > Perfektion
+    "pop": 1.00,
+    "jazz": 1.08,  # Höchste Ansprüche an Natürlichkeit
+    "classical": 1.10,  # Referenz-Qualität
+    "electronic": 0.90,  # Synthetische Quellen toleranter
+    "folk": 1.02,
+    "metal": 0.92,  # Lautstärke > Feinzeichnung
+    "hiphop": 0.93,
+    "rnb": 1.00,
 }
 
 
@@ -107,25 +110,25 @@ _GENRE_QUALITY_MODIFIER: dict[str, float] = {
 # Goal-Gewichte basierend auf perzeptiver Relevanz pro Frequenzbereich
 _PSYCHOACOUSTIC_GOAL_WEIGHTS: dict[str, float] = {
     # Tiefen (20–200 Hz): Bass-Punch, Groove, Räumlichkeit-Tiefe
-    "bass_praesenz":    0.12,
-    "punch":            0.08,
-    "groove":           0.10,
+    "bass_praesenz": 0.12,
+    "punch": 0.08,
+    "groove": 0.10,
     # Mitten (200–2000 Hz): Wärme, Natürlichkeit, Text, Artikulation
-    "waerme":           0.15,
-    "natuerlichkeit":   0.12,
+    "waerme": 0.15,
+    "natuerlichkeit": 0.12,
     "textverstaendlichkeit": 0.10,
-    "artikulation":     0.08,
-    "emotionalitaet":   0.10,
-    "authentizitaet":   0.08,
+    "artikulation": 0.08,
+    "emotionalitaet": 0.10,
+    "authentizitaet": 0.08,
     # Höhen (2000–20000 Hz): Brillanz, Transparenz, Luft
-    "brillanz":         0.10,
-    "transparenz":      0.08,
-    "hoehen_luft":      0.06,
+    "brillanz": 0.10,
+    "transparenz": 0.08,
+    "hoehen_luft": 0.06,
     # Räumlich
-    "raeumlichkeit":    0.07,
+    "raeumlichkeit": 0.07,
     # Dynamik
-    "mikrodynamik":     0.06,
-    "makrodynamik":     0.05,
+    "mikrodynamik": 0.06,
+    "makrodynamik": 0.05,
 }
 
 
@@ -178,10 +181,16 @@ class PerceptualQualityCouncil:
         mos_baseline = (baseline["mos"] - 1.0) / 4.0
         mos_warn = max(0.35, mos_baseline - 0.10)
         mos_fail = max(0.20, mos_baseline - 0.20)
-        dimensions.append(QualityDimension(
-            name="VERSA MOS", score=mos_norm, weight=0.25, confidence=mos_conf,
-            threshold_warn=mos_warn, threshold_fail=mos_fail,
-        ))
+        dimensions.append(
+            QualityDimension(
+                name="VERSA MOS",
+                score=mos_norm,
+                weight=0.25,
+                confidence=mos_conf,
+                threshold_warn=mos_warn,
+                threshold_fail=mos_fail,
+            )
+        )
 
         # ── Dimension 2: Musical Goals (gewichtet, psychoakustisch) ───────
         goal_weighted = 0.0
@@ -193,10 +202,16 @@ class PerceptualQualityCouncil:
         goal_score = goal_weighted / max(goal_total_w, 1e-6) if goal_total_w > 0 else 0.5
         goal_conf = 0.90
         goal_baseline = baseline["goals"] * genre_mod
-        dimensions.append(QualityDimension(
-            name="Musical Goals", score=goal_score, weight=0.30, confidence=goal_conf,
-            threshold_warn=goal_baseline - 0.08, threshold_fail=goal_baseline - 0.20,
-        ))
+        dimensions.append(
+            QualityDimension(
+                name="Musical Goals",
+                score=goal_score,
+                weight=0.30,
+                confidence=goal_conf,
+                threshold_warn=goal_baseline - 0.08,
+                threshold_fail=goal_baseline - 0.20,
+            )
+        )
 
         # ── Dimension 3: Temporal Consistency (aus Goal-Varianz geschätzt) ──
         goal_values = list(goals.values())
@@ -206,10 +221,16 @@ class PerceptualQualityCouncil:
         else:
             temporal_score = 0.7
         temporal_conf = 0.60
-        dimensions.append(QualityDimension(
-            name="Temporal Consistency", score=temporal_score, weight=0.15, confidence=temporal_conf,
-            threshold_warn=0.55, threshold_fail=0.35,
-        ))
+        dimensions.append(
+            QualityDimension(
+                name="Temporal Consistency",
+                score=temporal_score,
+                weight=0.15,
+                confidence=temporal_conf,
+                threshold_warn=0.55,
+                threshold_fail=0.35,
+            )
+        )
 
         # ── Dimension 4: Restoration Gain (Delta zum Original) ────────────
         if pre_restoration_mos > 0 and versa_mos > 0:
@@ -224,20 +245,29 @@ class PerceptualQualityCouncil:
         else:
             gain_score = 0.5
         gain_conf = 0.75
-        dimensions.append(QualityDimension(
-            name="Restoration Gain", score=gain_score, weight=0.15, confidence=gain_conf,
-            threshold_warn=0.40, threshold_fail=0.25,
-        ))
+        dimensions.append(
+            QualityDimension(
+                name="Restoration Gain",
+                score=gain_score,
+                weight=0.15,
+                confidence=gain_conf,
+                threshold_warn=0.40,
+                threshold_fail=0.25,
+            )
+        )
 
         # ── Dimension 5: Defect Residual (Exzellenz + Defekt-Schwere) ─────
-        residual_score = float(np.clip(
-            0.30 * excellence_score + 0.70 * (1.0 - defect_severity),
-            0.0, 1.0
-        ))
-        dimensions.append(QualityDimension(
-            name="Defect Residual", score=residual_score, weight=0.15, confidence=0.70,
-            threshold_warn=baseline["residual"] - 0.08, threshold_fail=baseline["residual"] - 0.20,
-        ))
+        residual_score = float(np.clip(0.30 * excellence_score + 0.70 * (1.0 - defect_severity), 0.0, 1.0))
+        dimensions.append(
+            QualityDimension(
+                name="Defect Residual",
+                score=residual_score,
+                weight=0.15,
+                confidence=0.70,
+                threshold_warn=baseline["residual"] - 0.08,
+                threshold_fail=baseline["residual"] - 0.20,
+            )
+        )
 
         # ── Holistic Aggregation (gewichteter Mittelwert mit Konfidenz) ────
         weighted_sum = 0.0

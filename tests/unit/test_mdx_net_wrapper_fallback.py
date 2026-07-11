@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.ml.inference_only.vocal_separation.mdx_net_wrapper import MDXNetSeparator
 

@@ -432,7 +432,6 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
     # only keep exclusions where AI-generated content has low correlation by design
     # natuerlichkeit excluded: gap-fill synthesis produces content absent from
     # reference; CREPE voicing score on synthesised audio is unreliable.
-
     # artikulation excluded (P2 root cause, 2026-03-29): dropout repair inserts
     # newly synthesised transients inside missing regions. ArticulationMetric
     # compares transient-shape correlation against the pre-repair signal where
@@ -1251,17 +1250,25 @@ PHASE_GOAL_EXCLUSIONS: dict[str, set[str]] = {
 
 # §v10.3 Media-Defect-Verifier: ALLE PMGG-Phasen mit alternativen Proxies
 # Dynamisch aus cassette_defect_verifier._PHASE_CATEGORIES geladen.
-_CASSETTE_VERIFIER_PHASES: frozenset[str] = frozenset({
-    "phase_24", "phase_56", "phase_57", "phase_59",
-    "phase_24_dropout_repair", "phase_56_spectral_band_gap_repair",
-    "phase_57_print_through_reduction", "phase_59_modulation_noise_reduction",
-})
+_CASSETTE_VERIFIER_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_24",
+        "phase_56",
+        "phase_57",
+        "phase_59",
+        "phase_24_dropout_repair",
+        "phase_56_spectral_band_gap_repair",
+        "phase_57_print_through_reduction",
+        "phase_59_modulation_noise_reduction",
+    }
+)
 
 
 def _get_all_verifier_phases() -> frozenset[str]:
     """§v10.3 Lazy-load aller Phasen aus dem Media-Defect-Verifier."""
     try:
         from backend.core.cassette_defect_verifier import _PHASE_CATEGORIES
+
         return frozenset(_PHASE_CATEGORIES.keys())
     except Exception as e:
         logger.warning("per_phase_musical_goals_gate.py::_get_all_verifier_phases fallback: %s", e)
@@ -1658,7 +1665,6 @@ def _resolve_team_context_policy(phase_id: str, phase_kwargs: dict[str, Any] | N
                 _policy["reason"] = str(_tp.get("reason", ""))
     except Exception as e:
         logger.warning("per_phase_musical_goals_gate.py::unknown fallback: %s", e)
-        pass
 
     # Team rule: if prior phases already restored HF content, phase_50 should
     # avoid treating those bins as "damage" via indirect metric pressure.
@@ -3832,14 +3838,18 @@ class PerPhaseMusicalGoalsGate:
             logger.error("PMGG wrap_phase: Input-Audio enthält NaN/Inf — Phase %s übersprungen", phase_id)
             _safe = np.nan_to_num(audio, nan=0.0, posinf=1.0, neginf=-1.0)
             _safe = np.clip(_safe, -1.0, 1.0)
-            return _safe, scores_before or {}, PhaseGateLogEntry(
-                phase_id=phase_id,
-                action="validation_error",
-                regression=0.0,
-                strength=0.0,
-                rms_drop_db=0.0,
-                hpe_delta=0.0,
-                metadata={"error": "input_contains_nan_inf"},
+            return (
+                _safe,
+                scores_before or {},
+                PhaseGateLogEntry(
+                    phase_id=phase_id,
+                    action="validation_error",
+                    regression=0.0,
+                    strength=0.0,
+                    rms_drop_db=0.0,
+                    hpe_delta=0.0,
+                    metadata={"error": "input_contains_nan_inf"},
+                ),
             )
 
         if phase_kwargs is None:
@@ -4010,12 +4020,12 @@ class PerPhaseMusicalGoalsGate:
             if self._best_effort_count > 3 and not self._user_warned:
                 self._user_warned = True
                 logger.warning(
-                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, "
-                    "um den Klang zu schützen."
+                    "ℹ️ Einige Verarbeitungsschritte wurden mit reduzierter Stärke angewendet, um den Klang zu schützen."
                 )
             # §v10.5 Guard Effectiveness Auditor: Paralysis-Event registrieren
             try:
                 from backend.core.guard_effectiveness_auditor import get_effectiveness_auditor as _get_ga
+
                 _ga = _get_ga()
                 _ga.track_phase_decision(
                     phase_id=phase_id,
@@ -4482,8 +4492,10 @@ class PerPhaseMusicalGoalsGate:
         # §v10.6 RESTAURIER-DENKER: Zentrale Entscheidungs-Intelligenz
         try:
             from denker.restaurier_denker import (
-                get_restaurier_denker, DenkerContext,
+                DenkerContext,
+                get_restaurier_denker,
             )
+
             _rd = get_restaurier_denker()
             _ctx = DenkerContext(
                 phase_id=phase_id,
@@ -4493,7 +4505,7 @@ class PerPhaseMusicalGoalsGate:
                 current_strength=1.0,
                 retry_count=0,
                 best_effort_count=self._best_effort_count,
-                total_phases_run=self._phase_count if hasattr(self, '_phase_count') else 0,
+                total_phases_run=self._phase_count if hasattr(self, "_phase_count") else 0,
                 scores_before=effective_scores_before,
                 scores_after=scores_after,
                 effective_goals=_goals_for_regression,
@@ -4510,8 +4522,7 @@ class PerPhaseMusicalGoalsGate:
                 regression = max(regression, threshold + 0.002)
                 logger.warning("§v10.6 Denker: UNDO in %s — %s", phase_id, _decision.reason)
             if _decision.paralysis_detected:
-                logger.warning("§v10.6 Denker: Paralysis %s — %s",
-                               phase_id, _decision.reason)
+                logger.warning("§v10.6 Denker: Paralysis %s — %s", phase_id, _decision.reason)
         except Exception as _rd_exc:
             logger.debug("RestaurierDenker nicht verfuegbar: %s", _rd_exc)
         _skip_corr = phase_id in _TIMING_CORR_EXCLUDE
@@ -4862,17 +4873,18 @@ class PerPhaseMusicalGoalsGate:
         # Manchmal ist weniger besser als gar nichts.
         try:
             from backend.core.human_pleasantness_estimator import compare_pleasantness
+
             _hpe_cmp = compare_pleasantness(
-                np.asarray(audio, dtype=np.float32),
-                np.asarray(best_audio, dtype=np.float32),
-                48000)
+                np.asarray(audio, dtype=np.float32), np.asarray(best_audio, dtype=np.float32), 48000
+            )
             _hpe_delta = float(_hpe_cmp.get("delta_score", 0.0))
 
             if _hpe_delta < -0.03:
                 logger.warning(
-                    "§v10 HPE-GATE: Phase %s HPE %+.3f < -0.03 — "
-                    "Phase verworfen, Pre-Phase-Audio wiederhergestellt.",
-                    phase_id, _hpe_delta)
+                    "§v10 HPE-GATE: Phase %s HPE %+.3f < -0.03 — Phase verworfen, Pre-Phase-Audio wiederhergestellt.",
+                    phase_id,
+                    _hpe_delta,
+                )
                 return audio, effective_scores_before, "hpe_skip", 0.0
 
             if -0.03 <= _hpe_delta < 0.0:
@@ -4880,11 +4892,13 @@ class PerPhaseMusicalGoalsGate:
                 logger.info(
                     "§v10 HPE-GATE: Phase %s HPE %+.3f im neutralen Bereich — "
                     "akzeptiert mit ultra-reduzierter Stärke %.2f.",
-                    phase_id, _hpe_delta, _ultra_strength)
+                    phase_id,
+                    _hpe_delta,
+                    _ultra_strength,
+                )
                 return best_audio, best_scores, "hpe_ultra_low", _ultra_strength
         except Exception as e:
             logger.warning("per_phase_musical_goals_gate.py::unknown fallback: %s", e)
-            pass
 
         # §0l Team-Net-Delta-Tracking: Besten Versuch anhand von Team-Score UND
         # max-Regression wählen. Wenn max-Regression ähnlich, besseres Team erhalten.

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für core/perceptual_quality_scorer.py — PerceptualQualityScorer.
 
 Spec §2.6: Gammatone-NSIM + MCD + LUFS + MOS-Mapping für Musik-Qualitätsbewertung.

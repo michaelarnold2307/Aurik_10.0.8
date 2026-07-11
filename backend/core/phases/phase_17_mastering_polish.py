@@ -419,21 +419,28 @@ class MasteringPolishPhase(PhaseInterface):
 
         mastered = np.nan_to_num(mastered, nan=0.0, posinf=0.0, neginf=0.0)
         mastered = np.clip(mastered, -1.0, 1.0)
-        
+
         # ── §v10 Mid/Side-Politur ──
         if mastered.ndim == 2 and mastered.shape[1] >= 2:
             try:
                 _l = mastered[:, 0] if mastered.shape[1] <= 2 else mastered[0, :]
                 _r = mastered[:, 1] if mastered.shape[1] <= 2 else mastered[1, :]
-                _mid = (_l + _r) / 2.0; _side = (_l - _r) / 2.0
-                _sos_mid = signal.butter(2, [2000, 4000], 'bandpass', fs=sample_rate, output='sos')
+                _mid = (_l + _r) / 2.0
+                _side = (_l - _r) / 2.0
+                _sos_mid = signal.butter(2, [2000, 4000], "bandpass", fs=sample_rate, output="sos")
                 _mid = _mid + signal.sosfiltfilt(_sos_mid, _mid) * 0.06
-                _sos_side = signal.butter(2, 10000, 'highshelf', fs=sample_rate, output='sos')
+                _sos_side = signal.butter(2, 10000, "highshelf", fs=sample_rate, output="sos")
                 _side = signal.sosfiltfilt(_sos_side, _side)
-                _lo = np.clip(_mid + _side, -1.0, 1.0); _ro = np.clip(_mid - _side, -1.0, 1.0)
-                if mastered.shape[1] <= 2: mastered[:,0]=_lo; mastered[:,1]=_ro
-                else: mastered[0,:]=_lo; mastered[1,:]=_ro
-            except Exception: pass
+                _lo = np.clip(_mid + _side, -1.0, 1.0)
+                _ro = np.clip(_mid - _side, -1.0, 1.0)
+                if mastered.shape[1] <= 2:
+                    mastered[:, 0] = _lo
+                    mastered[:, 1] = _ro
+                else:
+                    mastered[0, :] = _lo
+                    mastered[1, :] = _ro
+            except Exception:
+                pass
 
         return PhaseResult(
             success=True,
@@ -661,9 +668,11 @@ class MasteringPolishPhase(PhaseInterface):
         strength = strength * strength_scale * _harmonic_scale
         logger.debug(
             "§v10 Harmonic-Aware: material=%s template=%.2f existing_sat=%.2f scale=%.2f final=%.2f",
-            material.name if hasattr(material, 'name') else str(material),
+            material.name if hasattr(material, "name") else str(material),
             self.HARMONIC_ENHANCEMENT.get(material, 0.25),
-            _existing_saturation, _harmonic_scale, strength,
+            _existing_saturation,
+            _harmonic_scale,
+            strength,
         )
 
         if strength < 0.01:

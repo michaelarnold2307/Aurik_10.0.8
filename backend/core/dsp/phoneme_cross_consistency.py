@@ -378,7 +378,6 @@ class PhonemeConsistencyMonitor:
                     return segs
         except Exception as e:
             logger.warning("phoneme_cross_consistency.py::_get_segments fallback: %s", e)
-            pass
 
         # DSP-Fallback
         raw = _segment_by_energy(self._orig, self._sr)

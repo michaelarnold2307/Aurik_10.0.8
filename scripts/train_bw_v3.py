@@ -13,13 +13,14 @@ Generator = CompactUNetV2 (FiLM + U-Net), trainiert durch kombinierten Loss:
   L_total = lambda_L1 * L1 + lambda_STFT * MR-STFT + lambda_GAN * Hinge_G
 """
 
-import math, time
+import time
 from pathlib import Path
 
 import numpy as np
-import torch, torchaudio
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio
 from scipy.signal import butter, sosfiltfilt
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -38,6 +39,7 @@ _NOTES = np.array([130.81, 164.81, 196.00, 220.00, 261.63, 329.63, 392.00, 523.2
 # Audio generation (unverändert von V2)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def make_synthetic(n_samples, sr):
     t = np.arange(n_samples, dtype=np.float64) / sr
     y = np.zeros(n_samples, dtype=np.float64)
@@ -45,11 +47,13 @@ def make_synthetic(n_samples, sr):
         f0 = np.random.choice(_NOTES) * np.random.uniform(0.5, 2.0)
         for h in range(1, np.random.randint(2, 7)):
             amp = 0.4 / (h ** np.random.uniform(0.6, 1.4))
-            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2*np.pi))
+            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2 * np.pi))
     noise = np.random.randn(n_samples).astype(np.float64)
     color = np.random.choice(["pink", "brown", "white"])
-    if color == "pink": noise = np.cumsum(noise)
-    elif color == "brown": noise = np.cumsum(np.cumsum(noise))
+    if color == "pink":
+        noise = np.cumsum(noise)
+    elif color == "brown":
+        noise = np.cumsum(np.cumsum(noise))
     noise /= np.abs(noise).max() + 1e-8
     y += 0.08 * noise
     y /= np.abs(y).max() + 1e-8
@@ -58,7 +62,8 @@ def make_synthetic(n_samples, sr):
 
 def butter_lp(y, cutoff, sr, order=6):
     nyq = sr / 2
-    if cutoff >= nyq * 0.98: return y.copy()
+    if cutoff >= nyq * 0.98:
+        return y.copy()
     sos = butter(order, cutoff / nyq, btype="low", output="sos")
     return sosfiltfilt(sos, y).astype(np.float32)
 
@@ -68,9 +73,15 @@ def butter_lp(y, cutoff, sr, order=6):
 # ═══════════════════════════════════════════════════════════════════════════
 
 mel_t = torchaudio.transforms.MelSpectrogram(
-    sample_rate=SR, n_fft=N_FFT, hop_length=HOP, n_mels=N_MELS,
-    f_min=60, f_max=SR // 2, center=False,
+    sample_rate=SR,
+    n_fft=N_FFT,
+    hop_length=HOP,
+    n_mels=N_MELS,
+    f_min=60,
+    f_max=SR // 2,
+    center=False,
 )
+
 
 def audio_to_log_mel(waveform):
     mel = mel_t(waveform)
@@ -83,6 +94,7 @@ def audio_to_log_mel(waveform):
 # ═══════════════════════════════════════════════════════════════════════════
 # Generator (CompactUNetV2 — unverändert von V2)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class FiLMBlock(nn.Module):
     def __init__(self, cond_dim, feat_ch):
@@ -100,9 +112,11 @@ class ConvBlock(nn.Sequential):
     def __init__(self, in_ch, out_ch):
         super().__init__(
             nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
             nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
         )
 
 
@@ -142,8 +156,10 @@ class Generator(nn.Module):
 # PatchGAN Discriminator (leichtgewichtig, spectral-normed)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class PatchGANDiscriminator(nn.Module):
     """PatchGAN: klassifiziert 16x16 Patches als real/fake."""
+
     def __init__(self, in_channels=1, base_ch=32):
         super().__init__()
         C = base_ch
@@ -152,15 +168,18 @@ class PatchGANDiscriminator(nn.Module):
             return nn.utils.spectral_norm(nn.Conv2d(in_ch, out_ch, k, s, p, bias=False))
 
         self.layers = nn.Sequential(
-            sn_conv(in_channels, C, 4, 2, 1),        # 128x128 -> 64x64
+            sn_conv(in_channels, C, 4, 2, 1),  # 128x128 -> 64x64
             nn.LeakyReLU(0.2, inplace=True),
-            sn_conv(C, C * 2, 4, 2, 1),              # 64x64 -> 32x32
-            nn.BatchNorm2d(C * 2), nn.LeakyReLU(0.2, inplace=True),
-            sn_conv(C * 2, C * 4, 4, 2, 1),          # 32x32 -> 16x16
-            nn.BatchNorm2d(C * 4), nn.LeakyReLU(0.2, inplace=True),
-            sn_conv(C * 4, C * 8, 4, 2, 1),          # 16x16 -> 8x8
-            nn.BatchNorm2d(C * 8), nn.LeakyReLU(0.2, inplace=True),
-            sn_conv(C * 8, 1, 4, 1, 0),              # 8x8 -> 5x5
+            sn_conv(C, C * 2, 4, 2, 1),  # 64x64 -> 32x32
+            nn.BatchNorm2d(C * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            sn_conv(C * 2, C * 4, 4, 2, 1),  # 32x32 -> 16x16
+            nn.BatchNorm2d(C * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            sn_conv(C * 4, C * 8, 4, 2, 1),  # 16x16 -> 8x8
+            nn.BatchNorm2d(C * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            sn_conv(C * 8, 1, 4, 1, 0),  # 8x8 -> 5x5
         )
 
     def forward(self, x):
@@ -171,18 +190,29 @@ class PatchGANDiscriminator(nn.Module):
 # Losses
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def multi_resolution_stft_loss(pred, target):
     """Multi-scale spectral loss on Mel spectrogram rows (freq axis)."""
     B = pred.shape[0]
     loss = 0.0
     for n_fft in [32, 64, 128]:
         for b in range(B):
-            ps = torch.stft(pred[b, 0, :, :], n_fft=n_fft, hop_length=n_fft // 4,
-                            window=torch.hann_window(n_fft, device=pred.device),
-                            return_complex=True, pad_mode='reflect').abs()
-            ts = torch.stft(target[b, 0, :, :], n_fft=n_fft, hop_length=n_fft // 4,
-                            window=torch.hann_window(n_fft, device=target.device),
-                            return_complex=True, pad_mode='reflect').abs()
+            ps = torch.stft(
+                pred[b, 0, :, :],
+                n_fft=n_fft,
+                hop_length=n_fft // 4,
+                window=torch.hann_window(n_fft, device=pred.device),
+                return_complex=True,
+                pad_mode="reflect",
+            ).abs()
+            ts = torch.stft(
+                target[b, 0, :, :],
+                n_fft=n_fft,
+                hop_length=n_fft // 4,
+                window=torch.hann_window(n_fft, device=target.device),
+                return_complex=True,
+                pad_mode="reflect",
+            ).abs()
             loss += F.l1_loss(ps, ts)
     return loss / (B * 3)
 
@@ -203,6 +233,7 @@ def discriminator_loss(disc_real, disc_fake):
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     device = torch.device("cpu")
     segment_samples = (N_FRAMES - 1) * HOP + N_FFT
@@ -222,8 +253,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     if ckpt_path.exists():
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
         g_state = generator.state_dict()
-        pretrained = {k: v for k, v in ckpt["model_state_dict"].items()
-                       if k in g_state and v.shape == g_state[k].shape}
+        pretrained = {k: v for k, v in ckpt["model_state_dict"].items() if k in g_state and v.shape == g_state[k].shape}
         g_state.update(pretrained)
         generator.load_state_dict(g_state, strict=False)
         print(f"Loaded {len(pretrained)}/{len(g_state)} generator weights from V2 checkpoint")
@@ -237,7 +267,6 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Loss weights (progressive: start with L1+STFT, gradually add GAN)
-    lambda_l1 = 1.0
     lambda_stft = 0.3
     lambda_gan_start = 0.0
     lambda_gan_end = 0.1
@@ -267,8 +296,8 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
                 cutoff = np.random.choice(CUTOFFS)
                 y_lim = butter_lp(y_full, cutoff, SR)
                 start = np.random.randint(0, len(y_full) - segment_samples)
-                batch_x.append(torch.from_numpy(y_lim[start:start+segment_samples]))
-                batch_y.append(torch.from_numpy(y_full[start:start+segment_samples]))
+                batch_x.append(torch.from_numpy(y_lim[start : start + segment_samples]))
+                batch_y.append(torch.from_numpy(y_full[start : start + segment_samples]))
                 batch_c.append(cutoff / 11025.0)
 
             x = torch.stack(batch_x).to(device)
@@ -321,13 +350,18 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
         sch_d.step()
         elapsed = time.time() - t0
 
-        print(f"Epoch {epoch+1:3d}/{epochs} | G:{avg_g:.4f} D:{avg_d:.4f} "
-              f"GAN:{gan_weight:.3f} | LR {sch_g.get_last_lr()[0]:.1e} | {elapsed:.0f}s", flush=True)
+        print(
+            f"Epoch {epoch + 1:3d}/{epochs} | G:{avg_g:.4f} D:{avg_d:.4f} "
+            f"GAN:{gan_weight:.3f} | LR {sch_g.get_last_lr()[0]:.1e} | {elapsed:.0f}s",
+            flush=True,
+        )
 
         if avg_g < best_loss:
             best_loss = avg_g
-            torch.save({"model_state_dict": generator.state_dict(), "epoch": epoch, "loss": avg_g},
-                       out_dir / "best_model_v3.pt")
+            torch.save(
+                {"model_state_dict": generator.state_dict(), "epoch": epoch, "loss": avg_g},
+                out_dir / "best_model_v3.pt",
+            )
 
     # Export ONNX (generator only)
     generator.eval()
@@ -338,6 +372,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
         def __init__(self, gen):
             super().__init__()
             self.gen = gen
+
         def forward(self, x, cutoff):
             return self.gen(x, cutoff)
 
@@ -345,7 +380,9 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     onnx_path = out_dir / "bw_reconstructor_v3.onnx"
 
     torch.onnx.export(
-        export_model, (dummy_input, dummy_cutoff), str(onnx_path),
+        export_model,
+        (dummy_input, dummy_cutoff),
+        str(onnx_path),
         input_names=["input", "cutoff"],
         output_names=["output"],
         dynamic_axes={
@@ -357,6 +394,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
     )
 
     import onnx
+
     onnx.checker.check_model(str(onnx_path))
     size_mb = onnx_path.stat().st_size / 1e6
     print(f"\nONNX exported: {onnx_path} ({size_mb:.1f} MB)")
@@ -366,6 +404,7 @@ def train(epochs=300, batch_size=6, lr=1e-4, base_ch=24, steps_per_epoch=200):
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--batch-size", type=int, default=6)

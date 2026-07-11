@@ -117,9 +117,8 @@ class SileroPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("SileroVAD", True)
-        except Exception as e:
+        except Exception:
             logger.warning("silero_plugin.py::_vad_mask_single_call fallback", exc_info=True)
-            pass
         try:
             inp = mono16[None].astype(np.float32)  # [1, n_samples]
             out = self._session.run(None, {"input": inp})[0]  # [1, frames, 999]
@@ -144,9 +143,8 @@ class SileroPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("SileroVAD", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("silero_plugin.py::_vad_mask_single_call fallback", exc_info=True)
-                    pass
 
     def _energy_mask(self, mono16: np.ndarray) -> np.ndarray:
         """Energy-based VAD fallback: chunk-wise RMS."""
@@ -166,9 +164,8 @@ class SileroPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("SileroVAD", True)
-        except Exception as e:
+        except Exception:
             logger.warning("silero_plugin.py::_vad_onnx fallback", exc_info=True)
-            pass
         try:
             inp = chunk[None].astype(np.float32)
             try:
@@ -184,9 +181,8 @@ class SileroPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("SileroVAD", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("silero_plugin.py::_vad_onnx fallback", exc_info=True)
-                    pass
 
     @staticmethod
     def _energy_vad(chunk: np.ndarray, threshold: float = 0.01) -> float:

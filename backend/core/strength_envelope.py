@@ -35,7 +35,7 @@ _MIN_STRENGTH_FLOOR: float = 0.06  # Never completely dry — noise texture cont
 _MAX_STRENGTH: float = 1.0
 
 # Asymmetric smoothing time constants (seconds)
-_ATTACK_TAU_S: float = 0.005   # 5 ms — instant onset
+_ATTACK_TAU_S: float = 0.005  # 5 ms — instant onset
 _RELEASE_TAU_S: float = 0.050  # 50 ms — gradual release (no pumping)
 
 # Defect-type-specific Gaussian spread (seconds)
@@ -75,6 +75,7 @@ _CROSSFADE_MS: float = 2.5  # 2.5ms fade at state transitions
 # ═══════════════════════════════════════════════════════════════════════
 # §2.71b Core Envelope Computation
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def compute_strength_envelope(
     defect_locations: dict[str, list[tuple[float, float]]] | None,
@@ -142,7 +143,7 @@ def compute_strength_envelope(
             center = (f_start + f_end) / 2.0
             # Defect core width + Gaussian tails
             core_half = max(1.0, (f_end - f_start) / 2.0)
-            total_sigma = max(1.0, np.sqrt(core_half ** 2 + sigma_frames ** 2))
+            total_sigma = max(1.0, np.sqrt(core_half**2 + sigma_frames**2))
 
             f_min = max(0, int(center - 3.5 * total_sigma))
             f_max = min(n_frames, int(center + 3.5 * total_sigma) + 1)
@@ -216,12 +217,15 @@ def compute_strength_envelope(
     mean_val = float(np.mean(envelope))
     std_val = float(np.std(envelope))
     logger.info(
-        "§2.71 StrengthEnvelope v2: %d/%d frames (%.1f%%), μ=%.3f σ=%.3f, "
-        "base=%.2f panns=%.2f dur=%.1fs",
-        n_active, n_frames,
+        "§2.71 StrengthEnvelope v2: %d/%d frames (%.1f%%), μ=%.3f σ=%.3f, base=%.2f panns=%.2f dur=%.1fs",
+        n_active,
+        n_frames,
         100.0 * n_active / max(1, n_frames),
-        mean_val, std_val,
-        base_strength, panns_singing, audio_duration_s,
+        mean_val,
+        std_val,
+        base_strength,
+        panns_singing,
+        audio_duration_s,
     )
 
     return np.asarray(envelope, dtype=np.float32)
@@ -230,6 +234,7 @@ def compute_strength_envelope(
 # ═══════════════════════════════════════════════════════════════════════
 # §2.71c Smoothing, Transient Detection, Windowing
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _apply_asymmetric_smoothing(
     envelope: np.ndarray,
@@ -288,11 +293,11 @@ def _detect_transients(
 
         # Short-term energy (fast)
         kernel_short = np.ones(win_short) / win_short
-        e_short = np.convolve(energy, kernel_short, mode='same')
+        e_short = np.convolve(energy, kernel_short, mode="same")
 
         # Long-term energy (slow)
         kernel_long = np.ones(win_long) / win_long
-        e_long = np.convolve(energy, kernel_long, mode='same')
+        e_long = np.convolve(energy, kernel_long, mode="same")
 
         # Ratio — where short-term energy spikes above long-term
         eps = 1e-10
@@ -393,8 +398,8 @@ def _apply_temporal_masking(
             return envelope
 
         energy = mono.astype(np.float64) ** 2
-        e_short = np.convolve(energy, np.ones(win_short) / win_short, mode='same')
-        e_long = np.convolve(energy, np.ones(win_long) / win_long, mode='same')
+        e_short = np.convolve(energy, np.ones(win_short) / win_short, mode="same")
+        e_long = np.convolve(energy, np.ones(win_long) / win_long, mode="same")
         ratio = e_short / (e_long + 1e-10)
 
         frame_indices = np.arange(0, len(mono), hop)[:n_frames]
@@ -406,15 +411,15 @@ def _apply_temporal_masking(
 
         # 2. Forward-Masking-Profil (exponentiell, 200ms)
         tau_fwd_frames = max(1.0, 0.050 * sample_rate / hop)  # τ=50ms
-        fwd_frames = int(0.200 * sample_rate / hop)            # 200ms max
+        fwd_frames = int(0.200 * sample_rate / hop)  # 200ms max
         fwd_mask = np.zeros(fwd_frames, dtype=np.float64)
         for i in range(fwd_frames):
             fwd_mask[i] = np.exp(-i / tau_fwd_frames)
         fwd_mask = 1.0 - fwd_mask * 0.6  # Max 60% Reduktion
 
         # 3. Backward-Masking-Profil (exponentiell, 20ms)
-        tau_bwd_frames = max(1.0, 0.005 * sample_rate / hop)   # τ=5ms
-        bwd_frames = int(0.020 * sample_rate / hop)             # 20ms max
+        tau_bwd_frames = max(1.0, 0.005 * sample_rate / hop)  # τ=5ms
+        bwd_frames = int(0.020 * sample_rate / hop)  # 20ms max
         bwd_mask = np.zeros(bwd_frames, dtype=np.float64)
         for i in range(bwd_frames):
             bwd_mask[bwd_frames - 1 - i] = np.exp(-i / tau_bwd_frames)
@@ -429,23 +434,21 @@ def _apply_temporal_masking(
             end_fwd = min(n_frames, pos + fwd_frames)
             length = end_fwd - pos
             if length > 0:
-                mask_accum[pos:end_fwd] = np.minimum(
-                    mask_accum[pos:end_fwd], fwd_mask[:length]
-                )
+                mask_accum[pos:end_fwd] = np.minimum(mask_accum[pos:end_fwd], fwd_mask[:length])
             # Backward (vor dem Transienten)
             start_bwd = max(0, pos - bwd_frames)
             length = pos - start_bwd
             if length > 0:
-                mask_accum[start_bwd:pos] = np.minimum(
-                    mask_accum[start_bwd:pos], bwd_mask[bwd_frames - length:]
-                )
+                mask_accum[start_bwd:pos] = np.minimum(mask_accum[start_bwd:pos], bwd_mask[bwd_frames - length :])
 
         envelope_masked = envelope * mask_accum
         n_reduced = int(np.sum(mask_accum < 0.95))
         if n_reduced > 0:
             logger.debug(
                 "§2.71 TemporalMasking: %d/%d Frames reduziert (μ=%.3f)",
-                n_reduced, n_frames, float(np.mean(mask_accum)),
+                n_reduced,
+                n_frames,
+                float(np.mean(mask_accum)),
             )
 
         return np.asarray(envelope_masked, dtype=np.float64)
@@ -464,12 +467,13 @@ def _resample_1d(data: np.ndarray, target_len: int) -> np.ndarray:
 
     x_orig = np.linspace(0.0, 1.0, len(data))
     x_target = np.linspace(0.0, 1.0, target_len)
-    return interp1d(x_orig, data, kind='linear', fill_value='extrapolate')(x_target)
+    return interp1d(x_orig, data, kind="linear", fill_value="extrapolate")(x_target)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # §2.71d Resampling & Blending
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def resample_envelope_to_sr(
     envelope: np.ndarray,
@@ -502,8 +506,10 @@ def resample_envelope_to_sr(
         # Cubic spline — smoother than linear, no stairstep
         try:
             spline = interp1d(
-                env_t, envelope.astype(np.float64),
-                kind='cubic', bounds_error=False,
+                env_t,
+                envelope.astype(np.float64),
+                kind="cubic",
+                bounds_error=False,
                 fill_value=(float(envelope[0]), float(envelope[-1])),
             )
             return spline(target_t).astype(np.float32)
@@ -548,7 +554,8 @@ def apply_strength_envelope_wet_dry(
     if len(env) != n_samples:
         env = resample_envelope_to_sr(
             np.asarray([env], dtype=np.float64).flatten() if env.ndim > 1 else env,
-            n_samples, cubic=True,
+            n_samples,
+            cubic=True,
         ).astype(np.float64)
 
     wet = np.clip(env, 0.0, 1.0)
@@ -570,8 +577,8 @@ def apply_strength_envelope_wet_dry(
             kernel = np.hanning(win_samples)
             kernel = kernel / np.sum(kernel)
 
-            orig_rms = np.sqrt(np.convolve(orig_mono ** 2, kernel, mode='same') + 1e-12)
-            proc_rms = np.sqrt(np.convolve(proc_mono ** 2, kernel, mode='same') + 1e-12)
+            orig_rms = np.sqrt(np.convolve(orig_mono**2, kernel, mode="same") + 1e-12)
+            proc_rms = np.sqrt(np.convolve(proc_mono**2, kernel, mode="same") + 1e-12)
 
             # Gain factor: match processed RMS to original RMS
             gain = np.ones(n_samples, dtype=np.float64)
@@ -603,6 +610,7 @@ def apply_strength_envelope_wet_dry(
 # ═══════════════════════════════════════════════════════════════════════
 # §2.71e Phase Integration API
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def apply_strength_envelope(
     processed: np.ndarray,

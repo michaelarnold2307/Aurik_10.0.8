@@ -25,10 +25,8 @@ Date: 15. Februar 2026
 import logging
 
 import numpy as np
-from scipy import signal
-from backend.core.comprehensive_metrics import PsychoAcousticMetrics  # canonical (§dedup)
 
-from scipy.signal import hilbert, stft, welch
+from backend.core.comprehensive_metrics import PsychoAcousticMetrics  # canonical (§dedup)
 
 logger = logging.getLogger(__name__)
 

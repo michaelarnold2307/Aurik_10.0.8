@@ -3250,7 +3250,6 @@ def _extract_onnx_embedding(mert_plugin: object, audio: np.ndarray, sr: int) -> 
         _plm.set_active("MERT", True)
     except Exception as e:
         logger.warning("mert_mushra_proxy.py::_extract_onnx_embedding fallback: %s", e)
-        pass
 
     try:
         min_len = sr  # 1 s minimum
@@ -3274,7 +3273,6 @@ def _extract_onnx_embedding(mert_plugin: object, audio: np.ndarray, sr: int) -> 
                 _plm.set_active("MERT", False)
             except Exception as e:
                 logger.warning("mert_mushra_proxy.py::_extract_onnx_embedding fallback: %s", e)
-                pass
 
 
 def _extract_dsp_embedding(audio: np.ndarray, sr: int) -> np.ndarray:

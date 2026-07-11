@@ -53,7 +53,7 @@ class TestPostPipelineFrisson:
     def test_01_frisson_signal_has_dynamic_arc(self):
         """Das Test-Signal hat einen messbaren Dynamik-Bogen."""
         audio = _make_frisson_signal()
-        rms = np.sqrt(np.mean(audio**2))
+        np.sqrt(np.mean(audio**2))
 
         # Strophe sollte leiser sein als Klimax
         verse_rms = np.sqrt(np.mean(audio[: int(2.0 * SR)] ** 2))
@@ -66,7 +66,7 @@ class TestPostPipelineFrisson:
     def test_02_envelope_correlation_before_after_light_processing(self):
         """Nach leichter Verarbeitung bleibt die Hüllkurven-Korrelation hoch."""
         audio = _make_frisson_signal()
-        audio_rms = np.sqrt(np.mean(audio**2) + 1e-12)
+        np.sqrt(np.mean(audio**2) + 1e-12)
 
         # Simuliere leichte Dynamik-Glättung (wie Phase 54)
         from scipy.ndimage import uniform_filter1d
@@ -82,9 +82,7 @@ class TestPostPipelineFrisson:
         # Pearson-Korrelation der Hüllkurven
         corr = np.corrcoef(env_orig[::100], env_proc[::100])[0, 1]
 
-        assert corr > 0.85, (
-            f"Frisson-Bogen nicht erhalten: envelope correlation = {corr:.3f} < 0.85"
-        )
+        assert corr > 0.85, f"Frisson-Bogen nicht erhalten: envelope correlation = {corr:.3f} < 0.85"
 
     def test_03_climax_not_compressed_below_threshold(self):
         """Die Klimax-Passage wird nicht unter 70% ihrer ursprünglichen Energie komprimiert."""
@@ -102,16 +100,12 @@ class TestPostPipelineFrisson:
         processed_climax_rms = np.sqrt(np.mean(processed[int(3.0 * SR) : int(4.0 * SR)] ** 2))
         ratio = processed_climax_rms / max(original_climax_rms, 1e-12)
 
-        assert ratio > 0.70, (
-            f"Klimax zu stark komprimiert: post/pre ratio = {ratio:.3f} < 0.70"
-        )
+        assert ratio > 0.70, f"Klimax zu stark komprimiert: post/pre ratio = {ratio:.3f} < 0.70"
 
     def test_04_frisson_hard_veto_in_verboten_md(self):
         """Frisson Hard-Veto ist in VERBOTEN.md dokumentiert."""
         src = open(".github/VERBOTEN.md", encoding="utf-8").read()
-        assert "Frisson-Extremzone" in src, (
-            "Frisson Hard-Veto nicht in VERBOTEN.md dokumentiert"
-        )
+        assert "Frisson-Extremzone" in src, "Frisson Hard-Veto nicht in VERBOTEN.md dokumentiert"
         assert "chirurgische" in src.lower() or "Defekt-Behebung" in src, (
             "Priorität 'chirurgische Defekt-Behebung vor Frisson' nicht dokumentiert"
         )
@@ -122,6 +116,4 @@ class TestPostPipelineFrisson:
         import backend.core.unified_restorer_v3 as uv3_mod
 
         src = open(uv3_mod.__file__, encoding="utf-8").read()
-        assert "frisson_zones" in src, (
-            "frisson_zones nicht in UV3 — werden nicht an Phasen durchgereicht"
-        )
+        assert "frisson_zones" in src, "frisson_zones nicht in UV3 — werden nicht an Phasen durchgereicht"

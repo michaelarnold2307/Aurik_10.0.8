@@ -49,6 +49,7 @@ except ImportError:
     # Fallback: direkte ANSI-Escape-Codes (Linux/macOS ohne colorama)
     class _AnsiBase:
         """Minimal ANSI-Fallback; gibt leere Strings auf NO_COLOR-Systemen zurück."""
+
         CYAN = "\033[36m"
         WHITE = "\033[37m"
         GREEN = "\033[32m"
@@ -68,6 +69,7 @@ except ImportError:
     Fore = _AnsiBase()  # type: ignore[assignment]
     Back = _AnsiBack()  # type: ignore[assignment]
     Style = _AnsiStyle()  # type: ignore[assignment]
+
 
 @dataclass
 class CLITheme:
@@ -397,7 +399,7 @@ class AccessibleCLI:
                 print("\a", end="", flush=True)  # Single beep
             else:
                 print("\a", end="", flush=True)  # Single beep
-        except Exception as e:
+        except Exception:
             logger.warning("cli_accessibility.py::play_sound fallback", exc_info=True)
             pass  # Silently fail if beep not supported
 

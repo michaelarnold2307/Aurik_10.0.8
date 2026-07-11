@@ -14,7 +14,7 @@ def check_budget(name: str, size_gb: float = 0.1) -> bool:
             _logger.warning("Memory budget exceeded for %s (%.2f GB) — DSP fallback", name, size_gb)
             return False
         return True
-    except Exception as e:
+    except Exception:
         logger.warning("_memory_budget_guard.py::check_budget fallback", exc_info=True)
         return True
 

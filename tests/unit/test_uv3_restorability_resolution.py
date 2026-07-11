@@ -1,7 +1,7 @@
-import pytest
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from backend.core.unified_restorer_v3 import UnifiedRestorerV3
 

@@ -18,7 +18,6 @@ Bug-Abdeckung:
   Bug 9: except Exception: pass → dieser Check
 """
 
-import ast
 import re
 import sys
 from pathlib import Path
@@ -32,13 +31,14 @@ def check_typo_double_prefix(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_typo_double_prefix fallback", exc_info=True)
         return issues
     # Pattern: word_word_ where word == word (like cached_cached_)
-    for match in re.finditer(r'\b([a-z]+)_\1_[a-z]', content):
-        issues.append(f"{filepath}:{content[:match.start()].count(chr(10))+1}: "
-                      f"doppeltes Präfix '{match.group()}' (Bug 3)")
+    for match in re.finditer(r"\b([a-z]+)_\1_[a-z]", content):
+        issues.append(
+            f"{filepath}:{content[: match.start()].count(chr(10)) + 1}: doppeltes Präfix '{match.group()}' (Bug 3)"
+        )
     return issues
 
 
@@ -48,17 +48,16 @@ def check_preservation_mode_threshold(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_preservation_mode_threshold fallback", exc_info=True)
         return issues
     # Pattern: bw_loss_sev >= 0.90 (old threshold)
-    if re.search(r'bw_loss.*>=\s*0\.9[0-6]', content):
-        for i, line in enumerate(content.split('\n'), 1):
-            if 'bw_loss' in line and '>=' in line:
-                m = re.search(r'>=\s*(0\.\d+)', line)
+    if re.search(r"bw_loss.*>=\s*0\.9[0-6]", content):
+        for i, line in enumerate(content.split("\n"), 1):
+            if "bw_loss" in line and ">=" in line:
+                m = re.search(r">=\s*(0\.\d+)", line)
                 if m and float(m.group(1)) < 0.97:
-                    issues.append(f"{filepath}:{i}: Preservation Mode Schwelle "
-                                  f"={m.group(1)} < 0.97 (Bug 6)")
+                    issues.append(f"{filepath}:{i}: Preservation Mode Schwelle ={m.group(1)} < 0.97 (Bug 6)")
     return issues
 
 
@@ -71,15 +70,14 @@ def check_wrong_field_name(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_wrong_field_name fallback", exc_info=True)
         return issues
     for wrong, correct in KNOWN_WRONG.items():
         if wrong in content:
-            for i, line in enumerate(content.split('\n'), 1):
+            for i, line in enumerate(content.split("\n"), 1):
                 if wrong in line:
-                    issues.append(f"{filepath}:{i}: Falsches Feld '{wrong}' "
-                                  f"→ sollte '{correct}' sein (Bug 7)")
+                    issues.append(f"{filepath}:{i}: Falsches Feld '{wrong}' → sollte '{correct}' sein (Bug 7)")
     return issues
 
 
@@ -89,26 +87,26 @@ def check_bare_except_pass(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             lines = f.readlines()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_bare_except_pass fallback", exc_info=True)
         return issues
     for i, line in enumerate(lines):
-        if re.match(r'\s*except\s+Exception\s*(as\s+\w+)?\s*:', line):
+        if re.match(r"\s*except\s+Exception\s*(as\s+\w+)?\s*:", line):
             # Check next line for bare pass/return/continue
             if i + 1 < len(lines):
                 next_line = lines[i + 1]
-                if re.match(r'\s*(pass|return|continue)\s*$', next_line):
+                if re.match(r"\s*(pass|return|continue)\s*$", next_line):
                     # Check if logger.debug is within 2 lines above
                     has_logger = False
                     for j in range(max(0, i - 2), i):
-                        if 'logger.' in lines[j]:
+                        if "logger." in lines[j]:
                             has_logger = True
                             break
                     if not has_logger:
-                        issues.append(f"{filepath}:{i+1}: stummer except Exception: "
-                                      f"{next_line.strip()} ohne Logging (Bug 9)")
+                        issues.append(
+                            f"{filepath}:{i + 1}: stummer except Exception: {next_line.strip()} ohne Logging (Bug 9)"
+                        )
     return issues
-
 
 
 def check_pruner_signature(filepath: str) -> list[str]:
@@ -117,13 +115,13 @@ def check_pruner_signature(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_pruner_signature fallback", exc_info=True)
         return issues
-    if 'def prune(' in content and 'restoration_context' not in content:
+    if "def prune(" in content and "restoration_context" not in content:
         for i, line in enumerate(content.split(chr(10)), 1):
-            if 'def prune(' in line:
-                if 'restoration_context' not in line:
+            if "def prune(" in line:
+                if "restoration_context" not in line:
                     issues.append(f"{filepath}:{i}: prune() missing restoration_context parameter")
     return issues
 
@@ -134,14 +132,16 @@ def check_sentinel_architecture(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_sentinel_architecture fallback", exc_info=True)
         return issues
-    if 'VocalDistortionSentinel' in content:
-        if 'def check(' in content and 'def measure(' not in content:
+    if "VocalDistortionSentinel" in content:
+        if "def check(" in content and "def measure(" not in content:
             issues.append(f"{filepath}: Sentinel has check() but no measure() — must be SENSOR")
-        if 'strength_overrides' in content or 'injected_phases' in content:
-            issues.append(f"{filepath}: Sentinel must not contain strength_overrides/injected_phases — WRITE to restoration_context instead")
+        if "strength_overrides" in content or "injected_phases" in content:
+            issues.append(
+                f"{filepath}: Sentinel must not contain strength_overrides/injected_phases — WRITE to restoration_context instead"
+            )
     return issues
 
 
@@ -151,14 +151,14 @@ def check_magic_numbers(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_magic_numbers fallback", exc_info=True)
         return issues
     # Pattern: *= 0.85 or *= 0.6 in goal weight context
     for i, line in enumerate(content.split(chr(10)), 1):
-        if 'weights[' in line and '*= 0.85' in line:
+        if "weights[" in line and "*= 0.85" in line:
             issues.append(f"{filepath}:{i}: hardcoded *= 0.85 — use continuous function instead")
-        if 'weights[' in line and '*= 0.6' in line and 'bw_ratio' not in content:
+        if "weights[" in line and "*= 0.6" in line and "bw_ratio" not in content:
             issues.append(f"{filepath}:{i}: hardcoded *= 0.6 — use bw_ratio instead")
     return issues
 
@@ -169,18 +169,18 @@ def check_absolute_bw_loss(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_absolute_bw_loss fallback", exc_info=True)
         return issues
     # Pattern: using _bw_loss_sev directly for decisions (not _bw_loss_relative)
-    if '_bw_loss_sev' in content and '_bw_loss_relative' not in content:
+    if "_bw_loss_sev" in content and "_bw_loss_relative" not in content:
         # Allow in the guard calculation itself (where _bw_loss_relative is defined)
-        if 'def _build_song_calibration_profile' not in content:
+        if "def _build_song_calibration_profile" not in content:
             issues.append(f"{filepath}: uses _bw_loss_sev without material-relative normalization")
     # Pattern: hardcoded bandwidth comparison against 20000
     for i, line in enumerate(content.split(chr(10)), 1):
-        if '20000' in line and ('bandwidth' in line.lower() or 'bw' in line.lower()):
-            if 'MATERIAL_EXPECTED_BW' not in content:
+        if "20000" in line and ("bandwidth" in line.lower() or "bw" in line.lower()):
+            if "MATERIAL_EXPECTED_BW" not in content:
                 issues.append(f"{filepath}:{i}: hardcoded 20000 Hz bandwidth reference without MATERIAL_EXPECTED_BW")
     return issues
 
@@ -191,24 +191,24 @@ def check_defect_classification(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_defect_classification fallback", exc_info=True)
         return issues
-    if 'SURGICAL_DEFECT_TYPES' in content:
+    if "SURGICAL_DEFECT_TYPES" in content:
         # Check all DefectTypes are accounted for
         try:
             from backend.core.defect_scanner import DefectType
             from backend.core.surgical_defect_analyzer import SURGICAL_DEFECT_TYPES
+
             all_defects = {e.value for e in DefectType}
             surgical = all_defects & SURGICAL_DEFECT_TYPES
-            unaccounted = all_defects - SURGICAL_DEFECT_TYPES
+            all_defects - SURGICAL_DEFECT_TYPES
             # GLOBAL types are everything not in SURGICAL — no explicit list needed
             if len(surgical) != 24:
-                issues.append(f'{filepath}: SURGICAL_DEFECT_TYPES has {len(surgical)} types (expected 24)')
+                issues.append(f"{filepath}: SURGICAL_DEFECT_TYPES has {len(surgical)} types (expected 24)")
         except ImportError:
             pass
     return issues
-
 
 
 def check_surgical_architecture(filepath: str) -> list[str]:
@@ -217,33 +217,33 @@ def check_surgical_architecture(filepath: str) -> list[str]:
     try:
         with open(filepath) as f:
             content = f.read()
-    except Exception as e:
+    except Exception:
         logger.warning("anti_regression_gate.py::check_surgical_architecture fallback", exc_info=True)
         return issues
 
     # Check 1: PhasePlan must have surgical_routing
-    if 'class PhasePlan' in content:
-        if 'surgical_routing' not in content:
+    if "class PhasePlan" in content:
+        if "surgical_routing" not in content:
             issues.append(f"{filepath}: PhasePlan missing surgical_routing field")
 
     # Check 2: PhasePruner must protect surgical phases
-    if 'def prune(' in content and 'IntelligentPhasePruner' in content:
-        if 'surgical_defect_types' not in content:
+    if "def prune(" in content and "IntelligentPhasePruner" in content:
+        if "surgical_defect_types" not in content:
             issues.append(f"{filepath}: PhasePruner missing surgical phase protection")
 
     # Check 3: PhaseResult must have time_range
-    if 'class PhaseResult' in content:
-        if 'time_range' not in content:
+    if "class PhaseResult" in content:
+        if "time_range" not in content:
             issues.append(f"{filepath}: PhaseResult missing time_range field")
 
     # Check 4: restoration_context must propagate surgical_defect_types
-    if '_active_defekt_hint = _defekt_hint_kwarg' in content:
-        if 'surgical_defect_types' not in content:
+    if "_active_defekt_hint = _defekt_hint_kwarg" in content:
+        if "surgical_defect_types" not in content:
             issues.append(f"{filepath}: UV3 not propagating surgical_defect_types to restoration_context")
 
     # Check 5: ExzellenzDenker must know surgical zones
-    if 'class ExzellenzDenker' in content or 'def messe_und_repariere' in content:
-        if 'surgical' not in content.lower():
+    if "class ExzellenzDenker" in content or "def messe_und_repariere" in content:
+        if "surgical" not in content.lower():
             issues.append(f"{filepath}: ExzellenzDenker missing surgical zone awareness")
 
     return issues
@@ -251,11 +251,13 @@ def check_surgical_architecture(filepath: str) -> list[str]:
 
 def check_name_error_risk(filepath: str) -> list[str]:
     import py_compile
+
     try:
         py_compile.compile(filepath, doraise=True)
         return []
     except py_compile.PyCompileError as e:
-        return [f'{filepath}: does not compile: {e}']
+        return [f"{filepath}: does not compile: {e}"]
+
 
 def main() -> None:
     changed = sys.argv[1:]
@@ -265,7 +267,7 @@ def main() -> None:
 
     all_issues: list[str] = []
     for fp in changed:
-        if not fp.endswith('.py'):
+        if not fp.endswith(".py"):
             continue
         all_issues.extend(check_typo_double_prefix(fp))
         all_issues.extend(check_preservation_mode_threshold(fp))
@@ -283,7 +285,7 @@ def main() -> None:
         print(f"🛡️ Anti-Regression-Gate: {len(all_issues)} Verletzung(en)\n")
         for issue in all_issues:
             print(f"  🚫 {issue}")
-        print(f"\nDiese Muster wurden in Bugfix-Session 2026-07-09 behoben.")
+        print("\nDiese Muster wurden in Bugfix-Session 2026-07-09 behoben.")
         print("Commits, die sie reproduzieren, werden blockiert.")
         sys.exit(1)
 

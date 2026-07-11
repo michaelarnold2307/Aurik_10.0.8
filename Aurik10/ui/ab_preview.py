@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 
 import numpy as np
-from PyQt5 import QtCore, QtWidgets, QtGui
+from PyQt5 import QtCore, QtWidgets
 
 from Aurik10.i18n import t
 
@@ -146,23 +145,22 @@ class ABPreviewWidget(QtWidgets.QWidget):
 
                 # Leichte, schnelle Vorverarbeitung
                 try:
-                    from backend.api.bridge import get_defect_scanner
-                    from backend.api.bridge import get_human_pleasantness_estimator as _hpe; compute_pleasantness = _hpe()
+                    from backend.api.bridge import get_human_pleasantness_estimator as _hpe
+
+                    compute_pleasantness = _hpe()
                     result = compute_pleasantness(segment, self._sr)
                     logger.info("Preview HPE: %.2f", result.score)
-                except Exception as e:
+                except Exception:
                     logger.warning("ab_preview.py::_work fallback", exc_info=True)
-                    pass
 
                 # Schnelle Vorverarbeitung: einfaches Gate + Soft-Knee
                 try:
-                    from backend.api.bridge import get_audio_utils_gain_envelope as _ge; apply_musical_gain_envelope = _ge()
-                    segment = apply_musical_gain_envelope(
-                        segment, self._sr, gate_db=-30, knee_db=6, crossfade_ms=200
-                    )
-                except Exception as e:
+                    from backend.api.bridge import get_audio_utils_gain_envelope as _ge
+
+                    apply_musical_gain_envelope = _ge()
+                    segment = apply_musical_gain_envelope(segment, self._sr, gate_db=-30, knee_db=6, crossfade_ms=200)
+                except Exception:
                     logger.warning("ab_preview.py::_work fallback", exc_info=True)
-                    pass
 
                 self._preview_audio = segment.astype(np.float32)
             except Exception as e:
@@ -196,9 +194,9 @@ class ABPreviewWidget(QtWidgets.QWidget):
             return
         try:
             import sounddevice as sd
+
             sd.stop()
-            sd.play(self._original_audio[:min(len(self._original_audio), int(30 * self._sr))],
-                   self._sr)
+            sd.play(self._original_audio[: min(len(self._original_audio), int(30 * self._sr))], self._sr)
             self.btn_a.setStyleSheet(self._button_style("#FFD54F"))
             self.btn_b.setStyleSheet(self._button_style("#4CAF50"))
         except Exception as e:
@@ -209,6 +207,7 @@ class ABPreviewWidget(QtWidgets.QWidget):
             return
         try:
             import sounddevice as sd
+
             sd.stop()
             sd.play(self._preview_audio, self._sr)
             self.btn_b.setStyleSheet(self._button_style("#81C784"))
@@ -220,7 +219,8 @@ class ABPreviewWidget(QtWidgets.QWidget):
         from PyQt5.QtWidgets import QMessageBox
 
         reply = QMessageBox.question(
-            self, t("ab_preview.mode_title"),
+            self,
+            t("ab_preview.mode_title"),
             t("ab_preview.mode_question"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,

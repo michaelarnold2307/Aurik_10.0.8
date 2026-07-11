@@ -122,9 +122,8 @@ class MpSenetPlugin:
                 if not _try_alloc("MP-SENet", size_gb=0.04):
                     try:
                         _release("MP-SENet")
-                    except Exception as e:
+                    except Exception:
                         logger.warning("mp_senet_plugin.py::_try_load fallback", exc_info=True)
-                        pass
                     if not _try_alloc("MP-SENet", size_gb=0.04):
                         logger.warning("MP-SENet: ML-Budget erschöpft — DSP-Fallback.")
                         return

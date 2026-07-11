@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DefectInstance:
     """Eine zeitlich lokalisierte Defekt-Instanz."""
+
     start_s: float
     end_s: float
     defect_type: str
@@ -38,26 +39,27 @@ class DefectInstance:
 @dataclass
 class RepairResult:
     """Ergebnis einer chirurgischen Reparatur."""
+
     audio: np.ndarray
     zones_repaired: int = 0
     zones_skipped: int = 0
 
 
-
 # ── Lightweight Phase Functions für Surgical Repair ──────────────────────
 
 
-def _safety_clamp(repaired: "np.ndarray", original: "np.ndarray", max_ratio: float = 2.0) -> "np.ndarray":
+def _safety_clamp(repaired: np.ndarray, original: np.ndarray, max_ratio: float = 2.0) -> np.ndarray:
     """§2.59.14: Garantiert dass repariertes Audio nie > max_ratio × Original-Amplitude."""
     import numpy as np
+
     result = repaired.copy()
     # Per-Sample-Clamp: kein Sample darf max_ratio × Original überschreiten
     abs_orig = np.maximum(np.abs(original), 1e-10)
     limit = abs_orig * max_ratio
     np.clip(result, -limit, limit, out=result)
     # Global RMS darf nicht > 2× Original sein
-    rms_orig = np.sqrt(np.mean(original ** 2)) + 1e-10
-    rms_rep = np.sqrt(np.mean(result ** 2)) + 1e-10
+    rms_orig = np.sqrt(np.mean(original**2)) + 1e-10
+    rms_rep = np.sqrt(np.mean(result**2)) + 1e-10
     if rms_rep > rms_orig * max_ratio:
         result *= (rms_orig * max_ratio) / rms_rep
     return result.astype(np.float32)
@@ -65,16 +67,18 @@ def _safety_clamp(repaired: "np.ndarray", original: "np.ndarray", max_ratio: flo
 
 def _repair_wow_flutter(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """Leichte Wow/Flutter-Korrektur via lokaler Resampling-Anpassung.
-    
+
     Für isolierte Defekt-Zonen (nicht das ganze Lied).
     Die volle phase_12 läuft danach für globale Transport-Korrektur.
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 100:
         return result
     # Einfache Glättung der Pitch-Hüllkurve
     from scipy.signal import medfilt
+
     try:
         if result.ndim == 1:
             envelope = np.abs(result)
@@ -89,17 +93,17 @@ def _repair_wow_flutter(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch] = result[ch] * np.clip(gain, 0.5, 1.5)
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_wow_flutter fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
 
 def _repair_hiss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """Leichte Bandrausch-Reduktion via spektraler Subtraktion.
-    
+
     Nur für isolierte Zonen. phase_29 läuft danach global.
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 256:
         return result
@@ -108,7 +112,7 @@ def _repair_hiss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             spec = np.fft.rfft(result)
             mag = np.abs(spec)
             # Schätze Rauschboden aus hochfrequentem Bereich
-            noise_floor = np.median(mag[-len(mag)//4:]) * 0.5
+            noise_floor = np.median(mag[-len(mag) // 4 :]) * 0.5
             # Spektrale Subtraktion (soft)
             gain = np.maximum(mag - noise_floor, 0.0) / (mag + 1e-10)
             spec = spec * np.clip(gain, 0.1, 1.0)
@@ -117,13 +121,12 @@ def _repair_hiss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             for ch in range(result.shape[0]):
                 spec = np.fft.rfft(result[ch])
                 mag = np.abs(spec)
-                noise_floor = np.median(mag[-len(mag)//4:]) * 0.5
+                noise_floor = np.median(mag[-len(mag) // 4 :]) * 0.5
                 gain = np.maximum(mag - noise_floor, 0.0) / (mag + 1e-10)
                 spec = spec * np.clip(gain, 0.1, 1.0)
                 result[ch] = np.fft.irfft(spec, n=len(result[ch]))
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_hiss fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -139,6 +142,7 @@ def _repair_clicks(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """
     import numpy as np
     from scipy.interpolate import CubicSpline
+
     result = audio.copy()
     if audio.shape[-1] < 10:
         return result
@@ -185,11 +189,11 @@ def _repair_clicks(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 for g in group:
                     rel = g - s
                     if 0 <= rel < len(intact):
-                        intact[max(0, rel-1):min(len(intact), rel+2)] = False
+                        intact[max(0, rel - 1) : min(len(intact), rel + 2)] = False
                 if intact.sum() < 4:
                     continue
                 try:
-                    cs = CubicSpline(x[intact], y[intact], bc_type='natural')
+                    cs = CubicSpline(x[intact], y[intact], bc_type="natural")
                     ch_data[s:e] = cs(x)
                 except Exception:
                     # Linearer Fallback
@@ -200,7 +204,6 @@ def _repair_clicks(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_clicks fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -215,17 +218,20 @@ def _repair_crackle(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Referenz: Bailey, Casebeer & Fazekas (2019) AES 147th Conv.
     """
     import numpy as np
-    from scipy.signal import medfilt, butter, sosfiltfilt
+    from scipy.signal import butter, medfilt, sosfiltfilt
+
     result = audio.copy()
     if audio.shape[-1] < 32:
         return result
     try:
         # Highpass > 4 kHz extrahieren (da wo Knistern lebt)
-        sos = butter(4, 4000, 'high', fs=sr, output='sos')
-        channels = [(result, result)] if result.ndim == 1 else [
-            (result[ch:ch+1], result[ch]) for ch in range(result.shape[0])
-        ]
-        for (ch_view, ch_data) in channels:
+        sos = butter(4, 4000, "high", fs=sr, output="sos")
+        channels = (
+            [(result, result)]
+            if result.ndim == 1
+            else [(result[ch : ch + 1], result[ch]) for ch in range(result.shape[0])]
+        )
+        for ch_view, ch_data in channels:
             hf = sosfiltfilt(sos, ch_data)
             # Adaptiver Schwellwert für Knistern-Intensität
             hf_env = np.abs(hf)
@@ -235,7 +241,7 @@ def _repair_crackle(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             kernel = max(3, int(sr * 0.0005) | 1)  # ungerade
             filtered = medfilt(ch_data, kernel_size=kernel)
             # Blend: nur HF-Anteil ersetzen, Tiefpass unverändert
-            sos_lp = butter(4, 4000, 'low', fs=sr, output='sos')
+            sos_lp = butter(4, 4000, "low", fs=sr, output="sos")
             lp = sosfiltfilt(sos_lp, ch_data)
             lp_filtered = sosfiltfilt(sos_lp, filtered)
             hf_original = ch_data - lp
@@ -252,7 +258,6 @@ def _repair_crackle(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 pass  # already modified in-place via ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_crackle fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -268,6 +273,7 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """
     import numpy as np
     from scipy.interpolate import CubicSpline
+
     result = audio.copy()
     if audio.shape[-1] < 32:
         return result
@@ -280,8 +286,8 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             n_frames = max(1, (len(ch_data) - frame) // hop + 1)
             rms_env = np.zeros(len(ch_data), dtype=np.float32)
             for f in range(n_frames):
-                seg = ch_data[f*hop:f*hop+frame]
-                rms_env[f*hop:f*hop+frame] = np.sqrt(np.mean(seg**2) + 1e-10)
+                seg = ch_data[f * hop : f * hop + frame]
+                rms_env[f * hop : f * hop + frame] = np.sqrt(np.mean(seg**2) + 1e-10)
             # Globaler Median-RMS als Referenz
             ref_rms = np.median(rms_env[rms_env > 1e-8]) if np.any(rms_env > 1e-8) else 1e-6
             # Dropout = RMS unter 30% der Referenz
@@ -290,6 +296,7 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 continue
             # Gruppiere Dropout-Regionen
             from scipy.ndimage import label as _label
+
             labeled, n_regions = _label(dropout_mask)
             for r in range(1, n_regions + 1):
                 region = np.where(labeled == r)[0]
@@ -301,7 +308,7 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 s_ctx = max(0, s - ctx)
                 e_ctx = min(len(ch_data), e + ctx)
                 intact = np.ones(e_ctx - s_ctx, dtype=bool)
-                intact[s-s_ctx:e-s_ctx] = False
+                intact[s - s_ctx : e - s_ctx] = False
                 if intact.sum() < 4:
                     # Zu wenig Kontext → Gain-Kompensation
                     gain = ref_rms / (rms_env[s:e].mean() + 1e-10)
@@ -310,7 +317,7 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                     try:
                         x = np.arange(s_ctx, e_ctx)
                         y = ch_data[s_ctx:e_ctx].copy()
-                        cs = CubicSpline(x[intact], y[intact], bc_type='natural')
+                        cs = CubicSpline(x[intact], y[intact], bc_type="natural")
                         ch_data[s:e] = cs(np.arange(s, e))
                     except Exception:
                         gain = ref_rms / (rms_env[s:e].mean() + 1e-10)
@@ -321,7 +328,6 @@ def _repair_dropouts(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_dropouts fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -336,6 +342,7 @@ def _repair_pre_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Referenz: Herre & Johnston (1996) AES Conv. 101
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 256:
         return result
@@ -348,7 +355,7 @@ def _repair_pre_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             n_frames = max(1, (len(ch_data) - frame) // hop)
             energy = np.zeros(n_frames)
             for f in range(n_frames):
-                energy[f] = np.sum(ch_data[f*hop:f*hop+frame]**2)
+                energy[f] = np.sum(ch_data[f * hop : f * hop + frame] ** 2)
             if len(energy) < 3:
                 continue
             # Finde Pre-Echo: Energie-Sprung >12dB zwischen benachbarten Frames
@@ -373,7 +380,6 @@ def _repair_pre_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_pre_echo fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -388,13 +394,15 @@ def _repair_groove_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Referenz: AES Anthology of Disc Recording (2000)
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 4096:
         return result
     try:
         # Groove-Echo ist am stärksten im Bass-Bereich (<500 Hz)
         from scipy.signal import butter, sosfilt
-        sos_lp = butter(4, 500, 'low', fs=sr, output='sos')
+
+        sos_lp = butter(4, 500, "low", fs=sr, output="sos")
         channels = [result] if result.ndim == 1 else [result[ch] for ch in range(result.shape[0])]
         for ch_idx, ch_data in enumerate(channels):
             lp = sosfilt(sos_lp, ch_data)
@@ -405,8 +413,8 @@ def _repair_groove_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             if groove_delay >= len(lp) // 2:
                 continue
             # Kreuzkorrelation zwischen erstem und zweitem Teil
-            ref = lp[:len(lp)//4]
-            corr = np.correlate(lp[len(lp)//4:len(lp)//2], ref[:min(len(ref), groove_delay*2)], mode='valid')
+            ref = lp[: len(lp) // 4]
+            corr = np.correlate(lp[len(lp) // 4 : len(lp) // 2], ref[: min(len(ref), groove_delay * 2)], mode="valid")
             if len(corr) < 2:
                 continue
             peak = np.argmax(np.abs(corr))
@@ -423,7 +431,6 @@ def _repair_groove_echo(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_groove_echo fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -439,6 +446,7 @@ def _repair_mpeg_frame_loss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """
     import numpy as np
     from scipy.interpolate import CubicSpline
+
     result = audio.copy()
     if audio.shape[-1] < 512:
         return result
@@ -452,7 +460,7 @@ def _repair_mpeg_frame_loss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             hop = win // 2
             rms = np.zeros(len(ch_data) // hop)
             for f in range(len(rms)):
-                seg = ch_data[f*hop:min(f*hop+win, len(ch_data))]
+                seg = ch_data[f * hop : min(f * hop + win, len(ch_data))]
                 rms[f] = np.sqrt(np.mean(seg**2) + 1e-10)
             ref_rms = np.median(rms[rms > 1e-8]) if np.any(rms > 1e-8) else 1e-6
             # Frame-Drop: plötzlicher Energieabfall auf <5%
@@ -461,6 +469,7 @@ def _repair_mpeg_frame_loss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 continue
             # Gruppiere und interpoliere
             from scipy.ndimage import label as _label
+
             labeled, n_regions = _label(drop_mask)
             for r in range(1, n_regions + 1):
                 region = np.where(labeled == r)[0]
@@ -479,7 +488,7 @@ def _repair_mpeg_frame_loss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 if intact.sum() < 4:
                     continue
                 try:
-                    cs = CubicSpline(x[intact], ch_data[s:e][intact], bc_type='natural')
+                    cs = CubicSpline(x[intact], ch_data[s:e][intact], bc_type="natural")
                     ch_data[s:e] = cs(x)
                 except Exception:
                     ch_data[s:e] = np.interp(x, x[intact], ch_data[s:e][intact])
@@ -489,7 +498,6 @@ def _repair_mpeg_frame_loss(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_mpeg_frame_loss fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -502,6 +510,7 @@ def _repair_tape_head_clog(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Gain-Kompensation der betroffenen Stellen.
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 256:
         return result
@@ -513,21 +522,22 @@ def _repair_tape_head_clog(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             n_frames = max(1, (len(ch_data) - frame) // hop + 1)
             rms_env = np.zeros(len(ch_data))
             for f in range(n_frames):
-                seg = ch_data[f*hop:f*hop+frame]
-                rms_env[f*hop:f*hop+frame] = np.sqrt(np.mean(seg**2) + 1e-10)
+                seg = ch_data[f * hop : f * hop + frame]
+                rms_env[f * hop : f * hop + frame] = np.sqrt(np.mean(seg**2) + 1e-10)
             ref_rms = np.median(rms_env[rms_env > 1e-8]) if np.any(rms_env > 1e-8) else 1e-6
             # Head-Clog: partieller Pegelverlust (20-60% unter Referenz, kurzzeitig)
             dip_mask = (rms_env < (ref_rms * 0.6)) & (rms_env > (ref_rms * 0.2))
             if not np.any(dip_mask):
                 continue
             from scipy.ndimage import label as _label
+
             labeled, n_regions = _label(dip_mask)
             for r in range(1, n_regions + 1):
                 region = np.where(labeled == r)[0]
                 if len(region) < 8:
                     continue
                 s, e = region[0], min(len(ch_data), region[-1] + 1)
-                local_rms = np.sqrt(np.mean(ch_data[s:e]**2) + 1e-10)
+                local_rms = np.sqrt(np.mean(ch_data[s:e] ** 2) + 1e-10)
                 if local_rms > 0:
                     gain = min(ref_rms / local_rms, 3.0)  # Max +9.5dB
                     # Sanfte Gain-Rampe an den Rändern
@@ -546,7 +556,6 @@ def _repair_tape_head_clog(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_tape_head_clog fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -559,13 +568,15 @@ def _repair_sticky_shed(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Detektion via HF-Rausch-Modulation, spektrale Subtraktion.
     """
     import numpy as np
+
     result = audio.copy()
     if audio.shape[-1] < 512:
         return result
     try:
         from scipy.signal import butter, sosfilt
+
         # Sticky-Shed lebt im HF-Bereich >6kHz als amplitudenmoduliertes Rauschen
-        sos_hp = butter(4, 6000, 'high', fs=sr, output='sos')
+        sos_hp = butter(4, 6000, "high", fs=sr, output="sos")
         channels = [result] if result.ndim == 1 else [result[ch] for ch in range(result.shape[0])]
         for ch_idx, ch_data in enumerate(channels):
             hf = sosfilt(sos_hp, ch_data)
@@ -578,14 +589,15 @@ def _repair_sticky_shed(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             n_frames = max(1, (len(hf_env) - frame) // hop + 1)
             modulation = np.zeros(len(ch_data))
             for f in range(n_frames):
-                seg = hf_env[f*hop:f*hop+frame]
-                modulation[f*hop:f*hop+frame] = np.std(seg) / (np.mean(seg) + 1e-10)
+                seg = hf_env[f * hop : f * hop + frame]
+                modulation[f * hop : f * hop + frame] = np.std(seg) / (np.mean(seg) + 1e-10)
             # Hohe Modulation (>0.5) = Sticky-Shed-verdächtig
             shed_mask = modulation > 0.5
             if not np.any(shed_mask):
                 continue
             # Spektrale Subtraktion in den betroffenen Zonen
             from scipy.ndimage import label as _label
+
             labeled, n_regions = _label(shed_mask)
             for r in range(1, n_regions + 1):
                 region = np.where(labeled == r)[0]
@@ -596,7 +608,7 @@ def _repair_sticky_shed(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 seg = ch_data[s:e]
                 spec = np.fft.rfft(seg)
                 mag = np.abs(spec)
-                noise_floor = np.median(mag[-len(mag)//4:]) * 0.7
+                noise_floor = np.median(mag[-len(mag) // 4 :]) * 0.7
                 gain = np.maximum(mag - noise_floor, 0.0) / (mag + 1e-10)
                 ch_data[s:e] = np.fft.irfft(spec * np.clip(gain, 0.2, 1.0), n=len(seg))
             if result.ndim == 1:
@@ -605,7 +617,6 @@ def _repair_sticky_shed(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_sticky_shed fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -619,12 +630,13 @@ def _repair_inner_groove_distortion(audio: np.ndarray, sr: int, **kwargs) -> np.
     """
     import numpy as np
     from scipy.signal import butter, sosfilt
+
     result = audio.copy()
     if audio.shape[-1] < 4096:
         return result
     try:
         # IGD betrifft vor allem den HF-Bereich >8kHz
-        sos_hp = butter(4, 8000, 'high', fs=sr, output='sos')
+        sos_hp = butter(4, 8000, "high", fs=sr, output="sos")
         channels = [result] if result.ndim == 1 else [result[ch] for ch in range(result.shape[0])]
         for ch_idx, ch_data in enumerate(channels):
             n = len(ch_data)
@@ -644,14 +656,16 @@ def _repair_inner_groove_distortion(audio: np.ndarray, sr: int, **kwargs) -> np.
                     # Progressive HF-Anhebung (max +4dB für innerste Sektion)
                     boost_db = (sec + 1) * 1.0
                     boost_linear = 10 ** (boost_db / 20.0)
-                    sos_high_shelf = butter(2, 8000, 'highshelf', fs=sr, output='sos')
+                    sos_high_shelf = butter(2, 8000, "highshelf", fs=sr, output="sos")
                     # Shelf-Filter mit Gain
                     from scipy.signal import sosfilt
+
                     # Verwende biquad manuell für präzise Kontrolle
                     nyq = sr / 2
                     w0 = 8000 / nyq
                     Q = 1.0
                     import math
+
                     alpha = math.sin(w0) / (2 * Q)
                     A = math.sqrt(boost_linear)
                     # High-shelf Koeffizienten
@@ -662,9 +676,10 @@ def _repair_inner_groove_distortion(audio: np.ndarray, sr: int, **kwargs) -> np.
                     a0 = (A + 1) - (A - 1) * cos_w0 + 2 * math.sqrt(A) * alpha
                     a1 = 2 * ((A - 1) - (A + 1) * cos_w0)
                     a2 = (A + 1) - (A - 1) * cos_w0 - 2 * math.sqrt(A) * alpha
-                    b = np.array([b0/a0, b1/a0, b2/a0])
-                    a = np.array([1.0, a1/a0, a2/a0])
+                    b = np.array([b0 / a0, b1 / a0, b2 / a0])
+                    a = np.array([1.0, a1 / a0, a2 / a0])
                     from scipy.signal import lfilter
+
                     ch_data[s:e] = lfilter(b, a, seg)
             if result.ndim == 1:
                 result = ch_data
@@ -672,7 +687,6 @@ def _repair_inner_groove_distortion(audio: np.ndarray, sr: int, **kwargs) -> np.
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_inner_groove_distortion fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -686,13 +700,16 @@ def _repair_motor_interference(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
     """
     import numpy as np
     from scipy.signal import butter, sosfilt
+
     result = audio.copy()
     if audio.shape[-1] < 512:
         return result
     try:
         # Suche nach motor-typischen Frequenzen: 50/60Hz + Harmonische bis 300Hz
         spec = np.abs(np.fft.rfft(result if result.ndim == 1 else result[0]))
-        freqs = np.fft.rfftfreq(len(result if result.ndim == 1 else result[0]) if result.ndim == 1 else result.shape[1], d=1/sr)
+        freqs = np.fft.rfftfreq(
+            len(result if result.ndim == 1 else result[0]) if result.ndim == 1 else result.shape[1], d=1 / sr
+        )
         # Prüfe 50Hz und 60Hz Netzfrequenz
         for base_freq in [50.0, 60.0]:
             harmonics = [base_freq * h for h in range(1, 7) if base_freq * h < 300]
@@ -701,7 +718,7 @@ def _repair_motor_interference(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
                 idx = np.argmin(np.abs(freqs - hz))
                 if idx > 0 and idx < len(spec) - 1:
                     # Schmalband-Peak? (3× Umgebung)
-                    local_bg = np.median(spec[max(0,idx-10):min(len(spec),idx+10)])
+                    local_bg = np.median(spec[max(0, idx - 10) : min(len(spec), idx + 10)])
                     if local_bg > 0 and spec[idx] > local_bg * 3:
                         peaks_found += 1
             if peaks_found >= 2:  # Mindestens 2 Harmonische = Motor-Interferenz bestätigt
@@ -712,7 +729,7 @@ def _repair_motor_interference(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
                         Q = 30.0
                         w0 = hz / (sr / 2)
                         bw = w0 / Q
-                        sos_notch = butter(2, [w0 - bw, w0 + bw], 'bandstop', fs=sr, output='sos')
+                        sos_notch = butter(2, [w0 - bw, w0 + bw], "bandstop", fs=sr, output="sos")
                         ch_data[:] = sosfilt(sos_notch, ch_data)
                     if result.ndim == 1:
                         result = ch_data
@@ -721,7 +738,6 @@ def _repair_motor_interference(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
                 break  # Nur eine Netzfrequenz behandeln
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_motor_interference fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -736,13 +752,14 @@ def _repair_sibilance(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     Referenz: Zwicker & Fastl (1999) — Psychoacoustics, Ch. 8
     """
     import numpy as np
-    from scipy.signal import butter, sosfilt, lfilter
+    from scipy.signal import butter, sosfilt
+
     result = audio.copy()
     if audio.shape[-1] < 256:
         return result
     try:
         # Sibilance-Band: 5-10kHz
-        sos_sib = butter(4, [5000, 10000], 'bandpass', fs=sr, output='sos')
+        sos_sib = butter(4, [5000, 10000], "bandpass", fs=sr, output="sos")
         channels = [result] if result.ndim == 1 else [result[ch] for ch in range(result.shape[0])]
         for ch_idx, ch_data in enumerate(channels):
             sib_band = sosfilt(sos_sib, ch_data)
@@ -755,6 +772,7 @@ def _repair_sibilance(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
             if not np.any(sib_mask):
                 continue
             from scipy.ndimage import label as _label
+
             labeled, n_regions = _label(sib_mask)
             for r in range(1, n_regions + 1):
                 region = np.where(labeled == r)[0]
@@ -767,23 +785,23 @@ def _repair_sibilance(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 e_ctx = min(len(ch_data), e + ctx)
                 # Schmalband-Dämpfung: -6dB im Sibilance-Band
                 seg = ch_data[s_ctx:e_ctx]
-                sib_seg = sosfilt(sos_sib, seg)
+                sosfilt(sos_sib, seg)
                 # Dynamische Gain-Reduktion proportional zur Überschreitung
                 excess = np.clip(sib_env[s_ctx:e_ctx] / (threshold + 1e-10), 1.0, 8.0)
                 gain = 1.0 / np.sqrt(excess)  # Mehr Überschreitung → mehr Dämpfung
                 # Nur im Sibilance-Band anwenden (TP bleibt unverändert)
-                sos_lp = butter(4, 5000, 'low', fs=sr, output='sos')
-                sos_hp = butter(4, 10000, 'high', fs=sr, output='sos')
+                sos_lp = butter(4, 5000, "low", fs=sr, output="sos")
+                sos_hp = butter(4, 10000, "high", fs=sr, output="sos")
                 lp_seg = sosfilt(sos_lp, seg)
                 hp_seg = sosfilt(sos_hp, seg)
                 mid_seg = seg - lp_seg - hp_seg  # 5-10kHz Band
                 # Sanfte Gain-Rampe an den Rändern
                 ramp = np.ones(len(seg))
-                edge = min(ctx, len(seg)//4)
+                edge = min(ctx, len(seg) // 4)
                 if edge > 2:
                     ramp[:edge] = np.linspace(1.0, gain.mean(), edge)
                     ramp[-edge:] = np.linspace(gain.mean(), 1.0, edge)
-                    ramp[edge:-edge] = gain[edge:-edge] if len(gain) > 2*edge else gain.mean()
+                    ramp[edge:-edge] = gain[edge:-edge] if len(gain) > 2 * edge else gain.mean()
                 else:
                     ramp = gain
                 ch_data[s_ctx:e_ctx] = lp_seg + hp_seg + mid_seg * ramp.astype(np.float32)
@@ -793,7 +811,6 @@ def _repair_sibilance(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_sibilance fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -806,7 +823,7 @@ def _repair_transient_smearing(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
     (2-5ms Attack) zur Wiederherstellung der ursprünglichen Impulsivität.
     """
     import numpy as np
-    from scipy.signal import butter, sosfilt
+
     result = audio.copy()
     if audio.shape[-1] < 128:
         return result
@@ -819,7 +836,7 @@ def _repair_transient_smearing(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
             n_frames = max(1, (len(ch_data) - frame) // hop)
             energy = np.zeros(n_frames)
             for f in range(n_frames):
-                energy[f] = np.sqrt(np.mean(ch_data[f*hop:f*hop+frame]**2) + 1e-10)
+                energy[f] = np.sqrt(np.mean(ch_data[f * hop : f * hop + frame] ** 2) + 1e-10)
             if len(energy) < 4:
                 continue
             # Energie-Anstiegsrate
@@ -843,7 +860,6 @@ def _repair_transient_smearing(audio: np.ndarray, sr: int, **kwargs) -> np.ndarr
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::_repair_transient_smearing fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -857,6 +873,7 @@ def _repair_tape_splice(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
     """
     import numpy as np
     from scipy.interpolate import CubicSpline
+
     result = audio.copy()
     if audio.shape[-1] < 64:
         return result
@@ -893,8 +910,8 @@ def _repair_tape_splice(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 before_start = max(0, s_click - int(sr * 0.010))
                 if after_end <= after_start or before_end <= before_start:
                     continue
-                rms_before = np.sqrt(np.mean(ch_data[before_start:before_end]**2) + 1e-10)
-                rms_after = np.sqrt(np.mean(ch_data[after_start:after_end]**2) + 1e-10)
+                rms_before = np.sqrt(np.mean(ch_data[before_start:before_end] ** 2) + 1e-10)
+                rms_after = np.sqrt(np.mean(ch_data[after_start:after_end] ** 2) + 1e-10)
                 rms_ratio = rms_after / (rms_before + 1e-10)
                 # Pegelsprung >2dB detektiert → Splice bestätigt
                 if rms_ratio < 0.6 or rms_ratio > 1.7:
@@ -911,7 +928,7 @@ def _repair_tape_splice(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                         intact[click_inner_s:click_inner_e] = False
                         if intact.sum() >= 4:
                             try:
-                                cs = CubicSpline(x[intact], y[intact], bc_type='natural')
+                                cs = CubicSpline(x[intact], y[intact], bc_type="natural")
                                 ch_data[s:e] = cs(x)
                             except Exception:
                                 ch_data[s:e] = np.interp(x, x[intact], y[intact])
@@ -930,7 +947,6 @@ def _repair_tape_splice(audio: np.ndarray, sr: int, **kwargs) -> np.ndarray:
                 result[ch_idx] = ch_data
     except Exception as e:
         logger.warning("surgical_repair.py::unknown fallback: %s", e)
-        pass
     result = _safety_clamp(result, audio)
     return result.astype(np.float32)
 
@@ -973,6 +989,8 @@ _SURGICAL_REPAIR_FUNCTIONS = {
     "sibilance": _repair_sibilance,
     "transient_smearing": _repair_transient_smearing,
 }
+
+
 class SurgicalRepair:
     """Führt zeitlich präzise, ortsgenaue Reparaturen durch.
 
@@ -983,26 +1001,24 @@ class SurgicalRepair:
     def __init__(
         self,
         sr: int = 48000,
-        context_ms: float = 50.0,    # Kontext vor/nach dem Defekt
+        context_ms: float = 50.0,  # Kontext vor/nach dem Defekt
         crossfade_ms: float = 10.0,  # Cross-Fade-Dauer
     ) -> None:
         self.sr = sr
         self._context_samples = int(context_ms * sr / 1000)
         self._crossfade_samples = int(crossfade_ms * sr / 1000)
 
-    def _detect_transients(
-        self, audio: np.ndarray, sr: int
-    ) -> np.ndarray:
+    def _detect_transients(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """Erkennt Transienten für Crossfade-Vermeidung."""
         if audio.ndim == 1:
             signal = audio
         else:
             signal = np.mean(audio, axis=0)
-        energy = signal ** 2
+        energy = signal**2
         window = max(1, int(sr * 0.005))
         kernel = np.ones(window) / window
-        smooth = np.convolve(energy, kernel, mode='same')
-        threshold = np.convolve(smooth, kernel, mode='same') * 3.0 + 1e-10
+        smooth = np.convolve(energy, kernel, mode="same")
+        threshold = np.convolve(smooth, kernel, mode="same") * 3.0 + 1e-10
         return energy > threshold
 
     def repair(
@@ -1059,17 +1075,19 @@ class SurgicalRepair:
 
             # Wende Phase nur auf dieses Fenster an
             try:
-                kwargs = {"audio": segment, "sr": self.sr,
-                          "material": phase_kwargs.pop("material", "unknown") if phase_kwargs else "unknown",
-                          "mode": phase_kwargs.pop("mode", "restoration") if phase_kwargs else "restoration"}
+                kwargs = {
+                    "audio": segment,
+                    "sr": self.sr,
+                    "material": phase_kwargs.pop("material", "unknown") if phase_kwargs else "unknown",
+                    "mode": phase_kwargs.pop("mode", "restoration") if phase_kwargs else "restoration",
+                }
                 if phase_kwargs:
                     kwargs.update(phase_kwargs)
                 repaired_segment = phase_fn(**kwargs)
                 if isinstance(repaired_segment, np.ndarray):
                     segment = repaired_segment
             except Exception as _repair_exc:
-                logger.debug("CHIRURGIE-SKIP: %s @ %.3fs — %s",
-                           inst.defect_type, inst.start_s, str(_repair_exc)[:80])
+                logger.debug("CHIRURGIE-SKIP: %s @ %.3fs — %s", inst.defect_type, inst.start_s, str(_repair_exc)[:80])
                 skipped += 1
                 continue
 
@@ -1078,8 +1096,7 @@ class SurgicalRepair:
 
             # Cross-Fade: nur an den Rändern, Mitte bleibt Reparatur
             if segment.shape[1] >= self._crossfade_samples * 2:
-                self._apply_crossfade(segment, original_segment,
-                                      self._crossfade_samples)
+                self._apply_crossfade(segment, original_segment, self._crossfade_samples)
 
             # Pegel-Angleich: RMS vorher/nachher matchen
             segment = self._match_rms(segment, original_segment)
@@ -1097,25 +1114,35 @@ class SurgicalRepair:
         if _pct >= 100:
             logger.info(
                 "🔧 CHIRURGIE-OK: %s — %d/%d Zonen repariert (100%%)",
-                _defect_type, repaired, len(instances),
+                _defect_type,
+                repaired,
+                len(instances),
             )
         elif _pct >= 50:
             logger.info(
-                "🔧 CHIRURGIE: %s — %d/%d Zonen repariert (%.0f%%), "
-                "%d übersprungen",
-                _defect_type, repaired, len(instances), _pct, skipped,
+                "🔧 CHIRURGIE: %s — %d/%d Zonen repariert (%.0f%%), %d übersprungen",
+                _defect_type,
+                repaired,
+                len(instances),
+                _pct,
+                skipped,
             )
         elif repaired > 0:
             logger.warning(
-                "⚠️ CHIRURGIE-SCHWACH: %s — nur %d/%d Zonen repariert (%.0f%%), "
-                "%d übersprungen",
-                _defect_type, repaired, len(instances), _pct, skipped,
+                "⚠️ CHIRURGIE-SCHWACH: %s — nur %d/%d Zonen repariert (%.0f%%), %d übersprungen",
+                _defect_type,
+                repaired,
+                len(instances),
+                _pct,
+                skipped,
             )
         else:
             logger.warning(
                 "❌ CHIRURGIE-FEHLER: %s — 0/%d Zonen repariert! "
                 "Alle %d Instanzen übersprungen — Defekt bleibt unbehandelt",
-                _defect_type, len(instances), len(instances),
+                _defect_type,
+                len(instances),
+                len(instances),
             )
 
         return RepairResult(
@@ -1143,16 +1170,14 @@ class SurgicalRepair:
         ramp_in = 0.5 * (1 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
         for ch in range(repaired.shape[0]):
             repaired[ch, :fade_samples] = (
-                original[ch, :fade_samples] * (1 - ramp_in) +
-                repaired[ch, :fade_samples] * ramp_in
+                original[ch, :fade_samples] * (1 - ramp_in) + repaired[ch, :fade_samples] * ramp_in
             )
 
         # Cosine Fade-Out (rechter Rand)
         ramp_out = 0.5 * (1 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
         for ch in range(repaired.shape[0]):
             repaired[ch, -fade_samples:] = (
-                original[ch, -fade_samples:] * (1 - ramp_out[::-1]) +
-                repaired[ch, -fade_samples:] * ramp_out[::-1]
+                original[ch, -fade_samples:] * (1 - ramp_out[::-1]) + repaired[ch, -fade_samples:] * ramp_out[::-1]
             )
 
     @staticmethod
@@ -1172,7 +1197,7 @@ class SurgicalRepair:
             edge_rep = repaired[ch, :100]
             if np.std(edge_orig) > 1e-8 and np.std(edge_rep) > 1e-8:
                 # Einfache Phasenkorrektur: Vorzeichen-Anpassung
-                corr = np.correlate(edge_orig, edge_rep, mode='full')
+                corr = np.correlate(edge_orig, edge_rep, mode="full")
                 shift = np.argmax(corr) - 99
                 if abs(shift) <= 5 and shift != 0:
                     if shift > 0:
@@ -1184,8 +1209,8 @@ class SurgicalRepair:
     @staticmethod
     def _match_rms(repaired: np.ndarray, original: np.ndarray) -> np.ndarray:
         """Passt RMS-Pegel des reparierten Segments ans Original an."""
-        rms_orig = np.sqrt(np.mean(original ** 2)) + 1e-10
-        rms_rep = np.sqrt(np.mean(repaired ** 2)) + 1e-10
+        rms_orig = np.sqrt(np.mean(original**2)) + 1e-10
+        rms_rep = np.sqrt(np.mean(repaired**2)) + 1e-10
         if abs(rms_rep - rms_orig) / rms_orig > 0.01:  # >1% Abweichung
             return repaired * (rms_orig / rms_rep)
         return repaired

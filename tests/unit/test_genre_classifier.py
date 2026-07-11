@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für core/genre_classifier.py — GermanSchlagerClassifier.
 
 Spec §2.19: 7-Schicht-Ensemble Zero-Shot-Schlager-Erkennung.

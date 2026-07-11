@@ -173,7 +173,7 @@ class TestVocosPluginResample(unittest.TestCase):
         try:
             r = VocosPlugin._resample(x, 48000, 22050)
             self.assertEqual(r.dtype, np.float32)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Fehler sind toleriert, Absturz nicht
 
@@ -338,7 +338,7 @@ class TestVocosPluginFallback(unittest.TestCase):
         try:
             result, name, conf = self.plugin._synthesize_griffin_lim(x, AURIK_SR)
             self.assertEqual(len(result), 100)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Sehr kurze Signale können Fehler erzeugen — kein Crash
 

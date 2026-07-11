@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_literature_based_improvements.py — Literatur-gestützte Verbesserungen
 

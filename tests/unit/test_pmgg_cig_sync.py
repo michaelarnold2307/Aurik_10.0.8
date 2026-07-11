@@ -1,4 +1,5 @@
 import pytest
+
 """
 §2.55 PMGG-CIG-Synchronisations-Invariante — CI-Regression-Test
 =================================================================

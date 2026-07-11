@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -40,6 +39,7 @@ VOCAL_PHASES: tuple[str, ...] = (
 # Dataclass
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class SpeakerIdentityResult:
     phase_id: str
@@ -51,6 +51,7 @@ class SpeakerIdentityResult:
 # ═══════════════════════════════════════════════════════════════════════════
 # MFCC-Implementierung (reines NumPy, keine externen Abhängigkeiten)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _hz_to_mel(hz: float) -> float:
     return 2595.0 * np.log10(1.0 + hz / 700.0)
@@ -155,11 +156,13 @@ def extract_mfcc_voiceprint(
         delta2[:, 1:-1] = (delta[:, 2:] - delta[:, :-2]) / 2.0
 
     # Zusammenführen: MFCC + Delta + Delta-Delta → 60-dim
-    embedding = np.concatenate([
-        mfcc_array.mean(axis=1),
-        delta.mean(axis=1),
-        delta2.mean(axis=1),
-    ])
+    embedding = np.concatenate(
+        [
+            mfcc_array.mean(axis=1),
+            delta.mean(axis=1),
+            delta2.mean(axis=1),
+        ]
+    )
 
     # Normalisieren (L2)
     norm = np.linalg.norm(embedding)
@@ -172,6 +175,7 @@ def extract_mfcc_voiceprint(
 # ═══════════════════════════════════════════════════════════════════════════
 # Speaker Identity Guard
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class SpeakerIdentityGuard:
     """Bewacht die Sänger-Identität über die Pipeline hinweg."""
@@ -234,8 +238,7 @@ class SpeakerIdentityGuard:
 
             if not identity_preserved:
                 logger.warning(
-                    "SpeakerIdentity: %s — Identität möglicherweise verändert "
-                    "(cosine_sim=%.4f < threshold=%.2f)",
+                    "SpeakerIdentity: %s — Identität möglicherweise verändert (cosine_sim=%.4f < threshold=%.2f)",
                     phase_id,
                     similarity,
                     threshold,

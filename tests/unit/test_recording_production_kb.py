@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests für RecordingProductionKB und Singer-School-Klassifikation (v9.12.x)
 

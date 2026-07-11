@@ -1,7 +1,7 @@
-import pytest
 import types
 
 import numpy as np
+import pytest
 
 
 @pytest.mark.unit

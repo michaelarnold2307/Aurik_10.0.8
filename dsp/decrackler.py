@@ -174,7 +174,7 @@ class AiDecrackler:
             return np.zeros(n_predict, dtype=np.float64)
 
         try:
-            from scipy.signal import lfilter
+            pass
 
             # Adaptive AR order: higher order for longer contexts, capped
             order = min(16, max(2, len(context) // 4))
@@ -201,7 +201,7 @@ class AiDecrackler:
 
             return pred
 
-        except Exception as e:
+        except Exception:
             logger.warning("decrackler.py::_ar_predict_forward fallback", exc_info=True)
             return AiDecrackler._cubic_fallback(context, n_predict)
 
@@ -280,7 +280,7 @@ class AiDecrackler:
             # Return AR coefficients a[1..order]
             return a[1:].astype(np.float64)
 
-        except Exception as e:
+        except Exception:
             logger.warning("decrackler.py::_burg_ar fallback", exc_info=True)
             return None
 

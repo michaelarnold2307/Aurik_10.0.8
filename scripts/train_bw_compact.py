@@ -6,13 +6,16 @@ Generates synthetic audio on the fly, trains a compact U-Net on CPU.
 Run:  python scripts/train_bw_compact.py
 """
 
-import argparse, math, sys, time
+import argparse
+import math
+import time
 from pathlib import Path
 
 import numpy as np
-import torch, torchaudio
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Config
@@ -63,6 +66,7 @@ def make_synthetic(segment_samples: int, sr: int) -> np.ndarray:
 def butter_lowpass(y: np.ndarray, cutoff_hz: float, sr: int, order: int = 6) -> np.ndarray:
     """Apply Butterworth lowpass filter."""
     from scipy.signal import butter, sosfiltfilt
+
     nyq = sr / 2
     if cutoff_hz >= nyq * 0.98:
         return y.copy()
@@ -75,12 +79,19 @@ def butter_lowpass(y: np.ndarray, cutoff_hz: float, sr: int, order: int = 6) -> 
 # ═══════════════════════════════════════════════════════════════════════════
 
 _mel_t = torchaudio.transforms.MelSpectrogram(
-    sample_rate=SR, n_fft=N_FFT, hop_length=HOP, n_mels=N_MELS,
-    f_min=60, f_max=SR // 2, center=False,
+    sample_rate=SR,
+    n_fft=N_FFT,
+    hop_length=HOP,
+    n_mels=N_MELS,
+    f_min=60,
+    f_max=SR // 2,
+    center=False,
 )
 
 _istft_t = torchaudio.transforms.InverseSpectrogram(
-    n_fft=N_FFT, hop_length=HOP, normalized=True,
+    n_fft=N_FFT,
+    hop_length=HOP,
+    normalized=True,
 )
 
 
@@ -100,7 +111,7 @@ def log_mel_to_audio(mel: torch.Tensor) -> torch.Tensor:
     mel = torch.clamp(mel, min=1e-8)
     # Convert mel to linear spec via pseudo-inverse (approximate)
     # We use a simpler approach: just do Griffin-Lim on the mel-to-linear approx
-    n_fft_out = N_FFT // 2 + 1
+    N_FFT // 2 + 1
     mel_basis = _make_mel_basis(SR, N_FFT, N_MELS)
     mel_basis_pinv = torch.linalg.pinv(mel_basis)  # (n_fft_out, n_mels)
     # (B, n_mels, n_frames) -> (B, n_fft_out, n_frames)
@@ -138,6 +149,7 @@ def _make_mel_basis(sr: int, n_fft: int, n_mels: int) -> torch.Tensor:
 # U-Net (compact)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class ConvBlock(nn.Sequential):
     def __init__(self, in_ch, out_ch):
         super().__init__(
@@ -152,12 +164,13 @@ class ConvBlock(nn.Sequential):
 
 class CompactUNet(nn.Module):
     """3-level U-Net: enc doubles channels, dec halves them, skip-cats match."""
+
     def __init__(self, base_ch=16):
         super().__init__()
         C = base_ch  # 16
         # Encoder: 1 -> C -> 2C -> 4C
-        self.enc1 = ConvBlock(1, C)          # out: C
-        self.enc2 = ConvBlock(C, C * 2)      # out: 2C
+        self.enc1 = ConvBlock(1, C)  # out: C
+        self.enc2 = ConvBlock(C, C * 2)  # out: 2C
         self.enc3 = ConvBlock(C * 2, C * 4)  # out: 4C
         self.pool = nn.MaxPool2d(2)
         # Bottleneck
@@ -167,24 +180,25 @@ class CompactUNet(nn.Module):
         self.dec3 = ConvBlock(C * 8, C * 4)  # cat(up3:4C, e3:4C)=8C -> 4C
         self.up2 = nn.ConvTranspose2d(C * 4, C * 2, 2, 2)  # 4C -> 2C
         self.dec2 = ConvBlock(C * 4, C * 2)  # cat(up2:2C, e2:2C)=4C -> 2C
-        self.up1 = nn.ConvTranspose2d(C * 2, C, 2, 2)      # 2C -> C
-        self.dec1 = ConvBlock(C * 2, C)      # cat(up1:C, e1:C)=2C -> C
+        self.up1 = nn.ConvTranspose2d(C * 2, C, 2, 2)  # 2C -> C
+        self.dec1 = ConvBlock(C * 2, C)  # cat(up1:C, e1:C)=2C -> C
         self.final = nn.Conv2d(C, 1, 1)
 
     def forward(self, x):
-        e1 = self.enc1(x)                        # (B, C,   64, 64)
-        e2 = self.enc2(self.pool(e1))            # (B, 2C,  32, 32)
-        e3 = self.enc3(self.pool(e2))            # (B, 4C,  16, 16)
-        b  = self.bottleneck(self.pool(e3))      # (B, 8C,  8,   8)
+        e1 = self.enc1(x)  # (B, C,   64, 64)
+        e2 = self.enc2(self.pool(e1))  # (B, 2C,  32, 32)
+        e3 = self.enc3(self.pool(e2))  # (B, 4C,  16, 16)
+        b = self.bottleneck(self.pool(e3))  # (B, 8C,  8,   8)
         d3 = self.dec3(torch.cat([self.up3(b), e3], dim=1))  # cat(4C, 4C)=8C -> 4C @ 16x16
-        d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1)) # cat(2C, 2C)=4C -> 2C @ 32x32
-        d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1)) # cat(C, C)=2C -> C @ 64x64
-        return self.final(d1)                     # (B, 1, 64, 64)
+        d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))  # cat(2C, 2C)=4C -> 2C @ 32x32
+        d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))  # cat(C, C)=2C -> C @ 64x64
+        return self.final(d1)  # (B, 1, 64, 64)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def train(
     epochs: int = 40,
@@ -196,7 +210,9 @@ def train(
 ):
     device = torch.device("cpu")
     print(f"Device: {device}")
-    print(f"Model: CompactUNet(base_ch={base_ch}) = {sum(p.numel() for p in CompactUNet(base_ch).parameters()):,} params")
+    print(
+        f"Model: CompactUNet(base_ch={base_ch}) = {sum(p.numel() for p in CompactUNet(base_ch).parameters()):,} params"
+    )
 
     model = CompactUNet(base_ch=base_ch).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
@@ -253,7 +269,7 @@ def train(
         scheduler.step()
         elapsed = time.time() - t0
         print(
-            f"Epoch {epoch+1:3d}/{epochs} | Loss {avg_loss:.4f} | "
+            f"Epoch {epoch + 1:3d}/{epochs} | Loss {avg_loss:.4f} | "
             f"LR {scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s",
             flush=True,
         )
@@ -282,6 +298,7 @@ def train(
     )
 
     import onnx
+
     onnx.checker.check_model(str(onnx_path))
     size_mb = onnx_path.stat().st_size / 1e6
     print(f"✅ ONNX exported: {onnx_path} ({size_mb:.1f} MB)")

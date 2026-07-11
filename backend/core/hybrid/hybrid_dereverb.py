@@ -404,7 +404,6 @@ class HybridDereverb:
             _plm_dereverb.set_active(_plm_model_name, True)
         except Exception as e:
             logger.warning("hybrid_dereverb.py::_apply_dccrn fallback: %s", e)
-            pass
 
         try:
             audio_in = audio.astype(np.float32)
@@ -508,7 +507,6 @@ class HybridDereverb:
                     _plm_dereverb.set_active(_plm_model_name, False)
                 except Exception as e:
                     logger.warning("hybrid_dereverb.py::unknown fallback: %s", e)
-                    pass
 
     def _estimate_reverb_level(self, audio: np.ndarray, sample_rate: int) -> float:
         """

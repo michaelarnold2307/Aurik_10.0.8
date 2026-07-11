@@ -153,24 +153,25 @@ class PANNsPlugin:
                 device = "cuda"
                 # Prüfe auf fp16-Unterstützung (ab Compute Capability 5.3 bzw. Volta+)
                 fp16_ok = torch.cuda.get_device_capability(0)[0] >= 7
-                logger.info("PANNs GPU: CUDA erkannt (Compute Capability %s), fp16=%s",
-                            torch.cuda.get_device_capability(0), fp16_ok)
+                logger.info(
+                    "PANNs GPU: CUDA erkannt (Compute Capability %s), fp16=%s",
+                    torch.cuda.get_device_capability(0),
+                    fp16_ok,
+                )
                 return device, fp16_ok
-        except Exception as e:
+        except Exception:
             logger.warning("panns_plugin.py::_detect_gpu fallback", exc_info=True)
-            pass
 
         try:
             import torch  # pylint: disable=import-outside-toplevel
 
             # ROCm: torch.cuda.is_available() returns True for AMD GPUs too
             # but we also check for MIOpen/ROCm via HIP
-            if hasattr(torch, 'hip') and torch.hip.is_available():
+            if hasattr(torch, "hip") and torch.hip.is_available():
                 logger.info("PANNs GPU: ROCm/HIP erkannt")
                 return "cuda", True  # ROCm GPUs support fp16 well
-        except Exception as e:
+        except Exception:
             logger.warning("panns_plugin.py::_detect_gpu fallback", exc_info=True)
-            pass
 
         logger.info("PANNs GPU: Keine GPU erkannt — CPU-Inferenz")
         return "cpu", False
@@ -267,8 +268,8 @@ class PANNsPlugin:
 
             # Load pretrained CNN14 from torch hub
             self._torch_model = torch.hub.load(
-                'qiuqiangkong/audioset_tagging_cnn',
-                'Cnn14',
+                "qiuqiangkong/audioset_tagging_cnn",
+                "Cnn14",
                 pretrained=True,
                 trust_repo=True,
             )

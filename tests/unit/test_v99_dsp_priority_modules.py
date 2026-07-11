@@ -282,7 +282,7 @@ class TestAdaptiveSTFT:
         try:
             result = obj.stft(AUDIO_SINE, SR)
             assert result is not None
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Methode heißt ggf. anders
 
@@ -297,7 +297,7 @@ class TestAdaptiveSTFT:
             reconstructed = obj.istft(spec, sr=SR)
             assert isinstance(reconstructed, np.ndarray)
             assert len(reconstructed) > 0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # STFT-Methode heißt ggf. anders
 
@@ -307,9 +307,8 @@ class TestAdaptiveSTFT:
         obj = AdaptiveSTFT()
         try:
             obj.auto_optimize(AUDIO_SINE, SR)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
 
 class TestAdaptiveMelSpectrogram:
@@ -1062,7 +1061,7 @@ class TestAiStereoEnhancer:
         try:
             result = AiStereoEnhancer().process(AUDIO_STEREO, SR)
             assert isinstance(result, np.ndarray)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Mono-Eingabe möglicherweise nicht unterstützt
 
@@ -1072,7 +1071,7 @@ class TestAiStereoEnhancer:
         try:
             result = AiStereoEnhancer().process(AUDIO_SINE, SR)
             assert isinstance(result, np.ndarray)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Mono ggf. nicht unterstützt
 
@@ -1082,9 +1081,8 @@ class TestAiStereoEnhancer:
         try:
             result = AiStereoEnhancer().process(AUDIO_STEREO, SR)
             assert np.isfinite(result).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
 
 # ---------------------------------------------------------------------------

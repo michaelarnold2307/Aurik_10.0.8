@@ -1,10 +1,10 @@
-import pytest
 from __future__ import annotations
 
 import sys
 import types
 
 import numpy as np
+import pytest
 
 
 @pytest.mark.unit

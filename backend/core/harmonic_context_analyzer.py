@@ -245,7 +245,6 @@ class HarmonicContextAnalyzer:
                 )
         except Exception as e:
             logger.warning("harmonic_context_analyzer.py::_compute_chroma fallback: %s", e)
-            pass
         # Fallback: STFT chroma
         return self._stft_chroma(mono, sr)
 

@@ -608,7 +608,10 @@ def export_audio(
             if export_format.lower() in ("wav", "rf64"):
                 try:
                     from backend.core.bwf_writer import write_bwf_chunks
-                    write_bwf_chunks(export_path, description=f"Aurik {_AURIK_VERSION} Restauration", originator="Aurik")
+
+                    write_bwf_chunks(
+                        export_path, description=f"Aurik {_AURIK_VERSION} Restauration", originator="Aurik"
+                    )
                 except Exception as _bwf_exc:
                     logger.debug("BWF-metadata write skipped: %s", _bwf_exc)
             _size_mb = os.path.getsize(export_path) / (1024 * 1024)

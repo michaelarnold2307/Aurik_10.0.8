@@ -16,7 +16,7 @@ def check_compliance():
             report = yaml.safe_load(f)
         ok = all(r.get("audits_ok", False) for r in report)
         return ok
-    except Exception as e:
+    except Exception:
         logger.warning("monitoring.py::check_compliance fallback", exc_info=True)
         return False
 

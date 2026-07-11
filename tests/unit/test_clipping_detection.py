@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für backend/core/clipping_detection.py — §6.3 CLIPPING vs. SOFT_SATURATION.
 
 ≥ 35 Tests:

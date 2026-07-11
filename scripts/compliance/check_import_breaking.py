@@ -14,7 +14,6 @@ import ast
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
@@ -76,15 +75,13 @@ def get_exports(filepath: str) -> set[str]:
     try:
         with open(filepath) as f:
             tree = ast.parse(f.read())
-    except Exception as e:
+    except Exception:
         logger.warning("check_import_breaking.py::get_exports fallback", exc_info=True)
         return set()
 
     exports: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            exports.add(node.name)
-        elif isinstance(node, ast.ClassDef):
+        if isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
             exports.add(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
@@ -131,17 +128,16 @@ def main() -> None:
                 content = f.read()
         except Exception:
             continue
-        import re
-        if '_defekt_hint' in content or 'defekt_hint' in content:
+        if "_defekt_hint" in content or "defekt_hint" in content:
             # Check: does file have _defekt_hint = { but no defect_types?
-            has_hint = bool(re.search(r'_defekt_hint\s*=\s*\{', content))
+            has_hint = bool(re.search(r"_defekt_hint\s*=\s*\{", content))
             has_types = '"defect_types"' in content
             has_sevs = '"defect_severities"' in content
             if has_hint and (not has_types or not has_sevs):
                 structural_violations.append(
-                    f"{fp}: _defekt_hint dict present but MISSING " +
-                    ("defect_types " if not has_types else "") +
-                    ("defect_severities" if not has_sevs else "")
+                    f"{fp}: _defekt_hint dict present but MISSING "
+                    + ("defect_types " if not has_types else "")
+                    + ("defect_severities" if not has_sevs else "")
                 )
         if 'list(getattr(self, "_active_defekt_hint"' in content:
             structural_violations.append(

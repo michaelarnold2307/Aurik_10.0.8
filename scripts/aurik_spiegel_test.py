@@ -14,6 +14,7 @@ Dies ist das Spiegelbild von Auriks Fähigkeiten — und meinen.
 """
 
 import time
+
 import numpy as np
 
 SR = 48000
@@ -68,7 +69,7 @@ def create_damaged_recording():
     # 2. Clicks (20 zufällige Impulse)
     for _ in range(20):
         pos = rng.randint(100, len(audio) - 100)
-        audio[pos:pos+3] += rng.uniform(0.3, 0.6, 3).astype(np.float32)
+        audio[pos : pos + 3] += rng.uniform(0.3, 0.6, 3).astype(np.float32)
 
     # 3. 50Hz-Netzbrumm
     audio += 0.008 * np.sin(2 * np.pi * 50 * t).astype(np.float32)
@@ -77,7 +78,8 @@ def create_damaged_recording():
     # 4. Hochfrequenz-Rauschen über 8kHz (Ermüdung)
     hf_noise = rng.randn(len(audio)).astype(np.float32) * 0.01
     from scipy import signal as sp_signal
-    b, a = sp_signal.butter(4, 8000 / (SR/2), btype='high')
+
+    b, a = sp_signal.butter(4, 8000 / (SR / 2), btype="high")
     hf_noise = sp_signal.lfilter(b, a, hf_noise)
     audio += hf_noise.astype(np.float32)
 
@@ -108,31 +110,32 @@ def main():
     print("[1/7] Erzeuge beschädigte Aufnahme (Gesang + Gitarre + Bass + 7 Defekte)...")
     damaged, t = create_damaged_recording()
     mono_damaged = damaged.mean(axis=1)
-    print(f"      Dauer: {DURATION:.0f}s | SR: {SR/1000:.0f}kHz | Shape: {damaged.shape}")
+    print(f"      Dauer: {DURATION:.0f}s | SR: {SR / 1000:.0f}kHz | Shape: {damaged.shape}")
     print()
 
     # ── 2. DEFEKTERKENNUNG ──
     print("[2/7] Defekterkennung...")
     try:
         from backend.core.defect_scanner import DefectScanner, MaterialType
+
         scanner = DefectScanner(MaterialType.VINYL)
         start = time.time()
         scan_result = scanner.scan(mono_damaged, SR)
         elapsed = time.time() - start
-        defects = getattr(scan_result, 'detected_defects', [])
+        defects = getattr(scan_result, "detected_defects", [])
         print(f"      {len(defects)} Defekte erkannt in {elapsed:.2f}s:")
         for d in defects[:5]:
             print(f"        • {d}")
         if len(defects) > 5:
-            print(f"        • ... und {len(defects)-5} weitere")
+            print(f"        • ... und {len(defects) - 5} weitere")
     except Exception as e:
         print(f"      Scanner nicht verfügbar: {e}")
     print()
 
     # ── 3. PLEASANTNESS VOR RESTAURIERUNG ──
     print("[3/7] Psychoakustische Analyse VOR Restaurierung...")
+    from backend.core.goosebumps_factor import compute_emotional_impact, compute_goosebumps
     from backend.core.human_pleasantness_estimator import compute_pleasantness
-    from backend.core.goosebumps_factor import compute_goosebumps, compute_emotional_impact
     from backend.core.inviting_sound_checker import check_inviting_sound, check_inviting_sound_per_band
 
     hpe_before = compute_pleasantness(mono_damaged, SR)
@@ -163,7 +166,7 @@ def main():
 
     # ── 5. STEERING DEMO ──
     print("[5/7] Steering Rule — Szenarien-Demonstration...")
-    from backend.core.quality_feedback_loop import steer_pipeline, SteerAction, reset_steer_state
+    from backend.core.quality_feedback_loop import reset_steer_state, steer_pipeline
 
     scenarios = [
         (0.05, "Verbesserung"),
@@ -180,8 +183,8 @@ def main():
 
     # ── 6. RESTAURIERUNG (simuliert) ──
     print("[6/7] Restaurierung — HPE-geführt...")
-    from backend.core.pleasantness_registry import get_pleasantness_registry
     from backend.core.pleasantness_integration import audit_phase_pleasantness
+    from backend.core.pleasantness_registry import get_pleasantness_registry
 
     reg = get_pleasantness_registry()
     reg.reset()
@@ -195,6 +198,7 @@ def main():
 
     # Einfache Restoration: Median-Filter für Clicks + leichte NR
     from scipy.ndimage import median_filter
+
     mono_filtered = median_filter(mono_restored, size=5)
     mono_filtered = np.clip(mono_filtered, -1.0, 1.0)
 
@@ -206,7 +210,8 @@ def main():
 
     # Phase 2: EQ (simuliert: leichter High-Shelf für Brillanz)
     from scipy.signal import butter, lfilter
-    b_eq, a_eq = butter(2, 6000 / (SR/2), btype='high')
+
+    b_eq, a_eq = butter(2, 6000 / (SR / 2), btype="high")
     eq_signal = 0.03 * lfilter(b_eq, a_eq, mono_filtered)
     mono_eq = np.clip(mono_filtered + eq_signal, -1.0, 1.0)
 
@@ -230,14 +235,24 @@ def main():
     print("  ╔══════════════════════════════════════════════════════════╗")
     print("  ║           AURIK v10 — QUALITY REPORT                    ║")
     print("  ╠══════════════════════════════════════════════════════════╣")
-    print(f"  ║  HPE:        {hpe_before.score:.3f} → {hpe_after.score:.3f}  (Δ{hpe_after.score-hpe_before.score:+.3f})  {hpe_after.label:20s} ║")
-    print(f"  ║  Gänsehaut:  {goose_before.score:.3f} → {goose_after.score:.3f}  (Δ{goose_after.score-goose_before.score:+.3f})  {goose_after.label:20s} ║")
-    print(f"  ║  Emotional:  {ei_before['emotional_score']:.3f} → {ei_after['emotional_score']:.3f}  (Δ{ei_after['emotional_score']-ei_before['emotional_score']:+.3f})  {ei_after['label']:20s} ║")
-    print(f"  ║  Inviting:   {inv_before.score:.3f} → {inv_after.score:.3f}  (Δ{inv_after.score-inv_before.score:+.3f})  {inv_after.label:20s} ║")
-    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(
+        f"  ║  HPE:        {hpe_before.score:.3f} → {hpe_after.score:.3f}  (Δ{hpe_after.score - hpe_before.score:+.3f})  {hpe_after.label:20s} ║"
+    )
+    print(
+        f"  ║  Gänsehaut:  {goose_before.score:.3f} → {goose_after.score:.3f}  (Δ{goose_after.score - goose_before.score:+.3f})  {goose_after.label:20s} ║"
+    )
+    print(
+        f"  ║  Emotional:  {ei_before['emotional_score']:.3f} → {ei_after['emotional_score']:.3f}  (Δ{ei_after['emotional_score'] - ei_before['emotional_score']:+.3f})  {ei_after['label']:20s} ║"
+    )
+    print(
+        f"  ║  Inviting:   {inv_before.score:.3f} → {inv_after.score:.3f}  (Δ{inv_after.score - inv_before.score:+.3f})  {inv_after.label:20s} ║"
+    )
+    print("  ╠══════════════════════════════════════════════════════════╣")
     print(f"  ║  Registry-Verdict: {status.global_verdict[:48]:48s} ║")
-    print(f"  ║  Steps: {status.total_steps} ({status.steps_improved}↑ / {status.steps_declined}↓)                      ║")
-    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(
+        f"  ║  Steps: {status.total_steps} ({status.steps_improved}↑ / {status.steps_declined}↓)                      ║"
+    )
+    print("  ╠══════════════════════════════════════════════════════════╣")
 
     # Band-Vergleich
     improved_bands = []
@@ -252,18 +267,18 @@ def main():
         print(f"  ║  Bänder:     {improved_bands[0]:48s} ║")
         for b in improved_bands[1:3]:
             print(f"  ║              {b:48s} ║")
-    print(f"  ╚══════════════════════════════════════════════════════════╝")
+    print("  ╚══════════════════════════════════════════════════════════╝")
     print()
 
     # Zusammenfassung
     improvement = hpe_after.score - hpe_before.score
     if improvement > 0.03:
         print(f"  ✅ AURIK HAT DEN KLANG VERBESSERT: ΔHPE = +{improvement:.3f}")
-        print(f"     Das Ohr wird jetzt EINGELADEN statt zurückgewiesen.")
+        print("     Das Ohr wird jetzt EINGELADEN statt zurückgewiesen.")
     elif improvement > 0:
         print(f"  ✓ Aurik hat den Klang leicht verbessert: ΔHPE = +{improvement:.3f}")
     else:
-        print(f"  ⚠️  Keine signifikante Verbesserung — weitere Optimierung nötig.")
+        print("  ⚠️  Keine signifikante Verbesserung — weitere Optimierung nötig.")
 
     if inv_after.score >= 0.70:
         print(f"     Einladender Klang: {inv_after.label} — das Ohr legt sich gern hinein.")

@@ -1,4 +1,5 @@
 import pytest
+
 """Phase 24 short-context STFT safety tests.
 
 Ensures tonal/atonal repair paths stay stable for short before/after windows

@@ -507,9 +507,8 @@ class BSRoFormerPlugin:
                                 _avail_chk,
                             )
                             return self._separate_fallback(audio, sr, requested_stems)
-                    except Exception as e:
+                    except Exception:
                         logger.warning("bs_roformer_plugin.py::_process_segment fallback", exc_info=True)
-                        pass
                     _ce = min(_cs + _chunk_samples, n_orig_44)
                     voc_chunk = _process_segment(audio_44[_cs:_ce])
                     if voc_chunk is None:

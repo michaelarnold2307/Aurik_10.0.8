@@ -1,25 +1,25 @@
 {
-  "version": 2,
-  "rootId": "__root__",
   "objects": {
     "__root__": {
-      "id": "__root__",
-      "type": "frame",
-      "name": "Root",
-      "parentId": null,
-      "frameId": null,
-      "x": 0,
-      "y": 0,
-      "width": 0,
-      "height": 0,
-      "rotation": 0,
-      "opacity": 1,
-      "visible": true,
-      "locked": false,
-      "fills": [],
-      "strokes": [],
+      "children": [],
       "cornerRadius": 0,
-      "children": []
+      "fills": [],
+      "frameId": null,
+      "height": 0,
+      "id": "__root__",
+      "locked": false,
+      "name": "Root",
+      "opacity": 1,
+      "parentId": null,
+      "rotation": 0,
+      "strokes": [],
+      "type": "frame",
+      "visible": true,
+      "width": 0,
+      "x": 0,
+      "y": 0
     }
-  }
+  },
+  "rootId": "__root__",
+  "version": 2
 }

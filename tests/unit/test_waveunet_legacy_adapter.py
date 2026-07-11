@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for WaveUNet legacy adapter routing."""
 
 import numpy as np

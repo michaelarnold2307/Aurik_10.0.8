@@ -155,7 +155,7 @@ class TestVocalAIBranch:
                 denker.optimiere(audio, SR, material="vocal")
                 # Enhancer wurde instanziiert
                 mock_cls.assert_called_once()
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
                 pass  # Andere Schritte dürfen scheitern
 
@@ -172,9 +172,8 @@ class TestVocalAIBranch:
             denker = self._patched_exzellenz_denker()
             try:
                 denker.optimiere(audio, SR, material="tape")
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
-                pass
             mock_cls.assert_not_called()
 
     def test_12_singer_material_triggers_branch(self):
@@ -193,9 +192,8 @@ class TestVocalAIBranch:
             try:
                 self._patched_exzellenz_denker().optimiere(audio, SR, material="singer")
                 mock_cls.assert_called()
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
-                pass
 
     def test_13_vocal_enhancer_exception_swallowed(self):
         """Fehler in VocalAIEnhancer darf nicht zum Absturz führen."""
@@ -212,7 +210,7 @@ class TestVocalAIBranch:
                 result = self._patched_exzellenz_denker().optimiere(audio, SR, material="vocal")
                 # Kein Absturz
                 assert result is not None
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
                 pass  # Andere Stufen dürfen scheitern
 
@@ -227,9 +225,8 @@ class TestVocalAIBranch:
 
             try:
                 self._patched_exzellenz_denker().optimiere(audio, SR, material="vinyl")
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
-                pass
             mock_cls.assert_not_called()
 
     def test_15_voice_material_triggers_branch(self):
@@ -247,9 +244,8 @@ class TestVocalAIBranch:
             try:
                 self._patched_exzellenz_denker().optimiere(audio, SR, material="voice")
                 mock_cls.assert_called()
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
-                pass
 
 
 # ─── optimiere() Ausgabe-Invarianten ─────────────────────────────────────────
@@ -284,7 +280,7 @@ class TestOptimiereInvarianten:
         try:
             result = self._run_lightweight_optimiere(audio, material="tape")
             assert isinstance(result, ExzellenzErgebnis)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Falls deps nicht vorhanden
 
@@ -295,9 +291,8 @@ class TestOptimiereInvarianten:
         try:
             result = self._run_lightweight_optimiere(audio)
             assert np.isfinite(result.audio).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_18_goals_passed_non_negative(self):
         pass
@@ -306,9 +301,8 @@ class TestOptimiereInvarianten:
         try:
             result = self._run_lightweight_optimiere(audio)
             assert result.goals_passed >= 0
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_19_musical_goals_dict(self):
         pass
@@ -317,9 +311,8 @@ class TestOptimiereInvarianten:
         try:
             result = self._run_lightweight_optimiere(audio)
             assert isinstance(result.musical_goals, dict)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_20_excellence_score_finite(self):
         pass
@@ -328,9 +321,8 @@ class TestOptimiereInvarianten:
         try:
             result = self._run_lightweight_optimiere(audio)
             assert math.isfinite(result.excellence_score)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
 
 # ─── ExzellenzErgebnis.versa_mos ───────────────────────────────────────────────

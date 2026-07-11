@@ -201,7 +201,6 @@ class EmotionalArcPlanner:
                     weights[i_s:i_e] = np.maximum(weights[i_s:i_e], zone_weight)
             except Exception as e:
                 logger.warning("emotional_arc_planner.py::_apply_zone_weight fallback: %s", e)
-                pass
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,8 @@ def extract_breath_mask(
     if breath_ratio < BREATH_THRESHOLD:
         logger.debug(
             "BreathPreserver: Atem-Energie %.6f < %.6f — kein Schutz nötig",
-            breath_ratio, BREATH_THRESHOLD,
+            breath_ratio,
+            BREATH_THRESHOLD,
         )
         return None
 
@@ -93,7 +94,9 @@ def extract_breath_mask(
 
     logger.info(
         "BreathPreserver: Atem-Energie %.5f (%.1f%%) → Maske aktiv (softness=%.1f)",
-        breath_ratio, breath_ratio * 100, softness,
+        breath_ratio,
+        breath_ratio * 100,
+        softness,
     )
 
     return BreathMask(
@@ -132,17 +135,15 @@ def reconstruct_breath(
         return cleaned
 
     # ── Spektral-Domain Rekonstruktion ─────────────────────────────────
-    spec_clean = np.fft.rfft(mono_clean[:mask.fft_size])
-    spec_orig = np.fft.rfft(mono_orig[:mask.fft_size])
+    spec_clean = np.fft.rfft(mono_clean[: mask.fft_size])
+    spec_orig = np.fft.rfft(mono_orig[: mask.fft_size])
 
     # Maske auf Original und Cleaned anwenden
     breath_range = (mask.frequencies >= BREATH_LOW_HZ) & (mask.frequencies <= BREATH_HIGH_HZ)
 
     # Blend: Mixe Original-Atem in cleaned Signal
     spec_blend = spec_clean.copy()
-    spec_blend[breath_range] = (
-        (1 - blend) * spec_clean[breath_range] + blend * spec_orig[breath_range]
-    )
+    spec_blend[breath_range] = (1 - blend) * spec_clean[breath_range] + blend * spec_orig[breath_range]
 
     # Überprüfen: Blend nicht lauter als Original machen
     blend_energy = float(np.sum(np.abs(spec_blend[breath_range])))
@@ -154,14 +155,16 @@ def reconstruct_breath(
         logger.debug("BreathPreserver: Blend-Energie begrenzt (×%.2f)", scale)
 
     # Zurück in Time-Domain
-    waveform_blend = np.fft.irfft(spec_blend, n=len(mono_clean[:mask.fft_size * 2]))
+    waveform_blend = np.fft.irfft(spec_blend, n=len(mono_clean[: mask.fft_size * 2]))
 
     # Nur ersten Teil ersetzen, Rest unverändert
     result = cleaned.copy()
     if cleaned.ndim > 1:
         n_samples = min(len(waveform_blend), result.shape[0])
         for ch in range(result.shape[1]):
-            result[:n_samples, ch] = result[:n_samples, ch] * (1 - blend * 0.3) + waveform_blend[:n_samples] * blend * 0.3
+            result[:n_samples, ch] = (
+                result[:n_samples, ch] * (1 - blend * 0.3) + waveform_blend[:n_samples] * blend * 0.3
+            )
     else:
         n_samples = min(len(waveform_blend), len(result))
         result[:n_samples] = result[:n_samples] * (1 - blend * 0.3) + waveform_blend[:n_samples] * blend * 0.3
@@ -170,9 +173,7 @@ def reconstruct_breath(
     return result.astype(np.float32)
 
 
-def protect_breath(
-    audio: np.ndarray, sr: int = 48000
-) -> tuple[np.ndarray, BreathMask | None]:
+def protect_breath(audio: np.ndarray, sr: int = 48000) -> tuple[np.ndarray, BreathMask | None]:
     """Pre-Noise-Reduction: Atem-Bereich vor NR schützen.
 
     Erhöht die Energie im 4–8 kHz-Bereich leicht, sodass NR-Algorithmen
@@ -190,12 +191,12 @@ def protect_breath(
         return audio, None
 
     mono = np.mean(audio, axis=-1) if audio.ndim > 1 else audio
-    spec = np.fft.rfft(mono[:mask.fft_size].astype(np.float32))
+    spec = np.fft.rfft(mono[: mask.fft_size].astype(np.float32))
 
     # Maske anwenden (Boosten, nicht Cutten)
     spec_masked = spec * mask.mask_values
 
-    waveform = np.fft.irfft(spec_masked, n=len(mono[:mask.fft_size * 2]))
+    waveform = np.fft.irfft(spec_masked, n=len(mono[: mask.fft_size * 2]))
 
     result = audio.copy()
     n = min(len(waveform), result.shape[0] if result.ndim == 1 else result.shape[0])

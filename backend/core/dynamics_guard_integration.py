@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DynamicsIntegrationReport:
     """Gesammeltes Feedback aller integrierten Module."""
+
     pmgg_dynamics_score: float = 0.0
     budget_remaining: dict[str, float] = field(default_factory=dict)
     wisdom_strength_mod: float = 1.0
@@ -72,7 +73,9 @@ class DynamicsGuardIntegration:
         report = DynamicsIntegrationReport()
 
         # 1. RepairDynamicsGuard Verifikation
-        ct = dynamics_guard.verify_continuity(audio_after, sr, [0, len(audio_after.shape) if audio_after.ndim == 1 else audio_after.shape[-1]])
+        ct = dynamics_guard.verify_continuity(
+            audio_after, sr, [0, len(audio_after.shape) if audio_after.ndim == 1 else audio_after.shape[-1]]
+        )
         sb = dynamics_guard.verify_stereo_balance(audio_before, audio_after)
         pc = dynamics_guard.verify_phase_coherence(audio_before, audio_after)
         gd = dynamics_guard.verify_global_dynamics(audio_before, audio_after, sr)
@@ -83,7 +86,9 @@ class DynamicsGuardIntegration:
                 "max_env_dev_db": ct.max_envelope_deviation_db,
                 "stereo_drift_db": sb.max_stereo_drift_db,
                 "phase_corr": pc.min_phase_correlation,
-                "crest_change_pct": abs(gd.crest_factor_after - gd.crest_factor_before) / max(gd.crest_factor_before, 1e-10) * 100,
+                "crest_change_pct": abs(gd.crest_factor_after - gd.crest_factor_before)
+                / max(gd.crest_factor_before, 1e-10)
+                * 100,
             }
             verdict = "ok"
             if not ct.continuity_ok or not sb.stereo_balance_ok or not gd.global_dynamics_ok:
@@ -93,7 +98,6 @@ class DynamicsGuardIntegration:
                 guard_wisdom.record(phase_id, "dynamics_guard", wisdom_metrics, verdict)
             except Exception:
                 logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
-                pass
             report.wisdom_strength_mod = getattr(guard_wisdom, "_strength_mod", 1.0)
 
         # 3. GoalBudget: Dynamics-Budget abbuchen
@@ -109,13 +113,9 @@ class DynamicsGuardIntegration:
                         delta = min(0.05, ct.max_envelope_deviation_db / 50.0)
                         if delta > 0.001:
                             goal_budget.record_delta(budget_key, delta)
-                report.budget_remaining = {
-                    g: goal_budget.fraction_left(g)
-                    for g in ["waerme", "brillanz", "punch"]
-                }
+                report.budget_remaining = {g: goal_budget.fraction_left(g) for g in ["waerme", "brillanz", "punch"]}
             except Exception:
                 logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
-                pass
 
         # 4. CrossGuardCoordinator: dynamics_arc Kategorie
         if cross_guard_coordinator is not None:
@@ -133,7 +133,6 @@ class DynamicsGuardIntegration:
                     report.cross_guard_verdict = evaluation.get("verdict", "ok")
             except Exception:
                 logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
-                pass
 
         # 5. EmotionalArcPreserver: Arousal/Valence prüfen
         if emotional_arc_preserver is not None:
@@ -151,7 +150,6 @@ class DynamicsGuardIntegration:
                             )
             except Exception:
                 logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
-                pass
 
         # 6. PMGG: Dynamics-Score aktualisieren
         if pmgg_instance is not None:
@@ -162,7 +160,6 @@ class DynamicsGuardIntegration:
                     pmgg_instance._set_dynamics_score(pmgg_score)
             except Exception:
                 logger.debug("integrate_phase_result: silent except suppressed", exc_info=True)
-                pass
 
         # 7. restoration_context injizieren
         if isinstance(restoration_context, dict):
@@ -206,25 +203,18 @@ class DynamicsGuardIntegration:
         # Budget-Finalisierung
         if goal_budget is not None:
             try:
-                report.budget_remaining = {
-                    g: goal_budget.fraction_left(g)
-                    for g in ["waerme", "brillanz", "punch"]
-                }
+                report.budget_remaining = {g: goal_budget.fraction_left(g) for g in ["waerme", "brillanz", "punch"]}
             except Exception:
                 logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
-                pass
 
         # Wisdom-Feedback
         if guard_wisdom is not None:
             try:
                 snapshot = guard_wisdom.snapshot()
                 report.wisdom_strength_mod = snapshot.get("strength_mod", 1.0)
-                report.warnings.extend([
-                    f"GuardWisdom: {snapshot.get('rollbacks', 0)} rollbacks total"
-                ])
+                report.warnings.extend([f"GuardWisdom: {snapshot.get('rollbacks', 0)} rollbacks total"])
             except Exception:
                 logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
-                pass
 
         # CrossGuard finale Auswertung
         if cross_guard_coordinator is not None:
@@ -234,7 +224,6 @@ class DynamicsGuardIntegration:
                     report.cross_guard_verdict = evaluation.get("verdict", "ok")
             except Exception:
                 logger.debug("integrate_post_pipeline: silent except suppressed", exc_info=True)
-                pass
 
         # restoration_context abschließend
         if isinstance(restoration_context, dict):

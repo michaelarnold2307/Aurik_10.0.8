@@ -331,7 +331,7 @@ def test_uv3_accepts_precomputed_phase_plan_kwarg() -> None:
             mode="restoration",
             precomputed_phase_plan=["phase_40_loudness_normalization", "phase_47_truepeak_limiter"],
         )
-    except Exception as e:
+    except Exception:
         logger.warning("test fallback", exc_info=True)
         pass  # Inhaltliche Fehler sind OK (kein defect_result) — Kwarg muss akzeptiert werden
 
@@ -348,7 +348,7 @@ def test_uv3_precomputed_phase_plan_kwarg_is_popped() -> None:
         uv3.restore(audio, sample_rate=48000, precomputed_phase_plan=[])
     except TypeError as exc:
         pytest.fail(f"precomputed_phase_plan wurde nicht als kwarg akzeptiert: {exc}")
-    except Exception as e:
+    except Exception:
         logger.warning("test fallback", exc_info=True)
         pass  # Andere Fehler sind OK
 

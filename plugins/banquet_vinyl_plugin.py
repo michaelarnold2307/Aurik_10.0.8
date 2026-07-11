@@ -358,7 +358,7 @@ class BanquetVinylPlugin:
             if std > 1e-8:
                 feat /= std
             return feat, stft_ctx
-        except Exception as e:
+        except Exception:
             logger.warning("banquet_vinyl_plugin.py::_prepare_input fallback", exc_info=True)
             return np.zeros((1, 128, 128, 128), dtype=np.float32), np.zeros((128, 128), dtype=np.complex64)
 

@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests für MicrophoneResponseLibrary (§6.4a).
 """

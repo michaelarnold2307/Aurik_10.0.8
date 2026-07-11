@@ -175,7 +175,7 @@ def _make_session_options():
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         return opts
-    except Exception as e:
+    except Exception:
         logger.warning("dac_plugin.py::_make_session_options fallback", exc_info=True)
         return None
 
@@ -382,9 +382,8 @@ class DacPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("DacEncoder", True)
-        except Exception as e:
+        except Exception:
             logger.warning("dac_plugin.py::encode fallback", exc_info=True)
-            pass
         try:
             outputs = self._enc_session.run(
                 ["audio_codes"],
@@ -408,9 +407,8 @@ class DacPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("DacEncoder", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("dac_plugin.py::encode fallback", exc_info=True)
-                    pass
 
     def decode(self, codes: np.ndarray) -> DacDecodeResult:
         """Dekodiert discrete DAC codes back to audio.
@@ -441,9 +439,8 @@ class DacPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("DacDecoder", True)
-        except Exception as e:
+        except Exception:
             logger.warning("dac_plugin.py::decode fallback", exc_info=True)
-            pass
         try:
             outputs = self._dec_session.run(
                 ["audio_values"],
@@ -472,9 +469,8 @@ class DacPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("DacDecoder", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("dac_plugin.py::decode fallback", exc_info=True)
-                    pass
 
     def round_trip(self, audio: np.ndarray, sr: int) -> DacRoundTripResult:
         """Kodiert then decode (round-trip). Used for conditioning context and quality checks.

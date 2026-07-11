@@ -64,15 +64,15 @@ def optimize_naturalness(
 ) -> NaturalnessResult:
     """Maximiert die natürliche Hörqualität auf Weltklasse-Niveau.
 
-        progress_callback: Optional callable(pct_0_100, label) für Fortschrittsanzeige.
+    progress_callback: Optional callable(pct_0_100, label) für Fortschrittsanzeige.
 
-        audio: UV3-restauriertes Audio (float32)
-        original: Original-Audio (float32)
-        sr: Sample-Rate (48000)
-        material: shellac, vinyl, tape, cd_digital, ...
-        era: ≤1930, 1930-1945, 1945-1960, 1960-1970, ≥1970
-        mode: RESTORATION oder STUDIO_2026
-        dry_run: Nur Analyse, keine Änderung
+    audio: UV3-restauriertes Audio (float32)
+    original: Original-Audio (float32)
+    sr: Sample-Rate (48000)
+    material: shellac, vinyl, tape, cd_digital, ...
+    era: ≤1930, 1930-1945, 1945-1960, 1960-1970, ≥1970
+    mode: RESTORATION oder STUDIO_2026
+    dry_run: Nur Analyse, keine Änderung
     """
     # Input validation
     if sr != 48000:
@@ -93,15 +93,20 @@ def optimize_naturalness(
 
     if dry_run:
         return NaturalnessResult(
-            audio=arr, hpe_before=hpe_before, hpe_after=hpe_before,
-            delta_hpe=0.0, improvements=["Dry-Run: keine Änderungen"],
-            stereo_width_before=stereo_before, stereo_width_after=stereo_before,
+            audio=arr,
+            hpe_before=hpe_before,
+            hpe_after=hpe_before,
+            delta_hpe=0.0,
+            improvements=["Dry-Run: keine Änderungen"],
+            stereo_width_before=stereo_before,
+            stereo_width_after=stereo_before,
         )
 
     # ── Unified Steering via PhaseSteeringEngine (§v10.5) ─────────────
     _engine = None
     try:
-        from backend.core.phase_steering_guard import get_engine, SteerAction
+        from backend.core.phase_steering_guard import SteerAction, get_engine
+
         _engine = get_engine()
     except Exception as e:
         logger.warning("PhaseSteeringEngine not available: %s", e)
@@ -122,6 +127,7 @@ def optimize_naturalness(
     # Progress tracking
     _stage_num = 0
     _total_stages = 12 + (3 if mode == "RESTORATION" else 0) + (7 if mode == "STUDIO_2026" else 0)
+
     def _progress(label):
         nonlocal _stage_num
         _stage_num += 1
@@ -302,7 +308,7 @@ def optimize_naturalness(
     stereo_after = _measure_stereo_width(arr) if is_stereo else 0.0
 
     if hpe_after > hpe_before + 0.02:
-        improvements.insert(0, f"Natürlichkeit: {hpe_before:.2f} → {hpe_after:.2f} (+{hpe_after-hpe_before:.2f})")
+        improvements.insert(0, f"Natürlichkeit: {hpe_before:.2f} → {hpe_after:.2f} (+{hpe_after - hpe_before:.2f})")
     elif hpe_after < hpe_before - 0.03:
         logger.warning("NaturalnessOptimizer: Verschlechterung, gebe UV3-Original zurück")
         arr = np.asarray(audio, dtype=np.float32)
@@ -311,11 +317,15 @@ def optimize_naturalness(
         improvements.insert(0, "Natürlichkeit erhalten – bereits optimal.")
 
     return NaturalnessResult(
-        audio=arr, hpe_before=hpe_before, hpe_after=hpe_after,
+        audio=arr,
+        hpe_before=hpe_before,
+        hpe_after=hpe_after,
         delta_hpe=hpe_after - hpe_before,
-        improvements=improvements, applied_stages=applied,
+        improvements=improvements,
+        applied_stages=applied,
         glue_reduction_db=glue_db,
-        stereo_width_before=stereo_before, stereo_width_after=stereo_after,
+        stereo_width_before=stereo_before,
+        stereo_width_after=stereo_after,
         transient_events_protected=transients_protected,
     )
 
@@ -324,24 +334,26 @@ def optimize_naturalness(
 # Stage 2: Multi-Band Glue
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _multiband_glue(audio: np.ndarray, sr: int, mode: str = "RESTORATION") -> tuple[np.ndarray, float]:
     """3-Band SSL-Style Glue-Kompression.
-    
+
     Bands: Low < 250Hz, Mid 250-4000Hz, High > 4kHz.
     Jedes Band bekommt eigene Ratio/Threshold.
     """
     try:
         from scipy.signal import butter, sosfiltfilt
+
         nyq = sr / 2
-        
+
         # Linkwitz-Riley crossovers (2x butter 2nd order)
-        sos_lo = butter(2, 250/nyq, btype='low', output='sos')
-        sos_mid_lo = butter(2, 250/nyq, btype='high', output='sos')
-        sos_mid_hi = butter(2, 4000/nyq, btype='low', output='sos')
-        sos_hi = butter(2, 4000/nyq, btype='high', output='sos')
+        sos_lo = butter(2, 250 / nyq, btype="low", output="sos")
+        sos_mid_lo = butter(2, 250 / nyq, btype="high", output="sos")
+        sos_mid_hi = butter(2, 4000 / nyq, btype="low", output="sos")
+        sos_hi = butter(2, 4000 / nyq, btype="high", output="sos")
 
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
-        
+
         def _split(x):
             lo = sosfiltfilt(sos_lo, x)
             mid = sosfiltfilt(sos_mid_hi, sosfiltfilt(sos_mid_lo, x))
@@ -350,9 +362,9 @@ def _multiband_glue(audio: np.ndarray, sr: int, mode: str = "RESTORATION") -> tu
 
         bands = _split(mono)
         band_configs = [  # (ratio, threshold_db, attack_ms, release_ms)
-            (1.10, -8.0, 40, 150),   # Low: gentle, slow
+            (1.10, -8.0, 40, 150),  # Low: gentle, slow
             (1.20, -12.0, 20, 100),  # Mid: standard glue
-            (1.15, -14.0, 15, 80),   # High: light touch
+            (1.15, -14.0, 15, 80),  # High: light touch
         ]
         if mode == "STUDIO_2026":
             band_configs = [
@@ -382,15 +394,16 @@ def _multiband_glue(audio: np.ndarray, sr: int, mode: str = "RESTORATION") -> tu
         return audio, 0.0
 
 
-def _compress_band(band: np.ndarray, sr: int, ratio: float, thresh_db: float,
-                   att_ms: float, rel_ms: float) -> tuple[np.ndarray, float]:
+def _compress_band(
+    band: np.ndarray, sr: int, ratio: float, thresh_db: float, att_ms: float, rel_ms: float
+) -> tuple[np.ndarray, float]:
     """Komprimiert ein Frequenzband."""
     n = len(band)
     att_c = np.exp(-1.0 / (att_ms / 1000.0 * sr))
     rel_c = np.exp(-1.0 / (rel_ms / 1000.0 * sr))
 
     thresh_lin = 10.0 ** (thresh_db / 20.0)
-    rms = np.sqrt(band ** 2 + 1e-12)
+    rms = np.sqrt(band**2 + 1e-12)
     gain = np.ones(n, dtype=np.float32)
     gr_state = 1.0
 
@@ -412,8 +425,8 @@ def _compress_band(band: np.ndarray, sr: int, ratio: float, thresh_db: float,
 # Stage 3: Stereo-Feld-Optimierung
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _stereo_field_optimize(audio: np.ndarray, original: np.ndarray,
-                           sr: int, material: str) -> tuple[np.ndarray, str]:
+
+def _stereo_field_optimize(audio: np.ndarray, original: np.ndarray, sr: int, material: str) -> tuple[np.ndarray, str]:
     """Bewahrt und optimiert das Stereofeld."""
     try:
         L, R = audio[:, 0], audio[:, 1]
@@ -425,10 +438,10 @@ def _stereo_field_optimize(audio: np.ndarray, original: np.ndarray,
         orig_M = (orig_L + orig_R) / 2.0
         orig_S = (orig_L - orig_R) / 2.0
 
-        rms_S = float(np.sqrt(np.mean(S ** 2)) + 1e-12)
-        rms_M = float(np.sqrt(np.mean(M ** 2)) + 1e-12)
-        rms_orig_S = float(np.sqrt(np.mean(orig_S ** 2)) + 1e-12)
-        rms_orig_M = float(np.sqrt(np.mean(orig_M ** 2)) + 1e-12)
+        rms_S = float(np.sqrt(np.mean(S**2)) + 1e-12)
+        rms_M = float(np.sqrt(np.mean(M**2)) + 1e-12)
+        rms_orig_S = float(np.sqrt(np.mean(orig_S**2)) + 1e-12)
+        rms_orig_M = float(np.sqrt(np.mean(orig_M**2)) + 1e-12)
 
         width_now = rms_S / (rms_M + 1e-12)
         width_orig = rms_orig_S / (rms_orig_M + 1e-12)
@@ -465,8 +478,8 @@ def _measure_stereo_width(audio: np.ndarray) -> float:
         return 0.0
     M = (audio[:, 0] + audio[:, 1]) / 2.0
     S = (audio[:, 0] - audio[:, 1]) / 2.0
-    rms_S = float(np.sqrt(np.mean(S ** 2)) + 1e-12)
-    rms_M = float(np.sqrt(np.mean(M ** 2)) + 1e-12)
+    rms_S = float(np.sqrt(np.mean(S**2)) + 1e-12)
+    rms_M = float(np.sqrt(np.mean(M**2)) + 1e-12)
     return rms_S / (rms_M + 1e-12)
 
 
@@ -474,8 +487,8 @@ def _measure_stereo_width(audio: np.ndarray) -> float:
 # Stage 4: Transienten-Schutz
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _transient_preservation(audio: np.ndarray, original: np.ndarray,
-                            sr: int) -> tuple[np.ndarray, int]:
+
+def _transient_preservation(audio: np.ndarray, original: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
     """Erkennt und schützt Attack-Transienten vor Überglättung."""
     try:
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
@@ -487,10 +500,8 @@ def _transient_preservation(audio: np.ndarray, original: np.ndarray,
         if n_windows < 4:
             return audio, 0
 
-        env = np.array([float(np.max(np.abs(mono[i*win:(i+1)*win])))
-                        for i in range(n_windows)])
-        orig_env = np.array([float(np.max(np.abs(orig_mono[i*win:(i+1)*win])))
-                             for i in range(n_windows)])
+        env = np.array([float(np.max(np.abs(mono[i * win : (i + 1) * win]))) for i in range(n_windows)])
+        orig_env = np.array([float(np.max(np.abs(orig_mono[i * win : (i + 1) * win]))) for i in range(n_windows)])
 
         # Detect attacks: rapid envelope rise
         diff = np.diff(env)
@@ -525,6 +536,7 @@ def _transient_preservation(audio: np.ndarray, original: np.ndarray,
 # Stage 5: De-Essing-Nachbearbeitung
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _gentle_de_ess(audio: np.ndarray, sr: int, material: str) -> tuple[np.ndarray, str]:
     """Sanftes, material-adaptives De-Essing."""
     try:
@@ -533,14 +545,14 @@ def _gentle_de_ess(audio: np.ndarray, sr: int, material: str) -> tuple[np.ndarra
         # Sibilanz-Band: weiblich 7-11kHz, männlich 5-9kHz, default 6-10kHz
         band = (5000, 10000)
         nyq = sr / 2
-        sos = butter(2, [band[0]/nyq, band[1]/nyq], btype='band', output='sos')
+        sos = butter(2, [band[0] / nyq, band[1] / nyq], btype="band", output="sos")
 
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         sib_band = sosfiltfilt(sos, mono)
         full = sosfiltfilt(sos, np.ones_like(mono)) if False else mono
 
-        rms_sib = float(np.sqrt(np.mean(sib_band ** 2)) + 1e-12)
-        rms_full = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
+        rms_sib = float(np.sqrt(np.mean(sib_band**2)) + 1e-12)
+        rms_full = float(np.sqrt(np.mean(mono**2)) + 1e-12)
         sib_ratio = rms_sib / (rms_full + 1e-12)
 
         # Only de-ess if sibilance ratio is unusually high
@@ -549,7 +561,7 @@ def _gentle_de_ess(audio: np.ndarray, sr: int, material: str) -> tuple[np.ndarra
 
         # Gentle reduction: max 2dB in the sibilance band
         reduction = min(2.0, (sib_ratio - 0.06) * 40)
-        sos_notch = butter(1, [band[0]/nyq, band[1]/nyq], btype='bandstop', output='sos')
+        sos_notch = butter(1, [band[0] / nyq, band[1] / nyq], btype="bandstop", output="sos")
 
         if audio.ndim == 2:
             result = np.zeros_like(audio)
@@ -570,17 +582,19 @@ def _gentle_de_ess(audio: np.ndarray, sr: int, material: str) -> tuple[np.ndarra
 # Stage 6: Bass-Management
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _bass_preservation(audio: np.ndarray, original: np.ndarray, sr: int) -> np.ndarray:
     """Stellt sicher, dass Sub-Bass (20-100Hz) nicht verloren geht."""
     try:
         from scipy.signal import butter, sosfiltfilt
+
         nyq = sr / 2
-        sos = butter(2, [20/nyq, 100/nyq], btype='band', output='sos')
+        sos = butter(2, [20 / nyq, 100 / nyq], btype="band", output="sos")
 
         def _bass_energy(x):
             m = x.mean(axis=1) if x.ndim == 2 else x
             f = sosfiltfilt(sos, m)
-            return float(np.sqrt(np.mean(f ** 2)) + 1e-12)
+            return float(np.sqrt(np.mean(f**2)) + 1e-12)
 
         e_orig = _bass_energy(original)
         e_cur = _bass_energy(audio)
@@ -591,7 +605,6 @@ def _bass_preservation(audio: np.ndarray, original: np.ndarray, sr: int) -> np.n
             return (audio * gain).astype(np.float32)
     except Exception as e:
         logger.warning("_bass_energy: %s", e)
-        pass
     return audio
 
 
@@ -599,12 +612,13 @@ def _bass_preservation(audio: np.ndarray, original: np.ndarray, sr: int) -> np.n
 # Stages 7-13: Sharpness, Roughness, Warmth, Air, Loudness, Tonalness, Clamp
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _apply_high_shelf(audio: np.ndarray, sr: int, freq: float,
-                      gain_db: float, q: float = 0.7) -> np.ndarray:
+
+def _apply_high_shelf(audio: np.ndarray, sr: int, freq: float, gain_db: float, q: float = 0.7) -> np.ndarray:
     if abs(gain_db) < 0.2:
         return audio
     try:
         from scipy.signal import butter, sosfiltfilt
+
         nyq = sr / 2
         sos = butter(2, freq / nyq, btype="high", output="sos")
         gain_linear = 10.0 ** (gain_db / 20.0)
@@ -628,8 +642,9 @@ def _smooth_micro_dynamics(audio: np.ndarray, sr: int, window_ms: float = 30) ->
         return audio
     try:
         from scipy.ndimage import uniform_filter1d
+
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
-        env = np.sqrt(uniform_filter1d(mono ** 2, win) + 1e-12)
+        env = np.sqrt(uniform_filter1d(mono**2, win) + 1e-12)
         smooth = uniform_filter1d(env, win * 2)
         ratio = np.clip(smooth / (env + 1e-12), 0.7, 1.3)
         if audio.ndim == 2:
@@ -643,13 +658,14 @@ def _smooth_micro_dynamics(audio: np.ndarray, sr: int, window_ms: float = 30) ->
 def _warmth_band_guard(audio: np.ndarray, sr: int, reference: np.ndarray) -> np.ndarray:
     try:
         from scipy.signal import butter, sosfiltfilt
+
         nyq = sr / 2
-        sos = butter(3, [200.0/nyq, 800.0/nyq], btype="band", output="sos")
+        sos = butter(3, [200.0 / nyq, 800.0 / nyq], btype="band", output="sos")
 
         def _band_rms(x):
             m = x.mean(axis=1) if x.ndim == 2 else x
             f = sosfiltfilt(sos, m)
-            return float(np.sqrt(np.mean(f ** 2)) + 1e-12)
+            return float(np.sqrt(np.mean(f**2)) + 1e-12)
 
         rms_ref = _band_rms(reference)
         rms_cur = _band_rms(audio)
@@ -658,7 +674,6 @@ def _warmth_band_guard(audio: np.ndarray, sr: int, reference: np.ndarray) -> np.
             return (audio * gain).astype(np.float32)
     except Exception as e:
         logger.warning("_band_rms: %s", e)
-        pass
     return audio
 
 
@@ -675,8 +690,8 @@ def _allows_air_band(material: str, era: str) -> bool:
 
 
 def _loudness_balance(audio: np.ndarray, original: np.ndarray, mode: str) -> np.ndarray:
-    rms_cur = float(np.sqrt(np.mean(audio ** 2)) + 1e-12)
-    rms_orig = float(np.sqrt(np.mean(original ** 2)) + 1e-12)
+    rms_cur = float(np.sqrt(np.mean(audio**2)) + 1e-12)
+    rms_orig = float(np.sqrt(np.mean(original**2)) + 1e-12)
     cur_db = 20.0 * np.log10(rms_cur + 1e-12)
     orig_db = 20.0 * np.log10(rms_orig + 1e-12)
 
@@ -701,8 +716,8 @@ def _gentle_harmonic_enhance(audio: np.ndarray, sr: int, amount: float = 0.12) -
 
 
 def _safety_clamp(audio: np.ndarray, original: np.ndarray) -> np.ndarray:
-    orig_rms = float(np.sqrt(np.mean(original ** 2)) + 1e-12)
-    opt_rms = float(np.sqrt(np.mean(audio ** 2)) + 1e-12)
+    orig_rms = float(np.sqrt(np.mean(original**2)) + 1e-12)
+    opt_rms = float(np.sqrt(np.mean(audio**2)) + 1e-12)
     if opt_rms > orig_rms * 2.0 and orig_rms > 1e-10:
         audio = audio * (orig_rms * 2.0 / opt_rms)
     orig_peak = float(np.max(np.abs(original))) + 1e-12
@@ -716,9 +731,11 @@ def _safety_clamp(audio: np.ndarray, original: np.ndarray) -> np.ndarray:
 # HPE-Aufrufe & Vergleich
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _compute_hpe(audio: np.ndarray, sr: int) -> float:
     try:
         from backend.core.human_pleasantness_estimator import compute_pleasantness
+
         return float(compute_pleasantness(audio, sr).score)
     except Exception as e:
         logger.warning("_compute_hpe: %s", e)
@@ -728,6 +745,7 @@ def _compute_hpe(audio: np.ndarray, sr: int) -> float:
 def _compute_hpe_full(audio: np.ndarray, sr: int) -> dict:
     try:
         from backend.core.human_pleasantness_estimator import compute_pleasantness
+
         r = compute_pleasantness(audio, sr)
         return {
             "score": float(r.score),
@@ -740,17 +758,25 @@ def _compute_hpe_full(audio: np.ndarray, sr: int) -> dict:
         }
     except Exception as e:
         logger.warning("_compute_hpe_full: %s", e)
-        return {"score": _fallback_hpe(audio), "sharpness_zwicker": 1.5,
-                "roughness_asper": 0.5, "loudness_sone": 18.0,
-                "tonalness": 0.5, "fluctuation_vacil": 0.5, "label": "?"}
+        return {
+            "score": _fallback_hpe(audio),
+            "sharpness_zwicker": 1.5,
+            "roughness_asper": 0.5,
+            "loudness_sone": 18.0,
+            "tonalness": 0.5,
+            "fluctuation_vacil": 0.5,
+            "label": "?",
+        }
 
 
 def _fallback_hpe(audio: np.ndarray) -> float:
     mono = audio.mean(axis=1) if audio.ndim == 2 and audio.shape[1] <= 2 else audio.ravel()
-    rms = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
+    rms = float(np.sqrt(np.mean(mono**2)) + 1e-12)
     peak = float(np.max(np.abs(mono))) if len(mono) > 0 else 1e-12
     crest = min(peak / (rms + 1e-12), 20.0)
-    return float(min(1.0, max(0.0, 0.5 * (1.0 - abs(crest - 4.0) / 8.0) + 0.5 * (1.0 - abs(20.0*np.log10(rms) + 18) / 20))))
+    return float(
+        min(1.0, max(0.0, 0.5 * (1.0 - abs(crest - 4.0) / 8.0) + 0.5 * (1.0 - abs(20.0 * np.log10(rms) + 18) / 20)))
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -760,6 +786,7 @@ def _fallback_hpe(audio: np.ndarray) -> float:
 # Kein EQ-Boost, keine Kompression, kein Widening.
 # Nur: Rauschen in Pausen senken, Frequenzbalance glätten, Phantom-Mitte.
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _noise_floor_gate(audio: np.ndarray, sr: int, original: np.ndarray) -> np.ndarray:
     """Sanftes Noise-Gate: Rauschpegel in Signalpausen um 1-2 dB senken.
@@ -775,8 +802,7 @@ def _noise_floor_gate(audio: np.ndarray, sr: int, original: np.ndarray) -> np.nd
         # RMS in 10ms-Fenstern
         win = int(0.010 * sr)
         n_win = len(mono) // win
-        rms = np.array([float(np.sqrt(np.mean(mono[i*win:(i+1)*win]**2)) + 1e-12)
-                        for i in range(n_win)])
+        rms = np.array([float(np.sqrt(np.mean(mono[i * win : (i + 1) * win] ** 2)) + 1e-12) for i in range(n_win)])
         rms_db = 20.0 * np.log10(rms)
 
         # Schwelle: −48 dB (Raumton-Erhalt unter −60 dBFS)
@@ -814,18 +840,30 @@ def _spectral_balance(audio: np.ndarray, sr: int) -> np.ndarray:
     """
     try:
         from scipy.signal import butter, sosfiltfilt
+
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         nyq = sr / 2
 
         # 9 Bänder (Bark-Skala, vereinfacht)
-        bands = [(20,60),(60,200),(200,400),(400,800),(800,1500),
-                 (1500,3000),(3000,6000),(6000,10000),(10000,18000)]
-        
+        bands = [
+            (20, 60),
+            (60, 200),
+            (200, 400),
+            (400, 800),
+            (800, 1500),
+            (1500, 3000),
+            (3000, 6000),
+            (6000, 10000),
+            (10000, 18000),
+        ]
+
         band_energies = []
         for lo, hi in bands:
-            if hi >= nyq * 0.95: hi = nyq * 0.95
-            if lo >= hi: continue
-            sos = butter(2, [lo/nyq, hi/nyq], btype="band", output="sos")
+            if hi >= nyq * 0.95:
+                hi = nyq * 0.95
+            if lo >= hi:
+                continue
+            sos = butter(2, [lo / nyq, hi / nyq], btype="band", output="sos")
             filtered = sosfiltfilt(sos, mono)
             rms = float(np.sqrt(np.mean(filtered**2)) + 1e-12)
             rms_db = 20.0 * np.log10(rms)
@@ -835,17 +873,19 @@ def _spectral_balance(audio: np.ndarray, sr: int) -> np.ndarray:
             return audio
 
         # Gleitender Mittel über 3 Bänder
-        smoothed = np.convolve(band_energies, [1/3]*3, mode='same')
+        smoothed = np.convolve(band_energies, [1 / 3] * 3, mode="same")
 
         result = mono.copy()
         for i, (lo, hi) in enumerate(bands):
-            if i >= len(smoothed): continue
+            if i >= len(smoothed):
+                continue
             delta = band_energies[i] - smoothed[i]
             if abs(delta) > 3.0 and delta > 0:  # Nur CUTS, kein Boost
                 correction = -delta * 0.4  # 40% Richtung Mittel
                 correction = np.clip(correction, -4.0, 0.0)
-                if hi >= nyq * 0.95: hi = nyq * 0.95
-                sos = butter(2, [lo/nyq, hi/nyq], btype="band", output="sos")
+                if hi >= nyq * 0.95:
+                    hi = nyq * 0.95
+                sos = butter(2, [lo / nyq, hi / nyq], btype="band", output="sos")
                 band_sig = sosfiltfilt(sos, mono)
                 gain = 10.0 ** (correction / 20.0)
                 result = result + band_sig * (gain - 1.0)
@@ -870,14 +910,15 @@ def _stereo_focus(audio: np.ndarray, sr: int) -> np.ndarray:
         return audio
     try:
         from scipy.signal import butter, sosfiltfilt
+
         L, R = audio[:, 0], audio[:, 1]
         M, S = (L + R) / 2.0, (L - R) / 2.0
         nyq = sr / 2
 
         # Nur 300-3000 Hz (Sprach-/Gesangsbereich)
-        sos_mid_lo = butter(2, 300/nyq, btype="high", output="sos")
-        sos_mid_hi = butter(2, 3000/nyq, btype="low", output="sos")
-        
+        sos_mid_lo = butter(2, 300 / nyq, btype="high", output="sos")
+        sos_mid_hi = butter(2, 3000 / nyq, btype="low", output="sos")
+
         S_mid = sosfiltfilt(sos_mid_hi, sosfiltfilt(sos_mid_lo, S))
 
         # Wenn Side-Energie > 25% der Mid-Energie → Zentrum etwas straffen
@@ -887,9 +928,9 @@ def _stereo_focus(audio: np.ndarray, sr: int) -> np.ndarray:
             S_mid *= 0.90  # −10% Side im Gesangsbereich
 
         # Rekombinieren: Höhen bleiben breit, Mitten werden fokussiert
-        sos_hi = butter(2, 3000/nyq, btype="high", output="sos")
+        sos_hi = butter(2, 3000 / nyq, btype="high", output="sos")
         S_hi = sosfiltfilt(sos_hi, S)
-        sos_lo = butter(2, 300/nyq, btype="low", output="sos")
+        sos_lo = butter(2, 300 / nyq, btype="low", output="sos")
         S_lo = sosfiltfilt(sos_lo, S)
 
         S_new = S_lo + S_mid + S_hi
@@ -900,8 +941,7 @@ def _stereo_focus(audio: np.ndarray, sr: int) -> np.ndarray:
         return audio
 
 
-def compare_naturalness(original: np.ndarray, restored: np.ndarray,
-                        sr: int) -> dict[str, Any]:
+def compare_naturalness(original: np.ndarray, restored: np.ndarray, sr: int) -> dict[str, Any]:
     hpe_orig = _compute_hpe_full(original, sr)
     hpe_rest = _compute_hpe_full(restored, sr)
     delta = hpe_rest["score"] - hpe_orig["score"]
@@ -931,6 +971,7 @@ def compare_naturalness(original: np.ndarray, restored: np.ndarray,
 # Detection Helpers: Analysieren ob Masterband-Stages nötig sind (§v10.6)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _detect_noise_floor(audio: np.ndarray, sr: int) -> bool:
     """Detektiert ob ein hörbarer Rausch-Teppich in Signalpausen existiert."""
     try:
@@ -939,8 +980,7 @@ def _detect_noise_floor(audio: np.ndarray, sr: int) -> bool:
         n_win = len(mono) // win
         if n_win < 10:
             return False
-        rms = np.array([float(np.sqrt(np.mean(mono[i*win:(i+1)*win]**2)) + 1e-12)
-                        for i in range(n_win)])
+        rms = np.array([float(np.sqrt(np.mean(mono[i * win : (i + 1) * win] ** 2)) + 1e-12) for i in range(n_win)])
         rms_db = 20.0 * np.log10(rms)
         noise_floor = float(np.percentile(rms_db, 10))
         return noise_floor > -50.0
@@ -952,16 +992,28 @@ def _detect_spectral_imbalance(audio: np.ndarray, sr: int) -> bool:
     """Detektiert ob die spektrale Balance signifikant unausgeglichen ist."""
     try:
         from scipy.signal import butter, sosfiltfilt
+
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         nyq = sr / 2
-        bands = [(20,60),(60,200),(200,400),(400,800),(800,1500),
-                 (1500,3000),(3000,6000),(6000,10000),(10000,18000)]
+        bands = [
+            (20, 60),
+            (60, 200),
+            (200, 400),
+            (400, 800),
+            (800, 1500),
+            (1500, 3000),
+            (3000, 6000),
+            (6000, 10000),
+            (10000, 18000),
+        ]
         energies = []
         for lo, hi in bands:
-            if hi >= nyq * 0.95: hi = nyq * 0.95
-            if lo >= hi: continue
-            sos = butter(2, [lo/nyq, hi/nyq], btype="band", output="sos")
-            rms = float(np.sqrt(np.mean(sosfiltfilt(sos, mono)**2)) + 1e-12)
+            if hi >= nyq * 0.95:
+                hi = nyq * 0.95
+            if lo >= hi:
+                continue
+            sos = butter(2, [lo / nyq, hi / nyq], btype="band", output="sos")
+            rms = float(np.sqrt(np.mean(sosfiltfilt(sos, mono) ** 2)) + 1e-12)
             energies.append(20.0 * np.log10(rms))
         if len(energies) < 5:
             return False
@@ -977,11 +1029,12 @@ def _detect_diffuse_center(audio: np.ndarray, sr: int) -> bool:
         return False
     try:
         from scipy.signal import butter, sosfiltfilt
+
         L, R = audio[:, 0], audio[:, 1]
-        M, S = (L+R)/2, (L-R)/2
+        M, S = (L + R) / 2, (L - R) / 2
         nyq = sr / 2
-        sos_lo = butter(2, 300/nyq, btype="high", output="sos")
-        sos_hi = butter(2, 3000/nyq, btype="low", output="sos")
+        sos_lo = butter(2, 300 / nyq, btype="high", output="sos")
+        sos_hi = butter(2, 3000 / nyq, btype="low", output="sos")
         S_mid = sosfiltfilt(sos_hi, sosfiltfilt(sos_lo, S))
         M_mid = sosfiltfilt(sos_hi, sosfiltfilt(sos_lo, M))
         rms_S = float(np.sqrt(np.mean(S_mid**2)) + 1e-12)
@@ -996,10 +1049,12 @@ def _needs_bandwidth_extension(material: str) -> bool:
     Nur für Vintage-Material mit bekannten Bandbreiten-Limits.
     """
     from backend.core.dsp.bandwidth_extender import needs_bandwidth_extension
+
     return needs_bandwidth_extension(material)
 
 
 def _bandwidth_extend(audio, sr, material):
     """Erweitert Bandbreite für Vintage-Material via spektrale Spiegelung."""
     from backend.core.dsp.bandwidth_extender import extend_bandwidth
+
     return extend_bandwidth(audio, sr, material=material, amount=0.35)

@@ -15,7 +15,6 @@ Autor: Aurik 10 — 11. Juli 2026
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import sqlite3
@@ -91,14 +90,16 @@ class MUSHRASessionManager:
             for rep in range(repetitions):
                 order = conditions.copy()
                 self._rng.shuffle(order)
-                trials.append(MUSHRATrial(
-                    trial_id=f"{session_id}_S{si:02d}_R{rep:02d}",
-                    scenario=scenario,
-                    conditions=conditions,
-                    display_order=order,
-                    hidden_ref_key="reference",
-                    anchor_key="anchor",
-                ))
+                trials.append(
+                    MUSHRATrial(
+                        trial_id=f"{session_id}_S{si:02d}_R{rep:02d}",
+                        scenario=scenario,
+                        conditions=conditions,
+                        display_order=order,
+                        hidden_ref_key="reference",
+                        anchor_key="anchor",
+                    )
+                )
 
         state = MUSHRASessionState(
             session_id=session_id,
@@ -119,9 +120,7 @@ class MUSHRASessionManager:
             return None
         return state.trials[state.current_trial_idx]
 
-    def submit_rating(
-        self, session_id: str, trial_id: str, ratings: dict[str, float]
-    ) -> bool:
+    def submit_rating(self, session_id: str, trial_id: str, ratings: dict[str, float]) -> bool:
         state = self._sessions.get(session_id)
         if not state:
             return False
@@ -210,12 +209,17 @@ def create_mushra_app(manager: MUSHRASessionManager | None = None):
                 return jsonify({"completed": True, "message": "Alle Trials abgeschlossen"})
             return jsonify({"error": "Session nicht gefunden"}), 404
         st = manager.get_session(sid)
-        return jsonify({
-            "session_id": sid, "trial_id": trial.trial_id,
-            "scenario": trial.scenario, "display_order": trial.display_order,
-            "trial_index": st.current_trial_idx + 1, "total_trials": len(st.trials),
-            "completed": False,
-        })
+        return jsonify(
+            {
+                "session_id": sid,
+                "trial_id": trial.trial_id,
+                "scenario": trial.scenario,
+                "display_order": trial.display_order,
+                "trial_index": st.current_trial_idx + 1,
+                "total_trials": len(st.trials),
+                "completed": False,
+            }
+        )
 
     @app.route("/mushra/session/<sid>/rate", methods=["POST"])
     def rate(sid):
@@ -224,7 +228,14 @@ def create_mushra_app(manager: MUSHRASessionManager | None = None):
         if not ok:
             return jsonify({"error": "Rating fehlgeschlagen"}), 400
         st = manager.get_session(sid)
-        return jsonify({"ok": True, "completed_trials": st.current_trial_idx, "total_trials": len(st.trials), "finished": st.completed})
+        return jsonify(
+            {
+                "ok": True,
+                "completed_trials": st.current_trial_idx,
+                "total_trials": len(st.trials),
+                "finished": st.completed,
+            }
+        )
 
     @app.route("/mushra/session/<sid>/results", methods=["GET"])
     def results(sid):

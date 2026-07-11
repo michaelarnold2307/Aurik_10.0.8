@@ -912,37 +912,31 @@ class MediumDetector:
             rotation_hz, rotation_strength = self._rotation_periodicity(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         try:
             infrasonic_rms = self._infrasonic_rms(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         try:
             codec_artifact_score, codec_type_code = self._codec_artifact_score(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         try:
             crackle_density = self._crackle_density(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         try:
             snr_db = self._snr(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         try:
             noise_color = self._noise_color(mono, sr)
         except (ValueError, IndexError, TypeError, ZeroDivisionError) as _exc:
             logger.debug("MediumDetector: computation failed in spectral fingerprint: %s", _exc)
-            pass
 
         return SpectralFingerprint(
             rolloff_95_hz=float(np.nan_to_num(rolloff_95)),
@@ -1071,7 +1065,6 @@ class MediumDetector:
                 spec_disco_score = float(np.clip((spec_disco - 0.5) / 1.5, 0.0, 1.0))
             except (ValueError, TypeError, ImportError) as _exc:
                 logger.debug("MediumDetector: optional feature failed: %s", _exc)
-                pass
 
             # Müller & Ewert (2011): spectral discontinuity is the reliable codec
             # indicator — frequency-selective discontinuities at granule boundaries.
@@ -1423,9 +1416,7 @@ class MediumDetector:
             # §2.59 Canary: Kein file_ext → kein Digital-Prior → analoge Materialien
             # könnten fälschlich als Primärmedium klassifiziert werden.
             # Diese Log-Meldung hilft, fehlende input_path-Call-Sites zu identifizieren.
-            _analog_top3 = [
-                (m, s) for m, s in list(posteriors.items())[:3] if m in self._ANALOG_MATERIALS
-            ]
+            _analog_top3 = [(m, s) for m, s in list(posteriors.items())[:3] if m in self._ANALOG_MATERIALS]
             if _analog_top3:
                 logger.info(
                     "MediumDetector: NO file_ext — Digital-Prior fehlt (kein ×0.25 Analog-Penalty). "
@@ -1537,21 +1528,15 @@ class MediumDetector:
                         # Baue eine menschenlesbare Beschreibung des Erkennungswegs
                         _detection_method: str
                         if _via_rotation_gate:
-                            _detection_method = "Vinyl-Rotation-Gate (rotation={:.3f}≥0.30, infrasonic={:.4f}≥0.008)".format(
-                                fp.rotation_strength,
-                                fp.infrasonic_rms,
-                            )
+                            _detection_method = f"Vinyl-Rotation-Gate (rotation={fp.rotation_strength:.3f}≥0.30, infrasonic={fp.infrasonic_rms:.4f}≥0.008)"
                         elif _cand_analog == "cassette":
                             _detection_method = "Cassette wow/flutter+bandwidth (wow=%.3f, conf≥0.35)" % (
                                 fp.wow_flutter_index
                             )
                         elif _cand_analog == "vinyl":
-                            _detection_method = "Vinyl crackle+infrasonic (crackle={:.4f}, infrasonic={:.4f})".format(
-                                fp.crackle_density,
-                                fp.infrasonic_rms,
-                            )
+                            _detection_method = f"Vinyl crackle+infrasonic (crackle={fp.crackle_density:.4f}, infrasonic={fp.infrasonic_rms:.4f})"
                         else:
-                            _detection_method = "codec-adaptive gate (conf={:.3f}≥{:.3f})".format(_cand_conf, _pa_conf_thresh)
+                            _detection_method = f"codec-adaptive gate (conf={_cand_conf:.3f}≥{_pa_conf_thresh:.3f})"
                         logger.info(
                             "MediumDetector: ✅ PHYSICAL ANALOG DETECTED — "
                             "primary=%s (confidence=%.3f) via %s; "
@@ -2095,6 +2080,7 @@ def get_medium_detector() -> MediumDetector:
 def detect_medium_chain(audio: np.ndarray, sr: int) -> MediumDetectionResult:
     """Convenience-Wrapper: erkennt die Tonträgerkette eines Audio-Signals."""
     return get_medium_detector().detect(audio, sr)
+
 
 # §DSD: DSD/DSF/SACD import support (via dsdlib/pydsd)
 # DSD64/128/256 → PCM conversion at import time.

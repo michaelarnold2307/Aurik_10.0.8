@@ -195,7 +195,6 @@ def _get_mert_plugin_loader() -> Any:
             return _loader
     except Exception as e:
         logger.warning("musical_goals_metrics.py::_get_mert_plugin_loader fallback: %s", e)
-        pass
     return _GET_MERT_PLUGIN
 
 
@@ -209,7 +208,6 @@ def _get_loaded_mert_plugin_loader() -> Any:
             return _loader
     except Exception as e:
         logger.warning("musical_goals_metrics.py::_get_loaded_mert_plugin_loader fallback: %s", e)
-        pass
     return _GET_LOADED_MERT_PLUGIN
 
 
@@ -251,7 +249,6 @@ def _compute_mert_similarity(original: np.ndarray, restored: np.ndarray, sr: int
         return float(np.clip(0.40 * harm_sim + 0.40 * tonal_sim + 0.20 * flux_sim, 0.0, 1.0))
     except Exception as e:
         logger.warning("musical_goals_metrics.py::_compute_mert_similarity fallback: %s", e)
-        pass
 
     # Spektral-Korrelations-Proxy (Fallback ohne ML-Modell)
     cap = min(min_len, 65536)
@@ -1717,7 +1714,6 @@ class _VATEmotionEstimator:
                 tempo_val = float(np.clip((raw_tempo - 40.0) / 160.0, 0.0, 1.0))
             except Exception as e:
                 logger.warning("musical_goals_metrics.py::_compute_arousal fallback: %s", e)
-                pass
 
             # Attack-Time: durchschnittliche Anstiegszeit von Onset-Peaks
             onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
@@ -2173,8 +2169,8 @@ class GrooveMetric:
             # erhaltenen Groove hin; flache Autocorrelation auf Verschmierung.
             try:
                 _env = librosa.onset.onset_strength(y=audio, sr=sr, hop_length=256)
-                _ac = np.correlate(_env, _env, mode='full')
-                _ac = _ac[len(_ac)//2:] / max(_ac[len(_ac)//2], 1e-10)
+                _ac = np.correlate(_env, _env, mode="full")
+                _ac = _ac[len(_ac) // 2 :] / max(_ac[len(_ac) // 2], 1e-10)
                 _sub_lo = int(0.050 * sr / 256)  # 50 ms
                 _sub_hi = int(0.200 * sr / 256)  # 200 ms
                 if _sub_hi < len(_ac) and _sub_lo < _sub_hi:
@@ -2183,7 +2179,6 @@ class GrooveMetric:
                     score = min(1.0, score + _sub_score)
             except Exception as e:
                 logger.warning("musical_goals_metrics.py::unknown fallback: %s", e)
-                pass
 
         except Exception as exc:
             logger.debug("GrooveMetric Fallback (Fehler: %s)", exc)

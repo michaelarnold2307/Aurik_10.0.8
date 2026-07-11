@@ -58,7 +58,6 @@ def _detect_onsets_simple(audio_mono: np.ndarray, sr: int, hop: int = 256) -> np
         return np.asarray(onsets, dtype=np.int64)  # type: ignore[no-any-return]
     except Exception as e:
         logger.warning("transient_guard.py::_detect_onsets_simple fallback: %s", e)
-        pass
 
     # Fallback: Differenz der Frame-Energie
     frame_len = hop

@@ -699,32 +699,37 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
 
 
-
 # ── IAQS (Intrinsic Audio Quality Scorer) Tests ──
+
 
 class TestIAQS:
     def test_iaqs_import_and_instantiate(self):
         from backend.core.intrinsic_audio_quality_scorer import IntrinsicQualityScore
+
         iqs = IntrinsicQualityScore()
         assert iqs is not None
 
     def test_iaqs_has_required_fields(self):
         from backend.core.intrinsic_audio_quality_scorer import IntrinsicQualityScore
+
         iqs = IntrinsicQualityScore()
-        for field in ['overall', 'snr_score', 'harmonicity', 'transient_clarity']:
-            assert hasattr(iqs, field), f'Missing: {field}'
+        for field in ["overall", "snr_score", "harmonicity", "transient_clarity"]:
+            assert hasattr(iqs, field), f"Missing: {field}"
 
     def test_iaqs_overall_valid_range(self):
         from backend.core.intrinsic_audio_quality_scorer import IntrinsicQualityScore
+
         iqs = IntrinsicQualityScore()
-        score = getattr(iqs, 'overall', 0.0) or 0.0
+        score = getattr(iqs, "overall", 0.0) or 0.0
         assert 0.0 <= score <= 1.0
 
     def test_iaqs_fields_are_finite(self):
         import numpy as np
+
         from backend.core.intrinsic_audio_quality_scorer import IntrinsicQualityScore
+
         iqs = IntrinsicQualityScore()
-        for field in ['overall', 'snr_score', 'harmonicity']:
+        for field in ["overall", "snr_score", "harmonicity"]:
             val = getattr(iqs, field, 0.0)
             if isinstance(val, (int, float)):
                 assert np.isfinite(val)

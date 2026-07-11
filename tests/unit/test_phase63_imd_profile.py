@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: IntermodulationReductionPhase._compute_imd_profile() (§2.56)."""
 
 import numpy as np

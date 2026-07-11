@@ -1,9 +1,12 @@
 """Tests fuer backend/core/dsp/section_strength_envelope.py.
 Testet: build, Cosine-Crossfade, Range, get_section_strength_at, Frisson-Schutz.
 """
+
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
-from dataclasses import dataclass
+
 
 @dataclass
 class SectionTarget:
@@ -13,10 +16,12 @@ class SectionTarget:
     vq_weight: float = 1.0
     frisson_protection: bool = False
 
+
 from backend.core.dsp.section_strength_envelope import (
     build_strength_envelope,
     get_section_strength_at,
 )
+
 
 @pytest.mark.unit
 class TestBuild:
@@ -123,8 +128,8 @@ class TestCrossfadeQuality:
         ]
         envelope = build_strength_envelope(targets, n_samples=48000, sample_rate=48000)
         boundary = int(0.6 * 48000)
-        before = envelope[boundary - 1000:boundary]
-        after = envelope[boundary:boundary + 1000]
+        before = envelope[boundary - 1000 : boundary]
+        after = envelope[boundary : boundary + 1000]
         assert abs(np.mean(before) - np.mean(after)) < 0.5
 
 

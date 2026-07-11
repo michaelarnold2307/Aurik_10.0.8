@@ -199,7 +199,7 @@ def _transform_line(line: str) -> str | None:
 def _process_file(path: Path, apply: bool) -> int:
     try:
         original = path.read_text(encoding="utf-8")
-    except Exception as e:
+    except Exception:
         logger.warning("fix_fstring_loggers_ast.py::_process_file fallback", exc_info=True)
         return 0
 

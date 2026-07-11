@@ -303,9 +303,7 @@ class UTMOSPlugin:
                             _utmos_dev = "cpu"
                         device = torch.device(_utmos_dev)
                         model = _get_model(cfg, device)
-                        state = torch.load(
-                            str(ckpt_path), map_location=_utmos_dev, weights_only=True
-                        )  # nosec B614 — lokaler Tensor-State-Dict aus models/
+                        state = torch.load(str(ckpt_path), map_location=_utmos_dev, weights_only=True)  # nosec B614 — lokaler Tensor-State-Dict aus models/
                         # State-Dict kann direkt oder unter Schlüssel liegen
                         if isinstance(state, dict) and "state_dict" in state:
                             state = state["state_dict"]
@@ -333,18 +331,14 @@ class UTMOSPlugin:
                             logger.debug("UTMOS Fold %d (Paket) Fehler: %s", fold_idx, exc)
                         # Checkpoint direkt als Dict verwenden
                         try:
-                            state = torch.load(
-                                str(ckpt_path), map_location="cpu", weights_only=True
-                            )  # nosec B614 — lokaler Tensor-State-Dict aus models/
+                            state = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)  # nosec B614 — lokaler Tensor-State-Dict aus models/
                             loaded.append((state, None))
                             logger.info("🟣 UTMOS: Fold %d als checkpoint geladen", fold_idx)
                         except Exception as raw_exc:
                             logger.debug("UTMOS Fold %d raw-Fehler: %s", fold_idx, raw_exc)
                 else:
                     try:
-                        state = torch.load(
-                            str(ckpt_path), map_location="cpu", weights_only=True
-                        )  # nosec B614 — lokaler Tensor-State-Dict aus models/
+                        state = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)  # nosec B614 — lokaler Tensor-State-Dict aus models/
                         loaded.append((state, None))
                         logger.info("🟣 UTMOS: Fold %d als checkpoint geladen", fold_idx)
                     except Exception as exc:
@@ -460,9 +454,8 @@ class UTMOSPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("UTMOSv2", True)
-        except Exception as e:
+        except Exception:
             logger.warning("utmos_plugin.py::_estimate_utmos fallback", exc_info=True)
-            pass
         try:
             # Resample auf 16 kHz (UTMOS-intern)
             audio_16k = self._resample_to_16k(audio, sr)
@@ -504,9 +497,8 @@ class UTMOSPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("UTMOSv2", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("utmos_plugin.py::_estimate_utmos fallback", exc_info=True)
-                    pass
 
     # ------------------------------------------------------------------
     # UTMOSv2 PyTorch-Fold-Pfad (lokale Modelle)

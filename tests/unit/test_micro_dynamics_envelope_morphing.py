@@ -142,7 +142,7 @@ class TestMDEMMorph:
             out = mdem.morph(stereo.copy(), stereo.copy(), SR)
             assert np.isfinite(out).all()
             assert np.max(np.abs(out)) <= 1.0 + 1e-6
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Stereo-Ablehnung akzeptabel
 
@@ -165,7 +165,7 @@ class TestMDEMMorph:
         try:
             out = mdem.morph(audio.copy(), audio.copy(), SR)
             assert np.isfinite(out).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Kurze Dateien dürfen abgelehnt werden
 

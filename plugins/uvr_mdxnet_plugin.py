@@ -218,7 +218,7 @@ class UVRMDXNetPlugin:
 
             _H, P = librosa.effects.hpss(mono)  # type: ignore[attr-defined]
             return P.astype(np.float32)  # type: ignore[no-any-return]
-        except Exception as e:
+        except Exception:
             logger.warning("uvr_mdxnet_plugin.py::_hpss_fallback fallback", exc_info=True)
             return (mono * 0.7).astype(np.float32)  # type: ignore[no-any-return]
 

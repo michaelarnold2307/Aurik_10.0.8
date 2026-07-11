@@ -8,7 +8,7 @@
     pytest test_example.py -v
 """
 
-from plugins.sdk.aurik_plugin_base import AurikPlugin, PluginManifest, PluginResult
+from plugins.sdk.aurik_plugin_base import AurikPlugin, PluginManifest
 
 
 class ExamplePlugin(AurikPlugin):

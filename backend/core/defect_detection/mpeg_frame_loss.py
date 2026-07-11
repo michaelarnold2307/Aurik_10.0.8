@@ -80,7 +80,7 @@ def detect_mpeg_frame_loss(
     #   96 kbps  → ~15.5 kHz
     #   64 kbps  → ~11 kHz
     brickwall_candidates = [16_000, 15_500, 11_000, 8_000]
-    time_axis = np.arange(n_frames) * hop_size / sr
+    np.arange(n_frames) * hop_size / sr
 
     brickwall_locations: list[tuple[float, float]] = []
     energy_drop_locations: list[tuple[float, float]] = []
@@ -205,9 +205,7 @@ def detect_mpeg_frame_loss(
     return all_locations, confidence
 
 
-def _overlaps_existing(
-    start: float, end: float, existing: list[tuple[float, float]], margin: float = 0.05
-) -> bool:
+def _overlaps_existing(start: float, end: float, existing: list[tuple[float, float]], margin: float = 0.05) -> bool:
     """Prüft, ob ein Zeitintervall mit bestehenden Locations überlappt."""
     for es, ee in existing:
         if start < ee + margin and end > es - margin:

@@ -136,25 +136,25 @@ mkdir -p "${AURIK_OUTPUT_DIR}"
 
 for TEST_FILE in "${TEST_FILES[@]}"; do
     INPUT_FILE="${TEST_AUDIO_DIR}/${TEST_FILE}"
-    
+
     if [ ! -f "${INPUT_FILE}" ]; then
         echo "⚠️  Skipping missing file: ${TEST_FILE}"
         continue
     fi
-    
+
     BASENAME=$(basename "${TEST_FILE}" .wav)
     OUTPUT_FILE="${AURIK_OUTPUT_DIR}/${BASENAME}_restored.wav"
-    
+
     echo "Processing: ${TEST_FILE}"
     echo "  Input: ${INPUT_FILE}"
     echo "  Output: ${OUTPUT_FILE}"
-    
+
     # Run Aurik CLI (simple syntax: input output)
     python3 "${AURIK_ROOT}/aurik_cli.py" \
         "${INPUT_FILE}" \
         "${OUTPUT_FILE}" \
         2>&1 | tee "${AURIK_OUTPUT_DIR}/${BASENAME}_log.txt"
-    
+
     echo "✅ Completed: ${BASENAME}"
     echo ""
 done
@@ -210,16 +210,16 @@ results = []
 for output_file in sorted(aurik_output_dir.glob("*_restored.wav")):
     basename = output_file.stem.replace("_restored", "")
     print(f"Analyzing: {basename}")
-    
+
     try:
         # Load audio
         audio, sr = sf.read(output_file)
-        
+
         # Basic metrics
         duration = len(audio) / sr
         rms = np.sqrt(np.mean(audio**2))
         peak = np.max(np.abs(audio))
-        
+
         result = {
             "file": basename,
             "duration_seconds": round(duration, 2),
@@ -228,27 +228,27 @@ for output_file in sorted(aurik_output_dir.glob("*_restored.wav")):
             "sample_rate": sr,
             "channels": audio.ndim if audio.ndim == 1 else audio.shape[0]
         }
-        
+
         # Advanced metrics (if available)
         if metrics_available:
             try:
                 pm = PsychoacousticMetrics(sr)
-                
+
                 # Calculate naturalness score
                 audio_mono = np.mean(audio, axis=0) if audio.ndim == 2 else audio
                 naturalness = pm.calculate_naturalness(audio_mono[:sr*5])  # First 5 seconds
-                
+
                 result["naturalness"] = round(float(naturalness), 4)
             except Exception as e:
                 result["naturalness"] = "error"
-        
+
         results.append(result)
-        
+
         print(f"  Duration: {result['duration_seconds']}s")
         print(f"  RMS: {result['rms']:.6f}")
         print(f"  Naturalness: {result.get('naturalness', 'N/A')}")
         print("")
-        
+
     except Exception as e:
         print(f"❌ Error analyzing {basename}: {e}")
         print("")
@@ -264,7 +264,7 @@ print("")
 # Summary statistics
 if results:
     avg_naturalness = np.mean([r.get("naturalness", 0) for r in results if isinstance(r.get("naturalness"), float)])
-    
+
     print("=" * 80)
     print("Summary Statistics")
     print("=" * 80)
@@ -290,11 +290,11 @@ echo ""
 for LOG_FILE in "${AURIK_OUTPUT_DIR}"/*_log.txt; do
     if [ -f "${LOG_FILE}" ]; then
         BASENAME=$(basename "${LOG_FILE}" _log.txt)
-        
+
         # Extract RT factor if available
         RT_FACTOR=$(grep -oP "RT Factor: \K[0-9.]+×" "${LOG_FILE}" | head -1 || echo "N/A")
         PROC_TIME=$(grep -oP "Processing Time: \K[0-9.]+s" "${LOG_FILE}" | head -1 || echo "N/A")
-        
+
         echo "  ${BASENAME}:"
         echo "    Processing Time: ${PROC_TIME}"
         echo "    RT Factor: ${RT_FACTOR}"

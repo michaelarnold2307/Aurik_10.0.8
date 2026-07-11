@@ -10,11 +10,19 @@
       "onnx_models": [
         {
           "expected_speedup": 2.0,
-          "input_shape": [1, 2, -1],
+          "input_shape": [
+            1,
+            2,
+            -1
+          ],
           "model_size_mb": 95.6,
           "name": "banquet",
           "opset_version": 14,
-          "output_shape": [1, 2, -1],
+          "output_shape": [
+            1,
+            2,
+            -1
+          ],
           "path": "models/banquet/banquet.onnx",
           "quantized": false,
           "quantized_path": "models/banquet/banquet_int8.onnx",
@@ -39,11 +47,19 @@
       "onnx_models": [
         {
           "expected_speedup": 1.8,
-          "input_shape": [1, 96, 96],
+          "input_shape": [
+            1,
+            96,
+            96
+          ],
           "model_size_mb": 12.5,
           "name": "encoder",
           "opset_version": 14,
-          "output_shape": [1, 96, 96],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
           "path": "models/deepfilternet_v3_ii/enc.onnx",
           "quantized": false,
           "quantized_path": "models/deepfilternet_v3_ii/enc_int8.onnx",
@@ -51,11 +67,19 @@
         },
         {
           "expected_speedup": 1.8,
-          "input_shape": [1, 96, 96],
+          "input_shape": [
+            1,
+            96,
+            96
+          ],
           "model_size_mb": 8.3,
           "name": "decoder",
           "opset_version": 14,
-          "output_shape": [1, 96, 96],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
           "path": "models/deepfilternet_v3_ii/dec.onnx",
           "quantized": false,
           "quantized_path": "models/deepfilternet_v3_ii/dec_int8.onnx",
@@ -63,11 +87,19 @@
         },
         {
           "expected_speedup": 1.8,
-          "input_shape": [1, 32, 96],
+          "input_shape": [
+            1,
+            32,
+            96
+          ],
           "model_size_mb": 4.2,
           "name": "erb_decoder",
           "opset_version": 14,
-          "output_shape": [1, 96, 96],
+          "output_shape": [
+            1,
+            96,
+            96
+          ],
           "path": "models/deepfilternet_v3_ii/erb_dec.onnx",
           "quantized": false,
           "quantized_path": "models/deepfilternet_v3_ii/erb_dec_int8.onnx",
@@ -94,11 +126,19 @@
           "expected_speedup": 2.2,
           "external_data": true,
           "external_data_path": "models/demucs/htdemucs_6s.onnx.data",
-          "input_shape": [1, 2, -1],
+          "input_shape": [
+            1,
+            2,
+            -1
+          ],
           "model_size_mb": 195.4,
           "name": "htdemucs_6s",
           "opset_version": 14,
-          "output_shape": [6, 2, -1],
+          "output_shape": [
+            6,
+            2,
+            -1
+          ],
           "path": "models/demucs/htdemucs_6s.onnx",
           "quantized": false,
           "quantized_path": "models/demucs/htdemucs_6s_int8.onnx",
@@ -123,11 +163,19 @@
       "onnx_models": [
         {
           "expected_speedup": 2.1,
-          "input_shape": [1, 1, -1],
+          "input_shape": [
+            1,
+            1,
+            -1
+          ],
           "model_size_mb": 45.2,
           "name": "denoiser",
           "opset_version": 14,
-          "output_shape": [1, 1, -1],
+          "output_shape": [
+            1,
+            1,
+            -1
+          ],
           "path": "models/resemble_enhance/denoiser.onnx",
           "quantized": false,
           "quantized_path": "models/resemble_enhance/denoiser_int8.onnx",

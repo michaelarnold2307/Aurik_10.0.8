@@ -321,7 +321,6 @@ def _compute_formant_stability(
                         f1_list.append(valid[0])
                 except Exception as e:
                     logger.warning("vocal_quality_index.py::_lpc_f1_frames fallback: %s", e)
-                    pass
             return f1_list
 
         f1_pre = _lpc_f1_frames(_pre_bp)

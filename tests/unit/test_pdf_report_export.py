@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for PDF export in audit.processing_report_generator.
 
 Verifies that ReportExporter.export_pdf() produces a valid PDF file

@@ -1,7 +1,7 @@
-import pytest
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.core.phases import phase_55_diffusion_inpainting as phase55
 

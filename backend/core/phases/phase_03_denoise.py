@@ -407,31 +407,29 @@ class DenoisePhase(PhaseInterface):
         # ── §v10 PIM: Echte Per-Band-Intensität ──
 
         # ── §v10 #6: Transienten-Schutz vor NR ──
-        _transient_mask = None
         try:
             from backend.core.dsp.transient_guard import compute_transient_mask
-            _transient_mask = compute_transient_mask(audio, sample_rate)
+
+            compute_transient_mask(audio, sample_rate)
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
         _pim = kwargs.get("pim_intensity_map")
-        _per_band_mask = None
         if _pim is not None:
             # 1. Skalare NR-Stärke aus PIM (wie zuvor)
-            _nr_presence = _pim.get_nr_strength("presence", "verse")
-            _nr_air = _pim.get_nr_strength("air", "verse")
+            _pim.get_nr_strength("presence", "verse")
+            _pim.get_nr_strength("air", "verse")
             _nr_global = _pim.global_modifiers.get("nr_global", 1.0)
             if "noise_reduction_strength" in kwargs:
-                kwargs["noise_reduction_strength"] = float(np.clip(
-                    kwargs["noise_reduction_strength"] * _nr_global, 0.05, 0.95
-                ))
+                kwargs["noise_reduction_strength"] = float(
+                    np.clip(kwargs["noise_reduction_strength"] * _nr_global, 0.05, 0.95)
+                )
             # 2. NEU: Per-Band-Spektral-Maske für echte Frequenz-selektive NR
             try:
                 from backend.core.pim_phase_hook import compute_per_band_nr_mask
-                _per_band_mask = compute_per_band_nr_mask(_pim, sample_rate)
+
+                compute_per_band_nr_mask(_pim, sample_rate)
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         start_time = time.time()
         _progress_cb = kwargs.get("progress_sub_callback")
 
@@ -442,7 +440,6 @@ class DenoisePhase(PhaseInterface):
             _get_plm_evict().evict_for_phase("phase_03_denoise")
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
 
         def _report_progress(pct: float, label: str) -> None:
             if callable(_progress_cb):
@@ -450,7 +447,6 @@ class DenoisePhase(PhaseInterface):
                     _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
 
         _primary_material = str(kwargs.get("primary_material", "")).lower()
         if _primary_material == "shellac" and material_type in ("tape", "reel_tape", "cassette"):
@@ -864,24 +860,27 @@ class DenoisePhase(PhaseInterface):
         # Guard vor BS-RoFormer-Vokalverzerrung bei Energieanstiegen.
         # Sobald der Joint-Calibrator korrekt kalibriert (strength < 0.90),
         # greift der normale Guard oben.
-        _denker_fallback_active = False
         if _denker_strength <= _dsp_threshold and not use_lightweight:
             use_lightweight = True
             logger.info(
                 "§DENKER Phase 03: strength=%.2f ≤ %.2f → DSP-only (Denker-Entscheidung)",
-                _denker_strength, _dsp_threshold,
+                _denker_strength,
+                _dsp_threshold,
             )
         elif _denker_strength >= 0.95 and _panns_singing >= 0.25 and not use_lightweight:
             use_lightweight = True
-            _denker_fallback_active = True
             logger.info(
                 "§DENKER Phase 03 FALLBACK: strength=%.2f (unkalibriert), panns=%.2f ≥ 0.25 → DSP-only (Vokal-Schutz)",
-                _denker_strength, _panns_singing,
+                _denker_strength,
+                _panns_singing,
             )
 
-        _bsrof_gate = (_panns_singing >= 0.35 and not use_lightweight
-                       and (_est_snr_db is None or _est_snr_db < 20.0)
-                       and _denker_strength > 0.55)  # §2.70: Nur wenn Kalibration NR befürwortet
+        _bsrof_gate = (
+            _panns_singing >= 0.35
+            and not use_lightweight
+            and (_est_snr_db is None or _est_snr_db < 20.0)
+            and _denker_strength > 0.55
+        )  # §2.70: Nur wenn Kalibration NR befürwortet
         if _bsrof_gate:
             _bsrof_ram_ok = True
             try:
@@ -890,7 +889,6 @@ class DenoisePhase(PhaseInterface):
                 _bsrof_ram_ok = float(_psutil_bsr.virtual_memory().available / (1024**3)) >= 8.0
             except Exception:
                 logger.debug("_trim: silent except suppressed", exc_info=True)
-                pass
             if _bsrof_ram_ok:
                 try:
                     from plugins.bs_roformer_plugin import get_bs_roformer  # pylint: disable=import-outside-toplevel
@@ -1052,15 +1050,12 @@ class DenoisePhase(PhaseInterface):
 
                 _hpg = _get_hpg()
                 _audio_for_hpg = audio if audio.ndim == 1 else audio
-                _protected_mask, _h_ref = _hpg.extract_harmonic_mask(
-                    _audio_for_hpg.astype(np.float32), int(sr)
-                )
+                _protected_mask, _h_ref = _hpg.extract_harmonic_mask(_audio_for_hpg.astype(np.float32), int(sr))
                 params = dict(params)
                 params["_hpg_protected_mask"] = _protected_mask
                 params["_hpg_h_ref"] = _h_ref
                 logger.info(
-                    "§2.28 HPG: harmonic mask extracted — protected_bins=%.1f%% "
-                    "(material=%s, panns_singing=%.2f)",
+                    "§2.28 HPG: harmonic mask extracted — protected_bins=%.1f%% (material=%s, panns_singing=%.2f)",
                     100.0 * float(np.mean(_protected_mask)),
                     material_type,
                     _panns_singing,
@@ -1346,7 +1341,6 @@ class DenoisePhase(PhaseInterface):
                         _plm03_dfn.set_active("DeepFilterNetV3", False)
                     except Exception:
                         logger.debug("_trim: silent except suppressed", exc_info=True)
-                        pass
 
         _report_progress(38.0 if _dfn_applied else 10.0, "Entrauschung: Vokal-Stufe (DeepFilterNet) abgeschlossen")
 
@@ -1403,7 +1397,6 @@ class DenoisePhase(PhaseInterface):
                         _plm03_sgmse.touch_plugin("SGMSE+")  # type: ignore[attr-defined]
                     except Exception:
                         logger.debug("_trim: silent except suppressed", exc_info=True)
-                        pass
                 # §2.46f Context-Padding for SGMSE+: reflect-pad 1 s to prevent boundary artefacts
                 _ctx_n03_sg = min(int(1.0 * sample_rate), (audio.shape[-1] if audio.ndim == 2 else len(audio)) // 4)
                 _sg_use_pad = _ctx_n03_sg > 0 and (audio.shape[-1] if audio.ndim == 2 else len(audio)) > _ctx_n03_sg * 4
@@ -1447,7 +1440,6 @@ class DenoisePhase(PhaseInterface):
                         _plm03_sgmse.set_active("SGMSE+", False)
                     except Exception:
                         logger.debug("_trim: silent except suppressed", exc_info=True)
-                        pass
 
         # ML-Hybrid only if resources available and quality mode permits
         # Skip if DeepFilterNet (primary) or SGMSE+ (fallback) already applied successfully.
@@ -2378,6 +2370,7 @@ class DenoisePhase(PhaseInterface):
         if _strength_env is not None and _post_nr_guard_ref_audio is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(result_audio, dtype=np.float32)
                 result_audio = apply_strength_envelope(
                     processed=_env_pre,
@@ -3087,9 +3080,7 @@ class DenoisePhase(PhaseInterface):
                     _t_targ = np.linspace(0, 1, _n_targ)
                     _mask_aligned = np.zeros((G_omlsa.shape[0], _n_targ), dtype=np.float64)
                     for _f in range(min(_hpg_mask.shape[0], G_omlsa.shape[0])):
-                        _mask_aligned[_f, :] = np.interp(
-                            _t_targ, _t_orig, _hpg_mask[_f, :].astype(np.float64)
-                        )
+                        _mask_aligned[_f, :] = np.interp(_t_targ, _t_orig, _hpg_mask[_f, :].astype(np.float64))
                 else:
                     _mask_aligned = None
                 if _mask_aligned is not None:
@@ -3106,8 +3097,7 @@ class DenoisePhase(PhaseInterface):
                     _blend = np.clip(_mask_aligned + _edge_weight, 0.0, 1.0)
                     G_omlsa = _blend * _hpg_gain + (1.0 - _blend) * G_omlsa
                     logger.debug(
-                        "§2.28 HPG: OMLSA gain protected — "
-                        "protected_bins=%.1f%%, μ_G=%.3f (w/ HPG) vs %.3f (raw)",
+                        "§2.28 HPG: OMLSA gain protected — protected_bins=%.1f%%, μ_G=%.3f (w/ HPG) vs %.3f (raw)",
                         100.0 * float(np.mean(_mask_aligned > 0.5)),
                         float(np.mean(G_omlsa)),
                         float(np.mean(_hpg_gain)),

@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_iad_musical_residuum.py — IntroducedArtifactDetector §2.23 Test-Suite
 §2.46e Relative-Harmonicity-Guard (v9.12.1) — artifact_freedom = 0.95 adhesion fix.

@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for Aurik10/core/version_checker.py — update check logic."""
 
 import json

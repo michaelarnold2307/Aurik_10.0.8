@@ -559,7 +559,7 @@ class PhaseInteractionDenker:
         _codec_avg_discount: float = 1.0
         _scores = getattr(defect_result, "scores", {}) or {}
         _discounts: list[float] = []
-        for _ds in (_scores.values() if isinstance(_scores, dict) else []):
+        for _ds in _scores.values() if isinstance(_scores, dict) else []:
             if hasattr(_ds, "metadata"):
                 _tc = (_ds.metadata or {}).get("chain_contamination_terminal_codec")
                 if _tc and not _terminal_codec:
@@ -571,7 +571,9 @@ class PhaseInteractionDenker:
             _codec_avg_discount = sum(_discounts) / len(_discounts)
         if _terminal_codec:
             injected_notes.append(f"§CODEC Context: terminal={_terminal_codec} discount={_codec_avg_discount:.2f}")
-            logger.info("PhaseInteractionDenker §CODEC Context: %s (avg discount=%.2f)", _terminal_codec, _codec_avg_discount)
+            logger.info(
+                "PhaseInteractionDenker §CODEC Context: %s (avg discount=%.2f)", _terminal_codec, _codec_avg_discount
+            )
 
         # 4. Semantische Annotation
         annotations = self._annotate(merged_phases)
@@ -650,17 +652,18 @@ class PhaseInteractionDenker:
         # §U: Phase-Ordering-Intelligence — akustische Kopplungen optimieren
         try:
             from backend.core.phase_intelligence import PhaseOrderIntelligence
+
             _poi = PhaseOrderIntelligence()
             _order_result = _poi.optimize(list(ordered))
             if _order_result.changes:
                 ordered = _order_result.optimized_order
                 logger.info(
                     "§U Phase-Ordering: %d Änderungen (score=%.2f)",
-                    len(_order_result.changes), _order_result.score,
+                    len(_order_result.changes),
+                    _order_result.score,
                 )
                 for _ch in _order_result.changes[:5]:
-                    logger.debug("  §U %s: Pos %s→%s — %s",
-                                 _ch["phase"], _ch["from_pos"], _ch["to_pos"], _ch["reason"])
+                    logger.debug("  §U %s: Pos %s→%s — %s", _ch["phase"], _ch["from_pos"], _ch["to_pos"], _ch["reason"])
                 conflict_notes.append(
                     f"§U PhaseOrder: {len(_order_result.changes)} akustische "
                     f"Kopplungen optimiert (score={_order_result.score:.2f})"
@@ -670,7 +673,8 @@ class PhaseInteractionDenker:
 
         # ── §2.60 Denker-Intelligenz: PhaseEffectCatalog → Intensitäten ────
         try:
-            from backend.core.phase_effect_catalog import get_phase_effect_catalog, get_phase_risk_level
+            from backend.core.phase_effect_catalog import get_phase_effect_catalog
+
             _catalog = get_phase_effect_catalog()
             _audio_ctx = {
                 "snr_db": signal_signature.get("snr_db"),
@@ -686,10 +690,14 @@ class PhaseInteractionDenker:
                 "transient_ratio": signal_signature.get("transient_ratio", 0.0),
                 "micro_dynamic_db": signal_signature.get("micro_dynamic_db", 6.0),
                 "rms_dbfs": signal_signature.get("rms_dbfs", -20.0),
-                "chain_has_cassette": "cassette" in str(chain_info.get("chain_str", "")).lower() if chain_info else False,
+                "chain_has_cassette": "cassette" in str(chain_info.get("chain_str", "")).lower()
+                if chain_info
+                else False,
                 "chain_has_mp3": "mp3" in str(chain_info.get("chain_str", "")).lower() if chain_info else False,
                 "pipeline_confidence": pipeline_confidence if pipeline_confidence else 0.75,
-                "defect_count_total": len(defect_result.scores) if defect_result and hasattr(defect_result, "scores") else 0,
+                "defect_count_total": len(defect_result.scores)
+                if defect_result and hasattr(defect_result, "scores")
+                else 0,
                 # §CODEC: Denker-Kalibrierung codec-aware
                 "terminal_codec": _terminal_codec,
                 "codec_avg_discount": _codec_avg_discount,
@@ -699,10 +707,9 @@ class PhaseInteractionDenker:
             _n_cal = sum(1 for v in _calibration.values() if v != 1.0)
             # ── §2.60.1 Fahrplan: Denker als Dirigent ────────────────────
             try:
-                from backend.core.fahrplan import build_fahrplan, Fahrplan
-                _goal_prios = {
-                    k: float(v) for k, v in (goal_risk_map or {}).items()
-                }
+                from backend.core.fahrplan import build_fahrplan
+
+                _goal_prios = {k: float(v) for k, v in (goal_risk_map or {}).items()}
                 _fahrplan = build_fahrplan(
                     phase_ids=list(ordered),
                     sections=sections if sections else [],
@@ -717,17 +724,16 @@ class PhaseInteractionDenker:
                     len(_fahrplan.sections),
                     _fahrplan.note,
                 )
-            except Exception as e:
+            except Exception:
                 logger.warning("phase_interaction_denker.py::unknown fallback", exc_info=True)
-                pass
             if _n_cal > 0:
                 logger.info(
                     "§2.60 Denker-Kalibrierung: %d/%d Phasen intensitäts-angepasst",
-                    _n_cal, len(ordered),
+                    _n_cal,
+                    len(ordered),
                 )
-        except Exception as e:
+        except Exception:
             logger.warning("phase_interaction_denker.py::unknown fallback", exc_info=True)
-            pass
 
         # ── §ROADMAP-4: Dynamic Phase Ordering (DAG) ──
         # Sortiert Phasen topologisch nach Frequenzbereich-Überlappungen,
@@ -786,7 +792,6 @@ class PhaseInteractionDenker:
                 _surgical_defects = list(defekt_hint.get("surgical_defect_types", []) or [])
             except Exception:
                 logger.debug("_determine_repair_policy: silent except suppressed", exc_info=True)
-                pass
         if _surgical_defects:
             logger.info(
                 "PhaseInteractionDenker: %d chirurgische Defekte erkannt — "
@@ -800,7 +805,6 @@ class PhaseInteractionDenker:
                 _ph = set(getattr(defect_result, "recommended_phases", None) or [])
             except Exception:
                 logger.debug("_determine_repair_policy: silent except suppressed", exc_info=True)
-                pass
 
         # ── overall_severity ────────────────────────────────────────────
         _sev: float = 1.0
@@ -812,12 +816,24 @@ class PhaseInteractionDenker:
 
         # ── Material-adaptive Schwellen ─────────────────────────────────
         _historical_or_fragile = material.lower() in {
-            "wax_cylinder", "shellac", "lacquer_disc", "wire_recording",
-            "vinyl", "tape", "reel_tape", "cassette",
-            "cassette_dolby_b", "cassette_dolby_c", "cassette_dolby_s",
+            "wax_cylinder",
+            "shellac",
+            "lacquer_disc",
+            "wire_recording",
+            "vinyl",
+            "tape",
+            "reel_tape",
+            "cassette",
+            "cassette_dolby_b",
+            "cassette_dolby_c",
+            "cassette_dolby_s",
         }
         _modern_digital = material.lower() in {
-            "cd_digital", "dat", "aac", "mp3_high", "streaming",
+            "cd_digital",
+            "dat",
+            "aac",
+            "mp3_high",
+            "streaming",
         }
         # Historische Materialien: niedrigere Schwellen (früherer Eingriff)
         _click_threshold = 0.25 if _historical_or_fragile else 0.30
@@ -842,14 +858,22 @@ class PhaseInteractionDenker:
                 _click_threshold -= 0.02  # Hoher Crest-Faktor → clicks hörbarer
 
         # ── Einzelentscheidungen ────────────────────────────────────────
-        _has_click_phases = bool(_ph & {
-            "phase_01_click_removal", "phase_09_crackle_removal",
-            "phase_27_click_pop_removal",
-        })
+        _has_click_phases = bool(
+            _ph
+            & {
+                "phase_01_click_removal",
+                "phase_09_crackle_removal",
+                "phase_27_click_pop_removal",
+            }
+        )
         _has_hum_phases = bool(_ph & {"phase_02_hum_removal"})
-        _has_clip_phases = bool(_ph & {
-            "phase_23_spectral_repair", "phase_06_frequency_restoration",
-        })
+        _has_clip_phases = bool(
+            _ph
+            & {
+                "phase_23_spectral_repair",
+                "phase_06_frequency_restoration",
+            }
+        )
 
         def _decide(
             has_phase_hint: bool,
@@ -875,11 +899,7 @@ class PhaseInteractionDenker:
         #  identisch; zu aggressiver click_iqr schadet der Transparenz)
         if policy["clicks"] == "aggressive" and chain_info is not None:
             try:
-                _chain: list[str] = list(
-                    chain_info.get("transfer_chain")
-                    or chain_info.get("chain")
-                    or []
-                )
+                _chain: list[str] = list(chain_info.get("transfer_chain") or chain_info.get("chain") or [])
                 _terminal_codec = any(
                     str(n).strip().lower() in {"mp3_low", "mp3_high", "aac"}
                     for n in _chain[-2:]  # letztes Glied + Vorletztes
@@ -888,7 +908,6 @@ class PhaseInteractionDenker:
                     policy["clicks"] = "mild"
             except Exception:
                 logger.debug("_decide: silent except suppressed", exc_info=True)
-                pass
 
         return policy
 
@@ -1061,7 +1080,7 @@ class PhaseInteractionDenker:
         try:
             material_type_cls = _load_symbol("backend.core.defect_scanner", "MaterialType")
             policy_material = material_type_cls(material_key)
-        except Exception as e:
+        except Exception:
             logger.warning("phase_interaction_denker.py::_with_policy_material fallback", exc_info=True)
             return defect_result
         if getattr(defect_result, "material_type", None) == policy_material:
@@ -1079,7 +1098,7 @@ class PhaseInteractionDenker:
                 material_key,
             )
             return planned
-        except Exception as e:
+        except Exception:
             logger.warning("phase_interaction_denker.py::_with_policy_material fallback", exc_info=True)
             return defect_result
 
@@ -1127,14 +1146,14 @@ class PhaseInteractionDenker:
         - vinyl/shellac: static order (noise is broadband, needs Stage 1 first)
         """
         stages = [
-            "breitband",   # 1: Hum, Rumpel, DC
-            "impulsiv",    # 2: Clicks, Kratzer, Dropouts
-            "rauschen",    # 3: Phase 03, 29
-            "spektral",    # 4: AntiMuffling
-            "raeumlich",   # 5: SmartTapeRepair, EchoRemoval
-            "dynamik",     # 6: Phase 10, 26, 54
-            "enhancement", # 7: SibilanceMax, VocalClarity
-            "ausgabe",     # 8: Humanization, PerceptualOptimizer
+            "breitband",  # 1: Hum, Rumpel, DC
+            "impulsiv",  # 2: Clicks, Kratzer, Dropouts
+            "rauschen",  # 3: Phase 03, 29
+            "spektral",  # 4: AntiMuffling
+            "raeumlich",  # 5: SmartTapeRepair, EchoRemoval
+            "dynamik",  # 6: Phase 10, 26, 54
+            "enhancement",  # 7: SibilanceMax, VocalClarity
+            "ausgabe",  # 8: Humanization, PerceptualOptimizer
         ]
 
         mat = str(material).lower()
@@ -1212,16 +1231,22 @@ class PhaseInteractionDenker:
 
         return result
 
-
     # ── Guard-Modulation (zentrale Entscheidungs-Intelligenz) ─────────────
 
-    _CRITICAL_PHASES: frozenset[str] = frozenset({
-        "phase_14_phase_correction", "phase_25_azimuth_correction",
-        "phase_56_spectral_band_gap_repair", "phase_24_dropout_repair",
-        "phase_01_click_removal", "phase_09_crackle_removal",
-        "phase_27_click_pop_removal", "phase_03_denoise",
-        "phase_02_hum_removal", "phase_05_rumble_filter",
-    })
+    _CRITICAL_PHASES: frozenset[str] = frozenset(
+        {
+            "phase_14_phase_correction",
+            "phase_25_azimuth_correction",
+            "phase_56_spectral_band_gap_repair",
+            "phase_24_dropout_repair",
+            "phase_01_click_removal",
+            "phase_09_crackle_removal",
+            "phase_27_click_pop_removal",
+            "phase_03_denoise",
+            "phase_02_hum_removal",
+            "phase_05_rumble_filter",
+        }
+    )
 
     @staticmethod
     def resolve_guard_modulation(
@@ -1253,7 +1278,6 @@ class PhaseInteractionDenker:
                     penalties.append((max(0.5, wf), 0.40))
             except Exception:
                 logger.debug("resolve_guard_modulation: silent except suppressed", exc_info=True)
-                pass
 
         # ── GuardWisdom (50 %) ──
         if guard_wisdom is not None and hasattr(guard_wisdom, "get_strength_mod"):

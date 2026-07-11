@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_v99_backend_modules_3537.py
 ============================================
@@ -463,7 +464,7 @@ class TestGoalExplainer:
                 desc = ge.generate_explanation()
                 ge.stop_tracking()
                 assert desc is not None
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
                 pass  # "Need at least original + 1 processed step" ist OK
 

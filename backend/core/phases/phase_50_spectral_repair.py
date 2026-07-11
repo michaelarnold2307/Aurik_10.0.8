@@ -422,14 +422,15 @@ class SpectralRepairPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "spectral_repair2",
-                default_nr=0.45, default_de_ess=0.25, default_comp=1.0)
+
+            _pim = apply_pim_intensity(
+                kwargs, "spectral_repair2", default_nr=0.45, default_de_ess=0.25, default_comp=1.0
+            )
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_50_spectral_repair.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p50_transposed = to_channels_last(audio)
         self.validate_input(audio)

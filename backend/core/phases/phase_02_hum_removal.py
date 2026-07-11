@@ -276,14 +276,13 @@ class HumRemovalPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "hum_removal",
-                default_nr=0.35, default_de_ess=0.1, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "hum_removal", default_nr=0.35, default_de_ess=0.1, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_02_hum_removal.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         _ = auto_detect  # Pflichtparameter PhaseInterface-Vertrag; Funktion erkennt immer auto
         start_time = time.time()
@@ -299,7 +298,6 @@ class HumRemovalPhase(PhaseInterface):
             _get_plm_evict02().evict_for_phase("phase_02_hum_removal")
         except Exception as e:
             logger.warning("phase_02_hum_removal.py::process fallback: %s", e)
-            pass
 
         # §2.45a-I: Gated-RMS — only musical frames (> −50 dBFS) contribute (prevents fadeout-explosion)
         _rms_in_02_db = _gated_rms_dbfs_02(np.asarray(audio, dtype=np.float32))
@@ -581,7 +579,6 @@ class HumRemovalPhase(PhaseInterface):
             _plm02_dfn.set_active("DeepFilterNetV3", True)
         except Exception as e:
             logger.warning("phase_02_hum_removal.py::_refine_with_ml fallback: %s", e)
-            pass
 
         try:
             # Create temporary files
@@ -642,7 +639,6 @@ class HumRemovalPhase(PhaseInterface):
                     _plm02_dfn.set_active("DeepFilterNetV3", False)
                 except Exception as e:
                     logger.warning("phase_02_hum_removal.py::unknown fallback: %s", e)
-                    pass
 
     def _track_harmonics(
         self, audio: np.ndarray, fundamental: int, max_harmonics: int, threshold_db: float

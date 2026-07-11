@@ -182,7 +182,6 @@ class HybridMLDenoiser:
                 _resemble_budget_ok = _ml_try_allocate("ResembleEnhance", size_gb=0.5)
             except Exception as e:
                 logger.warning("hybrid_ml_denoiser.py::denoise fallback: %s", e)
-                pass
             if (
                 _resemble_budget_ok
                 and self._has_sufficient_ml_headroom(audio, sample_rate)

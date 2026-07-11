@@ -152,9 +152,7 @@ class PleasantnessRegistry:
 
     # ── Öffentliche API ──────────────────────────────────────────────────
 
-    def set_baseline(
-        self, pleasantness: float, *, label: str = "", goosebumps: float = 0.5
-    ) -> None:
+    def set_baseline(self, pleasantness: float, *, label: str = "", goosebumps: float = 0.5) -> None:
         """Setzt die Angenehmheits-Baseline (EINMAL vor der Pipeline)."""
         with self._rw_lock:
             self._baseline = pleasantness
@@ -164,11 +162,13 @@ class PleasantnessRegistry:
             self._current = pleasantness
             self._best = pleasantness
             self._epoch = 0
-            self._record(0.0, "Baseline", "baseline", pleasantness, label,
-                         {"goosebumps": goosebumps})
+            self._record(0.0, "Baseline", "baseline", pleasantness, label, {"goosebumps": goosebumps})
             logger.info(
                 "Registry: Baseline P=%.3f (%s) | Target P=%.3f | Goosebumps=%.3f",
-                pleasantness, label, self._target, goosebumps,
+                pleasantness,
+                label,
+                self._target,
+                goosebumps,
             )
 
     def report_pre(self, module_name: str, current_pleasantness: float) -> int:
@@ -204,7 +204,10 @@ class PleasantnessRegistry:
                 self._consecutive_declines += 1
                 logger.warning(
                     "Registry: %s hat P um %.3f VERSCHLECHTERT (von %.3f auf %.3f)",
-                    module_name, delta, pleasantness - delta, pleasantness,
+                    module_name,
+                    delta,
+                    pleasantness - delta,
+                    pleasantness,
                 )
             else:
                 self._neutral += 1
@@ -219,8 +222,13 @@ class PleasantnessRegistry:
 
             # Snapshot aufzeichnen und speichern
             snap = self._record(
-                delta, module_name, "post", pleasantness, label,
-                issues=issues or [], metadata=metadata or {},
+                delta,
+                module_name,
+                "post",
+                pleasantness,
+                label,
+                issues=issues or [],
+                metadata=metadata or {},
             )
 
             # Modul als completed markieren
@@ -233,13 +241,10 @@ class PleasantnessRegistry:
                     cb(snap)
                 except Exception as e:
                     logger.warning("pleasantness_registry.py::report_post fallback: %s", e)
-                    pass
 
             return snap
 
-    def report_intermediate(
-        self, module_name: str, pleasantness: float, delta: float = 0.0
-    ) -> None:
+    def report_intermediate(self, module_name: str, pleasantness: float, delta: float = 0.0) -> None:
         """Meldet einen Zwischenstand (kein kompletter Schritt)."""
         with self._rw_lock:
             self._current = pleasantness
@@ -371,13 +376,15 @@ class PleasantnessRegistry:
             self._steering_active = True
             self._current_steering_action = action
             self._steering_reason = reason
-            self._steering_actions.append({
-                "epoch": self._epoch,
-                "module": module_name,
-                "delta": delta,
-                "action": action,
-                "reason": reason,
-            })
+            self._steering_actions.append(
+                {
+                    "epoch": self._epoch,
+                    "module": module_name,
+                    "delta": delta,
+                    "action": action,
+                    "reason": reason,
+                }
+            )
         else:
             self._steering_active = False
 
@@ -397,6 +404,7 @@ class PleasantnessRegistry:
 
 # ── Singleton-Zugriff ────────────────────────────────────────────────────
 
+
 def get_pleasantness_registry() -> PleasantnessRegistry:
     """Gibt die globale PleasantnessRegistry-Instanz zurück."""
     return PleasantnessRegistry()
@@ -404,14 +412,20 @@ def get_pleasantness_registry() -> PleasantnessRegistry:
 
 # ── Convenience: Team-Benachrichtigungen ─────────────────────────────────
 
+
 def notify_team_improvement(module: str, delta: float) -> None:
     """Kurze Benachrichtigung: Modul hat Verbesserung erzielt."""
     reg = get_pleasantness_registry()
     status = reg.get_status()
     logger.info(
         "🎵 %s → Team: ΔP=+%.3f | Gesamtstatus: P=%.3f (Ziel=%.3f, Best=%.3f) | %d/%d Module fertig",
-        module, delta, status.current_pleasantness, status.target_pleasantness,
-        status.best_pleasantness, len(status.completed_modules), len(status.active_modules),
+        module,
+        delta,
+        status.current_pleasantness,
+        status.target_pleasantness,
+        status.best_pleasantness,
+        len(status.completed_modules),
+        len(status.active_modules),
     )
 
 
@@ -420,5 +434,7 @@ def notify_team_decline(module: str, delta: float) -> None:
     reg = get_pleasantness_registry()
     logger.warning(
         "⚠️  %s → Team: ΔP=%.3f VERSCHLECHTERT | Rollback? %s",
-        module, delta, "JA" if reg._consecutive_declines >= 2 else "noch nicht",
+        module,
+        delta,
+        "JA" if reg._consecutive_declines >= 2 else "noch nicht",
     )

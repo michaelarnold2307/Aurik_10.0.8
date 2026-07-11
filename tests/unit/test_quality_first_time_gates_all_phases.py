@@ -1,4 +1,5 @@
 import pytest
+
 """Quality-first policy guard for time-limited phase paths.
 
 Ensures known runtime caps/skip guards are quality-gated in high-end modes

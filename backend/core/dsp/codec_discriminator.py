@@ -48,7 +48,8 @@ class CodecDiscriminator:
         if not self._enabled or not locations_s:
             return 0.0
         try:
-            import numpy as np
+            pass
+
             onsets = self._detect_transients(audio)
             regions = [(int(s * 44100), int(e * 44100)) for s, e in locations_s if e > s]
             return self.crackle_onset_correlation(regions, onsets)
@@ -67,13 +68,14 @@ class CodecDiscriminator:
         """Einfache Transienten-Detektion via Energie-Anstieg."""
         try:
             import numpy as np
+
             a = np.asarray(audio).ravel()
             if len(a) < 1024:
                 return []
             energy = np.abs(a[::256])
             onsets = []
             for i in range(1, len(energy) - 1):
-                if energy[i] > 3.0 * max(energy[i-1], 1e-12) and energy[i] > energy[i+1] * 1.5:
+                if energy[i] > 3.0 * max(energy[i - 1], 1e-12) and energy[i] > energy[i + 1] * 1.5:
                     onsets.append(i * 256)
             return onsets[:500]  # Max 500 onsets
         except Exception as e:
@@ -91,8 +93,8 @@ class CodecDiscriminator:
         Returns True wenn Codec-Ursprung wahrscheinlich."""
         if not self._enabled:
             return False
-        frame_samples = MP3_FRAME_SAMPLES_44100 if sample_rate <= 44100 else int(
-            MP3_FRAME_SAMPLES_48000 * sample_rate / 48000
+        frame_samples = (
+            MP3_FRAME_SAMPLES_44100 if sample_rate <= 44100 else int(MP3_FRAME_SAMPLES_48000 * sample_rate / 48000)
         )
         offset = click_sample_idx % frame_samples
         tolerance = max(2, frame_samples // 64)  # ~1.5% tolerance
@@ -107,9 +109,7 @@ class CodecDiscriminator:
 
     # ── Crackle: Onset-Korrelation ─────────────────────────
 
-    def crackle_onset_correlation(
-        self, crackle_regions: list[tuple[int, int]], onsets: list[int]
-    ) -> float:
+    def crackle_onset_correlation(self, crackle_regions: list[tuple[int, int]], onsets: list[int]) -> float:
         """Misst wie stark Crackle-Regionen mit Transienten-Onsets korrelieren.
 
         MP3-Pre-Echo: tritt 5-35ms VOR Onsets auf → hohe Korrelation.
@@ -129,9 +129,7 @@ class CodecDiscriminator:
 
     # ── Wow/Flutter: Spectral Flatness ─────────────────────
 
-    def wow_spectral_flatness_is_codec(
-        self, pitch_curve: np.ndarray, sample_rate: int
-    ) -> float:
+    def wow_spectral_flatness_is_codec(self, pitch_curve: np.ndarray, sample_rate: int) -> float:
         """Prüft ob eine Tonhöhenmodulation von MP3-SBR stammt.
 
         MP3 SBR (Spectral Band Replication) erzeugt bandbegrenzte
@@ -190,9 +188,7 @@ class CodecDiscriminator:
 
     # ── Dropouts: Frame-Loss-Signatur ──────────────────────
 
-    def dropout_is_frame_loss(
-        self, gap_start_ms: float, gap_duration_ms: float, sample_rate: int
-    ) -> bool:
+    def dropout_is_frame_loss(self, gap_start_ms: float, gap_duration_ms: float, sample_rate: int) -> bool:
         """Prüft ob eine Dropout-Lücke exakt einem MP3-Frame-Multiple entspricht.
 
         MP3-Frame-Loss: Lücken sind exakte Vielfache von ~26.1ms.

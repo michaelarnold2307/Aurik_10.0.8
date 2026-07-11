@@ -13,6 +13,7 @@ Usage:
             result = self.run_phase({'param': value})
             assert result is not None
 """
+
 from __future__ import annotations
 
 import importlib
@@ -81,21 +82,16 @@ class PhaseIntegrationTest:
         """Prüft ob die Phase unter max_rt × Echtzeit bleibt."""
         rt = self._last_duration / self.duration_s
         assert rt < max_rt, (
-            f"Phase {self.phase_class}: RT={rt:.1f}× > {max_rt}× Limit "
-            f"(duration={self._last_duration:.2f}s)"
+            f"Phase {self.phase_class}: RT={rt:.1f}× > {max_rt}× Limit (duration={self._last_duration:.2f}s)"
         )
 
     def assert_no_nan(self, audio: np.ndarray) -> None:
         """Prüft ob das Audio NaN/Inf-frei ist."""
-        assert np.all(np.isfinite(audio)), (
-            f"Phase {self.phase_class}: Audio enthält NaN/Inf"
-        )
+        assert np.all(np.isfinite(audio)), f"Phase {self.phase_class}: Audio enthält NaN/Inf"
 
     def assert_level_preserved(self, before: np.ndarray, after: np.ndarray, max_db: float = 3.0) -> None:
         """Prüft ob der Pegel innerhalb max_db bleibt."""
-        rms_before = np.sqrt(np.mean(before ** 2)) + 1e-10
-        rms_after = np.sqrt(np.mean(after ** 2)) + 1e-10
+        rms_before = np.sqrt(np.mean(before**2)) + 1e-10
+        rms_after = np.sqrt(np.mean(after**2)) + 1e-10
         delta_db = abs(20 * np.log10(rms_after / rms_before))
-        assert delta_db < max_db, (
-            f"Phase {self.phase_class}: Pegeländerung {delta_db:.1f} dB > {max_db} dB"
-        )
+        assert delta_db < max_db, f"Phase {self.phase_class}: Pegeländerung {delta_db:.1f} dB > {max_db} dB"

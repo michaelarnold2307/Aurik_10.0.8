@@ -1,4 +1,5 @@
 import pytest
+
 """tests/unit/test_medium_detector_short_clip.py
 
 Tests für §2.47/§0c Fix: rotation_strength-Maskierung bei kurzen Clips

@@ -291,7 +291,6 @@ class ClickPopRemoval(PhaseInterface):
                 _p27_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))
             except Exception as e:
                 logger.warning("phase_27_click_pop_removal.py::process fallback: %s", e)
-                pass
         for _z in kwargs.get("frisson_zones") or []:
             try:
                 _fz_s = float(getattr(_z, "start_s", None) or _z[0])
@@ -299,19 +298,16 @@ class ClickPopRemoval(PhaseInterface):
                 _p27_protected_zones.append((_fz_s, _fz_e, 0.30))
             except Exception as e:
                 logger.warning("phase_27_click_pop_removal.py::process fallback: %s", e)
-                pass
         for _z in kwargs.get("whisper_zones") or []:
             try:
                 _p27_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))
             except Exception as e:
                 logger.warning("phase_27_click_pop_removal.py::process fallback: %s", e)
-                pass
         for _z in kwargs.get("passaggio_zones") or []:
             try:
                 _p27_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))
             except Exception as e:
                 logger.warning("phase_27_click_pop_removal.py::process fallback: %s", e)
-                pass
         _p27_pz = _p27_protected_zones or None
 
         if _effective_strength <= 0.0:

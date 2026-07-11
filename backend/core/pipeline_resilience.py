@@ -22,7 +22,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -38,6 +37,7 @@ _CHECKPOINT_DIR = Path(tempfile.gettempdir()) / "aurik_checkpoints"
 @dataclass
 class PipelineCheckpoint:
     """Gespeicherter Zustand nach einer Phase."""
+
     audio: np.ndarray
     phase_idx: int
     total_phases: int
@@ -104,8 +104,12 @@ class PipelineCheckpoint:
                 cp.audio = np.load(audio_file)
             else:
                 return None
-            logger.info("§CKPT Geladen: Phase %d/%d, %d Phasen bereits ausgeführt",
-                         cp.phase_idx + 1, cp.total_phases, len(cp.executed_phases))
+            logger.info(
+                "§CKPT Geladen: Phase %d/%d, %d Phasen bereits ausgeführt",
+                cp.phase_idx + 1,
+                cp.total_phases,
+                len(cp.executed_phases),
+            )
             return cp
         except Exception as e:
             logger.warning("§CKPT Fehler beim Laden: %s", e)
@@ -160,15 +164,17 @@ _PHASE_TIMEOUT_BASE: dict[str, float] = {
 }
 
 # ML-schwere Phasen bekommen mehr Zeit
-_HEAVY_ML_PHASES: frozenset[str] = frozenset({
-    "phase_03_denoise",
-    "phase_06_frequency_restoration",
-    "phase_23_spectral_repair",
-    "phase_24_dropout_repair",
-    "phase_29_tape_hiss_reduction",
-    "phase_49_advanced_dereverb",
-    "phase_56_spectral_band_gap_repair",
-})
+_HEAVY_ML_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_03_denoise",
+        "phase_06_frequency_restoration",
+        "phase_23_spectral_repair",
+        "phase_24_dropout_repair",
+        "phase_29_tape_hiss_reduction",
+        "phase_49_advanced_dereverb",
+        "phase_56_spectral_band_gap_repair",
+    }
+)
 
 
 def get_phase_timeout(phase_id: str, material: str = "unknown", audio_duration_s: float = 0.0) -> float:
@@ -228,9 +234,14 @@ class PhaseTimeoutGuard:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Priorität-1-Ziele: MÜSSEN über Schwellwert sein
-_P1_GOALS: frozenset[str] = frozenset({
-    "waerme", "brillanz", "emotionalitaet", "natuerlichkeit",
-})
+_P1_GOALS: frozenset[str] = frozenset(
+    {
+        "waerme",
+        "brillanz",
+        "emotionalitaet",
+        "natuerlichkeit",
+    }
+)
 
 _MATERIAL_QUALITY_FLOOR: dict[str, float] = {
     "wax_cylinder": 0.55,

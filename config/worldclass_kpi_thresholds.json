@@ -10,7 +10,13 @@
       "cd_vocal_001",
       "mp3_vocal_001"
     ],
-    "required_materials": ["shellac", "vinyl", "tape", "cd_digital", "mp3_low"]
+    "required_materials": [
+      "shellac",
+      "vinyl",
+      "tape",
+      "cd_digital",
+      "mp3_low"
+    ]
   },
   "targets": {
     "artifact_freedom_min_samples": 5,
@@ -44,7 +50,9 @@
   "trusted_vocal_restoration": {
     "allow_metric_only_claims": false,
     "fully_automated_operation": {
-      "allowed_user_decisions": ["mode_selection"],
+      "allowed_user_decisions": [
+        "mode_selection"
+      ],
       "max_manual_interventions_per_case": 0,
       "max_user_parameters_per_case": 0,
       "require_autonomous_export_decision": true,

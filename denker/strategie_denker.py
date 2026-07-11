@@ -254,7 +254,7 @@ class StrategieDenker:
                 # "speed" existiert nicht im QualityMode-Enum → FAST als Fallback
             }
             return mapping.get(_m, _quality_mode_cls.QUALITY)
-        except Exception as e:
+        except Exception:
             logger.warning("strategie_denker.py::_parse_mode fallback", exc_info=True)
             return mode_str  # PerformanceGuard handles unknown mode gracefully
 
@@ -343,20 +343,20 @@ class StrategieDenker:
         _goose_base = 0.5
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             _hpe_r = compute_pleasantness(audio, sr)
             _hpe_base = float(_hpe_r.score)
             logger.info("StrategieDenker: HPE-Baseline = %.3f (%s)", _hpe_base, _hpe_r.label)
-        except Exception as e:
+        except Exception:
             logger.warning("strategie_denker.py::unknown fallback", exc_info=True)
-            pass
         try:
             from backend.core.goosebumps_factor import compute_goosebumps
+
             _goose_r = compute_goosebumps(audio, sr)
             _goose_base = float(_goose_r.score)
             logger.info("StrategieDenker: Goosebumps-Baseline = %.3f (%s)", _goose_base, _goose_r.label)
-        except Exception as e:
+        except Exception:
             logger.warning("strategie_denker.py::unknown fallback", exc_info=True)
-            pass
 
         note = ""
         if audio_dur > 300:

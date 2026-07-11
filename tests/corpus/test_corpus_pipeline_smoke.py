@@ -48,6 +48,7 @@ class TestCorpusPipelineSmoke:
         """Pipeline darf bei keiner Corpus-Datei abstürzen."""
         try:
             from backend.file_import import load_audio_file
+
             audio, sr = load_audio_file(str(filepath))
         except Exception as e:
             pytest.skip(f"Could not load {filepath.name}: {e}")

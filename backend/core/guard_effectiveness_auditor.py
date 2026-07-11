@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 # Thresholds
 # ─────────────────────────────────────────────────────────────────
 PARALYSIS_STRENGTH_THRESHOLD: float = 0.25  # Unterhalb = paralysiert
-PARALYSIS_RETRY_COUNT_THRESHOLD: int = 3    # Retries bevor best_effort
-FALSE_POSITIVE_RATIO: float = 0.65          # Alt-Regression < Original * 0.65 = false positive
+PARALYSIS_RETRY_COUNT_THRESHOLD: int = 3  # Retries bevor best_effort
+FALSE_POSITIVE_RATIO: float = 0.65  # Alt-Regression < Original * 0.65 = false positive
 
 
 @dataclass
@@ -53,12 +53,12 @@ class ParalysisEvent:
     initial_strength: float
     final_strength: float
     retries_exhausted: int
-    pmgg_action: str                       # "best_effort", "best_effort_r1", etc.
-    goal_triggered: str = ""               # Welches Goal hat die Regression ausgelöst
-    original_regression: float = 0.0       # Originale PMGG-Regression
-    alternative_regression: float = 0.0    # MediaDefectVerifier Alternativ-Regression
+    pmgg_action: str  # "best_effort", "best_effort_r1", etc.
+    goal_triggered: str = ""  # Welches Goal hat die Regression ausgelöst
+    original_regression: float = 0.0  # Originale PMGG-Regression
+    alternative_regression: float = 0.0  # MediaDefectVerifier Alternativ-Regression
     is_false_positive: bool = False
-    audio_before: np.ndarray | None = None # Für Recovery-Re-Run
+    audio_before: np.ndarray | None = None  # Für Recovery-Re-Run
     audio_after: np.ndarray | None = None
     scores_before: dict[str, float] | None = None
     scores_after: dict[str, float] | None = None
@@ -170,22 +170,24 @@ class GuardEffectivenessAuditor:
                 if is_fp:
                     report.false_positives += 1
                     report.phases_to_recover.append(event.phase_id)
-                    report.recovery_recommendations.append({
-                        "phase": event.phase_id,
-                        "paralyzed_at_strength": event.final_strength,
-                        "original_strength": event.initial_strength,
-                        "pmgg_action": event.pmgg_action,
-                        "goal_triggered": event.goal_triggered,
-                        "original_regression": event.original_regression,
-                        "alternative_regression": alt_regression,
-                        "action": "RE-RUN_AT_FULL_STRENGTH",
-                        "reason": (
-                            f"PMGG best_effort bei strength={event.final_strength:.0%} "
-                            f"durch false positive in '{event.goal_triggered}' "
-                            f"(Original Δ={event.original_regression:.3f}, "
-                            f"Alternativ={alt_regression:.3f})"
-                        ),
-                    })
+                    report.recovery_recommendations.append(
+                        {
+                            "phase": event.phase_id,
+                            "paralyzed_at_strength": event.final_strength,
+                            "original_strength": event.initial_strength,
+                            "pmgg_action": event.pmgg_action,
+                            "goal_triggered": event.goal_triggered,
+                            "original_regression": event.original_regression,
+                            "alternative_regression": alt_regression,
+                            "action": "RE-RUN_AT_FULL_STRENGTH",
+                            "reason": (
+                                f"PMGG best_effort bei strength={event.final_strength:.0%} "
+                                f"durch false positive in '{event.goal_triggered}' "
+                                f"(Original Δ={event.original_regression:.3f}, "
+                                f"Alternativ={alt_regression:.3f})"
+                            ),
+                        }
+                    )
                 else:
                     report.confirmed_degradations += 1
 
@@ -206,16 +208,11 @@ class GuardEffectivenessAuditor:
                 )
                 logger.info("§v10.5 Auditor: %s", report.summary)
             else:
-                report.summary = (
-                    f"GUARD CLEAN: Keine Paralysis-Ereignisse in "
-                    f"{self._phase_count} Phasen."
-                )
+                report.summary = f"GUARD CLEAN: Keine Paralysis-Ereignisse in {self._phase_count} Phasen."
 
             return report
 
-    def _check_false_positive(
-        self, event: ParalysisEvent
-    ) -> tuple[bool, float]:
+    def _check_false_positive(self, event: ParalysisEvent) -> tuple[bool, float]:
         """§v10.5 Prüft ob die PMGG-Regression ein false positive war.
 
         Verwendet den MediaDefectVerifier für alternative Proxy-Metriken.
@@ -264,8 +261,11 @@ class GuardEffectivenessAuditor:
                 logger.info(
                     "§v10.5 Auditor: %s false positive bestätigt — "
                     "original Δ=%.4f (goal=%s), alternativ Δ=%.4f (ratio=%.1f%%)",
-                    event.phase_id, event.original_regression, goal,
-                    alt_reg, (alt_reg / max(event.original_regression, 1e-6) * 100),
+                    event.phase_id,
+                    event.original_regression,
+                    goal,
+                    alt_reg,
+                    (alt_reg / max(event.original_regression, 1e-6) * 100),
                 )
 
             return is_fp, alt_reg
@@ -282,13 +282,15 @@ class GuardEffectivenessAuditor:
             result = []
             for event in self._events:
                 if event.is_false_positive:
-                    result.append({
-                        "phase_id": event.phase_id,
-                        "initial_strength": 1.0,  # Volle Strength
-                        "skip_pmgg_goals": [event.goal_triggered] if event.goal_triggered else [],
-                        "reason": f"Guard-induced paralysis at {event.final_strength:.0%} — "
-                                  f"false positive in '{event.goal_triggered}'",
-                    })
+                    result.append(
+                        {
+                            "phase_id": event.phase_id,
+                            "initial_strength": 1.0,  # Volle Strength
+                            "skip_pmgg_goals": [event.goal_triggered] if event.goal_triggered else [],
+                            "reason": f"Guard-induced paralysis at {event.final_strength:.0%} — "
+                            f"false positive in '{event.goal_triggered}'",
+                        }
+                    )
             return result
 
     def has_paralysis(self) -> bool:

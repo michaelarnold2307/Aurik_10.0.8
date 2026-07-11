@@ -131,7 +131,7 @@ class TestAutoDetectRiaaVariant:
             result = phase._auto_detect_riaa_variant(silence_2s, SR, 1950)
             assert isinstance(result, str)
             assert result in phase.HISTORICAL_CURVES
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Ablehnung bei Stille akzeptabel
 

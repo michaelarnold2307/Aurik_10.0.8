@@ -59,7 +59,9 @@ class VocalDistortionSentinel:
                 logger.warning(
                     "🎤 Sentinel: HNR-Abfall %.1f dB (%.1f→%.1f) — "
                     "SongCalibration sollte Harmonic-Restoration-Stärke reduzieren",
-                    hnr_delta, self._hnr_before, post_hnr_db,
+                    hnr_delta,
+                    self._hnr_before,
+                    post_hnr_db,
                 )
             elif hnr_delta < -1.5:
                 logger.info(

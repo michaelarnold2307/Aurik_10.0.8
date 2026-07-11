@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import pytest
 import yaml
 
 CORPUS_DIR = Path(__file__).parent.parent.parent / "corpus"
@@ -70,9 +69,7 @@ class TestCorpusIntegrity:
                 if entry.get("_status") == "placeholder":
                     continue  # Placeholder überspringen
                 filepath = mf.parent / entry["file"]
-                assert filepath.exists(), (
-                    f"{mf.relative_to(CORPUS_DIR)}: referenced file missing: {entry['file']}"
-                )
+                assert filepath.exists(), f"{mf.relative_to(CORPUS_DIR)}: referenced file missing: {entry['file']}"
 
     def test_checksums_match(self):
         """Alle Checksummen in Manifests müssen mit Dateien übereinstimmen."""
@@ -89,8 +86,7 @@ class TestCorpusIntegrity:
                     actual = _compute_sha256(filepath)
                     expected = entry["checksum_sha256"]
                     assert actual == expected, (
-                        f"{entry['file']}: checksum mismatch "
-                        f"(expected {expected[:16]}..., got {actual[:16]}...)"
+                        f"{entry['file']}: checksum mismatch (expected {expected[:16]}..., got {actual[:16]}...)"
                     )
 
     def test_material_categories_present(self):

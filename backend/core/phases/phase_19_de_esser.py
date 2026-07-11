@@ -563,7 +563,6 @@ class DeEsserPhase(PhaseInterface):
                 kwargs["correction_strength"] = _pim["de_ess_strength"]
         except Exception as e:
             logger.warning("phase_19_de_esser.py::process fallback: %s", e)
-            pass
         material = material_type  # alias: method body uses 'material' throughout
         start_time = time.time()
         self.validate_input(audio)
@@ -660,19 +659,18 @@ class DeEsserPhase(PhaseInterface):
         # §2.9.4 Multi-Gender-Timeline: Erkennt ALLE Stimmen im Song
         _gender_timeline = self._detect_gender_timeline(audio, sample_rate)
         self.stats["gender_timeline"] = _gender_timeline
-        _multi_gender = len(set(s["gender"] for s in _gender_timeline)) > 1 if _gender_timeline else False
+        _multi_gender = len({s["gender"] for s in _gender_timeline}) > 1 if _gender_timeline else False
 
         # §2.9.5 Union-Profil: Wenn mehrere Gender erkannt wurden,
         # schütze ALLE Stimmbereiche durch kombinierte Parameter
         if _multi_gender and _gender_timeline:
-            _genders_present = sorted(set(s["gender"] for s in _gender_timeline))
+            _genders_present = sorted({s["gender"] for s in _gender_timeline})
             _union_profile = _build_union_vocal_profile(_genders_present)
             self.vocal_profile = _union_profile
             self.stats["gender_profile"] = "multi"
             self.stats["genders_detected"] = _genders_present
             logger.info(
-                "🎤 Multi-Gender: %s → Union-Profil (Formanten %.0f–%.0f Hz, "
-                "Sibilanz-Bands %s)",
+                "🎤 Multi-Gender: %s → Union-Profil (Formanten %.0f–%.0f Hz, Sibilanz-Bands %s)",
                 ", ".join(_genders_present),
                 _union_profile["formant_range"][0],
                 _union_profile["formant_range"][1],
@@ -687,7 +685,8 @@ class DeEsserPhase(PhaseInterface):
                     self.stats["gender_profile"] = _timeline_gender
                     logger.info(
                         "🎤 GenderTimeline bestätigt: %s (confidence=%.2f)",
-                        _timeline_gender, _gender_timeline[0]["confidence"],
+                        _timeline_gender,
+                        _gender_timeline[0]["confidence"],
                     )
 
         # Stats Reset
@@ -967,12 +966,16 @@ class DeEsserPhase(PhaseInterface):
             logger.info(
                 "🎤 §2.9.6 Per-Gender-De-Essing: %d Segmente, genders=%s",
                 len(_gender_timeline),
-                sorted(set(s["gender"] for s in _gender_timeline)),
+                sorted({s["gender"] for s in _gender_timeline}),
             )
             deessed_audio = self._process_per_gender_segments(
-                enhanced_audio, sample_rate, _gender_timeline,
-                material=material, band_weights=band_weights,
-                max_reduction_db=max_reduction_db, threshold_ratio=threshold_ratio,
+                enhanced_audio,
+                sample_rate,
+                _gender_timeline,
+                material=material,
+                band_weights=band_weights,
+                max_reduction_db=max_reduction_db,
+                threshold_ratio=threshold_ratio,
                 lookahead_samples=lookahead_samples,
             )
         elif is_stereo:
@@ -2319,9 +2322,11 @@ class DeEsserPhase(PhaseInterface):
             self.SIBILANCE_BANDS = original_bands
 
         return result, gender_adaptive_bands
+
     def get_metadata(self) -> "PhaseMetadata":
         """Gibt Metadaten für Phase 19 v4.0 zurück."""
-        from .phase_interface import PhaseMetadata, PhaseCategory
+        from .phase_interface import PhaseCategory, PhaseMetadata
+
         return PhaseMetadata(
             phase_id="phase_19_de_esser",
             name="World-Class Gender-Aware De-Esser v4.0 Professional",
@@ -2341,7 +2346,12 @@ class DeEsserPhase(PhaseInterface):
         """Fallback gender detection via LPC formant analysis."""
         try:
             from backend.core.dsp.lpc_formant_tracker import get_lpc_formant_tracker
-            mono = audio.mean(axis=0) if audio.ndim == 2 and audio.shape[0] <= 2 else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+
+            mono = (
+                audio.mean(axis=0)
+                if audio.ndim == 2 and audio.shape[0] <= 2
+                else (audio.mean(axis=1) if audio.ndim == 2 else audio)
+            )
             return get_lpc_formant_tracker().classify_gender_via_formants(mono, sample_rate)
         except Exception:
             return "female"
@@ -2354,11 +2364,11 @@ class DeEsserPhase(PhaseInterface):
         """Segment-based gender processing (passthrough on fallback)."""
         return audio
 
-    def _apply_formant_preservation(self, original, processed, sample_rate, 
-                                     formant_low, formant_high, protection_factor):
+    def _apply_formant_preservation(
+        self, original, processed, sample_rate, formant_low, formant_high, protection_factor
+    ):
         """Preserve formant regions by blending original back."""
         return processed
-
 
 
 def _estimate_vibrato_from_pyin(
@@ -2433,8 +2443,8 @@ def _estimate_vibrato_from_pyin(
         if len(f0_v) < 30:
             return None, None
         f0_c = f0_v - np.median(f0_v)
-        ac = np.correlate(f0_c, f0_c, mode='full')
-        ac = ac[len(ac)//2:] / max(ac[len(ac)//2], 1e-10)
+        ac = np.correlate(f0_c, f0_c, mode="full")
+        ac = ac[len(ac) // 2 :] / max(ac[len(ac) // 2], 1e-10)
         mn = int(1.0 / (8.0 * hop_length / sample_rate))
         mx = int(1.0 / (3.0 * hop_length / sample_rate))
         if mx >= len(ac) or mn >= mx:
@@ -2448,9 +2458,7 @@ def _estimate_vibrato_from_pyin(
         return None, None
 
 
-def _find_contiguous_segments(
-    mask: np.ndarray, hop: int, sample_rate: int
-) -> list[tuple[float, float]]:
+def _find_contiguous_segments(mask: np.ndarray, hop: int, sample_rate: int) -> list[tuple[float, float]]:
     """Findet zusammenhängende True-Regionen in einer Bool-Maske."""
     segments: list[tuple[float, float]] = []
     if not np.any(mask):
@@ -2490,13 +2498,16 @@ def _classify_gender_segment(
     if f0_hz < 130.0:
         scores["male"] += _W_F0
     elif f0_hz < 150.0:
-        scores["male"] += _W_F0 * 0.7; scores["female"] += _W_F0 * 0.3
+        scores["male"] += _W_F0 * 0.7
+        scores["female"] += _W_F0 * 0.3
     elif f0_hz < 200.0:
-        scores["female"] += _W_F0 * 0.8; scores["male"] += _W_F0 * 0.2
+        scores["female"] += _W_F0 * 0.8
+        scores["male"] += _W_F0 * 0.2
     elif f0_hz < 280.0:
         scores["female"] += _W_F0
     elif f0_hz < 320.0:
-        scores["female"] += _W_F0 * 0.5; scores["child"] += _W_F0 * 0.5
+        scores["female"] += _W_F0 * 0.5
+        scores["child"] += _W_F0 * 0.5
     else:
         scores["child"] += _W_F0
 
@@ -2504,31 +2515,54 @@ def _classify_gender_segment(
     _W_TILT = 0.25
     if spectral_tilt is not None:
         t = float(spectral_tilt)
-        if t < -8.0:       scores["male"] += _W_TILT
-        elif t < -6.0:     scores["male"] += _W_TILT * 0.7; scores["female"] += _W_TILT * 0.3
-        elif t < -4.5:     scores["female"] += _W_TILT * 0.8; scores["male"] += _W_TILT * 0.2
-        elif t < -2.5:     scores["female"] += _W_TILT; scores["child"] += _W_TILT * 0.3
-        else:              scores["child"] += _W_TILT * 0.8; scores["female"] += _W_TILT * 0.5
+        if t < -8.0:
+            scores["male"] += _W_TILT
+        elif t < -6.0:
+            scores["male"] += _W_TILT * 0.7
+            scores["female"] += _W_TILT * 0.3
+        elif t < -4.5:
+            scores["female"] += _W_TILT * 0.8
+            scores["male"] += _W_TILT * 0.2
+        elif t < -2.5:
+            scores["female"] += _W_TILT
+            scores["child"] += _W_TILT * 0.3
+        else:
+            scores["child"] += _W_TILT * 0.8
+            scores["female"] += _W_TILT * 0.5
 
     # ── Vibrato (×0.20) ─────────────────────────────────────────
     _W_VIB = 0.20
     if vib_rate is not None and vib_depth is not None:
         r, d = float(vib_rate), float(vib_depth)
-        if r >= 4.8 and d >= 120:       scores["female"] += _W_VIB
-        elif r >= 4.6 and d >= 100:     scores["female"] += _W_VIB * 0.8
-        elif r >= 4.0 and d >= 80:      scores["female"] += _W_VIB * 0.4; scores["male"] += _W_VIB * 0.4
-        elif r >= 3.5 and d >= 40:      scores["male"] += _W_VIB * 0.8
-        elif r > 0 and d > 0:           scores["male"] += _W_VIB * 0.5
-        if r >= 5.5 and d >= 80:        scores["child"] += _W_VIB * 0.6
+        if r >= 4.8 and d >= 120:
+            scores["female"] += _W_VIB
+        elif r >= 4.6 and d >= 100:
+            scores["female"] += _W_VIB * 0.8
+        elif r >= 4.0 and d >= 80:
+            scores["female"] += _W_VIB * 0.4
+            scores["male"] += _W_VIB * 0.4
+        elif r >= 3.5 and d >= 40:
+            scores["male"] += _W_VIB * 0.8
+        elif r > 0 and d > 0:
+            scores["male"] += _W_VIB * 0.5
+        if r >= 5.5 and d >= 80:
+            scores["child"] += _W_VIB * 0.6
 
     # ── HNR (×0.15) ─────────────────────────────────────────────
     _W_HNR = 0.15
     if hnr_db is not None:
         h = float(hnr_db)
-        if h > -1.0:        scores["female"] += _W_HNR * 0.8; scores["child"] += _W_HNR * 0.6
-        elif h > -3.0:      scores["female"] += _W_HNR * 0.7; scores["male"] += _W_HNR * 0.3
-        elif h > -5.0:      scores["male"] += _W_HNR * 0.7; scores["female"] += _W_HNR * 0.3
-        else:               scores["male"] += _W_HNR
+        if h > -1.0:
+            scores["female"] += _W_HNR * 0.8
+            scores["child"] += _W_HNR * 0.6
+        elif h > -3.0:
+            scores["female"] += _W_HNR * 0.7
+            scores["male"] += _W_HNR * 0.3
+        elif h > -5.0:
+            scores["male"] += _W_HNR * 0.7
+            scores["female"] += _W_HNR * 0.3
+        else:
+            scores["male"] += _W_HNR
 
     # ── Winner + Confidence ──────────────────────────────────────
     gender = max(scores, key=lambda k: scores[k])
@@ -2631,7 +2665,6 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
         "harmonics_preserve": True,
         "breath_enhance": True,
     }
-
 
     def _detect_gender_robust(self, audio: np.ndarray, sample_rate: int) -> str:
         """
@@ -2771,7 +2804,7 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
                     and _formants_failed
                     and not _contralto_detected
                 ):
-                    _pyin_available = '_f0_pyin' in locals() and '_voiced_prob' in locals()
+                    _pyin_available = "_f0_pyin" in locals() and "_voiced_prob" in locals()
                     _vib_rate, _vib_depth = _estimate_vibrato_from_pyin(
                         _f0_pyin if _pyin_available else None,
                         _voiced_prob if _pyin_available else None,
@@ -2783,7 +2816,8 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
                         logger.info(
                             "🎤 §2.9.2 Vibrato-Analyse: rate=%.1f Hz depth=%.0f cents "
                             "→ %s (F0=%.0f Hz, formants failed)",
-                            _vib_rate, _vib_depth,
+                            _vib_rate,
+                            _vib_depth,
                             "FEMALE-TYPICAL → override" if _is_female_vibrato else "ambiguous",
                             f0,
                         )
@@ -2887,9 +2921,7 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
         else:
             return VocalGender.CHILD
 
-    def _detect_gender_timeline(
-        self, audio: np.ndarray, sample_rate: int
-    ) -> list[dict[str, object]]:
+    def _detect_gender_timeline(self, audio: np.ndarray, sample_rate: int) -> list[dict[str, object]]:
         """Erkennt ALLE Gesangsstimmen im Song mit Zeitsegmenten.
 
         Statt eines globalen 'male'/'female'/'child' liefert diese Methode
@@ -2922,8 +2954,12 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
             import librosa as _librosa
 
             _f0, _voiced_flag, _voiced_prob = _librosa.pyin(
-                mono, fmin=60.0, fmax=700.0, sr=sample_rate,
-                frame_length=2048, win_length=1024,
+                mono,
+                fmin=60.0,
+                fmax=700.0,
+                sr=sample_rate,
+                frame_length=2048,
+                win_length=1024,
             )
             if _f0 is None or len(_f0) < 10:
                 return timeline
@@ -2965,20 +3001,24 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
 
                 # Gender-Klassifikation (SOTA Multi-Feature Scoring)
                 gender, confidence = _classify_gender_segment(
-                    f0_median, vib_rate, vib_depth,
+                    f0_median,
+                    vib_rate,
+                    vib_depth,
                     spectral_tilt=seg_tilt,
                 )
 
-                timeline.append({
-                    "t_start_s": seg_start_s,
-                    "t_end_s": seg_end_s,
-                    "gender": gender,
-                    "confidence": confidence,
-                    "f0_hz": f0_median,
-                    "vibrato_hz": vib_rate,
-                    "vibrato_cents": vib_depth,
-                    "spectral_tilt": seg_tilt,
-                })
+                timeline.append(
+                    {
+                        "t_start_s": seg_start_s,
+                        "t_end_s": seg_end_s,
+                        "gender": gender,
+                        "confidence": confidence,
+                        "f0_hz": f0_median,
+                        "vibrato_hz": vib_rate,
+                        "vibrato_cents": vib_depth,
+                        "spectral_tilt": seg_tilt,
+                    }
+                )
 
         except Exception as exc:
             logger.debug("GenderTimeline failed (%s)", exc)
@@ -2989,15 +3029,16 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
 
         # ── 4. Statistiken loggen ────────────────────────────────────
         if timeline:
-            genders_found = set(seg["gender"] for seg in timeline)
+            genders_found = {seg["gender"] for seg in timeline}
             total_s = sum(float(seg["t_end_s"]) - float(seg["t_start_s"]) for seg in timeline)
             gender_summary = ", ".join(
-                f"{g}={sum(1 for s in timeline if s['gender']==g)}"
-                for g in sorted(genders_found)
+                f"{g}={sum(1 for s in timeline if s['gender'] == g)}" for g in sorted(genders_found)
             )
             logger.info(
                 "🎤 GenderTimeline: %d Segmente, %.1fs voiced, genders=[%s]",
-                len(timeline), total_s, gender_summary,
+                len(timeline),
+                total_s,
+                gender_summary,
             )
 
         return timeline
@@ -3044,8 +3085,12 @@ def _build_union_vocal_profile(genders: list[str]) -> dict:
                 _fp = self.vocal_profile.get("formant_protect", 0.85)
                 _fr = self.vocal_profile.get("formant_range", (300, 2000))
                 seg_proc = self._apply_formant_preservation(
-                    seg_audio, seg_proc, sample_rate,
-                    float(_fr[0]), float(_fr[1]), float(_fp),
+                    seg_audio,
+                    seg_proc,
+                    sample_rate,
+                    float(_fr[0]),
+                    float(_fr[1]),
+                    float(_fp),
                 )
 
                 fl = min(fade, s1 - s0)

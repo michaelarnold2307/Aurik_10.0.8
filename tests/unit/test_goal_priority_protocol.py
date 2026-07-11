@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für core/goal_priority_protocol.py — Spec §2.34.
 
 ≥ 25 Unit-Tests: Prioritätsregeln, Konfliktlösung, Iterations-Abbruch,

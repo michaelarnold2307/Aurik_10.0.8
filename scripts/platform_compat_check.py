@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -97,7 +96,7 @@ def main() -> int:
         print("\nAll platform compatibility checks passed.")
         return 0
     else:
-        print(f"\nPlatform compatibility issues found.")
+        print("\nPlatform compatibility issues found.")
         return 1
 
 

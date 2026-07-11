@@ -27,6 +27,7 @@ import numpy as np
 @dataclass
 class ConditionStats:
     """Statistiken für eine Bedingung."""
+
     name: str
     n: int
     mean: float
@@ -41,6 +42,7 @@ class ConditionStats:
 @dataclass
 class AnalysisResult:
     """Komplette Analyse-Ergebnisse."""
+
     conditions: list[ConditionStats]
     anova_f: float
     anova_p: float
@@ -73,14 +75,8 @@ def _one_way_anova(groups: dict[str, list[float]]) -> tuple[float, float, bool]:
     all_arr = np.array(all_scores)
 
     grand_mean = np.mean(all_arr)
-    ss_between = sum(
-        len(scores) * (np.mean(scores) - grand_mean) ** 2
-        for scores in groups.values()
-    )
-    ss_within = sum(
-        sum((s - np.mean(scores)) ** 2 for s in scores)
-        for scores in groups.values()
-    )
+    ss_between = sum(len(scores) * (np.mean(scores) - grand_mean) ** 2 for scores in groups.values())
+    ss_within = sum(sum((s - np.mean(scores)) ** 2 for s in scores) for scores in groups.values())
 
     k = len(groups)
     n = len(all_arr)
@@ -139,17 +135,19 @@ def analyze_results(results_path: Path) -> AnalysisResult:
     for name, scores in sorted(condition_scores.items()):
         arr = np.array(scores)
         ci_low, ci_high = _compute_ci95(scores)
-        stats_list.append(ConditionStats(
-            name=name,
-            n=len(scores),
-            mean=round(float(np.mean(arr)), 2),
-            std=round(float(np.std(arr, ddof=1)), 2),
-            ci_95_lower=round(ci_low, 2),
-            ci_95_upper=round(ci_high, 2),
-            min_score=round(float(np.min(arr)), 2),
-            max_score=round(float(np.max(arr)), 2),
-            median=round(float(np.median(arr)), 2),
-        ))
+        stats_list.append(
+            ConditionStats(
+                name=name,
+                n=len(scores),
+                mean=round(float(np.mean(arr)), 2),
+                std=round(float(np.std(arr, ddof=1)), 2),
+                ci_95_lower=round(ci_low, 2),
+                ci_95_upper=round(ci_high, 2),
+                min_score=round(float(np.min(arr)), 2),
+                max_score=round(float(np.max(arr)), 2),
+                median=round(float(np.median(arr)), 2),
+            )
+        )
 
     # ANOVA
     f_val, p_val, anova_sig = _one_way_anova(condition_scores)
@@ -163,19 +161,19 @@ def analyze_results(results_path: Path) -> AnalysisResult:
         # Einfacher gepaarter t-Test (Approximation)
         if aurik_scores and scores:
             diff = np.mean(aurik_scores) - np.mean(scores)
-            pooled_std = np.sqrt(
-                (np.var(aurik_scores, ddof=1) + np.var(scores, ddof=1)) / 2
-            )
+            pooled_std = np.sqrt((np.var(aurik_scores, ddof=1) + np.var(scores, ddof=1)) / 2)
             n = min(len(aurik_scores), len(scores))
             t_val = diff / (pooled_std / np.sqrt(n)) if pooled_std > 0 else 0
             p_approx = 1.0 / (1.0 + abs(t_val))
-            pairwise.append({
-                "comparison": f"aurik_vs_{name}",
-                "mean_diff": round(float(diff), 2),
-                "t_statistic": round(float(t_val), 2),
-                "p_value": round(float(p_approx), 4),
-                "significant": bool(p_approx < 0.05),
-            })
+            pairwise.append(
+                {
+                    "comparison": f"aurik_vs_{name}",
+                    "mean_diff": round(float(diff), 2),
+                    "t_statistic": round(float(t_val), 2),
+                    "p_value": round(float(p_approx), 4),
+                    "significant": bool(p_approx < 0.05),
+                }
+            )
 
     # ICC (vereinfacht als Korrelation zwischen Teilnehmern)
     icc_val = 0.75  # Platzhalter
@@ -193,7 +191,7 @@ def analyze_results(results_path: Path) -> AnalysisResult:
         icc=round(icc_val, 3),
         anchor_valid=anchor_valid,
         metadata={
-            "total_participants": len(set(r.get("participant_id", "") for r in results)),
+            "total_participants": len({r.get("participant_id", "") for r in results}),
             "total_trials": len(results),
             "conditions_count": len(condition_scores),
         },
@@ -254,27 +252,31 @@ def main() -> int:
 
     print("## Bedingungen\n")
     print(f"  {'Bedingung':<15} {'N':>4} {'Mean':>8} {'95%-CI':<18} {'Median':>8}")
-    print(f"  {'-'*15} {'-'*4} {'-'*8} {'-'*18} {'-'*8}")
+    print(f"  {'-' * 15} {'-' * 4} {'-' * 8} {'-' * 18} {'-' * 8}")
     for c in analysis.conditions:
         ci = f"[{c.ci_95_lower:.1f}, {c.ci_95_upper:.1f}]"
         print(f"  {c.name:<15} {c.n:>4} {c.mean:>8.1f} {ci:<18} {c.median:>8.1f}")
 
-    print(f"\n## ANOVA\n")
-    print(f"  F({analysis.metadata['conditions_count']-1},{analysis.metadata['total_trials']-analysis.metadata['conditions_count']}) = {analysis.anova_f:.3f}")
+    print("\n## ANOVA\n")
+    print(
+        f"  F({analysis.metadata['conditions_count'] - 1},{analysis.metadata['total_trials'] - analysis.metadata['conditions_count']}) = {analysis.anova_f:.3f}"
+    )
     print(f"  p = {analysis.anova_p:.4f}")
     print(f"  Signifikant: {'✅ Ja' if analysis.anova_significant else '❌ Nein'}")
 
     if analysis.pairwise_comparisons:
-        print(f"\n## Paarweise Vergleiche (Aurik vs. ...)\n")
+        print("\n## Paarweise Vergleiche (Aurik vs. ...)\n")
         for pc in analysis.pairwise_comparisons:
             sig = "✅" if pc["significant"] else "❌"
-            print(f"  {sig} {pc['comparison']}: diff={pc['mean_diff']:+.1f}, t={pc['t_statistic']:.2f}, p={pc['p_value']:.4f}")
+            print(
+                f"  {sig} {pc['comparison']}: diff={pc['mean_diff']:+.1f}, t={pc['t_statistic']:.2f}, p={pc['p_value']:.4f}"
+            )
 
-    print(f"\n## Validierung\n")
+    print("\n## Validierung\n")
     print(f"  Anchor (<30):      {'✅ Valide' if analysis.anchor_valid else '❌ Invalide'}")
     print(f"  ICC:               {analysis.icc:.3f}")
 
-    print(f"\n✅ Analyse abgeschlossen.\n")
+    print("\n✅ Analyse abgeschlossen.\n")
     return 0
 
 

@@ -25,13 +25,13 @@ from typing import Any
 # §2.60.1 Perceptual-Budget: Psychoakustisch kritische Bänder bekommen mehr Verarbeitung.
 # Verteilung basiert auf Fletcher-Munson: 2-5kHz (Präsenz) hat höchste Priorität.
 PERCEPTUAL_BUDGET: dict[str, float] = {
-    "sub_bass": 0.15,     # < 60 Hz
-    "bass": 0.20,         # 60-250 Hz
-    "low_mid": 0.15,      # 250-500 Hz
-    "mid": 0.10,          # 500-2000 Hz
-    "presence": 0.25,     # 2000-5000 Hz
-    "high": 0.10,         # 5000-10000 Hz
-    "air": 0.05,          # > 10000 Hz
+    "sub_bass": 0.15,  # < 60 Hz
+    "bass": 0.20,  # 60-250 Hz
+    "low_mid": 0.15,  # 250-500 Hz
+    "mid": 0.10,  # 500-2000 Hz
+    "presence": 0.25,  # 2000-5000 Hz
+    "high": 0.10,  # 5000-10000 Hz
+    "air": 0.05,  # > 10000 Hz
 }
 
 # §2.60.1 Phasen-Substitutionen: Wenn Risk-Guard eine Phase entfernt, wählt der Fahrplan Ersatz.
@@ -96,6 +96,7 @@ class Fahrplan:
                 result[pid] = 1.0
         return result
 
+
 def build_fahrplan(
     phase_ids: list[str],
     sections: list[tuple[float, float, str]],
@@ -121,7 +122,7 @@ def build_fahrplan(
         Fahrplan mit per-Segment-Anweisungen
     """
     sections = sections or [(0.0, 1.0, "full")]
-    ctx = audio_ctx or {}
+    audio_ctx or {}
 
     plan = Fahrplan(
         sections=sections,
@@ -129,10 +130,10 @@ def build_fahrplan(
         physical_ceiling_hz=physical_ceiling_hz,
         perceptual_budget=dict(PERCEPTUAL_BUDGET),
         goal_priorities={
-            g: int(p * 10) for g, p in sorted(
-                goal_priorities.items(), key=lambda x: x[1], reverse=True
-            )[:5]
-        } if goal_priorities else {},
+            g: int(p * 10) for g, p in sorted(goal_priorities.items(), key=lambda x: x[1], reverse=True)[:5]
+        }
+        if goal_priorities
+        else {},
     )
 
     # ── 1. Substitutionen auflösen ──────────────────────────
@@ -181,8 +182,10 @@ def build_fahrplan(
 
             # Stille-Sektionen → Click/Hum-Phasen überspringen
             if "silence" in s_label_lower and pid in (
-                "phase_01_click_removal", "phase_02_hum_removal",
-                "phase_09_crackle_removal", "phase_27_click_pop_removal",
+                "phase_01_click_removal",
+                "phase_02_hum_removal",
+                "phase_09_crackle_removal",
+                "phase_27_click_pop_removal",
             ):
                 instr.skip = True
                 instr.reason = "silence_segment"

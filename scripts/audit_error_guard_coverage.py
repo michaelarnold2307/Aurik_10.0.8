@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -86,9 +85,7 @@ def scan_phase(filepath: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit ErrorGuard-Coverage")
     parser.add_argument("--json-only", action="store_true", help="Nur JSON ausgeben")
-    parser.add_argument(
-        "--output", default="error_guard_gaps.json", help="JSON-Ausgabedatei"
-    )
+    parser.add_argument("--output", default="error_guard_gaps.json", help="JSON-Ausgabedatei")
     args = parser.parse_args()
 
     if not _PHASES_DIR.is_dir():
@@ -149,25 +146,22 @@ def main() -> int:
     print("  Aurik ErrorGuard Coverage Audit")
     print(f"{sep}")
     print(f"  Phasen gesamt:           {total}")
-    print(f"  Mit ErrorGuard:          {len(guarded)} ({len(guarded)/max(total,1)*100:.1f}%)")
-    print(f"  Mit NaN/Inf-Check:       {len(nan_checked)} ({len(nan_checked)/max(total,1)*100:.1f}%)")
-    print(f"  ❌ UNGESCHÜTZT:           {len(unprotected)} ({len(unprotected)/max(total,1)*100:.1f}%)")
+    print(f"  Mit ErrorGuard:          {len(guarded)} ({len(guarded) / max(total, 1) * 100:.1f}%)")
+    print(f"  Mit NaN/Inf-Check:       {len(nan_checked)} ({len(nan_checked) / max(total, 1) * 100:.1f}%)")
+    print(f"  ❌ UNGESCHÜTZT:           {len(unprotected)} ({len(unprotected) / max(total, 1) * 100:.1f}%)")
     print(f"{sep}\n")
 
     if unprotected:
         print("## Ungeschützte Phasen (ErrorGuard fehlt)\n")
         print(f"| {'#':>3} | {'Phase':<45} | {'Zeilen':>6} | {'NaN-Check':>9} |")
-        print(f"|{'-'*5}|{'-'*47}|{'-'*8}|{'-'*11}|")
+        print(f"|{'-' * 5}|{'-' * 47}|{'-' * 8}|{'-' * 11}|")
         for i, phase in enumerate(unprotected, 1):
             nan_ok = "✅" if phase["has_nan_check"] else "❌"
-            print(
-                f"| {i:>3} | {phase['file']:<45} | {phase['line_count']:>6} | "
-                f"{nan_ok:>9} |"
-            )
+            print(f"| {i:>3} | {phase['file']:<45} | {phase['line_count']:>6} | {nan_ok:>9} |")
         print()
 
     print(f"📄 JSON-Report: {output_path}")
-    print(f"✅ Audit abgeschlossen.\n")
+    print("✅ Audit abgeschlossen.\n")
 
     return 0
 

@@ -29,7 +29,7 @@ Diese Invariante konkretisiert §0 Klangwahrheit für den gesamten Produktbetrie
 
 > **HPE ist oberste Instanz.** PMGG darf Phasen ueberspringen, wenn sie
 > den Klang fuer menschliche Ohren verschlechtern (§2.29 v10).
-> Siehe backend/core/per_phase_musical_goals_gate.py, 
+> Siehe backend/core/per_phase_musical_goals_gate.py,
 > backend/core/human_pleasantness_estimator.py.
 > **Kein Rollback-Verbot mehr.** CausalDefectReasoner kann irren — das Ohr nicht.
 

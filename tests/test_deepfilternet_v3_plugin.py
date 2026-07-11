@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from plugins.deepfilternet_v3_ii_plugin import _DF_ORDER, DeepFilterNetV3IIPlugin
 

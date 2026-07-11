@@ -15,7 +15,7 @@ Autor: Aurik 10 — Rolls-Royce Phantom Edition, 11. Juli 2026
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 class PhantomConfig:
     """Vollständig automatisch erkannte Konfiguration."""
 
-    material: str          # shellac, vinyl, tape, digital
-    era: int               # Geschätztes Aufnahmejahr
-    genre: str             # Jazz, Classical, Rock, ...
-    defects: list[str]     # Erkannte Defekte
+    material: str  # shellac, vinyl, tape, digital
+    era: int  # Geschätztes Aufnahmejahr
+    genre: str  # Jazz, Classical, Rock, ...
+    defects: list[str]  # Erkannte Defekte
     defect_severity: dict[str, float]  # 0–1 pro Defekt
     has_vocals: bool
     vocal_confidence: float
     recommended_mode: str  # quick, full, deep
-    quality_preset: str    # draft, standard, high, archival
+    quality_preset: str  # draft, standard, high, archival
     estimated_snr_db: float
-    confidence: float      # Gesamt-Confidence der Erkennung (0–1)
+    confidence: float  # Gesamt-Confidence der Erkennung (0–1)
 
 
 class PhantomDetector:
@@ -67,7 +67,7 @@ class PhantomDetector:
         """
         mono = np.mean(audio, axis=-1) if audio.ndim > 1 else audio
         mono = mono.astype(np.float32).flatten()
-        duration_s = len(mono) / sr
+        len(mono) / sr
 
         # ── Material-Erkennung ──────────────────────────────────────────
         material, mat_conf = self._detect_material(mono, sr)
@@ -126,7 +126,7 @@ class PhantomDetector:
     def _detect_material(self, mono: np.ndarray, sr: int) -> tuple[str, float]:
         """Erkennt Tonträger-Material via Bandbreite und Rauschboden."""
         n_fft = min(4096, len(mono) // 2)
-        spec = np.abs(np.fft.rfft(mono[:n_fft * 2]))
+        spec = np.abs(np.fft.rfft(mono[: n_fft * 2]))
         freqs = np.fft.rfftfreq(n_fft * 2, d=1.0 / sr)
         total_energy = float(np.sum(spec)) + 1e-10
 
@@ -148,7 +148,11 @@ class PhantomDetector:
 
         for mat, profile in self._material_profiles.items():
             bw_score = 1.0 - min(1.0, abs(bw_hz - profile["bw_hz"]) / profile["bw_hz"])
-            nf_score = 1.0 - min(1.0, abs(noise_floor - profile["noise_floor_db"]) / abs(profile["noise_floor_db"])) if profile["noise_floor_db"] != 0 else 0.0
+            nf_score = (
+                1.0 - min(1.0, abs(noise_floor - profile["noise_floor_db"]) / abs(profile["noise_floor_db"]))
+                if profile["noise_floor_db"] != 0
+                else 0.0
+            )
             score = 0.6 * bw_score + 0.4 * nf_score
             if score > best_score:
                 best_score = score
@@ -186,7 +190,7 @@ class PhantomDetector:
 
         # Hiss/Rauschen: Rauschboden oberhalb von 6 kHz
         n_fft = min(4096, len(mono) // 2)
-        spec = np.abs(np.fft.rfft(mono[:n_fft * 2]))
+        spec = np.abs(np.fft.rfft(mono[: n_fft * 2]))
         freqs = np.fft.rfftfreq(n_fft * 2, d=1.0 / sr)
         hiss_mask = freqs > 6000
         if np.any(hiss_mask):
@@ -210,13 +214,14 @@ class PhantomDetector:
 
     def _detect_genre(self, mono: np.ndarray, sr: int) -> str:
         """Vereinfachte Genre-Erkennung."""
-        rms = float(np.sqrt(np.mean(mono**2)))
+        float(np.sqrt(np.mean(mono**2)))
         # Platzhalter — echte Genre-Erkennung bräuchte ML
         return "unknown"
 
     def _detect_vocals(self, mono: np.ndarray, sr: int) -> tuple[bool, float]:
         """Erkennt Gesangspräsenz."""
         from backend.core.vocal_quality_gate import VocalDetector
+
         detector = VocalDetector()
         presence = detector.detect(mono, sr)
         return presence.has_vocals, presence.confidence
@@ -236,7 +241,7 @@ class PhantomDetector:
         frame_rms = np.zeros(n_frames)
         for i in range(n_frames):
             start = i * hop
-            frame_rms[i] = np.sqrt(np.mean(mono[start:start + window] ** 2))
+            frame_rms[i] = np.sqrt(np.mean(mono[start : start + window] ** 2))
 
         # Signal = obere 10%, Rauschen = untere 10%
         sorted_rms = np.sort(frame_rms)

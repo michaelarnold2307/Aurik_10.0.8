@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für §GOAL_BASELINE_CHECK Optimierungen v9.12.8.
 
 Prio 1: FC-SECONDARY — Sekundärphasen-Injection für below-floor Goals in FeedbackChain

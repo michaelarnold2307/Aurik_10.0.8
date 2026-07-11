@@ -1,4 +1,5 @@
 import pytest
+
 """Regressiontests fuer Phase 46 Vocal-Echo-Guard in Restoration."""
 
 from __future__ import annotations

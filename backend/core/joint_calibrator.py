@@ -10,7 +10,6 @@ Der Denker entscheidet für JEDEN Song individuell.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 
@@ -36,12 +35,14 @@ GOAL_WEIGHTS: dict[str, float] = {
 }
 
 # Phasen die NIE unter 0.20 gedrosselt werden (Primum non nocere)
-PROTECTED_PHASES: frozenset[str] = frozenset({
-    "phase_01_click_removal",
-    "phase_24_dropout_repair",
-    "phase_08_transient_preservation",
-    "phase_12_wow_flutter_fix",     # Tape-Level-Dips sind strukturelle Defekte
-})
+PROTECTED_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_01_click_removal",
+        "phase_24_dropout_repair",
+        "phase_08_transient_preservation",
+        "phase_12_wow_flutter_fix",  # Tape-Level-Dips sind strukturelle Defekte
+    }
+)
 
 
 def joint_calibrate(
@@ -86,7 +87,7 @@ def joint_calibrate(
             gaps[goal] = gap
 
     if not gaps:
-        return {pid: min_strength for pid in phase_ids}
+        return dict.fromkeys(phase_ids, min_strength)
 
     _is_codec = terminal_codec is not None and codec_avg_discount < 0.90
 

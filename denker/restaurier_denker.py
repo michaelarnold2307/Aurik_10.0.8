@@ -537,7 +537,6 @@ class RestaurierDenker:
                     )
             except Exception:
                 logger.debug("restauriere: silent except suppressed", exc_info=True)
-                pass
 
             # §v10 Bitrate-Erkennung
             try:
@@ -551,7 +550,6 @@ class RestaurierDenker:
                     logger.info("RestaurierDenker: Bitrate ~%d kbps (conf=%.2f)", _kbps, _conf)
             except Exception as e:
                 logger.warning("restaurier_denker.py::unknown fallback: %s", e)
-                pass
 
             try:
                 # §v10 HPE Baseline + Inviting VOR UV3
@@ -565,7 +563,6 @@ class RestaurierDenker:
                     _inv_pre = check_inviting_sound(audio, sr).score
                 except Exception:
                     logger.debug("restauriere: silent except suppressed", exc_info=True)
-                    pass
 
                 raw = restorer.restore(audio, **_uv3_kwargs)
                 result = self._konvertiere(raw, material=material)
@@ -617,7 +614,6 @@ class RestaurierDenker:
                                 )
                         except Exception:
                             logger.debug("restauriere: silent except suppressed", exc_info=True)
-                            pass
 
                         # §v10 SWEET SPOT OPTIMIERUNG: Alle 20 Metriken gleichzeitig
                         _sweet = None
@@ -636,7 +632,6 @@ class RestaurierDenker:
                                     logger.info("  - %s", w)
                         except Exception as e:
                             logger.warning("restaurier_denker.py::unknown fallback: %s", e)
-                            pass
 
                         if _sweet is not None and _sweet.all_green:
                             # PERFEKT — alle Metriken in Grünzone + Aura Check
@@ -650,7 +645,6 @@ class RestaurierDenker:
                                     logger.warning("RestaurierDenker: AURA VERLETZT — %s", _aura_cmp.get("verdict", ""))
                             except Exception as e:
                                 logger.warning("restaurier_denker.py::unknown fallback: %s", e)
-                                pass
                             # §v10 Song-Profil aktualisieren
                             try:
                                 from backend.core.aurik_completion_engine import update_song_profile
@@ -659,7 +653,6 @@ class RestaurierDenker:
                                 update_song_profile("unknown", _mat, _delta)
                             except Exception:
                                 logger.debug("restauriere: silent except suppressed", exc_info=True)
-                                pass
                             result.quality_delta = _delta
                             return result
 
@@ -695,7 +688,6 @@ class RestaurierDenker:
                         )
                 except Exception:
                     logger.debug("restauriere: silent except suppressed", exc_info=True)
-                    pass
 
                 return result
             except Exception as uv3_exc:
@@ -813,6 +805,7 @@ class RestaurierDenker:
             if use_source_separation:
                 try:
                     from backend.core.source_aware_restorer import restore_per_source
+
                     raw = restore_per_source(
                         audio,
                         sr,
@@ -969,16 +962,23 @@ class RestaurierDenker:
             _era = str(getattr(raw, "era", "") or "")
             _mode = "STUDIO_2026" if getattr(raw, "mode", "") in ("studio2026", "STUDIO_2026") else "RESTORATION"
             result = optimize_naturalness(
-                out_audio, _orig_audio, 48000,
-                material=_mat_str, era=_era, mode=_mode,
+                out_audio,
+                _orig_audio,
+                48000,
+                material=_mat_str,
+                era=_era,
+                mode=_mode,
             )
             out_audio = result.audio
             _hpe_before = {"score": result.hpe_before}
             _hpe_after = {"score": result.hpe_after}
             logger.info(
                 "NaturalnessOptimizer MAX: HPE %.3f → %.3f (Δ%+.3f) | stages: %s | improvements: %s",
-                result.hpe_before, result.hpe_after, result.delta_hpe,
-                result.applied_stages, result.improvements[:3] if result.improvements else [],
+                result.hpe_before,
+                result.hpe_after,
+                result.delta_hpe,
+                result.applied_stages,
+                result.improvements[:3] if result.improvements else [],
             )
         except Exception as _hpe_exc:
             logger.debug("NaturalnessOptimizer nicht verfügbar: %s", _hpe_exc)
@@ -1005,10 +1005,10 @@ class RestaurierDenker:
             phases_executed=list(raw.phases_executed or []),
             phases_skipped=list(raw.phases_skipped or []),
             musical_goals=goals,
-            warnings=list(raw.warnings or []) + (
+            warnings=list(raw.warnings or [])
+            + (
                 ["HPE ↑ trotz PMGG-Regression — angenehmeres Ergebnis gewinnt"]
-                if _hpe_after.get("score", 0) > _hpe_before.get("score", 0) + 0.02
-                and float(raw.quality_estimate) < 0.5
+                if _hpe_after.get("score", 0) > _hpe_before.get("score", 0) + 0.02 and float(raw.quality_estimate) < 0.5
                 else []
             ),
             material=detected_material or "unknown",
@@ -1023,9 +1023,11 @@ class RestaurierDenker:
                 **(dict(raw.metadata or {}) if isinstance(getattr(raw, "metadata", None), dict) else {}),
                 "total_time_seconds": float(raw.total_time_seconds or 0.0),
                 # §v10.1 HPE Naturalness Scores
-                "hpe_score_before": _hpe_before.get("score", None),
-                "hpe_score_after": _hpe_after.get("score", None),
-                "hpe_delta": (_hpe_after.get("score", 0) - _hpe_before.get("score", 0)) if _hpe_before and _hpe_after else None,
+                "hpe_score_before": _hpe_before.get("score"),
+                "hpe_score_after": _hpe_after.get("score"),
+                "hpe_delta": (_hpe_after.get("score", 0) - _hpe_before.get("score", 0))
+                if _hpe_before and _hpe_after
+                else None,
                 # §v10.5 HPE-is-Boss: PMGG-Regression ist akzeptabel wenn HPE steigt
                 "hpe_overrides_pmgg": bool(_hpe_after.get("score", 0) > _hpe_before.get("score", 0) + 0.02),
             },
@@ -1399,7 +1401,6 @@ def get_restaurier_denker() -> RestaurierDenker:
                         )
         except Exception:
             logger.debug("_check_undo_provenance: silent except suppressed", exc_info=True)
-            pass
         return None
 
     def _check_paralysis(self, ctx: DenkerContext) -> Decision | None:
@@ -1440,7 +1441,6 @@ def get_restaurier_denker() -> RestaurierDenker:
                         )
             except Exception:
                 logger.debug("_check_paralysis: silent except suppressed", exc_info=True)
-                pass
         return None
 
     def _get_alternative_regression(self, ctx: DenkerContext) -> float | None:
@@ -1462,7 +1462,6 @@ def get_restaurier_denker() -> RestaurierDenker:
                 return alt_reg if alt_reg > 0 else None
         except Exception:
             logger.debug("_get_alternative_regression: silent except suppressed", exc_info=True)
-            pass
         return None
 
     def _decide_on_regression(

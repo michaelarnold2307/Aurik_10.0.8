@@ -290,9 +290,8 @@ def _aurik_restoration_fn(audio: np.ndarray, sr: int, sid: str | None = None) ->
                 _intensity, _prio_cnt = _snapshot
                 _sid_key = str(sid or "unknown")
                 _COMP_INNOVATION_SNAPSHOTS.setdefault(_sid_key, []).append((_intensity, _prio_cnt))
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
         return result.audio
     finally:
         restorer.config.enable_phase_gate = _prev_phase_gate
@@ -746,6 +745,7 @@ def test_competitive_worker_time_budget_respects_grace_override(monkeypatch: pyt
 
 # ── Open-Source Competitive Benchmark (v10.0.0-Phantom) ─────────────────────
 
+
 @pytest.mark.competitive_oss
 @pytest.mark.timeout(60)
 def test_open_source_competitive_benchmark() -> None:
@@ -775,6 +775,7 @@ def test_open_source_competitive_benchmark() -> None:
 
 
 # ── Regression Gate (v10.0.0-Phantom) ────────────────────────────────────────
+
 
 @pytest.mark.regression
 @pytest.mark.timeout(120)

@@ -1,4 +1,5 @@
 import pytest
+
 """Erweiterte Unit-Tests für forensics.medium_detector (v10.0).
 
 Testet:

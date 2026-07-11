@@ -16,8 +16,8 @@ Architektur:
 from __future__ import annotations
 
 import logging
+
 import numpy as np
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ class PerceptualExportOptimizer:
     """Maximale Export-Qualität durch ML/DSP-Hybrid-Ansatz."""
 
     # RAM-Budgets (GB) für ML-Modelle
-    MIN_RAM_FOR_DFN = 0.5       # DeepFilterNet braucht ~0.3 GB working set
+    MIN_RAM_FOR_DFN = 0.5  # DeepFilterNet braucht ~0.3 GB working set
     MIN_RAM_FOR_AUDIOSR = 20.0  # AudioSR braucht ~3 GB + working
-    MIN_RAM_FOR_DEMUCS = 2.0    # Demucs braucht ~0.5 GB + working
+    MIN_RAM_FOR_DEMUCS = 2.0  # Demucs braucht ~0.5 GB + working
 
     def __init__(self) -> None:
         self._available_ram_gb = self._get_available_ram()
@@ -73,9 +73,7 @@ class PerceptualExportOptimizer:
 
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
-    def _apply_masking_gate(
-        self, audio: np.ndarray, sr: int, material: str
-    ) -> np.ndarray:
+    def _apply_masking_gate(self, audio: np.ndarray, sr: int, material: str) -> np.ndarray:
         """Psychoakustisches Masking-Gate: entfernt nur hörbare Defekte."""
         # In MP3/Cassette mit eingeschränkter Bandbreite sind Defekte >8kHz
         # unter der Maskierungsschwelle → keine Reparatur nötig
@@ -87,6 +85,7 @@ class PerceptualExportOptimizer:
         """DeepFilterNet v3 II für ML-gestützte Rausch-/Click-Entfernung."""
         try:
             from plugins.deepfilternet_v3_ii_plugin import DeepFilterNetV3IIPlugin
+
             dfn = DeepFilterNetV3IIPlugin()
             # DFN erwartet (batch, channels, samples) oder (channels, samples)
             if audio.ndim == 2:
@@ -103,12 +102,13 @@ class PerceptualExportOptimizer:
         """Demucs Stem-Trennung: isoliert Vocals für präzisere Bearbeitung."""
         try:
             from plugins.demucs_plugin import DemucsPlugin
+
             demucs = DemucsPlugin()
             stems = demucs.separate(audio, sr)
-            if stems and 'vocals' in stems:
+            if stems and "vocals" in stems:
                 # Vocal-Isolation: verstärke Klarheit im Vocal-Stem
-                vocals = stems['vocals']
-                other = stems.get('other', audio - vocals)
+                vocals = stems["vocals"]
+                other = stems.get("other", audio - vocals)
                 # Sanfte Vocal-Anhebung (+1dB) für mehr Präsenz
                 result = other + vocals * 1.12
                 logger.info("§AQ Demucs: vocal isolation + presence boost applied")
@@ -117,15 +117,14 @@ class PerceptualExportOptimizer:
             logger.debug("§AQ Demucs unavailable: %s", e)
         return audio
 
-    def _apply_audiosr_bandwidth(
-        self, audio: np.ndarray, sr: int, material: str
-    ) -> np.ndarray:
+    def _apply_audiosr_bandwidth(self, audio: np.ndarray, sr: int, material: str) -> np.ndarray:
         """AudioSR: ML-Bandbreiten-Erweiterung für bandbreitenbegrenztes Material."""
         # Nur bei BW-verlustbehafteten Materialien
         if material not in ("cassette", "shellac", "wax_cylinder", "mp3_low", "tape", "wire_recording"):
             return audio
         try:
             from plugins.audiosr_plugin import AudioSRPlugin
+
             asr = AudioSRPlugin()
             result = asr.upsample(audio, sr)
             logger.info("§AQ AudioSR: ML bandwidth extension applied")
@@ -134,35 +133,34 @@ class PerceptualExportOptimizer:
             logger.debug("§AQ AudioSR unavailable: %s", e)
         return audio
 
-    def _apply_listening_adaptation(
-        self, audio: np.ndarray, sr: int, mode: str
-    ) -> np.ndarray:
+    def _apply_listening_adaptation(self, audio: np.ndarray, sr: int, mode: str) -> np.ndarray:
         """Hörumgebungs-Adaption: optimiert für Wiedergabegerät."""
         result = np.asarray(audio, dtype=np.float32).copy()
 
         # EQ-Kurven für verschiedene Hörumgebungen (ISO 226:2023 Equal-Loudness)
         eq_profiles = {
             "headphones": [
-                ("highshelf", 7000, 0.8, 0.7),   # Leichte Höhenanhebung für Kopfhörer
-                ("lowshelf", 150, -0.5, 0.7),     # Leichte Bass-Absenkung
+                ("highshelf", 7000, 0.8, 0.7),  # Leichte Höhenanhebung für Kopfhörer
+                ("lowshelf", 150, -0.5, 0.7),  # Leichte Bass-Absenkung
             ],
             "nearfield": [
-                ("highshelf", 8000, 0.3, 0.7),    # Minimal für Nahfeld
+                ("highshelf", 8000, 0.3, 0.7),  # Minimal für Nahfeld
                 ("lowshelf", 200, 0.5, 0.7),
             ],
             "farfield": [
-                ("lowshelf", 200, 1.2, 0.7),      # Mehr Bass für Fernfeld
+                ("lowshelf", 200, 1.2, 0.7),  # Mehr Bass für Fernfeld
                 ("highshelf", 10000, 0.5, 0.5),
             ],
             "car": [
-                ("lowshelf", 180, 1.5, 0.7),      # Starker Bass für Auto
-                ("highshelf", 10000, 1.3, 0.5),   # Höhen für Straßenlärm
+                ("lowshelf", 180, 1.5, 0.7),  # Starker Bass für Auto
+                ("highshelf", 10000, 1.3, 0.5),  # Höhen für Straßenlärm
             ],
         }
 
         profile = eq_profiles.get(mode, eq_profiles["headphones"])
         try:
             import scipy.signal as sp_sig
+
             for filter_type, freq, gain_db, q in profile:
                 # §scipy-1.10: iirfilter(ftype='shelf') erst ab scipy 1.12.
                 # Fallback: butter + Gain-Skalierung der SOS-Koeffizienten.
@@ -190,7 +188,6 @@ class PerceptualExportOptimizer:
             logger.info("§AQ Listening adaptation: %s", mode)
         except Exception as e:
             logger.warning("perceptual_export_optimizer.py::_apply_listening_adaptation fallback: %s", e)
-            pass
 
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
@@ -199,11 +196,11 @@ class PerceptualExportOptimizer:
         """Ermittelt verfügbares RAM in GB."""
         try:
             meminfo = {}
-            with open('/proc/meminfo') as f:
+            with open("/proc/meminfo") as f:
                 for line in f:
-                    key, val = line.split(':')
+                    key, val = line.split(":")
                     meminfo[key.strip()] = int(val.split()[0])
-            available = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
+            available = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
             return available / (1024 * 1024)  # KB → GB
         except Exception as e:
             logger.warning("perceptual_export_optimizer.py::_get_available_ram fallback: %s", e)

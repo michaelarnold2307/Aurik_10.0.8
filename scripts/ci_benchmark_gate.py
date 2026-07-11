@@ -21,9 +21,7 @@ Exit-Codes:
 from __future__ import annotations
 
 import json
-import os
 import sys
-import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +84,7 @@ def check_goal_achievement() -> tuple[bool, str]:
     # Minimal-Check: Verifiziere dass die HPI-Berechnung funktioniert
     try:
         import numpy as np
+
         audio = np.zeros(48000, dtype=np.float32)
         assert np.all(np.isfinite(audio))
         return True, "HPI-Berechnung: numpy operational (Basis-Check)"
@@ -112,6 +111,7 @@ def check_no_regression() -> tuple[bool, str]:
 
 def main() -> int:
     import argparse
+
     parser = argparse.ArgumentParser(description="CI Benchmark Gate")
     parser.add_argument("--quick", action="store_true", help="Nur Goal-Erreichung prüfen")
     parser.add_argument("--full", action="store_true", help="Alle Gates prüfen")

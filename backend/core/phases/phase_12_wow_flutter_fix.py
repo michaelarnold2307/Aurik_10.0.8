@@ -387,7 +387,6 @@ class WowFlutterFix(PhaseInterface):
                     _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
 
         _original_audio = np.asarray(audio, dtype=np.float32).copy()
 
@@ -625,9 +624,7 @@ class WowFlutterFix(PhaseInterface):
                 # MP3 cannot produce — transport_bump was previously excluded by
                 # the MP3 guard but is now properly passed through.
                 _dl = kwargs.get("defect_locations") or {}
-                _has_tape_dip_defect = bool(
-                    _dl.get("tape_head_level_dip") or _dl.get("transport_bump")
-                )
+                _has_tape_dip_defect = bool(_dl.get("tape_head_level_dip") or _dl.get("transport_bump"))
                 if (_is_primary_tape or _has_tape_dip_defect) and _effective_strength > 0.0:
                     audio, n_level_dips_repaired = self._stabilize_tape_level(
                         audio,
@@ -1000,7 +997,6 @@ class WowFlutterFix(PhaseInterface):
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
             for _z in kwargs.get("frisson_zones") or []:
                 try:
                     _fz_s = float(getattr(_z, "start_s", None) or _z[0])
@@ -1008,19 +1004,16 @@ class WowFlutterFix(PhaseInterface):
                     _p12_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
             for _z in kwargs.get("whisper_zones") or []:
                 try:
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
             for _z in kwargs.get("passaggio_zones") or []:
                 try:
                     _p12_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
             restored, n_bumps_repaired = self._repair_transport_bumps(
                 restored,
                 sample_rate,

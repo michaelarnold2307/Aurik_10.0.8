@@ -819,7 +819,7 @@ def estimate_goal_importance(
                 weights["transparenz"] *= 1.0 + 0.30 * (1.0 - _snr_ratio)
                 weights["brillanz"] *= 0.70 + 0.30 * _snr_ratio
                 weights["spatial_depth"] *= 0.70 + 0.30 * _snr_ratio
-                reasons.append(f"snr({snr_db:.0f}dB→transparenz×{1.0+0.30*(1.0-_snr_ratio):.2f})")
+                reasons.append(f"snr({snr_db:.0f}dB→transparenz×{1.0 + 0.30 * (1.0 - _snr_ratio):.2f})")
             if float(snr_db) > 35.0:
                 weights["natuerlichkeit"] *= 0.95 + 0.25 * _snr_ratio
                 weights["authentizitaet"] *= 0.95 + 0.25 * _snr_ratio

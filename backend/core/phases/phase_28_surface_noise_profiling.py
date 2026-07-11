@@ -271,14 +271,13 @@ class SurfaceNoiseProfiling(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "surface_noise",
-                default_nr=0.5, default_de_ess=0.2, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "surface_noise", default_nr=0.5, default_de_ess=0.2, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_28_surface_noise_profiling.py::process fallback: %s", e)
-            pass
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p28_transposed = to_channels_last(audio)
@@ -541,14 +540,20 @@ class SurfaceNoiseProfiling(PhaseInterface):
         if _strength_env is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(denoised_audio, dtype=np.float32)
                 denoised_audio = apply_strength_envelope(
-                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
-                    envelope=_strength_env, sample_rate=sample_rate,
+                    processed=_env_pre,
+                    original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env,
+                    sample_rate=sample_rate,
                     base_strength=_effective_strength,
                 )
                 if float(np.mean(np.abs(denoised_audio - _env_pre))) > 0.001:
-                    logger.info("§2.71 Envelope-Blending Phase 28: Δ=%.4f RMS", float(np.mean(np.abs(denoised_audio - _env_pre))))
+                    logger.info(
+                        "§2.71 Envelope-Blending Phase 28: Δ=%.4f RMS",
+                        float(np.mean(np.abs(denoised_audio - _env_pre))),
+                    )
             except Exception as _se_exc:
                 logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
 

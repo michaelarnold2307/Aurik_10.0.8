@@ -21,6 +21,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # Dataclass
 # ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ def _band_variance_db(audio: np.ndarray, sr: int, low_hz: float, high_hz: float)
     energies = []
     window = np.hanning(frame_len)
     for start in range(0, audio64.size - frame_len + 1, hop):
-        frame = audio64[start:start + frame_len] * window
+        frame = audio64[start : start + frame_len] * window
         spec = np.abs(np.fft.rfft(frame)) ** 2
         freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
         mask = (freqs >= low_hz) & (freqs <= high_hz)
@@ -166,7 +167,7 @@ def _extract_f1_f2(audio: np.ndarray, sr: int, lpc_order: int = 14) -> tuple[flo
 
         for i in range(min(n_frames, 200)):  # At most 200 frames
             start = i * hop
-            frame = bp_audio[start:start + frame_len] * window
+            frame = bp_audio[start : start + frame_len] * window
             if len(frame) < frame_len:
                 continue
             try:
@@ -178,7 +179,6 @@ def _extract_f1_f2(audio: np.ndarray, sr: int, lpc_order: int = 14) -> tuple[flo
                     f2_vals.append(formants[1])
             except Exception as e:
                 logger.warning("vocal_overprocessing_detector.py::_extract_f1_f2 fallback: %s", e)
-                pass
 
         f1 = float(np.median(f1_vals)) if f1_vals else 0.0
         f2 = float(np.median(f2_vals)) if f2_vals else 0.0
@@ -210,9 +210,7 @@ class VocalOverprocessingDetector:
 
     # ── §v10 Adaptive Thresholds ──────────────────────────────────────
 
-    def _adapt_thresholds(
-        self, vocals: np.ndarray, sr: int, era_decade: int | None = None
-    ) -> dict[str, float]:
+    def _adapt_thresholds(self, vocals: np.ndarray, sr: int, era_decade: int | None = None) -> dict[str, float]:
         """SNR/Era-adaptive Schwellwerte (§v10)."""
         mono = vocals if vocals.ndim == 1 else vocals.mean(axis=0)
         rms = float(np.sqrt(np.mean(mono**2)) + 1e-12)
@@ -221,9 +219,12 @@ class VocalOverprocessingDetector:
         snr_scale = float(np.clip(25.0 / max(8.0, snr_est), 0.6, 1.3))
         era_scale = 1.0
         if era_decade is not None:
-            if era_decade < 1960:   era_scale = 1.30
-            elif era_decade < 1980: era_scale = 1.15
-            elif era_decade >= 2000: era_scale = 0.90
+            if era_decade < 1960:
+                era_scale = 1.30
+            elif era_decade < 1980:
+                era_scale = 1.15
+            elif era_decade >= 2000:
+                era_scale = 0.90
         return {
             "lisp_threshold": float(self.LISP_VARIANCE_THRESHOLD_DB * snr_scale * era_scale),
             "sibilance_threshold": float(

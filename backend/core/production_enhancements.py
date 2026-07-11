@@ -19,8 +19,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -31,13 +30,13 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _STAGE_MILESTONES: dict[str, str] = {
-    "analysis_done":     "Analyse abgeschlossen",
-    "denoise_done":      "Rauschunterdrückung",
+    "analysis_done": "Analyse abgeschlossen",
+    "denoise_done": "Rauschunterdrückung",
     "defect_repair_done": "Defekt-Reparatur",
-    "eq_done":           "EQ-Korrektur",
-    "dynamics_done":     "Dynamik-Bearbeitung",
-    "stereo_done":       "Stereo-Aufbereitung",
-    "final":             "Endergebnis",
+    "eq_done": "EQ-Korrektur",
+    "dynamics_done": "Dynamik-Bearbeitung",
+    "stereo_done": "Stereo-Aufbereitung",
+    "final": "Endergebnis",
 }
 
 _PREVIEW_LENGTH_S = 10.0
@@ -47,6 +46,7 @@ _PREVIEW_SAMPLE_RATE = 48000
 @dataclass
 class StagePreview:
     """Ein Preview-Chunk: 10s Audio + Metadaten."""
+
     audio: np.ndarray
     stage: str
     label: str
@@ -115,18 +115,20 @@ class StagePreviewGenerator:
 # §Y Export Format Intelligence (Codec-Aware Processing)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class CodecProfile:
     """Verarbeitungsprofil für ein Export-Format."""
+
     format_name: str
     extension: str
-    lowpass_hz: float | None = None       # Anti-Aliasing vor Encoder
-    pre_emphasis_db: float = 0.0           # Leichte Höhenanhebung
-    true_peak_limit_db: float = 0.0        # True-Peak-Limiter (0 = kein)
+    lowpass_hz: float | None = None  # Anti-Aliasing vor Encoder
+    pre_emphasis_db: float = 0.0  # Leichte Höhenanhebung
+    true_peak_limit_db: float = 0.0  # True-Peak-Limiter (0 = kein)
     loudness_target_lufs: float | None = None  # Integrated LUFS
-    smoothing_ms: float = 0.0              # Smoothing-Fenster
-    isp_protection: bool = False           # Inter-Sample-Peak-Schutz
-    dither: bool = True                    # Dithering für 16-bit
+    smoothing_ms: float = 0.0  # Smoothing-Fenster
+    isp_protection: bool = False  # Inter-Sample-Peak-Schutz
+    dither: bool = True  # Dithering für 16-bit
     comment: str = ""
 
 
@@ -217,10 +219,19 @@ class CodecAwareProcessor:
             # 1. Pre-Emphasis (leichte Höhenanhebung vor Encoder)
             if p.pre_emphasis_db > 0.01:
                 from scipy.signal import butter, sosfilt
+
                 freq = 4000.0
-                gain = 10.0 ** (p.pre_emphasis_db / 40.0)
-                sos = butter(2, freq / (sr / 2), btype='highshelf', output='sos',
-                            ) if 'butter' in dir() else None
+                10.0 ** (p.pre_emphasis_db / 40.0)
+                sos = (
+                    butter(
+                        2,
+                        freq / (sr / 2),
+                        btype="highshelf",
+                        output="sos",
+                    )
+                    if "butter" in dir()
+                    else None
+                )
                 if sos is not None and False:
                     pass  # scipy not guaranteed
 
@@ -228,7 +239,8 @@ class CodecAwareProcessor:
             if p.lowpass_hz is not None and p.lowpass_hz < sr / 2.2:
                 try:
                     from scipy.signal import butter, sosfilt
-                    sos = butter(4, p.lowpass_hz / (sr / 2), btype='low', output='sos')
+
+                    sos = butter(4, p.lowpass_hz / (sr / 2), btype="low", output="sos")
                     if result.ndim == 2:
                         result[0] = sosfilt(sos, result[0])
                         result[1] = sosfilt(sos, result[1])
@@ -247,8 +259,7 @@ class CodecAwareProcessor:
                     # ISP: 4x Oversampling-Check
                     if p.isp_protection and result.ndim < 2:
                         oversampled = np.interp(
-                            np.linspace(0, len(result)-1, len(result)*4),
-                            np.arange(len(result)), result
+                            np.linspace(0, len(result) - 1, len(result) * 4), np.arange(len(result)), result
                         )
                         isp = float(np.max(np.abs(oversampled)))
                         if isp > 0.999:
@@ -267,13 +278,17 @@ class CodecAwareProcessor:
             if p.dither:
                 noise_floor = 1.0 / 32768.0  # 16-bit LSB
                 if result.ndim == 2:
-                    result += np.random.default_rng().triangular(
-                        -noise_floor, 0, noise_floor, size=result.shape
-                    ).astype(np.float64)
+                    result += (
+                        np.random.default_rng()
+                        .triangular(-noise_floor, 0, noise_floor, size=result.shape)
+                        .astype(np.float64)
+                    )
                 else:
-                    result += np.random.default_rng().triangular(
-                        -noise_floor, 0, noise_floor, size=result.shape
-                    ).astype(np.float64)
+                    result += (
+                        np.random.default_rng()
+                        .triangular(-noise_floor, 0, noise_floor, size=result.shape)
+                        .astype(np.float64)
+                    )
 
         except Exception as e:
             logger.debug("§Y CodecAwareProcessor: %s", e)

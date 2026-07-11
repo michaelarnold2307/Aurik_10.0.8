@@ -328,7 +328,8 @@ class ReparaturDenker:
                 self._CLICK_IQR_MULTIPLIER = float(np.clip(_density_iqr, 8.5, 14.0))
                 logger.info(
                     "ReparaturDenker: %d clicks → click_iqr %.1f (Denker-Schutzstufe 2)",
-                    _n_click_locs, self._CLICK_IQR_MULTIPLIER,
+                    _n_click_locs,
+                    self._CLICK_IQR_MULTIPLIER,
                 )
 
         # §2.41: Era-adaptive Hum-Sensitivität — ältere Aufnahmen haben

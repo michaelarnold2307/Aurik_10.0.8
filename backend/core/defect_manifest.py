@@ -97,16 +97,28 @@ class DefectManifest:
             "crackle": ["phase_03_denoise", "phase_09_crackle_removal", "phase_28_surface_noise_profiling"],
             "hum": ["phase_02_hum_removal"],
             "motor_interference": ["phase_02_hum_removal"],
-            "high_freq_noise": ["phase_03_denoise", "phase_18_noise_gate", "phase_29_tape_hiss_reduction", "phase_66_stem_targeted_nr"],
-            "modulation_noise": ["phase_03_denoise", "phase_29_tape_hiss_reduction", "phase_59_modulation_noise_reduction", "phase_66_stem_targeted_nr"],
+            "high_freq_noise": [
+                "phase_03_denoise",
+                "phase_18_noise_gate",
+                "phase_29_tape_hiss_reduction",
+                "phase_66_stem_targeted_nr",
+            ],
+            "modulation_noise": [
+                "phase_03_denoise",
+                "phase_29_tape_hiss_reduction",
+                "phase_59_modulation_noise_reduction",
+                "phase_66_stem_targeted_nr",
+            ],
             "quantization_noise": ["phase_03_denoise"],
             "aliasing": ["phase_03_denoise"],
             "low_freq_rumble": ["phase_05_rumble_filter"],
             # --- Frequenz / Harmonik ---
             "clipping": ["phase_06_frequency_restoration", "phase_07_harmonic_restoration", "phase_11_limiting"],
             "bandwidth_loss": [
-                "phase_06_frequency_restoration", "phase_23_spectral_repair",
-                "phase_39_air_band_enhancement", "phase_55_diffusion_inpainting",
+                "phase_06_frequency_restoration",
+                "phase_23_spectral_repair",
+                "phase_39_air_band_enhancement",
+                "phase_55_diffusion_inpainting",
                 "phase_56_spectral_band_gap_repair",
             ],
             "overload_distortion": ["phase_07_harmonic_restoration"],
@@ -126,14 +138,23 @@ class DefectManifest:
             "stereo_imbalance": ["phase_15_stereo_balance", "phase_33_stereo_width_limiter"],
             "stereo_field_collapse": ["phase_32_mono_to_stereo"],
             # --- Dynamik ---
-            "dynamic_compression_excess": ["phase_10_compression", "phase_26_dynamic_range_expansion", "phase_35_multiband_compression"],
+            "dynamic_compression_excess": [
+                "phase_10_compression",
+                "phase_26_dynamic_range_expansion",
+                "phase_35_multiband_compression",
+            ],
             # --- Sibilance / Reverb ---
             "sibilance": ["phase_19_de_esser", "phase_43_ml_deesser"],
             "reverb_excess": ["phase_20_reverb_reduction", "phase_49_advanced_dereverb"],
             # --- Saturation ---
             "soft_saturation": ["phase_22_tape_saturation"],
             # --- Dropouts ---
-            "dropouts": ["phase_23_spectral_repair", "phase_24_dropout_repair", "phase_50_spectral_repair", "phase_55_diffusion_inpainting"],
+            "dropouts": [
+                "phase_23_spectral_repair",
+                "phase_24_dropout_repair",
+                "phase_50_spectral_repair",
+                "phase_55_diffusion_inpainting",
+            ],
             "dropout_oxide": ["phase_24_dropout_repair"],
             "dropout_head_contact": ["phase_24_dropout_repair"],
             "dropout_splice": ["phase_24_dropout_repair"],

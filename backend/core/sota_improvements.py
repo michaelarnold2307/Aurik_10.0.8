@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # S1: Real-time A/B comparison state
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ABComparisonState:
     """Hält den Zustand für Echtzeit-A/B-Vergleich während der Verarbeitung."""
@@ -55,11 +56,13 @@ class ABComparisonState:
         with self.lock:
             self.post_phase_audio = np.asarray(audio, dtype=np.float32).copy()
             if self.pre_phase_audio is not None:
-                self.ab_snippets.append({
-                    "phase": self.current_phase,
-                    "pre": self.pre_phase_audio,
-                    "post": self.post_phase_audio,
-                })
+                self.ab_snippets.append(
+                    {
+                        "phase": self.current_phase,
+                        "pre": self.pre_phase_audio,
+                        "post": self.post_phase_audio,
+                    }
+                )
 
 
 # Singleton
@@ -79,6 +82,7 @@ def get_ab_comparison_state() -> ABComparisonState:
 # ═══════════════════════════════════════════════════════════════════════════
 # S2: Dynamic parameter optimization per song section
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class SongSectionParams:
@@ -129,11 +133,13 @@ def compute_section_specific_params(
                 stype = "verse"
             else:
                 stype = "bridge"
-            sections.append(SongSectionParams(
-                section_type=stype,
-                start_sample=start,
-                end_sample=end,
-            ))
+            sections.append(
+                SongSectionParams(
+                    section_type=stype,
+                    start_sample=start,
+                    end_sample=end,
+                )
+            )
         return sections
 
     # Struktur-basierte Parameter
@@ -156,15 +162,12 @@ def compute_section_specific_params(
         elif stype == "bridge":
             sp.stereo_width = 0.95
             sp.de_ess_strength = 0.4
-        elif stype == "intro":
-            sp.noise_reduction_strength = 0.3
-            sp.compression_ratio = 1.1
-        elif stype == "outro":
+        elif stype == "intro" or stype == "outro":
             sp.noise_reduction_strength = 0.3
             sp.compression_ratio = 1.1
 
         # Intent-Overrides
-        if intent and hasattr(intent, 'preserve_dynamics') and intent.preserve_dynamics:
+        if intent and hasattr(intent, "preserve_dynamics") and intent.preserve_dynamics:
             sp.compression_ratio = min(sp.compression_ratio, 1.3)
 
         params.append(sp)
@@ -176,13 +179,15 @@ def compute_section_specific_params(
 # S3: Pipeline confidence gates for aggressive phases
 # ═══════════════════════════════════════════════════════════════════════════
 
-AGGRESSIVE_PHASES: frozenset[str] = frozenset({
-    "phase_35_multiband_compression",
-    "phase_42_vocal_enhancement",
-    "phase_38_presence_boost",
-    "phase_46_spatial_enhancement",
-    "phase_55_diffusion_inpainting",
-})
+AGGRESSIVE_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_35_multiband_compression",
+        "phase_42_vocal_enhancement",
+        "phase_38_presence_boost",
+        "phase_46_spatial_enhancement",
+        "phase_55_diffusion_inpainting",
+    }
+)
 
 
 def should_gate_phase(phase_id: str, pipeline_confidence: float) -> tuple[bool, str]:
@@ -209,6 +214,7 @@ def should_gate_phase(phase_id: str, pipeline_confidence: float) -> tuple[bool, 
 # ═══════════════════════════════════════════════════════════════════════════
 # S4: Cross-Phase Awareness
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class PhaseDelta:
@@ -263,10 +269,12 @@ class CrossPhaseAwareness:
 # S5: Loudness Normalization Cascade Fix
 # ═══════════════════════════════════════════════════════════════════════════
 
-LOUDNESS_PHASES: frozenset[str] = frozenset({
-    "phase_40_loudness_normalization",
-    "phase_41_output_format_optimization",
-})
+LOUDNESS_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_40_loudness_normalization",
+        "phase_41_output_format_optimization",
+    }
+)
 
 
 def compute_cumulative_loudness_gain(phase_deltas: list[PhaseDelta]) -> float:
@@ -298,6 +306,7 @@ def compute_cumulative_loudness_gain(phase_deltas: list[PhaseDelta]) -> float:
 # ═══════════════════════════════════════════════════════════════════════════
 # S6: MP3 vs Vinyl Source-Differentiated Processing
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class SourceProfile:
@@ -354,6 +363,7 @@ def get_source_profile(material: str) -> SourceProfile:
 # S7: Per-Phase Rollback / Undo
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class PhaseRollback:
     """Ermöglicht Rollback einzelner Phasen."""
 
@@ -388,6 +398,7 @@ class PhaseRollback:
 # S8: Spectral Balance Final Validation (Tilt Check)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def validate_spectral_balance(
     audio: np.ndarray,
     sr: int,
@@ -417,7 +428,7 @@ def validate_spectral_balance(
     spec_accum = np.zeros(n_fft // 2 + 1)
     n_frames = 0
     for i in range(0, len(mono) - n_fft, hop * 10):  # Every 10th frame
-        frame = mono[i:i+n_fft] * np.hanning(n_fft)
+        frame = mono[i : i + n_fft] * np.hanning(n_fft)
         spec_accum += np.abs(np.fft.rfft(frame))
         n_frames += 1
 
@@ -521,6 +532,7 @@ def export_all_formats(
         # Resampling (wenn nötig)
         if target_sr != sr:
             from scipy import signal as scipy_signal
+
             g = np.gcd(sr, target_sr)
             up, down = target_sr // g, sr // g
             audio_out = scipy_signal.resample_poly(arr, up, down, axis=-1)
@@ -547,13 +559,14 @@ def export_all_formats(
 
     # Write metadata summary
     import json
+
     meta_path = output_dir / f"{base_name}_export_manifest.json"
     manifest = {
         "source_sample_rate": sr,
         "platforms_exported": len(results),
         "files": {k: str(v) for k, v in results.items()},
     }
-    with open(meta_path, 'w') as f:
+    with open(meta_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
     logger.info("S9: %d Formate exportiert → %s", len(results), output_dir)
@@ -563,6 +576,7 @@ def export_all_formats(
 # ═══════════════════════════════════════════════════════════════════════════
 # S10: Singer Identity Post-Pipeline Validation
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def validate_singer_identity_post_pipeline(
     pre_pipeline_audio: np.ndarray,
@@ -591,7 +605,7 @@ def validate_singer_identity_post_pipeline(
         guard.capture_pre_embedding(pre_pipeline_audio, sr)
         result = guard.check_phase(post_pipeline_audio, sr, "final")
 
-        if result is not None and hasattr(result, 'cosine_similarity'):
+        if result is not None and hasattr(result, "cosine_similarity"):
             sim = float(result.cosine_similarity)
         else:
             # Fallback: einfache MFCC-Distanz
@@ -601,8 +615,7 @@ def validate_singer_identity_post_pipeline(
         warning = ""
         if not identity_preserved:
             warning = (
-                f"⚠️ Sänger-Identität möglicherweise verändert: "
-                f"Cosine-Similarity = {sim:.3f} (Schwelle: {threshold})"
+                f"⚠️ Sänger-Identität möglicherweise verändert: Cosine-Similarity = {sim:.3f} (Schwelle: {threshold})"
             )
 
         return {
@@ -616,14 +629,17 @@ def validate_singer_identity_post_pipeline(
         return {"identity_preserved": True, "cosine_similarity": 1.0, "warning": ""}
 
 
-def _compute_simple_mfcc_similarity(
-    audio1: np.ndarray, audio2: np.ndarray, sr: int, n_mfcc: int = 13
-) -> float:
+def _compute_simple_mfcc_similarity(audio1: np.ndarray, audio2: np.ndarray, sr: int, n_mfcc: int = 13) -> float:
     """Einfache MFCC-basierte Ähnlichkeit (Fallback)."""
     try:
         import librosa
-        mfcc1 = librosa.feature.mfcc(y=np.asarray(audio1, dtype=np.float32).mean(axis=0) if audio1.ndim > 1 else audio1, sr=sr, n_mfcc=n_mfcc)
-        mfcc2 = librosa.feature.mfcc(y=np.asarray(audio2, dtype=np.float32).mean(axis=0) if audio2.ndim > 1 else audio2, sr=sr, n_mfcc=n_mfcc)
+
+        mfcc1 = librosa.feature.mfcc(
+            y=np.asarray(audio1, dtype=np.float32).mean(axis=0) if audio1.ndim > 1 else audio1, sr=sr, n_mfcc=n_mfcc
+        )
+        mfcc2 = librosa.feature.mfcc(
+            y=np.asarray(audio2, dtype=np.float32).mean(axis=0) if audio2.ndim > 1 else audio2, sr=sr, n_mfcc=n_mfcc
+        )
         mfcc1_mean = mfcc1.mean(axis=1)
         mfcc2_mean = mfcc2.mean(axis=1)
         dot = float(np.dot(mfcc1_mean, mfcc2_mean))

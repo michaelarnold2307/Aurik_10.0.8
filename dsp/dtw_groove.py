@@ -466,7 +466,7 @@ class DtwGrooveMeasurer:
             rms = float(np.sqrt(np.mean(np.array(deviations) ** 2)))
             score = float(max(0.0, 1.0 - rms / (2.0 * DTW_MAX_MS)))
             return min(1.0, score)
-        except Exception as e:
+        except Exception:
             logger.warning("dtw_groove.py::measure_quick fallback", exc_info=True)
             return 0.88  # Neutraler Default bei Fehler
 

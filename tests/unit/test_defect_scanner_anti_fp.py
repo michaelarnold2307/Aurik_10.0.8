@@ -1,4 +1,5 @@
 import pytest
+
 """Anti-False-Positive-Tests für DefectScanner (§6.3 — Aurik v9.10.57).
 
 Validates that the three hardened detectors (_detect_clicks,

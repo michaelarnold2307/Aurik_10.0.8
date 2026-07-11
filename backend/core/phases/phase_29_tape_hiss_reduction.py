@@ -445,8 +445,8 @@ class TapeHissReductionPhase(PhaseInterface):
         _per_band_mask = None
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity, compute_per_band_nr_mask
-            _pim = apply_pim_intensity(kwargs, "tape_hiss",
-                default_nr=0.6, default_de_ess=0.3, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "tape_hiss", default_nr=0.6, default_de_ess=0.3, default_comp=1.0)
             if "noise_reduction_strength" in kwargs:
                 kwargs["noise_reduction_strength"] = _pim["nr_strength"]
             _pim_map = kwargs.get("pim_intensity_map")
@@ -454,7 +454,6 @@ class TapeHissReductionPhase(PhaseInterface):
                 _per_band_mask = compute_per_band_nr_mask(_pim_map, sample_rate)
         except Exception as e:
             logger.warning("phase_29_tape_hiss_reduction.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         self.sample_rate = sample_rate
@@ -491,7 +490,6 @@ class TapeHissReductionPhase(PhaseInterface):
             _get_plm_evict29().evict_for_phase("phase_29_tape_hiss_reduction")
         except Exception as e:
             logger.warning("phase_29_tape_hiss_reduction.py::process fallback: %s", e)
-            pass
 
         # Determine if ML should be used
         use_ml = False
@@ -1337,31 +1335,36 @@ class TapeHissReductionPhase(PhaseInterface):
         except Exception as _band_anchor_exc_29:
             logger.debug("Phase29 BandAnchor (non-blocking): %s", _band_anchor_exc_29)
 
-        
         # ── §v10 Per-Band-Maske NACH tape_hiss anwenden ──
         if _per_band_mask is not None:
             try:
                 from backend.core.pim_phase_hook import apply_per_band_mask
+
                 _before = audio
                 _after = apply_per_band_mask(_before, _per_band_mask, sample_rate, mix=0.55)
                 audio = _after
             except Exception as e:
                 logger.warning("phase_29_tape_hiss_reduction.py::_band_energy_29 fallback: %s", e)
-                pass
 
         # §2.71 Strength-Envelope: Chirurgische Tape-Hiss-Reduktion
         _strength_env = kwargs.get("strength_envelope")
         if _strength_env is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(audio_processed, dtype=np.float32)
                 audio_processed = apply_strength_envelope(
-                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
-                    envelope=_strength_env, sample_rate=sample_rate,
+                    processed=_env_pre,
+                    original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env,
+                    sample_rate=sample_rate,
                     base_strength=_effective_strength,
                 )
                 if float(np.mean(np.abs(audio_processed - _env_pre))) > 0.001:
-                    logger.info("§2.71 Envelope-Blending Phase 29: Δ=%.4f RMS", float(np.mean(np.abs(audio_processed - _env_pre))))
+                    logger.info(
+                        "§2.71 Envelope-Blending Phase 29: Δ=%.4f RMS",
+                        float(np.mean(np.abs(audio_processed - _env_pre))),
+                    )
             except Exception as _se_exc:
                 logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
 
@@ -2212,7 +2215,6 @@ class TapeHissReductionPhase(PhaseInterface):
             _plm29_dfn.set_active("DeepFilterNetV3", True)
         except Exception as e:
             logger.warning("phase_29_tape_hiss_reduction.py::_refine_hf_with_ml fallback: %s", e)
-            pass
 
         try:
             # Create temporary files
@@ -2333,7 +2335,6 @@ class TapeHissReductionPhase(PhaseInterface):
                     _plm29_dfn.set_active("DeepFilterNetV3", False)
                 except Exception as e:
                     logger.warning("phase_29_tape_hiss_reduction.py::unknown fallback: %s", e)
-                    pass
 
     def _apply_adaptive_gate(
         self, band_signal: np.ndarray, noise_floor_db: float, threshold_db: float, reduction_db: float, sample_rate: int

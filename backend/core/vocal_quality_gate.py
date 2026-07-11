@@ -172,6 +172,7 @@ class VocalDetector:
 
         # Harmonische Struktur (spektrale Peaks)
         from scipy.signal import find_peaks
+
         peaks, props = find_peaks(spec, height=np.max(spec) * 0.1, distance=5)
         harmonic_score = min(1.0, len(peaks) / 20.0) if len(peaks) > 0 else 0.0
 
@@ -230,10 +231,7 @@ class VocalNaturalnessScorer:
             "timbre_warmth": 0.10,
         }
 
-        overall = sum(
-            getattr(scores, key) * weight
-            for key, weight in weights.items()
-        )
+        overall = sum(getattr(scores, key) * weight for key, weight in weights.items())
         scores.overall = round(overall, 1)
 
         return scores
@@ -452,20 +450,14 @@ class VocalQualityGate:
         # Einzel-Checks
         if post_scores.formant_integrity < pre_scores.formant_integrity - 5:
             warnings.append(
-                f"Formant-Integrität gesunken: "
-                f"{pre_scores.formant_integrity:.0f} → {post_scores.formant_integrity:.0f}"
+                f"Formant-Integrität gesunken: {pre_scores.formant_integrity:.0f} → {post_scores.formant_integrity:.0f}"
             )
             recommendations.append("Formant-Korrektur prüfen (Phase 65)")
         if post_scores.sibilance_retention < _SIBILANCE_MIN_RETENTION * 100:
-            warnings.append(
-                f"Sibilanz-Erhalt kritisch: {post_scores.sibilance_retention:.0f}/100"
-            )
+            warnings.append(f"Sibilanz-Erhalt kritisch: {post_scores.sibilance_retention:.0f}/100")
             recommendations.append("De-Essing reduzieren oder rückgängig machen")
         if post_scores.comfort < 40:
-            warnings.append(
-                f"Hörkomfort kritisch: {post_scores.comfort:.0f}/100 "
-                f"(Hörmüdung wahrscheinlich)"
-            )
+            warnings.append(f"Hörkomfort kritisch: {post_scores.comfort:.0f}/100 (Hörmüdung wahrscheinlich)")
             recommendations.append("2–5 kHz-Bereich auf Schärfe prüfen")
         if post_scores.breath_naturalness < 30:
             warnings.append(
@@ -511,16 +503,10 @@ class VocalQualityGate:
             "best_delta": round(float(np.max(deltas)), 1) if deltas else 0.0,
             "worst_delta": round(float(np.min(deltas)), 1) if deltas else 0.0,
             "final_quality": (
-                self._history[-1].post_scores.overall
-                if self._history and self._history[-1].post_scores
-                else 0.0
+                self._history[-1].post_scores.overall if self._history and self._history[-1].post_scores else 0.0
             ),
-            "warnings": [
-                w for d in self._history for w in d.warnings
-            ],
-            "recommendations": list(set(
-                r for d in self._history for r in d.recommendations
-            )),
+            "warnings": [w for d in self._history for w in d.warnings],
+            "recommendations": list({r for d in self._history for r in d.recommendations}),
         }
 
 

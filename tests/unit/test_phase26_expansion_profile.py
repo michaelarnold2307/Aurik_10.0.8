@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_26_dynamic_range_expansion._compute_expansion_profile (§2.56, §6.2b)."""
 
 import numpy as np

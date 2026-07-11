@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for the productive MIIPHER vocal SOTA adapter."""
 
 import types

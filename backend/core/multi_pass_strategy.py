@@ -375,8 +375,6 @@ class ObjectiveScore:
         )
 
 
-
-
 class IntrinsicAudioQualityScorer:
     """§v10 Leichtgewichtiger Scorer für Multi-Pass-Varianten-Evaluation.
 
@@ -389,6 +387,7 @@ class IntrinsicAudioQualityScorer:
 
     def score(self, original: np.ndarray, processed: np.ndarray, sr: int) -> float:
         import numpy as np
+
         orig = np.asarray(original, dtype=np.float64)
         proc = np.asarray(processed, dtype=np.float64)
         # Mono für Vergleich
@@ -406,7 +405,7 @@ class IntrinsicAudioQualityScorer:
         rms_score = 25.0 * rms_ratio
 
         # 2. Peak-Erhalt (Score 0-25)
-        peak_orig = float(np.max(np.abs(orig)))
+        float(np.max(np.abs(orig)))
         peak_proc = float(np.max(np.abs(proc)))
         peak_ok = 1.0 if peak_proc < 0.99 else 0.5 if peak_proc < 1.0 else 0.0
         peak_score = 25.0 * peak_ok
@@ -421,14 +420,16 @@ class IntrinsicAudioQualityScorer:
         # 4. Spektrale Ähnlichkeit (Score 0-25)
         n_fft = min(2048, min_len // 4)
         if n_fft >= 64:
-            spec_orig = np.abs(np.fft.rfft(orig[:n_fft*10] * np.hanning(n_fft*10)))[:n_fft//2]
-            spec_proc = np.abs(np.fft.rfft(proc[:n_fft*10] * np.hanning(n_fft*10)))[:n_fft//2]
+            spec_orig = np.abs(np.fft.rfft(orig[: n_fft * 10] * np.hanning(n_fft * 10)))[: n_fft // 2]
+            spec_proc = np.abs(np.fft.rfft(proc[: n_fft * 10] * np.hanning(n_fft * 10)))[: n_fft // 2]
             spec_corr = float(np.corrcoef(spec_orig, spec_proc)[0, 1]) if len(spec_orig) > 1 else 1.0
             spec_score = 25.0 * max(0.0, spec_corr)
         else:
             spec_score = 25.0
 
         return rms_score + peak_score + snr_score + spec_score
+
+
 class ObjectiveScorer:
     """
     Bewertet Audio via objektive Metriken.
@@ -613,9 +614,7 @@ class ObjectiveScorer:
             score.pleasantness_label = hpe_result.label
             # Wenn Referenz-Audio verfügbar, berechne Delta
             # (reference_audio wird als Parameter durchgereicht, kann None sein)
-            logger.debug(
-                "HPE: Score=%.3f Label=%s", score.pleasantness_score, score.pleasantness_label
-            )
+            logger.debug("HPE: Score=%.3f Label=%s", score.pleasantness_score, score.pleasantness_label)
         except Exception as e:
             logger.debug("HPE nicht verfügbar: %s", e)
             score.pleasantness_score = 0.5

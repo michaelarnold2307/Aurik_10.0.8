@@ -1,4 +1,5 @@
 import pytest
+
 """Guard tests for EraVocalProfile propagation at critical VQI callsites.
 
 These checks prevent regressions where historical-vocal paths call compute_vqi

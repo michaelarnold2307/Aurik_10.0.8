@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for §2.35b vocal_proximity_score (compute_vocal_proximity_score).
 
 Verifies:

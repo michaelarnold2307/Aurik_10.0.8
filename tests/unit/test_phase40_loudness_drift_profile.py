@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests fuer Phase 40 Amplituden-Drift-Lokalitaet."""
 
 import numpy as np

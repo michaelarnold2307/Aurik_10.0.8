@@ -1,4 +1,5 @@
 import pytest
+
 """test_warmup_thread.py — §9.7.4 Modell-Warmup im Hintergrund.
 
 Pflicht-Tests (≥ 8) für _warmup_models_background() aus Aurik10/main.py.
@@ -50,7 +51,7 @@ def _run_warmup_logic(module_map: dict | None = None, sleep_s: float = 0.0) -> l
             fn = getattr(m, _accessor, None)
             if fn is not None:
                 fn()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Kein Absturz — Lazy-Load übernimmt
     return loaded
@@ -130,9 +131,8 @@ class TestWarmupThread:
             if fn is not None:
                 fn()
                 loaded.append(accessor)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
         assert loaded == []
 
     # 6. Warmup-Thread blockiert Hauptthread nicht

@@ -293,6 +293,7 @@ class TestPrePipelinePlausibilityGuard:
 
     def setup_method(self):
         from backend.core.stereo_temporal_coherence_guard import StereoTemporalCoherenceGuard
+
         self.guard = StereoTemporalCoherenceGuard()
 
     def _make_stereo_with_real_large_lag(self, lag_samples: int, n: int = SR * 12) -> np.ndarray:
@@ -342,7 +343,7 @@ class TestPrePipelinePlausibilityGuard:
         audio_out = self.guard.correct_interchannel_delay(audio_in, SR, phase_id="post_pipeline")
 
         # After correction the L-R lag must be reduced (R was shifted by ≥1 sample).
-        l_out = audio_out[0]
+        audio_out[0]
         r_in = audio_in[1]
         r_out = audio_out[1]
         # R channel must have changed (correction was applied)
@@ -359,6 +360,4 @@ class TestPrePipelinePlausibilityGuard:
         r_in = audio_in[1]
         r_out = audio_out[1]
         # R channel must have changed (small lag correction applied)
-        assert not np.array_equal(r_out, r_in), (
-            "STCG pre_pipeline must still correct small delays ≤ 20 ms"
-        )
+        assert not np.array_equal(r_out, r_in), "STCG pre_pipeline must still correct small delays ≤ 20 ms"

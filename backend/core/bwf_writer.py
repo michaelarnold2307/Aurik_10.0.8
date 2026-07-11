@@ -152,7 +152,7 @@ def _write_bwf_chunks_raw(filepath: str | Path, bext: bytes, ixml: bytes) -> boo
                 logger.debug("BWF-Writer: Keine RIFF-Datei: %s", filepath)
                 return False
 
-            riff_size_bytes = f.read(4)
+            f.read(4)
             wave_id = f.read(4)
             if wave_id != b"WAVE":
                 logger.debug("BWF-Writer: Kein WAVE-Format: %s", filepath)

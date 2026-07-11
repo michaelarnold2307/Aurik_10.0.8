@@ -2,11 +2,11 @@
 perceptual_export_optimizer, phase_19, medium_detector reel_tape.
 """
 
-import numpy as np
-import pytest
 import sys
 from pathlib import Path
-from dataclasses import dataclass, field
+
+import numpy as np
+import pytest
 
 _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO) not in sys.path:
@@ -17,18 +17,21 @@ if str(_REPO) not in sys.path:
 # goosebumps_factor
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.unit
 class TestGoosebumpsFactor:
     """Stellt sicher, dass GoosebumpsResult korrekt definiert ist und compute_goosebumps läuft."""
 
     def test_dataclass_exists(self):
         from backend.core.goosebumps_factor import GoosebumpsResult
+
         gr = GoosebumpsResult()
         assert gr.score == 0.0
         assert gr.label == "neutral"
 
     def test_dataclass_all_fields(self):
         from backend.core.goosebumps_factor import GoosebumpsResult
+
         gr = GoosebumpsResult(
             score=0.75,
             dynamic_contrast=0.6,
@@ -82,11 +85,13 @@ class TestGoosebumpsFactor:
 # phase_effect_catalog
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPhaseEffectCatalog:
     """Stellt sicher, dass calibrate_all mit None-Werten umgehen kann."""
 
     def test_base_strength_field_exists(self):
         from backend.core.phase_effect_catalog import PhaseEffectProfile
+
         p = PhaseEffectProfile(phase_id="test")
         assert hasattr(p, "base_strength")
         assert p.base_strength == 1.0
@@ -130,7 +135,6 @@ class TestPhaseEffectCatalog:
 
     def test_base_strength_used_in_calibrate(self):
         from backend.core.phase_effect_catalog import (
-            PHASE_EFFECT_CATALOG,
             calibrate_phase_intensity,
         )
 
@@ -147,6 +151,7 @@ class TestPhaseEffectCatalog:
 # ═══════════════════════════════════════════════════════════════════════════
 # metadata_preserver ISRC/UPC
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestMetadataPreserver:
     """Stellt sicher, dass ISRC/UPC-Felder existieren und extrahiert werden können."""
@@ -172,12 +177,14 @@ class TestMetadataPreserver:
 # perceptual_export_optimizer (highshelf fix)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPerceptualExportOptimizer:
     """Shelving-Filter mit butter + Gain (scipy 1.10 kompatibel)."""
 
     def test_shelf_filter_no_error(self):
         """Highpass-Filter via butter (scipy 1.10 kompatibel)."""
         import scipy.signal as sp_sig
+
         sr = 48000
         sos = sp_sig.butter(2, 8000 / (sr / 2), btype="high", output="sos")
         assert sos is not None
@@ -185,14 +192,16 @@ class TestPerceptualExportOptimizer:
     def test_lowshelf_filter_no_error(self):
         """Lowpass via butter (scipy 1.10 kompatibel)."""
         import scipy.signal as sp_sig
+
         sr = 48000
         sos = sp_sig.butter(2, 200 / (sr / 2), btype="low", output="sos")
         assert sos is not None
 
     def test_shelf_filter_applies_gain(self):
         """Gain-Skalierung ändert die Amplitude (scipy 1.10 kompatibel)."""
-        import scipy.signal as sp_sig
         import numpy as np
+        import scipy.signal as sp_sig
+
         sr = 48000
         noise = np.random.randn(48000).astype(np.float32) * 0.1
         sos = sp_sig.butter(2, 8000 / (sr / 2), btype="high", output="sos")
@@ -201,6 +210,8 @@ class TestPerceptualExportOptimizer:
         filtered = sp_sig.sosfilt(sos, noise)
         assert filtered is not None
         assert np.isfinite(filtered).all()
+
+
 class TestPhase19:
     """Stellt sicher, dass Phase 19 instanziiert werden kann und get_metadata hat."""
 
@@ -231,18 +242,23 @@ class TestPhase19:
 # phase_40 ISO-226
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPhase40ISO226:
     """Stellt sicher, dass Phase 40 die ISO-226-Kompensation unterstützt."""
 
     def test_iso226_kwargs_accepted(self):
-        from backend.core.phases.phase_40_loudness_normalization import LoudnessNormalizationPhase as LoudnessNormalization
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_40_loudness_normalization import (
+            LoudnessNormalizationPhase as LoudnessNormalization,
+        )
 
         sr = 48000
         audio = np.random.randn(2, sr).astype(np.float32) * 0.01
         phase = LoudnessNormalization()
         result = phase.process(
-            audio, sr, MaterialType.CD_DIGITAL,
+            audio,
+            sr,
+            MaterialType.CD_DIGITAL,
             strength=0.5,
             iso226_target_phon=80.0,
             iso226_reference_phon=60.0,
@@ -251,8 +267,10 @@ class TestPhase40ISO226:
         assert result.audio is not None
 
     def test_phase40_no_iso226_kwargs_still_works(self):
-        from backend.core.phases.phase_40_loudness_normalization import LoudnessNormalizationPhase as LoudnessNormalization
         from backend.core.defect_scanner import MaterialType
+        from backend.core.phases.phase_40_loudness_normalization import (
+            LoudnessNormalizationPhase as LoudnessNormalization,
+        )
 
         sr = 48000
         audio = np.random.randn(2, sr).astype(np.float32) * 0.01
@@ -264,6 +282,7 @@ class TestPhase40ISO226:
 # ═══════════════════════════════════════════════════════════════════════════
 # phase_47 Pre-Limiter Highpass
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestPhase47Highpass:
     """Stellt sicher, dass Phase 47 den 20-Hz-Pre-Limiter-Highpass anwendet."""
@@ -301,12 +320,12 @@ class TestPhase47Highpass:
 # medium_detector reel_tape
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestMediumDetectorReelTape:
     """Stellt sicher, dass reel_tape bei Disc→Tape→Codec-Ketten erkannt wird."""
 
     def test_detect_with_disc_and_codec(self):
-        from forensics.medium_detector import MediumDetector
-        from forensics.medium_detector import SpectralFingerprint
+        from forensics.medium_detector import MediumDetector, SpectralFingerprint
 
         # Simuliere einen Fingerprint mit Disc-Rotation + Tape-Flutter + Codec
         fp = SpectralFingerprint(
@@ -317,7 +336,7 @@ class TestMediumDetectorReelTape:
         )
         detector = MediumDetector()
         sources = detector._infer_analog_source_from_fingerprint(fp)
-        source_names = [s[0] for s in sources]
+        [s[0] for s in sources]
         # Bei wow=0.034 < 0.06 + has_disc=True → reel_tape sollte erkannt werden
         # (der genaue Test hängt von _codec_contamination ab, aber die Methode sollte
         # zumindest nicht crashen und reel_tape oder cassette zurückgeben)

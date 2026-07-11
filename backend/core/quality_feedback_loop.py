@@ -25,8 +25,8 @@ from typing import Any
 
 import numpy as np
 
-from backend.core.phases.phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 from backend.core.comprehensive_metrics import PsychoAcousticMetrics
+from backend.core.phases.phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +39,29 @@ _PMGG_CONSECUTIVE_NO_IMPROVEMENT: int = 0
 _PLEASANTNESS_DECLINING_COUNT: int = 0
 _BEST_PLEASANTNESS: float = 0.0
 
+
 class SteerAction:
     """§v10 Steering-Aktionen — wie ein Toningenieur reagiert."""
-    CONTINUE = "continue"           # Alles gut, weitermachen
-    RETRY_LIGHTER = "retry_lighter" # Gleicher Schritt mit reduzierter Intensität
-    RETRY_DIFFERENT = "retry_different" # Alternativer Ansatz versuchen
-    SKIP = "skip"                   # Schritt überspringen (würde nur verschlechtern)
-    ROLLBACK = "rollback"           # Zurück zum besten Zustand
-    STOP_GRACEFUL = "stop_graceful" # Keine weitere Verbesserung möglich
+
+    CONTINUE = "continue"  # Alles gut, weitermachen
+    RETRY_LIGHTER = "retry_lighter"  # Gleicher Schritt mit reduzierter Intensität
+    RETRY_DIFFERENT = "retry_different"  # Alternativer Ansatz versuchen
+    SKIP = "skip"  # Schritt überspringen (würde nur verschlechtern)
+    ROLLBACK = "rollback"  # Zurück zum besten Zustand
+    STOP_GRACEFUL = "stop_graceful"  # Keine weitere Verbesserung möglich
 
 
-def steer_pipeline(pmgg_delta: float, pleasantness_delta: float, phase_id: str,
-                   step_index: int, total_steps: int,
-                   pmgg_threshold: float = 0.01, max_pmgg_noop: int = 3,
-                   max_pleasantness_drops: int = 2,
-                   mode: str = "restoration") -> tuple[str, str]:
+def steer_pipeline(
+    pmgg_delta: float,
+    pleasantness_delta: float,
+    phase_id: str,
+    step_index: int,
+    total_steps: int,
+    pmgg_threshold: float = 0.01,
+    max_pmgg_noop: int = 3,
+    max_pleasantness_drops: int = 2,
+    mode: str = "restoration",
+) -> tuple[str, str]:
     """§v10 Steering: Nicht stoppen, sondern nachsteuern.
 
     Wie ein Toningenieur: „Das klang nicht gut — ich versuch's mit weniger."
@@ -74,14 +82,14 @@ def steer_pipeline(pmgg_delta: float, pleasantness_delta: float, phase_id: str,
 
     # Mode-adjustierte Schwellwerte (§v10.1)
     if is_studio:
-        hpe_up_threshold = 0.025       # Studio: braucht starke Evidenz zum Weitermachen
-        hpe_light_drop = 0.060         # Studio: toleriert leichte Einbrüche
-        hpe_heavy_drop = 0.100         # Studio: erst starker Einbruch triggert SKIP
+        hpe_up_threshold = 0.025  # Studio: braucht starke Evidenz zum Weitermachen
+        hpe_light_drop = 0.060  # Studio: toleriert leichte Einbrüche
+        hpe_heavy_drop = 0.100  # Studio: erst starker Einbruch triggert SKIP
         max_drops = max_pleasantness_drops + 1
     else:
-        hpe_up_threshold = 0.010       # Restoration: jede Verbesserung = gut
-        hpe_light_drop = 0.020         # Restoration: kleinster Drop → RETRY
-        hpe_heavy_drop = 0.040         # Restoration: moderater Drop → SKIP
+        hpe_up_threshold = 0.010  # Restoration: jede Verbesserung = gut
+        hpe_light_drop = 0.020  # Restoration: kleinster Drop → RETRY
+        hpe_heavy_drop = 0.040  # Restoration: moderater Drop → SKIP
         max_drops = max_pleasantness_drops
 
     # Track best pleasantness
@@ -98,32 +106,24 @@ def steer_pipeline(pmgg_delta: float, pleasantness_delta: float, phase_id: str,
     if -hpe_heavy_drop < pleasantness_delta <= -hpe_light_drop:
         _PLEASANTNESS_DECLINING_COUNT += 1
         if is_studio and _PLEASANTNESS_DECLINING_COUNT >= 2:
-            return SteerAction.RETRY_DIFFERENT, (
-                f"HPE ↓ (ΔP={pleasantness_delta:+.3f}) — versuche alternativen Ansatz"
-            )
-        return SteerAction.RETRY_LIGHTER, (
-            f"HPE ↓ (ΔP={pleasantness_delta:+.3f}) — versuche reduzierte Intensität"
-        )
+            return SteerAction.RETRY_DIFFERENT, (f"HPE ↓ (ΔP={pleasantness_delta:+.3f}) — versuche alternativen Ansatz")
+        return SteerAction.RETRY_LIGHTER, (f"HPE ↓ (ΔP={pleasantness_delta:+.3f}) — versuche reduzierte Intensität")
 
     # ── Angenehmheit fällt STARK → SKIP ──
     if pleasantness_delta <= -hpe_heavy_drop:
         _PLEASANTNESS_DECLINING_COUNT += 1
-        if _PLEASANTNESS_DECLINING_COUNT >= max_drops:
+        if max_drops <= _PLEASANTNESS_DECLINING_COUNT:
             return SteerAction.ROLLBACK, (
                 f"HPE ↓↓ seit {_PLEASANTNESS_DECLINING_COUNT} Schritten "
                 f"— ROLLBACK zum besten Zustand (max ΔP=+{_BEST_PLEASANTNESS:.3f})"
             )
-        return SteerAction.SKIP, (
-            f"HPE ↓↓ (ΔP={pleasantness_delta:+.3f}) — Schritt {phase_id} überspringen"
-        )
+        return SteerAction.SKIP, (f"HPE ↓↓ (ΔP={pleasantness_delta:+.3f}) — Schritt {phase_id} überspringen")
 
     # ── PMGG konvergiert → STOP_GRACEFUL ──
     if abs(pmgg_delta) < pmgg_threshold:
         _PMGG_CONSECUTIVE_NO_IMPROVEMENT += 1
-        if _PMGG_CONSECUTIVE_NO_IMPROVEMENT >= max_pmgg_noop:
-            return SteerAction.STOP_GRACEFUL, (
-                f"PMGG konvergiert — Bearbeitung optimal abgeschlossen."
-            )
+        if max_pmgg_noop <= _PMGG_CONSECUTIVE_NO_IMPROVEMENT:
+            return SteerAction.STOP_GRACEFUL, ("PMGG konvergiert — Bearbeitung optimal abgeschlossen.")
 
     # ── Pipeline-Ende erreicht ──
     if step_index >= total_steps - 1:
@@ -141,12 +141,16 @@ def reset_steer_state():
 
 
 # ── Legacy-Kompatibilität ──
-def should_stop_pipeline(pmgg_delta, phase_id, threshold=0.01, max_consecutive=3,
-                         pleasantness_delta=0.0, max_pleasantness_drops=2):
+def should_stop_pipeline(
+    pmgg_delta, phase_id, threshold=0.01, max_consecutive=3, pleasantness_delta=0.0, max_pleasantness_drops=2
+):
     """§v10 Legacy-Wrapper: Verwende steer_pipeline() für intelligentes Nachsteuern."""
     action, reason = steer_pipeline(
-        pmgg_delta, pleasantness_delta, phase_id,
-        step_index=0, total_steps=max_consecutive,
+        pmgg_delta,
+        pleasantness_delta,
+        phase_id,
+        step_index=0,
+        total_steps=max_consecutive,
         pmgg_threshold=threshold,
         max_pleasantness_drops=max_pleasantness_drops,
     )
@@ -158,7 +162,6 @@ def should_stop_pipeline(pmgg_delta, phase_id, threshold=0.01, max_consecutive=3
 def reset_stop_rule_state():
     """Legacy-Wrapper für reset_steer_state."""
     reset_steer_state()
-
 
 
 class QualityFeedbackLoop:

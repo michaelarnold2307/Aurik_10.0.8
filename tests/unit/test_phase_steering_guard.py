@@ -28,7 +28,7 @@ def _make_test_audio(duration: float = _DURATION) -> np.ndarray:
     """Erzeugt Test-Audio: Sinus 440Hz + weißes Rauschen −30dB."""
     t = np.arange(int(duration * _SR), dtype=np.float32) / _SR
     sine = np.sin(2.0 * np.pi * 440.0 * t).astype(np.float32) * 0.5
-    noise = (np.random.randn(len(t)).astype(np.float32) * 0.03)
+    noise = np.random.randn(len(t)).astype(np.float32) * 0.03
     return np.clip(sine + noise, -1.0, 1.0)
 
 
@@ -45,6 +45,7 @@ class TestPhaseSteeringGuard:
     def test_01_engine_initialization(self):
         """Engine initialisiert korrekt."""
         from backend.core.phase_steering_guard import PhaseSteeringEngine
+
         engine = PhaseSteeringEngine()
         assert engine is not None
         assert engine._state.total_phases == 0
@@ -54,12 +55,14 @@ class TestPhaseSteeringGuard:
     def test_02_engine_disabled_by_default(self):
         """Ohne AURIK_STEERING=1 ist Steering deaktiviert."""
         from backend.core.phase_steering_guard import PhaseSteeringEngine
+
         engine = PhaseSteeringEngine()
         assert engine.enabled  # v10.4: immer aktiv
 
     def test_03_engine_enabled_with_env(self):
         """Mit AURIK_STEERING=1 ist Steering aktiv."""
         from backend.core.phase_steering_guard import PhaseSteeringEngine
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         assert engine.enabled
@@ -70,6 +73,7 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         decision = engine.decide(0.50, 0.55, "phase_test", 1.0)
@@ -82,6 +86,7 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         decision = engine.decide(0.60, 0.57, "phase_test", 1.0)
@@ -94,6 +99,7 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         decision = engine.decide(0.70, 0.60, "phase_test", 1.0)
@@ -105,6 +111,7 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
 
@@ -126,6 +133,7 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         audio = _make_test_audio()
@@ -150,13 +158,14 @@ class TestPhaseSteeringGuard:
             PhaseSteeringEngine,
             SteerAction,
         )
+
         os.environ["AURIK_STEERING"] = "1"
         engine = PhaseSteeringEngine()
         audio = _make_test_audio()
 
         # Drei Phasen mit minimaler Änderung
         engine.record_phase("p1", audio, 0.700, 0.90)
-        d1 = engine.decide(0.699, 0.700, "p2", 1.0)
+        engine.decide(0.699, 0.700, "p2", 1.0)
         engine.record_phase("p2", audio, 0.700, 0.90)
 
         d2 = engine.decide(0.700, 0.701, "p3", 1.0)
@@ -183,7 +192,6 @@ class TestPhaseSteeringGuard:
     def test_11_cross_phase_integration(self):
         """CrossPhaseTracker wird pro Phase aufgerufen."""
         from backend.core.cross_phase_naturalness import (
-            CrossPhaseTracker,
             get_tracker,
             reset_tracker,
         )

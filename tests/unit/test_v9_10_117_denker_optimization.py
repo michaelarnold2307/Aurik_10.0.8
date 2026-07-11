@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests for v9.10.117 — Denker full-context optimization.
 

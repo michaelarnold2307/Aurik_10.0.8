@@ -32,9 +32,13 @@ _ALWAYS_APPLY: frozenset = frozenset(
 )
 
 # §v10.1 Mode-aware Plugin-Routing
-_RESTORATION_BLOCKED_MODULES: frozenset[str] = frozenset({
-    "HarmonicExciterStudio", "StereoEnhancer", "SpeakerEnhancement",
-})
+_RESTORATION_BLOCKED_MODULES: frozenset[str] = frozenset(
+    {
+        "HarmonicExciterStudio",
+        "StereoEnhancer",
+        "SpeakerEnhancement",
+    }
+)
 _current_processing_mode: str = "restoration"
 
 

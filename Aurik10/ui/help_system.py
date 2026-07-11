@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PyQt5 import QtCore, QtWidgets, QtGui
+from PyQt5 import QtCore, QtGui, QtWidgets
+
 from Aurik10.i18n import t
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,10 @@ class HelpTooltip(QtWidgets.QPushButton):
     def _show_help(self):
         QtWidgets.QToolTip.showText(
             self.mapToGlobal(QtCore.QPoint(0, -10)),
-            t(self._help_key), self, QtCore.QRect(), 8000,
+            t(self._help_key),
+            self,
+            QtCore.QRect(),
+            8000,
         )
 
 
@@ -107,9 +111,7 @@ class ErrorSimplifier:
     @classmethod
     def get_all_messages(cls) -> dict[str, str]:
         """Gibt alle Fehler-Nachrichten als dict zurück."""
-        return {
-            key: t(key) for _, key in cls._PATTERNS
-        }
+        return {key: t(key) for _, key in cls._PATTERNS}
 
 
 class HelpSearchDialog(QtWidgets.QDialog):

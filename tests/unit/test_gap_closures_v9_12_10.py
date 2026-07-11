@@ -1,4 +1,5 @@
 import pytest
+
 """Gap Closure Tests für v9.12.10 — EraVocalProfile, Pre-Echo, RestorationMemory.
 
 Unit-Tests für die geschlossenen Lücken:

@@ -20,7 +20,7 @@ Wissenschaftliche Basis:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Genre-Profile: „Was würde ein Toningenieur für dieses Genre tun?"
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class ArtisticIntent:
@@ -92,7 +93,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="ballad",
         emotion="intimate",
-        notes="Ballade: Dynamik maximal erhalten, Stimme im Vordergrund, warm und intim"
+        notes="Ballade: Dynamik maximal erhalten, Stimme im Vordergrund, warm und intim",
     ),
     "classical": ArtisticIntent(
         preserve_dynamics=True,
@@ -110,7 +111,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.10,
         genre="classical",
         emotion="majestic",
-        notes="Klassik: Maximale Dynamik, keine künstliche Präsenz, natürlicher Raumklang"
+        notes="Klassik: Maximale Dynamik, keine künstliche Präsenz, natürlicher Raumklang",
     ),
     "jazz": ArtisticIntent(
         preserve_dynamics=True,
@@ -128,9 +129,8 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.25,
         genre="jazz",
         emotion="sophisticated",
-        notes="Jazz: Warmer Kontrabass, natürliche Dynamik, luftige Höhen"
+        notes="Jazz: Warmer Kontrabass, natürliche Dynamik, luftige Höhen",
     ),
-
     # ── Pop / Mainstream ──
     "schlager": ArtisticIntent(
         preserve_dynamics=False,
@@ -148,7 +148,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.30,
         genre="schlager",
         emotion="joyful",
-        notes="Schlager: Melodische Lead-Stimme, Schunkelrhythmus, präsent und lebendig"
+        notes="Schlager: Melodische Lead-Stimme, Schunkelrhythmus, präsent und lebendig",
     ),
     "pop": ArtisticIntent(
         preserve_dynamics=False,
@@ -166,7 +166,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.35,
         genre="pop",
         emotion="energetic",
-        notes="Pop: Modern, brillant, druckvoll, Stimme präsent"
+        notes="Pop: Modern, brillant, druckvoll, Stimme präsent",
     ),
     "electronic": ArtisticIntent(
         preserve_dynamics=False,
@@ -184,9 +184,8 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.40,
         genre="electronic",
         emotion="hypnotic",
-        notes="Electronic: Tiefer Sub-Bass, breites Stereo,现代, präzise Transienten"
+        notes="Electronic: Tiefer Sub-Bass, breites Stereo,现代, präzise Transienten",
     ),
-
     # ── Rock / Energie ──
     "rock": ArtisticIntent(
         preserve_dynamics=False,
@@ -205,7 +204,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.35,
         genre="rock",
         emotion="powerful",
-        notes="Rock: Druckvoll, Gitarren präsent, Attack betont, druckvoller Bass"
+        notes="Rock: Druckvoll, Gitarren präsent, Attack betont, druckvoller Bass",
     ),
     "metal": ArtisticIntent(
         preserve_dynamics=False,
@@ -224,9 +223,8 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.40,
         genre="metal",
         emotion="aggressive",
-        notes="Metal: Maximale Energie, präzise Kick, aggressive Gitarren"
+        notes="Metal: Maximale Energie, präzise Kick, aggressive Gitarren",
     ),
-
     # ── Akustisch / Folk ──
     "folk": ArtisticIntent(
         preserve_dynamics=True,
@@ -244,7 +242,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="folk",
         emotion="earthy",
-        notes="Folk: Natürlich, warm, authentisch, Stimme im Mittelpunkt"
+        notes="Folk: Natürlich, warm, authentisch, Stimme im Mittelpunkt",
     ),
     "blues": ArtisticIntent(
         preserve_dynamics=True,
@@ -262,7 +260,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="blues",
         emotion="soulful",
-        notes="Blues: Warm, erdig, emotional, roh und authentisch"
+        notes="Blues: Warm, erdig, emotional, roh und authentisch",
     ),
     "hiphop": ArtisticIntent(
         preserve_dynamics=False,
@@ -281,9 +279,8 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.35,
         genre="hiphop",
         emotion="confident",
-        notes="Hip-Hop: Tiefer 808-Bass, Stimme extrem präsent, druckvoll"
+        notes="Hip-Hop: Tiefer 808-Bass, Stimme extrem präsent, druckvoll",
     ),
-
     # ── Default / Unbekannt ──
     "reggae": ArtisticIntent(
         preserve_dynamics=True,
@@ -301,7 +298,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="reggae",
         emotion="laid_back",
-        notes="Reggae: Tiefer, satter Bass, entspannt, moderate Dynamik"
+        notes="Reggae: Tiefer, satter Bass, entspannt, moderate Dynamik",
     ),
     "latin": ArtisticIntent(
         preserve_dynamics=True,
@@ -319,7 +316,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.15,
         genre="latin",
         emotion="passionate",
-        notes="Latin: Lebhaft, perkussiv, präsente Vocals, warme Mitten"
+        notes="Latin: Lebhaft, perkussiv, präsente Vocals, warme Mitten",
     ),
     "gospel": ArtisticIntent(
         preserve_dynamics=True,
@@ -337,7 +334,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.15,
         genre="gospel",
         emotion="soulful",
-        notes="Gospel: Kraftvolle Stimmen, viel Raum, warm, emotional"
+        notes="Gospel: Kraftvolle Stimmen, viel Raum, warm, emotional",
     ),
     "country": ArtisticIntent(
         preserve_dynamics=True,
@@ -355,7 +352,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="country",
         emotion="heartfelt",
-        notes="Country: Erzählende Stimme im Vordergrund, natürlich, bodenständig"
+        notes="Country: Erzählende Stimme im Vordergrund, natürlich, bodenständig",
     ),
     "funk": ArtisticIntent(
         preserve_dynamics=True,
@@ -373,7 +370,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="funk",
         emotion="groovy",
-        notes="Funk: Tight, perkussiv, satter Bass, punchy Drums"
+        notes="Funk: Tight, perkussiv, satter Bass, punchy Drums",
     ),
     "ambient": ArtisticIntent(
         preserve_dynamics=False,
@@ -391,7 +388,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.30,
         genre="ambient",
         emotion="atmospheric",
-        notes="Ambient: Weit, atmosphärisch, keine harten Transienten"
+        notes="Ambient: Weit, atmosphärisch, keine harten Transienten",
     ),
     "world": ArtisticIntent(
         preserve_dynamics=True,
@@ -409,7 +406,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="world",
         emotion="authentic",
-        notes="World: Authentische Instrumente, moderate Bearbeitung, natürlicher Klang"
+        notes="World: Authentische Instrumente, moderate Bearbeitung, natürlicher Klang",
     ),
     "unknown": ArtisticIntent(
         preserve_dynamics=True,
@@ -427,7 +424,7 @@ _GENRE_PROFILES: dict[str, ArtisticIntent] = {
         risk_tolerance=0.20,
         genre="unknown",
         emotion="neutral",
-        notes='Default: Konservativ — "First, do no harm". Minimale Eingriffe.'
+        notes='Default: Konservativ — "First, do no harm". Minimale Eingriffe.',
     ),
 }
 
@@ -522,8 +519,7 @@ def get_artistic_intent(
     profile.era_decade = era_decade or 1980
 
     logger.info(
-        "ArtisticIntent: genre=%s era=%s material=%s vocals=%s → "
-        "warmth=%.2f brilliance=%.2f dynamics=%s risk=%.2f",
+        "ArtisticIntent: genre=%s era=%s material=%s vocals=%s → warmth=%.2f brilliance=%.2f dynamics=%s risk=%.2f",
         genre_key,
         era_decade,
         material,

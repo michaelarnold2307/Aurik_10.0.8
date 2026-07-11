@@ -49,7 +49,7 @@ def compute_step_intensity(
         from backend.core.boundary_optimizer import get_media_limits
         from backend.core.human_pleasantness_estimator import compute_pleasantness
 
-        limits = get_media_limits(material)
+        get_media_limits(material)
         baseline_p = compute_pleasantness(audio, sr).score
 
         best_intensity = intensity_range[0]
@@ -74,7 +74,11 @@ def compute_step_intensity(
 
         logger.info(
             "PIL %s: optimal intensity=%.2f (baseline P=%.3f, range %s, material=%s)",
-            step_name, best_intensity, baseline_p, intensity_range, material,
+            step_name,
+            best_intensity,
+            baseline_p,
+            intensity_range,
+            material,
         )
         return best_intensity
 
@@ -83,9 +87,7 @@ def compute_step_intensity(
         return 0.65  # Konservativer Default
 
 
-def get_frequency_corrections(
-    audio: np.ndarray, sr: int
-) -> dict[str, float]:
+def get_frequency_corrections(audio: np.ndarray, sr: int) -> dict[str, float]:
     """§v10 Nutzt Freq-Inviting-Daten für gezielte EQ-Korrekturen.
 
     Returns dict mit EQ-Parametern pro problematischem Band:
@@ -186,7 +188,9 @@ def audit_phase_pleasantness(
 
         if not improved:
             logger.warning(
-                "Phase %s: HPE %+.3f — KEINE Verbesserung!", phase_name, delta,
+                "Phase %s: HPE %+.3f — KEINE Verbesserung!",
+                phase_name,
+                delta,
             )
 
         # Extrahiere Scores aus nested dicts
@@ -201,7 +205,6 @@ def audit_phase_pleasantness(
             reg.report_post(phase_name, after_score, delta=delta)
         except Exception as e:
             logger.warning("pleasantness_integration.py::audit_phase_pleasantness fallback: %s", e)
-            pass
 
         return {
             "improved": improved,

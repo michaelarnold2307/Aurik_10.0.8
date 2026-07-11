@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für §4.10-VintageVoice Vintage-Stimm-Identitätsschutz in phase_42.
 
 Prüft, dass bei Vintage-Material (shellac/vinyl/reel_tape/tape/cassette etc.)

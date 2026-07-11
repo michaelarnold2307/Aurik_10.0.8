@@ -69,7 +69,7 @@ class ArmStats:
         self.count += 1.0
         alpha = 1.0 / max(0.5, self.count)  # Klassisches inkrementelles Mittel
         self.mean_delta += alpha * (delta - self.mean_delta)
-        self.sum_sq += delta ** 2
+        self.sum_sq += delta**2
         self.last_updated = time.time()
 
     def apply_decay(self, decay_factor: float) -> None:
@@ -101,13 +101,11 @@ class ArmStats:
 
         # §v10.7 Gaussian Process Upgrade: ab 1000 Pulls nutze Standardfehler
         if total_pulls > 1000 and self.count > 5:
-            variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta ** 2)
+            variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta**2)
             std_err = math.sqrt(variance / max(1.0, self.count))
             exploration = 2.0 * std_err  # 95% Konfidenzintervall
         else:
-            exploration = exploration_factor * math.sqrt(
-                math.log(max(2, total_pulls)) / max(0.5, self.count)
-            )
+            exploration = exploration_factor * math.sqrt(math.log(max(2, total_pulls)) / max(0.5, self.count))
 
         return exploitation + exploration
 
@@ -117,7 +115,7 @@ class ArmStats:
         """
         if self.count < 2:
             return self.mean_delta, float("inf")
-        variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta ** 2)
+        variance = max(0.0, self.sum_sq / max(1.0, self.count) - self.mean_delta**2)
         std_err = math.sqrt(variance / max(1.0, self.count))
         return self.mean_delta, 2.0 * std_err  # 95% CI
 
@@ -266,8 +264,13 @@ class SelfLearningOptimizer:
                 return {"variant": None, "pulls": 0, "gp_active": False}
             best = max(arms, key=lambda v: arms[v].ucb1_score(self._total_pulls))
             mean, ci = arms[best].gp_confidence()
-            return {"variant": best, "mean": round(mean,4), "ci95": round(ci,4),
-                    "pulls": int(arms[best].count), "gp_active": self._total_pulls > 1000}
+            return {
+                "variant": best,
+                "mean": round(mean, 4),
+                "ci95": round(ci, 4),
+                "pulls": int(arms[best].count),
+                "gp_active": self._total_pulls > 1000,
+            }
 
     def get_statistics(self) -> dict[str, Any]:
         """Gibt vollständige Lernstatistiken zurück (für Audit/Debugging)."""

@@ -104,9 +104,7 @@ def detect_stereo_collapse(
                 t_start = i * hop_s + window_s / 2.0
                 t_end = j * hop_s + window_s / 2.0
                 # Check if not already covered
-                already_covered = any(
-                    abs(loc[0] - t_start) < 5.0 for loc in locations
-                )
+                already_covered = any(abs(loc[0] - t_start) < 5.0 for loc in locations)
                 if not already_covered and t_end - t_start >= 5.0:
                     locations.append((float(max(0, t_start)), float(min(duration, t_end))))
 
@@ -133,9 +131,7 @@ def detect_stereo_collapse(
         confidence = 0.3
 
     # Also consider acute collapse for confidence
-    if any(
-        (loc[1] - loc[0]) < 30.0 for loc in locations
-    ):  # acute events
+    if any((loc[1] - loc[0]) < 30.0 for loc in locations):  # acute events
         confidence = max(confidence, 0.65)
 
     return locations, collapse_ratio, float(np.clip(confidence, 0.0, 1.0))

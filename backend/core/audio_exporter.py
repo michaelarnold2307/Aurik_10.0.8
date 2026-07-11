@@ -516,7 +516,6 @@ class AudioExporter:
         except Exception as e:
             raise RuntimeError(f"Export failed: {e}") from e
 
-
     def export_bitperfect(
         self,
         audio: np.ndarray,
@@ -526,34 +525,35 @@ class AudioExporter:
         add_bwf_metadata: bool = True,
     ) -> Path:
         """§v10 Bit-Perfect-Archiv-Pfad: integer-exakter Passthrough ohne DSP."""
-        import hashlib
         import datetime
+        import hashlib
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         ext = output_path.suffix.lower()
-        if ext not in ('.wav', '.flac'):
-            raise ValueError(f'Bit-Perfect nur WAV/FLAC, nicht {ext}')
+        if ext not in (".wav", ".flac"):
+            raise ValueError(f"Bit-Perfect nur WAV/FLAC, nicht {ext}")
         audio_out = np.asarray(audio, dtype=np.float32).copy()
         audio_out = np.clip(np.nan_to_num(audio_out, nan=0.0), -1.0, 1.0)
         bwf = {}
         if add_bwf_metadata:
-            now = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-            bwf['originator'] = 'Aurik v10 Bit-Perfect Archive'
-            bwf['originator_reference'] = f'AURIK_BP_{now}'
-            bwf['coding_history'] = f'A={ext[1:].upper()},F={sr},W=32,T=Aurik v10 BitPerfect'
+            now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            bwf["originator"] = "Aurik v10 Bit-Perfect Archive"
+            bwf["originator_reference"] = f"AURIK_BP_{now}"
+            bwf["coding_history"] = f"A={ext[1:].upper()},F={sr},W=32,T=Aurik v10 BitPerfect"
         if metadata:
             bwf.update(metadata)
         chk = hashlib.sha256(audio_out.tobytes()).hexdigest()
-        bwf['sha256'] = chk
-        tmp = output_path.with_name(output_path.name + '.tmp')
+        bwf["sha256"] = chk
+        tmp = output_path.with_name(output_path.name + ".tmp")
         try:
-            sf.write(tmp, audio_out, sr, format=ext[1:].upper(), subtype='PCM_24')
+            sf.write(tmp, audio_out, sr, format=ext[1:].upper(), subtype="PCM_24")
             tmp.replace(output_path)
         finally:
             if tmp.exists():
                 tmp.unlink(missing_ok=True)
         self._write_metadata(output_path, bwf)
-        logger.info('Bit-Perfect: %s (%d Hz, sha256=%s)', output_path, sr, chk[:16])
+        logger.info("Bit-Perfect: %s (%d Hz, sha256=%s)", output_path, sr, chk[:16])
         return output_path
 
     def _write_metadata(self, file_path: Path, metadata: dict[str, str]) -> None:

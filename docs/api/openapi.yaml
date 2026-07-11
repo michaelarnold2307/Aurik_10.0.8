@@ -3,7 +3,7 @@ info:
   title: Aurik REST API
   description: >
     §15.7: OpenAPI 3.0 Spezifikation der Aurik REST-API.
-    
+
     Aurik ist ein intelligentes Musik-Restaurierungssystem mit
     68-Phasen-Pipeline, DSP/ML-Verarbeitung und Plugin-System.
   version: "10.0.0"

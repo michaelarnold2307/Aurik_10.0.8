@@ -8,7 +8,7 @@ damit der Wizard nur einmal erscheint.
 
 from __future__ import annotations
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from Aurik10.i18n import t
 
@@ -134,13 +134,18 @@ class OnboardingWizard(QtWidgets.QDialog):
 
         # Mode cards
         for mode_id, mode_name, desc, icon, color in [
-            ("restoration", "💿 Restoration", "Behutsam · Original bleibt erhalten\nFür Vinyl, Kassetten & Archiv", "💿", "#FFB300"),
+            (
+                "restoration",
+                "💿 Restoration",
+                "Behutsam · Original bleibt erhalten\nFür Vinyl, Kassetten & Archiv",
+                "💿",
+                "#FFB300",
+            ),
             ("studio", "🎯 Studio 2026", "Modern · Klar & kraftvoll\nFür Spotify, YouTube & Handy", "🎯", "#00B0FF"),
         ]:
             card = QtWidgets.QFrame()
             card.setStyleSheet(
-                f"background: rgba(14,18,36,0.8); border: 1px solid {color}; "
-                "border-radius: 10px; padding: 12px;"
+                f"background: rgba(14,18,36,0.8); border: 1px solid {color}; border-radius: 10px; padding: 12px;"
             )
             card_layout = QtWidgets.QVBoxLayout(card)
             card_title = QtWidgets.QLabel(f"{icon}  {mode_name}")
@@ -259,6 +264,6 @@ def should_show_onboarding() -> bool:
 
         s = QSettings("AURIK", "AURIK Professional")
         return not s.value("onboarding/shown", False, type=bool)
-    except Exception as e:
+    except Exception:
         logger.warning("onboarding.py::should_show_onboarding fallback", exc_info=True)
         return True

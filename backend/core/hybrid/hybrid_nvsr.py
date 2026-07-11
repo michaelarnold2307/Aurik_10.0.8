@@ -435,7 +435,6 @@ class HybridNVSR:
             _plm_nvsr.set_active("AudioSR", True)
         except Exception as e:
             logger.warning("hybrid_nvsr.py::_run_audiosr fallback: %s", e)
-            pass
         try:
             return plugin.process(audio, sample_rate, target_sr=self.config.audiosr_target_sr)  # type: ignore[no-any-return]
         finally:
@@ -444,7 +443,6 @@ class HybridNVSR:
                     _plm_nvsr.set_active("AudioSR", False)
                 except Exception as e:
                     logger.warning("hybrid_nvsr.py::_run_audiosr fallback: %s", e)
-                    pass
 
     def _blend_audio(
         self, audio_a: np.ndarray, audio_b: np.ndarray, sample_rate: int, crossover_freq: float, blend_ratio: float

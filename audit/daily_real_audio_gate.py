@@ -35,7 +35,7 @@ class DailyGatePoint:
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
-    except Exception as e:
+    except Exception:
         logger.warning("daily_real_audio_gate.py::_safe_int fallback", exc_info=True)
         return default
 
@@ -46,7 +46,7 @@ def _safe_ts(value: Any) -> datetime:
     text = value.strip()
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except Exception as e:
+    except Exception:
         logger.warning("daily_real_audio_gate.py::_safe_ts fallback", exc_info=True)
         return datetime.min
 

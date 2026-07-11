@@ -7,13 +7,13 @@
 ```mermaid
 C4Context
     title System Context — Aurik 10
-    
+
     Person(user, "Audio Engineer", "Restauriert historische Musikaufnahmen")
     System(aurik, "Aurik", "Intelligente Musik-Restaurierung")
-    
+
     System_Ext(archive, "Internet Archive", "Public-Domain-Quellen")
     System_Ext(storage, "Dateisystem", "WAV/FLAC/MP3")
-    
+
     Rel(user, aurik, "Restauriert Audio via", "CLI / Python API / REST")
     Rel(aurik, storage, "Liest/Schreibt", "WAV, FLAC, MP3")
     Rel(aurik, archive, "Optional: Lädt Referenz-Material", "HTTP")
@@ -26,7 +26,7 @@ C4Container
     title Container — Aurik 10
 
     Person(user, "Audio Engineer", "")
-    
+
     Container_Boundary(aurik, "Aurik") {
         Container(cli, "CLI", "Python", "Kommandozeilen-Interface")
         Container(api, "REST API", "Python/Flask", "HTTP-API für GUI-Integration")
@@ -34,9 +34,9 @@ C4Container
         Container(backend, "Backend Core", "Python", "68-Phasen-Pipeline, DSP, ML")
         Container(plugins, "Plugin System", "Python", "Plugin-SDK + 58 Plugins")
     }
-    
+
     ContainerDb(models, "ONNX Models", "Dateisystem", "PANNS, Whisper, wav2vec2, RMVPE")
-    
+
     Rel(user, cli, "Nutzt", "CLI")
     Rel(user, api, "Nutzt", "HTTP")
     Rel(cli, denker, "startet", "Python API")
@@ -57,18 +57,18 @@ C4Component
         Component(restore, "Phases 02-66", "Restaurierung (65 DSP/ML-Phasen)")
         Component(glue, "Phase 67: Glue", "Zusammenführung")
         Component(export, "Phase 68: Export", "Format-Optimierung & Ausgabe")
-        
+
         Component(guard, "ErrorGuard", "Graceful Degradation")
         Component(goals, "Musical Goals", "Qualitäts-Gates (14 Ziele)")
         Component(mushra, "MUSHRA Estimator", "Objektive Qualitäts-Approximation")
     }
-    
+
     ComponentDb(session_mgr, "Session Manager", "ONNX-Lifecycle")
-    
+
     Rel(load, restore, "→", "np.ndarray")
     Rel(restore, glue, "→", "mit Metadaten")
     Rel(glue, export, "→", "finales Audio")
-    
+
     Rel(guard, restore, "schützt", "Decorator")
     Rel(goals, restore, "prüft", "per Phase")
     Rel(mushra, export, "bewertet", "OQS")

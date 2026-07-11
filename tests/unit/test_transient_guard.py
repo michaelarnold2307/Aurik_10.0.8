@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für §PEP (V22) transient_guard.py.
 
 Testet detect_transient_shifts() und TransientShiftResult.

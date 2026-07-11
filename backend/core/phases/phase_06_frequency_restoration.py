@@ -378,14 +378,13 @@ class FrequencyRestorationPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "freq_restore",
-                default_nr=0.4, default_de_ess=0.2, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "freq_restore", default_nr=0.4, default_de_ess=0.2, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_06_frequency_restoration.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
 
@@ -398,7 +397,6 @@ class FrequencyRestorationPhase(PhaseInterface):
             _get_plm_evict06().evict_for_phase("phase_06_frequency_restoration")
         except Exception as e:
             logger.warning("phase_06_frequency_restoration.py::process fallback: %s", e)
-            pass
 
         # §2.47 PMGG-Retry: locality_factor skaliert finale Intensität bei Retries.
         # §Cross-Goal-Recovery override: Frequenz-Restaurierung ist ein GLOBALER Eingriff
@@ -1005,14 +1003,19 @@ class FrequencyRestorationPhase(PhaseInterface):
         if _strength_env is not None:
             try:
                 from backend.core.strength_envelope import apply_strength_envelope
+
                 _env_pre = np.asarray(restored, dtype=np.float32)
                 restored = apply_strength_envelope(
-                    processed=_env_pre, original=np.asarray(audio, dtype=np.float32),
-                    envelope=_strength_env, sample_rate=sample_rate,
+                    processed=_env_pre,
+                    original=np.asarray(audio, dtype=np.float32),
+                    envelope=_strength_env,
+                    sample_rate=sample_rate,
                     base_strength=_effective_strength,
                 )
                 if float(np.mean(np.abs(restored - _env_pre))) > 0.001:
-                    logger.info("§2.71 Envelope-Blending Phase 06: Δ=%.4f RMS", float(np.mean(np.abs(restored - _env_pre))))
+                    logger.info(
+                        "§2.71 Envelope-Blending Phase 06: Δ=%.4f RMS", float(np.mean(np.abs(restored - _env_pre)))
+                    )
             except Exception as _se_exc:
                 logger.debug("§2.71 Envelope non-blocking: %s", _se_exc)
 

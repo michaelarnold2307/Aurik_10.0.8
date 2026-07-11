@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RunHealth:
     """Gesundheits-Snapshot eines einzelnen Runs."""
+
     run_id: int = 0
     timestamp: float = 0.0
     duration_s: float = 0.0
@@ -59,7 +60,7 @@ class HealthReportCollector:
 
             # Nur die letzten N Runs behalten
             if len(self._runs) > self._report_interval * 2:
-                self._runs = self._runs[-self._report_interval:]
+                self._runs = self._runs[-self._report_interval :]
 
             # Report alle N Runs
             if self._total_runs % self._report_interval == 0:
@@ -70,7 +71,7 @@ class HealthReportCollector:
         if not self._runs:
             return
 
-        recent = self._runs[-self._report_interval:]
+        recent = self._runs[-self._report_interval :]
         n = len(recent)
 
         contracts_ok = sum(1 for r in recent if r.contract_ok)
@@ -104,15 +105,13 @@ class HealthReportCollector:
         # Warnung bei Trends
         if artifact_avg < 0.90:
             logger.warning(
-                "📊 Health: ArtifactFreedom Ø=%.3f < 0.90 — "
-                "mögliche Qualitäts-Degradation über die letzten %d Runs",
+                "📊 Health: ArtifactFreedom Ø=%.3f < 0.90 — mögliche Qualitäts-Degradation über die letzten %d Runs",
                 artifact_avg,
                 n,
             )
         if total_excepts > 0:
             logger.warning(
-                "📊 Health: %d silent excepts in %d Runs — "
-                "Fehler werden unterdrückt, siehe debug-Log",
+                "📊 Health: %d silent excepts in %d Runs — Fehler werden unterdrückt, siehe debug-Log",
                 total_excepts,
                 n,
             )
@@ -126,18 +125,20 @@ class HealthReportCollector:
                 new_artifact = sum(r.artifact_freedom for r in newer) / len(newer)
                 if new_artifact < old_artifact - 0.05:
                     logger.warning(
-                        "📊 Health TREND: ArtifactFreedom sinkt — "
-                        "%.3f → %.3f (Δ=%.3f über %d Runs)",
-                        old_artifact, new_artifact, old_artifact - new_artifact,
+                        "📊 Health TREND: ArtifactFreedom sinkt — %.3f → %.3f (Δ=%.3f über %d Runs)",
+                        old_artifact,
+                        new_artifact,
+                        old_artifact - new_artifact,
                         self._report_interval // 2,
                     )
                 old_scalar = sum(r.global_scalar for r in older) / len(older)
                 new_scalar = sum(r.global_scalar for r in newer) / len(newer)
                 if new_scalar < old_scalar - 0.03:
                     logger.warning(
-                        "📊 Health TREND: GlobalScalar sinkt — "
-                        "%.3f → %.3f (Δ=%.3f)",
-                        old_scalar, new_scalar, old_scalar - new_scalar,
+                        "📊 Health TREND: GlobalScalar sinkt — %.3f → %.3f (Δ=%.3f)",
+                        old_scalar,
+                        new_scalar,
+                        old_scalar - new_scalar,
                     )
 
     def get_summary(self) -> dict[str, Any]:

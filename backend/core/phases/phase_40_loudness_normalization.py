@@ -259,8 +259,8 @@ class LoudnessNormalizationPhase(PhaseInterface):
                 if audio_lc is not None and np.all(np.isfinite(audio_lc)):
                     audio = audio_lc.astype(np.float32)
                     logger.debug(
-                        "Phase40 §ISO-226: loudness compensated target=%.0f phon ref=%.0f phon",
-                        _iso_target, _iso_ref)
+                        "Phase40 §ISO-226: loudness compensated target=%.0f phon ref=%.0f phon", _iso_target, _iso_ref
+                    )
             except Exception as _iso_exc:
                 logger.debug("Phase40 §ISO-226 non-blocking: %s", _iso_exc)
 

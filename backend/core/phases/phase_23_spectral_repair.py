@@ -644,14 +644,15 @@ class SpectralRepair(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "spectral_repair",
-                default_nr=0.45, default_de_ess=0.25, default_comp=1.0)
+
+            _pim = apply_pim_intensity(
+                kwargs, "spectral_repair", default_nr=0.45, default_de_ess=0.25, default_comp=1.0
+            )
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
         sample_rate = kwargs.get("sample_rate", 48000)
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
 
@@ -660,7 +661,6 @@ class SpectralRepair(PhaseInterface):
             get_plugin_lifecycle_manager().evict_for_phase("phase_23_spectral_repair")
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
 
         start_time = time.time()
         _progress_cb = kwargs.get("progress_sub_callback")
@@ -671,7 +671,6 @@ class SpectralRepair(PhaseInterface):
                     _progress_cb(float(np.clip(pct, 0.0, 100.0)), label, time.time() - start_time)
                 except Exception:
                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                    pass
 
         _report_progress(2.0, "Spektralreparatur: Vorbereitung")
         self._ml_guard_events = []
@@ -868,7 +867,6 @@ class SpectralRepair(PhaseInterface):
                                     _plm23.touch_plugin("Apollo")  # type: ignore[attr-defined]
                                 except Exception:
                                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                                    pass
                             _ap_l = _apollo_inst.repair(audio[:, 0], sample_rate, material=self._current_material)
                             _ap_l_audio = _ap_l.audio
                             _ap_l_hf = float(_ap_l.hf_gain_db)
@@ -880,7 +878,6 @@ class SpectralRepair(PhaseInterface):
                                     _plm23.touch_plugin("Apollo")  # type: ignore[attr-defined]
                                 except Exception:
                                     logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                                    pass
                             _ap_r = _apollo_inst.repair(audio[:, 1], sample_rate, material=self._current_material)
                             # §2.51 L/R-Zeitversatz-Guard: Apollo kann je Kanal minimal
                             # unterschiedliche Sample-Zahlen zurückgeben (Mamba-State-Init-Differenz).
@@ -911,7 +908,6 @@ class SpectralRepair(PhaseInterface):
                             _plm23.set_active("Apollo", False)
                         except Exception:
                             logger.debug("_report_progress: silent except suppressed", exc_info=True)
-                            pass
 
         # --- ADMM Declipping path (spec §4.5a) ---
         # Detect hard clipping and route to sparse-recovery solver instead of
@@ -1228,25 +1224,21 @@ class SpectralRepair(PhaseInterface):
                     _vfa_zones_p23.append((float(_vz[0]), float(_vz[1]), 0.20))
                 except Exception:
                     logger.debug("_waerme_proxy_p23: silent except suppressed", exc_info=True)
-                    pass
             for _fz in kwargs.get("frisson_zones") or []:
                 try:
                     _vfa_zones_p23.append((float(_fz[0]), float(_fz[1]), 0.30))
                 except Exception:
                     logger.debug("_waerme_proxy_p23: silent except suppressed", exc_info=True)
-                    pass
             for _wz in kwargs.get("whisper_zones") or []:
                 try:
                     _vfa_zones_p23.append((float(_wz[0]), float(_wz[1]), 0.25))
                 except Exception:
                     logger.debug("_waerme_proxy_p23: silent except suppressed", exc_info=True)
-                    pass
             for _pz in kwargs.get("passaggio_zones") or []:
                 try:
                     _vfa_zones_p23.append((float(_pz[0]), float(_pz[1]), 0.35))
                 except Exception:
                     logger.debug("_waerme_proxy_p23: silent except suppressed", exc_info=True)
-                    pass
             if _vfa_zones_p23:
                 _n_p23 = repaired_audio.shape[0] if repaired_audio.ndim == 1 else repaired_audio.shape[-1]
                 _blend_p23 = np.ones(_n_p23, dtype=np.float32) * float(repair_strength)
@@ -1752,7 +1744,6 @@ class SpectralRepair(PhaseInterface):
                     progress_cb(float(np.clip(pct, 0.0, 100.0)), label)
                 except Exception:
                     logger.debug("_report: silent except suppressed", exc_info=True)
-                    pass
 
         _report(8.0, "STFT")
         # Compute STFT
@@ -2088,7 +2079,6 @@ class SpectralRepair(PhaseInterface):
                     progress_cb(5.0 + 90.0 * (_zi / _n_zones), f"Zone {name}")
                 except Exception:
                     logger.debug("_intra_zone_budget_exceeded: silent except suppressed", exc_info=True)
-                    pass
             logger.info(
                 "phase_23 MRSA: zone %d/%d '%s' elapsed=%.1fs budget=%.0fs",
                 _zi + 1,
@@ -2193,7 +2183,6 @@ class SpectralRepair(PhaseInterface):
                 progress_cb(100.0, "Zonen-Merge")
             except Exception:
                 logger.debug("_intra_zone_budget_exceeded: silent except suppressed", exc_info=True)
-                pass
         result = merge_zones(zone_audios, zone_meta, sample_rate, len(audio_f32))
         # §0h Music-Death-Shield: MRSA output must not exceed +3 dB of input RMS.
         # merge_zones sums 5 zone reconstructions — imperfect filterbank overlap or
@@ -2248,7 +2237,6 @@ class SpectralRepair(PhaseInterface):
             _plm23_asr.set_active("AudioSR", True)
         except Exception:
             logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
-            pass
         try:
             if not self._has_sufficient_ml_headroom(audio, sample_rate):
                 return audio
@@ -2400,7 +2388,6 @@ class SpectralRepair(PhaseInterface):
                     _plm23_asr.set_active("AudioSR", False)
                 except Exception:
                     logger.debug("_repair_stereo_ms_channels_first: silent except suppressed", exc_info=True)
-                    pass
 
     def _estimate_noise_floor_imcra(self, magnitude: np.ndarray) -> np.ndarray:
         """IMCRA-adaptiver Rauschboden pro Zeit-Frequenz-Bin (Cohen 2003).

@@ -368,10 +368,8 @@ class ClickRemovalPhase(PhaseInterface):
                 progress_callback(float(pct), label)
             except Exception:
                 logger.debug("_emit_progress: silent except suppressed", exc_info=True)
-                pass
         except Exception:
             logger.debug("_emit_progress: silent except suppressed", exc_info=True)
-            pass
 
     def process(
         self,
@@ -400,14 +398,13 @@ class ClickRemovalPhase(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "click_removal",
-                default_nr=0.3, default_de_ess=0.1, default_comp=1.0)
+
+            _pim = apply_pim_intensity(kwargs, "click_removal", default_nr=0.3, default_de_ess=0.1, default_comp=1.0)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception:
             logger.debug("process: silent except suppressed", exc_info=True)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         start_time = time.time()
         progress_sub_callback = kwargs.get("progress_sub_callback")
@@ -772,7 +769,6 @@ class ClickRemovalPhase(PhaseInterface):
                     _plm01_dfn.set_active("DeepFilterNetV3", False)
                 except Exception:
                     logger.debug("_repair_click_patch_ml: silent except suppressed", exc_info=True)
-                    pass
 
     @staticmethod
     def _compute_click_local_strength(
@@ -1165,7 +1161,6 @@ class ClickRemovalPhase(PhaseInterface):
             _plm01_dfn.set_active("DeepFilterNetV3", True)
         except Exception:
             logger.debug("_repair_clicks_ml: silent except suppressed", exc_info=True)
-            pass
 
         try:
             # In-memory enhance() statt Subprocess-Datei-API (§V05: kein griffinlim, kein process())
@@ -1195,7 +1190,6 @@ class ClickRemovalPhase(PhaseInterface):
                     _plm01_dfn.set_active("DeepFilterNetV3", False)
                 except Exception:
                     logger.debug("_repair_clicks_ml: silent except suppressed", exc_info=True)
-                    pass
 
     def _detect_clicks_multiscale(self, audio: np.ndarray, thresholds: dict[str, float]) -> list[tuple[int, int]]:
         """

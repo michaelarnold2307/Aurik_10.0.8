@@ -1,4 +1,5 @@
 import pytest
+
 """§2.64 v9.12.2 — Unit-Tests für _fast_goal_snapshot Proxy-Kalibrierung.
 
 Schützt vor Regression der drei systemischen Proxy-Bugs, die zu persistenten

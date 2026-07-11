@@ -116,6 +116,6 @@ class MLDeEsser:
             if audio.ndim == 1:
                 return _deess_mono(audio).astype(audio.dtype)
             return np.stack([_deess_mono(ch) for ch in audio], axis=0).astype(audio.dtype)
-        except Exception as e:
+        except Exception:
             logger.warning("deesser_ml.py::_deess_mono fallback", exc_info=True)
             return audio

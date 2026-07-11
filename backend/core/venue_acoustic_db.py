@@ -744,17 +744,20 @@ def estimate_room_type(
     # nie in Kirchen entstanden. Der Hall kommt vom Plattenhall/Chamber.
     # Caps: concert_hall→broadcast, church→broadcast.
     _is_studio_era = (
-        era_decade is not None and era_decade >= 1960
-        and material_hint in ("vinyl", "tape", "reel_tape", "cassette")
+        era_decade is not None and era_decade >= 1960 and material_hint in ("vinyl", "tape", "reel_tape", "cassette")
     )
     if _is_studio_era and room in ("concert_hall", "church"):
         import logging
+
         _log = logging.getLogger(__name__)
         _log.info(
             "§2.59.16 Room-Era-Plausibilität: RT60=%.1fs → '%s', "
             "aber era=%d + material=%s → auf 'broadcast' korrigiert "
             "(kein Kirchenhall in Studio-Ära)",
-            rt60_mid_s, room, era_decade, material_hint,
+            rt60_mid_s,
+            room,
+            era_decade,
+            material_hint,
         )
         return "broadcast"
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Mapping: DefectType → Phase-ID die diesen Defekt chirurgisch behandeln kann
 # Nur Phasen mit bekannter, stabiler per-Instance-Reparatur.
 SURGICAL_DEFECT_TO_PHASE: dict[str, str] = {
@@ -94,8 +93,15 @@ class SurgicalPlan:
     # Safety
     max_amplitude_ratio: float = 2.0  # Output nie > 2× Input
 
-    def add(self, defect_type: str, phase_id: str, start_s: float, end_s: float,
-            severity: float = 1.0, metadata: dict[str, Any] | None = None) -> None:
+    def add(
+        self,
+        defect_type: str,
+        phase_id: str,
+        start_s: float,
+        end_s: float,
+        severity: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Fügt eine chirurgische Anweisung hinzu."""
         # Validiere: kein Placeholder (0–duration)
         dur = end_s - start_s
@@ -103,14 +109,16 @@ class SurgicalPlan:
             return  # Skip Placeholder
         if dur < 0.0001:  # < 0.1ms
             return  # Skip zu kurze Events
-        self.instructions.append(SurgicalInstruction(
-            defect_type=defect_type,
-            phase_id=phase_id,
-            start_s=start_s,
-            end_s=end_s,
-            severity=severity,
-            metadata=metadata or {},
-        ))
+        self.instructions.append(
+            SurgicalInstruction(
+                defect_type=defect_type,
+                phase_id=phase_id,
+                start_s=start_s,
+                end_s=end_s,
+                severity=severity,
+                metadata=metadata or {},
+            )
+        )
 
     def by_phase(self) -> dict[str, list[SurgicalInstruction]]:
         """Gruppiert Anweisungen nach Phase-ID."""

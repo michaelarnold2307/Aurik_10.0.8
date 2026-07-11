@@ -538,9 +538,7 @@ class E2EOptimizationFramework:
 
     def load_checkpoint(self, checkpoint_path: Path):
         """Lädt training checkpoint."""
-        checkpoint = torch.load(
-            checkpoint_path, map_location=self.device, weights_only=True
-        )  # nosec B614 — interner Tensor-Checkpoint aus models/
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)  # nosec B614 — interner Tensor-Checkpoint aus models/
 
         self.trainable_modules.load_state_dict(checkpoint["model_state_dict"])
         if self.optimizer is not None:

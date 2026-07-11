@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_post_pipeline_stereo_guard.py — §2.49b Post-Pipeline Cumulative Stereo-Collapse Guard
 

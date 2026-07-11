@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_09_crackle_removal._compute_crackle_removal_profile (§2.56)."""
 
 from backend.core.phases.phase_09_crackle_removal import CrackleRemovalPhase

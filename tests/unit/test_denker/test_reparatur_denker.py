@@ -187,7 +187,7 @@ class TestReparaturDenkerRepariere:
 
                 denker = ReparaturDenker()
                 return denker.repariere(audio, sr, material=material, quality_before=quality_before)
-            except Exception as e:
+            except Exception:
                 logger.warning("test fallback", exc_info=True)
                 return None
 

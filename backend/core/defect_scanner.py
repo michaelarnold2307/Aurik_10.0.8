@@ -1355,24 +1355,23 @@ class DefectScanner:
         #   Niedriges SNR (noisy) → konservativer (höherer Threshold)
         # Ausnahme: Defekttypen die physikalisch NUR bei bestimmten Materialien
         # auftreten (z.B. WOW nur bei analog) — deren Thresholds bleiben unskaliert.
-        _NON_SCALING_DEFECTS: frozenset[DefectType] = frozenset({
-            DefectType.WOW,
-            DefectType.FLUTTER,
-            DefectType.PRINT_THROUGH,
-        })
-        _measured_snr = _estimate_local_snr(
-            audio[: min(len(audio), sample_rate * 5)],
-            sample_rate
+        _NON_SCALING_DEFECTS: frozenset[DefectType] = frozenset(
+            {
+                DefectType.WOW,
+                DefectType.FLUTTER,
+                DefectType.PRINT_THROUGH,
+            }
         )
+        _measured_snr = _estimate_local_snr(audio[: min(len(audio), sample_rate * 5)], sample_rate)
         _snr_scale = float(np.clip(30.0 / max(5.0, _measured_snr), 0.6, 1.4))
         for _dt in self.thresholds:
             if _dt not in _NON_SCALING_DEFECTS:
-                self.thresholds[_dt] = float(np.clip(
-                    self.thresholds[_dt] * _snr_scale, 0.05, 0.98
-                ))
+                self.thresholds[_dt] = float(np.clip(self.thresholds[_dt] * _snr_scale, 0.05, 0.98))
         logger.debug(
             "§v10 SNR-adaptive thresholds: snr=%.1fdB scale=%.2f material=%s",
-            _measured_snr, _snr_scale, material_type.name if hasattr(material_type, 'name') else str(material_type)
+            _measured_snr,
+            _snr_scale,
+            material_type.name if hasattr(material_type, "name") else str(material_type),
         )
 
         # §9.x [RELEASE_MUST] Chain-adaptive threshold merge — Tonträgerkette darf niemals
@@ -1926,9 +1925,8 @@ class DefectScanner:
                         _nc_sev = max(_nc_sev, float(_sub.severity))
                         _nc_conf = max(_nc_conf, float(_sub.confidence))
                         _abs_locations.extend((t0 + _seg_off, t1 + _seg_off) for t0, t1 in _sub.locations)
-                    except Exception as e:
+                    except Exception:
                         logger.debug("fallback in defect_scanner.py", exc_info=True)
-                        pass
                 scores[_edt].severity = float(np.clip(_nc_sev, 0.0, 1.0))
                 scores[_edt].confidence = float(np.clip(_nc_conf, 0.0, 1.0))
                 if _abs_locations:
@@ -2577,7 +2575,7 @@ class DefectScanner:
 
         # Diskont-Faktor: stärker bei low-bitrate Codecs
         _DISCOUNT_MAP = {
-            "mp3_low": 0.45,     # Stärkster Discount
+            "mp3_low": 0.45,  # Stärkster Discount
             "mp3_high": 0.60,
             "aac": 0.55,
             "streaming": 0.50,
@@ -2591,13 +2589,13 @@ class DefectScanner:
 
         # Analog-Defekte die von Codec-Artefakten imitiert werden
         _ANALOG_MIMICABLE: set[DefectType] = {
-            DefectType.CRACKLE,             # MP3 pre-echo
-            DefectType.CLICKS,              # MP3 block-boundary
-            DefectType.HIGH_FREQ_NOISE,     # MP3 quantization noise / tape hiss
-            DefectType.WOW,                 # SBR gaps + natural vibrato
-            DefectType.FLUTTER,             # SBR spectral holes
-            DefectType.DROPOUTS,            # MP3 bitrate drops
-            DefectType.GROOVE_ECHO,         # MP3 temporal masking
+            DefectType.CRACKLE,  # MP3 pre-echo
+            DefectType.CLICKS,  # MP3 block-boundary
+            DefectType.HIGH_FREQ_NOISE,  # MP3 quantization noise / tape hiss
+            DefectType.WOW,  # SBR gaps + natural vibrato
+            DefectType.FLUTTER,  # SBR spectral holes
+            DefectType.DROPOUTS,  # MP3 bitrate drops
+            DefectType.GROOVE_ECHO,  # MP3 temporal masking
             # TRANSPORT_BUMP REMOVED (§2.74): Broadband level dips cannot
             # be produced by MP3 encoding. These are genuine tape transport
             # defects — the encoder passes them through transparently.
@@ -2621,7 +2619,9 @@ class DefectScanner:
         if _n_discounted > 0:
             logger.info(
                 "§MP3-GUARD Chain-Contamination: %d analoge Defekttypen ×%.2f diskontiert (terminal=%s)",
-                _n_discounted, discount, _terminal,
+                _n_discounted,
+                discount,
+                _terminal,
             )
 
     # ========== MATERIAL AUTO-DETECTION ==========
@@ -2989,7 +2989,7 @@ class DefectScanner:
         # a well-defined noise floor → lower factor catches subtle clicks.
         # Noisy recordings have high baseline variation → higher factor
         # prevents false positives from noise transients.
-        _snr_est = _estimate_local_snr(audio, sample_rate)
+        _snr_est = _estimate_local_snr(audio, self.sample_rate)
         _outlier_factor = float(np.clip(8.0 - _snr_est / 5.0, 3.5, 8.0))
         base_threshold = max(
             float(np.percentile(diff, 99.9)),
@@ -3033,7 +3033,7 @@ class DefectScanner:
         strict_threshold = max(
             float(np.percentile(diff, 99.99)),
             local_median * _strict_factor,
-            float(np.clip(0.15 + _snr_est / 200.0, 0.15, 0.50))
+            float(np.clip(0.15 + _snr_est / 200.0, 0.15, 0.50)),
         )
         strict_indices = np.where(diff > strict_threshold)[0]
         if len(strict_indices) > 0:
@@ -3802,8 +3802,15 @@ class DefectScanner:
 
         logger.info(
             "transport_bump: n=%d, density=%.1f/min, max_mag=%.3f, mean=%.2f, sev=%.3f, suppressed=%d, dur=%.0f–%.0fms (μ=%.0fms)",
-            n_bumps, bump_density, max_mag, mean_score, severity, suppressed_head_dip_like,
-            _dur_min * 1000, _dur_max * 1000, _dur_mean * 1000,
+            n_bumps,
+            bump_density,
+            max_mag,
+            mean_score,
+            severity,
+            suppressed_head_dip_like,
+            _dur_min * 1000,
+            _dur_max * 1000,
+            _dur_mean * 1000,
         )
 
         return DefectScore(
@@ -4180,7 +4187,6 @@ class DefectScanner:
                 blockiness_subscore = float(np.clip((blockiness - 0.20) / 0.80, 0.0, 1.0))
         except Exception as e:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
-            pass
 
         # Konservatives Aggregat: Clipping darf dominieren, sonst gewichteter Mix.
         aggregate = max(
@@ -5762,9 +5768,8 @@ class DefectScanner:
                             mean_sb_ratio = float(np.mean(sideband_ratios_b))
                             # Jitter sidebands: ratio typically 0.05–0.30; pure signal < 0.01
                             sev_bitto = float(np.clip((mean_sb_ratio - 0.03) / 0.25, 0.0, 1.0))
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
-            pass
 
         raw_severity = 0.22 * sev_zc + 0.26 * sev_if + 0.22 * sev_hf + 0.16 * sev_sb + 0.14 * sev_bitto
 
@@ -6019,7 +6024,7 @@ class DefectScanner:
                 locations=[],
                 metadata={"even_ratio": even_ratio, "flat_top_ratio": flat_tops},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.SOFT_SATURATION, 0.0, 0.3)
 
@@ -6156,7 +6161,7 @@ class DefectScanner:
                     "brightness_ratio": round(brightness_ratio, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.SIBILANCE, 0.0, 0.3)
 
@@ -6318,7 +6323,7 @@ class DefectScanner:
                     "presence_fraction": round(pres_fraction, 4),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.VOCAL_HARSHNESS, 0.0, 0.3)
 
@@ -6532,7 +6537,7 @@ class DefectScanner:
                     "dolby_nr_type": _dolby_type,
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.DOLBY_NR_MISMATCH, 0.0, 0.3)
 
@@ -6677,7 +6682,7 @@ class DefectScanner:
                     "median_interval_s": round(median_interval_s, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.TAPE_HEAD_LEVEL_DIP, 0.0, 0.3)
 
@@ -6818,7 +6823,7 @@ class DefectScanner:
                     "mean_mid_band_db": round(float(np.mean(preserved_mid_events)), 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.TAPE_HEAD_CLOG, 0.0, 0.3)
 
@@ -6851,7 +6856,7 @@ class DefectScanner:
         try:
             chain = str(getattr(fmd_result, "transfer_chain", "") or getattr(fmd_result, "chain", "")).lower()
             return any(t in chain for t in ("tape", "reel_tape", "cassette", "wire_recording"))
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return False
 
@@ -7028,7 +7033,7 @@ class DefectScanner:
                     "drift_db_per_minute": round(slope_db_per_minute, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.AMPLITUDE_DRIFT, 0.0, 0.3)
 
@@ -7107,7 +7112,7 @@ class DefectScanner:
                     "best_matching_curve": "RIAA",
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.RIAA_CURVE_ERROR, 0.0, 0.3)
 
@@ -7352,7 +7357,7 @@ class DefectScanner:
                     "spectral_sharpness": round(spectral_sharpness, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.TRANSIENT_SMEARING, 0.0, 0.3)
 
@@ -7570,9 +7575,8 @@ class DefectScanner:
                         fallback_rel_mean = float(np.mean(_fallback_rel))
                         fallback_sev = float(np.clip((fallback_rel_mean - 0.05) / 0.30, 0.0, 0.7))
                         raw_severity = max(raw_severity, fallback_sev)
-                except Exception as e:
+                except Exception:
                     logger.debug("fallback in defect_scanner.py", exc_info=True)
-                    pass
 
             n_events += fallback_events
             event_bonus = float(np.clip(n_events / 10.0, 0.0, 0.3))
@@ -7612,7 +7616,7 @@ class DefectScanner:
                     "is_tape": is_tape,
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.PRE_ECHO, 0.0, 0.3)
 
@@ -7692,7 +7696,7 @@ class DefectScanner:
                 locations=locations,
                 metadata={"near_nyquist_ratio": near_nyq_ratio, "nyquist_hz": nyquist},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.ALIASING, 0.0, 0.3)
 
@@ -7776,7 +7780,7 @@ class DefectScanner:
                 confidence,
                 metadata={"correlation": round(corr, 4), "noise_signal_ratio": round(ratio, 6)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.MODULATION_NOISE, 0.0, 0.3)
 
@@ -7845,7 +7849,7 @@ class DefectScanner:
                 confidence,
                 metadata={"thd_per_quarter": [round(v, 6) for v in thd_values], "slope": round(slope, 4)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.INNER_GROOVE_DISTORTION, 0.0, 0.3)
 
@@ -7964,7 +7968,7 @@ class DefectScanner:
                     "n_echoes": len(best_ratios),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.GROOVE_ECHO, 0.0, 0.3)
 
@@ -8033,7 +8037,7 @@ class DefectScanner:
                 confidence,
                 metadata={"mean_coherence": round(mean_coherence, 4), "delay_ratio": round(delay_ratio, 4)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.CROSSTALK, 0.0, 0.3)
 
@@ -8124,7 +8128,7 @@ class DefectScanner:
                 confidence,
                 metadata={"n_imd_products": len(imd_evidence), "mean_imd_level_db": round(mean_imd, 2)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.INTERMODULATION_DISTORTION, 0.0, 0.3)
 
@@ -8215,7 +8219,7 @@ class DefectScanner:
                 locations=locations,
                 metadata={"n_splices": len(splice_events), "mean_jump_db": round(mean_jump, 2)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.TAPE_SPLICE_ARTIFACT, 0.0, 0.3)
 
@@ -8285,7 +8289,7 @@ class DefectScanner:
                 confidence,
                 metadata={"slope_db_octave": round(slope_db_per_octave, 2), "n_ghost_harmonics": n_ghost},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.HF_REMANENCE_LOSS, 0.0, 0.3)
 
@@ -8358,7 +8362,7 @@ class DefectScanner:
                 confidence,
                 metadata={"odd_ratio": round(odd_ratio, 4), "waveform_asymmetry": round(asym, 4)},
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.STYLUS_DAMAGE, 0.0, 0.3)
 
@@ -8464,7 +8468,7 @@ class DefectScanner:
                     "boundary_modulation_score": round(modulation_score, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.STICKY_SHED_RESIDUE, 0.0, 0.3)
 
@@ -8590,7 +8594,7 @@ class DefectScanner:
                     "mean_instability_cents": round(mean_inst, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.MULTIBAND_WOW_FLUTTER, 0.0, 0.3)
 
@@ -8658,7 +8662,7 @@ class DefectScanner:
                     "floor_uniformity": round(floor_uniforms, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.GENERATION_LOSS, 0.0, 0.3)
 
@@ -8772,7 +8776,7 @@ class DefectScanner:
                     "harmonic_series_energy_ratio": round(harmonic_series_energy_ratio, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.MOTOR_INTERFERENCE, 0.0, 0.3)
 
@@ -8844,7 +8848,7 @@ class DefectScanner:
                     "ref_mean_db": round(ref_mean, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.PROXIMITY_EFFECT_EXCESS, 0.0, 0.3)
 
@@ -8926,7 +8930,7 @@ class DefectScanner:
                     "mean_prominence_db": round(mean_prominence, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.ROOM_MODE_RESONANCE, 0.0, 0.3)
 
@@ -9011,7 +9015,7 @@ class DefectScanner:
                     "nf_modulation_db": round(nf_modulation, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.NR_BREATHING_ARTIFACT, 0.0, 0.3)
 
@@ -9093,7 +9097,7 @@ class DefectScanner:
                     "mean_sideband_prominence_db": round(mean_sb_prom, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.FLUTTER_SPECTRAL_SIDEBANDS, 0.0, 0.3)
 
@@ -9180,7 +9184,7 @@ class DefectScanner:
                     "mean_sideband_prominence_db": round(mean_prom_db, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.SCRAPE_FLUTTER, 0.0, 0.3)
 
@@ -9256,7 +9260,7 @@ class DefectScanner:
                     "deviation_factor": round(deviation_factor, 3),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.SPEED_CALIBRATION_ERROR, 0.0, 0.3)
 
@@ -9354,7 +9358,7 @@ class DefectScanner:
                     "f0_hz": round(f0, 1),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.OVERLOAD_DISTORTION, 0.0, 0.3)
 
@@ -9519,7 +9523,7 @@ class DefectScanner:
                     "noise_modulation": round(noise_mod, 2),
                 },
             )
-        except Exception as e:
+        except Exception:
             logger.debug("fallback in defect_scanner.py", exc_info=True)
             return DefectScore(DefectType.LACQUER_DISC_DEGRADATION, 0.0, 0.3)
 

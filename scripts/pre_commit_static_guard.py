@@ -32,17 +32,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Wissenschaftlich begründete Konstanten (ISO, IEC, physikalische Limits)
 SCIENTIFIC_CONSTANTS: set[str] = {
-    "ISO_226", "IEC_60098", "IEC_60094", "RIAA", "NAB", "CCIR",
-    "NYQUIST", "SPEED_OF_SOUND", "GRAVITY",
+    "ISO_226",
+    "IEC_60098",
+    "IEC_60094",
+    "RIAA",
+    "NAB",
+    "CCIR",
+    "NYQUIST",
+    "SPEED_OF_SOUND",
+    "GRAVITY",
 }
 
 # Erlaubte statische Werte in bestimmten Kontexten
 ALLOWED_STATIC_PATTERNS: list[str] = [
-    r"sample_rate\s*=\s*48000",        # Projektspezifisch festgelegt
-    r"CROSSOVER_FREQS\s*=\s*\[",        # Wissenschaftlich (Bark-Skala)
-    r"_CODEC_ARTIFACT_THRESHOLD\s*=",   # Kalibriert, nicht willkürlich
-    r"SECONDARY_ANALOG_MIN\s*=",        # Bayesian-kalibriert
-    r"SILENCE_THRESHOLD_DBFS\s*=",      # Physikalisch (digital floor)
+    r"sample_rate\s*=\s*48000",  # Projektspezifisch festgelegt
+    r"CROSSOVER_FREQS\s*=\s*\[",  # Wissenschaftlich (Bark-Skala)
+    r"_CODEC_ARTIFACT_THRESHOLD\s*=",  # Kalibriert, nicht willkürlich
+    r"SECONDARY_ANALOG_MIN\s*=",  # Bayesian-kalibriert
+    r"SILENCE_THRESHOLD_DBFS\s*=",  # Physikalisch (digital floor)
 ]
 
 # Muster für statische Werte, die dynamisch sein sollten
@@ -57,10 +64,9 @@ STATIC_VALUE_PATTERNS: list[tuple[str, str]] = [
 ]
 
 # Fragile Test-Patterns
-SOURCE_GREP_PATTERN = re.compile(r'inspect\.getsource.*\n.*assert.*in (?:src|content|source)')
+SOURCE_GREP_PATTERN = re.compile(r"inspect\.getsource.*\n.*assert.*in (?:src|content|source)")
 UNGUARDED_IMPORT_PATTERN = re.compile(
-    r'^(?:from hypothesis |import hypothesis|import requests|import torch\b)',
-    re.MULTILINE
+    r"^(?:from hypothesis |import hypothesis|import requests|import torch\b)", re.MULTILINE
 )
 
 
@@ -68,7 +74,7 @@ def _find_python_files(paths: list[str] | None = None) -> list[Path]:
     """Findet alle zu prüfenden Python-Dateien."""
     if paths:
         return [Path(p) for p in paths if p.endswith(".py")]
-    
+
     files: list[Path] = []
     for root, dirs, filenames in os.walk(PROJECT_ROOT):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__" and ".venv" not in d]
@@ -93,23 +99,17 @@ def check_r1_r2_static_values(filepath: Path) -> list[str]:
     for pattern, desc in STATIC_VALUE_PATTERNS:
         matches = list(re.finditer(pattern, content, re.IGNORECASE))
         for match in matches:
-            line_no = content[:match.start()].count("\n") + 1
+            line_no = content[: match.start()].count("\n") + 1
             line = content.split("\n")[line_no - 1].strip()
             # Check if there's SNR adaptation nearby (±5 lines)
             context_start = max(0, line_no - 6)
             context_end = min(len(content.split("\n")), line_no + 5)
             context = "\n".join(content.split("\n")[context_start:context_end])
             has_adaptation = any(
-                kw in context.lower()
-                for kw in ["snr_adapt", "snr-adapt", "_snr", "adaptive", "measured", "dynamic"]
+                kw in context.lower() for kw in ["snr_adapt", "snr-adapt", "_snr", "adaptive", "measured", "dynamic"]
             )
-            if not has_adaptation and not any(
-                re.search(p, line) for p in ALLOWED_STATIC_PATTERNS
-            ):
-                violations.append(
-                    f"{filepath}:{line_no}: {desc} ohne SNR-Adaption — "
-                    f"'{line[:80]}'"
-                )
+            if not has_adaptation and not any(re.search(p, line) for p in ALLOWED_STATIC_PATTERNS):
+                violations.append(f"{filepath}:{line_no}: {desc} ohne SNR-Adaption — '{line[:80]}'")
     return violations
 
 
@@ -148,10 +148,10 @@ def check_r4_unguarded_imports(filepath: Path) -> list[str]:
         return violations
 
     for match in UNGUARDED_IMPORT_PATTERN.finditer(content):
-        line_no = content[:match.start()].count("\n") + 1
+        line_no = content[: match.start()].count("\n") + 1
         # Check if there's a try/except nearby
         context_start = max(0, line_no - 3)
-        context = "\n".join(content.split("\n")[context_start:line_no + 1])
+        context = "\n".join(content.split("\n")[context_start : line_no + 1])
         if "try:" not in context and "except" not in context:
             violations.append(
                 f"{filepath}:{line_no}: Unguarded Import '{match.group().strip()}' — "
@@ -174,8 +174,8 @@ def check_r5_missing_markers(filepath: Path) -> list[str]:
         return violations  # Kleine Tests brauchen keine Marker
 
     # Check for pytest marker usage
-    has_marker = bool(re.search(r'@pytest\.mark\.\w+', content))
-    has_pytestmark = bool(re.search(r'pytestmark\s*=', content))
+    has_marker = bool(re.search(r"@pytest\.mark\.\w+", content))
+    has_pytestmark = bool(re.search(r"pytestmark\s*=", content))
     if not has_marker and not has_pytestmark:
         violations.append(
             f"{filepath}:1: Test-Datei ({len(content.split(chr(10)))} Zeilen) "
@@ -196,16 +196,21 @@ def main() -> int:
     # Nur geänderte/neue Dateien prüfen (Git Staging)
     if not args.files:
         import subprocess
+
         try:
             result = subprocess.run(
                 ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
-                capture_output=True, text=True, cwd=PROJECT_ROOT
+                capture_output=True,
+                text=True,
+                cwd=PROJECT_ROOT,
             )
             staged = {f.strip() for f in result.stdout.split("\n") if f.endswith(".py")}
             if staged:
-                py_files = [f for f in py_files if str(f.relative_to(PROJECT_ROOT)) in staged or any(
-                    str(f).endswith(s) for s in staged
-                )]
+                py_files = [
+                    f
+                    for f in py_files
+                    if str(f.relative_to(PROJECT_ROOT)) in staged or any(str(f).endswith(s) for s in staged)
+                ]
         except Exception:
             pass
 
@@ -221,7 +226,7 @@ def main() -> int:
         print(f"\n⚠️  {len(all_violations)} Static-Value-Guard Verstöße gefunden:\n")
         for v in all_violations:
             print(f"  {v}")
-        print(f"\n→ Siehe docs/reports/audit_lessons_learned_2026-07-11.md für Kontext.")
+        print("\n→ Siehe docs/reports/audit_lessons_learned_2026-07-11.md für Kontext.")
         if args.ci:
             return 1
         return 0 if input("\nTrotzdem commiten? [y/N] ").lower() != "y" else 0

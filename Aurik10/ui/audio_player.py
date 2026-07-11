@@ -257,9 +257,8 @@ class StreamingAudioPlayer:
                 try:
                     self._stream.stop()
                     self._stream.close()
-                except Exception as e:
+                except Exception:
                     logger.warning("audio_player.py::shutdown fallback", exc_info=True)
-                    pass
                 self._stream = None
             self._resample_cache.clear()
 
@@ -341,9 +340,8 @@ class StreamingAudioPlayer:
             if cb is not None:
                 try:
                     cb()
-                except Exception as e:
+                except Exception:
                     logger.warning("audio_player.py::_audio_callback fallback", exc_info=True)
-                    pass
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -403,9 +401,8 @@ class StreamingAudioPlayer:
             try:
                 if self._stream.active or not self._stream.closed:
                     return True
-            except Exception as e:
+            except Exception:
                 logger.warning("audio_player.py::_ensure_stream fallback", exc_info=True)
-                pass
             # Stream dead — recreate
             self._stream = None
 
@@ -451,7 +448,7 @@ class StreamingAudioPlayer:
 
         try:
             data = np.asarray(audio, dtype=np.float32)
-        except Exception as e:
+        except Exception:
             logger.warning("audio_player.py::_prepare fallback", exc_info=True)
             return None
 

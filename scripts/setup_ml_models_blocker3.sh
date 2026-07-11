@@ -47,27 +47,27 @@ download_hf_model() {
     local repo="$1"
     local target_dir="$2"
     local description="$3"
-    
+
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}📥 Downloading: $description${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
+
     if model_exists "$target_dir"; then
         echo -e "${YELLOW}✓ Model already exists at: $target_dir${NC}"
         echo -e "${YELLOW}  Skipping download.${NC}"
         return 0
     fi
-    
+
     echo "Repository: $repo"
     echo "Target: $target_dir"
-    
+
     # Try git clone first (faster for large models)
     if git clone "https://huggingface.co/$repo" "$target_dir" 2>/dev/null; then
         echo -e "${GREEN}✓ Successfully cloned via git${NC}"
         return 0
     fi
-    
+
     # Fallback to huggingface-cli
     echo -e "${YELLOW}Git clone failed, trying huggingface-cli...${NC}"
     if command -v huggingface-cli &> /dev/null; then
@@ -75,7 +75,7 @@ download_hf_model() {
         echo -e "${GREEN}✓ Successfully downloaded via huggingface-cli${NC}"
         return 0
     fi
-    
+
     echo -e "${RED}✗ Failed to download model${NC}"
     echo -e "${RED}  Please install huggingface-cli: pip install huggingface-hub${NC}"
     return 1
@@ -98,7 +98,7 @@ MERT_DIR="$MODELS_DIR/mert_instrument_detector"
 
 if download_hf_model "m-a-p/MERT-v1-330M" "$MERT_DIR" "MERT-v1-330M"; then
     echo -e "${GREEN}✓ MERT-v1-330M ready${NC}"
-    
+
     # Create integration config
     cat > "$MERT_DIR/aurik_config.json" << EOF
 {
@@ -136,7 +136,7 @@ if python3 -c "import madmom" 2>/dev/null; then
     echo -e "${YELLOW}✓ madmom already installed${NC}"
 else
     echo "Installing madmom..."
-    
+
     # Check which venv to use
     if [ -d "$PROJECT_ROOT/.venv_aurik" ]; then
         VENV_PYTHON="$PROJECT_ROOT/.venv_aurik/bin/python"
@@ -145,15 +145,15 @@ else
         VENV_PYTHON="python3"
         VENV_PIP="pip3"
     fi
-    
+
     echo "Using Python: $VENV_PYTHON"
-    
+
     # Install madmom
     $VENV_PIP install madmom
-    
+
     if $VENV_PYTHON -c "import madmom" 2>/dev/null; then
         echo -e "${GREEN}✓ madmom successfully installed${NC}"
-        
+
         # Create documentation
         mkdir -p "$MODELS_DIR/madmom"
         cat > "$MODELS_DIR/madmom/aurik_config.json" << EOF
@@ -194,7 +194,7 @@ AST_DIR="$MODELS_DIR/ast_perceptual_base"
 
 if download_hf_model "MIT/ast-finetuned-audioset-10-10-0.4593" "$AST_DIR" "AST Model"; then
     echo -e "${GREEN}✓ AST Model ready${NC}"
-    
+
     # Create integration config
     cat > "$AST_DIR/aurik_config.json" << EOF
 {
@@ -211,7 +211,7 @@ if download_hf_model "MIT/ast-finetuned-audioset-10-10-0.4593" "$AST_DIR" "AST M
 }
 EOF
     echo "  Config saved to: $AST_DIR/aurik_config.json"
-    
+
     echo ""
     echo -e "${YELLOW}⚠ Note: AST model is downloaded but NOT fine-tuned${NC}"
     echo -e "${YELLOW}  For optimal perceptual validation:${NC}"

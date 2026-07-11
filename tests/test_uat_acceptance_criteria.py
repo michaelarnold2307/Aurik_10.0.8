@@ -797,7 +797,7 @@ def _load_json_dict(path: Path) -> dict[str, Any]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-    except Exception as e:
+    except Exception:
         logger.warning("test fallback", exc_info=True)
         return {}
     return {}
@@ -810,7 +810,7 @@ def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(path)
-    except Exception as e:
+    except Exception:
         logger.warning("test fallback", exc_info=True)
         return
 

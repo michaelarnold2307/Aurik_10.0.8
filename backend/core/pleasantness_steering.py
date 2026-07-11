@@ -23,11 +23,7 @@ Es wird nachgesteuert, bis das Optimum gefunden ist.
 
 from __future__ import annotations
 
-import copy
 import logging
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any
 
 import numpy as np
 
@@ -37,6 +33,7 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Steering-Aktionen
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class PleasantnessSteering:
     """Steuert die Pipeline anhand psychoakustischer Angenehmheit.
@@ -63,11 +60,11 @@ class PleasantnessSteering:
     """
 
     # Konfiguration
-    DELTA_NEUTRAL: float = 0.015      # |ΔP| < 0.015 → neutral
-    DELTA_RETRY: float = 0.03         # |ΔP| zwischen 0.015 und 0.05 → leichter wiederholen
-    DELTA_SKIP: float = 0.06          # |ΔP| > 0.05 → überspringen
-    MAX_CONSECUTIVE_DROPS: int = 2    # Nach so vielen Drops in Folge → Rollback
-    MAX_RETRIES_PER_STEP: int = 2     # Max. Wiederholungen pro Schritt
+    DELTA_NEUTRAL: float = 0.015  # |ΔP| < 0.015 → neutral
+    DELTA_RETRY: float = 0.03  # |ΔP| zwischen 0.015 und 0.05 → leichter wiederholen
+    DELTA_SKIP: float = 0.06  # |ΔP| > 0.05 → überspringen
+    MAX_CONSECUTIVE_DROPS: int = 2  # Nach so vielen Drops in Folge → Rollback
+    MAX_RETRIES_PER_STEP: int = 2  # Max. Wiederholungen pro Schritt
     INTENSITY_REDUCTION_PER_RETRY: float = 0.35  # 35% weniger Intensität pro Retry
 
     def __init__(self) -> None:
@@ -170,10 +167,12 @@ class PleasantnessSteering:
             if self._retries_this_step <= self.MAX_RETRIES_PER_STEP:
                 reduction = self.INTENSITY_REDUCTION_PER_RETRY * self._retries_this_step
                 logger.info(
-                    "HPE 🔄 ΔP=%+.3f — Leichte Verschlechterung. "
-                    "Retry %d/%d mit %d%% weniger Intensität. (%s)",
-                    delta, self._retries_this_step, self.MAX_RETRIES_PER_STEP,
-                    int(reduction * 100), step_info,
+                    "HPE 🔄 ΔP=%+.3f — Leichte Verschlechterung. Retry %d/%d mit %d%% weniger Intensität. (%s)",
+                    delta,
+                    self._retries_this_step,
+                    self.MAX_RETRIES_PER_STEP,
+                    int(reduction * 100),
+                    step_info,
                 )
                 return SteerDecision(
                     action=SteerAction.RETRY_LIGHTER,
@@ -185,9 +184,10 @@ class PleasantnessSteering:
             # Max Retries erreicht → SKIP
             self._consecutive_drops += 1
             logger.info(
-                "HPE ⏭️  ΔP=%+.3f — Nach %d Retries keine Verbesserung. "
-                "Schritt überspringen. (%s)",
-                delta, self.MAX_RETRIES_PER_STEP, step_info,
+                "HPE ⏭️  ΔP=%+.3f — Nach %d Retries keine Verbesserung. Schritt überspringen. (%s)",
+                delta,
+                self.MAX_RETRIES_PER_STEP,
+                step_info,
             )
             return SteerDecision(
                 action=SteerAction.SKIP_AND_REVERT,
@@ -199,9 +199,9 @@ class PleasantnessSteering:
         # Case 4: Deutliche Verschlechterung → SOFORT SKIP
         self._consecutive_drops += 1
         logger.warning(
-            "HPE ⏭️  ΔP=%+.3f — Deutliche Verschlechterung! "
-            "Schritt überspringen. (%s)",
-            delta, step_info,
+            "HPE ⏭️  ΔP=%+.3f — Deutliche Verschlechterung! Schritt überspringen. (%s)",
+            delta,
+            step_info,
         )
 
         # Prüfe ob Rollback nötig
@@ -209,9 +209,10 @@ class PleasantnessSteering:
             best = self._best_snapshot
             if best is not None:
                 logger.warning(
-                    "HPE ⏪ %d Schritte in Folge verschlechtert. "
-                    "Rollback zu Schritt %d (P=%.3f).",
-                    self._consecutive_drops, best.step_id, best.pleasantness,
+                    "HPE ⏪ %d Schritte in Folge verschlechtert. Rollback zu Schritt %d (P=%.3f).",
+                    self._consecutive_drops,
+                    best.step_id,
+                    best.pleasantness,
                 )
                 return SteerDecision(
                     action=SteerAction.ROLLBACK_TO_BEST,
@@ -240,8 +241,7 @@ class PleasantnessSteering:
 
         best = self._best_snapshot
         if best is None:
-            return SteerDecision(action=SteerAction.STOP_WITH_BEST,
-                                 reason="Kein Referenz-Snapshot")
+            return SteerDecision(action=SteerAction.STOP_WITH_BEST, reason="Kein Referenz-Snapshot")
 
         delta_vs_best = final_p - best.pleasantness
         delta_vs_ref = final_p - self._reference_pleasantness
@@ -249,9 +249,10 @@ class PleasantnessSteering:
         if delta_vs_best < -self.DELTA_NEUTRAL and best.step_id > 0:
             # Endergebnis schlechter als bester Zwischenstand → Rollback
             logger.warning(
-                "HPE ⏪ Final=%.3f schlechter als Best=%.3f (Schritt %d). "
-                "Rollback zum Optimum.",
-                final_p, best.pleasantness, best.step_id,
+                "HPE ⏪ Final=%.3f schlechter als Best=%.3f (Schritt %d). Rollback zum Optimum.",
+                final_p,
+                best.pleasantness,
+                best.step_id,
             )
             return SteerDecision(
                 action=SteerAction.ROLLBACK_TO_BEST,
@@ -312,15 +313,14 @@ class PleasantnessSteering:
         """Misst die psychoakustische Angenehmheit. Robust gegen Fehler."""
         try:
             from backend.core.human_pleasantness_estimator import compute_pleasantness
+
             result = compute_pleasantness(audio, self._sr)
             return float(result.score)
         except Exception as e:
             logger.debug("HPE-Messung fehlgeschlagen: %s", e)
             return 0.5  # Neutraler Fallback
 
-    def _record_snapshot(
-        self, step_id: int, audio: np.ndarray, pleasantness: float, label: str
-    ) -> None:
+    def _record_snapshot(self, step_id: int, audio: np.ndarray, pleasantness: float, label: str) -> None:
         """Zeichnet einen Snapshot auf und aktualisiert den Bestwert."""
         snap = StepSnapshot(
             step_id=step_id,
@@ -342,9 +342,8 @@ class PleasantnessSteering:
 # PleasantnessSteering ersetzt. Bestehende Aufrufer von should_stop_pipeline()
 # können stattdessen steering.post_step() verwenden.
 
-def create_steering(
-    reference_audio: np.ndarray, sr: int
-) -> PleasantnessSteering:
+
+def create_steering(reference_audio: np.ndarray, sr: int) -> PleasantnessSteering:
     """Factory-Funktion: Erstellt ein konfiguriertes PleasantnessSteering."""
     steering = PleasantnessSteering()
     steering.set_reference(reference_audio, sr)

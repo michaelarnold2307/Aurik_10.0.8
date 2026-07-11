@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests für core/transient_decoupled_processor.py — TransientDecoupledProcessing.
 
 Spec §2.27: HPSS-Trennung, separate(), recombine(), GrooveMetric-Invariante.

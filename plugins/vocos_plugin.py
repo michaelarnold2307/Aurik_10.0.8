@@ -148,9 +148,8 @@ class VocosPlugin:
             if not try_allocate("Vocos", size_gb=0.12):
                 try:
                     _release("Vocos")
-                except Exception as e:
+                except Exception:
                     logger.warning("vocos_plugin.py::_try_load fallback", exc_info=True)
-                    pass
                 if not try_allocate("Vocos", size_gb=0.12):
                     logger.warning("Vocos: ML-Budget erschöpft — Griffin-Lim-Fallback")
                     return
@@ -362,9 +361,8 @@ class VocosPlugin:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("Vocos", True)
-        except Exception as e:
+        except Exception:
             logger.warning("vocos_plugin.py::_synthesize_vocos_onnx fallback", exc_info=True)
-            pass
         try:
             # 1. Resample auf Modell-SR (bei 48 kHz nativem Modell kein Resampling nötig)
             audio_model = self._resample(audio, sr, model_sr)
@@ -446,9 +444,8 @@ class VocosPlugin:
             if _plm is not None:
                 try:
                     _plm.set_active("Vocos", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("vocos_plugin.py::unknown fallback", exc_info=True)
-                    pass
 
     def _synthesize_bigvgan_v2(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, str, float]:
         """BigVGAN v2 Fallback-Synthese (Stufe 1.5, §4.4 SOTA-Matrix März 2026).
@@ -575,7 +572,7 @@ class VocosPlugin:
             sig = 1.0 / (1.0 + math.exp(-z))
             mos = 1.0 + 4.0 * sig
             return float(np.clip(mos, 1.0, 5.0))
-        except Exception as e:
+        except Exception:
             logger.warning("vocos_plugin.py::_estimate_pqs_mos fallback", exc_info=True)
             return 3.0
 
@@ -595,7 +592,7 @@ class VocosPlugin:
             if signal_pow < 1e-20:
                 return 0.0
             return float(10.0 * math.log10(max(signal_pow / noise_pow, 1e-10)))
-        except Exception as e:
+        except Exception:
             logger.warning("vocos_plugin.py::_mel_snr fallback", exc_info=True)
             return 0.0
 

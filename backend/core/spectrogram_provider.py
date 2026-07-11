@@ -178,7 +178,10 @@ def compute_before_after_spectrograms(
     """
     try:
         spec_orig = compute_spectrogram_data(
-            original, sr, fft_size, hop_size,
+            original,
+            sr,
+            fft_size,
+            hop_size,
             downsample_factor=downsample_factor,
         )
     except ValueError as e:
@@ -187,7 +190,10 @@ def compute_before_after_spectrograms(
 
     try:
         spec_rest = compute_spectrogram_data(
-            restored, sr, fft_size, hop_size,
+            restored,
+            sr,
+            fft_size,
+            hop_size,
             downsample_factor=downsample_factor,
         )
     except ValueError as e:
@@ -230,6 +236,7 @@ def compute_before_after_spectrograms(
 def spectrogram_to_json(data: SpectrogramData) -> str:
     """Konvertiert SpectrogramData nach JSON (für REST-Endpoint)."""
     import json
+
     return json.dumps(data.__dict__, ensure_ascii=False)
 
 

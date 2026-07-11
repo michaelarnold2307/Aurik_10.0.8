@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for NVSR productive adapter metadata."""
 
 import numpy as np

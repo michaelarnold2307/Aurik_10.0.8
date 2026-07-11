@@ -65,7 +65,6 @@ from .phase_39_air_band_enhancement import AirBandEnhancement
 # Phase 40-42: Final Output Processing
 from .phase_40_loudness_normalization import LoudnessNormalizationPhase
 from .phase_41_output_format_optimization import OutputFormatOptimization
-from .phase_glue_stage import GlueStagePhase
 from .phase_42_vocal_enhancement import VocalEnhancement
 from .phase_43_ml_deesser import AdaptiveDeEsserPhase, MLDeEsserPhase
 from .phase_44_guitar_enhancement import GuitarEnhancementPhase
@@ -81,6 +80,7 @@ from .phase_51_drums_enhancement import DrumsEnhancementV1
 from .phase_52_piano_restoration import PianoRestorationV1
 from .phase_54_transparent_dynamics import TransparentDynamicsV1
 from .phase_55_diffusion_inpainting import DiffusionInpaintingPhase
+from .phase_glue_stage import GlueStagePhase
 
 # Phase Interface & Base Classes
 from .phase_interface import (

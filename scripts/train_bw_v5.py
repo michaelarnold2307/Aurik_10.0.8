@@ -15,11 +15,11 @@ Architektur inspiriert von Demucs/Wave-U-Net:
 Loss: Multi-Resolution STFT Loss (3 FFT-Größen) + L1-Waveform
 """
 
-import math, time
+import time
 from pathlib import Path
 
 import numpy as np
-import torch, torchaudio
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.signal import butter, sosfiltfilt
@@ -50,7 +50,7 @@ def make_synthetic(n_samples, sr):
         f0 = np.random.choice(_NOTES) * np.random.uniform(0.5, 2.0)
         for h in range(1, np.random.randint(2, 8)):
             amp = 0.4 / (h ** np.random.uniform(0.5, 1.5))
-            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2*np.pi))
+            y += amp * np.sin(2 * np.pi * f0 * h * t + np.random.uniform(0, 2 * np.pi))
 
     # Transients (drum-like)
     for _ in range(np.random.randint(0, 3)):
@@ -58,13 +58,15 @@ def make_synthetic(n_samples, sr):
         decay = np.exp(-np.arange(min(2000, n_samples - pos)) / np.random.uniform(50, 300))
         freq = np.random.uniform(200, 2000)
         pulse = decay * np.sin(2 * np.pi * freq * np.arange(len(decay)) / sr)
-        y[pos:pos+len(pulse)] += 0.3 * pulse
+        y[pos : pos + len(pulse)] += 0.3 * pulse
 
     # Noise
     noise = np.random.randn(n_samples).astype(np.float64)
     color = np.random.choice(["pink", "brown", "white"])
-    if color == "pink": noise = np.cumsum(noise)
-    elif color == "brown": noise = np.cumsum(np.cumsum(noise))
+    if color == "pink":
+        noise = np.cumsum(noise)
+    elif color == "brown":
+        noise = np.cumsum(np.cumsum(noise))
     noise /= np.abs(noise).max() + 1e-8
     y += 0.05 * noise
 
@@ -77,7 +79,8 @@ def make_synthetic(n_samples, sr):
 
 def butter_lp(y, cutoff, sr, order=6):
     nyq = sr / 2
-    if cutoff >= nyq * 0.98: return y.copy()
+    if cutoff >= nyq * 0.98:
+        return y.copy()
     sos = butter(order, cutoff / nyq, btype="low", output="sos")
     return sosfiltfilt(sos, y).astype(np.float32)
 
@@ -86,8 +89,10 @@ def butter_lp(y, cutoff, sr, order=6):
 # Waveform U-Net (1D)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class FiLM1D(nn.Module):
     """1D FiLM: condition on cutoff frequency."""
+
     def __init__(self, cond_dim, feat_ch):
         super().__init__()
         self.scale = nn.Linear(cond_dim, feat_ch)
@@ -102,6 +107,7 @@ class FiLM1D(nn.Module):
 
 class EncoderBlock(nn.Module):
     """Downsampling encoder block: Conv1d + GLU + optional downsample."""
+
     def __init__(self, in_ch, out_ch, downsample=True):
         super().__init__()
         self.downsample = downsample
@@ -121,6 +127,7 @@ class EncoderBlock(nn.Module):
 
 class DecoderBlock(nn.Module):
     """Upsampling decoder block with skip connection."""
+
     def __init__(self, in_ch, skip_ch, out_ch):
         super().__init__()
         self.up = nn.ConvTranspose1d(in_ch, in_ch, 4, stride=2, padding=1, bias=False)
@@ -131,9 +138,9 @@ class DecoderBlock(nn.Module):
         x = self.up(x)
         # Align lengths
         if x.shape[-1] > skip.shape[-1]:
-            x = x[..., :skip.shape[-1]]
+            x = x[..., : skip.shape[-1]]
         elif x.shape[-1] < skip.shape[-1]:
-            skip = skip[..., :x.shape[-1]]
+            skip = skip[..., : x.shape[-1]]
         x = torch.cat([x, skip], dim=1)
         x = self.conv(x)
         x = self.norm(x)
@@ -148,8 +155,8 @@ class WaveformUNet(nn.Module):
         C = base_ch
 
         # Encoder
-        self.enc1 = EncoderBlock(1, C, downsample=True)        # T -> T/2
-        self.enc2 = EncoderBlock(C, C * 2, downsample=True)    # T/2 -> T/4
+        self.enc1 = EncoderBlock(1, C, downsample=True)  # T -> T/2
+        self.enc2 = EncoderBlock(C, C * 2, downsample=True)  # T/2 -> T/4
         self.enc3 = EncoderBlock(C * 2, C * 4, downsample=True)  # T/4 -> T/8
         self.enc4 = EncoderBlock(C * 4, C * 8, downsample=True)  # T/8 -> T/16
 
@@ -161,10 +168,10 @@ class WaveformUNet(nn.Module):
         self.film = FiLM1D(1, C * 8)
 
         # Decoder with skip connections
-        self.dec4 = DecoderBlock(C * 8, C * 4, C * 4)   # T/16 -> T/8
-        self.dec3 = DecoderBlock(C * 4, C * 2, C * 2)   # T/8 -> T/4
-        self.dec2 = DecoderBlock(C * 2, C, C)             # T/4 -> T/2
-        self.dec1 = DecoderBlock(C, 0, C)                 # T/2 -> T  (no skip for input)
+        self.dec4 = DecoderBlock(C * 8, C * 4, C * 4)  # T/16 -> T/8
+        self.dec3 = DecoderBlock(C * 4, C * 2, C * 2)  # T/8 -> T/4
+        self.dec2 = DecoderBlock(C * 2, C, C)  # T/4 -> T/2
+        self.dec1 = DecoderBlock(C, 0, C)  # T/2 -> T  (no skip for input)
 
         self.final = nn.Sequential(
             nn.Conv1d(C, C, 3, padding=1),
@@ -175,10 +182,10 @@ class WaveformUNet(nn.Module):
 
     def forward(self, x, cutoff_norm):
         # x: (B, 1, T), cutoff_norm: (B, 1)
-        e1 = self.enc1(x)         # (B, C,   T/2)
-        e2 = self.enc2(e1)        # (B, 2C,  T/4)
-        e3 = self.enc3(e2)        # (B, 4C,  T/8)
-        e4 = self.enc4(e3)        # (B, 8C,  T/16)
+        e1 = self.enc1(x)  # (B, C,   T/2)
+        e2 = self.enc2(e1)  # (B, 2C,  T/4)
+        e3 = self.enc3(e2)  # (B, 4C,  T/8)
+        e4 = self.enc4(e3)  # (B, 8C,  T/16)
 
         # LSTM: (B, 8C, T/16) -> (B, T/16, 8C) -> LSTM -> (B, T/16, 16C) -> (B, 8C, T/16)
         b_lstm = e4.permute(0, 2, 1)
@@ -189,14 +196,14 @@ class WaveformUNet(nn.Module):
         # FiLM
         b = self.film(b, cutoff_norm)
 
-        d4 = self.dec4(b, e3)     # T/8
-        d3 = self.dec3(d4, e2)    # T/4
-        d2 = self.dec2(d3, e1)    # T/2
+        d4 = self.dec4(b, e3)  # T/8
+        d3 = self.dec3(d4, e2)  # T/4
+        d2 = self.dec2(d3, e1)  # T/2
 
         # Final block without skip
-        d2_up = F.interpolate(d2, scale_factor=2, mode='linear', align_corners=False)
+        d2_up = F.interpolate(d2, scale_factor=2, mode="linear", align_corners=False)
         if d2_up.shape[-1] > x.shape[-1]:
-            d2_up = d2_up[..., :x.shape[-1]]
+            d2_up = d2_up[..., : x.shape[-1]]
         d1 = self.final(d2_up)
 
         return d1
@@ -206,20 +213,25 @@ class WaveformUNet(nn.Module):
 # Multi-Resolution STFT Loss (waveform domain)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def mr_stft_loss(pred_wave, target_wave):
     """Multi-resolution STFT loss on waveforms."""
     loss = 0.0
     for n_fft in [512, 1024, 2048]:
         for hop in [n_fft // 4, n_fft // 2]:
             pred_spec = torch.stft(
-                pred_wave.squeeze(1), n_fft=n_fft, hop_length=hop,
+                pred_wave.squeeze(1),
+                n_fft=n_fft,
+                hop_length=hop,
                 window=torch.hann_window(n_fft, device=pred_wave.device),
-                return_complex=True
+                return_complex=True,
             )
             target_spec = torch.stft(
-                target_wave.squeeze(1), n_fft=n_fft, hop_length=hop,
+                target_wave.squeeze(1),
+                n_fft=n_fft,
+                hop_length=hop,
                 window=torch.hann_window(n_fft, device=target_wave.device),
-                return_complex=True
+                return_complex=True,
             )
             # Spectral convergence + magnitude loss
             sc_loss = (pred_spec - target_spec).abs().pow(2).sum() / (target_spec.abs().pow(2).sum() + 1e-8)
@@ -231,6 +243,7 @@ def mr_stft_loss(pred_wave, target_wave):
 # ═══════════════════════════════════════════════════════════════════════════
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
     device = torch.device("cpu")
@@ -255,7 +268,7 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
         loaded = 0
         for k, v in ckpt["model_state_dict"].items():
             # Map 2D conv weights to 1D where possible
-            k1d = k.replace("enc1", "enc1").replace("enc2", "enc2")
+            k.replace("enc1", "enc1").replace("enc2", "enc2")
             if k in ms and v.shape == ms[k].shape:
                 ms[k].copy_(v)
                 loaded += 1
@@ -290,8 +303,8 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
 
                 # Random crop
                 start = np.random.randint(0, len(y_full) - target_len)
-                batch_x.append(torch.from_numpy(y_lim[start:start+target_len]))
-                batch_y.append(torch.from_numpy(y_full[start:start+target_len]))
+                batch_x.append(torch.from_numpy(y_lim[start : start + target_len]))
+                batch_y.append(torch.from_numpy(y_full[start : start + target_len]))
                 batch_c.append(cutoff / 11025.0)
 
             x = torch.stack(batch_x).unsqueeze(1).to(device)  # (B, 1, T)
@@ -315,13 +328,17 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
         scheduler.step()
         elapsed = time.time() - t0
 
-        print(f"Epoch {epoch+1:3d}/{epochs} | Loss {avg_loss:.4f} | "
-              f"LR {scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s", flush=True)
+        print(
+            f"Epoch {epoch + 1:3d}/{epochs} | Loss {avg_loss:.4f} | "
+            f"LR {scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s",
+            flush=True,
+        )
 
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save({"model_state_dict": model.state_dict(), "epoch": epoch, "loss": avg_loss},
-                       out_dir / "best_model_v5.pt")
+            torch.save(
+                {"model_state_dict": model.state_dict(), "epoch": epoch, "loss": avg_loss}, out_dir / "best_model_v5.pt"
+            )
 
     # Export ONNX
     model.eval()
@@ -329,12 +346,18 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
     dummy_cutoff = torch.tensor([[0.5]], dtype=torch.float32, device=device)
 
     class ExportWrapper(nn.Module):
-        def __init__(self, m): super().__init__(); self.m = m
-        def forward(self, x, cutoff): return self.m(x, cutoff)
+        def __init__(self, m):
+            super().__init__()
+            self.m = m
+
+        def forward(self, x, cutoff):
+            return self.m(x, cutoff)
 
     onnx_path = out_dir / "bw_reconstructor_v5.onnx"
     torch.onnx.export(
-        ExportWrapper(model), (dummy_input, dummy_cutoff), str(onnx_path),
+        ExportWrapper(model),
+        (dummy_input, dummy_cutoff),
+        str(onnx_path),
         input_names=["waveform", "cutoff"],
         output_names=["waveform_out"],
         dynamic_axes={
@@ -346,6 +369,7 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
     )
 
     import onnx
+
     onnx.checker.check_model(str(onnx_path))
     size_mb = onnx_path.stat().st_size / 1e6
     print(f"\nONNX exported: {onnx_path} ({size_mb:.1f} MB)")
@@ -355,6 +379,7 @@ def train(epochs=200, batch_size=4, lr=1e-4, base_ch=32, steps_per_epoch=200):
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=4)

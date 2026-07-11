@@ -104,7 +104,7 @@ class TestHPGExtractMask:
             mask, href = hpg.extract_harmonic_mask(silence_1s, SR)
             assert np.isfinite(mask).all()
             assert np.isfinite(href).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Ablehnung bei Stille akzeptabel
 
@@ -112,41 +112,36 @@ class TestHPGExtractMask:
         try:
             mask, href = hpg.extract_harmonic_mask(noise_2s, SR)
             assert np.isfinite(mask).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_10_instrument_tag_piano_bass(self, hpg, tonal_with_harmonics):
         try:
             mask, href = hpg.extract_harmonic_mask(tonal_with_harmonics, SR, instrument_tag="piano_bass")
             assert np.isfinite(mask).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_11_instrument_tag_flute(self, hpg, tonal_with_harmonics):
         try:
             mask, href = hpg.extract_harmonic_mask(tonal_with_harmonics, SR, instrument_tag="flute")
             assert np.isfinite(mask).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_12_instrument_tag_guitar(self, hpg, tonal_with_harmonics):
         try:
             mask, href = hpg.extract_harmonic_mask(tonal_with_harmonics, SR, instrument_tag="guitar")
             assert np.isfinite(mask).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_13_instrument_tag_unknown(self, hpg, tonal_2s):
         try:
             mask, href = hpg.extract_harmonic_mask(tonal_2s, SR, instrument_tag="unknown")
             assert np.isfinite(mask).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +187,8 @@ class TestHPGApplyCorrection:
             mask, href = hpg.extract_harmonic_mask(silence_1s, SR)
             out = hpg.apply_correction(silence_1s.copy(), href, mask, SR)
             assert np.isfinite(out).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_20_no_negative_gain_applied(self, hpg, tonal_2s):
         """Korrektur sollte NUR anheben, nicht absenken (Gain ≥ 1.0)."""
@@ -247,9 +241,8 @@ class TestHPGEdgeCases:
             mask, href = hpg.extract_harmonic_mask(audio, SR)
             out = hpg.apply_correction(audio.copy(), href, mask, SR)
             assert np.isfinite(out).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_24_max_amplitude_audio(self, hpg):
         np.random.seed(7)
@@ -260,9 +253,8 @@ class TestHPGEdgeCases:
             mask, href = hpg.extract_harmonic_mask(audio, SR)
             out = hpg.apply_correction(audio.copy(), href, mask, SR)
             assert np.max(np.abs(out)) <= 1.0 + 1e-6
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
-            pass
 
     def test_25_href_shape_2d(self, hpg, tonal_2s):
         """href (Harmonik-Referenzenergie) sollte 2D sein (Zeit × Frequenz)."""

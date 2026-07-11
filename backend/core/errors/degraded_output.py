@@ -26,7 +26,7 @@ class DegradedOutput:
         _is_degraded:     True wenn die Phase fehlgeschlagen ist und degradiert wurde.
     """
 
-    audio: "np.ndarray"  # noqa: F821 — numpy ist in Aurik immer verfügbar
+    audio: np.ndarray  # noqa: F821 — numpy ist in Aurik immer verfügbar
     sample_rate: int
     warnings: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
@@ -44,9 +44,11 @@ class DegradedOutput:
         """Kurze Zusammenfassung aller Warnungen."""
         if not self.warnings:
             return f"[{self.phase_name}] Keine Warnungen"
-        return f"[{self.phase_name}] {len(self.warnings)} Warnung(en): " + "; ".join(
-            self.warnings[:5]
-        ) + ("..." if len(self.warnings) > 5 else "")
+        return (
+            f"[{self.phase_name}] {len(self.warnings)} Warnung(en): "
+            + "; ".join(self.warnings[:5])
+            + ("..." if len(self.warnings) > 5 else "")
+        )
 
     def to_dict(self) -> dict:
         """Serialisierung für Logging/Persistenz."""

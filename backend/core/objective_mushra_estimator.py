@@ -22,13 +22,13 @@ Usage:
     assert result._is_approximation  # Garantiert True
 """
 
-from backend.core.mushra_evaluator import (  # noqa: F401 — re-export
-    evaluate_mushra,
-    compare_mushra,
-    get_mushra_evaluator,
+from backend.core.mushra_evaluator import (
     MushraComparison,
     MushraEvaluator,
     MushraResult,
+    compare_mushra,
+    evaluate_mushra,
+    get_mushra_evaluator,
 )
 
 __all__ = [

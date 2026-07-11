@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # ── QualityMode Enum ─────────────────────────────────────────────────────
 
+
 class QualityMode(Enum):
     FAST = "fast"
     BALANCED = "balanced"
@@ -61,19 +62,23 @@ def is_phase_ml_enabled(phase_number: int) -> bool:
 
 
 def log_mode_decision(phase_name: str, use_ml: bool, message: str = "") -> None:
-    logger.debug("ML-%s %s: %s", "ON" if use_ml else "OFF", phase_name, message or ("enabled" if use_ml else "disabled"))
+    logger.debug(
+        "ML-%s %s: %s", "ON" if use_ml else "OFF", phase_name, message or ("enabled" if use_ml else "disabled")
+    )
 
 
 # ──
 
-QUALITY_MODES: frozenset[str] = frozenset({
-    "restoration",
-    "quality",
-    "maximum",
-    "studio_2026",
-    "balanced",
-    "fast",
-})
+QUALITY_MODES: frozenset[str] = frozenset(
+    {
+        "restoration",
+        "quality",
+        "maximum",
+        "studio_2026",
+        "balanced",
+        "fast",
+    }
+)
 
 MODE_ALIASES: dict[str, str] = {
     "restoration": "quality",
@@ -117,8 +122,7 @@ def validate_mode(mode: Any, fallback: str = MODE_FALLBACK) -> str:
     for known in QUALITY_MODES:
         if mode_lower in known or known in mode_lower:
             logger.warning(
-                "QualityMode: '%s' is not a valid mode. Did you mean '%s'? "
-                "Falling back to '%s'.",
+                "QualityMode: '%s' is not a valid mode. Did you mean '%s'? Falling back to '%s'.",
                 mode,
                 known,
                 fallback,

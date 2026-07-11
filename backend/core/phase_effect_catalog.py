@@ -219,6 +219,7 @@ PHASE_EFFECT_CATALOG: dict[str, PhaseEffectProfile] = {
 
 # ── §2.60 Kalibrierungs-Logik ─────────────────────────────────────────────
 
+
 def calibrate_phase_intensity(
     phase_id: str,
     base_strength: float,
@@ -330,8 +331,12 @@ def calibrate_phase_intensity(
         if "ml_artifact" in profile.risks:
             strength *= _codec_factor
         # Analog-spezifische Phasen ohne echte Defekte: deutlich dämpfen
-        if phase_id in ("phase_28_surface_noise_profiling", "phase_20_reverb_reduction",
-                         "phase_49_advanced_dereverb", "phase_60_inner_groove_distortion_repair"):
+        if phase_id in (
+            "phase_28_surface_noise_profiling",
+            "phase_20_reverb_reduction",
+            "phase_49_advanced_dereverb",
+            "phase_60_inner_groove_distortion_repair",
+        ):
             strength *= _codec_factor * 0.7
         # Wow/Flutter-Detektor: Codec-Artefakte → false positives, aber Tape-Dips sind real
         if phase_id == "phase_12_wow_flutter_fix":
@@ -381,9 +386,11 @@ def get_phase_risk_level(phase_id: str, **audio_state) -> str:
         return "medium"
     return "low"
 
+
 # ── §2.60 Katalog-Singleton ─────────────────────────────────────────────
 
 _catalog_instance = None
+
 
 def get_phase_effect_catalog():
     """Singleton-Zugriff auf den PhaseEffectCatalog."""

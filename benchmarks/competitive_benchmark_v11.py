@@ -12,7 +12,6 @@ und benchmarks/competitive/cedar/ erwartet (manuell vorverarbeitet).
 """
 
 import argparse
-import json
 import logging
 import sys
 import time
@@ -28,10 +27,12 @@ def load_audio(filepath: str) -> tuple[np.ndarray, int]:
     """Lädt Audio (48kHz float32 mono/stereo)."""
     try:
         import soundfile as sf
+
         audio, sr = sf.read(filepath, dtype="float32")
         if sr != 48000:
             from scipy.signal import resample_poly
-            ratio = 48000 / sr
+
+            48000 / sr
             audio = resample_poly(audio, up=48000, down=sr)
         return audio.astype(np.float32), 48000
     except Exception as e:
@@ -43,17 +44,18 @@ def compute_hpe(audio: np.ndarray, sr: int) -> float:
     """Human Pleasantness Estimator Score."""
     try:
         from backend.core.human_pleasantness_estimator import compute_pleasantness
+
         return float(compute_pleasantness(audio, sr).score)
-    except Exception as e:
+    except Exception:
         logger.warning("competitive_benchmark_v11.py::compute_hpe fallback", exc_info=True)
         return 0.5
 
 
 def compute_snr_improvement(original: np.ndarray, processed: np.ndarray) -> float:
     """SNR-Verbesserung in dB."""
-    noise = original - processed[:len(original)]
-    signal_rms = float(np.sqrt(np.mean(original ** 2)) + 1e-12)
-    noise_rms = float(np.sqrt(np.mean(noise ** 2)) + 1e-12)
+    noise = original - processed[: len(original)]
+    signal_rms = float(np.sqrt(np.mean(original**2)) + 1e-12)
+    noise_rms = float(np.sqrt(np.mean(noise**2)) + 1e-12)
     return 20.0 * np.log10(signal_rms / (noise_rms + 1e-12))
 
 
@@ -79,15 +81,16 @@ def compute_mushra_proxy(audio: np.ndarray, sr: int) -> float:
     """MERT-basierter MUSHRA-Proxy-Score (0-100)."""
     try:
         from backend.core.mert_mushra_proxy import estimate_mushra_proxy
+
         return float(estimate_mushra_proxy(audio, sr)[0] * 100)
-    except Exception as e:
+    except Exception:
         logger.warning("competitive_benchmark_v11.py::compute_mushra_proxy fallback", exc_info=True)
         return 50.0
 
 
 def compute_all_metrics(original: np.ndarray, processed: np.ndarray, sr: int) -> dict:
     """Berechnet alle Metriken für eine Datei."""
-    proc = processed[:len(original)]
+    proc = processed[: len(original)]
     return {
         "hpe": round(compute_hpe(proc, sr), 3),
         "snr_improvement_db": round(compute_snr_improvement(original, proc), 1),
@@ -224,7 +227,9 @@ def generate_report(results: dict, output_path: str):
             if "error" in m:
                 lines.append(f"| {tool} | ❌ | ❌ | ❌ | ❌ |")
             else:
-                lines.append(f"| {tool} | {m.get('hpe','-')} | {m.get('snr_improvement_db','-')} | {m.get('stereo_preservation','-')} | {m.get('mushra_proxy','-')} |")
+                lines.append(
+                    f"| {tool} | {m.get('hpe', '-')} | {m.get('snr_improvement_db', '-')} | {m.get('stereo_preservation', '-')} | {m.get('mushra_proxy', '-')} |"
+                )
         lines.append("")
 
     # Fazit

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_32_mono_to_stereo._compute_mono_to_stereo_profile (§2.56)."""
 
 from backend.core.phases.phase_32_mono_to_stereo import MonoToStereoPhaseV2

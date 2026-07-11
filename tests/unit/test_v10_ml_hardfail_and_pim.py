@@ -6,8 +6,6 @@ Kein stiller Fallback mehr — der Entwickler MUSS bewusst entscheiden.
 """
 
 import importlib
-import os
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -180,6 +178,7 @@ ML_MODULES: dict[str, dict] = {
 # Dynamisch generierte Plugin-Tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.unit
 class TestPluginModules:
     """Jedes Plugin-Modul MUSS importierbar sein und funktionierende Inferenz liefern."""
@@ -187,7 +186,7 @@ class TestPluginModules:
     @pytest.fixture(autouse=True)
     def _check_deps(self, request):
         """Prüft ob benötigte Pakete installiert sind."""
-        module_name = request.node.name.split("[")[1].rstrip("]") if "[" in request.node.name else ""
+        request.node.name.split("[")[1].rstrip("]") if "[" in request.node.name else ""
         # Find matching module info
         for name, info in PLUGIN_MODULES.items():
             if name in request.node.name:
@@ -209,6 +208,7 @@ class TestPluginModules:
 
 def _generate_plugin_test(name: str, info: dict):
     """Generiert einen Test für ein Plugin-Modul."""
+
     def test_func(self):
         plugin_path = f"plugins.{name}"
         fn_name = info["test_fn"]
@@ -236,6 +236,7 @@ def _generate_plugin_test(name: str, info: dict):
         # Lade das Modell und führe Inferenz aus
         try:
             import inspect
+
             sig = inspect.signature(fn)
             if len(sig.parameters) == 0:
                 # Factory pattern: fn() returns plugin instance
@@ -244,12 +245,34 @@ def _generate_plugin_test(name: str, info: dict):
                 method = getattr(plugin, method_name, None)
                 if method is None:
                     # Try common method names
-                    for m in ("get_tags", "tag", "process", "infer", "predict", "enhance",
-                              "separate", "transcribe", "get_pitch", "estimate",
-                              "run", "forward", "encode", "decode", "classify",
-                              "detect", "score", "predict_tags", "embed",
-                              "get_embedding", "compute_embedding", "extract_features",
-                              "generate", "enh", "separate_stems", "get_stems"):
+                    for m in (
+                        "get_tags",
+                        "tag",
+                        "process",
+                        "infer",
+                        "predict",
+                        "enhance",
+                        "separate",
+                        "transcribe",
+                        "get_pitch",
+                        "estimate",
+                        "run",
+                        "forward",
+                        "encode",
+                        "decode",
+                        "classify",
+                        "detect",
+                        "score",
+                        "predict_tags",
+                        "embed",
+                        "get_embedding",
+                        "compute_embedding",
+                        "extract_features",
+                        "generate",
+                        "enh",
+                        "separate_stems",
+                        "get_stems",
+                    ):
                         method = getattr(plugin, m, None)
                         if method is not None:
                             break
@@ -267,10 +290,12 @@ def _generate_plugin_test(name: str, info: dict):
             _assert_no_nan(result, f"{name} output")
             _assert_shape_valid(result)
         elif expected in ("tags_dict", "tags_dict_or_embedding"):
-            assert isinstance(result, (dict, list, np.ndarray)), f"{name}: Erwartet dict/list/array, bekam {type(result)}"
+            assert isinstance(result, (dict, list, np.ndarray)), (
+                f"{name}: Erwartet dict/list/array, bekam {type(result)}"
+            )
         elif expected == "mos_score":
             # VersaResult/ähnliche Objekte haben .mos-Attribut
-            if hasattr(result, 'mos'):
+            if hasattr(result, "mos"):
                 mos_val = float(result.mos)
             else:
                 mos_val = float(result)
@@ -292,6 +317,7 @@ def _generate_plugin_test(name: str, info: dict):
 
 def _generate_ml_test(name: str, info: dict):
     """Generiert einen Test für ein ML-Modul."""
+
     def test_func(self):
         mod = importlib.import_module(info["module"])
         cls = getattr(mod, info["class"])
@@ -328,12 +354,14 @@ for ml_name, ml_info in ML_MODULES.items():
 # Hard-Fail Tests: Kein stiller Fallback
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNoSilentFallback:
     """Kein ML-Modul darf stillschweigend auf DSP fallen."""
 
     def test_01_speaker_identity_no_silent_fallback(self):
         """SpeakerIdentityGuard: ECAPA-TDNN oder MFCC — aber niemals None."""
         from backend.ml.speaker_identity_guard import SpeakerIdentityGuard
+
         guard = SpeakerIdentityGuard()
         audio = _make_test_audio(channels=2)
         guard.capture_pre_embedding(audio, SR)
@@ -344,7 +372,7 @@ class TestNoSilentFallback:
 
     def test_02_no_silent_fallback_in_plugins(self):
         """Kein Plugin-Modul darf None oder leeres Array bei Modell-Fehler zurückgeben."""
-        import logging
+
         # Prüfe, dass logger.warning() in den Fallback-Pfaden existiert
         # Dies ist ein struktureller Test, der die Code-Qualität prüft
         plugin_dir = Path("plugins")
@@ -358,14 +386,20 @@ class TestNoSilentFallback:
                 if "except ImportError" in content or "except Exception" in content:
                     silent_files.append(py_file.name)
         # sota_universal_enhancer wurde bereits gefixt — nur prüfen dass Liste nicht länger wird
-        known_silent = {"sota_universal_enhancer.py", "waveunet_plugin.py", "breath_detector.py",
-                        "convtasnet_plugin.py", "htdemucs_plugin.py", "parameter_optimizer.py"}
+        known_silent = {
+            "sota_universal_enhancer.py",
+            "waveunet_plugin.py",
+            "breath_detector.py",
+            "convtasnet_plugin.py",
+            "htdemucs_plugin.py",
+            "parameter_optimizer.py",
+        }
         new_silent = set(silent_files) - known_silent
-        assert not new_silent, \
-            f"Neue Silent-Fallback-Dateien entdeckt: {new_silent}"
+        assert not new_silent, f"Neue Silent-Fallback-Dateien entdeckt: {new_silent}"
         # Andere Silent-Fallback-Dateien dokumentieren, kein Hart-Fail
         if silent_files:
             import warnings
+
             warnings.warn(f"Plugin-Dateien mit potenziellem Silent-Fallback: {silent_files}")
 
 
@@ -373,12 +407,14 @@ class TestNoSilentFallback:
 # PIM-Hook Utility Tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPIMPhaseHooks:
     """PIM-Integration in den DSP-Phasen."""
 
     def test_01_pim_hook_available(self):
         """Prüft dass der PIM-Hook importierbar ist."""
         from backend.core.perceptual_intensity_mapper import get_perceptual_intensity_mapper
+
         pim = get_perceptual_intensity_mapper()
         assert pim is not None
 
@@ -391,8 +427,9 @@ class TestPIMPhaseHooks:
     def test_03_pim_intensity_map_structure(self):
         """IntensityMap MUSS per_band und global_modifiers enthalten."""
         from backend.core.perceptual_intensity_mapper import (
-            IntensityMap, PerBandIntensity, get_perceptual_intensity_mapper
+            get_perceptual_intensity_mapper,
         )
+
         pim = get_perceptual_intensity_mapper()
         audio = _make_test_audio()
         imap = pim.compute_intensity_map(audio, SR, material="cassette")

@@ -1,10 +1,10 @@
-
 """§v10 PIM-Utility — Einheitlicher Hook für alle Phasen.
 
 Import: from backend.core.pim_phase_hook import apply_pim_intensity
 """
 
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -53,18 +53,26 @@ def apply_pim_intensity(
 
     # Kalibrierte Werte (gewichteter Durchschnitt der kritischen Bänder)
     # Höhere Gewichtung für Presence (Gesang) und Mid (Gitarren/Keys)
-    nr_strength = float(np.clip(
-        (nr_presence * 0.35 + nr_mid * 0.25 + nr_air * 0.25 + nr_ultra * 0.15) * nr_global,
-        0.05, 0.95
-    ))
+    nr_strength = float(
+        np.clip((nr_presence * 0.35 + nr_mid * 0.25 + nr_air * 0.25 + nr_ultra * 0.15) * nr_global, 0.05, 0.95)
+    )
 
     # Transientenschutz aus dem Presence-Band ableiten
-    transient_prot = float(pim.per_band.get("presence", type('X',(),{'transient_preserve':1.0})()).transient_preserve
-                           if hasattr(pim.per_band.get("presence", None), 'transient_preserve')
-                           else 1.0)
+    transient_prot = float(
+        pim.per_band.get("presence", type("X", (), {"transient_preserve": 1.0})()).transient_preserve
+        if hasattr(pim.per_band.get("presence", None), "transient_preserve")
+        else 1.0
+    )
 
-    logger.debug("PIM→%s: nr=%.2f (presence=%.2f mid=%.2f air=%.2f global=%.2f)",
-                 phase_name, nr_strength, nr_presence, nr_mid, nr_air, nr_global)
+    logger.debug(
+        "PIM→%s: nr=%.2f (presence=%.2f mid=%.2f air=%.2f global=%.2f)",
+        phase_name,
+        nr_strength,
+        nr_presence,
+        nr_mid,
+        nr_air,
+        nr_global,
+    )
 
     return {
         "nr_strength": nr_strength,
@@ -119,6 +127,7 @@ def compute_per_band_nr_mask(
 
     # Smoothing: Gauss-Filter über die Band-Grenzen (3 FFT-Bins)
     from scipy.ndimage import gaussian_filter1d
+
     gain_db = gaussian_filter1d(gain_db.astype(np.float64), sigma=1.5).astype(np.float32)
 
     return gain_db
@@ -150,15 +159,15 @@ def apply_per_band_mask(
 
     def _process_channel(ch: np.ndarray) -> np.ndarray:
         # STFT
-        f, t, Zxx = scipy_signal.stft(ch, fs=sr, nperseg=n_fft, noverlap=n_fft//2)
+        f, t, Zxx = scipy_signal.stft(ch, fs=sr, nperseg=n_fft, noverlap=n_fft // 2)
         # Apply per-band gain
-        gain_broadcast = gain_linear[:Zxx.shape[0], np.newaxis]
+        gain_broadcast = gain_linear[: Zxx.shape[0], np.newaxis]
         Zxx_masked = Zxx * gain_broadcast
         # Inverse STFT
-        _, reconstructed = scipy_signal.istft(Zxx_masked, fs=sr, nperseg=n_fft, noverlap=n_fft//2)
+        _, reconstructed = scipy_signal.istft(Zxx_masked, fs=sr, nperseg=n_fft, noverlap=n_fft // 2)
         # Trim to original length
         if len(reconstructed) > len(ch):
-            reconstructed = reconstructed[:len(ch)]
+            reconstructed = reconstructed[: len(ch)]
         elif len(reconstructed) < len(ch):
             reconstructed = np.pad(reconstructed, (0, len(ch) - len(reconstructed)))
         return reconstructed
@@ -186,20 +195,27 @@ def apply_per_band_mask(
 def apply_pre_emphasis(audio, sr, freq_hz=2000, boost_db=6.0):
     """§v10 #5: Pre-Emphasis — Höhen vor NR anheben."""
     from scipy import signal
-    sos = signal.butter(2, freq_hz, 'highshelf', fs=sr, output='sos')
+
+    sos = signal.butter(2, freq_hz, "highshelf", fs=sr, output="sos")
     return signal.sosfiltfilt(sos, audio, axis=0)
+
 
 def apply_de_emphasis(audio, sr, freq_hz=2000, cut_db=6.0):
     """§v10 #5: De-Emphasis — Höhen nach NR absenken."""
     from scipy import signal
-    sos = signal.butter(2, freq_hz, 'lowshelf', fs=sr, output='sos')
+
+    sos = signal.butter(2, freq_hz, "lowshelf", fs=sr, output="sos")
     return signal.sosfiltfilt(sos, audio, axis=0)
 
 
 def compute_loudness_adaptive_nr(audio, sr, base_nr=0.5):
     """§v10 #7: Loudness-adaptive NR — leise Passagen sanfter."""
-    mono = audio.mean(axis=-1) if audio.ndim>1 and audio.shape[-1]<=2 else (audio.mean(axis=0) if audio.ndim>1 else audio)
-    rms = float(np.sqrt(np.mean(np.asarray(mono)**2)) + 1e-12)
+    mono = (
+        audio.mean(axis=-1)
+        if audio.ndim > 1 and audio.shape[-1] <= 2
+        else (audio.mean(axis=0) if audio.ndim > 1 else audio)
+    )
+    rms = float(np.sqrt(np.mean(np.asarray(mono) ** 2)) + 1e-12)
     rms_db = 20.0 * np.log10(rms)
     # Leise (<-30dBFS): NR auf 60% reduzieren. Laut (>-15dBFS): volle NR.
     loudness_factor = float(np.clip((rms_db + 30.0) / 15.0, 0.6, 1.0))

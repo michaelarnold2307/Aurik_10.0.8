@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Pre-Commit-Hook: §2.59 Surgical Repair — Vollständigkeits-Prüfung."""
-import sys, os
+
+import os
+import sys
 from pathlib import Path
 
 # Repo-Root: .git/hooks/pre-commit → .git → repo-root

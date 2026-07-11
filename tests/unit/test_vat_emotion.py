@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für _VATEmotionEstimator — Valence-Arousal-Tension-Modell (§V45).
 
 Abdeckung:

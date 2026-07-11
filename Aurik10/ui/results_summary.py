@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from Aurik10.i18n import t
 
@@ -42,9 +42,7 @@ class ResultsSummaryDialog(QtWidgets.QDialog):
 
         # ── Header ────────────────────────────────────────────────────────
         header = QtWidgets.QLabel(t("results.header_done"))
-        header.setStyleSheet(
-            "font-size: 18pt; font-weight: bold; color: #82B89A;"
-        )
+        header.setStyleSheet("font-size: 18pt; font-weight: bold; color: #82B89A;")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
@@ -98,8 +96,7 @@ class ResultsSummaryDialog(QtWidgets.QDialog):
 
         quality_label = QtWidgets.QLabel(f"⭐ {quality_text}")
         quality_label.setStyleSheet(
-            "font-size: 11pt; color: #B8A068; padding: 8px;"
-            "background: rgba(184, 160, 104, 0.08); border-radius: 6px;"
+            "font-size: 11pt; color: #B8A068; padding: 8px;background: rgba(184, 160, 104, 0.08); border-radius: 6px;"
         )
         quality_label.setWordWrap(True)
         layout.addWidget(quality_label)
@@ -108,9 +105,7 @@ class ResultsSummaryDialog(QtWidgets.QDialog):
         output = d.get("output_path", "")
         if output:
             fmt = d.get("export_format", "FLAC")
-            output_label = QtWidgets.QLabel(
-                t("results.saved_as").format(path=output, fmt=fmt)
-            )
+            output_label = QtWidgets.QLabel(t("results.saved_as").format(path=output, fmt=fmt))
             output_label.setStyleSheet("font-size: 10pt; color: #8894A8;")
             output_label.setWordWrap(True)
             layout.addWidget(output_label)
@@ -139,9 +134,7 @@ class ResultsSummaryDialog(QtWidgets.QDialog):
                 "padding: 10px 24px; font-size: 11pt; }"
                 "QPushButton:hover { border-color: #667eea; color: #c9d1d9; }"
             )
-            folder_btn.clicked.connect(
-                lambda: self.open_folder_requested.emit(str(Path(output).parent))
-            )
+            folder_btn.clicked.connect(lambda: self.open_folder_requested.emit(str(Path(output).parent)))
             btn_row.addWidget(folder_btn)
 
         ok_btn = QtWidgets.QPushButton(t("results.ok"))
@@ -255,4 +248,3 @@ def build_results_data(
         "hpe_before": hpe_before,
         "hpe_after": hpe_after,
     }
-

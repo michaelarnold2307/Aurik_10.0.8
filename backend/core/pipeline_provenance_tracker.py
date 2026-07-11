@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────
 # Thresholds
 # ─────────────────────────────────────────────────────────────────
-UNDO_THRESHOLD: float = 0.015       # Delta unter diesem Wert = signifikantes Undo
-NET_DELTA_WARNING: float = -0.010   # Netto-Verschlechterung über alle Phasen
+UNDO_THRESHOLD: float = 0.015  # Delta unter diesem Wert = signifikantes Undo
+NET_DELTA_WARNING: float = -0.010  # Netto-Verschlechterung über alle Phasen
 NET_DELTA_CRITICAL: float = -0.025  # Kritische Netto-Verschlechterung
 
 
@@ -54,7 +54,7 @@ class GoalContribution:
     phase_id: str
     before_score: float
     after_score: float
-    delta: float                         # after - before (positiv = Verbesserung)
+    delta: float  # after - before (positiv = Verbesserung)
     is_improvement: bool
     timestamp: float = 0.0
 
@@ -64,13 +64,13 @@ class UndoEvent:
     """Phase N hat Goal G verschlechtert, das Phase M zuvor verbessert hatte."""
 
     goal: str
-    undoing_phase: str                   # Phase die verschlechtert
-    original_contributor: str            # Phase die verbessert hatte
-    original_delta: float                # Ursprüngliche Verbesserung
-    undo_delta: float                    # Verschlechterung (negativ)
-    best_score: float                    # Bester je erreichter Score
-    current_score: float                 # Aktueller Score nach Undo
-    severity: str = "warning"            # "warning", "critical"
+    undoing_phase: str  # Phase die verschlechtert
+    original_contributor: str  # Phase die verbessert hatte
+    original_delta: float  # Ursprüngliche Verbesserung
+    undo_delta: float  # Verschlechterung (negativ)
+    best_score: float  # Bester je erreichter Score
+    current_score: float  # Aktueller Score nach Undo
+    severity: str = "warning"  # "warning", "critical"
 
     @property
     def recovery_gap(self) -> float:
@@ -83,11 +83,11 @@ class GoalProvenance:
     """Vollständige Provenance eines einzelnen Musical Goals."""
 
     goal: str
-    baseline_score: float                # Score vor Pipeline-Start
-    best_ever_score: float               # Höchster je erreichter Score
-    best_ever_phase: str = ""            # Phase die den Bestwert erreicht hat
-    current_score: float = 0.0           # Aktueller Score
-    net_delta: float = 0.0               # Kumulativ: current - baseline
+    baseline_score: float  # Score vor Pipeline-Start
+    best_ever_score: float  # Höchster je erreichter Score
+    best_ever_phase: str = ""  # Phase die den Bestwert erreicht hat
+    current_score: float = 0.0  # Aktueller Score
+    net_delta: float = 0.0  # Kumulativ: current - baseline
     contributions: list[GoalContribution] = field(default_factory=list)
     undo_events: list[UndoEvent] = field(default_factory=list)
     undo_count: int = 0
@@ -103,7 +103,7 @@ class PipelineProvenance:
     pipeline_start_audio_hash: str = ""
     best_audio: np.ndarray | None = None
     best_audio_phase: str = ""
-    best_audio_score: float = 0.0        # Durchschnitt aller Goals zum Bestzeitpunkt
+    best_audio_score: float = 0.0  # Durchschnitt aller Goals zum Bestzeitpunkt
 
 
 class PipelineProvenanceTracker:
@@ -173,12 +173,16 @@ class PipelineProvenanceTracker:
           - net_deltas: dict[goal -> net_delta]
         """
         if not self._active:
-            return {"undo_detected": False, "undo_events": [],
-                    "net_delta_warning": False, "recovery_recommended": False}
+            return {
+                "undo_detected": False,
+                "undo_events": [],
+                "net_delta_warning": False,
+                "recovery_recommended": False,
+            }
 
         with self._lock:
-            goals_to_check = effective_goals if effective_goals else list(
-                set(scores_before.keys()) & set(scores_after.keys())
+            goals_to_check = (
+                effective_goals if effective_goals else list(set(scores_before.keys()) & set(scores_after.keys()))
             )
             undo_events: list[UndoEvent] = []
             total_net_delta = 0.0
@@ -219,10 +223,12 @@ class PipelineProvenanceTracker:
                 # Phase hat Goal verschlechtert, das zuvor von einer ANDEREN
                 # Phase verbessert wurde, UND der aktuelle Score ist signifikant
                 # unter dem Bestwert.
-                if (delta < -UNDO_THRESHOLD
-                        and prov.best_ever_phase
-                        and prov.best_ever_phase != phase_id
-                        and prov.best_ever_score - after > UNDO_THRESHOLD):
+                if (
+                    delta < -UNDO_THRESHOLD
+                    and prov.best_ever_phase
+                    and prov.best_ever_phase != phase_id
+                    and prov.best_ever_score - after > UNDO_THRESHOLD
+                ):
                     severity = "critical" if prov.best_ever_score - after > NET_DELTA_CRITICAL else "warning"
                     undo = UndoEvent(
                         goal=goal,
@@ -257,14 +263,16 @@ class PipelineProvenanceTracker:
 
             if recovery_recommended:
                 logger.warning(
-                    "§v10.4 Provenance: CRITICAL net delta %.4f nach Phase %s "
-                    "(%d undo events). Recovery empfohlen.",
-                    avg_net, phase_id, len(undo_events),
+                    "§v10.4 Provenance: CRITICAL net delta %.4f nach Phase %s (%d undo events). Recovery empfohlen.",
+                    avg_net,
+                    phase_id,
+                    len(undo_events),
                 )
             elif undo_events:
                 logger.info(
                     "§v10.4 Provenance: %d undo(s) detektiert in Phase %s: %s",
-                    len(undo_events), phase_id,
+                    len(undo_events),
+                    phase_id,
                     [(u.goal, u.original_contributor) for u in undo_events],
                 )
 
@@ -309,13 +317,9 @@ class PipelineProvenanceTracker:
                 "best_phase": prov.best_ever_phase,
                 "current": prov.current_score,
                 "net_delta": prov.net_delta,
-                "contributions": [
-                    {"phase": c.phase_id, "delta": c.delta}
-                    for c in prov.contributions
-                ],
+                "contributions": [{"phase": c.phase_id, "delta": c.delta} for c in prov.contributions],
                 "undo_events": [
-                    {"undoing": u.undoing_phase, "contributor": u.original_contributor,
-                     "severity": u.severity}
+                    {"undoing": u.undoing_phase, "contributor": u.original_contributor, "severity": u.severity}
                     for u in prov.undo_events
                 ],
                 "undo_count": prov.undo_count,
@@ -343,9 +347,7 @@ class PipelineProvenanceTracker:
                     "goals_affected": goals_list,
                     "count": len(goals_list),
                 }
-                for (orig, undoer), goals_list in sorted(
-                    conflicts.items(), key=lambda x: -len(x[1])
-                )
+                for (orig, undoer), goals_list in sorted(conflicts.items(), key=lambda x: -len(x[1]))
             ]
 
     def finalize(self) -> dict[str, Any]:
@@ -364,25 +366,17 @@ class PipelineProvenanceTracker:
             for g in goals.values():
                 for c in g.contributions:
                     if c.is_improvement:
-                        phase_contributions[c.phase_id] = (
-                            phase_contributions.get(c.phase_id, 0.0) + c.delta
-                        )
+                        phase_contributions[c.phase_id] = phase_contributions.get(c.phase_id, 0.0) + c.delta
 
-            top_contributors = sorted(
-                phase_contributions.items(), key=lambda x: -x[1]
-            )[:5]
+            top_contributors = sorted(phase_contributions.items(), key=lambda x: -x[1])[:5]
 
             # Phasen die am meisten Undos verursacht haben
             phase_undo_counts: dict[str, int] = {}
             for g in goals.values():
                 for u in g.undo_events:
-                    phase_undo_counts[u.undoing_phase] = (
-                        phase_undo_counts.get(u.undoing_phase, 0) + 1
-                    )
+                    phase_undo_counts[u.undoing_phase] = phase_undo_counts.get(u.undoing_phase, 0) + 1
 
-            top_undoers = sorted(
-                phase_undo_counts.items(), key=lambda x: -x[1]
-            )[:5]
+            top_undoers = sorted(phase_undo_counts.items(), key=lambda x: -x[1])[:5]
 
             # Durchschnittlicher Net-Delta
             avg_net = float(np.mean([g.net_delta for g in goals.values()]))
@@ -397,14 +391,8 @@ class PipelineProvenanceTracker:
                 "avg_net_delta": avg_net,
                 "best_audio_phase": self._provenance.best_audio_phase,
                 "best_audio_score": self._provenance.best_audio_score,
-                "top_contributors": [
-                    {"phase": ph, "total_delta": d}
-                    for ph, d in top_contributors
-                ],
-                "top_undoers": [
-                    {"phase": ph, "undo_count": c}
-                    for ph, c in top_undoers
-                ],
+                "top_contributors": [{"phase": ph, "total_delta": d} for ph, d in top_contributors],
+                "top_undoers": [{"phase": ph, "undo_count": c} for ph, c in top_undoers],
                 "detected_conflicts": self.get_conflict_phases(),
                 "per_goal": {
                     g: {
@@ -420,10 +408,13 @@ class PipelineProvenanceTracker:
             }
 
             logger.info(
-                "§v10.4 Pipeline Provenance: %d Phasen, %d Goals, "
-                "Avg-Net=%.4f, %d improved, %d degraded, %d undos",
-                report["total_phases"], report["total_goals"],
-                avg_net, improved, degraded, report["total_undos"],
+                "§v10.4 Pipeline Provenance: %d Phasen, %d Goals, Avg-Net=%.4f, %d improved, %d degraded, %d undos",
+                report["total_phases"],
+                report["total_goals"],
+                avg_net,
+                improved,
+                degraded,
+                report["total_undos"],
             )
 
             return report

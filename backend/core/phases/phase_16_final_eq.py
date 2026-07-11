@@ -369,16 +369,31 @@ class FinalEQ(PhaseInterface):
         except Exception as _opm_exc_p16:
             logger.debug("§V26 phase_16 onset_guard non-blocking: %s", _opm_exc_p16)
 
-        
         # ── §v10 Reference Target Matching ──
         try:
-            _g = str(kwargs.get("genre","unknown")).lower()
-            _e = int(kwargs.get("era_decade",1980))
-            _t = {"schlager":(1.0,1.5),"rock":(0.5,2.0),"pop":(1.5,2.0),"jazz":(0.0,1.0),"classical":(-0.5,0.0),"ballad":(0.3,0.5),"electronic":(2.0,2.5)}.get(_g,(0.5,1.0))
-            if _e<1970: _t=(_t[0]*0.6,_t[1]*0.7)
-            if abs(_t[0])>0.1: audio=signal.sosfiltfilt(signal.butter(2,8000,'highshelf',fs=sample_rate,output='sos'),audio,axis=0)
-            if abs(_t[1])>0.1: audio=signal.sosfiltfilt(signal.butter(2,100,'lowshelf',fs=sample_rate,output='sos'),audio,axis=0)
-        except Exception: pass
+            _g = str(kwargs.get("genre", "unknown")).lower()
+            _e = int(kwargs.get("era_decade", 1980))
+            _t = {
+                "schlager": (1.0, 1.5),
+                "rock": (0.5, 2.0),
+                "pop": (1.5, 2.0),
+                "jazz": (0.0, 1.0),
+                "classical": (-0.5, 0.0),
+                "ballad": (0.3, 0.5),
+                "electronic": (2.0, 2.5),
+            }.get(_g, (0.5, 1.0))
+            if _e < 1970:
+                _t = (_t[0] * 0.6, _t[1] * 0.7)
+            if abs(_t[0]) > 0.1:
+                audio = signal.sosfiltfilt(
+                    signal.butter(2, 8000, "highshelf", fs=sample_rate, output="sos"), audio, axis=0
+                )
+            if abs(_t[1]) > 0.1:
+                audio = signal.sosfiltfilt(
+                    signal.butter(2, 100, "lowshelf", fs=sample_rate, output="sos"), audio, axis=0
+                )
+        except Exception:
+            pass
 
         return PhaseResult(
             success=True,

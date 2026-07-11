@@ -12,7 +12,6 @@ Alle drei arbeiten auf dem finalen Signal VOR der Ausgabe.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 from scipy import signal as scipy_signal
@@ -25,14 +24,14 @@ logger = logging.getLogger(__name__)
 
 # Era-EQ-Profil: (Low-Shelf [Hz, dB], Presence-Peak [Hz, dB, Q], High-Shelf [Hz, dB])
 ERA_EQ_PROFILES: dict[int, tuple[tuple[float, float], tuple[float, float, float], tuple[float, float]]] = {
-    1930: ((200.0, 2.0),  (3000.0, -1.0, 0.5), (8000.0, -2.5)),   # Warm, leicht dumpf
-    1940: ((200.0, 1.5), (3200.0, -0.5, 0.5), (9000.0, -1.5)),    # Weniger dumpf
-    1950: ((150.0, 1.5), (3500.0, 0.5,  0.6), (10000.0, -0.5)),   # Erste Präsenz
-    1960: ((100.0, 1.0), (3000.0, 1.0,  0.7), (12000.0, 0.0)),    # Präsenz-Ära
-    1970: ((100.0, 1.0), (3000.0, 1.5,  0.7), (10000.0, 1.0)),    # Klassischer Präsenz-Peak
-    1980: ((60.0,  2.0), (3000.0, 1.0,  0.8), (10000.0, 1.0)),    # Bass + Klarheit
-    1990: ((60.0,  1.5), (4000.0, 0.5,  0.5), (12000.0, 1.5)),    # Moderner werdend
-    2000: ((50.0,  1.0), (5000.0, 0.0,  0.5), (14000.0, 1.0)),    # Neutraler
+    1930: ((200.0, 2.0), (3000.0, -1.0, 0.5), (8000.0, -2.5)),  # Warm, leicht dumpf
+    1940: ((200.0, 1.5), (3200.0, -0.5, 0.5), (9000.0, -1.5)),  # Weniger dumpf
+    1950: ((150.0, 1.5), (3500.0, 0.5, 0.6), (10000.0, -0.5)),  # Erste Präsenz
+    1960: ((100.0, 1.0), (3000.0, 1.0, 0.7), (12000.0, 0.0)),  # Präsenz-Ära
+    1970: ((100.0, 1.0), (3000.0, 1.5, 0.7), (10000.0, 1.0)),  # Klassischer Präsenz-Peak
+    1980: ((60.0, 2.0), (3000.0, 1.0, 0.8), (10000.0, 1.0)),  # Bass + Klarheit
+    1990: ((60.0, 1.5), (4000.0, 0.5, 0.5), (12000.0, 1.5)),  # Moderner werdend
+    2000: ((50.0, 1.0), (5000.0, 0.0, 0.5), (14000.0, 1.0)),  # Neutraler
 }
 
 
@@ -77,11 +76,19 @@ def apply_era_eq(
         if abs(ls_gain_db) > 0.1:
             ls_freq_norm = min(ls_freq / nyquist, 0.99)
             sos_ls = scipy_signal.iirfilter(
-                2, ls_freq_norm, btype='low', ftype='butter', output='sos',
+                2,
+                ls_freq_norm,
+                btype="low",
+                ftype="butter",
+                output="sos",
             )
             # Einfacher Gain: direkt auf gefiltertem Low-Anteil
             sos_hp = scipy_signal.iirfilter(
-                2, ls_freq_norm, btype='high', ftype='butter', output='sos',
+                2,
+                ls_freq_norm,
+                btype="high",
+                ftype="butter",
+                output="sos",
             )
             if is_stereo:
                 lo = scipy_signal.sosfiltfilt(sos_ls, result, axis=1)
@@ -97,11 +104,11 @@ def apply_era_eq(
         # 2. Presence-Peak (Parametric EQ)
         if abs(pk_gain_db) > 0.1:
             pk_freq_norm = min(pk_freq / nyquist, 0.99)
-            bw = pk_freq_norm / pk_q if pk_q > 0 else pk_freq_norm * 0.5
+            pk_freq_norm / pk_q if pk_q > 0 else pk_freq_norm * 0.5
             sos_pk = scipy_signal.iirpeak(pk_freq_norm, pk_q, sample_rate)
             # scipy_signal.iirpeak returns (b, a), convert to sos
             b, a = sos_pk
-            sos = np.array([[b[0], b[1], b[2], 1.0, a[1], a[2]]]) if len(b) == 3 else np.array([[1,0,0,1,0,0]])
+            sos = np.array([[b[0], b[1], b[2], 1.0, a[1], a[2]]]) if len(b) == 3 else np.array([[1, 0, 0, 1, 0, 0]])
             if is_stereo:
                 pk_signal = scipy_signal.sosfiltfilt(sos, result, axis=1)
             else:
@@ -113,10 +120,18 @@ def apply_era_eq(
         if abs(hs_gain_db) > 0.1:
             hs_freq_norm = min(hs_freq / nyquist, 0.99)
             sos_hp2 = scipy_signal.iirfilter(
-                2, hs_freq_norm, btype='high', ftype='butter', output='sos',
+                2,
+                hs_freq_norm,
+                btype="high",
+                ftype="butter",
+                output="sos",
             )
             sos_lp2 = scipy_signal.iirfilter(
-                2, hs_freq_norm, btype='low', ftype='butter', output='sos',
+                2,
+                hs_freq_norm,
+                btype="low",
+                ftype="butter",
+                output="sos",
             )
             if is_stereo:
                 hi2 = scipy_signal.sosfiltfilt(sos_hp2, result, axis=1)
@@ -131,7 +146,13 @@ def apply_era_eq(
 
         logger.info(
             "§2.73a Era-EQ: %der (LS=%.0fHz%+.0fdB, PK=%.0fHz%+.0fdB, HS=%.0fHz%+.0fdB)",
-            decade, ls_freq, ls_gain_db, pk_freq, pk_gain_db, hs_freq, hs_gain_db,
+            decade,
+            ls_freq,
+            ls_gain_db,
+            pk_freq,
+            pk_gain_db,
+            hs_freq,
+            hs_gain_db,
         )
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
@@ -227,7 +248,9 @@ def apply_cd_noise_texture(
 
             logger.info(
                 "§2.73b CD-Noise-Texture: %d/%d Bänder geglättet (Δmax=%.1f dB)",
-                corrections, len(band_noise), max(band_noise) - min(band_noise),
+                corrections,
+                len(band_noise),
+                max(band_noise) - min(band_noise),
             )
             return np.clip(result, -1.0, 1.0).astype(np.float32)
 
@@ -240,11 +263,13 @@ def apply_cd_noise_texture(
 # STFT helpers (avoid top-level librosa import — lazy)
 def _librosa_stft(y, n_fft=2048, hop_length=512):
     import librosa
+
     return librosa.stft(y, n_fft=n_fft, hop_length=hop_length)
 
 
 def _librosa_istft(D, hop_length=512, length=None):
     import librosa
+
     return librosa.istft(D, hop_length=hop_length, length=length)
 
 
@@ -284,15 +309,14 @@ def apply_noise_shaped_dither(
     """
     try:
         signal_f64 = np.asarray(audio, dtype=np.float64)
-        lsb = 2.0 / (2 ** bit_depth)  # 1 LSB in float
+        lsb = 2.0 / (2**bit_depth)  # 1 LSB in float
 
         # TPDF-Dither: Summe zweier unabhängiger Rechteckverteilungen
         # → Dreieckverteilung, 1 LSB RMS
         rng = np.random.default_rng(42)  # Deterministischer Seed
-        dither_raw = (
-            rng.uniform(-lsb, lsb, signal_f64.shape).astype(np.float64)
-            + rng.uniform(-lsb, lsb, signal_f64.shape).astype(np.float64)
-        )
+        dither_raw = rng.uniform(-lsb, lsb, signal_f64.shape).astype(np.float64) + rng.uniform(
+            -lsb, lsb, signal_f64.shape
+        ).astype(np.float64)
 
         # A-gewichtetes Noise-Shaping (IIR-Filter, Koeffizienten nach Lipshitz 1991)
         # Hebt Rauschen über 10 kHz um +6 dB an, senkt es unter 1 kHz um −6 dB
@@ -327,10 +351,11 @@ def apply_noise_shaped_dither(
         quantized = np.round(dithered / lsb) * lsb
         result = np.clip(quantized, -1.0 + lsb, 1.0 - lsb)
 
-        rms_dither = float(np.sqrt(np.mean(dither ** 2)))
+        rms_dither = float(np.sqrt(np.mean(dither**2)))
         logger.info(
             "§2.73c Noise-Shaped Dither: %d-bit TPDF (RMS=%.1f LSB, A-gewichtet)",
-            bit_depth, rms_dither / lsb,
+            bit_depth,
+            rms_dither / lsb,
         )
 
         return result.astype(np.float32)

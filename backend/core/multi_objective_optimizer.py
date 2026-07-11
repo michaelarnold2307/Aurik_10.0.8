@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import random
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class OptimizationResult:
     """Ergebnis der Multi-Objective-Optimierung."""
+
     best_strengths: dict[str, float] = field(default_factory=dict)
     pareto_front: list[dict[str, Any]] = field(default_factory=list)
     fitness_history: list[float] = field(default_factory=list)
@@ -77,14 +77,12 @@ class MultiObjectiveOptimizer:
             else:
                 individual = {}
                 for ph in phases:
-                    individual[ph] = float(np.clip(
-                        base.get(ph, 0.5) + random.uniform(-0.25, 0.25),
-                        0.1, 1.0
-                    ))
+                    individual[ph] = float(np.clip(base.get(ph, 0.5) + random.uniform(-0.25, 0.25), 0.1, 1.0))
                 population.append(individual)
 
         # Evaluations-Cache
         cache: dict[str, dict[str, float]] = {}
+
         def _cached_evaluate(individual: dict) -> dict[str, float]:
             key = str(sorted(individual.items()))
             if key not in cache:
@@ -96,10 +94,10 @@ class MultiObjectiveOptimizer:
             if not scores:
                 return 0.0
             # P1-Goals doppelt gewichten
-            weights = {g: (2.0 if g in ("waerme","brillanz","emotionalitaet","natuerlichkeit") else 1.0)
-                      for g in scores}
-            return float(np.average(list(scores.values()),
-                                    weights=[weights.get(g, 1.0) for g in scores]))
+            weights = {
+                g: (2.0 if g in ("waerme", "brillanz", "emotionalitaet", "natuerlichkeit") else 1.0) for g in scores
+            }
+            return float(np.average(list(scores.values()), weights=[weights.get(g, 1.0) for g in scores]))
 
         best_individual = population[0]
         best_fitness = -999.0
@@ -158,18 +156,20 @@ class MultiObjectiveOptimizer:
                 # Mutation
                 for ph in phases:
                     if random.random() < self._mutation_rate:
-                        child[ph] = float(np.clip(
-                            child[ph] + random.gauss(0, 0.1),
-                            0.1, 1.0
-                        ))
+                        child[ph] = float(np.clip(child[ph] + random.gauss(0, 0.1), 0.1, 1.0))
 
                 new_pop.append(child)
 
             population = new_pop
 
         improvement = ((best_fitness - fitness_history[0]) / max(abs(fitness_history[0]), 1e-6)) * 100
-        logger.info("§AA GP-Optimizer: %d Gen → fitness=%.3f (%.0f%% improve), Pareto=%d",
-                     self._generations, best_fitness, improvement, len(pareto))
+        logger.info(
+            "§AA GP-Optimizer: %d Gen → fitness=%.3f (%.0f%% improve), Pareto=%d",
+            self._generations,
+            best_fitness,
+            improvement,
+            len(pareto),
+        )
 
         return OptimizationResult(
             best_strengths=best_individual,

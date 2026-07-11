@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests für denker/cross_phase_coordinator.py — Cross-Phase Naturalness Consensus §3.0.
 
@@ -15,8 +16,10 @@ if str(_REPO) not in sys.path:
 
 # ── Test-Utilities ────────────────────────────────────────────────────
 
+
 def _import_cpc():
     from denker.cross_phase_coordinator import CrossPhaseCoordinator, get_cross_phase_coordinator
+
     return CrossPhaseCoordinator, get_cross_phase_coordinator
 
 
@@ -35,6 +38,7 @@ def _known_phase_ids():
 
 
 # ── Overlap-Matrix Tests ──────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_singleton_returns_same_instance():
@@ -103,6 +107,7 @@ def test_overlap_risk_scales_with_density():
 
 # ── Budget-Verteilung Tests ───────────────────────────────────────────
 
+
 def test_budget_sum_never_exceeds_one():
     CPC, _ = _import_cpc()
     cpc = CPC.analyze(
@@ -134,6 +139,7 @@ def test_budget_empty_plan():
 
 
 # ── Capped Strengths Tests ────────────────────────────────────────────
+
 
 def test_get_capped_strength_returns_none_without_analysis():
     CPC, _ = _import_cpc()
@@ -178,6 +184,7 @@ def test_unknown_phase_returns_none():
 
 # ── Material-Adaptive Tests ───────────────────────────────────────────
 
+
 def test_cassette_more_conservative_than_cd():
     CPC, _ = _import_cpc()
     CPC.analyze(
@@ -216,6 +223,7 @@ def test_shellac_more_conservative_than_vinyl():
 
 
 # ── Artifact Detection Tests ──────────────────────────────────────────
+
 
 def test_musical_noise_detected_with_many_nr_phases():
     CPC, _ = _import_cpc()
@@ -263,6 +271,7 @@ def test_roughness_regression_detected_with_bass_and_presence():
 
 # ── Recommendations Tests ─────────────────────────────────────────────
 
+
 def test_recommendations_generated_for_high_risk():
     CPC, _ = _import_cpc()
     cpc = CPC.analyze(
@@ -289,6 +298,7 @@ def test_recommendations_empty_for_clean_plan():
 
 
 # ── Edge Cases ─────────────────────────────────────────────────────────
+
 
 def test_analyze_with_unknown_phases():
     CPC, _ = _import_cpc()
@@ -324,8 +334,14 @@ def test_band_budgets_all_bands_exist():
         material="vinyl",
     )
     expected_bands = {
-        "sub_bass", "bass", "low_mid", "mid",
-        "presence_low", "presence_high", "air_low", "air_high",
+        "sub_bass",
+        "bass",
+        "low_mid",
+        "mid",
+        "presence_low",
+        "presence_high",
+        "air_low",
+        "air_high",
     }
     actual_bands = set(cpc._last_result.band_budgets.keys())
     assert actual_bands == expected_bands
@@ -334,6 +350,7 @@ def test_band_budgets_all_bands_exist():
 def test_overlap_result_repr():
     CPC, _ = _import_cpc()
     from denker.cross_phase_coordinator import OverlapResult
+
     ov = OverlapResult(
         phase_a="phase_19_de_esser",
         phase_b="phase_38_presence_boost",
@@ -350,6 +367,7 @@ def test_overlap_result_repr():
 def test_consensus_result_fields():
     CPC, _ = _import_cpc()
     from denker.cross_phase_coordinator import ConsensusResult
+
     cr = ConsensusResult()
     assert cr.overlaps == []
     assert cr.capped_strengths == {}

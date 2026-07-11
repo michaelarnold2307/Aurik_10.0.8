@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests fuer Spec-Upgrade Gate (§2.81 / §MG-UPG)."""
 
 from __future__ import annotations

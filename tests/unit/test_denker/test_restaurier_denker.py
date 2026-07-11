@@ -1,4 +1,5 @@
 import pytest
+
 """tests/unit/test_denker/test_restaurier_denker.py
 
 Tests für RestaurierDenker — Hauptrestaurierung via UnifiedRestorerV3.

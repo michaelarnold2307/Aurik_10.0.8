@@ -1,4 +1,5 @@
 import pytest
+
 """Unit-Tests: InnerGrooveDistortionRepairPhase._compute_igd_profile() (§2.56)."""
 
 import numpy as np

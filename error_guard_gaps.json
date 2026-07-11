@@ -1,13 +1,866 @@
 {
+  "details": [
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_01_click_removal.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1625,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  01 Click Removal"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_02_hum_removal.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 897,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  02 Hum Removal"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_03_denoise.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 3591,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  03 Denoise"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_04_eq_correction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1346,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  04 Eq Correction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_05_rumble_filter.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 923,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  05 Rumble Filter"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_06_frequency_restoration.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2123,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  06 Frequency Restoration"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_07_harmonic_restoration.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1650,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  07 Harmonic Restoration"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_08_transient_preservation.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 995,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  08 Transient Preservation"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_09_crackle_removal.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2003,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  09 Crackle Removal"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_10_compression.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 615,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  10 Compression"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_11_limiting.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 692,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  11 Limiting"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_12_wow_flutter_fix.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 3511,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isnan",
+        "np.isnan",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  12 Wow Flutter Fix"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_13_stereo_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 690,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  13 Stereo Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_14_phase_correction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 752,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  14 Phase  Correction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_15_stereo_balance.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 642,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  15 Stereo Balance"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_16_final_eq.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 488,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  16 Final Eq"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_17_mastering_polish.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 965,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  17 Mastering Polish"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_18_noise_gate.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1073,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  18 Noise Gate"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_19_de_esser.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 3325,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  19 De Esser"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_20_reverb_reduction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1790,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  20 Reverb Reduction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_21_exciter.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 492,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  21 Exciter"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_22_tape_saturation.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 787,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  22 Tape Saturation"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_23_spectral_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2645,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isnan",
+        "np.isnan",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  23 Spectral Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_24_dropout_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2442,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  24 Dropout Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_25_azimuth_correction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1094,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  25 Azimuth Correction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_26_dynamic_range_expansion.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 671,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  26 Dynamic Range Expansion"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_27_click_pop_removal.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 736,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  27 Click Pop Removal"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_28_surface_noise_profiling.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 852,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  28 Surface Noise Profiling"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_29_tape_hiss_reduction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2475,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  29 Tape Hiss Reduction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_30_dc_offset_removal.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 474,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  30 Dc Offset Removal"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_31_speed_pitch_correction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1731,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  31 Speed Pitch Correction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_32_mono_to_stereo.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 674,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  32 Mono To Stereo"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_33_stereo_width_limiter.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 757,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  33 Stereo Width Limiter"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_34_mid_side_processing.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 821,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  34 Mid Side Processing"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_35_multiband_compression.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 771,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  35 Multiband Compression"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_36_transient_shaper.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 609,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  36 Transient Shaper"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_37_bass_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 530,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  37 Bass Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_38_presence_boost.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 518,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  38 Presence Boost"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_39_air_band_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 696,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  39 Air Band Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_40_loudness_normalization.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 955,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  40 Loudness Normalization"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_41_output_format_optimization.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 693,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  41 Output Format Optimization"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_42_vocal_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 2507,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  42 Vocal Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_43_ml_deesser.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1069,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  43 Ml Deesser"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_44_guitar_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 473,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  44 Guitar Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_45_brass_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 413,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  45 Brass Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_46_spatial_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 364,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  46 Spatial Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_47_truepeak_limiter.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 298,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  47 Truepeak Limiter"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_48_stereo_width_enhancer.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 348,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  48 Stereo Width Enhancer"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_49_advanced_dereverb.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1584,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  49 Advanced Dereverb"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_50_spectral_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 865,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  50 Spectral Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_51_drums_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 560,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  51 Drums Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_52_piano_restoration.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 874,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  52 Piano Restoration"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_53_semantic_audio.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 490,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  53 Semantic Audio"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_54_transparent_dynamics.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 924,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  54 Transparent Dynamics"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_55_diffusion_inpainting.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1745,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  55 Diffusion Inpainting"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_56_spectral_band_gap_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 1227,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  56 Spectral Band Gap Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_57_print_through_reduction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 706,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  57 Print Through Reduction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_58_lyrics_guided_enhancement.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 344,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  58 Lyrics Guided Enhancement"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_59_modulation_noise_reduction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 612,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  59 Modulation Noise Reduction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_60_inner_groove_distortion_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 427,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  60 Inner Groove Distortion Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_61_groove_echo_cancellation.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 549,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  61 Groove Echo Cancellation"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_62_crosstalk_cancellation.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 566,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  62 Crosstalk Cancellation"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_63_intermodulation_reduction.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 668,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  63 Intermodulation Reduction"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_64_tape_splice_repair.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 555,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  64 Tape Splice Repair"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_65_vocal_naturalness_restoration.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 691,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  65 Vocal Naturalness Restoration"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_66_stem_targeted_nr.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 497,
+      "nan_check_matches": [
+        "nan_to_num",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  66 Stem Targeted Nr"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_glue_stage.py",
+      "has_error_guard": false,
+      "has_nan_check": false,
+      "line_count": 91,
+      "nan_check_matches": [],
+      "phase_name": "Phase  Glue Stage"
+    },
+    {
+      "error_guard_matches": [],
+      "file": "backend/core/phases/phase_interface.py",
+      "has_error_guard": false,
+      "has_nan_check": true,
+      "line_count": 401,
+      "nan_check_matches": [
+        "nan_to_num",
+        "isfinite",
+        "np.isfinite",
+        "np.nan_to_num"
+      ],
+      "phase_name": "Phase  Interface"
+    }
+  ],
+  "guarded": [],
   "metadata": {
-    "total_phases": 68,
+    "audit_date": "2026-07-11T12:49:21.669537",
+    "coverage_pct": 0.0,
     "guarded_phases": 0,
     "nan_checked_phases": 67,
-    "unprotected_phases": 68,
-    "coverage_pct": 0.0,
-    "audit_date": "2026-07-11T12:49:21.669537"
+    "total_phases": 68,
+    "unprotected_phases": 68
   },
-  "guarded": [],
   "nan_checked": [
     "backend/core/phases/phase_01_click_removal.py",
     "backend/core/phases/phase_02_hum_removal.py",
@@ -80,1195 +933,342 @@
   "unprotected": [
     {
       "file": "backend/core/phases/phase_01_click_removal.py",
-      "line_count": 1625,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_02_hum_removal.py",
-      "line_count": 897,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_03_denoise.py",
-      "line_count": 3591,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_04_eq_correction.py",
-      "line_count": 1346,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_05_rumble_filter.py",
-      "line_count": 923,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_06_frequency_restoration.py",
-      "line_count": 2123,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_07_harmonic_restoration.py",
-      "line_count": 1650,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_08_transient_preservation.py",
-      "line_count": 995,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_09_crackle_removal.py",
-      "line_count": 2003,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_10_compression.py",
-      "line_count": 615,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_11_limiting.py",
-      "line_count": 692,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_12_wow_flutter_fix.py",
-      "line_count": 3511,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_13_stereo_enhancement.py",
-      "line_count": 690,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_14_phase_correction.py",
-      "line_count": 752,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_15_stereo_balance.py",
-      "line_count": 642,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_16_final_eq.py",
-      "line_count": 488,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_17_mastering_polish.py",
-      "line_count": 965,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_18_noise_gate.py",
-      "line_count": 1073,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_19_de_esser.py",
-      "line_count": 3325,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_20_reverb_reduction.py",
-      "line_count": 1790,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_21_exciter.py",
-      "line_count": 492,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_22_tape_saturation.py",
-      "line_count": 787,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_23_spectral_repair.py",
-      "line_count": 2645,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_24_dropout_repair.py",
-      "line_count": 2442,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_25_azimuth_correction.py",
-      "line_count": 1094,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_26_dynamic_range_expansion.py",
-      "line_count": 671,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_27_click_pop_removal.py",
-      "line_count": 736,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_28_surface_noise_profiling.py",
-      "line_count": 852,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_29_tape_hiss_reduction.py",
-      "line_count": 2475,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_30_dc_offset_removal.py",
-      "line_count": 474,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_31_speed_pitch_correction.py",
-      "line_count": 1731,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_32_mono_to_stereo.py",
-      "line_count": 674,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_33_stereo_width_limiter.py",
-      "line_count": 757,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_34_mid_side_processing.py",
-      "line_count": 821,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_35_multiband_compression.py",
-      "line_count": 771,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_36_transient_shaper.py",
-      "line_count": 609,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_37_bass_enhancement.py",
-      "line_count": 530,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_38_presence_boost.py",
-      "line_count": 518,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_39_air_band_enhancement.py",
-      "line_count": 696,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_40_loudness_normalization.py",
-      "line_count": 955,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_41_output_format_optimization.py",
-      "line_count": 693,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_42_vocal_enhancement.py",
-      "line_count": 2507,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_43_ml_deesser.py",
-      "line_count": 1069,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_44_guitar_enhancement.py",
-      "line_count": 473,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_45_brass_enhancement.py",
-      "line_count": 413,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_46_spatial_enhancement.py",
-      "line_count": 364,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_47_truepeak_limiter.py",
-      "line_count": 298,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_48_stereo_width_enhancer.py",
-      "line_count": 348,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_49_advanced_dereverb.py",
-      "line_count": 1584,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_50_spectral_repair.py",
-      "line_count": 865,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_51_drums_enhancement.py",
-      "line_count": 560,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_52_piano_restoration.py",
-      "line_count": 874,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_53_semantic_audio.py",
-      "line_count": 490,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_54_transparent_dynamics.py",
-      "line_count": 924,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_55_diffusion_inpainting.py",
-      "line_count": 1745,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_56_spectral_band_gap_repair.py",
-      "line_count": 1227,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_57_print_through_reduction.py",
-      "line_count": 706,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_58_lyrics_guided_enhancement.py",
-      "line_count": 344,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_59_modulation_noise_reduction.py",
-      "line_count": 612,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_60_inner_groove_distortion_repair.py",
-      "line_count": 427,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_61_groove_echo_cancellation.py",
-      "line_count": 549,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_62_crosstalk_cancellation.py",
-      "line_count": 566,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_63_intermodulation_reduction.py",
-      "line_count": 668,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_64_tape_splice_repair.py",
-      "line_count": 555,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_65_vocal_naturalness_restoration.py",
-      "line_count": 691,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_66_stem_targeted_nr.py",
-      "line_count": 497,
-      "has_nan_check": true
-    },
-    {
-      "file": "backend/core/phases/phase_glue_stage.py",
-      "line_count": 91,
-      "has_nan_check": false
-    },
-    {
-      "file": "backend/core/phases/phase_interface.py",
-      "line_count": 401,
-      "has_nan_check": true
-    }
-  ],
-  "details": [
-    {
-      "file": "backend/core/phases/phase_01_click_removal.py",
-      "phase_name": "Phase  01 Click Removal",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 1625
     },
     {
       "file": "backend/core/phases/phase_02_hum_removal.py",
-      "phase_name": "Phase  02 Hum Removal",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 897
     },
     {
       "file": "backend/core/phases/phase_03_denoise.py",
-      "phase_name": "Phase  03 Denoise",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 3591
     },
     {
       "file": "backend/core/phases/phase_04_eq_correction.py",
-      "phase_name": "Phase  04 Eq Correction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1346
     },
     {
       "file": "backend/core/phases/phase_05_rumble_filter.py",
-      "phase_name": "Phase  05 Rumble Filter",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 923
     },
     {
       "file": "backend/core/phases/phase_06_frequency_restoration.py",
-      "phase_name": "Phase  06 Frequency Restoration",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 2123
     },
     {
       "file": "backend/core/phases/phase_07_harmonic_restoration.py",
-      "phase_name": "Phase  07 Harmonic Restoration",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1650
     },
     {
       "file": "backend/core/phases/phase_08_transient_preservation.py",
-      "phase_name": "Phase  08 Transient Preservation",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 995
     },
     {
       "file": "backend/core/phases/phase_09_crackle_removal.py",
-      "phase_name": "Phase  09 Crackle Removal",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 2003
     },
     {
       "file": "backend/core/phases/phase_10_compression.py",
-      "phase_name": "Phase  10 Compression",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 615
     },
     {
       "file": "backend/core/phases/phase_11_limiting.py",
-      "phase_name": "Phase  11 Limiting",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 692
     },
     {
       "file": "backend/core/phases/phase_12_wow_flutter_fix.py",
-      "phase_name": "Phase  12 Wow Flutter Fix",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isnan",
-        "np.isnan",
-        "np.nan_to_num"
-      ],
       "line_count": 3511
     },
     {
       "file": "backend/core/phases/phase_13_stereo_enhancement.py",
-      "phase_name": "Phase  13 Stereo Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 690
     },
     {
       "file": "backend/core/phases/phase_14_phase_correction.py",
-      "phase_name": "Phase  14 Phase  Correction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 752
     },
     {
       "file": "backend/core/phases/phase_15_stereo_balance.py",
-      "phase_name": "Phase  15 Stereo Balance",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 642
     },
     {
       "file": "backend/core/phases/phase_16_final_eq.py",
-      "phase_name": "Phase  16 Final Eq",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 488
     },
     {
       "file": "backend/core/phases/phase_17_mastering_polish.py",
-      "phase_name": "Phase  17 Mastering Polish",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 965
     },
     {
       "file": "backend/core/phases/phase_18_noise_gate.py",
-      "phase_name": "Phase  18 Noise Gate",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1073
     },
     {
       "file": "backend/core/phases/phase_19_de_esser.py",
-      "phase_name": "Phase  19 De Esser",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 3325
     },
     {
       "file": "backend/core/phases/phase_20_reverb_reduction.py",
-      "phase_name": "Phase  20 Reverb Reduction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1790
     },
     {
       "file": "backend/core/phases/phase_21_exciter.py",
-      "phase_name": "Phase  21 Exciter",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 492
     },
     {
       "file": "backend/core/phases/phase_22_tape_saturation.py",
-      "phase_name": "Phase  22 Tape Saturation",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 787
     },
     {
       "file": "backend/core/phases/phase_23_spectral_repair.py",
-      "phase_name": "Phase  23 Spectral Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isnan",
-        "np.isnan",
-        "np.nan_to_num"
-      ],
       "line_count": 2645
     },
     {
       "file": "backend/core/phases/phase_24_dropout_repair.py",
-      "phase_name": "Phase  24 Dropout Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 2442
     },
     {
       "file": "backend/core/phases/phase_25_azimuth_correction.py",
-      "phase_name": "Phase  25 Azimuth Correction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1094
     },
     {
       "file": "backend/core/phases/phase_26_dynamic_range_expansion.py",
-      "phase_name": "Phase  26 Dynamic Range Expansion",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 671
     },
     {
       "file": "backend/core/phases/phase_27_click_pop_removal.py",
-      "phase_name": "Phase  27 Click Pop Removal",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 736
     },
     {
       "file": "backend/core/phases/phase_28_surface_noise_profiling.py",
-      "phase_name": "Phase  28 Surface Noise Profiling",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 852
     },
     {
       "file": "backend/core/phases/phase_29_tape_hiss_reduction.py",
-      "phase_name": "Phase  29 Tape Hiss Reduction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 2475
     },
     {
       "file": "backend/core/phases/phase_30_dc_offset_removal.py",
-      "phase_name": "Phase  30 Dc Offset Removal",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 474
     },
     {
       "file": "backend/core/phases/phase_31_speed_pitch_correction.py",
-      "phase_name": "Phase  31 Speed Pitch Correction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1731
     },
     {
       "file": "backend/core/phases/phase_32_mono_to_stereo.py",
-      "phase_name": "Phase  32 Mono To Stereo",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 674
     },
     {
       "file": "backend/core/phases/phase_33_stereo_width_limiter.py",
-      "phase_name": "Phase  33 Stereo Width Limiter",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 757
     },
     {
       "file": "backend/core/phases/phase_34_mid_side_processing.py",
-      "phase_name": "Phase  34 Mid Side Processing",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 821
     },
     {
       "file": "backend/core/phases/phase_35_multiband_compression.py",
-      "phase_name": "Phase  35 Multiband Compression",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 771
     },
     {
       "file": "backend/core/phases/phase_36_transient_shaper.py",
-      "phase_name": "Phase  36 Transient Shaper",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 609
     },
     {
       "file": "backend/core/phases/phase_37_bass_enhancement.py",
-      "phase_name": "Phase  37 Bass Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 530
     },
     {
       "file": "backend/core/phases/phase_38_presence_boost.py",
-      "phase_name": "Phase  38 Presence Boost",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 518
     },
     {
       "file": "backend/core/phases/phase_39_air_band_enhancement.py",
-      "phase_name": "Phase  39 Air Band Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 696
     },
     {
       "file": "backend/core/phases/phase_40_loudness_normalization.py",
-      "phase_name": "Phase  40 Loudness Normalization",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 955
     },
     {
       "file": "backend/core/phases/phase_41_output_format_optimization.py",
-      "phase_name": "Phase  41 Output Format Optimization",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 693
     },
     {
       "file": "backend/core/phases/phase_42_vocal_enhancement.py",
-      "phase_name": "Phase  42 Vocal Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 2507
     },
     {
       "file": "backend/core/phases/phase_43_ml_deesser.py",
-      "phase_name": "Phase  43 Ml Deesser",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1069
     },
     {
       "file": "backend/core/phases/phase_44_guitar_enhancement.py",
-      "phase_name": "Phase  44 Guitar Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 473
     },
     {
       "file": "backend/core/phases/phase_45_brass_enhancement.py",
-      "phase_name": "Phase  45 Brass Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 413
     },
     {
       "file": "backend/core/phases/phase_46_spatial_enhancement.py",
-      "phase_name": "Phase  46 Spatial Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 364
     },
     {
       "file": "backend/core/phases/phase_47_truepeak_limiter.py",
-      "phase_name": "Phase  47 Truepeak Limiter",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 298
     },
     {
       "file": "backend/core/phases/phase_48_stereo_width_enhancer.py",
-      "phase_name": "Phase  48 Stereo Width Enhancer",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 348
     },
     {
       "file": "backend/core/phases/phase_49_advanced_dereverb.py",
-      "phase_name": "Phase  49 Advanced Dereverb",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 1584
     },
     {
       "file": "backend/core/phases/phase_50_spectral_repair.py",
-      "phase_name": "Phase  50 Spectral Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 865
     },
     {
       "file": "backend/core/phases/phase_51_drums_enhancement.py",
-      "phase_name": "Phase  51 Drums Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 560
     },
     {
       "file": "backend/core/phases/phase_52_piano_restoration.py",
-      "phase_name": "Phase  52 Piano Restoration",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 874
     },
     {
       "file": "backend/core/phases/phase_53_semantic_audio.py",
-      "phase_name": "Phase  53 Semantic Audio",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 490
     },
     {
       "file": "backend/core/phases/phase_54_transparent_dynamics.py",
-      "phase_name": "Phase  54 Transparent Dynamics",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 924
     },
     {
       "file": "backend/core/phases/phase_55_diffusion_inpainting.py",
-      "phase_name": "Phase  55 Diffusion Inpainting",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 1745
     },
     {
       "file": "backend/core/phases/phase_56_spectral_band_gap_repair.py",
-      "phase_name": "Phase  56 Spectral Band Gap Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 1227
     },
     {
       "file": "backend/core/phases/phase_57_print_through_reduction.py",
-      "phase_name": "Phase  57 Print Through Reduction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 706
     },
     {
       "file": "backend/core/phases/phase_58_lyrics_guided_enhancement.py",
-      "phase_name": "Phase  58 Lyrics Guided Enhancement",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 344
     },
     {
       "file": "backend/core/phases/phase_59_modulation_noise_reduction.py",
-      "phase_name": "Phase  59 Modulation Noise Reduction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 612
     },
     {
       "file": "backend/core/phases/phase_60_inner_groove_distortion_repair.py",
-      "phase_name": "Phase  60 Inner Groove Distortion Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 427
     },
     {
       "file": "backend/core/phases/phase_61_groove_echo_cancellation.py",
-      "phase_name": "Phase  61 Groove Echo Cancellation",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 549
     },
     {
       "file": "backend/core/phases/phase_62_crosstalk_cancellation.py",
-      "phase_name": "Phase  62 Crosstalk Cancellation",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 566
     },
     {
       "file": "backend/core/phases/phase_63_intermodulation_reduction.py",
-      "phase_name": "Phase  63 Intermodulation Reduction",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 668
     },
     {
       "file": "backend/core/phases/phase_64_tape_splice_repair.py",
-      "phase_name": "Phase  64 Tape Splice Repair",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 555
     },
     {
       "file": "backend/core/phases/phase_65_vocal_naturalness_restoration.py",
-      "phase_name": "Phase  65 Vocal Naturalness Restoration",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 691
     },
     {
       "file": "backend/core/phases/phase_66_stem_targeted_nr.py",
-      "phase_name": "Phase  66 Stem Targeted Nr",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "np.nan_to_num"
-      ],
       "line_count": 497
     },
     {
       "file": "backend/core/phases/phase_glue_stage.py",
-      "phase_name": "Phase  Glue Stage",
-      "has_error_guard": false,
       "has_nan_check": false,
-      "error_guard_matches": [],
-      "nan_check_matches": [],
       "line_count": 91
     },
     {
       "file": "backend/core/phases/phase_interface.py",
-      "phase_name": "Phase  Interface",
-      "has_error_guard": false,
       "has_nan_check": true,
-      "error_guard_matches": [],
-      "nan_check_matches": [
-        "nan_to_num",
-        "isfinite",
-        "np.isfinite",
-        "np.nan_to_num"
-      ],
       "line_count": 401
     }
   ]

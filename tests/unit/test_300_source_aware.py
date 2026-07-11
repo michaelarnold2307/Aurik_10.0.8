@@ -4,10 +4,10 @@ Testet:
 - StemConfig-Filterung, Remix-Gains
 - ONNX-Fallback bei fehlendem Modell
 """
+
 from __future__ import annotations
 
 import numpy as np
-
 import pytest
 
 

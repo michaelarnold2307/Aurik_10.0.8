@@ -282,18 +282,16 @@ class FormantTracker:
 
             _plm = get_plugin_lifecycle_manager()
             _plm.set_active("DeepFormants", True)
-        except Exception as e:
+        except Exception:
             logger.warning("formant_tracker.py::_analyze_deepformants fallback", exc_info=True)
-            pass
         try:
             ort_out = self._deepformants_session.run(None, {inp_name: inp})
         finally:
             if _plm is not None:
                 try:
                     _plm.set_active("DeepFormants", False)
-                except Exception as e:
+                except Exception:
                     logger.warning("formant_tracker.py::_analyze_deepformants fallback", exc_info=True)
-                    pass
         formant_tracks_hz = np.asarray(ort_out[0], dtype=np.float32)  # [1, 4, T] oder [4, T]
 
         if formant_tracks_hz.ndim == 3:

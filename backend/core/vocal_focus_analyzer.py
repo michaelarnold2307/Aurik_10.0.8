@@ -538,13 +538,13 @@ class VocalFocusAnalyzer:
             if f1_mean <= 0.0 or f2_mean <= 0.0:
                 _f0_est = _estimate_f0_simple(seg, sr)
                 if _f0_est > 0:
-                    if _f0_est < 160.0:    # Male range
+                    if _f0_est < 160.0:  # Male range
                         f1_mean = f1_mean if f1_mean > 0 else 500.0
                         f2_mean = f2_mean if f2_mean > 0 else 1500.0
                     elif _f0_est < 300.0:  # Female range
                         f1_mean = f1_mean if f1_mean > 0 else 700.0
                         f2_mean = f2_mean if f2_mean > 0 else 2000.0
-                    else:                   # Child / high voice
+                    else:  # Child / high voice
                         f1_mean = f1_mean if f1_mean > 0 else 800.0
                         f2_mean = f2_mean if f2_mean > 0 else 2300.0
                 else:
@@ -969,8 +969,8 @@ def _estimate_f0_simple(audio: np.ndarray, sr: int) -> float:
             return 0.0
         n = min(len(audio), sr * 2)  # Max 2s
         seg = audio[:n].astype(np.float64)
-        autocorr = np.correlate(seg, seg, mode='full')
-        autocorr = autocorr[len(seg) - 1:] / max(autocorr[len(seg) - 1], 1e-10)
+        autocorr = np.correlate(seg, seg, mode="full")
+        autocorr = autocorr[len(seg) - 1 :] / max(autocorr[len(seg) - 1], 1e-10)
         min_lag = int(sr / 450)
         max_lag = int(sr / 80)
         if max_lag >= len(autocorr):

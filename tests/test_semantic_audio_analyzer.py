@@ -1,4 +1,5 @@
 import pytest
+
 """
 Tests for Semantic Audio Analyzer (Innovation #3)
 ==================================================

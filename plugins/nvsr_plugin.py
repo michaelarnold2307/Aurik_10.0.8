@@ -285,9 +285,8 @@ class NvsrPlugin:
             _e_in = float(np.mean(np.abs(_Zin[_hf_mask]) ** 2)) + 1e-20
             _e_out = float(np.mean(np.abs(_Zout[_hf_mask]) ** 2)) + 1e-20
             hf_added_db = float(10.0 * np.log10(_e_out / _e_in))
-        except Exception as e:
+        except Exception:
             logger.warning("nvsr_plugin.py::_process_dsp_sbr fallback", exc_info=True)
-            pass
 
         self._last_route_metadata = self._metadata(
             strategy="dsp_sbr",

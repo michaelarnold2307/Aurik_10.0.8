@@ -1,4 +1,5 @@
 import pytest
+
 """Quality-first contract audit across all 64 phases.
 
 This test enforces two invariants:

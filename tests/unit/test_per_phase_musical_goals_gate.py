@@ -231,7 +231,7 @@ class TestPMGGAudioQuality:
             out, _, entry = gate.wrap_phase(_MockExplodePhase(), audio_5s, SR)
             # Falls kein Fehler: Ausgabe muss finite sein (Rollback greift)
             assert np.isfinite(out).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Exception ist auch akzeptabel
 
@@ -441,7 +441,7 @@ class TestPMGGInputVariations:
         try:
             out, scores, entry = gate.wrap_phase(_MockPassPhase(), stereo, SR)
             assert np.isfinite(out).all()
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             pass  # Stereo-Ablehnung ist akzeptabel
 

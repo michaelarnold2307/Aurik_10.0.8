@@ -18,8 +18,8 @@ Spec: §8.1, §8.2, §v10, §0h, §1.2c
 from __future__ import annotations
 
 import os
-import pytest
 
+import pytest
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AMRB Gate — Weltklasse-Benchmark
@@ -41,10 +41,9 @@ class TestAMRBWorldclass:
     def test_amrb_02_benchmark_data_exists(self):
         """AMRB-Benchmark-Daten existieren (≥10 Baseline-Runs)."""
         import glob
+
         baselines = glob.glob("benchmarks/amrb_baseline_*.json")
-        assert len(baselines) >= 5, (
-            f"Nur {len(baselines)} AMRB-Baselines — erwartet ≥5 (§8.1)"
-        )
+        assert len(baselines) >= 5, f"Nur {len(baselines)} AMRB-Baselines — erwartet ≥5 (§8.1)"
 
     def test_amrb_03_eight_of_ten_scenarios(self):
         """AMRB: ≥8/10 Szenarien müssen erreichbar sein."""
@@ -52,9 +51,7 @@ class TestAMRBWorldclass:
         if not os.path.exists(fp):
             pytest.skip("test_amrb_ci_gate.py nicht gefunden")
         src = open(fp, encoding="utf-8").read()
-        assert "8" in src or "eight" in src.lower(), (
-            "AMRB: 8/10 Szenarien-Anforderung nicht in Gate-Datei"
-        )
+        assert "8" in src or "eight" in src.lower(), "AMRB: 8/10 Szenarien-Anforderung nicht in Gate-Datei"
 
     def test_amrb_04_restoration_mode_tested(self):
         """AMRB testet Restoration-Modus (nicht nur Studio 2026)."""
@@ -62,14 +59,13 @@ class TestAMRBWorldclass:
         if not os.path.exists(fp):
             pytest.skip("test_amrb_ci_gate.py nicht gefunden")
         src = open(fp, encoding="utf-8").read()
-        assert "restoration" in src.lower(), (
-            "AMRB: Restoration-Modus nicht getestet"
-        )
+        assert "restoration" in src.lower(), "AMRB: Restoration-Modus nicht getestet"
 
     def test_amrb_05_benchmark_runner_importable(self):
         """AMRB-Benchmark-Runner ist importierbar."""
         try:
             from benchmarks.run_amrb_baseline import main as amrb_main
+
             assert callable(amrb_main)
         except ImportError:
             pytest.skip("AMRB-Runner nicht importierbar — ML-Abhängigkeiten fehlen")
@@ -103,6 +99,7 @@ class TestCompetitiveWorldclass:
     def test_comp_03_competitive_benchmark_data_exists(self):
         """Competitive-Benchmark-Daten existieren."""
         import glob
+
         data = glob.glob("benchmarks/competitive/**/*.json", recursive=True)
         assert len(data) >= 1, "Keine Competitive-Benchmark-Daten"
 
@@ -118,16 +115,20 @@ class TestHPEPleasantnessProof:
 
     def test_hpe_01_compare_pleasantness_callable(self):
         """compare_pleasantness ist aufrufbar."""
-        from backend.core.human_pleasantness_estimator import compare_pleasantness
         import numpy as np
+
+        from backend.core.human_pleasantness_estimator import compare_pleasantness
+
         audio = 0.3 * np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, dtype=np.float32))
         result = compare_pleasantness(audio, audio, sr=48000)
         assert "delta_score" in result, f"HPE-Result ohne delta_score: {list(result.keys())}"
 
     def test_hpe_02_delta_score_is_finite(self):
         """HPE delta_score ist immer finit (kein NaN)."""
-        from backend.core.human_pleasantness_estimator import compare_pleasantness
         import numpy as np
+
+        from backend.core.human_pleasantness_estimator import compare_pleasantness
+
         audio = 0.3 * np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, dtype=np.float32))
         result = compare_pleasantness(audio, audio, sr=48000)
         delta = float(result.get("delta_score", float("nan")))
@@ -135,8 +136,10 @@ class TestHPEPleasantnessProof:
 
     def test_hpe_03_identical_audio_is_neutral(self):
         """Identisches Audio → HPE ≈ 0 (neutral)."""
-        from backend.core.human_pleasantness_estimator import compare_pleasantness
         import numpy as np
+
+        from backend.core.human_pleasantness_estimator import compare_pleasantness
+
         audio = 0.3 * np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, dtype=np.float32))
         result = compare_pleasantness(audio, audio, sr=48000)
         delta = float(result.get("delta_score", -99.0))
@@ -144,19 +147,20 @@ class TestHPEPleasantnessProof:
 
     def test_hpe_04_noise_is_worse_than_clean(self):
         """Verrauschtes Audio → HPE < 0 (schlechter als clean)."""
-        from backend.core.human_pleasantness_estimator import compare_pleasantness
         import numpy as np
+
+        from backend.core.human_pleasantness_estimator import compare_pleasantness
+
         clean = 0.3 * np.sin(2 * np.pi * 440 * np.linspace(0, 0.5, 24000, dtype=np.float32))
         noisy = clean + 0.1 * np.random.randn(24000).astype(np.float32)
         result = compare_pleasantness(clean, noisy, sr=48000)
         delta = float(result.get("delta_score", 0.0))
-        assert delta < 0.05, (
-            f"Verrauschtes Audio HPE={delta:.3f} — erwartet < 0.05 (schlechter)"
-        )
+        assert delta < 0.05, f"Verrauschtes Audio HPE={delta:.3f} — erwartet < 0.05 (schlechter)"
 
     def test_hpe_05_hpe_gate_in_pmgg_is_active(self):
         """HPE-Gate in PMGG ist aktiv (nicht auskommentiert)."""
         import backend.core.per_phase_musical_goals_gate as pmgg_mod
+
         src = open(pmgg_mod.__file__, encoding="utf-8").read()
         assert "hpe_skip" in src, "hpe_skip nicht in PMGG"
         # hpe_skip darf NICHT auskommentiert sein
@@ -186,23 +190,17 @@ class TestGoalMatrixWorldclass:
             pytest.skip("Spec 01 nicht gefunden")
         src = open(spec_path, encoding="utf-8").read()
         # Mindestens: Goal-Gewichte existieren
-        assert "weight" in src.lower() or "Gewicht" in src, (
-            "Goal-Weights nicht in Spec 01 dokumentiert"
-        )
+        assert "weight" in src.lower() or "Gewicht" in src, "Goal-Weights nicht in Spec 01 dokumentiert"
 
     def test_goal_03_teamwork_principle_documented(self):
         """Teamwork-Prinzip (§1.2c) ist in Specs dokumentiert."""
         src = open(".github/specs/01_musical_goals.md", encoding="utf-8").read()
-        assert "Teamwork" in src or "teamwork" in src.lower(), (
-            "Teamwork-Prinzip nicht in Spec 01"
-        )
+        assert "Teamwork" in src or "teamwork" in src.lower(), "Teamwork-Prinzip nicht in Spec 01"
 
     def test_goal_04_brillanz_has_threshold(self):
         """Jedes Goal hat einen Schwellwert für Restoration."""
         src = open(".github/specs/01_musical_goals.md", encoding="utf-8").read()
-        assert "Brillanz" in src or "brilliance" in src.lower(), (
-            "Brillanz/Brilliance nicht in Spec 01"
-        )
+        assert "Brillanz" in src or "brilliance" in src.lower(), "Brillanz/Brilliance nicht in Spec 01"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -217,15 +215,15 @@ class TestPipelineStability:
     def test_pipe_01_health_check_all_passed(self):
         """Pipeline-Health-Check: alle 5 Checks bestanden."""
         from backend.core.pipeline_health_check import run_health_checks
+
         report = run_health_checks(audio_duration_s=60.0)
-        assert report.all_passed, (
-            f"Health-Check fehlgeschlagen:\n{report.summary()}"
-        )
+        assert report.all_passed, f"Health-Check fehlgeschlagen:\n{report.summary()}"
 
     def test_pipe_02_denker_importable(self):
         """AurikDenker ist importierbar."""
         try:
             from denker.aurik_denker import AurikDenker
+
             assert AurikDenker is not None
         except ImportError as e:
             pytest.skip(f"AurikDenker nicht importierbar: {e}")
@@ -233,11 +231,13 @@ class TestPipelineStability:
     def test_pipe_03_unified_restorer_importable(self):
         """UnifiedRestorerV3 ist importierbar."""
         from backend.core.unified_restorer_v3 import UnifiedRestorerV3
+
         assert UnifiedRestorerV3 is not None
 
     def test_pipe_04_export_gate_exists(self):
         """Export-Qualitäts-Gate existiert (§0h)."""
         import backend.core.unified_restorer_v3 as uv3_mod
+
         src = open(uv3_mod.__file__, encoding="utf-8").read()
         assert "artifact_freedom" in src, "artifact_freedom nicht in UV3"
         assert "export" in src.lower(), "Kein Export-Gate in UV3"
@@ -245,5 +245,6 @@ class TestPipelineStability:
     def test_pipe_05_graceful_stop_mechanism_exists(self):
         """Graceful-Stop-Mechanismus existiert (§0c)."""
         import backend.core.unified_restorer_v3 as uv3_mod
+
         src = open(uv3_mod.__file__, encoding="utf-8").read()
         assert "_graceful_stop_event" in src, "Kein _graceful_stop_event in UV3"

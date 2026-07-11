@@ -69,7 +69,7 @@ class TestDipDetectionAccuracy:
 
     def test_01_dip_detected_on_tape_material(self):
         """Dip wird auf Tape-Material erkannt."""
-        from backend.core.defect_scanner import DefectScanner, MaterialType, DefectType
+        from backend.core.defect_scanner import DefectScanner, MaterialType
 
         scanner = DefectScanner(material_type=MaterialType.CASSETTE, sample_rate=SR)
         audio = _make_dip_audio(dip_depth_db=12.0)
@@ -80,7 +80,7 @@ class TestDipDetectionAccuracy:
 
     def test_02_dip_detection_handles_any_audio(self):
         """Dip-Detection funktioniert unabhängig vom Material (Gating in scan())."""
-        from backend.core.defect_scanner import DefectScanner, MaterialType, DefectType
+        from backend.core.defect_scanner import DefectScanner, MaterialType
 
         scanner = DefectScanner(material_type=MaterialType.CD_DIGITAL, sample_rate=SR)
         audio = _make_dip_audio(dip_depth_db=12.0)
@@ -105,9 +105,7 @@ class TestDipDetectionAccuracy:
         import backend.core.defect_scanner as ds_mod
 
         src = open(ds_mod.__file__, encoding="utf-8").read()
-        assert "_local_dyn" in src, (
-            "dip_thresh_db nicht SNR-adaptiv — _local_dyn fehlt in _detect_tape_head_level_dips"
-        )
+        assert "_local_dyn" in src, "dip_thresh_db nicht SNR-adaptiv — _local_dyn fehlt in _detect_tape_head_level_dips"
 
 
 @pytest.mark.unit
@@ -116,7 +114,7 @@ class TestBumpDetectionAccuracy:
 
     def test_10_bump_detected_on_cassette(self):
         """Transport Bump wird auf Kassette erkannt."""
-        from backend.core.defect_scanner import DefectScanner, MaterialType, DefectType
+        from backend.core.defect_scanner import DefectScanner, MaterialType
 
         scanner = DefectScanner(material_type=MaterialType.CASSETTE, sample_rate=SR)
         audio = _make_bump_audio()
@@ -157,6 +155,7 @@ class TestPerceptualTransparency:
     def test_20_pleasantness_estimator_available(self):
         """compare_pleasantness ist verfügbar für HPE-Messung."""
         from backend.core.human_pleasantness_estimator import compare_pleasantness
+
         assert callable(compare_pleasantness), "HPE nicht verfügbar"
 
     def test_21_dip_audio_differs_from_clean(self):
@@ -170,21 +169,15 @@ class TestPerceptualTransparency:
         # Mit 12dB Dip sollte HPE negativ sein (verschlechtert)
         delta = float(result.get("delta_score", 0.0))
         # Der Dip SOLLTE als Verschlechterung erkannt werden
-        assert delta < 0.1, (
-            f"HPE-Delta bei 12dB Dip: {delta:.3f} — erwartet < 0.1 (Verschlechterung)"
-        )
+        assert delta < 0.1, f"HPE-Delta bei 12dB Dip: {delta:.3f} — erwartet < 0.1 (Verschlechterung)"
 
     def test_22_hpe_gate_exists_in_pmgg(self):
         """PMGG hat HPE-Gate für Post-Phase-Validierung."""
         import backend.core.per_phase_musical_goals_gate as pmgg_mod
 
         src = open(pmgg_mod.__file__, encoding="utf-8").read()
-        assert "compare_pleasantness" in src, (
-            "PMGG hat kein compare_pleasantness — keine HPE-Validierung nach Phase"
-        )
-        assert "hpe_skip" in src, (
-            "PMGG hat kein hpe_skip — Phase kann bei HPE-Verschlechterung nicht verworfen werden"
-        )
+        assert "compare_pleasantness" in src, "PMGG hat kein compare_pleasantness — keine HPE-Validierung nach Phase"
+        assert "hpe_skip" in src, "PMGG hat kein hpe_skip — Phase kann bei HPE-Verschlechterung nicht verworfen werden"
 
     def test_23_cause_to_phases_covers_both_defects(self):
         """Beide Defekte sind in CAUSE_TO_PHASES geroutet."""

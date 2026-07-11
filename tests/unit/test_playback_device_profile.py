@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für PlaybackDeviceProfile (§PDV-1).
 
 Spec: §PDV-1 Translation-EQ für Consumer-Geräte

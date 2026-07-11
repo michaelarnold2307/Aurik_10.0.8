@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für backend/core/dsp/nmr_feedback.py — NMR-Feedback-Modul.
 
 Abdeckung:

@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_i18n.py — Unit-Tests für das i18n-Framework (§3.5).
 
@@ -9,7 +10,6 @@ from __future__ import annotations
 
 import threading
 from typing import Any
-
 
 from Aurik10.i18n import get_language, set_language, t
 

@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for phase_08_transient_preservation._compute_transient_profile (§2.56)."""
 
 from backend.core.phases.phase_08_transient_preservation import TransientPreservationPhase

@@ -49,8 +49,8 @@ def validate_defect_contracts(
     try:
         from backend.core.defect_scanner import DefectType
         from backend.core.phase_pruner import (
-            _PHASE_DEFECT_REQUIREMENTS,
             _MATERIAL_SKIP_PHASES,
+            _PHASE_DEFECT_REQUIREMENTS,
         )
 
         CANONICAL = {e.value for e in DefectType}
@@ -67,9 +67,9 @@ def validate_defect_contracts(
                     )
 
         # Check all MaterialType values are covered
-        all_materials = {e.value for e in __import__(
-            "backend.core.defect_scanner", fromlist=["MaterialType"]
-        ).MaterialType}
+        all_materials = {
+            e.value for e in __import__("backend.core.defect_scanner", fromlist=["MaterialType"]).MaterialType
+        }
         digital = {"aac", "cd_digital", "dat", "minidisc", "mp3_high", "mp3_low", "streaming"}
         for mat in digital:
             if mat not in _MATERIAL_SKIP_PHASES:
@@ -112,8 +112,9 @@ def validate_defect_contracts(
 
     # ── 3. SongGoalImportance: Defekt-Keys prüfen ─────────────────────
     try:
-        from backend.core.song_goal_importance import estimate_goal_importance as _egi
         import inspect
+
+        from backend.core.song_goal_importance import estimate_goal_importance as _egi
 
         sig = inspect.signature(_egi)
         param_names = list(sig.parameters.keys())
@@ -174,6 +175,7 @@ def validate_defect_contracts(
 
     # ── 6. Keine toten Verzeichnisse mehr ──────────────────────────────
     import os
+
     dead_paths = [
         "backend/adaptive_pipeline.py",
         "backend/defect_detection/",

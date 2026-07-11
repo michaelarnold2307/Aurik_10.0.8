@@ -2,7 +2,7 @@
 # Install MFA Models for Five Languages
 # =======================================
 #
-# This script installs Montreal Forced Aligner models for 
+# This script installs Montreal Forced Aligner models for
 # English, German, French, Spanish, and Italian language support.
 #
 # Author: AURIK Development Team

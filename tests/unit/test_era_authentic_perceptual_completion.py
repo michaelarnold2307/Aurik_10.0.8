@@ -1,4 +1,5 @@
 import pytest
+
 """Tests für core/era_authentic_perceptual_completion.py — Spec §2.35.
 
 ≥ 25 Unit-Tests: Aktivierungsbedingungen, Bandbreiten-Erkennung, era-Ceiling,

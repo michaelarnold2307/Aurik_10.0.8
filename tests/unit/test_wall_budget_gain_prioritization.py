@@ -1,7 +1,7 @@
-import pytest
 import types
 
 import numpy as np
+import pytest
 
 from backend.core.defect_scanner import MaterialType
 from backend.core.unified_restorer_v3 import RestorationConfig, UnifiedRestorerV3

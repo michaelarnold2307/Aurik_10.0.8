@@ -39,7 +39,8 @@ import time
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 import numpy as np
 
@@ -114,9 +115,7 @@ class CrashRecoveryGuard:
         try:
             yield
         except MemoryError:
-            logger.critical(
-                "CrashRecoveryGuard: MemoryError in job %s — saving checkpoint", job_id
-            )
+            logger.critical("CrashRecoveryGuard: MemoryError in job %s — saving checkpoint", job_id)
             self._save_checkpoint(job_id, audio, metadata, "MemoryError", traceback.format_exc())
             raise
         except Exception as exc:
@@ -126,9 +125,7 @@ class CrashRecoveryGuard:
                 type(exc).__name__,
                 exc,
             )
-            self._save_checkpoint(
-                job_id, audio, metadata, f"{type(exc).__name__}: {exc}", traceback.format_exc()
-            )
+            self._save_checkpoint(job_id, audio, metadata, f"{type(exc).__name__}: {exc}", traceback.format_exc())
             raise
         finally:
             self._active_jobs.pop(job_id, None)
@@ -312,8 +309,12 @@ class CrashRecoveryGuard:
     def _cleanup_checkpoint_files(self, json_path: Path) -> None:
         """Remove checkpoint JSON and associated audio NPZ + tmp files."""
         stem = str(json_path).replace("_crash_checkpoint.json", "")
-        for suffix in ("_crash_checkpoint.json", "_crash_audio.npz",
-                        "_crash_checkpoint.json.tmp", "_crash_audio.npz.tmp"):
+        for suffix in (
+            "_crash_checkpoint.json",
+            "_crash_audio.npz",
+            "_crash_checkpoint.json.tmp",
+            "_crash_audio.npz.tmp",
+        ):
             try:
                 os.remove(stem + suffix)
             except OSError:
@@ -344,8 +345,9 @@ class CrashRecoveryGuard:
                 len(self._active_jobs),
             )
             saved = self.emergency_checkpoint_all()
-            logger.info("CrashRecoveryGuard: %d/%d jobs checkpointed on SIGTERM",
-                        saved, len(self._active_jobs) if saved else 0)
+            logger.info(
+                "CrashRecoveryGuard: %d/%d jobs checkpointed on SIGTERM", saved, len(self._active_jobs) if saved else 0
+            )
             # Chain to the existing handler if it's callable and not the
             # default SIG_DFL/SIG_IGN
             if callable(_existing) and _existing not in (signal.SIG_DFL, signal.SIG_IGN):
@@ -353,7 +355,6 @@ class CrashRecoveryGuard:
                     _existing(signum, frame)
                 except Exception as e:
                     logger.warning("crash_recovery_guard.py::_sigterm_wrapper fallback: %s", e)
-                    pass
             else:
                 # No existing handler — re-raise the original signal to let
                 # the OS default behaviour (process termination) take over.
@@ -413,9 +414,7 @@ def recovery_prompt_for_gui(guard: CrashRecoveryGuard | None = None) -> list[dic
             {
                 "job_id": cp["job_id"],
                 "failure_reason": cp["failure_reason"],
-                "timestamp_iso": time.strftime(
-                    "%Y-%m-%dT%H:%M:%S", time.localtime(cp["timestamp"])
-                ),
+                "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(cp["timestamp"])),
                 "age_hours": round(age_hours, 1),
                 "checkpoint_path": cp.get("checkpoint_path", ""),
             }

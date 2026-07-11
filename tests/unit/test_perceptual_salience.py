@@ -1,4 +1,5 @@
 import pytest
+
 """Tests for PerceptualSalienceEstimator (§9.1c).
 
 Validations:

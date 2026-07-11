@@ -13,8 +13,7 @@ Author: Aurik 10.0.1
 import numpy as np
 
 
-def compute_ab_delta(original: np.ndarray, restored: np.ndarray,
-                     normalize: bool = True) -> np.ndarray:
+def compute_ab_delta(original: np.ndarray, restored: np.ndarray, normalize: bool = True) -> np.ndarray:
     """Compute the difference signal between original and restored audio.
 
     Args:
@@ -26,24 +25,26 @@ def compute_ab_delta(original: np.ndarray, restored: np.ndarray,
         Delta signal: restored - original. Positive = added, negative = removed.
     """
     # Align lengths
-    min_len = min(original.shape[-1] if original.ndim > 1 else len(original),
-                  restored.shape[-1] if restored.ndim > 1 else len(restored))
-    
+    min_len = min(
+        original.shape[-1] if original.ndim > 1 else len(original),
+        restored.shape[-1] if restored.ndim > 1 else len(restored),
+    )
+
     if original.ndim > 1:
         orig = original[..., :min_len]
     else:
         orig = original[:min_len]
-    
+
     if restored.ndim > 1:
         rest = restored[..., :min_len]
     else:
         rest = restored[:min_len]
-    
+
     delta = rest.astype(np.float64) - orig.astype(np.float64)
-    
+
     if normalize:
         peak = float(np.max(np.abs(delta))) + 1e-12
         target_peak = 10 ** (-6.0 / 20.0)  # -6 dBFS
         delta = delta * (target_peak / peak)
-    
+
     return np.clip(delta, -1.0, 1.0).astype(np.float32)

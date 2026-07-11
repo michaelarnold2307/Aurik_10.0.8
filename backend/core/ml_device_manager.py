@@ -611,6 +611,7 @@ class MLDeviceManager:
         """Fallback: detect ROCm via ONNX Runtime providers (no torch needed)."""
         try:
             import onnxruntime as ort  # type: ignore[import]
+
             providers = ort.get_available_providers()
             if "ROCMExecutionProvider" in providers:
                 self._backend = GPUBackend.ROCM
@@ -620,9 +621,7 @@ class MLDeviceManager:
                 self._gpu_name = "AMD GPU (ONNX ROCm, no torch)"
                 self._vram_total_gb = 4.0  # conservative estimate
                 self._vram_free_gb = 4.0
-                logger.info(
-                    "MLDeviceManager: ONNX ROCm provider detected — ONNX models will use GPU"
-                )
+                logger.info("MLDeviceManager: ONNX ROCm provider detected — ONNX models will use GPU")
             else:
                 logger.debug("MLDeviceManager: ONNX ROCm provider not available")
         except ImportError:
@@ -834,7 +833,6 @@ class MLDeviceManager:
                         return name
         except Exception as e:
             logger.warning("ml_device_manager.py::_query_gpu_name_windows fallback: %s", e)
-            pass
         return ""
 
     def _query_vram_free_rocm(self) -> float:
@@ -867,7 +865,6 @@ class MLDeviceManager:
                         return round(int(raw) / (1024**3), 2)
         except Exception as e:
             logger.warning("ml_device_manager.py::_query_vram_directml fallback: %s", e)
-            pass
         return 4.0  # conservative default when WMIC is unavailable
 
     # ── Public API ────────────────────────────────────────────────────────

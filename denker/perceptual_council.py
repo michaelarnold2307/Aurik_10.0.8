@@ -203,17 +203,22 @@ class PerceptualQualityCouncil:
                 _goals_mean = float(np.mean(_finite))
         _goals_ratio = goals_passed / max(goals_total, 1)
         _goals_component = 0.60 * _goals_mean + 0.40 * _goals_ratio
-        _log.append(
-            f"Goals-Komponente: {_goals_component:.3f} "
-            f"(Mittel={_goals_mean:.3f}, Ratio={_goals_ratio:.3f})"
-        )
+        _log.append(f"Goals-Komponente: {_goals_component:.3f} (Mittel={_goals_mean:.3f}, Ratio={_goals_ratio:.3f})")
 
         # ── 4. Material-adaptive Gewichtung ─────────────────────────────
         _material = str(material or "unknown").strip().lower()
         _is_historical = _material in {
-            "wax_cylinder", "shellac", "lacquer_disc", "wire_recording",
-            "vinyl", "tape", "reel_tape", "cassette",
-            "cassette_dolby_b", "cassette_dolby_c", "cassette_dolby_s",
+            "wax_cylinder",
+            "shellac",
+            "lacquer_disc",
+            "wire_recording",
+            "vinyl",
+            "tape",
+            "reel_tape",
+            "cassette",
+            "cassette_dolby_b",
+            "cassette_dolby_c",
+            "cassette_dolby_s",
         }
         _is_digital = _material in {"cd_digital", "dat", "mp3_high", "aac", "streaming"}
 
@@ -241,11 +246,7 @@ class PerceptualQualityCouncil:
             _holistic = 0.40 * _defect_component + 0.60 * _versa_norm
             _log.append(f"Holistischer Score (2-Komp., keine Goals): {_holistic:.3f}")
         else:
-            _holistic = (
-                _w_defect * _defect_component
-                + _w_versa * _versa_norm
-                + _w_goals * _goals_component
-            )
+            _holistic = _w_defect * _defect_component + _w_versa * _versa_norm + _w_goals * _goals_component
             _log.append(f"Holistischer Score (3-Komp.): {_holistic:.3f}")
         _holistic = float(np.clip(_holistic, 0.0, 1.0))
         _log.append(f"Holistischer Score: {_holistic:.3f}")
@@ -302,47 +303,60 @@ class PerceptualQualityCouncil:
         # Verschlechterung: holistic_score sehr niedrig trotz niedriger Defektschwere
         # → mögliches Overprocessing
         if holistic_score < 0.30:
-            return ("rollback",
-                    "Qualität unter 0.30 — Rollback empfohlen. "
-                    "Die Restaurierung hat das Signal wahrscheinlich verschlechtert.")
+            return (
+                "rollback",
+                "Qualität unter 0.30 — Rollback empfohlen. "
+                "Die Restaurierung hat das Signal wahrscheinlich verschlechtert.",
+            )
 
         # Exzellent
         if holistic_score >= 0.80:
-            return ("accept",
-                    f"Hervorragende Qualität (Score={holistic_score:.2f}). "
-                    "Alle perzeptiven Metriken im Zielbereich.")
+            return (
+                "accept",
+                f"Hervorragende Qualität (Score={holistic_score:.2f}). Alle perzeptiven Metriken im Zielbereich.",
+            )
 
         # Gut — aber mit Verbesserungspotential
         if holistic_score >= 0.65:
             if goals_passed < goals_total * 0.6:
-                return ("review",
-                        f"Gute Gesamtqualität (Score={holistic_score:.2f}), "
-                        f"aber nur {goals_passed}/{goals_total} Goals bestanden. "
-                        "Eine manuelle Prüfung wird empfohlen.")
+                return (
+                    "review",
+                    f"Gute Gesamtqualität (Score={holistic_score:.2f}), "
+                    f"aber nur {goals_passed}/{goals_total} Goals bestanden. "
+                    "Eine manuelle Prüfung wird empfohlen.",
+                )
             if has_improvements and not is_historical:
-                return ("retry_studio2026",
-                        f"Qualität ausreichend (Score={holistic_score:.2f}), "
-                        f"aber {improvement_count} Goals unter Schwelle. "
-                        "Erneuter Versuch in STUDIO 2026 könnte Verbesserung bringen.")
-            return ("accept",
-                    f"Solide Qualität (Score={holistic_score:.2f}). "
-                    "Für historisches Material im erwarteten Bereich.")
+                return (
+                    "retry_studio2026",
+                    f"Qualität ausreichend (Score={holistic_score:.2f}), "
+                    f"aber {improvement_count} Goals unter Schwelle. "
+                    "Erneuter Versuch in STUDIO 2026 könnte Verbesserung bringen.",
+                )
+            return (
+                "accept",
+                f"Solide Qualität (Score={holistic_score:.2f}). Für historisches Material im erwarteten Bereich.",
+            )
 
         # Grenzwertig
         if holistic_score >= 0.45:
             if versa_mos > 0.0 and versa_mos < material_target:
-                return ("retry_quality",
-                        f"Qualität grenzwertig (Score={holistic_score:.2f}, "
-                        f"VERSA MOS={versa_mos:.1f} < Ziel={material_target:.1f}). "
-                        "Erneuter Versuch in QUALITY-Modus empfohlen.")
-            return ("review",
-                    f"Qualität grenzwertig (Score={holistic_score:.2f}). "
-                    "Menschliche Prüfung vor endgültiger Freigabe empfohlen.")
+                return (
+                    "retry_quality",
+                    f"Qualität grenzwertig (Score={holistic_score:.2f}, "
+                    f"VERSA MOS={versa_mos:.1f} < Ziel={material_target:.1f}). "
+                    "Erneuter Versuch in QUALITY-Modus empfohlen.",
+                )
+            return (
+                "review",
+                f"Qualität grenzwertig (Score={holistic_score:.2f}). "
+                "Menschliche Prüfung vor endgültiger Freigabe empfohlen.",
+            )
 
         # Unzureichend
-        return ("retry_quality",
-                f"Qualität unzureichend (Score={holistic_score:.2f}). "
-                "Erneuter Versuch mit QUALITY-Modus empfohlen.")
+        return (
+            "retry_quality",
+            f"Qualität unzureichend (Score={holistic_score:.2f}). Erneuter Versuch mit QUALITY-Modus empfohlen.",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RepairVerification:
     """Ergebnis der Verifikation einer einzelnen Defektreparatur."""
+
     defect_type: str = ""
     defect_sample: int = 0
     before_rms: float = 0.0
@@ -43,6 +44,7 @@ class RepairVerification:
 @dataclass
 class BatchRepairReport:
     """Gesamt-Report über alle verifizierten Reparaturen."""
+
     total_defects: int = 0
     repaired_ok: int = 0
     retried: int = 0
@@ -59,7 +61,7 @@ class PerDefectRepairVerifier:
     """
 
     MAX_RETRIES = 3
-    MIN_RMS_REDUCTION_DB = 0.5   # Minimum Verbesserung für "repaired_ok"
+    MIN_RMS_REDUCTION_DB = 0.5  # Minimum Verbesserung für "repaired_ok"
     MAX_RMS_REDUCTION_DB = 30.0  # Maximum (Over-Repair-Schutz)
 
     def __init__(self, dynamics_guard: Any = None) -> None:
@@ -116,10 +118,7 @@ class PerDefectRepairVerifier:
             reduction = v.rms_reduction_db
 
         # Reparatur OK wenn: genug reduziert aber nicht überreduziert
-        v.repair_ok = (
-            reduction >= self.MIN_RMS_REDUCTION_DB and
-            reduction <= self.MAX_RMS_REDUCTION_DB
-        )
+        v.repair_ok = reduction >= self.MIN_RMS_REDUCTION_DB and reduction <= self.MAX_RMS_REDUCTION_DB
 
         if reduction < self.MIN_RMS_REDUCTION_DB:
             v.warnings.append(f"Under-repair: {reduction:.1f} dB reduction (min {self.MIN_RMS_REDUCTION_DB})")
@@ -129,15 +128,12 @@ class PerDefectRepairVerifier:
         # §AF Continuity-Check
         if self._dynamics is not None:
             try:
-                ct = self._dynamics.verify_continuity(
-                    mono_after, sr, [s0, s1], channel=None
-                )
+                ct = self._dynamics.verify_continuity(mono_after, sr, [s0, s1], channel=None)
                 v.continuity_ok = ct.continuity_ok
                 if not ct.continuity_ok:
                     v.warnings.append(f"Continuity violation: {ct.max_envelope_deviation_db:.1f} dB")
             except Exception as e:
                 logger.warning("per_defect_repair_verifier.py::verify_defect fallback: %s", e)
-                pass
 
         return v
 
@@ -158,12 +154,12 @@ class PerDefectRepairVerifier:
         report = BatchRepairReport(total_defects=len(defects))
 
         for d in defects:
-            s0 = d.get('start_sample', 0)
-            s1 = d.get('end_sample', s0 + 100)
-            dtype = d.get('type', 'UNKNOWN')
+            s0 = d.get("start_sample", 0)
+            s1 = d.get("end_sample", s0 + 100)
+            dtype = d.get("type", "UNKNOWN")
 
             v = self.verify_defect(audio_before, audio_after, sr, s0, s1, dtype)
-            v.retries_used = d.get('retries', 0)
+            v.retries_used = d.get("retries", 0)
 
             if v.repair_ok:
                 report.repaired_ok += 1
@@ -175,12 +171,12 @@ class PerDefectRepairVerifier:
             report.verifications.append(v)
 
         if report.repaired_ok > 0:
-            report.avg_rms_reduction_db = float(np.mean([
-                v.rms_reduction_db for v in report.verifications if v.repair_ok
-            ]))
-        report.avg_retries = float(np.mean([
-            v.retries_used for v in report.verifications
-        ])) if report.verifications else 0.0
+            report.avg_rms_reduction_db = float(
+                np.mean([v.rms_reduction_db for v in report.verifications if v.repair_ok])
+            )
+        report.avg_retries = (
+            float(np.mean([v.retries_used for v in report.verifications])) if report.verifications else 0.0
+        )
 
         return report
 

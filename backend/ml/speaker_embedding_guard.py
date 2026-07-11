@@ -118,7 +118,7 @@ class SpeakerEmbeddingGuard:
         if len(full_embedding) < self._dim:
             full_embedding = np.pad(full_embedding, (0, self._dim - len(full_embedding)))
         else:
-            full_embedding = full_embedding[:self._dim]
+            full_embedding = full_embedding[: self._dim]
 
         # L2-Normalisierung
         norm = np.linalg.norm(full_embedding)
@@ -131,7 +131,7 @@ class SpeakerEmbeddingGuard:
 
         return SpeakerEmbedding(
             vector=full_embedding.astype(np.float32),
-            n_frames=n_frames if 'n_frames' in dir() else 0,
+            n_frames=n_frames if "n_frames" in dir() else 0,
             duration_s=len(mono) / sr,
             has_speech=rms > 0.001,
             confidence=confidence,
@@ -218,7 +218,7 @@ class SpeakerEmbeddingGuard:
 
         for i in range(n_frames):
             start = i * HOP_LENGTH
-            frame = mono[start:start + win_size] * window
+            frame = mono[start : start + win_size] * window
             spec = np.abs(np.fft.rfft(frame, n=N_FFT))
             freqs = np.fft.rfftfreq(N_FFT, d=1.0 / sr)
 

@@ -11,31 +11,47 @@ Diese werden per-Instance chirurgisch behandelt, nicht global.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # §2.59: 24 von 66 Defekten sind ZEITLICH LOKALISIERT.
 # Sie sollten per-Instance chirurgisch behandelt werden, nicht global.
-SURGICAL_DEFECT_TYPES: frozenset[str] = frozenset({
-    # Transienten (ms-Bereich)
-    "clicks", "crackle",
-    # Dropouts (ms-s)
-    "dropouts", "dropout_oxide", "dropout_head_contact", "dropout_splice",
-    # Transport (ereignisbasiert)
-    "transport_bump", "tape_splice_artifact",
-    # Zeitliche Artefakte
-    "pre_echo", "print_through", "groove_echo", "mpeg_frame_loss",
-    # Kopf/Kontakt (transient)
-    "tape_head_clog", "sticky_shed_residue",
-    # Lokalisierte Bandfehler (Sektionen, nicht global)
-    "wow", "flutter", "scrape_flutter", "multiband_wow_flutter",
-    "modulation_noise",
-    # Positionsabhängig
-    "inner_groove_distortion", "dc_offset",
-    "motor_interference", "sibilance", "transient_smearing",
-})
+SURGICAL_DEFECT_TYPES: frozenset[str] = frozenset(
+    {
+        # Transienten (ms-Bereich)
+        "clicks",
+        "crackle",
+        # Dropouts (ms-s)
+        "dropouts",
+        "dropout_oxide",
+        "dropout_head_contact",
+        "dropout_splice",
+        # Transport (ereignisbasiert)
+        "transport_bump",
+        "tape_splice_artifact",
+        # Zeitliche Artefakte
+        "pre_echo",
+        "print_through",
+        "groove_echo",
+        "mpeg_frame_loss",
+        # Kopf/Kontakt (transient)
+        "tape_head_clog",
+        "sticky_shed_residue",
+        # Lokalisierte Bandfehler (Sektionen, nicht global)
+        "wow",
+        "flutter",
+        "scrape_flutter",
+        "multiband_wow_flutter",
+        "modulation_noise",
+        # Positionsabhängig
+        "inner_groove_distortion",
+        "dc_offset",
+        "motor_interference",
+        "sibilance",
+        "transient_smearing",
+    }
+)
 
 # Defekte die GLOBAL behandelt werden (39 Typen):
 # bandwidth_loss, high_freq_noise, quantization_noise, compression_artifacts,
@@ -120,12 +136,14 @@ class SurgicalDefectAnalyzer:
                     # Skip zones that span >50% of song (Platzhalter)
                     if audio_duration_s > 0 and _dur > audio_duration_s * 0.5:
                         continue
-                    zones.append(DefectZone(
-                        float(_t0),
-                        float(_t1),
-                        defect_type,
-                        sev,
-                    ))
+                    zones.append(
+                        DefectZone(
+                            float(_t0),
+                            float(_t1),
+                            defect_type,
+                            sev,
+                        )
+                    )
                 _loc_types_with_data.add(defect_type)
             # Defekte ohne Locations (kontinuierlich: wow, flutter, etc.)
             # werden NICHT chirurgisch behandelt — globale Phasen übernehmen
@@ -137,13 +155,10 @@ class SurgicalDefectAnalyzer:
             for z in zones:
                 _by_type[z.defect_type] = _by_type.get(z.defect_type, 0) + 1
                 _by_sev.setdefault(z.defect_type, []).append(z.severity)
-            _type_summary = ", ".join(
-                f"{t}={c}×" for t, c in sorted(_by_type.items())
-            )
-            _total_instances = sum(len(_loc_data.get(t, [])) for t in _by_type)
+            _type_summary = ", ".join(f"{t}={c}×" for t, c in sorted(_by_type.items()))
+            sum(len(_loc_data.get(t, [])) for t in _by_type)
             logger.info(
-                "🔬 CHIRURGIE-PLAN: %d echte Defekt-Instanzen in %d Typen "
-                "(%d s Audio) → %s",
+                "🔬 CHIRURGIE-PLAN: %d echte Defekt-Instanzen in %d Typen (%d s Audio) → %s",
                 len(zones),
                 len(_by_type),
                 int(audio_duration_s) if audio_duration_s > 0 else 0,
@@ -153,7 +168,8 @@ class SurgicalDefectAnalyzer:
                 sevs = _by_sev.get(t, [])
                 logger.debug(
                     "  ↳ %s: %d Zone(n), severity Ø%.2f (%.2f–%.2f)",
-                    t, _by_type[t],
+                    t,
+                    _by_type[t],
                     sum(sevs) / max(len(sevs), 1),
                     min(sevs) if sevs else 0,
                     max(sevs) if sevs else 0,

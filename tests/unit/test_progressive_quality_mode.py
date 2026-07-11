@@ -1,4 +1,5 @@
 import pytest
+
 """
 tests/unit/test_progressive_quality_mode.py — ProgressiveQualityMode Test-Suite (≥ 15 Tests)
 Alle Tests synthetisch, kein Datei-I/O, SR = 48_000.

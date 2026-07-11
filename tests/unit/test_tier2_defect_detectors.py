@@ -16,9 +16,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
 from backend.core.causal_defect_reasoner import MATERIAL_PRIORS
 from backend.core.defect_phase_mapper import DefectPhaseMapper
+from backend.core.defect_scanner import DefectScanner, DefectType, MaterialType
 
 SR = 22050
 
@@ -42,9 +42,9 @@ def _stereo(duration_s: float, sr: int = SR) -> np.ndarray:
     t = np.arange(n) / sr
     left = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
     # Right channel: same fundamental but different harmonics + noise
-    right = (0.35 * np.sin(2 * np.pi * 440 * t) +
-             0.15 * np.sin(2 * np.pi * 880 * t) +
-             0.1 * np.random.randn(n)).astype(np.float32)
+    right = (0.35 * np.sin(2 * np.pi * 440 * t) + 0.15 * np.sin(2 * np.pi * 880 * t) + 0.1 * np.random.randn(n)).astype(
+        np.float32
+    )
     return np.column_stack([left, right])
 
 
@@ -67,7 +67,7 @@ def _inject_brickwall(audio: np.ndarray, sr: int = SR, cutoff_hz: float = 16000.
     # Clamp cutoff to be well below Nyquist for the filter to work
     cutoff_hz = min(cutoff_hz, nyq * 0.85)
     cutoff_norm = cutoff_hz / nyq
-    sos = butter(8, cutoff_norm, btype='low', output='sos')
+    sos = butter(8, cutoff_norm, btype="low", output="sos")
     return sosfilt(sos, audio).astype(np.float32)
 
 
@@ -148,9 +148,7 @@ class TestMaterialSensitivity:
             if mat_type not in DefectScanner.MATERIAL_SENSITIVITY:
                 continue
             val = DefectScanner.MATERIAL_SENSITIVITY[mat_type][defect_type]
-            assert 0.0 <= val <= 1.0, (
-                f"{defect_type.name}/{mat_type.name} sensitivity={val} out of [0,1]"
-            )
+            assert 0.0 <= val <= 1.0, f"{defect_type.name}/{mat_type.name} sensitivity={val} out of [0,1]"
 
 
 # ============================================================================
@@ -364,9 +362,7 @@ class TestCausalPriors:
     @pytest.mark.parametrize("cause", _NEW_CAUSES)
     def test_cause_prior_exists_in_all_materials(self, cause):
         for mat_key in MATERIAL_PRIORS:
-            assert cause in MATERIAL_PRIORS[mat_key], (
-                f"Cause '{cause}' fehlt in MATERIAL_PRIORS['{mat_key}']"
-            )
+            assert cause in MATERIAL_PRIORS[mat_key], f"Cause '{cause}' fehlt in MATERIAL_PRIORS['{mat_key}']"
 
 
 # ============================================================================
@@ -390,12 +386,8 @@ class TestPhaseMapperCompleteness:
     def test_phase_map_has_entry(self, defect_type):
         mapper = DefectPhaseMapper()
         assignment = mapper.get_assignment(defect_type)
-        assert assignment is not None, (
-            f"Kein PhaseAssignment für {defect_type.name}"
-        )
-        assert len(assignment.primary_phases) >= 1, (
-            f"{defect_type.name} hat keine Primary-Phase"
-        )
+        assert assignment is not None, f"Kein PhaseAssignment für {defect_type.name}"
+        assert len(assignment.primary_phases) >= 1, f"{defect_type.name} hat keine Primary-Phase"
 
 
 # ============================================================================
@@ -425,9 +417,7 @@ class TestScannerIntegration:
         audio = _stereo(12.0)
         result = s.scan(audio)
         scores = result.scores
-        assert DefectType.STEREO_FIELD_COLLAPSE in scores, (
-            "STEREO_FIELD_COLLAPSE fehlt im Stereo-Scan-Ergebnis"
-        )
+        assert DefectType.STEREO_FIELD_COLLAPSE in scores, "STEREO_FIELD_COLLAPSE fehlt im Stereo-Scan-Ergebnis"
 
     def test_scores_have_valid_ranges(self):
         s = _scanner(MaterialType.CASSETTE)
@@ -436,12 +426,8 @@ class TestScannerIntegration:
         for dt in DefectType:
             if dt in result.scores:
                 score = result.scores[dt]
-                assert 0.0 <= score.severity <= 1.0, (
-                    f"{dt.name} severity out of range: {score.severity}"
-                )
-                assert 0.0 <= score.confidence <= 1.0, (
-                    f"{dt.name} confidence out of range: {score.confidence}"
-                )
+                assert 0.0 <= score.severity <= 1.0, f"{dt.name} severity out of range: {score.severity}"
+                assert 0.0 <= score.confidence <= 1.0, f"{dt.name} confidence out of range: {score.confidence}"
 
 
 if __name__ == "__main__":

@@ -100,17 +100,23 @@ def _coerce_list_any(raw: Any) -> list[Any]:
 def get_human_pleasantness_estimator():
     """Bridge for UI: returns human pleasantness estimator."""
     from backend.core.human_pleasantness_estimator import compute_pleasantness
+
     return compute_pleasantness
+
 
 def get_audio_utils_gain_envelope():
     """Bridge for UI: returns musical gain envelope function."""
     from backend.core.audio_utils import apply_musical_gain_envelope
+
     return apply_musical_gain_envelope
+
 
 def get_ab_delta():
     """Bridge for UI: returns AB delta computation."""
     from backend.core.dsp.ab_delta import compute_ab_delta
+
     return compute_ab_delta
+
 
 __all__ = [
     # Defect-Cache
@@ -880,7 +886,7 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     def _safe01(v: Any) -> float:
         try:
             vf = float(v)
-        except Exception as e:
+        except Exception:
             logger.warning("bridge.py::_safe01 fallback", exc_info=True)
             return 0.0
         if not np.isfinite(vf):
@@ -890,7 +896,7 @@ def get_experience_insights(result: Any) -> dict[str, Any]:
     def _safe_float(v: Any, default: float = 0.0) -> float:
         try:
             vf = float(v)
-        except Exception as e:
+        except Exception:
             logger.warning("bridge.py::_safe_float fallback", exc_info=True)
             return float(default)
         if not np.isfinite(vf):
@@ -1218,20 +1224,24 @@ def record_goal_feedback(
 def get_reflective_listening_pass():
     """§v10 Gibt ReflectiveListeningPass-Klasse zurück (lazy import)."""
     from backend.core.reflective_listening_pass import ReflectiveListeningPass
+
     return ReflectiveListeningPass
 
 
-def apply_reflective_listening(audio, sr, *, original_audio=None, artistic_intent=None, material='unknown'):
+def apply_reflective_listening(audio, sr, *, original_audio=None, artistic_intent=None, material="unknown"):
     """§v10 Führt den Reflective Listening Pass aus (lazy, convenience)."""
     from backend.core.reflective_listening_pass import ReflectiveListeningPass
+
     rlp = ReflectiveListeningPass()
-    return rlp.process(audio, sr, original_audio=original_audio,
-                        artistic_intent=artistic_intent, material=material)
+    return rlp.process(audio, sr, original_audio=original_audio, artistic_intent=artistic_intent, material=material)
+
 
 def get_album_consistency_pass():
     """§v10 Gibt AlbumConsistencyPass-Klasse zurück (lazy import, §1.4)."""
     from backend.core.album_consistency import AlbumConsistencyPass
+
     return AlbumConsistencyPass
+
 
 def get_stem_remix_balancer_fn():
     """Gibt ``StemRemixBalancer.balance_remix``-Funktion zurück (lazy import, §1.4).
@@ -1747,9 +1757,8 @@ def build_export_metadata(result: object, **tag_kwargs):
                     import math
 
                     out[k] = 0.0 if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v
-                except Exception as e:
+                except Exception:
                     logger.warning("bridge.py::_safe_guard fallback", exc_info=True)
-                    pass
             elif isinstance(v, (list, tuple)):
                 out[k] = [str(x) for x in v]
         return out or None
@@ -2282,44 +2291,48 @@ def run_album_consistency_pass(
     }
 
 
-
-
 def _get_ml_availability() -> dict[str, Any]:
     """§v10 Prüft welche ML-Modelle verfügbar sind (nicht auf DSP fallbacken)."""
     models = {}
     # ECAPA-TDNN (Speaker Identity)
     try:
-        import speechbrain
+        pass
+
         models["speaker_identity"] = "ecapa_tdnn"
     except ImportError:
         models["speaker_identity"] = "mfcc_dsp"
     # PANNs (Genre/Audio tagging)
     try:
-        import onnxruntime
+        pass
+
         models["panns"] = "onnx"
     except ImportError:
         models["panns"] = "dsp"
     # LAION-CLAP
     try:
         import torch
+
         models["laion_clap"] = "torch"
     except ImportError:
         models["laion_clap"] = "unavailable"
     # SGMSE+ Dereverb
     try:
         import torch
+
         models["sgmse_dereverb"] = "torchscript" if torch else "dsp_wpe"
     except ImportError:
         models["sgmse_dereverb"] = "dsp_wpe"
     # RMVPE Pitch
     try:
-        import onnxruntime
+        pass
+
         models["rmvpe_pitch"] = "onnx"
     except ImportError:
         models["rmvpe_pitch"] = "pyin_dsp"
-    
+
     any_ml = any(v not in ("dsp", "dsp_wpe", "pyin_dsp", "mfcc_dsp", "unavailable") for v in models.values())
     return {"any_ml_available": any_ml, "models": models}
+
 
 def get_layman_summary(result: Any) -> dict[str, Any]:
     """§v10 Laien-verständliche Ergebnis-Zusammenfassung.
@@ -2332,19 +2345,19 @@ def get_layman_summary(result: Any) -> dict[str, Any]:
         'recommendation', 'icon'
     """
     insights = get_experience_insights(result)
-    
+
     joy = insights.get("joy_index", 0.5)
     fatigue = insights.get("fatigue_index", 0.5)
     degradation = insights.get("quality_gate", {}).get("degradation_status", "ok")
-    profile = insights.get("quality_gate", {}).get("profile", "neutral")
+    insights.get("quality_gate", {}).get("profile", "neutral")
     preserve = insights.get("quality_gate", {}).get("preserve_signal", 0.5)
-    recs = insights.get("recommendations", [])
-    rec_count = insights.get("recommendation_count", 0)
+    insights.get("recommendations", [])
+    insights.get("recommendation_count", 0)
     cluster = insights.get("cluster_key", "")
     fqf = insights.get("fallback_quality_floor", {})
     fqf_triggered = fqf.get("triggered", False)
     fqf_recovered = fqf.get("recovered", False)
-    
+
     # ── Qualität in Schulnoten ──
     if degradation == "ok" and joy >= 0.75 and fatigue <= 0.30:
         quality_label = "Hervorragend"
@@ -2383,26 +2396,28 @@ def get_layman_summary(result: Any) -> dict[str, Any]:
 
     # ── Laien-Body ──
     body_parts = []
-    
+
     # Was wurde gefunden?
     if cluster:
         body_parts.append(f'Deine Aufnahme wurde als "{cluster}" eingeordnet.')
-    
+
     # Was wurde verbessert?
     if degradation == "ok" and joy >= 0.55:
         body_parts.append("Störende Geräusche wie Knistern, Rauschen oder Kratzer wurden reduziert.")
         body_parts.append("Die Klangfarbe wurde auf natürliche Weise verbessert.")
     elif degradation == "ok":
         body_parts.append("Die wichtigsten Störungen wurden behoben.")
-    
+
     # Fatigue-Warnung
     if fatigue >= 0.45:
-        body_parts.append("In leisen Passagen könnte ein leichtes Grundrauschen hörbar sein — das ist normal für historische Aufnahmen.")
-    
+        body_parts.append(
+            "In leisen Passagen könnte ein leichtes Grundrauschen hörbar sein — das ist normal für historische Aufnahmen."
+        )
+
     # Signal-Preserve
     if preserve >= 0.55:
         body_parts.append("Die Bearbeitung war besonders vorsichtig, um den Original-Charakter zu erhalten.")
-    
+
     body = " ".join(body_parts) if body_parts else quality_detail
 
     # ── Empfehlung ──
@@ -2411,10 +2426,11 @@ def get_layman_summary(result: Any) -> dict[str, Any]:
     elif degradation == "ok":
         recommendation = "✅ Diese Version ist bereit zum Anhören."
     elif fqf_recovered:
-        recommendation = "⚠️ Das Ergebnis ist brauchbar, aber nicht perfekt. Für beste Ergebnisse: bessere Quellqualität verwenden."
+        recommendation = (
+            "⚠️ Das Ergebnis ist brauchbar, aber nicht perfekt. Für beste Ergebnisse: bessere Quellqualität verwenden."
+        )
     else:
         recommendation = "🔄 Wir empfehlen einen erneuten Versuch mit der Original-Datei in höherer Qualität."
-
 
     # ── §v10 V7: LUFS-Ist/Soll-Vergleich ──
     lufs_target = None
@@ -2425,9 +2441,8 @@ def get_layman_summary(result: Any) -> dict[str, Any]:
         _exp_meta = _coerce_dict_str_any(_meta.get("export_metrics", {}))
         lufs_target = _exp_meta.get("target_lufs")
         lufs_actual = _exp_meta.get("integrated_lufs_after") or _exp_meta.get("output_integrated_lufs")
-    except Exception as e:
+    except Exception:
         logger.warning("bridge.py::unknown fallback", exc_info=True)
-        pass
 
     # ── ML-Modell-Status für GUI ──
     ml_status = _get_ml_availability()
@@ -2443,11 +2458,14 @@ def get_layman_summary(result: Any) -> dict[str, Any]:
         "fatigue_index": fatigue,
         "lufs_target": lufs_target,
         "lufs_actual": lufs_actual,
-        "lufs_ok": (abs(lufs_actual - lufs_target) < 0.5) if (lufs_target is not None and lufs_actual is not None) else None,
+        "lufs_ok": (abs(lufs_actual - lufs_target) < 0.5)
+        if (lufs_target is not None and lufs_actual is not None)
+        else None,
         "ml_available": ml_status["any_ml_available"],
         "ml_models": ml_status["models"],
         "technical": insights,
     }
+
 
 def get_pipeline_trace(result: Any) -> dict[str, Any]:
     """Gibt vollständigen Pipeline-Trace als Dict zurück (für Frontend/CLI/Debug).
@@ -2509,62 +2527,68 @@ def get_pipeline_ab_snapshots(*, include_audio: bool = True, max_duration_s: flo
         Liste von dicts mit phase, pre_audio_b64, post_audio_b64, sample_rate, duration_s
     """
     try:
+        import base64
+        import io
+
+        import numpy as np
+
         from backend.core.sota_improvements import get_ab_comparison_state
-        import base64, io, numpy as np
+
         ab = get_ab_comparison_state()
         if not ab.ab_snippets:
             return []
-        
+
         snippets = []
         for s in ab.ab_snippets[-10:]:
             pre = np.asarray(s.get("pre", s.get("pre_phase_audio", np.zeros(1))), dtype=np.float32)
             post = np.asarray(s.get("post", s.get("post_phase_audio", np.zeros(1))), dtype=np.float32)
             phase = str(s.get("phase", "unknown"))
-            
+
             # Limit duration
             sr = 48000
             max_samples = int(max_duration_s * sr)
             if pre.ndim >= 1 and len(pre) > max_samples:
                 mid = len(pre) // 2
-                pre = pre[mid - max_samples//2 : mid + max_samples//2]
+                pre = pre[mid - max_samples // 2 : mid + max_samples // 2]
             if post.ndim >= 1 and len(post) > max_samples:
                 mid = len(post) // 2
-                post = post[mid - max_samples//2 : mid + max_samples//2]
-            
+                post = post[mid - max_samples // 2 : mid + max_samples // 2]
+
             # Ensure mono for smaller payload
             if pre.ndim > 1 and pre.shape[-1] <= 2:
                 pre = pre.mean(axis=-1) if pre.shape[-1] == 2 else pre
             if post.ndim > 1 and post.shape[-1] <= 2:
                 post = post.mean(axis=-1) if post.shape[-1] == 2 else post
-            
+
             entry = {
                 "phase": phase,
                 "sample_rate": sr,
                 "duration_s": float(min(len(pre), len(post))) / sr if len(pre) > 0 and len(post) > 0 else 0.0,
             }
-            
+
             if include_audio:
                 # Encode as 16-bit PCM WAV → Base64
-                import struct, wave as _wave
+                import wave as _wave
+
                 for key, arr in [("pre_audio_b64", pre), ("post_audio_b64", post)]:
                     if len(arr) == 0:
                         entry[key] = ""
                         continue
                     arr_16 = np.clip(arr * 32767, -32768, 32767).astype(np.int16)
                     buf = io.BytesIO()
-                    with _wave.open(buf, 'wb') as wf:
+                    with _wave.open(buf, "wb") as wf:
                         wf.setnchannels(1)
                         wf.setsampwidth(2)  # 16-bit
                         wf.setframerate(sr)
                         wf.writeframes(arr_16.tobytes())
-                    entry[key] = base64.b64encode(buf.getvalue()).decode('ascii')
+                    entry[key] = base64.b64encode(buf.getvalue()).decode("ascii")
             else:
-                entry["pre_shape"] = list(pre.shape) if hasattr(pre, 'shape') else [len(pre)]
-                entry["post_shape"] = list(post.shape) if hasattr(post, 'shape') else [len(post)]
-            
+                entry["pre_shape"] = list(pre.shape) if hasattr(pre, "shape") else [len(pre)]
+                entry["post_shape"] = list(post.shape) if hasattr(post, "shape") else [len(post)]
+
             snippets.append(entry)
-        
+
         return snippets
-    except Exception as e:
+    except Exception:
         logger.warning("bridge.py::get_pipeline_ab_snapshots fallback", exc_info=True)
         return []

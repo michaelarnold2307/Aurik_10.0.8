@@ -49,8 +49,7 @@ class TransparencyResult:
     artifacts: list[str] = field(default_factory=list)
 
 
-def check_transparency(audio: np.ndarray, sr: int,
-                       reference: np.ndarray | None = None) -> TransparencyResult:
+def check_transparency(audio: np.ndarray, sr: int, reference: np.ndarray | None = None) -> TransparencyResult:
     """Prüft ob die Bearbeitung hörbar ist.
 
     Args:
@@ -74,16 +73,19 @@ def check_transparency(audio: np.ndarray, sr: int,
     warp = _check_phase_warp(arr, sr) if arr.ndim == 2 else 1.0
     sterile = _check_sterility(mono, sr, reference)
 
-    score = float(np.clip(
-        water * 0.25 + smear * 0.20 + breath * 0.20 + warp * 0.15 + sterile * 0.20,
-        0.0, 1.0))
+    score = float(np.clip(water * 0.25 + smear * 0.20 + breath * 0.20 + warp * 0.15 + sterile * 0.20, 0.0, 1.0))
 
     artifacts = []
-    if water < 0.5: artifacts.append("wässrig/metallisch")
-    if smear < 0.5: artifacts.append("verschmiert/matt")
-    if breath < 0.4: artifacts.append("atmender Rauschboden")
-    if warp < 0.5: artifacts.append("Phasen-Artefakte")
-    if sterile < 0.3: artifacts.append("steril/leblos")
+    if water < 0.5:
+        artifacts.append("wässrig/metallisch")
+    if smear < 0.5:
+        artifacts.append("verschmiert/matt")
+    if breath < 0.4:
+        artifacts.append("atmender Rauschboden")
+    if warp < 0.5:
+        artifacts.append("Phasen-Artefakte")
+    if sterile < 0.3:
+        artifacts.append("steril/leblos")
 
     if score >= 0.85:
         label = "Transparent"
@@ -116,15 +118,15 @@ def _check_spectral_water(mono: np.ndarray, sr: int) -> float:
     hop = n_fft // 2
     frame_scores = []
     for i in range(0, len(mono) - n_fft, hop):
-        frame = np.nan_to_num(mono[i:i + n_fft], nan=0.0, posinf=0.0, neginf=0.0) * np.hanning(n_fft)
+        frame = np.nan_to_num(mono[i : i + n_fft], nan=0.0, posinf=0.0, neginf=0.0) * np.hanning(n_fft)
         spec = np.abs(np.fft.rfft(frame))
         spec_db = 20.0 * np.log10(np.maximum(spec, 1e-12))
 
         # Glätte und berechne Residual-Varianz
         kernel = np.ones(15) / 15.0
-        smooth = np.convolve(spec_db, kernel, mode='same')
+        smooth = np.convolve(spec_db, kernel, mode="same")
         residual = spec_db - smooth
-        mid = residual[len(kernel)//2 : -len(kernel)//2] if len(residual) > len(kernel) else residual
+        mid = residual[len(kernel) // 2 : -len(kernel) // 2] if len(residual) > len(kernel) else residual
         if len(mid) > 10:
             frame_scores.append(float(np.var(mid)))
 
@@ -133,10 +135,14 @@ def _check_spectral_water(mono: np.ndarray, sr: int) -> float:
 
     avg_var = float(np.mean(frame_scores))
 
-    if avg_var < 15: return 0.90
-    elif avg_var < 30: return 0.65
-    elif avg_var < 50: return 0.40
-    elif avg_var < 80: return 0.20
+    if avg_var < 15:
+        return 0.90
+    elif avg_var < 30:
+        return 0.65
+    elif avg_var < 50:
+        return 0.40
+    elif avg_var < 80:
+        return 0.20
     return 0.10
 
 
@@ -149,7 +155,7 @@ def _check_transient_smear(mono: np.ndarray, sr: int) -> float:
     # Finde Transienten via Energie-Sprung
     energy = []
     for i in range(0, len(mono) - win, win // 2):
-        energy.append(float(np.sum(mono[i:i + win] ** 2)))
+        energy.append(float(np.sum(mono[i : i + win] ** 2)))
     energy = np.array(energy)
     energy_db = 10.0 * np.log10(energy + 1e-12)
     jumps = np.diff(energy_db)
@@ -164,7 +170,8 @@ def _check_transient_smear(mono: np.ndarray, sr: int) -> float:
     # Für jeden Transient: prüfe Anstiegszeit
     rise_times = []
     for idx in np.where(transients)[0]:
-        if idx < 2: continue
+        if idx < 2:
+            continue
         # Wie viele Samples bis zum Peak?
         rise = 0
         for k in range(idx - 2, min(idx + 3, len(energy_db))):
@@ -178,9 +185,12 @@ def _check_transient_smear(mono: np.ndarray, sr: int) -> float:
     mean_rise = np.mean(rise_times)
     # Kurze Anstiegszeit (1-2 Frames = 2-5ms) = scharfe Transienten
     # Lange Anstiegszeit (>5 Frames = >12ms) = verschmierte Transienten
-    if mean_rise < 3: return 0.90
-    elif mean_rise < 6: return 0.60
-    elif mean_rise < 10: return 0.35
+    if mean_rise < 3:
+        return 0.90
+    elif mean_rise < 6:
+        return 0.60
+    elif mean_rise < 10:
+        return 0.35
     return 0.15
 
 
@@ -193,8 +203,8 @@ def _check_noise_breathing(mono: np.ndarray, sr: int) -> float:
     # RMS in 100ms-Blöcken
     rms_blocks = []
     for i in range(0, len(mono) - win, win):
-        chunk = mono[i:i + win]
-        rms_blocks.append(float(np.sqrt(np.mean(chunk ** 2))))
+        chunk = mono[i : i + win]
+        rms_blocks.append(float(np.sqrt(np.mean(chunk**2))))
 
     rms_blocks = np.array(rms_blocks)
     rms_db = 20.0 * np.log10(rms_blocks + 1e-12)
@@ -210,9 +220,12 @@ def _check_noise_breathing(mono: np.ndarray, sr: int) -> float:
     # Variation des Noise Floors = Atmen
     noise_variation = float(np.std(noise_levels))
 
-    if noise_variation < 3.0: return 0.95  # Kaum Variation
-    elif noise_variation < 6.0: return 0.65
-    elif noise_variation < 12.0: return 0.35
+    if noise_variation < 3.0:
+        return 0.95  # Kaum Variation
+    elif noise_variation < 6.0:
+        return 0.65
+    elif noise_variation < 12.0:
+        return 0.35
     return 0.15
 
 
@@ -232,8 +245,8 @@ def _check_phase_warp(arr: np.ndarray, sr: int) -> float:
     hop = n_fft // 4
     phase_variances = []
     for i in range(0, len(L) - n_fft, hop):
-        spec_L = np.fft.rfft(L[i:i + n_fft] * np.hanning(n_fft))
-        spec_R = np.fft.rfft(R[i:i + n_fft] * np.hanning(n_fft))
+        spec_L = np.fft.rfft(L[i : i + n_fft] * np.hanning(n_fft))
+        spec_R = np.fft.rfft(R[i : i + n_fft] * np.hanning(n_fft))
         phase_diff = np.angle(spec_L / (spec_R + 1e-12))
         phase_variances.append(float(np.var(phase_diff)))
 
@@ -243,27 +256,32 @@ def _check_phase_warp(arr: np.ndarray, sr: int) -> float:
     mean_phase_var = float(np.mean(phase_variances))
     # Niedrige Varianz = konsistente Phase = natürlich
     # Hohe Varianz = Phasen-Artefakte
-    if mean_phase_var < 0.5: return 0.90
-    elif mean_phase_var < 1.5: return 0.60
-    elif mean_phase_var < 3.0: return 0.35
+    if mean_phase_var < 0.5:
+        return 0.90
+    elif mean_phase_var < 1.5:
+        return 0.60
+    elif mean_phase_var < 3.0:
+        return 0.35
     return 0.15
 
 
-def _check_sterility(mono: np.ndarray, sr: int,
-                     reference: np.ndarray | None = None) -> float:
+def _check_sterility(mono: np.ndarray, sr: int, reference: np.ndarray | None = None) -> float:
     """§v10: Erkennt sterilen/leblosen Klang — wenn zu viel bereinigt wurde."""
     win = int(0.05 * sr)
-    if len(mono) < 20 * win: return 0.7
+    if len(mono) < 20 * win:
+        return 0.7
 
-    rms_vals = [float(np.sqrt(np.mean(mono[i:i+win]**2))) for i in range(0, len(mono)-win, win)]
+    rms_vals = [float(np.sqrt(np.mean(mono[i : i + win] ** 2))) for i in range(0, len(mono) - win, win)]
     rms_db = 20.0 * np.log10(np.array(rms_vals) + 1e-12)
     noise_floor_db = float(np.percentile(rms_db, 15))
     peak_db = float(np.max(rms_db))
     dr = peak_db - noise_floor_db
 
-    score_dr = 0.15 if dr<10 else 0.40 if dr<20 else 0.70 if dr<35 else 0.90
-    score_nf = 0.10 if noise_floor_db<-90 else 0.35 if noise_floor_db<-75 else 0.60 if noise_floor_db<-60 else 0.85
+    score_dr = 0.15 if dr < 10 else 0.40 if dr < 20 else 0.70 if dr < 35 else 0.90
+    score_nf = (
+        0.10 if noise_floor_db < -90 else 0.35 if noise_floor_db < -75 else 0.60 if noise_floor_db < -60 else 0.85
+    )
     diffs = np.abs(np.diff(rms_db))
-    md = float(np.median(diffs[diffs>0.5])) if np.any(diffs>0.5) else 0.0
-    score_micro = 0.10 if md<0.5 else 0.40 if md<1.5 else 0.70 if md<3.0 else 0.95
-    return float(np.clip(score_dr*0.35 + score_nf*0.40 + score_micro*0.25, 0.0, 1.0))
+    md = float(np.median(diffs[diffs > 0.5])) if np.any(diffs > 0.5) else 0.0
+    score_micro = 0.10 if md < 0.5 else 0.40 if md < 1.5 else 0.70 if md < 3.0 else 0.95
+    return float(np.clip(score_dr * 0.35 + score_nf * 0.40 + score_micro * 0.25, 0.0, 1.0))

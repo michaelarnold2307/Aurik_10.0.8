@@ -1,4 +1,5 @@
 import pytest
+
 """Unit tests for shared pipeline health state helpers."""
 
 from __future__ import annotations

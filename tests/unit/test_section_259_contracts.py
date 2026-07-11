@@ -30,8 +30,10 @@ class TestSafeDict:
         from backend.core.safe_dict import SafeDict
 
         d = SafeDict(
-            {"clicks": 0.8}, name="test",
-            known_keys={"clicks"}, warn_on_missing=False,
+            {"clicks": 0.8},
+            name="test",
+            known_keys={"clicks"},
+            warn_on_missing=False,
         )
         assert d.get("hiss", 0.0) == 0.0  # No warning when disabled
 

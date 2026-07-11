@@ -178,7 +178,7 @@ class TestTontraegerketteDenkerAnalysiere:
             from denker.tontraegerkette_denker import TontraegerketteDenker
 
             return TontraegerketteDenker().analysiere(audio, sr)
-        except Exception as e:
+        except Exception:
             logger.warning("test fallback", exc_info=True)
             return None
 

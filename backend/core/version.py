@@ -26,7 +26,6 @@ def get_aurik_version() -> str:
         return _pkg_version("aurik9")
     except Exception as e:
         logger.warning("version.py::get_aurik_version fallback: %s", e)
-        pass
     try:
         _pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
         content = _pyproject.read_text(encoding="utf-8")

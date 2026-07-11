@@ -385,7 +385,6 @@ class DropoutRepairPhase(PhaseInterface):
                         local_strength = min(local_strength, _cap)
                 except Exception:
                     logger.debug("_compute_dropout_local_strength: silent except suppressed", exc_info=True)
-                    pass
 
         return float(np.clip(local_strength, 0.0, 1.0))
 
@@ -1029,7 +1028,6 @@ class DropoutRepairPhase(PhaseInterface):
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.20))  # §0p Vibrato-Schutz
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("frisson_zones") or []:
             try:
                 _fz_s = float(getattr(_z, "start_s", None) or _z[0])
@@ -1037,19 +1035,16 @@ class DropoutRepairPhase(PhaseInterface):
                 _p24_protected_zones.append((_fz_s, _fz_e, 0.30))  # Frisson sakrosankt
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("whisper_zones") or []:
             try:
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.25))  # Flüsterpassagen
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         for _z in kwargs.get("passaggio_zones") or []:
             try:
                 _p24_protected_zones.append((float(_z[0]), float(_z[1]), 0.35))  # Passaggio-Übergänge
             except Exception:
                 logger.debug("process: silent except suppressed", exc_info=True)
-                pass
         if _p24_protected_zones:
             logger.debug(
                 "§V38 phase_24: %d VFA-Schutzzone(n) aktiv (Vibrato/Frisson/Flüster/Passaggio)",
@@ -1888,7 +1883,6 @@ class DropoutRepairPhase(PhaseInterface):
             _plm24_asr.set_active("AudioSR", True)
         except Exception:
             logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
-            pass
 
         for drop_idx, (start, end) in enumerate(dropouts):
             time.sleep(0)  # yield GIL → Qt event loop can breathe between dropouts
@@ -1975,7 +1969,6 @@ class DropoutRepairPhase(PhaseInterface):
                     _plm24_asr.set_active("AudioSR", False)
                 except Exception:
                     logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
-                    pass
             return True
 
         logger.warning("AudioSR: no dropouts could be repaired (all fell back to DSP)")
@@ -1984,7 +1977,6 @@ class DropoutRepairPhase(PhaseInterface):
                 _plm24_asr.set_active("AudioSR", False)
             except Exception:
                 logger.debug("_repair_with_audiosr: silent except suppressed", exc_info=True)
-                pass
         return False
 
     def _classify_content(self, before: np.ndarray, after: np.ndarray) -> str:

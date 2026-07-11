@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -43,7 +42,6 @@ class BatchRecoveryManager:
                 return json.loads(self._manifest_path.read_text())
             except Exception as e:
                 logger.warning("batch_recovery.py::_load_manifest fallback: %s", e)
-                pass
         return {
             "batch_id": self._batch_id,
             "created": time.time(),
@@ -82,11 +80,13 @@ class BatchRecoveryManager:
     def fail_file(self, file_path: str, error: str):
         """Markiert eine Datei als fehlgeschlagen."""
         with self._lock:
-            self._manifest["failed"].append({
-                "file": file_path,
-                "error": error,
-                "time": time.time(),
-            })
+            self._manifest["failed"].append(
+                {
+                    "file": file_path,
+                    "error": error,
+                    "time": time.time(),
+                }
+            )
             self._manifest["in_progress"] = None
             self._save_manifest()
 
@@ -153,7 +153,6 @@ class BatchRecoveryManager:
                     Path(cp_path).with_suffix(".json").unlink(missing_ok=True)
                 except Exception as e:
                     logger.warning("batch_recovery.py::cleanup fallback: %s", e)
-                    pass
             self._manifest_path.unlink(missing_ok=True)
 
     def get_progress(self) -> dict:
@@ -165,5 +164,7 @@ class BatchRecoveryManager:
                 "completed": len(self._manifest["completed"]),
                 "failed": len(self._manifest["failed"]),
                 "in_progress": self._manifest["in_progress"],
-                "pending": max(0, self._manifest["total_files"] - len(self._manifest["completed"]) - len(self._manifest["failed"])),
+                "pending": max(
+                    0, self._manifest["total_files"] - len(self._manifest["completed"]) - len(self._manifest["failed"])
+                ),
             }

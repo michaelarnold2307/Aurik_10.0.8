@@ -375,14 +375,13 @@ class TransparentDynamicsV1(PhaseInterface):
         # ── §v10 PIM: Per-Band-Intensität kalibrieren ──
         try:
             from backend.core.pim_phase_hook import apply_pim_intensity
-            _pim = apply_pim_intensity(kwargs, "transparent_dyn",
-                default_nr=0.3, default_de_ess=0.2, default_comp=1.3)
+
+            _pim = apply_pim_intensity(kwargs, "transparent_dyn", default_nr=0.3, default_de_ess=0.2, default_comp=1.3)
             for _key in ("noise_reduction_strength", "nr_strength", "strength", "wet"):
                 if _key in kwargs:
                     kwargs[_key] = _pim["nr_strength"]
         except Exception as e:
             logger.warning("phase_54_transparent_dynamics.py::process fallback: %s", e)
-            pass
         assert sample_rate == 48000, f"SR muss 48000 Hz sein, erhalten: {sample_rate}"
         audio, _p54_transposed = to_channels_last(audio)
         start_time = time.time()
@@ -415,7 +414,9 @@ class TransparentDynamicsV1(PhaseInterface):
             control_strength = float(control_strength * _vocal_protect)
             logger.debug(
                 "§v10 Phase 54 Vocal-Protect: panns=%.2f factor=%.2f control=%.2f",
-                _panns_singing, _vocal_protect, control_strength
+                _panns_singing,
+                _vocal_protect,
+                control_strength,
             )
 
         if control_strength <= 1e-6:

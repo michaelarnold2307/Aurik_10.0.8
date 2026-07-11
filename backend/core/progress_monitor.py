@@ -34,12 +34,12 @@ Autor: Aurik 10 — 11. Juli 2026
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class ProgressMonitor:
         - ``pipeline_error``: Pipeline abgebrochen
     """
 
-    _instance: "ProgressMonitor | None" = None
+    _instance: ProgressMonitor | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -102,7 +102,7 @@ class ProgressMonitor:
         self._pipeline_lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls) -> "ProgressMonitor":
+    def get_instance(cls) -> ProgressMonitor:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -138,14 +138,16 @@ class ProgressMonitor:
                 started_at=time.monotonic(),
             )
 
-        self._emit({
-            "event": "pipeline_start",
-            "total_phases": total_phases,
-            "audio_duration_s": audio_duration_s,
-            "material": material,
-            "metadata": metadata or {},
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "pipeline_start",
+                "total_phases": total_phases,
+                "audio_duration_s": audio_duration_s,
+                "material": material,
+                "metadata": metadata or {},
+                "timestamp": time.time(),
+            }
+        )
 
     def on_phase_start(self, phase_name: str, phase_id: str = "") -> None:
         """Phase-Beginn signalisieren."""
@@ -162,12 +164,14 @@ class ProgressMonitor:
                 self._pipeline.current_phase = phase_name
                 self._pipeline.phases[pid] = phase
 
-        self._emit({
-            "event": "phase_start",
-            "phase_name": phase_name,
-            "phase_id": pid,
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "phase_start",
+                "phase_name": phase_name,
+                "phase_id": pid,
+                "timestamp": time.time(),
+            }
+        )
 
     def on_phase_progress(
         self,
@@ -176,13 +180,15 @@ class ProgressMonitor:
         detail: str = "",
     ) -> None:
         """Granularen Fortschritt INNERHALB einer Phase melden (optional)."""
-        self._emit({
-            "event": "phase_progress",
-            "phase_name": phase_name,
-            "progress_pct": progress_pct,
-            "detail": detail,
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "phase_progress",
+                "phase_name": phase_name,
+                "progress_pct": progress_pct,
+                "detail": detail,
+                "timestamp": time.time(),
+            }
+        )
 
     def on_phase_end(
         self,
@@ -203,9 +209,7 @@ class ProgressMonitor:
                 if phase:
                     phase.status = status
                     phase.completed_at = time.monotonic()
-                    phase.duration_s = (
-                        phase.completed_at - (phase.started_at or phase.completed_at)
-                    )
+                    phase.duration_s = phase.completed_at - (phase.started_at or phase.completed_at)
                     phase.quality_estimate = quality_estimate
                     phase.warnings = warnings or []
                     phase.error = error
@@ -225,16 +229,18 @@ class ProgressMonitor:
                     remaining = pipeline.total_phases - done
                     pipeline.estimated_remaining_s = avg_phase_s * remaining
 
-        self._emit({
-            "event": "phase_end",
-            "phase_name": phase_name,
-            "phase_id": pid,
-            "status": status,
-            "quality_estimate": quality_estimate,
-            "warnings": warnings or [],
-            "error": error,
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "phase_end",
+                "phase_name": phase_name,
+                "phase_id": pid,
+                "status": status,
+                "quality_estimate": quality_estimate,
+                "warnings": warnings or [],
+                "error": error,
+                "timestamp": time.time(),
+            }
+        )
 
     def on_pipeline_complete(self, output_path: str = "") -> None:
         """Pipeline erfolgreich abgeschlossen."""
@@ -242,21 +248,25 @@ class ProgressMonitor:
             if self._pipeline:
                 self._pipeline.elapsed_s = time.monotonic() - self._pipeline.started_at
 
-        self._emit({
-            "event": "pipeline_complete",
-            "output_path": output_path,
-            "progress": self.get_progress(),
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "pipeline_complete",
+                "output_path": output_path,
+                "progress": self.get_progress(),
+                "timestamp": time.time(),
+            }
+        )
 
     def on_pipeline_error(self, error: str) -> None:
         """Pipeline mit Fehler abgebrochen."""
-        self._emit({
-            "event": "pipeline_error",
-            "error": error,
-            "progress": self.get_progress(),
-            "timestamp": time.time(),
-        })
+        self._emit(
+            {
+                "event": "pipeline_error",
+                "error": error,
+                "progress": self.get_progress(),
+                "timestamp": time.time(),
+            }
+        )
 
     # ── Status-Abfrage ───────────────────────────────────────────────────────
 

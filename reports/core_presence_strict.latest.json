@@ -1,48 +1,48 @@
 {
-  "mode": "runtime_readiness",
   "all_runtime_ready": true,
-  "missing_runtime_components": [],
   "components": [
     {
+      "fallback": true,
       "name": "fcpe",
       "primary": true,
-      "fallback": true,
-      "runtime_ready": true,
       "release_mode": "primary",
-      "resolved_by": "primary"
+      "resolved_by": "primary",
+      "runtime_ready": true
     },
     {
+      "fallback": true,
       "name": "sgmse_plus",
       "primary": true,
-      "fallback": true,
-      "source_checkpoint": true,
-      "runtime_ready": true,
       "release_mode": "primary",
-      "resolved_by": "torchscript_primary"
+      "resolved_by": "torchscript_primary",
+      "runtime_ready": true,
+      "source_checkpoint": true
     },
     {
+      "fallback": true,
       "name": "versa",
       "primary": true,
-      "fallback": true,
-      "runtime_ready": true,
       "release_mode": "primary",
-      "resolved_by": "primary"
+      "resolved_by": "primary",
+      "runtime_ready": true
     },
     {
+      "fallback": true,
       "name": "flow_matching",
       "primary": false,
-      "fallback": true,
-      "runtime_ready": true,
       "release_mode": "fallback",
-      "resolved_by": "cqtdiff_or_diffwave_fallback"
+      "resolved_by": "cqtdiff_or_diffwave_fallback",
+      "runtime_ready": true
     },
     {
+      "fallback": true,
       "name": "gacela",
       "primary": true,
-      "fallback": true,
-      "runtime_ready": true,
       "release_mode": "primary",
-      "resolved_by": "primary"
+      "resolved_by": "primary",
+      "runtime_ready": true
     }
-  ]
+  ],
+  "missing_runtime_components": [],
+  "mode": "runtime_readiness"
 }
