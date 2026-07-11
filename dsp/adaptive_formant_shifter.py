@@ -11,8 +11,6 @@ import librosa
 import numpy as np
 
 try:
-    pass
-
     _TORCH_AVAILABLE = True
 except ImportError:
     _TORCH_AVAILABLE = False

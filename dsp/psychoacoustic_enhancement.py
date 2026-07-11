@@ -20,8 +20,6 @@ import numpy as np
 from scipy.signal import butter, hilbert, sosfilt
 
 try:
-    pass
-
     _TORCH_AVAILABLE = True
 except ImportError:
     _TORCH_AVAILABLE = False

@@ -13,8 +13,6 @@ import numpy as np
 from dsp._memory_budget_guard import check_budget
 
 try:
-    pass
-
     _TORCH_AVAILABLE = True
 except ImportError:
     _TORCH_AVAILABLE = False

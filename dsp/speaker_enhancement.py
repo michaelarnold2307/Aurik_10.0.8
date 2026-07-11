@@ -44,9 +44,7 @@ class AiSpeakerEnhancement:
         # ML-Inferenz (wenn Modell vorhanden)
         if self.model is not None:
             try:
-                pass
-
-                x = audio.astype(np.float32)[None, :]
+                                x = audio.astype(np.float32)[None, :]
                 ort_inputs = {self.model.get_inputs()[0].name: x}
                 out = self.model.run(None, ort_inputs)[0]
                 audio_out = out.squeeze().astype(audio_out.dtype)

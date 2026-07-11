@@ -347,9 +347,7 @@ def test_fix5_uv3_wall_time_budget() -> None:
     """
     t0 = time.perf_counter()
     try:
-        pass
-
-        uv3_path = ROOT / "backend" / "core" / "unified_restorer_v3.py"
+                uv3_path = ROOT / "backend" / "core" / "unified_restorer_v3.py"
         src = uv3_path.read_text(encoding="utf-8")
 
         # Prüfe: _PIPELINE_WALL_BUDGET_S definiert

@@ -36,8 +36,6 @@ except ImportError:
     logger.debug("onnxruntime nicht installiert — BW Reconstructor nicht verfügbar")
 
 try:
-    pass
-
     _SCIPY_AVAILABLE = True
 except ImportError:
     _SCIPY_AVAILABLE = False

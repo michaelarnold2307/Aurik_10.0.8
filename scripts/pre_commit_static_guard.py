@@ -60,6 +60,9 @@ def scan_file(filepath: Path) -> list[str]:
         return []
     if '.venv' in str(filepath) or '__pycache__' in str(filepath):
         return []
+    # Skip test files (they use pytest fixtures which are legal undefined names)
+    if '/tests/' in str(filepath) or str(filepath).startswith('tests/'):
+        return []
 
     content = filepath.read_text(encoding="utf-8", errors="replace")
     lines = content.splitlines()

@@ -29,8 +29,6 @@ except ImportError:
     LIBROSA_AVAILABLE = False
 
 try:
-    pass
-
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False

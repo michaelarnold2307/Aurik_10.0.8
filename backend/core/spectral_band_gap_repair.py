@@ -25,15 +25,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 try:
-    pass
-
     _LIBROSA_OK = True
 except ImportError:
     _LIBROSA_OK = False
 
 try:
-    pass
-
     _CREPE_OK = True
 except Exception:
     _CREPE_OK = False

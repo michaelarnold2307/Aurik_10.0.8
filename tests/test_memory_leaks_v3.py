@@ -27,9 +27,7 @@ pytestmark = [pytest.mark.ml, pytest.mark.slow]
 
 # Check if memory_profiler is available
 try:
-    pass
-
-    MEMORY_PROFILING_AVAILABLE = True
+        MEMORY_PROFILING_AVAILABLE = True
 except ImportError:
     MEMORY_PROFILING_AVAILABLE = False
     print("⚠️  memory_profiler not available - using basic memory tracking")
@@ -358,9 +356,7 @@ if __name__ == "__main__":
 
     # Check if psutil is available
     try:
-        pass
-
-        print("✓ psutil available - using precise memory tracking\n")
+                print("✓ psutil available - using precise memory tracking\n")
     except ImportError:
         print("⚠️  psutil not available - install with:")
         print("   pip install psutil\n")

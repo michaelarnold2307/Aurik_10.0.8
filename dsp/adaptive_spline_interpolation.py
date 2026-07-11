@@ -12,8 +12,6 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 try:
-    pass
-
     _TORCH_AVAILABLE = True
 except ImportError:
     _TORCH_AVAILABLE = False

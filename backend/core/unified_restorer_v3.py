@@ -28176,8 +28176,6 @@ class UnifiedRestorerV3:
         )
         if _is_eq_phase and "strength" in kwargs:
             try:
-                pass
-
                 kwargs.setdefault("check_simultaneous_masking", True)
             except Exception:
                 logger.debug("§SimultanMasking non-blocking", exc_info=True)

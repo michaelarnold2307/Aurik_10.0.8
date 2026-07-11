@@ -174,8 +174,6 @@ class AiDecrackler:
             return np.zeros(n_predict, dtype=np.float64)
 
         try:
-            pass
-
             # Adaptive AR order: higher order for longer contexts, capped
             order = min(16, max(2, len(context) // 4))
             order = min(order, len(context) - 1)
