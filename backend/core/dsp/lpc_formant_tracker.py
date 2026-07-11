@@ -449,7 +449,7 @@ def check_formant_shift_db(
                 _pre_seg_lpc = _sosfiltfilt_lpc(_aa_sos, pre_seg.copy())
                 _sosfiltfilt_lpc(_aa_sos, post_seg.copy())
             except Exception as e:
-                logger.warning("lpc_formant_tracker.py::_to_mono fallback: %s", e)
+                logger.debug("lpc_formant_tracker.py::_to_mono AA-filter: %s", e)
                 pass  # non-blocking — Dezimation ohne AA ist besser als Absturz
         pre_ds = _pre_seg_lpc[::ds]
         sr_ds = sr // ds
@@ -459,7 +459,7 @@ def check_formant_shift_db(
             a = _burg_lpc(pre_ds * np.hanning(len(pre_ds)), _LPC_ORDER)
             formants_hz = _lpc_to_formants(a, sr_ds, max_formants=max_formants)
         except Exception as e:
-            logger.warning("lpc_formant_tracker.py::_to_mono fallback: %s", e)
+            logger.debug("lpc_formant_tracker.py::_to_mono lpc: %s", e)
             return False, 0.0
         if not formants_hz:
             return False, 0.0
@@ -498,7 +498,7 @@ def check_formant_shift_db(
 
         return rollback, max_shift
     except Exception as e:
-        logger.warning("lpc_formant_tracker.py::unknown fallback: %s", e)
+        logger.debug("lpc_formant_tracker.py::unknown: %s", e)
         return False, 0.0
 
 
@@ -560,7 +560,7 @@ class _LPCFormantTracker:
                     _aa_sos_t = _butter_t(4, (sr / (2.0 * ds)) * 0.90, btype="low", fs=sr, output="sos")
                     _mono_aa = _sosfiltfilt_t(_aa_sos_t, mono_win.astype(np.float64))
                 except Exception as e:
-                    logger.warning("lpc_formant_tracker.py::track fallback: %s", e)
+                    logger.debug("lpc_formant_tracker.py::track AA-filter: %s", e)
             mono_ds = _mono_aa[::ds].astype(np.float64)
             sr_ds = max(1, sr // ds)
             if mono_ds.size <= (_LPC_ORDER + 1):
@@ -575,7 +575,7 @@ class _LPCFormantTracker:
                 result[keys[i]] = float(f)
             return result
         except Exception as e:
-            logger.warning("lpc_formant_tracker.py::track fallback: %s", e)
+            logger.debug("lpc_formant_tracker.py::track AA-filter: %s", e)
             return {"f1_mean": 0.0, "f2_mean": 0.0, "f3_mean": 0.0, "f4_mean": 0.0}
 
 
