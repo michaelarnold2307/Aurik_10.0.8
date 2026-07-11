@@ -36,6 +36,7 @@ ACCEPTED_STUBS: frozenset[tuple[str, str]] = frozenset(
         # @abstractmethod — legitimes Python-ABC-Muster (kein echter Stub)
         ("core/phases/phase_interface.py", "process"),
         ("core/phases/phase_interface.py", "get_metadata"),
+        ("plugins/sdk/aurik_plugin_base.py", "process_audio"),  # @abstractmethod im Plugin-SDK
         # Template-Method-Pattern — Subklassen überschreiben gezielt
         ("backend/ml/safety_wrappers/safety_wrapper_template.py", "_validate_pre_conditions"),
         ("backend/ml/safety_wrappers/safety_wrapper_template.py", "_assess_epistemic_confidence"),
