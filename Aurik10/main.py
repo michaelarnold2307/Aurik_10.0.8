@@ -55,6 +55,9 @@ warnings.filterwarnings("ignore", message="Some weights of the model checkpoint.
 warnings.filterwarnings("ignore", message="Some weights of.*were not initialized from the model checkpoint")
 warnings.filterwarnings("ignore", message="You should probably TRAIN this model")
 
+# ── webrtcvad: pkg_resources ist deprecated (externes Package, nicht Aurik) ──
+warnings.filterwarnings("ignore", message=".*pkg_resources.*deprecated.*", category=UserWarning)
+
 # ── PyTorch global thread-pool — must be set once at startup (§VERBOTEN) ─────
 try:
     import torch as _torch
