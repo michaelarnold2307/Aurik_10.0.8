@@ -347,11 +347,38 @@ def run_pre_analysis(
         _total_steps = len(_step_fns)
         _done_steps = 0
 
-        # Era und Genre teilen sich LAION-CLAP (2.2 GB).
-        # Sequentiell im AUFRUFENDEN Thread (hat ROCm-Kontext).
-        # Defect + Restorability parallel im Pool (unabhängig).
+        # Era + Genre laufen ASYNCHRON als Daemon-Thread (wie alte _detect_era_genre_bg).
+        # CLAP-Kaltstart dauert 200+s auf ROCm — synchrones Warten blockiert
+        # die gesamte Pre-Analysis. Der Daemon-Thread lädt CLAP im Hintergrund
+        # und setzt result.era/result.genre wenn fertig.
         _clap_steps = {k: v for k, v in _step_fns.items() if k in ("era", "genre")}
         _other_steps = {k: v for k, v in _step_fns.items() if k not in ("era", "genre")}
+
+        if _clap_steps:
+            def _run_era_genre_async() -> None:
+                """Hintergrund-Thread für Era+Genre (hat ROCm-Kontext)."""
+                for _name in ("era", "genre"):
+                    if _name not in _clap_steps:
+                        continue
+                    try:
+                        setattr(result, _name, _clap_steps[_name]())
+                        logger.info("pre_analysis: step=%s done (async)", _name)
+                    except Exception as _exc:
+                        result.errors[_name] = str(_exc)
+                        logger.warning("pre_analysis: step=%s failed (%s)", _name, _exc)
+                    # Update progress via callback
+                    nonlocal _done_steps
+                    _done_steps += 1
+                    if _done_steps <= _total_steps:
+                        _pct = 75 + int((_done_steps / max(_total_steps, 1)) * 15)
+                        _cb(_pct, f"Analyse: {_name} abgeschlossen ({_done_steps}/{_total_steps})…")
+
+            _era_thread = threading.Thread(target=_run_era_genre_async, daemon=True, name="aurik-era-genre")
+            _era_thread.start()
+            # Markiere als "pending" — der Rest der Analyse läuft ohne Era/Genre weiter
+            for _name in _clap_steps:
+                if getattr(result, _name, None) is None and _name not in result.errors:
+                    pass  # Will be set by async thread
 
         # Phase 1: Submit non-CLAP steps to pool → start immediately
         _pool = None
@@ -361,20 +388,7 @@ def run_pre_analysis(
             for name, fn in _other_steps.items():
                 _other_futs[_pool.submit(fn)] = name
 
-        # Phase 2: Run CLAP steps sequentially in THIS thread (has ROCm context)
-        for name, fn in _clap_steps.items():
-            try:
-                setattr(result, name, fn())
-            except Exception as exc:
-                result.errors[name] = str(exc)
-                logger.warning("pre_analysis: step=%s failed (%s)", name, exc)
-            _done_steps += 1
-            _step_pct = 75 + int((_done_steps / max(_total_steps, 1)) * 15)
-            _cb(_step_pct, f"Analyse: {name} abgeschlossen ({_done_steps}/{_total_steps})…")
-            logger.info("pre_analysis: step=%s done (%d/%d)", name, _done_steps, _total_steps)
-
-        # Phase 3: Collect pool results via as_completed
-        if _pool is not None and _other_futs:
+            # Phase 2: Collect pool results via as_completed
             try:
                 _total_timeout = _SUBSTEP_TIMEOUT_S * len(_other_futs)
                 for fut in _cf.as_completed(_other_futs, timeout=_total_timeout):
