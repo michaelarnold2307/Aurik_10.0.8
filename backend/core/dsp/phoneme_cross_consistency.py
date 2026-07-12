@@ -368,7 +368,7 @@ class PhonemeConsistencyMonitor:
             )
 
             lge = get_lyrics_guided_enhancement()
-            if lge.is_loaded():  # type: ignore[attr-defined]
+            if lge.is_loaded():
                 result = lge.transcribe(self._orig, self._sr)
                 segs = []
                 for word in result.words:

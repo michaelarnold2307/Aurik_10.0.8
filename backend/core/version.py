@@ -23,9 +23,15 @@ def get_aurik_version() -> str:
         from importlib.metadata import PackageNotFoundError  # pylint: disable=import-outside-toplevel
         from importlib.metadata import version as _pkg_version  # pylint: disable=import-outside-toplevel
 
-        return _pkg_version("aurik9")
+        # Try multiple possible package names (aurik9, aurik10, Aurik10)
+        for _pkg_name in ("aurik9", "aurik10", "Aurik10"):
+            try:
+                return _pkg_version(_pkg_name)
+            except PackageNotFoundError:
+                continue
+        # All package names failed — fall through to pyproject.toml
     except Exception as e:
-        logger.warning("version.py::get_aurik_version fallback: %s", e)
+        logger.debug("version.py::get_aurik_version pkg fallback: %s", e)
     try:
         _pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
         content = _pyproject.read_text(encoding="utf-8")

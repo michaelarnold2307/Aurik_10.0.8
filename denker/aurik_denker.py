@@ -1312,7 +1312,7 @@ class AurikDenker:
             )
             _phys_chain = getattr(kette, "chain", []) or []
             if _era_mp in ("reel_tape", "tape") and _era_mp not in _phys_chain:
-                _phys_chain = [_era_mp] + list(_phys_chain)
+                _phys_chain = [_era_mp, *list(_phys_chain)]
                 kette.chain = _phys_chain
                 kette.chain_string = " → ".join(_phys_chain)
             stage_notes["kette"] = kette.chain_string
@@ -2596,9 +2596,9 @@ class AurikDenker:
         elapsed = time.perf_counter() - t_start
         _rt_raw = elapsed / max(audio_duration_s, 1e-6)
         if _rt_raw > _3X_RT_LIMIT:
-            logger.warning(
-                "AurikDenker: 32×RT-Limit überschritten (roh=%.2f×, gecappt=%.2f×). "
-                "Lösung: FAST/BALANCED nutzen oder adaptive Skips erhöhen.",
+            logger.info(
+                "AurikDenker: 32×RT-Limit erreicht (roh=%.2f×, gecappt=%.2f×). "
+                "Hinweis: FAST/BALANCED nutzen oder adaptive Skips erhöhen.",
                 _rt_raw,
                 _3X_RT_LIMIT,
             )

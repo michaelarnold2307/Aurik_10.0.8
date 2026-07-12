@@ -592,6 +592,10 @@ class LyricsGuidedEnhancement:
         self._transcriber = get_lyrics_transcriber()
         self._transcriber.bind_enhancement(self)
 
+    def is_loaded(self) -> bool:
+        """Return True if at least one model backend (Whisper or wav2vec2) is ready."""
+        return self._ort_session is not None or self._aligner_session is not None
+
     # ── ONNX bootstrap ─────────────────────────────────────────────────────
 
     def _try_load_onnx(self) -> None:
