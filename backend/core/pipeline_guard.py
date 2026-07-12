@@ -218,6 +218,90 @@ class PipelineGuard:
         except Exception as e:
             logger.debug("PipelineGuard: HPE unavailable: %s", e)
 
+        # Adaptive Goal Evaluation: dynamische Schwellen aus Materialphysik
+        try:
+            from backend.core.spec_constitution import get_constitution
+            const = get_constitution()
+
+            # Schaetze physikalische Eigenschaften aus CLP + Material
+            est_bw_hz = 20000.0  # default
+            est_snr_db = 60.0    # default
+            est_era = 2000       # default
+
+            if self._clp_result is not None and self._clp_result.zone_scores:
+                # Bandbreite aus CLP-Zonen schaetzen
+                zone_energy = self._clp_result.zone_scores
+                if zone_energy.get("Luft", 0) > 0.1 or zone_energy.get("Brillanz", 0) > 0.3:
+                    est_bw_hz = 20000.0
+                elif zone_energy.get("Brillanz", 0) > 0.1:
+                    est_bw_hz = 12000.0
+                elif zone_energy.get("Praesenz", 0) > 0.3:
+                    est_bw_hz = 8000.0
+                else:
+                    est_bw_hz = 5000.0
+
+                # SNR aus Whisper-Energy + Vocal-Presence schaetzen
+                whisper = self._clp_result.whisper_energy
+                vocal = self._clp_result.vocal_presence
+                if vocal > 0.5:
+                    est_snr_db = 55.0
+                elif whisper > 0.3:
+                    est_snr_db = 35.0
+                elif whisper > 0.1:
+                    est_snr_db = 45.0
+                else:
+                    est_snr_db = 60.0
+
+            # Era aus Material-Typ schaetzen
+            material_era = {
+                "wax_cylinder": 1910, "shellac": 1940, "vinyl": 1970,
+                "tape": 1965, "reel_tape": 1960, "cassette": 1985,
+                "cd_digital": 1995, "dat": 1990, "mp3_low": 2000,
+                "mp3_high": 2005, "aac": 2010, "streaming": 2015,
+            }
+            est_era = material_era.get(self._material, 2000)
+
+            # Dynamische Schwellen berechnen
+            adaptive = const.compute_adaptive_thresholds(
+                self._material,
+                effective_bandwidth_hz=est_bw_hz,
+                effective_snr_db=est_snr_db,
+                era_decade=est_era,
+            )
+            static = const.get_musical_goal_thresholds(self._material)
+
+            # HPE-Metriken in Goal-Format (via getattr fuer Robustheit)
+            _hpe_roughness = getattr(hpe, "roughness_asper", 0.5)
+            _hpe_sharpness = getattr(hpe, "sharpness_zwicker", 2.0)
+            _hpe_fluctuation = getattr(hpe, "fluctuation_vacil", 0.5)
+            _hpe_tonalness = getattr(hpe, "tonalness", 0.6)
+            hpe_goals = {
+                "natuerlichkeit": max(0.0, 1.0 - _hpe_roughness * 0.3),
+                "brillanz": min(1.0, _hpe_sharpness / 4.0),
+                "authentizitaet": max(0.0, 1.0 - _hpe_fluctuation * 0.2),
+                "transparenz": _hpe_tonalness,
+            }
+
+            passed_adaptive, total_adaptive, failed_adaptive = const.evaluate_goals(
+                {g: hpe_goals.get(g, static.get(g, 0.6)) for g in adaptive}, self._material
+            )
+            report["adaptive_goals"] = {
+                "passed": passed_adaptive,
+                "total": total_adaptive,
+                "failed": failed_adaptive,
+                "bandwidth_hz": est_bw_hz,
+                "snr_db": est_snr_db,
+                "era_decade": est_era,
+                "sample_thresholds": {g: f"{adaptive[g]:.3f}" for g in list(adaptive.keys())[:5]},
+            }
+            if failed_adaptive:
+                report["warnings"].append(
+                    f"Adaptive-Goals: {passed_adaptive}/{total_adaptive} passed "
+                    f"(BW={est_bw_hz:.0f}Hz, SNR={est_snr_db:.0f}dB, Era={est_era})"
+                )
+        except Exception as e:
+            logger.debug("PipelineGuard: adaptive goals error: %s", e)
+
         elapsed = time.perf_counter() - self._start_time
         report["guard_overhead_ms"] = round(elapsed * 1000)
 
