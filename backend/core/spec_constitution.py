@@ -220,6 +220,14 @@ FORBIDDEN_PATTERNS: list[ForbiddenPattern] = [
         "frame_energy_correlation() auf voiced-Zonen",
         "warning",
     ),
+    # ── V10.0.7: Fortgeschrittene Regeln (V21-V42, 7 neue)
+    ForbiddenPattern("V21","Noise","noise.texture.*resynth","Noise-Textur-Resynthese ohne Original-Referenz","Noise-Textur aus Original extrahieren","warning"),
+    ForbiddenPattern("V33","Material","MaterialType.*missing|CASSETTE.*not in","Neues MaterialType ohne vollstaendige dict-Eintraege","Jedes dict[MaterialType,...] MUSS vollstaendig sein","critical"),
+    ForbiddenPattern("V38","Strength","uniform.*strength.*loop|strength.*for.*in.*events","Einheitliche Strength fuer disparate Defekt-Events","Per-Event-Strength-Oracle Pflicht","warning"),
+    ForbiddenPattern("V39","Phase","phase_21.*CAUSE|phase_35.*CAUSE|phase_42.*CAUSE","Phase 21/35/42 in Restoration-CAUSE_TO_PHASES","Diese Phasen NIE fuer Restoration-Cause vorschlagen","critical"),
+    ForbiddenPattern("V40","NR","denoise.*ohne.*NMR|phase_03.*ohne.*feedback","NR-Phase ohne NMR-Feedback","compute_nmr_score() Pflicht","warning"),
+    ForbiddenPattern("V41","Masking","additive.*ohne.*ForwardMasking","Additive Phase ohne ForwardMaskingGuard","ForwardMaskingGuard bei panns_singing>=0.25","warning"),
+    ForbiddenPattern("V42","Roughness","NR.*ohne.*roughness|phase_29.*ohne.*check","NR-Phase ohne Roughness-Check","check_roughness_regression() Pflicht","warning"),
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
