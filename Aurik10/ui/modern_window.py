@@ -16337,6 +16337,9 @@ class ModernMainWindow(QMainWindow):
                 # a large array on the instance beyond the lifetime of this thread.
                 self._pa_audio_native = None
                 self._pa_sr_native = 0
+                # Reset double-fire guard so finalized-preanalysis can run for this file
+                self._preanalysis_finalized_for = None
+                self._preanalysis_flags = set()
 
                 _logger_ = logger
 
@@ -16780,11 +16783,10 @@ class ModernMainWindow(QMainWindow):
                     self._apply_mode_recommendation_visuals()
 
                     # -- Gate signals --
-                    # era_genre: always; defect_scan: only when batch is not running
+                    # Both flags MUST be signaled together: the unified backend
+                    # runs all analyses in one call, unlike the old two-thread arch.
                     _try_signal_preanalysis_done("era_genre")
-                    _batch_running = bool(self.batch_thread and self.batch_thread.isRunning())
-                    if not _batch_running:
-                        _try_signal_preanalysis_done("defect_scan")
+                    _try_signal_preanalysis_done("defect_scan")
 
                 self.dispatch_to_gui(_update_all)
 
