@@ -18521,6 +18521,18 @@ class ModernMainWindow(QMainWindow):
         if bool(getattr(self, "_in_tick_heartbeat", False)):
             return
         self._in_tick_heartbeat = True
+        # §W-PROGRESS-STALE: Check if progress bar and step msg are in sync
+        try:
+            _bar_pct = self.progress_bar.value() / 100.0 if self.progress_bar.maximum() > 0 else 0.0
+        except RuntimeError:
+            _bar_pct = 0.0
+        _step_pct = getattr(self, '_preanalysis_step_pct', 0)
+        _step_msg = getattr(self, '_preanalysis_step_msg', '')
+        if _step_msg and abs(_bar_pct - _step_pct) > 15.0:
+            logger.warning(
+                "§W-PROGRESS-STALE: Bar=%.1f%% Step=%d%% Msg='%s' — Progress-Streams entkoppelt",
+                _bar_pct, _step_pct, _step_msg,
+            )
         QTimer.singleShot(0, lambda: setattr(self, "_in_tick_heartbeat", False))
 
         # Off-Track-Liveguard: externe Interventionsanforderung vor UI-Update prüfen.
