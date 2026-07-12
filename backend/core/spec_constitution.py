@@ -407,12 +407,18 @@ class SpecConstitution:
     # ── Musical Goals ───────────────────────────────────────────────────
 
     def get_musical_goal_thresholds(self, material: str = "unknown") -> dict[str, float]:
-        """Gibt Goal-Schwellwerte zurück, material-adaptiv mit Floor-Toleranzen."""
+        """Gibt Goal-Schwellwerte zurück, material-adaptiv mit Floor-Toleranzen.
+
+        Für fragile Materialien (Wachswalze, Schellack) sind die Schwellwerte
+        NIEDRIGER als die Defaults — sie respektieren die physikalischen Grenzen.
+        """
         thresholds: dict[str, float] = {}
         floor = self._material_floors.get(material, {})
         for goal, cfg in self._musical_goals.items():
             floor_val = floor.get(goal, cfg["threshold"])
-            thresholds[goal] = max(floor_val, cfg["threshold"])
+            # Floor ist das physikalisch maximal Erreichbare für dieses Material.
+            # Der Schwellwert ist der Floor-Wert (niedriger als Default bei fragilen Trägern).
+            thresholds[goal] = floor_val
         return thresholds
 
     def get_goal_weights(self) -> dict[str, float]:
