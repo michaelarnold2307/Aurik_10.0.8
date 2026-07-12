@@ -869,11 +869,17 @@ class DenoisePhase(PhaseInterface):
                 _dsp_threshold,
             )
         elif _denker_strength >= 0.95 and _panns_singing >= 0.25 and not use_lightweight:
-            use_lightweight = True
+            # Statt DSP-only: ML-Stärke proportional zur Gesangs-Wahrscheinlichkeit
+            # reduzieren.  panns=0.35 → 65% ML, panns=0.80 → 20% ML.
+            # So profitiert das Material weiterhin von ML-Denoising, aber die
+            # Vokal-Stärke wird proportional geschützt (§0 Primum non nocere).
+            _vocal_blend = float(np.clip(1.0 - _panns_singing, 0.15, 1.0))
+            effective_strength = float(np.clip(effective_strength * _vocal_blend, 0.05, 1.0))
             logger.info(
-                "§DENKER Phase 03 FALLBACK: strength=%.2f (unkalibriert), panns=%.2f ≥ 0.25 → DSP-only (Vokal-Schutz)",
+                "§DENKER Phase 03: strength=%.2f (unkalibriert), panns=%.2f → ML reduziert auf %.2f (Vokal-Blend)",
                 _denker_strength,
                 _panns_singing,
+                effective_strength,
             )
 
         _bsrof_gate = (
