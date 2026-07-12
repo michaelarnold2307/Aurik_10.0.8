@@ -4791,27 +4791,42 @@ DefectScanner-bestätigtem Wow/Flutter (Score ≥ 0.70) NICHT durch starren
 - Datei: `backend/core/phases/phase_12_wow_flutter_fix.py`
 
 
-## §2.46d: AudioSR Recovery-Kette (v10.0.0 → v10.0.3)
+## §2.46d: AudioSR Recovery-Kette (v10.0.3 final)
 
 **Pflicht**: AudioSR muss Recovery vor Zone Passthrough implementieren.
 
 | Stufe | Verfahren | Steps | Device | Qualität |
 |-------|-----------|-------|--------|----------|
-| 1 | CPU-DDIM | 50 | CPU | ML-optimal |
+| 1 | CPU-DDIM | 25–50 | CPU | ML-optimal |
 | 2 | SBR-DSP (`_sbr_extend`) | — | CPU | DSP-Spektralspiegelung |
 | 3 | Zone Passthrough | — | — | Unverändert |
 
-- **ROCm-Fix v3 (v10.0.3)**: Gesamtes Modell auf CPU.
-  - ROCm (AMD GPU) produziert NaN im HiFi-GAN-Vocoder (`first_stage_model`)
-    aufgrund von transposed-convolution-Bugs im ROCm-Treiber.
-  - Mixed-Device-Ansatz (GPU-DDIM + CPU-Vocoder) führte zu
-    `Input type (torch.cuda.FloatTensor) and weight type (torch.FloatTensor)`
-    wegen inkonsistenter Device-Platzierung der Sub-Module.
-  - `build_model(device="cpu")` — keine Patches nötig, alles auf einem Device.
-- AudioSR-Trainings-Limit: 2–8× Extension. Bei Extremfällen (375 Hz→17 kHz=45×)
-  ist Stufe 1 instabil, Stufe 2 (SBR-DSP) ist der wahrscheinlichste Pfad.
-- Datei: `plugins/audiosr_plugin.py`
+### Architektur-Entscheidungen
 
+- **CPU-only** (v10.0.3): `build_model(device="cpu")` — gesamtes Modell auf CPU.
+  - ROCm (AMD GPU) produziert NaN im HiFi-GAN-Vocoder via transposed-convolution-Bug.
+  - Mixed-Device (GPU-DDIM + CPU-Vocoder) führte zu inkonsistenten Device-Platzierungen.
+  - CPU-Inferenz: ~20s pro 1s Audio (25 DDIM-Steps), akzeptabel für Offline-Restoration.
+
+- **DDIM numerische Stabilität** (v10.0.3):
+  - `models/audiosr/audiosr/latent_diffusion/models/ddim.py`: Alle unguarded
+    `sqrt()`, `log()`, `reciprocal()`-Operationen mit `clip(…, 1e-12/1e-20)` abgesichert.
+  - Gleiche Fixes in `ddpm.py` und `plms.py` für Konsistenz.
+  - `weight_norm`-NaN beim FP16→FP32-Load: `nan_to_num`-Clean aller 2592 Parameter
+    nach `build_model()` (0/2592 NaN nach Clean).
+  - `warnings.filterwarnings("ignore", "invalid value encountered in multiply")`
+    für harmlose RuntimeWarning beim weight_norm-Load.
+
+- **SBR-DSP-Fallback**: `logger.info` statt `logger.warning`.
+  - SBR ist ein voll funktionsfähiger Pfad, kein Fehler.
+  - Spektrale HF-Energie steigt nachweislich (z.B. 0.000→0.157).
+
+- AudioSR-Trainings-Limit: 2–8x Extension. Bei Extremfällen (375 Hz→17 kHz=45x)
+  ist Stufe 1 instabil, Stufe 2 (SBR-DSP) ist der wahrscheinlichste Pfad.
+
+- Datei: `plugins/audiosr_plugin.py`
+- DDIM-Fixes: `models/audiosr/audiosr/latent_diffusion/models/ddim.py`,
+  `ddpm.py`, `plms.py`
 
 ## §2.35c: LPC-Formant-Tracker Anti-Aliasing (v10.0.0)
 
