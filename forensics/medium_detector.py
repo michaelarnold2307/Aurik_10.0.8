@@ -2527,6 +2527,21 @@ class MediumDetector:
         chain = _normalized_chain
         chain_confidences = _normalized_confidences
 
+        # ── Chronological sort ────────────────────────────────────
+        # Ensure chain respects technology timeline, not detection order.
+        # reel_tape (1930s) → vinyl (1950s) → cassette (1960s) → mp3 (1990s)
+        if len(chain) > 1:
+            _sorted_chain = sorted(
+                chain, key=lambda m: self._MEDIUM_ORDER.get(m, 99)
+            )
+            if _sorted_chain != chain:
+                logger.debug(
+                    "MediumDetector: chain reordered chronologically: %s → %s",
+                    " → ".join(chain),
+                    " → ".join(_sorted_chain),
+                )
+                chain = _sorted_chain
+
         primary = chain[0]
         # §6.1b [RELEASE_MUST] Letzter-Analog-Träger-Primärprinzip (v9.12.x):
         # Für Mehrstufenketten (vinyl→cassette→mp3_low) ist der letzte analoge Träger

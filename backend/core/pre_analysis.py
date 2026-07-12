@@ -406,7 +406,11 @@ def run_pre_analysis(
                     )
 
                 # 2. Genre + Sprache → Kette: Chain mit erweiterten Parametern neu matchen
-                _detected = list(set(_chain))
+                                # Sort detected materials chronologically (reel_tape before cassette etc.)
+                _detected = sorted(
+                    set(_chain),
+                    key=lambda m: _detector._MEDIUM_ORDER.get(m, 99)
+                )
                 _refined_chain = _detector._best_matching_chain(
                     _detected, genre=_genre_label, language=_lang_code or None
                 )
