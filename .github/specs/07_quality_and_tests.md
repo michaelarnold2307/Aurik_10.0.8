@@ -825,6 +825,27 @@ Pflichtanforderungen:
 3. Szenario-Score, Konfidenzintervall, Delta zur Vorversion
 4. Bericht als Release-Artefakt versioniert abgelegt
 
+### §5.8 [RELEASE_MUST] Test-Assertion-Konvention für numpy-Toleranzen (NEU 2026-07-12)
+
+Toleranzen (`rtol`, `atol`) gehören AUSSCHLIESSLICH in `np.testing.assert_allclose()`, NIEMALS in numpy-Mathefunktionen.
+
+```python
+# KORREKT:
+np.testing.assert_allclose(actual, np.abs(expected), rtol=1e-5, atol=1e-8)
+np.testing.assert_allclose(actual, np.tanh(x), atol=1e-6)
+np.testing.assert_allclose(actual, np.zeros(N))
+
+# VERBOTEN — TypeError zur Laufzeit:
+np.abs(x, rtol=1e-5, atol=1e-8)       # np.abs() kennt keine Toleranzen
+np.tanh(x, rtol=1e-5, atol=1e-8)       # np.tanh() kennt keine Toleranzen
+np.zeros(N, rtol=1e-5, atol=1e-8)      # np.zeros() kennt keine Toleranzen
+np.array([...], rtol=1e-5, atol=1e-8)  # np.array() kennt keine Toleranzen
+```
+
+**CI-Gate:** Kein Test darf durch diesen Fehler brechen. Pattern-Check via
+`grep -rPn '(?<=np\.(abs|tanh|zeros|array|ones|full|arange))\(' tests/ | grep rtol` als Pre-Commit.
+
+
 ### §5.7a [RELEASE_MUST] Modusgetrennte Hörvalidierungs-Checkliste (v9.10.130)
 
 Die externe Hörvalidierung MUSS beide Modi getrennt ausweisen. Ein kombinierter

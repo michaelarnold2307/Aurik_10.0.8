@@ -956,6 +956,14 @@ Era-Badge-Block (nach Pfad C)
 
 ---
 
+
+### v10-Amendment (2026-07-12)
+
+**version.py Multi-Package-Name-Probe** (v10, 2026-07-12):
+
+`backend/core/version.py::get_aurik_version()` probiert jetzt mehrere mögliche Package-Namen (`aurik9`, `aurik10`, `Aurik10`) via `importlib.metadata.version()`, bevor es auf den `pyproject.toml`-Fallback zurückfällt. Der `PackageNotFoundError`-Fallback-Pfad loggt jetzt auf `logger.debug`-Level (statt `logger.warning`), da der `pyproject.toml`-Fallback in allen getesteten Umgebungen zuverlässig funktioniert.
+
+**Implementierung**: `backend/core/version.py` → `for _pkg_name in ("aurik9", "aurik10", "Aurik10"): try: ... except PackageNotFoundError: continue`.
 ## §13 Distribution & Out-of-the-Box-Pflicht
 
 > Aurik 10 muss auf einem frischen Linux- oder Windows-System **ohne Python,

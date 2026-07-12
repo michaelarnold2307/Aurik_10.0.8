@@ -916,6 +916,20 @@ unterschiedliche Spektral-/Zeit-Behandlung.
 
 ---
 
+
+### v10-Amendment (2026-07-12)
+
+**LGE.is_loaded() Methode** (v10, 2026-07-12):
+
+`LyricsGuidedEnhancement` in `backend/core/lyrics_guided_enhancement.py` hat jetzt eine öffentliche `is_loaded() → bool`-Methode:
+
+```python
+def is_loaded(self) -> bool:
+    """Return True if at least one model backend (Whisper or wav2vec2) is ready."""
+    return self._ort_session is not None or self._aligner_session is not None
+```
+
+Diese Methode wird von `phoneme_cross_consistency.py` aufgerufen, um vor der Transkription zu prüfen, ob ein Modell-Backend geladen ist. Zuvor führte der Aufruf zu einem `AttributeError`, der als Fallback abgefangen wurde — die DSP-Segmentierung sprang ein. Mit der neuen Methode entfällt dieser Fallback-Pfad.
 ## §11.6 Plugin-Richtlinie (vollständige Liste)
 
 **Pflicht: Erst diese Liste prüfen, DANN neu schreiben.**

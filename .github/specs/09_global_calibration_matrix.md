@@ -725,6 +725,20 @@ ARTIFACT_FREEDOM_MATERIAL_THRESHOLDS = {
 
 ---
 
+
+### v10-Amendment (2026-07-12)
+
+**IAD severity-graded response** (v10, 2026-07-12):
+
+Siehe §2.49 Amendment in `02_pipeline_architecture.md`. Zusammenfassung der Log-Level:
+
+| Fraktion | Log-Level | Aktion |
+| --- | --- | --- |
+| `< 1%` | INFO | Keine — spektraler Rest |
+| `1–5%` | WARNING | `artifact_freedom_penalty` prüfen, ggf. VETO |
+| `≥ 5%` | WARNING + Rescue | §2.23 Dry/Wet-Blend zurück zum Original |
+
+Die AFG-Schwellwerte selbst bleiben unverändert. Nur die *Reaktion* (Log-Level + Rescue-Trigger) ist jetzt nach Schweregrad gestaffelt.
 ## §09.7 Expected Quality Scores (Baseline-Vorhersage) ✅
 
 Nach Pre-Analysis ist ein Expected Quality Score vorhersagbar, damit das UI eine Erwartung setzen kann.

@@ -237,6 +237,16 @@ class StemRemixBalancer:
 
 ---
 
+
+### v10-Amendment (2026-07-12)
+
+**MERT-v1-330M weight_norm/Parametrizations-Kompatibilität** (v10, 2026-07-12):
+
+Der MERT-v1-330M-Checkpoint wurde mit einer älteren `transformers`-Version gespeichert, die `torch.nn.utils.weight_norm` verwendete (State-Dict-Keys: `encoder.pos_conv_embed.conv.weight_g`, `weight_v`). Neuere `torch>=2.0`-Versionen verwenden `torch.nn.utils.parametrizations` (Keys: `parametrizations.weight.original0`, `original1`).
+
+Die weights werden von PyTorch automatisch in die neuen Parametrizations-Namen konvertiert. Das Modell ist voll funktionsfähig. Die Warnung beim Laden wird jetzt durch `ignore_mismatched_sizes=True` in `AutoModel.from_pretrained()` unterdrückt.
+
+**Implementierung**: `plugins/mert_plugin.py` → `AutoModel.from_pretrained(..., ignore_mismatched_sizes=True)`.
 ## §2.2 Pipeline-Ablauf (kanonisch, Code-genau)
 
 ### §2.2.0 Sample-Rate-Vertrag (Dual-SR, [RELEASE_MUST])
@@ -1792,6 +1802,25 @@ if float(_hpi_result.hpi) > 0.0 and _af_save >= 0.95:
 alle 5 Fallback-Stufen liefern None → `timbral_fidelity` nutzt stets nur den degradierten Input
 → Restaurierungsqualität systematisch unterschätzt → HPG-Lernkurve deaktiviert.
 
+
+### v10-Amendment (2026-07-12)
+
+**Final-Export-Audio-Gate: Restoration-Mode verwendet `best_carrier_checkpoint`** (v10, 2026-07-12):
+
+Das finale Export-Gate (§2.44/§2.49) in `unified_restorer_v3.py` vergleicht das restaurierte Audio standardmäßig gegen `analysis_audio` (degradiertes Original). Eine gute Restaurierung klingt jedoch *anders* (sauberer) als das degradierte Original → der Artifact-Freedom-Detektor meldet fälschlich `af=0.000` ("100 % Unterschied") → unnötiger Rollback.
+
+**Fix**: Im Restoration-Mode (`not self.is_studio_mode()`) verwendet das Final-Gate jetzt `self._best_carrier_checkpoint` als Referenz — das Zwischenergebnis, gegen das der Restorer tatsächlich optimiert hat. Falls kein Carrier-Checkpoint existiert, fällt das Gate auf `analysis_audio` zurück. Studio-Mode bleibt unverändert.
+
+**Implementierung**: `backend/core/unified_restorer_v3.py` → Zeile ~18629:
+```python
+if not self.is_studio_mode():
+    _carrier_ref = getattr(self, "_best_carrier_checkpoint", None)
+    _final_gate_ref = ...(_carrier_ref if _carrier_ref else analysis_audio)...
+else:
+    _final_gate_ref = ...analysis_audio...
+```
+
+**Erwartetes Ergebnis**: Kein falscher `af=0.000`-Rollback mehr. Das finale Tor vergleicht »finaler Output vs bester Zwischenstand« — genau das, was es in der Restoration intendiert.
 ## §2.45 [RELEASE_MUST] Minimal-Intervention-Prinzip (v9.10.122, aktualisiert §2.54)
 
 **Restoration**: Phasen ohne hörbare Verbesserung werden NICHT angewendet:
@@ -2879,6 +2908,22 @@ Ohne diese Prüfung restauriert der HPI-Rollback ein stereo-zerstörtes Signal.
 
 ---
 
+
+### v10-Amendment (2026-07-12)
+
+**IAD-Logging nach Schweregrad gestaffelt** (v10, 2026-07-12):
+
+Die `logger.warning`-Ausgabe des IAD (Introduced Artifact Detector) in `unified_restorer_v3.py` wird jetzt nach Kontaminationsgrad gestaffelt:
+
+| Fraktion | Log-Level | Bedeutung |
+| --- | --- | --- |
+| `< 1%` | `logger.info` (ℹ️) | Spektraler Rest (z.B. musical_noise auf Cassette). Typisches NR-Residuum, keine hörbare Degradation. |
+| `1–5%` | `logger.warning` (⚠️) | Leichter Qualitätsverlust. `artifact_freedom_penalty < 0.95` → VETO-Schwelle wird geprüft. |
+| `≥ 5%` | `logger.warning` (⚠️) + Dry/Wet-Rescue | Signifikante Kontamination. §2.23 IAD-Rescue triggert Dry/Wet-Blend zurück zum Original. |
+
+**Begründung**: `fraction=0.003` (0,3 %) `musical_noise` auf Cassette-Material ist normales spektrales Restrauschen jeder NR. `artifact_freedom_penalty=0.997` liegt weit über der 0.95-Veto-Schwelle. Eine WARNING bei <1 % ist ein Fehlalarm, der vom tatsächlichen Qualitätsverlust (≥5 %) ablenkt.
+
+**Implementierung**: `backend/core/unified_restorer_v3.py` → `_iad_is_trivial = _frac_iad < 0.01` → `logger.info` vs `logger.warning`.
 ## §2.49c [RELEASE_MUST] Psychoakustischer Rauheit/Schärfe-Guard (v9.11.x)
 
 **Motivierung**: ArtifactFreedomGate §2.49 prüft strukturelle Artefakte (Spectral Noise,
@@ -4734,3 +4779,30 @@ DefectScanner-bestätigtem Wow/Flutter (Score ≥ 0.70) NICHT durch starren
 - Segment-Trim: `pre_seg`/`post_seg` auf `min(len)` getrimmt
 - Filter: Butterworth 4. Ordnung, Zero-Phase, float64, 90% Ziel-Nyquist
 - Datei: `backend/core/dsp/lpc_formant_tracker.py`
+
+
+### v10-Amendment (2026-07-12)
+
+**SFT LEVEL_COLLAPSE: Phasenkorrektur-Phasen → INFO** (v10, 2026-07-12):
+
+Der Signal Flow Tracer (`backend/core/signal_flow_tracer.py`) flaggt `LEVEL_COLLAPSE`
+(rms_post < −60 dBFS) per `logger.warning`. Bei Phasenkorrektur-Phasen (phase_14,
+phase_25, azimuth, phase_correction) auf fehlausgerichtetem Stereo-Material (Cassette,
+Reel-Tape) erzeugt die Azimuth-Korrektur kurze transiente Pegelabfälle bis nahe
+−∞ dBFS durch gegenphasige Überlappung. Dies ist mathematisch erwartet und wird vom
+PMGG (waerme delta ≈ 0.0001) als nicht hörbar bestätigt.
+
+**Implementierung** (`backend/core/signal_flow_tracer.py`):
+
+```python
+_pc_collapse = ("LEVEL_COLLAPSE" in " | ".join(flags)
+    and phase_id and any(p in str(phase_id)
+    for p in ("phase_14", "phase_25", "azimuth", "phase_correction")))
+if _pc_collapse:
+    logger.info("§SFT %s FLAGS: %s", phase_id, " | ".join(flags))
+else:
+    logger.warning("§SFT %s FLAGS: %s", phase_id, " | ".join(flags))
+```
+
+**Erwartetes Ergebnis**: Keine WARNING-Flut bei Cassette-Restaurierung. Echte
+LEVEL_COLLAPSE in anderen Phasen bleibt als WARNING erhalten.
