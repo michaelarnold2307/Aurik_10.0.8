@@ -18544,7 +18544,9 @@ class ModernMainWindow(QMainWindow):
             _bar_pct = 0.0
         _step_pct = getattr(self, '_preanalysis_step_pct', 0)
         _step_msg = getattr(self, '_preanalysis_step_msg', '')
-        if _step_msg and abs(_bar_pct - _step_pct) > 15.0:
+        # Suppress during valid preanalysis→restoration transition
+        _pre_pending = getattr(self, '_preanalysis_pending', False)
+        if _step_msg and abs(_bar_pct - _step_pct) > 15.0 and _pre_pending:
             _last_stale_warn = getattr(self, '_last_progress_stale_warn', 0.0)
             if time.monotonic() - _last_stale_warn > 30.0:
                 logger.warning(

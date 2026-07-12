@@ -213,6 +213,69 @@ class TestRunPreAnalysisFlow:
             )
 
 
+
+
+
+class TestAsyncEraGenre:
+    """G24: Async Era/Genre — pre-analysis completes without waiting."""
+
+    def test_pre_analysis_completes_without_era(self, monkeypatch):
+        """Pre-Analysis MUSS in <100s abschließen, auch wenn Era noch läuft."""
+        import time
+
+        _start = time.monotonic()
+
+        def _slow_era(*a, **kw):
+            time.sleep(5.0)  # Simuliert CLAP-Kaltstart
+            return MagicMock(decade=1970, confidence=0.80)
+
+        def _slow_genre(*a, **kw):
+            time.sleep(5.0)
+            return MagicMock(genre_label="Schlager", confidence=0.63)
+
+        def mock_load_symbol(module, name):
+            if "bridge" in module and name == "get_era_classifier_fn":
+                return lambda: _slow_era
+            if "bridge" in module and name == "get_genre_classifier_fn":
+                return lambda: _slow_genre
+            if "defect_scanner" in module:
+                return lambda **kw: MagicMock(scan=lambda *a, **kw: MagicMock(scores={}))
+            if "restorability" in module:
+                return lambda audio, sr: MagicMock(score=64.0)
+
+            class MockMedium:
+                primary_material = "vinyl"
+                confidence = 0.26
+                chain_label = "vinyl → mp3"
+                transfer_chain = ["vinyl", "mp3_low"]
+
+            return lambda: MagicMock(detect=lambda *a, **kw: MockMedium())
+
+        monkeypatch.setattr("backend.core.pre_analysis._load_symbol", mock_load_symbol)
+        monkeypatch.setattr("backend.core.pre_analysis._store_in_cache", lambda *a: None)
+        monkeypatch.setattr("backend.core.pre_analysis._load_cached_parts", lambda *a: {})
+
+        import numpy as np
+        audio = np.zeros((44100, 2), dtype=np.float32)
+
+        result = run_pre_analysis(
+            audio_native=audio, sr_native=44100,
+            file_path="/tmp/test.mp3", store_in_bridge_cache=False,
+        )
+
+        _elapsed = time.monotonic() - _start
+        # Must complete in <3s (era/genre are async, don't block)
+        assert _elapsed < 3.0, (
+            f"Pre-analysis took {_elapsed:.1f}s — should be <3s. "
+            "Era/Genre are ASYNC and must not block."
+        )
+        # Defect + restorability must be present
+        assert result.defects is not None, "Defects missing"
+        # Era may or may not be done (async) — both are acceptable
+        # but errors must not contain era/genre failures
+        assert "era" not in result.errors, f"Era should not have errors: {result.errors}"
+        assert "genre" not in result.errors, f"Genre should not have errors: {result.errors}"
+
 class TestAsCompletedSemantics:
     """as_completed vs sequential — die GIL-Falle (§perf-era-genre)."""
 
