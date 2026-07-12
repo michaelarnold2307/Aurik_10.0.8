@@ -373,8 +373,8 @@ def run_pre_analysis(
                 # Fast steps (defect, restorability) report immediately instead
                 # of being blocked behind slow steps (era, genre).
                 # as_completed timeout is TOTAL across all futures.
-                # Scale by step count to match old per-future behavior.
-                _total_timeout = _SUBSTEP_TIMEOUT_S * max(_total_steps, 1)
+                # Cap at 600s (10 min) — enough for slowest classifier + margin.
+                _total_timeout = min(_SUBSTEP_TIMEOUT_S * max(_total_steps, 1), 600.0)
                 for fut in _cf.as_completed(_fut_to_name, timeout=_total_timeout):
                     name = _fut_to_name[fut]
                     try:
