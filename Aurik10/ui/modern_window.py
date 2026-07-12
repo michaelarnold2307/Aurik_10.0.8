@@ -16496,6 +16496,8 @@ class ModernMainWindow(QMainWindow):
                 # §V72: Timeout/Fehler in UI anzeigen statt Leerfeld
                 _era_errors = _result.errors.get("era", "")
                 _genre_errors = _result.errors.get("genre", "")
+                # Initialize tip_era early (used below before the main era block)
+                tip_era = ""
                 if _era_errors and er is None:
                     decade_label = "nicht verfügbar"
                     tip_era += "Aufnahme-Ära: <b>Analyse nicht verfügbar</b><br>"
