@@ -568,6 +568,179 @@ class MediumDetector:
         "streaming": "Streaming (Spotify/Apple/YouTube)",
     }
 
+    # Studio recording format characteristics -> medium hints.
+    # When detected by forensics modules, these inform chain building.
+    _STUDIO_FORMAT_INDICATORS: dict[str, dict] = {
+        # Dolby Noise Reduction variants
+        "dolby_a": {
+            "era": "1965-1990",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "studio": True,
+            "description_de": "Dolby A (Professionelles Rauschunterdrueckungssystem, 1965)",
+        },
+        "dolby_b": {
+            "era": "1968-2000",
+            "typical_media": ["cassette", "reel_tape"],
+            "quality": "consumer_hifi",
+            "studio": False,
+            "description_de": "Dolby B (Consumer Rauschunterdrueckung, 1968)",
+        },
+        "dolby_c": {
+            "era": "1980-2000",
+            "typical_media": ["cassette"],
+            "quality": "consumer_hifi",
+            "studio": False,
+            "description_de": "Dolby C (Verbesserte Consumer NR, 1980)",
+        },
+        "dolby_sr": {
+            "era": "1986-2010",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "studio": True,
+            "description_de": "Dolby SR (Spectral Recording, 1986)",
+        },
+        "dolby_s": {
+            "era": "1990-2000",
+            "typical_media": ["cassette"],
+            "quality": "consumer_hifi",
+            "studio": False,
+            "description_de": "Dolby S (Consumer-NR, spaete 1990er)",
+        },
+        "dbx_type_i": {
+            "era": "1971-1985",
+            "typical_media": ["reel_tape", "vinyl"],
+            "quality": "professional",
+            "studio": True,
+            "description_de": "dbx Type I (Professionelles Kompander-System, 1971)",
+        },
+        "dbx_type_ii": {
+            "era": "1975-1990",
+            "typical_media": ["cassette", "vinyl"],
+            "quality": "consumer_hifi",
+            "studio": False,
+            "description_de": "dbx Type II (Consumer Kompander, 1975)",
+        },
+        "telcom_c4": {
+            "era": "1975-1995",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "studio": True,
+            "description_de": "Telcom C4 (Deutsches Profi-Kompander-System, 1975)",
+        },
+        # Tape formulations (inferred from bias noise characteristics)
+        "tape_type_i": {
+            "era": "1963-2000",
+            "typical_media": ["cassette"],
+            "quality": "consumer_basic",
+            "description_de": "Compact Cassette Typ I (Eisenoxid, Normalband)",
+        },
+        "tape_type_ii": {
+            "era": "1975-2000",
+            "typical_media": ["cassette"],
+            "quality": "consumer_hifi",
+            "description_de": "Compact Cassette Typ II (Chromdioxid, High-Bias)",
+        },
+        "tape_type_iv": {
+            "era": "1979-2000",
+            "typical_media": ["cassette"],
+            "quality": "consumer_premium",
+            "description_de": "Compact Cassette Typ IV (Reineisen/Metallband)",
+        },
+        # RIAA / Equalization
+        "riaa_standard": {
+            "era": "1954-present",
+            "typical_media": ["vinyl"],
+            "description_de": "RIAA-Entzerrungskurve (Standard seit 1954)",
+        },
+        "riaa_pre_1954": {
+            "era": "1948-1954",
+            "typical_media": ["vinyl"],
+            "description_de": "Vor-RIAA-Entzerrung (herstellerspezifisch, vor 1954)",
+        },
+        "ccir_eq": {
+            "era": "1960-1990",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "description_de": "CCIR-Entzerrung (EU-Studio-Tonbandstandard)",
+        },
+        "nab_eq": {
+            "era": "1950-1990",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "description_de": "NAB-Entzerrung (US-Studio-Tonbandstandard)",
+        },
+        # Tape speed indicators (from flutter spectrum or pilot tone)
+        "tape_speed_30ips": {
+            "era": "1950-1990",
+            "typical_media": ["reel_tape"],
+            "quality": "professional_master",
+            "description_de": "30 ips (76 cm/s) — Studio-Master-Bandgeschwindigkeit",
+        },
+        "tape_speed_15ips": {
+            "era": "1950-present",
+            "typical_media": ["reel_tape"],
+            "quality": "professional",
+            "description_de": "15 ips (38 cm/s) — Professionelle Bandgeschwindigkeit",
+        },
+        "tape_speed_7_5ips": {
+            "era": "1950-1990",
+            "typical_media": ["reel_tape", "cassette"],
+            "quality": "consumer_hifi",
+            "description_de": "7,5 ips (19 cm/s) — Consumer-HiFi-Bandgeschwindigkeit",
+        },
+        "tape_speed_3_75ips": {
+            "era": "1950-1990",
+            "typical_media": ["reel_tape"],
+            "quality": "consumer_basic",
+            "description_de": "3,75 ips (9,5 cm/s) — Consumer-Basic-Bandgeschwindigkeit",
+        },
+        "tape_speed_1_875ips": {
+            "era": "1963-present",
+            "typical_media": ["cassette"],
+            "quality": "consumer_basic",
+            "description_de": "1,875 ips (4,76 cm/s) — Compact-Cassette-Standard",
+        },
+        # Half-speed / Direct Metal Mastering
+        "half_speed_mastering": {
+            "era": "1970-present",
+            "typical_media": ["vinyl"],
+            "quality": "audiophile",
+            "description_de": "Half-Speed-Mastering (Audiophile Vinyl-Pressung)",
+        },
+        "dmm_mastering": {
+            "era": "1984-present",
+            "typical_media": ["vinyl"],
+            "quality": "audiophile",
+            "description_de": "Direct Metal Mastering (Teldec/Neumann DMM)",
+        },
+    }
+
+    # Studio era -> typical recording chains
+    _STUDIO_ERA_CHAINS: dict[str, list[list[str]]] = {
+        # 1950s-1960s Abbey Road / Capitol Studios
+        "studio_golden_age": [
+            ["reel_tape", "lacquer_disc", "vinyl"],
+            ["reel_tape", "vinyl"],
+        ],
+        # 1970s analog studio (Ampex/Studer → vinyl)
+        "studio_analog_peak": [
+            ["reel_tape", "vinyl", "cassette"],
+            ["reel_tape", "vinyl", "cartridge_8track"],
+        ],
+        # 1980s digital transition (reel → DAT → CD)
+        "studio_digital_transition": [
+            ["reel_tape", "dat", "cd_digital"],
+            ["reel_tape", "cd_digital", "cassette"],
+        ],
+        # 1990s-2000s DAW era
+        "studio_daw": [
+            ["cd_digital", "mp3_high"],
+            ["cd_digital", "streaming"],
+        ],
+    }
+
+
     _LANGUAGE_MEDIUM_BONUS: dict[str, dict[str, float]] = {
         "de": {"shellac": 0.15, "vinyl": 0.10, "cassette": 0.05, "cd_digital": 0.05, "mp3_low": -0.10},
         "en": {"vinyl": 0.05, "cd_digital": 0.05, "mp3_low": 0.05, "streaming": 0.05},
