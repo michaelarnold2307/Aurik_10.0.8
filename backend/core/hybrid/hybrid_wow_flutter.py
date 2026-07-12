@@ -133,9 +133,7 @@ class PolyphonicSpeedCurveEstimator:
             self._bp = get_basicpitch_plugin()  # type: ignore[assignment]
             _was_loaded = getattr(self._bp, "_model_loaded", False)
             if _was_loaded:
-                logger.debug(
-                    "PolyphonicSpeedCurveEstimator: BasicPitch bereits geladen (model_loaded=True)"
-                )
+                logger.debug("PolyphonicSpeedCurveEstimator: BasicPitch bereits geladen (model_loaded=True)")
             else:
                 logger.info(
                     "PolyphonicSpeedCurveEstimator: BasicPitch geladen (model_loaded=%s)",
@@ -210,7 +208,7 @@ class PolyphonicSpeedCurveEstimator:
                 _log_r = np.log2(ref_hz[k])
                 _oct_shift = round(_log_r - _cluster)
                 if abs(_oct_shift) >= 1:
-                    ref_hz[k] = float(ref_hz[k] / (2.0 ** _oct_shift))
+                    ref_hz[k] = float(ref_hz[k] / (2.0**_oct_shift))
 
         # Step 3: per-frame per-voice deviation in cents
         deviation_cents = np.zeros((T, K), dtype=np.float32)

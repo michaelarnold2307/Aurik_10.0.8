@@ -60,8 +60,7 @@ class _DedupStderr:
                         if count + 1 == self._threshold:
                             # First suppression: emit a summary
                             written += self._real_write(
-                                f"[stderr-dedup] {self._threshold - 1} frühere identische "
-                                f"Zeilen unterdrückt, letzte:\n"
+                                f"[stderr-dedup] {self._threshold - 1} frühere identische Zeilen unterdrückt, letzte:\n"
                             )
                             written += self._real_write(full_line)
                         # Beyond threshold: silent suppression
@@ -79,8 +78,8 @@ class _DedupStderr:
     def _is_c_level_warning(self, line: str) -> bool:
         """Check if a line looks like a C-level or ML-framework warning."""
         prefixes = (
-            "[W:",   # ONNX Runtime warning
-            "[E:",   # ONNX Runtime error
+            "[W:",  # ONNX Runtime warning
+            "[E:",  # ONNX Runtime error
             "Warning:",  # Generic C warning
         )
         if line.startswith(prefixes):
@@ -88,9 +87,9 @@ class _DedupStderr:
         # §F6: PyTorch/HuggingFace warnings printed to stderr
         # e.g. "Some weights of the model checkpoint at ... were not used..."
         stderr_patterns = (
-            "Some weights of",       # HuggingFace model loading
+            "Some weights of",  # HuggingFace model loading
             "You should probably TRAIN",  # HuggingFace training advice
-            "This IS expected if",   # HuggingFace initialization note
+            "This IS expected if",  # HuggingFace initialization note
         )
         return any(p in line for p in stderr_patterns)
 

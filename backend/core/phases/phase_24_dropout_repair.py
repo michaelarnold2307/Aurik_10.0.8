@@ -84,9 +84,9 @@ from backend.core.audio_utils import (
     restore_layout,
     to_channels_last,
 )
+from backend.core.ml_model_readiness import check_ml_model_ready
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult, create_phase_result
-from backend.core.ml_model_readiness import check_ml_model_ready  # noqa: E402
 
 try:
     from backend.core.quality_mode import QualityMode, should_use_ml  # type: ignore[attr-defined]

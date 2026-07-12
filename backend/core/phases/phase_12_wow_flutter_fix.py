@@ -82,9 +82,9 @@ from backend.core.audio_utils import (
     to_channels_last,
 )
 from backend.core.defect_scanner import MaterialType
+from backend.core.ml_model_readiness import check_ml_model_ready
 
 from .phase_interface import PhaseCategory, PhaseInterface, PhaseMetadata, PhaseResult
-from backend.core.ml_model_readiness import check_ml_model_ready  # noqa: E402
 
 # Resource Management for fallback to lightweight algorithms
 try:
@@ -114,7 +114,7 @@ logger = logging.getLogger(__name__)
 # wasting CPU on a known-lost cause.
 _POLYPHONIC_CONSECUTIVE_ZERO_CONSENSUS: int = 0
 _POLYPHONIC_CB_MAX_FAILURES: int = 3  # Max consecutive zero-consensus chunks before skipping
-_POLYPHONIC_CB_ACTIVE: bool = False   # True = polyphonic estimator permanently skipped for this run
+_POLYPHONIC_CB_ACTIVE: bool = False  # True = polyphonic estimator permanently skipped for this run
 
 
 def _reset_polyphonic_circuit_breaker() -> None:
@@ -583,9 +583,9 @@ class WowFlutterFix(PhaseInterface):
                 int(np.sum(np.asarray(confidence) > 0.15)),
             )
             # §C3: Track consecutive zero-consensus — circuit-breaker.
-            _consensus_frames = int(np.sum(~np.isnan(
-                np.full(pitch_trajectory.size, np.nan)
-            ))) if pitch_trajectory.size > 0 else 0
+            _consensus_frames = (
+                int(np.sum(~np.isnan(np.full(pitch_trajectory.size, np.nan)))) if pitch_trajectory.size > 0 else 0
+            )
             if _consensus_frames == 0:
                 _POLYPHONIC_CONSECUTIVE_ZERO_CONSENSUS += 1
                 if _POLYPHONIC_CONSECUTIVE_ZERO_CONSENSUS >= _POLYPHONIC_CB_MAX_FAILURES:
@@ -881,7 +881,7 @@ class WowFlutterFix(PhaseInterface):
         _wow_sev = float(kwargs.get("wow_severity", kwargs.get("flutter_severity", 0.0)) or 0.0)
         # Fallback: restoration_context → conservative default for analog tape
         if _wow_sev == 0.0:
-            _ctx = getattr(self, '_restoration_context', {}) or {}
+            _ctx = getattr(self, "_restoration_context", {}) or {}
             _wow_sev = float(_ctx.get("wow_severity", _ctx.get("flutter_severity", 0.0)) or 0.0)
         if _wow_sev == 0.0 and str(material_type).lower() in ("cassette", "reel_tape", "tape", "vinyl"):
             _wow_sev = 0.30  # Conservative minimum for analog tape/disc
@@ -2968,13 +2968,19 @@ class WowFlutterFix(PhaseInterface):
                 if _span_cents > _adaptive_limit:
                     logger.info(
                         "Phase 12 pitch span %.0f cents > %.0f (mat=%s wow=%.2f)",
-                        _span_cents, _adaptive_limit, _mat_key, _wow_sev,
+                        _span_cents,
+                        _adaptive_limit,
+                        _mat_key,
+                        _wow_sev,
                     )
                     return np.ones_like(pitch_trajectory)
                 else:
                     logger.info(
                         "Phase 12 pitch span %.0f cents within limit %.0f (mat=%s wow=%.2f)",
-                        _span_cents, _adaptive_limit, _mat_key, _wow_sev,
+                        _span_cents,
+                        _adaptive_limit,
+                        _mat_key,
+                        _wow_sev,
                     )
 
         target_pitch = np.median(confident_pitches)

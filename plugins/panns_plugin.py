@@ -26,11 +26,11 @@ import logging
 import math
 import threading
 from pathlib import Path
-
-from backend.core.plugin_base import MLPluginBase  # §A2
 from typing import Any
 
 import numpy as np
+
+from backend.core.plugin_base import MLPluginBase  # §A2
 
 # ---------------------------------------------------------------------------
 # §9.7.1 SHA256-Ergebnis-Cache für PANNs-Inferenz (§3.8)

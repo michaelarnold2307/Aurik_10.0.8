@@ -129,20 +129,22 @@ def _calibrate_guard_thresholds() -> dict[str, float]:
     _pressure_recovery_sleep_s: float = 0.35
 
     # ── Persist as module-level for fast access ──────────────────────
-    globals().update({
-        "_HEAVY_MODEL_PREEMPTIVE_MIN_GB": _heavy_min_gb,
-        "_HEAVY_MODEL_PREEMPTIVE_SWAP_PCT": round(_heavy_swap_pct, 1),
-        "_HEAVY_MODEL_PREEMPTIVE_SWAP_EARLY_PCT": round(_heavy_swap_early_pct, 1),
-        "_HEAVY_MODEL_PREEMPTIVE_SWAP_IO_MB_S": _heavy_swap_io_mb_s,
-        "_HEAVY_MODEL_PREEMPTIVE_AVAIL_RATIO_MAX": round(_heavy_avail_ratio_max, 2),
-        "_MIN_FREE_MB_HARD": round(_min_free_mb_hard, 0),
-        "_PRESSURE_RECOVERY_ATTEMPTS": _pressure_recovery_attempts,
-        "_PRESSURE_RECOVERY_SLEEP_S": _pressure_recovery_sleep_s,
-        "_SYSTEM_MEMORY_MARGIN_BASE": _margin_base,
-        "_SYSTEM_MEMORY_MARGIN_MIN": _margin_min,
-        # For _preflight_system_memory load-peak factors
-        "_CALIBRATED_TOTAL_RAM_GB": round(_total_gb, 1),
-    })
+    globals().update(
+        {
+            "_HEAVY_MODEL_PREEMPTIVE_MIN_GB": _heavy_min_gb,
+            "_HEAVY_MODEL_PREEMPTIVE_SWAP_PCT": round(_heavy_swap_pct, 1),
+            "_HEAVY_MODEL_PREEMPTIVE_SWAP_EARLY_PCT": round(_heavy_swap_early_pct, 1),
+            "_HEAVY_MODEL_PREEMPTIVE_SWAP_IO_MB_S": _heavy_swap_io_mb_s,
+            "_HEAVY_MODEL_PREEMPTIVE_AVAIL_RATIO_MAX": round(_heavy_avail_ratio_max, 2),
+            "_MIN_FREE_MB_HARD": round(_min_free_mb_hard, 0),
+            "_PRESSURE_RECOVERY_ATTEMPTS": _pressure_recovery_attempts,
+            "_PRESSURE_RECOVERY_SLEEP_S": _pressure_recovery_sleep_s,
+            "_SYSTEM_MEMORY_MARGIN_BASE": _margin_base,
+            "_SYSTEM_MEMORY_MARGIN_MIN": _margin_min,
+            # For _preflight_system_memory load-peak factors
+            "_CALIBRATED_TOTAL_RAM_GB": round(_total_gb, 1),
+        }
+    )
 
     logger.info(
         "ml_memory_budget: guard thresholds calibrated for %.1f GB RAM — "
@@ -193,6 +195,7 @@ def _log_system_profile() -> None:
         )
     except Exception:
         pass
+
 
 _log_system_profile()
 
@@ -455,11 +458,14 @@ def _should_block_heavy_ml_load(size_gb: float) -> bool:
         # §E2: Blend system-RAM-based peak with model-file-size-based peak.
         _total_ram_gb = _psutil.virtual_memory().total / (1024.0**3)
         if _total_ram_gb >= 24.0:
-            _sys_peak = 1.30; _oomd_frac = 0.08
+            _sys_peak = 1.30
+            _oomd_frac = 0.08
         elif _total_ram_gb >= 16.0:
-            _sys_peak = 1.45; _oomd_frac = 0.10
+            _sys_peak = 1.45
+            _oomd_frac = 0.10
         else:
-            _sys_peak = 1.60; _oomd_frac = 0.12
+            _sys_peak = 1.60
+            _oomd_frac = 0.12
         _model_peak = _estimate_load_peak_factor(size_gb)
         _peak = min(_sys_peak, _model_peak)  # use the more optimistic estimate
         _preempt_factor = 0.80
@@ -525,11 +531,14 @@ def _preflight_system_memory(required_mb: float) -> bool:
         # §E2: Blend with model-file-size-based peak for more precision.
         _total_ram_gb = float(_psutil.virtual_memory().total) / (1024.0**3)
         if _total_ram_gb >= 24.0:
-            _sys_peak = 1.30; _oomd_pct = 0.08
+            _sys_peak = 1.30
+            _oomd_pct = 0.08
         elif _total_ram_gb >= 16.0:
-            _sys_peak = 1.45; _oomd_pct = 0.10
+            _sys_peak = 1.45
+            _oomd_pct = 0.10
         else:
-            _sys_peak = 1.60; _oomd_pct = 0.12
+            _sys_peak = 1.60
+            _oomd_pct = 0.12
         _model_peak = _estimate_load_peak_factor(_size_gb)
         _load_peak = min(_sys_peak, _model_peak)
         _total_ram_mb = float(_psutil.virtual_memory().total) / (1024.0 * 1024.0)
@@ -701,6 +710,7 @@ def try_allocate(model_name: str, size_gb: float) -> bool:
         # readiness checks reflect the newly loaded state.
         try:
             from backend.core.ml_model_readiness import invalidate_ml_readiness
+
             invalidate_ml_readiness(model_name)
         except Exception:
             pass

@@ -82,6 +82,90 @@ def _estimate_interchannel_lag_samples(audio: np.ndarray, sr: int, max_seconds: 
         return 0
 
 
+def _estimate_interchannel_lag_multi_point(
+    audio: np.ndarray, sr: int, num_points: int = 3, window_s: float = 5.0
+) -> dict:
+    """Misst Interchannel-Lag an mehreren Positionen im Signal (§G13).
+
+    GCC-PHAT auf nur einem Fenster (z.B. den ersten 5 s) kann bei
+    zeitlich variierendem Lag (Banddehnung, Dropouts) ein falsches Bild
+    liefern.  Multi-Point-Messung an Start, Mitte und Ende des Signals
+    liefert ein Konsistenzprofil:
+
+        - Alle Messungen innerhalb ±50 samples → Lag ist konsistent.
+          Eine globale Korrektur reicht.
+        - Messungen streuen > 100 samples → Lag variiert zeitlich.
+          Median wird als globale Basiskorrektur verwendet; STCG
+          behandelt die per-Chunk-Variation während Phase 12.
+
+    Returns dict mit:
+        points:     [(position_frac, lag_samples), ...]
+        median_lag: Median-Lag über alle Messpunkte
+        consistent: True wenn alle Messungen innerhalb ±50 samples liegen
+        max_spread: max(|lag_i - lag_j|) über alle Punktpaare
+    """
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim != 2:
+        return {"points": [], "median_lag": 0, "consistent": True, "max_spread": 0}
+
+    total_n = arr.shape[0]
+    window_n = int(sr * window_s)
+    lags: list[int] = []
+
+    for i in range(num_points):
+        # Positionen: 0%, 50%, 90% (bzw. äquidistant bei num_points > 3)
+        frac = i / max(num_points - 1, 1) if num_points > 1 else 0.5
+        # Nicht ganz ans Ende (letztes Fenster braucht window_n Samples)
+        max_start = max(0, total_n - window_n)
+        start = min(int(frac * total_n), max_start)
+        end = min(start + window_n, total_n)
+
+        if end - start < max(1024, sr // 10):
+            continue
+
+        chunk = arr[start:end]
+        # Channel-first: (samples, 2) → (2, samples) extrahieren
+        l_ch = chunk[:, 0] if chunk.shape[1] == 2 else chunk[0]
+        r_ch = chunk[:, 1] if chunk.shape[1] == 2 else chunk[1]
+
+        # GCC-PHAT auf diesem Fenster
+        n = len(l_ch)
+        n_fft = 1
+        while n_fft < 2 * n:
+            n_fft <<= 1
+        X = np.fft.rfft(l_ch.astype(np.float64), n=n_fft)
+        Y = np.fft.rfft(r_ch.astype(np.float64), n=n_fft)
+        cross = X * np.conj(Y)
+        gcc = np.fft.irfft(cross / (np.abs(cross) + 1e-10), n=n_fft)
+
+        max_delay = min(int(sr * 0.2), n - 1)
+        if max_delay <= 0:
+            continue
+        search = np.concatenate([gcc[n_fft - max_delay:], gcc[:max_delay + 1]])
+        lag = int(np.argmax(np.abs(search))) - max_delay
+        lags.append(lag)
+
+    if not lags:
+        return {"points": [], "median_lag": 0, "consistent": True, "max_spread": 0}
+
+    median_lag = int(np.median(lags))
+    max_spread = max(abs(a - b) for a in lags for b in lags) if len(lags) > 1 else 0
+    consistent = max_spread <= 50
+
+    # Positionen für Logging berechnen
+    positions = []
+    for i, lag in enumerate(lags):
+        frac = i / max(len(lags) - 1, 1) if len(lags) > 1 else 0.5
+        positions.append((round(frac, 2), lag))
+
+    return {
+        "points": positions,
+        "median_lag": median_lag,
+        "consistent": consistent,
+        "max_spread": max_spread,
+    }
+
+
 def _lazy_get_carrier_tools():
     from .carrier_forensics import analyze_carrier_forensics
     from .carrier_ml_classifier import classify_carrier_ml

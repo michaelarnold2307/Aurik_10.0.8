@@ -8596,10 +8596,7 @@ class UnifiedRestorerV3:
                 audio,
                 sample_rate,
                 era_decade=self._restoration_context.get("decade"),
-                venue_hint=str(
-                    getattr(_classified_material, "value", _classified_material)
-                    or "unknown"
-                ),
+                venue_hint=str(getattr(_classified_material, "value", _classified_material) or "unknown"),
             )
             self._restoration_context["room_acoustics_fingerprint"] = _raf
         except Exception as _raf_exc:
@@ -8980,17 +8977,33 @@ class UnifiedRestorerV3:
             logger.debug("DCOffsetPreRemoval Fehler (scipy nicht verfügbar): %s", _dc_exc)
 
         # §LAG_PROBE_0B: NACH DC-Offset-Removal, VOR TDP
-        # GCC-PHAT via file_import helper — O(n log n)
+        # §G13/F1: Multi-Point-GCC-PHAT — misst Lag an 3 Positionen (0%, 50%, 90%)
+        # für präzise Erkennung von konsistentem vs. zeitlich variierendem Lag.
         try:
             if audio.ndim == 2:
-                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                from backend.file_import import _estimate_interchannel_lag_multi_point as _multi_lag
 
-                _lp0b_lag = _gcc_lag(audio, sample_rate)
-                logger.info(
-                    "LAG_PROBE 0B/after_dc_removal_before_tdp: lag=%d samples (%.1f ms)",
-                    _lp0b_lag,
-                    _lp0b_lag / sample_rate * 1000,
-                )
+                _lag_profile = _multi_lag(audio, sample_rate, num_points=3, window_s=5.0)
+                _lp0b_lag = _lag_profile["median_lag"]
+                _lag_consistent = _lag_profile["consistent"]
+                _lag_spread = _lag_profile["max_spread"]
+                _lag_points = _lag_profile.get("points", [])
+
+                _pts_str = ", ".join(
+                    f"{frac*100:.0f}%→{lag}" for frac, lag in _lag_points
+                ) if _lag_points else "n/a"
+
+                if _lag_consistent:
+                    logger.info(
+                        "LAG_PROBE 0B: lag=%d samples (%.1f ms) — KONSISTENT (spread=%d, points=[%s])",
+                        _lp0b_lag, _lp0b_lag / sample_rate * 1000, _lag_spread, _pts_str,
+                    )
+                else:
+                    logger.warning(
+                        "LAG_PROBE 0B: lag=%d samples (%.1f ms) — VARIIERT (spread=%d, points=[%s]). "
+                        "Median-Korrektur + STCG für Residuale.",
+                        _lp0b_lag, _lp0b_lag / sample_rate * 1000, _lag_spread, _pts_str,
+                    )
                 # §G13/F1: Globaler Interchannel-Lag MUSS vor Phase 1 korrigiert werden.
                 # Der Lag wird PRÄZISE via GCC-PHAT gemessen (kein statischer Offset).
                 # Er kann pro Song variieren, auch innerhalb eines Songs (positive/negative
@@ -9010,22 +9023,26 @@ class UnifiedRestorerV3:
                     _lag_abs = abs(_lp0b_lag)
                     if _lp0b_lag < 0:
                         # Negativer Lag: R-Kanal hängt hinter L → R trimmen und alignen
-                        audio = audio[:, :audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
+                        audio = audio[:, : audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
                         audio[:, 1] = np.roll(audio[:, 1], _lag_abs)
                     else:
                         # Positiver Lag: L-Kanal hängt hinter R → L trimmen und alignen
-                        audio = audio[:, :audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
+                        audio = audio[:, : audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
                         audio[:, 0] = np.roll(audio[:, 0], _lag_abs)
                     logger.info(
-                        "§G13 Interchannel-Lag-Korrektur: GCC-PHAT misst %d samples (%.1f ms) — "
-                        "Kanal-Alignment durchgeführt. STCG behandelt residuale per-Chunk-Variationen.",
+                        "§G13 Interchannel-Lag-Korrektur: Median %d samples (%.1f ms) — "
+                        "Kanal-Alignment durchgeführt. Messpunkte: %s. "
+                        "STCG behandelt residuale per-Chunk-Variationen.",
                         _lp0b_lag,
                         _lp0b_lag / sample_rate * 1000,
+                        _pts_str,
                     )
                     # Im Context vermerken, damit Downstream-Code (STCG, Export) Bescheid weiß
                     _restoration_context["_lag_correction_applied"] = True
                     _restoration_context["_lag_correction_samples"] = int(_lp0b_lag)
-                    _restoration_context["_lag_probe_0b_value"] = int(_lp0b_lag)
+                    _restoration_context["_lag_consistent"] = _lag_consistent
+                    _restoration_context["_lag_spread"] = int(_lag_spread)
+                    _restoration_context["_lag_points"] = _lag_points
         except Exception as _lp0b_exc:
             logger.debug("LAG_PROBE_0B fehlgeschlagen: %s", _lp0b_exc)
 
@@ -11952,7 +11969,8 @@ class UnifiedRestorerV3:
                                     _total_failed += len(_time_ranges)
                                     logger.debug(
                                         "Surgical zone repair failed for %s: %s",
-                                        _phase_id, str(_surg_exc)[:120],
+                                        _phase_id,
+                                        str(_surg_exc)[:120],
                                     )
                             _plan_types = ", ".join(f"{t}={c}" for t, c in sorted(_surgical_plan.items()))
                             if _total_repaired > 0 and _total_failed == 0:
@@ -13114,8 +13132,7 @@ class UnifiedRestorerV3:
                 )
 
                 _iad_log(
-                    "§2.49 IAD: artifact_freedom_penalty=%.3f (fraction=%.3f)"
-                    " — %s if < 0.95",
+                    "§2.49 IAD: artifact_freedom_penalty=%.3f (fraction=%.3f) — %s if < 0.95",
                     self._iad_artifact_freedom_penalty,
                     _frac_iad,
                     "VETO" if not _iad_is_trivial else "OK (>0.99)",
@@ -14647,7 +14664,8 @@ class UnifiedRestorerV3:
                                 # §PERF Plateau-Detection: wenn 3+ konsekutive Varianten
                                 # identische Violation-Sets liefern, brechen wir ab.
                                 _variant_violations = frozenset(
-                                    k for k in _variant_scores
+                                    k
+                                    for k in _variant_scores
                                     if k in _applicable_goal_names
                                     and float(_variant_scores.get(k, 0.0)) < _effective_goal_thresholds.get(k, 0.85)
                                 )
@@ -18693,7 +18711,8 @@ class UnifiedRestorerV3:
             if not self.is_studio_mode():
                 _carrier_ref = getattr(self, "_best_carrier_checkpoint", None)
                 _final_gate_ref = _channels_first_for_final_gate(
-                    np.asarray(_carrier_ref if _carrier_ref is not None else analysis_audio, dtype=np.float32))
+                    np.asarray(_carrier_ref if _carrier_ref is not None else analysis_audio, dtype=np.float32)
+                )
             else:
                 _final_gate_ref = _channels_first_for_final_gate(np.asarray(analysis_audio, dtype=np.float32))
             _final_gate_audio = _channels_first_for_final_gate(np.asarray(restored_audio, dtype=np.float32))
@@ -19583,10 +19602,8 @@ class UnifiedRestorerV3:
         # Laienfreundliche Zusammenfassung
         try:
             from backend.core.phase_fazit import log_restoration_summary
-            _summary_chain = (
-                self._restoration_context.get("transfer_chain")
-                or self._restoration_context.get("chain")
-            )
+
+            _summary_chain = self._restoration_context.get("transfer_chain") or self._restoration_context.get("chain")
             log_restoration_summary(
                 total_time_s=total_time,
                 rt_factor=rt_factor,
@@ -30720,10 +30737,14 @@ class UnifiedRestorerV3:
         audio = np.clip(audio, -1.0, 1.0)
         # §F2: phase_human_name für lesbare Log-Einträge
         try:
-            from backend.core.phase_names import phase_human_name  # pylint: disable=import-outside-toplevel,redefined-outer-name
+            from backend.core.phase_names import (
+                phase_human_name,  # pylint: disable=import-outside-toplevel,redefined-outer-name
+            )
         except ImportError:
+
             def phase_human_name(phase_id: str) -> str:
                 return phase_id
+
         # §Längen-Guard: Originalsamplelänge merken — Phasen dürfen die Länge nicht verändern.
         _input_n_samples: int = audio.shape[-1] if audio.ndim >= 2 else len(audio)
         _active_quality_mode = quality_mode_override or self.config.mode
@@ -32805,7 +32826,12 @@ class UnifiedRestorerV3:
                                         _cb_exc,
                                     )
                             executed.append(phase_id)
-                            logger.info("✅ %s (%s): %.2fs (parallel)", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
+                            logger.info(
+                                "✅ %s (%s): %.2fs (parallel)",
+                                phase_id,
+                                phase_human_name(phase_id),
+                                result.execution_time_seconds,
+                            )
                         else:
                             _record_oom_probe("phase_failed_parallel", phase_id)
                             logger.error(
@@ -33341,7 +33367,13 @@ class UnifiedRestorerV3:
                         continue
                 except ImportError:
                     logger.debug("psutil not available — pre-phase RAM check skipped")
-                logger.info("▶ %s (%s) startet (%d/%d)", phase_id, phase_human_name(phase_id), len(executed) + 1, len(selected_phases))
+                logger.info(
+                    "▶ %s (%s) startet (%d/%d)",
+                    phase_id,
+                    phase_human_name(phase_id),
+                    len(executed) + 1,
+                    len(selected_phases),
+                )
                 _record_oom_probe("phase_start", phase_id, estimated_time_s=round(float(estimated_time), 3))
                 # §2.61 Input-Länge für Output-Length-Guard festhalten
                 _phase_input_len_2_61: int = len(current_audio)
@@ -34532,7 +34564,12 @@ class UnifiedRestorerV3:
                                             audio_update_callback(current_audio, sample_rate, phase_id)
                                         except Exception as _exc:
                                             logger.debug("audio_update_callback (PMGG fallback) failed: %s", _exc)
-                                    logger.info("✅ %s (%s, fallback): %.2fs", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
+                                    logger.info(
+                                        "✅ %s (%s, fallback): %.2fs",
+                                        phase_id,
+                                        phase_human_name(phase_id),
+                                        result.execution_time_seconds,
+                                    )
                                     # §Punkt3 Regressionsprotokoll: RMS nach PMGG-Fallback-Phase
                                     _rms_after_db = 20.0 * np.log10(float(np.sqrt(np.mean(current_audio**2) + 1e-12)))
                                     self._phase_regression_log[phase_id] = round(_rms_after_db - _rms_before_db, 3)
@@ -34714,7 +34751,12 @@ class UnifiedRestorerV3:
                                         audio_update_callback(current_audio, sample_rate, phase_id)
                                     except Exception as _exc:
                                         logger.debug("audio_update_callback (direct phase) failed: %s", _exc)
-                                logger.info("✅ %s (%s): %.2fs", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
+                                logger.info(
+                                    "✅ %s (%s): %.2fs",
+                                    phase_id,
+                                    phase_human_name(phase_id),
+                                    result.execution_time_seconds,
+                                )
                                 _record_oom_probe(
                                     "phase_ok",
                                     phase_id,

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ _FAILURE_CACHE: dict[str, bool] = {}
 # Cache entries older than this many seconds are re-checked.
 _FAILURE_CACHE_TTL_S: float = 30.0
 _FAILURE_CACHE_TIMESTAMPS: dict[str, float] = {}
+
 
 def check_ml_model_ready(model_id: str, phase_name: str = "") -> bool:
     """Return True if the named ML model loaded successfully.
@@ -126,6 +127,7 @@ def clear_readiness_cache() -> None:
 
 def _probe_plugin(module_path: str, getter_name: str, attr: str | None = None) -> Callable[[], bool]:
     """Return a check function that probes a plugin's getter + optional attr."""
+
     def _check() -> bool:
         try:
             mod = __import__(module_path, fromlist=[getter_name])
@@ -153,6 +155,7 @@ def _probe_plugin(module_path: str, getter_name: str, attr: str | None = None) -
 
 def _probe_function(module_path: str, fn_name: str) -> Callable[[], bool]:
     """Return a check function that probes a module-level function."""
+
     def _check() -> bool:
         try:
             mod = __import__(module_path, fromlist=[fn_name])
@@ -170,6 +173,7 @@ def _probe_function(module_path: str, fn_name: str) -> Callable[[], bool]:
 
 
 # ── Register all known ML models ──────────────────────────────────────
+
 
 def _register_all() -> None:
     """Probe and register all ML models used in Aurik phases."""
@@ -280,35 +284,49 @@ def _register_all() -> None:
 
     # --- Speech Enhancement / Separation ---
     register_ml_check("SGMSE+", _probe_plugin("plugins.sgmse_plugin", "get_sgmse_plus_plugin", "_model_loaded"))
-    register_ml_check("ResembleEnhance", _probe_plugin("plugins.resemble_enhance_plugin", "get_resemble_enhance_plugin", "_model_loaded"))
-    register_ml_check("ConvTasNet", _probe_plugin("plugins.convtasnet_plugin", "get_convtasnet_plugin", "_model_loaded"))
+    register_ml_check(
+        "ResembleEnhance",
+        _probe_plugin("plugins.resemble_enhance_plugin", "get_resemble_enhance_plugin", "_model_loaded"),
+    )
+    register_ml_check(
+        "ConvTasNet", _probe_plugin("plugins.convtasnet_plugin", "get_convtasnet_plugin", "_model_loaded")
+    )
     register_ml_check("MP-SENet", _probe_plugin("plugins.mp_senet_plugin", "get_mp_senet_plugin", "_model_loaded"))
     # --- Music Demixing ---
     register_ml_check("MDX23C", _probe_plugin("plugins.mdx23c_plugin", "get_mdx23c_plugin", "_model_loaded"))
-    register_ml_check("UVR-MDX-Net", _probe_plugin("plugins.uvr_mdxnet_plugin", "get_uvr_mdxnet_plugin", "_model_loaded"))
+    register_ml_check(
+        "UVR-MDX-Net", _probe_plugin("plugins.uvr_mdxnet_plugin", "get_uvr_mdxnet_plugin", "_model_loaded")
+    )
     # --- Vocoder / Waveform ---
     register_ml_check("BigVGAN", _probe_plugin("plugins.bigvgan_v2_plugin", "get_bigvgan_v2", "_model_loaded"))
     register_ml_check("HiFi-GAN", _probe_plugin("plugins.hifigan_plugin", "get_hifigan_plugin", "_model_loaded"))
     register_ml_check("Vocos", _probe_plugin("plugins.vocos_plugin", "get_vocos_plugin", "_model_loaded"))
     register_ml_check("DAC", _probe_plugin("plugins.dac_plugin", "get_dac_plugin", "_model_loaded"))
     register_ml_check("DiffWave", _probe_plugin("plugins.diffwave_plugin", "get_diffwave_plugin", "_model_loaded"))
-    register_ml_check("FlowMatching", _probe_plugin("plugins.flow_matching_plugin", "get_flow_matching_plugin", "_model_loaded"))
+    register_ml_check(
+        "FlowMatching", _probe_plugin("plugins.flow_matching_plugin", "get_flow_matching_plugin", "_model_loaded")
+    )
     # --- Quality Metrics ---
     register_ml_check("VERSA", _probe_plugin("plugins.versa_plugin", "get_versa_plugin", "_model_loaded"))
     register_ml_check("ViSQOL", _probe_plugin("plugins.visqol_plugin", "get_visqol_plugin", "_model_loaded"))
     register_ml_check("UTMOS", _probe_plugin("plugins.utmos_plugin", "get_utmos", "_model_loaded"))
     # --- Speaker / Voice / Pitch ---
-    register_ml_check("Resemblyzer", _probe_plugin("plugins.resemblyzer_plugin", "get_resemblyzer_plugin", "_model_loaded"))
+    register_ml_check(
+        "Resemblyzer", _probe_plugin("plugins.resemblyzer_plugin", "get_resemblyzer_plugin", "_model_loaded")
+    )
     register_ml_check("RMVPE", _probe_plugin("plugins.rmvpe_plugin", "get_rmvpe_plugin", "_model_loaded"))
     # --- Super Resolution / Mastering ---
     register_ml_check("NVSR", _probe_plugin("plugins.nvsr_plugin", "get_nvsr_plugin", "_model_loaded"))
-    register_ml_check("Matchering", _probe_plugin("plugins.matchering_plugin", "get_matchering_plugin", "_model_loaded"))
+    register_ml_check(
+        "Matchering", _probe_plugin("plugins.matchering_plugin", "get_matchering_plugin", "_model_loaded")
+    )
 
 
 _register_all()
 
 
 # ── §A1 Startup-Selbsttest: Validate all registered readiness checks ──
+
 
 def _validate_all_checks() -> None:
     """Run every registered check once at import time and log failures.

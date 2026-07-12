@@ -25,6 +25,7 @@ ort.set_default_logger_severity(3)  # 0=VERBOSE 1=INFO 2=WARNING 3=ERROR 4=FATAL
 #    that bypasses ONNX's logger (CUDA, ROCm, system libraries).
 try:
     from backend.core.stderr_dedup import install_stderr_dedup
+
     install_stderr_dedup()
 except Exception:
     pass  # Non-critical — dedup is a cosmetic improvement
