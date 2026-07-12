@@ -994,7 +994,7 @@ class CrackleRemovalPhase(PhaseInterface):
             _onnx_ok = False
             try:
                 if QUALITY_MODE_AVAILABLE:
-                    log_mode_decision("phase_09", True, "Vinyl: BANQUET ONNX direct (local inference, no Docker)")
+                    logger.info("BANQUET ML-Modell (Vinyl-Entknacken) aktiv — ONNX Direct Inference")
                 _sample_rate = int(kwargs.get("sample_rate", 48000))
                 restored = self._remove_crackle_onnx_direct(audio, _sample_rate, params)
                 if 0.0 < _effective_strength < 1.0:
@@ -1039,6 +1039,7 @@ class CrackleRemovalPhase(PhaseInterface):
 
             if not _onnx_ok:
                 # Fallback: Docker-based plugin
+                logger.info("BANQUET ML-Modell (Vinyl-Entknacken) aktiv — Docker Plugin")
                 banquet = self._get_banquet_plugin()
                 if banquet is not None:
                     try:
