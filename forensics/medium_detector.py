@@ -296,8 +296,8 @@ class MediumDetector:
         "shellac_vertical": 4,   # Pathe/Edison Diamond Disc, vertikaler Schnitt
         "wire_recording": 5,     # Stahldraht, 1898–1950er
         # 1950–1980: Vinyl- + Tape-Ara
-        "vinyl": 6,              # LP 1948, 45 rpm 1949
-        "reel_tape": 7,          # Studio-Master, 1935+ (ab 1950 marktbeherrschend)
+        "reel_tape": 6,          # Studio-Master, 1935+ (Recording → Pressing)
+        "vinyl": 7,              # LP 1948, 45 rpm 1949
         "tape": 7,               # Alias
         "cartridge_4track": 8,   # Fidelipac 1956, Radio
         "cartridge_8track": 9,   # Lear 1964–1982, Consumer/Auto
