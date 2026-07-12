@@ -158,7 +158,13 @@ def _get_ml_model() -> object | None:
             # Fix: gesamtes Modell auf CPU. Für 225s Audio mit 50 DDIM-Steps ≈ 15 min,
             # akzeptabel für Offline-Restoration.
             model = build_model(model_name="basic", device="cpu")
-            # Keine device-Patches nötig — alles auf CPU, keine NaN-Probleme.
+            # weight_norm (torch<2.0 compat) kann NaN/Inf in Parametern erzeugen
+            # wenn FP16→FP32-Konversion weights mit Norm≈0 produziert.
+            # Clean ALL parameters once after loading.
+            import torch as _clean_torch
+            for _p in model.parameters():
+                if not _clean_torch.isfinite(_p).all():
+                    _p.data = _clean_torch.nan_to_num(_p.data, nan=0.0, posinf=0.0, neginf=0.0)
             _ml_model = model
             _actual_device = "cpu"
             if hasattr(model, "parameters"):

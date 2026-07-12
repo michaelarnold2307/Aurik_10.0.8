@@ -339,7 +339,7 @@ class DDIMSampler(object):
 
         # current prediction for x_0
         if self.model.parameterization != "v":
-            pred_x0 = (x - sqrt_one_minus_at * e_t) / a_t.sqrt()
+            pred_x0 = (x - sqrt_one_minus_at * e_t) / torch.clamp(a_t, min=1e-12).sqrt()
         else:
             pred_x0 = self.model.predict_start_from_z_and_v(x, t, model_output)
 
@@ -354,7 +354,7 @@ class DDIMSampler(object):
         noise = sigma_t * noise_like(x.shape, device, repeat_noise) * temperature
         if noise_dropout > 0.0:
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
-        x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+        x_prev = torch.clamp(a_prev, min=1e-12).sqrt() * pred_x0 + dir_xt + noise
         return x_prev, pred_x0
 
     @torch.no_grad()
@@ -408,10 +408,11 @@ class DDIMSampler(object):
                     noise_pred - e_t_uncond
                 )
 
-            xt_weighted = (alphas_next[i] / alphas[i]).sqrt() * x_next
+            xt_weighted = torch.clamp(alphas_next[i] / torch.clamp(alphas[i], min=1e-20), min=1e-20).sqrt() * x_next
             weighted_noise_pred = (
-                alphas_next[i].sqrt()
-                * ((1 / alphas_next[i] - 1).sqrt() - (1 / alphas[i] - 1).sqrt())
+                torch.clamp(alphas_next[i], min=1e-20).sqrt()
+                * (torch.clamp(1 / torch.clamp(alphas_next[i], min=1e-20) - 1, min=1e-20).sqrt()
+                   - torch.clamp(1 / torch.clamp(alphas[i], min=1e-20) - 1, min=1e-20).sqrt())
                 * noise_pred
             )
             x_next = xt_weighted + weighted_noise_pred
