@@ -80,3 +80,11 @@ Jede G-Regel kann durch einen Linter automatisiert geprüft werden:
 | **G20** | Jeder Timeout MUSS ein UI-Event emittieren. Degradierte Ergebnisse MÜSSEN als "Analyse nicht verfügbar" markiert werden | Era/Genre-Timeout → leere Prognose-Felder ohne Erklärung | `_SUBSTEP_TIMEOUT_S` |
 | **G21** | Jeder Stateful-Prozess MUSS eine `_reset_*()`-Methode haben, die ALLE Guard-Flags zurücksetzt. Aufruf am Anfang jedes neuen Durchlaufs | `_preanalysis_finalized_for` blockte Wiederholung | `_finalize_preanalysis` Double-Fire-Guard |
 | **G22** | Kein stiller `except: pass`. Jeder except-Block MUSS loggen (`logger.debug` mindestens) ODER einen Kommentar enthalten, warum Stille korrekt ist | PANNs 6 Monate DSP-Fallback, `phase_human_name`-Crash im Fallback-Pfad | Diverse |
+
+## Kategorie H: GPU/Threading-Architektur (2026-07-12)
+
+| ID | Gebot | Begründung | Fundstelle |
+|----|-------|-----------|------------|
+| **G23** | GPU-Modelle (PyTorch, ONNX mit CUDA/ROCm) dürfen NUR im Haupt-Thread oder in Threads geladen werden, die explizit via `ml_device_manager` GPU-initialisiert wurden. `ThreadPoolExecutor`-Worker haben KEINEN GPU-Kontext | CLAP-Loading im Pool-Thread: ROCm-Neuinitialisierung → 200+s. Restorability im Pool-Thread: 1s (weil CPU-only) | `_run_clap_chain` → Timeout |
+| **G24** | Jede Architektur-Änderung, die Threading-Modelle verschiebt, MUSS einen Integrationstest haben, der den VOLLSTÄNDIGEN Flow (nicht nur gemockte Komponenten) durchläuft | Era-Timeout wurde erst nach 15+ Runs sichtbar. Unit-Tests mit Mocks liefen alle durch | `run_pre_analysis` → Era async |
+| **G25** | Das Threading-Modell MUSS als Architektur-Diagramm dokumentiert sein: Welcher Thread hat GPU-Zugriff? Welche Threads teilen welche Singletons? Welche Threads dispatchen zur GUI? | 4× Threading-Refactoring (sequentiell → parallel → clap_chain → async) weil das Modell nicht explizit war | `_pre_analysis_bg`, Pool, Daemon |
