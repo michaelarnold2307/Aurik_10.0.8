@@ -902,11 +902,17 @@ class DenoisePhase(PhaseInterface):
         if _bsrof_gate:
             _bsrof_ram_ok = True
             try:
-                import psutil as _psutil_bsr  # pylint: disable=import-outside-toplevel
+                import psutil as _psutil_bsr
 
-                _bsrof_ram_ok = float(_psutil_bsr.virtual_memory().available / (1024**3)) >= 8.0
+                _avail_gb = float(_psutil_bsr.virtual_memory().available / (1024**3))
+                _bsrof_ram_ok = _avail_gb >= 8.0
+                if not _bsrof_ram_ok:
+                    logger.info(
+                        "BS-RoFormer: nur %.1f GB RAM frei (braucht ≥8 GB) — Stem-Separation deaktiviert",
+                        _avail_gb,
+                    )
             except Exception:
-                logger.debug("_trim: silent except suppressed", exc_info=True)
+                logger.debug("BS-RoFormer RAM-Check fehlgeschlagen", exc_info=True)
             if _bsrof_ram_ok:
                 try:
                     from plugins.bs_roformer_plugin import get_bs_roformer  # pylint: disable=import-outside-toplevel

@@ -32745,7 +32745,7 @@ class UnifiedRestorerV3:
                                         _cb_exc,
                                     )
                             executed.append(phase_id)
-                            logger.info("✅ %s: %.2fs (parallel)", phase_id, result.execution_time_seconds)
+                            logger.info("✅ %s (%s): %.2fs (parallel)", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
                         else:
                             _record_oom_probe("phase_failed_parallel", phase_id)
                             logger.error(
@@ -33281,7 +33281,7 @@ class UnifiedRestorerV3:
                         continue
                 except ImportError:
                     logger.debug("psutil not available — pre-phase RAM check skipped")
-                logger.info("▶ %s startet (%d/%d)", phase_id, len(executed) + 1, len(selected_phases))
+                logger.info("▶ %s (%s) startet (%d/%d)", phase_id, phase_human_name(phase_id), len(executed) + 1, len(selected_phases))
                 _record_oom_probe("phase_start", phase_id, estimated_time_s=round(float(estimated_time), 3))
                 # §2.61 Input-Länge für Output-Length-Guard festhalten
                 _phase_input_len_2_61: int = len(current_audio)
@@ -34472,7 +34472,7 @@ class UnifiedRestorerV3:
                                             audio_update_callback(current_audio, sample_rate, phase_id)
                                         except Exception as _exc:
                                             logger.debug("audio_update_callback (PMGG fallback) failed: %s", _exc)
-                                    logger.info("✅ %s (fallback): %.2fs", phase_id, result.execution_time_seconds)
+                                    logger.info("✅ %s (%s, fallback): %.2fs", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
                                     # §Punkt3 Regressionsprotokoll: RMS nach PMGG-Fallback-Phase
                                     _rms_after_db = 20.0 * np.log10(float(np.sqrt(np.mean(current_audio**2) + 1e-12)))
                                     self._phase_regression_log[phase_id] = round(_rms_after_db - _rms_before_db, 3)
@@ -34654,7 +34654,7 @@ class UnifiedRestorerV3:
                                         audio_update_callback(current_audio, sample_rate, phase_id)
                                     except Exception as _exc:
                                         logger.debug("audio_update_callback (direct phase) failed: %s", _exc)
-                                logger.info("✅ %s: %.2fs", phase_id, result.execution_time_seconds)
+                                logger.info("✅ %s (%s): %.2fs", phase_id, phase_human_name(phase_id), result.execution_time_seconds)
                                 _record_oom_probe(
                                     "phase_ok",
                                     phase_id,
