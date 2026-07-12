@@ -1629,7 +1629,9 @@ class BatchProcessingThread(QThread):
             # P1: Core-Imports AUSSCHLIEßLICH über Bridge (§11 Spec 08)
             # Singleton-Accessor: sichert Single-Orchestrator Ownership pro Prozess
             # (No-Competing-Instances-Protokoll — RELEASE_MUST).
+            logger.info("BatchThread: importing AurikDenker via bridge...")
             _denker_singleton = _bridge_get_aurik_denker_instance()
+            logger.info("BatchThread: AurikDenker imported")
             if _denker_singleton is None:
                 raise RuntimeError(
                     "AurikDenker-Singleton ist über die Bridge nicht verfügbar. "
