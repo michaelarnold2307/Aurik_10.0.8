@@ -16365,8 +16365,6 @@ class ModernMainWindow(QMainWindow):
 
                 def _on_preanalysis_step(pct: int, msg: str) -> None:
                     """Forward pre-analysis step progress to GUI status text AND progress bar."""
-                    _last_step_pct[0] = float(pct)
-                    _last_step_time[0] = time.monotonic()
                     try:
                         self.dispatch_to_gui(lambda _p=pct, _m=msg: (
                             setattr(self, '_preanalysis_step_msg', _m),
@@ -16825,15 +16823,23 @@ class ModernMainWindow(QMainWindow):
             # ── §W-PREANALYSIS-LIVENESS Watchdog ──────────────────────────
             # Falls die Pre-Analysis hängt (kein _cb()-Update > 60s), loggen
             # und ggf. Timeout-Force-Finalize triggern.
-            _last_step_pct = [0.0]
-            _last_step_time = [time.monotonic()]
+            _last_step_pct_val = [0.0]
+
+            _last_step_check_time = time.monotonic()
 
             def _preanalysis_liveness_check() -> None:
+                nonlocal _last_step_check_time
                 while getattr(self, '_preanalysis_pending', False):
                     time.sleep(15.0)
                     if not getattr(self, '_preanalysis_pending', False):
                         break
-                    _elapsed = time.monotonic() - _last_step_time[0]
+                    _elapsed = time.monotonic() - _last_step_check_time
+                    # Check if progress has advanced since last check
+                    _cur_pct = getattr(self, '_preanalysis_step_pct', 0)
+                    if _cur_pct > _last_step_pct_val[0]:
+                        _last_step_pct_val[0] = _cur_pct
+                        _last_step_check_time = time.monotonic()
+                        _elapsed = 0.0
                     if _elapsed > 60.0:
                         _cur_step = getattr(self, '_preanalysis_step_msg', '')
                         logger.warning(
