@@ -424,6 +424,29 @@ class PipelineGuard:
             logger.debug("PipelineGuard: dynamics check error: %s", e)
         return audio
 
+    # ── Combined NR Protection (CLP + Whisper) ───────────────────────
+
+    def get_nr_protection_limits(self, freq_hz: float, time_s: float) -> tuple[float, float]:
+        """Gibt kombinierte NR-Schutzlimits: (max_attenuation_db, strength_multiplier).
+
+        Denoise-Phasen rufen dies PRO Frequenzband und Frame auf.
+        CLP-Maske begrenzt Daempfung in gehoerempfindlichen Zonen (2-5kHz).
+        Whisper-Maske reduziert NR-Staerke in leisen Gesangspassagen.
+        """
+        max_atten = self.get_clp_attenuation_limit(freq_hz)
+        whisper_prot = self.get_whisper_protection(time_s)
+        strength_mult = 1.0 - whisper_prot * 0.7
+        return max_atten, max(0.1, strength_mult)
+
+    def is_dynamics_phase(self, phase_name: str) -> bool:
+        """Prueft ob eine Phase Dynamics-relevant ist."""
+        dynamics_phases = {
+            "phase_10_compression", "phase_11_limiting",
+            "phase_26_dynamic_range_expansion", "phase_36_transient_shaper",
+            "phase_40_loudness_normalization", "phase_54_transparent_dynamics",
+        }
+        return any(p in phase_name.lower() for p in dynamics_phases)
+
     # ── Reset ─────────────────────────────────────────────────────────
 
     def reset(self) -> None:
