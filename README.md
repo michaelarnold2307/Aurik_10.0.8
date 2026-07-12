@@ -1,6 +1,6 @@
 # 🎵 Aurik 10 — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
 
-**Version:** 10.0.0 | **Status:** ✅ Produktionsbereit | **Stand:** 6. Juli 2026
+**Version:** 10.0.8 | **Status:** ✅ Produktionsbereit | **Stand:** 6. Juli 2026
 
 > Normativer Ist-Stand: `.github/specs/`, `.github/copilot-instructions.md`, `CHANGELOG.md`, `denker/README.md`.
 
@@ -32,7 +32,7 @@ vollständig offline, ohne Cloud- oder Netzwerkabhängigkeiten.
 - Endnutzer-Workflow: genau eine Entscheidung pro Datei, `Restoration` oder `Studio 2026`
 - Kanonischer Laufzeitpfad: Bridge -> `AurikDenker.denke(...)` -> `export_guard()`
 
-**Aktuelle Ergebnisse (v10.0.0):**
+**Aktuelle Ergebnisse (v10.0.8):**
 
 - ✅ **285+ Denker-Tests** — grün (zzgl. ~15.000 weitere Test-Suites)
 - ✅ **62/62 Defekttypen** — vollständig erkannt und auf Phasen gemappt
@@ -110,7 +110,7 @@ DefectScanner (62 Typen)
 
 ---
 
-## 🚀 Aurik 10.0.0 — Weltklasse-Intelligenz
+## 🚀 Aurik 10.0.8 — Weltklasse-Intelligenz
 
 **Stand: 4. Juli 2026** | **38 Dateien modifiziert, 14 neue Dateien** | **358+ Tests**
 
@@ -675,4 +675,4 @@ Aurik 9 steht unter der **Apache-2.0-Lizenz** — siehe [LICENSE](LICENSE).
 
 ---
 
-Aurik 10.0.0 — Juli 2026
+Aurik 10.0.8 — Juli 2026

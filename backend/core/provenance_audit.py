@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 
 # Software-Version dieses Moduls
-AURIK_VERSION = "9.15.0"
+from backend.core.version import AURIK_VERSION
 AUDIT_SCHEMA_VERSION = "1.0"
 
 

@@ -9,7 +9,7 @@ Usage:
     from backend.core.phases import PhaseInterface, PhaseCategory, PhaseMetadata
 
 Author: Aurik 10.0 Development Team
-Version: 10.0.0
+Version: 10.0.8
 Date: 2026-07-11
 """
 
@@ -291,6 +291,6 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "10.0.0"
+from backend.core.version import __version__
 __author__ = "Aurik 10.0 Development Team"
 __date__ = "2026-07-11"
