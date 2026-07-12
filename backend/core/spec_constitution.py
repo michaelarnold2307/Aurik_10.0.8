@@ -525,8 +525,10 @@ class SpecConstitution:
         import math
 
         # Normalisiere Bandbreite auf [200, 20000] Hz
-        bw_norm = max(0.0, min(1.0, (math.log10(max(effective_bandwidth_hz, 200.0)) - math.log10(200.0))
-                                  / (math.log10(20000.0) - math.log10(200.0))))
+        _bw_log = math.log10(max(effective_bandwidth_hz, 200.0))
+        bw_norm = max(0.0, min(1.0,
+            (_bw_log - math.log10(200.0)) / (math.log10(20000.0) - math.log10(200.0))
+        ))
 
         # Normalisiere SNR auf [15, 90] dB
         snr_norm = max(0.0, min(1.0, (effective_snr_db - 15.0) / 75.0))

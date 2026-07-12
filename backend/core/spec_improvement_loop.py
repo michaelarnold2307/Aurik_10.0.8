@@ -407,12 +407,36 @@ def _extract_metrics_from_spec(content: str) -> dict[str, dict[str, Any]]:
       - Tabellen mit Schwellwerten
       - `>= 0.XX` -Formate
       - Goal-Definitionen mit Zahlenwerten
+
+    Filtert Code-Variablennamen heraus (keine echten Metriken).
     """
+    # Code-Variablennamen, die fälschlich als Metriken erkannt werden
+    _CODE_TOKENS = {
+        "float", "int", "str", "bool", "list", "dict", "tuple", "set",
+        "q", "n", "d", "z", "x", "y", "i", "j", "k",
+        "sr", "hz", "db", "ms", "s", "khz",
+        "delta", "threshold", "score", "scale", "ratio", "fraction",
+        "strength", "severity", "conf", "confidence",
+        "wet_mix", "g_floor", "blended", "axis", "iqr",
+        "holes", "regression", "shift", "sprung",
+        "scalar", "scale_factor", "ceiling_avg",
+        "recovery_ratio", "restored_compat", "af_penalty",
+        "schwellwert", "korrelation", "pearson",
+        "dateilänge", "dateien", "tonal_center",
+        "spectral_novelty", "hpi", "w_crepe",
+        "int", "f_bump", "wet_mult", "gate",
+        "infrasonic_rms", "crackle_density", "rotation_strength",
+        "panns_singing_confidence", "panns_singing",
+        # German words / Greek letters / common code tokens:
+        "in", "bei", "mit", "nach", "fehler", "floor", "segment",
+        "window_ms", "drift", "δ", "β",
+    }
     metrics: dict[str, dict[str, Any]] = {}
-    # Pattern: Name gefolgt von >= oder >= Zahl
     pattern = r"`?(\w+)`?\s*[≥>=]\s*([0-9]+\.?[0-9]*)"
     for match in re.finditer(pattern, content):
         name = match.group(1).lower().replace("`", "")
+        if name in _CODE_TOKENS:
+            continue
         try:
             value = float(match.group(2))
             metrics[name] = {"threshold": value, "source": "spec_extraction"}
