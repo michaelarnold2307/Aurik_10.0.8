@@ -1818,6 +1818,8 @@ def warmup_models_background() -> None:
         # Fallback-Plugins (nach Bedarf)
         ("plugins.panns_plugin", "get_panns_plugin"),  # Audio-Tagging Fallback
         ("plugins.crepe_plugin", "get_crepe_plugin"),  # Pitch-Tracking Fallback
+        # Era/Genre shared model — pre-load to avoid cold-start latency
+        ("plugins.laion_clap_plugin", "get_laion_clap"),  # LAION-CLAP (2.2 GB)
     ]
     logger.info("bridge: warmup started (%d plugins) …", len(_plugins))
     for _mod, _accessor in _plugins:
