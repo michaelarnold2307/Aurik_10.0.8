@@ -13057,22 +13057,33 @@ class UnifiedRestorerV3:
 
             _iad_result = detect_introduced_artifacts(original_audio_for_goals, restored_audio, sample_rate)
             if _iad_result.has_artifacts:
-                logger.warning(
-                    "⚠️ IAD: Artefakte erkannt — fraction=%.3f Typen=%s",
-                    _iad_result.total_contaminated_fraction,
-                    ", ".join(_iad_result.artifact_types) if _iad_result.artifact_types else "unbekannt",
-                )
-
                 _frac_iad = float(_iad_result.total_contaminated_fraction)
 
                 # §2.49: IAD contributes to artifact_freedom, but avoid a degenerate zero at small
                 # contamination fractions. Keep veto behavior at >= 5% contamination.
                 # penalty = 1.00 at 0%, 0.95 at 5%, 0.90 at 10%.
                 self._iad_artifact_fraction_penalty = float(np.clip(1.0 - _frac_iad, 0.0, 1.0))
-                logger.warning(
-                    "§2.49 IAD: artifact_freedom_penalty=%.3f (fraction=%.3f × 1.0) — VETO if < 0.95",
-                    self._iad_artifact_fraction_penalty,
+
+                # Severity: <1% → INFO (musical_noise on cassette is typical spectral-residue),
+                #           1–5% → WARNING (minor degradation),
+                #           ≥5% → CRITICAL (triggers Dry/Wet rescue below).
+                _iad_is_trivial = _frac_iad < 0.01
+                _iad_log: object = logger.info if _iad_is_trivial else logger.warning
+                _iad_prefix = "ℹ️" if _iad_is_trivial else "⚠️"
+
+                _iad_log(
+                    "%s IAD: Artefakte erkannt — fraction=%.3f Typen=%s",
+                    _iad_prefix,
                     _frac_iad,
+                    ", ".join(_iad_result.artifact_types) if _iad_result.artifact_types else "unbekannt",
+                )
+
+                _iad_log(
+                    "§2.49 IAD: artifact_freedom_penalty=%.3f (fraction=%.3f)"
+                    " — %s if < 0.95",
+                    self._iad_artifact_freedom_penalty,
+                    _frac_iad,
+                    "VETO" if not _iad_is_trivial else "OK (>0.99)",
                 )
 
                 # §2.23 IAD-Rescue (analog §2.45a Dry/Wet-Rescue):
