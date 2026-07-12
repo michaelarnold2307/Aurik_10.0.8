@@ -1,6 +1,6 @@
 # =============================================================================
-# .pre-commit-config.yaml — Aurik 9 Code-Qualitäts-Hooks (SOTA, Juni 2026)
-# Installation: pre-commit install
+# .pre-commit-config.yaml  Aurik 10 Code-Qualitäts-Hooks (SOTA, Juli 2026)
+# Installation: pre-commit install && pre-commit install --hook-type commit-msg
 # Manuell ausführen: pre-commit run --all-files
 # =============================================================================
 
@@ -37,7 +37,7 @@ repos:
       - id: check-toml
       - id: check-json
         exclude: ^\.vscode/
-      - id: check-ast              # Python-Syntax vorab prüfen
+      - id: check-ast
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: check-docstring-first
@@ -45,7 +45,7 @@ repos:
       - id: check-shebang-scripts-are-executable
       - id: check-added-large-files
         args: [--maxkb=512]
-      - id: debug-statements       # kein breakpoint() oder pdb in Produktion
+      - id: debug-statements
       - id: detect-private-key
       - id: fix-byte-order-marker
       - id: mixed-line-ending
@@ -57,51 +57,17 @@ repos:
         exclude: '^(\.vscode/|analysis_results/)'
 
   # ---------------------------------------------------------------------------
-  # 2. Black — DEAKTIVIERT (Konflikt mit ruff-format; ruff-format ist black-kompatibel)
-  # ---------------------------------------------------------------------------
-  # - repo: https://github.com/psf/black
-  #   rev: 26.1.0
-  #   hooks:
-  #     - id: black
-  #       language_version: python3.10
-  #       args: [--line-length=120]
-
-  # ---------------------------------------------------------------------------
-  # 3. isort — DEAKTIVIERT (Import-Sortierung via ruff)
-  # ---------------------------------------------------------------------------
-  # - repo: https://github.com/PyCQA/isort
-  #   rev: 6.0.1
-  #   hooks:
-  #     - id: isort
-  #       args: [--profile=black, --line-length=120]
-
-  # ---------------------------------------------------------------------------
-  # 4. Ruff — Schneller Linter (ersetzt Flake8 + Pylint weitgehend)
+  # 2. Ruff — Schneller Linter + Formatter (ersetzt Black, isort, autoflake)
   # ---------------------------------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.15.15
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-          # ruff-format als Black-Alternative (nur für zusätzliche Prüfungen)
 
   # ---------------------------------------------------------------------------
-  # 5. Autoflake — Unnötige Imports und Variablen entfernen
-  # ---------------------------------------------------------------------------
-  - repo: https://github.com/PyCQA/autoflake
-    rev: v2.3.1
-    hooks:
-      - id: autoflake
-        args:
-          - --in-place
-          - --remove-all-unused-imports
-          - --remove-unused-variables
-          - --expand-star-imports
-          - --ignore-init-module-imports
-
-  # ---------------------------------------------------------------------------
-  # 6. PyUpgrade — Modernisierung auf Python 3.10+
+  # 3. PyUpgrade — Modernisierung auf Python 3.10+
   # ---------------------------------------------------------------------------
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
@@ -110,10 +76,10 @@ repos:
         args: [--py310-plus]
 
   # ---------------------------------------------------------------------------
-  # 7. Flake8 — PEP-8 und Stil-Prüfung
+  # 4. Flake8 — PEP-8 + Plugins (bugbear, comprehensions, simplify, naming)
   # ---------------------------------------------------------------------------
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.2.0
+    rev: 7.3.0
     hooks:
       - id: flake8
         additional_dependencies:
@@ -125,10 +91,10 @@ repos:
         args: [--config=.flake8]
 
   # ---------------------------------------------------------------------------
-  # 8. Mypy — Statische Typprüfung
+  # 5. Mypy — Statische Typprüfung
   # ---------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v2.1.0
     hooks:
       - id: mypy
         additional_dependencies:
@@ -154,14 +120,13 @@ repos:
           - --disable-error-code=return
           - --disable-error-code=dict-item
           - --disable-error-code=override
-        # Nur Kern-Module prüfen (backend/ + plugins/ + denker/ — deckt backend/core/ korrekt ab)
         files: ^(backend|plugins|denker)/.*\.py$
 
   # ---------------------------------------------------------------------------
-  # 9. Bandit — Sicherheits-Scan (OWASP Top 10)
+  # 6. Bandit — Sicherheits-Scan (OWASP Top 10)
   # ---------------------------------------------------------------------------
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.3
+    rev: 1.9.4
     hooks:
       - id: bandit
         args:
@@ -173,7 +138,7 @@ repos:
         files: ^(core|dsp|plugins|backend|denker)/
 
   # ---------------------------------------------------------------------------
-  # 10. Markdownlint — Markdown-Qualität
+  # 7. Markdownlint — Markdown-Qualität
   # ---------------------------------------------------------------------------
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.44.0
@@ -189,7 +154,7 @@ repos:
           )$
 
   # ---------------------------------------------------------------------------
-  # 11. YAML-Lint — YAML-Qualität
+  # 8. YAML-Lint — YAML-Qualität
   # ---------------------------------------------------------------------------
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.0
@@ -198,7 +163,7 @@ repos:
         args: [-c, .yamllint.yaml]
 
   # ---------------------------------------------------------------------------
-  # 12. Prettier — JSON-Formatierung
+  # 9. Prettier — JSON-Formatierung
   # ---------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v4.0.0-alpha.8
@@ -207,106 +172,144 @@ repos:
         files: '\.json$'
         exclude: '^(models/|audit/|sessions/|logs/|analysis_results/)'
 
-  # ---------------------------------------------------------------------------
-  # 13. Lokale Hooks — Projekt-spezifische Validierungen
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
+  # 10. Lokale Hooks — Aurik-spezifische Validierungen
+  # ===========================================================================
   - repo: local
     hooks:
+      # §2.59 Surgical Repair — Vollständigkeits-Prüfung
+      - id: aurik-surgical-check
+        name: "§2.59 Surgical Repair — Defekt/Repair-Vollständigkeit"
+        entry: .venv_aurik/bin/python scripts/pre_commit_surgical_check.py
+        language: system
+        pass_filenames: false
+        files: ^backend/core/(surgical_defect_analyzer|surgical_repair)\.py$
+
+      # §2.60.2 Denker-Intelligenz-Check
+      - id: aurik-denker-intelligence
+        name: "§2.60.2 Denker-Intelligenz — Phases, Substitutionen, Budget"
+        entry: .venv_aurik/bin/python scripts/pre_commit_denker_intelligence.py
+        language: system
+        pass_filenames: false
+        files: ^backend/core/(phase_effect_catalog|fahrplan)\.py$
+
+      # Keine NotImplementedError-Stubs in Produktion
       - id: no-production-stubs
-        name: "⚠️ Keine NotImplementedError-Stubs in Produktion"
+        name: "Keine NotImplementedError-Stubs in Produktion"
         entry: .venv_aurik/bin/python -m pytest tests/normative/test_no_production_stubs.py -x -q
         language: system
         pass_filenames: false
         files: ^(core|dsp|plugins|backend|denker)/.*\.py$
 
+      # Musical-Goals-Schwellwerte unverändert
       - id: musical-goals-thresholds
-        name: "🎵 Musical-Goals-Schwellwerte unverandert"
+        name: "Musical-Goals-Schwellwerte unverändert"
         entry: .venv_aurik/bin/python scripts/check_musical_goals.py
         language: system
         pass_filenames: false
         files: ^backend/core/musical_goals/
 
+      # Aurik VERBOTEN-Regeln
       - id: aurik-compliance
-        name: "🚫 Aurik VERBOTEN-Regeln (copilot-instructions §VERBOTEN)"
+        name: "Aurik VERBOTEN-Regeln (copilot-instructions)"
         entry: .venv_aurik/bin/python scripts/compliance_check.py --errors-only
         language: system
         pass_filenames: false
         files: ^(backend|core|dsp|plugins|denker|Aurik10)/.*\.py$
 
+      # Aurik AST VERBOTEN-Linter (V01–V33)
       - id: aurik-verboten-linter
-        name: "🔍 Aurik AST VERBOTEN-Linter (V01–V33)"
+        name: "Aurik AST VERBOTEN-Linter (V01–V33)"
         entry: .venv_aurik/bin/python scripts/aurik_verboten_linter.py backend/ plugins/
         language: system
         pass_filenames: false
         files: ^(backend|plugins)/.*\.py$
 
+      # Crossfire-Guard (phase_21/35/42 nie in CAUSE_TO_PHASES)
       - id: aurik-crossfire-guard
-        name: "🛋 §0a Crossfire-Guard (phase_21/35/42 nie in CAUSE_TO_PHASES)"
+        name: "Crossfire-Guard (phase_21/35/42 nie in CAUSE_TO_PHASES)"
         entry: .venv_aurik/bin/python scripts/check_crossfire_phases.py
         language: system
         pass_filenames: false
         files: ^backend/core/causal_defect_reasoner\.py$
 
+      # Stash-Drift-Guard (verhindert Snapshot-Akkumulation)
       - id: aurik-stash-drift-guard
-        name: "📦 Aurik Stash-Drift-Guard (verhindert Snapshot-Akkumulation)"
-        entry: "bash -c 'count=$(git stash list | wc -l); if [ \"$count\" -gt 2 ]; then echo \"WARNUNG: $count Stashes vorhanden. Vor Commit aufloesen: git stash drop oder git stash pop.\"; exit 1; fi; files=$(git stash show 2>/dev/null | tail -1 | awk \"{print \\$1}\"); if [ \"${files:-0}\" -gt 50 ]; then echo \"WARNUNG: Aktiver Stash hat $files Dateien (Snapshot-Drift). Vor Commit mit HEAD abgleichen.\"; exit 1; fi; exit 0'"
+        name: "Stash-Drift-Guard (verhindert Snapshot-Akkumulation)"
+        entry: "bash -c 'count=$(git stash list | wc -l); if [ \"$count\" -gt 2 ]; then echo \"WARNUNG: $count Stashes vorhanden. Vor Commit auflösen.\"; exit 1; fi; exit 0'"
         language: system
         pass_filenames: false
         always_run: true
 
+      # Type-Ignore-Reihenfolge (ignore vor Inline-Kommentar)
       - id: aurik-type-ignore-order
-        name: "🧭 mypy type-ignore Reihenfolge (ignore vor Inline-Kommentar)"
+        name: "mypy type-ignore Reihenfolge"
         entry: .venv_aurik/bin/python scripts/check_type_ignore_order.py backend plugins Aurik10 cli scripts
         language: system
         pass_filenames: false
         files: ^(backend|plugins|Aurik10|cli|scripts)/.*\.py$
 
+      # Mypy Real-Bug-Gate
       - id: aurik-mypy-real-bug-gate
-        name: "🧪 Aurik mypy Real-Bug-Gate (alle Layer, var-annotated Sprint 4 toleriert)"
+        name: "Mypy Real-Bug-Gate (alle Layer)"
         entry: .venv_aurik/bin/python scripts/check_mypy_real_bugs.py
         language: system
         pass_filenames: false
         files: ^(backend|plugins|Aurik10|cli)/.*\.py$
 
-      # ── v10.0.1 Chirurgische Präzision ──────────────────────────
+      # Format-String-Guard (logger %s-Anzahl == Argument-Anzahl)
       - id: aurik-format-string-guard
-        name: "🔤 Format-String-Guard (logger %s-Anzahl == Argument-Anzahl)"
+        name: "Format-String-Guard (logger %s == args)"
         entry: .venv_aurik/bin/python scripts/compliance/check_format_strings.py
         language: system
         pass_filenames: true
         files: ^(backend|Aurik10)/.*\.py$
 
+      # ContractValidator (Cross-Module Defect/Phase-Konsistenz)
       - id: aurik-contract-validator
-        name: "🔗 ContractValidator (Cross-Module Defect/Phase-Konsistenz)"
+        name: "ContractValidator (Defect/Phase-Konsistenz)"
         entry: .venv_aurik/bin/python scripts/compliance/check_contracts.py
         language: system
         pass_filenames: false
         always_run: true
 
+      # Import-Breaking-Change (kritische Exports erhalten)
       - id: aurik-import-breaking
-        name: "🚫 Import-Breaking-Change (kritische Exports erhalten)"
+        name: "Import-Breaking-Change (kritische Exports)"
         entry: .venv_aurik/bin/python scripts/compliance/check_import_breaking.py
         language: system
         pass_filenames: true
         files: ^backend/core/(quality_mode|defect_manifest|phase_pruner|safe_dict|periodic_health)\.py$
 
+      # Anti-Regression-Gate (alle 9 Bug-Muster)
       - id: aurik-anti-regression
-        name: "🛡️ Anti-Regression-Gate (alle 9 Bug-Muster)"
+        name: "Anti-Regression-Gate (alle 9 Bug-Muster)"
         entry: .venv_aurik/bin/python scripts/compliance/anti_regression_gate.py
         language: system
         pass_filenames: true
 
+      # Version-Consistency (kein Aurik 8.0/9.x in Logs)
       - id: aurik-version-consistency
-        name: "🏷️ Version-Consistency (kein Aurik 8.0/9.x in Logs)"
+        name: "Version-Consistency (kein Aurik 8.0/9.x)"
         entry: "bash -c '! grep -rn \"Aurik [0-9]\\.[0-9]\" backend/ Aurik10/ --include=\"*.py\" | grep -v \"10\\.\" | grep -v \"# \" | grep -v \"CLAUDE\" | grep -v \"CHANGELOG\" | grep -v \"specs/\"'"
         language: system
         pass_filenames: false
         files: ^(backend|Aurik10)/.*\.py$
 
-      # ── v10 Sprint: Static-Value-Guard (§v10 No-Blind-Trust) ──────
+      # Static-Value-Guard (v10: keine blinden statischen Werte)
       - id: aurik-static-value-guard
-        name: "🔍 Static-Value-Guard (§v10: keine blinden statischen Werte)"
-        entry: .venv_aurik/bin/python scripts/pre_commit_static_guard.py --ci
+        name: "Static-Value-Guard (v10: keine blinden statischen Werte)"
+        entry: .venv_aurik/bin/python scripts/pre_commit_static_guard.py --all
         language: system
         pass_filenames: true
         files: ^(backend|Aurik10)/.*\.py$
+
+      # Conventional Commits Message Validation
+      - id: conventional-commit-msg
+        name: "Conventional Commits (feat/fix/docs/style/refactor/perf/test/chore/spec/build/ci)"
+        entry: '^(feat|fix|docs|style|refactor|perf|test|chore|spec|build|ci)(\([^)]+\))?: .{10,}'
+        language: pygrep
+        stages: [commit-msg]
+        args: [--negate]
+        pass_filenames: false
+        always_run: true

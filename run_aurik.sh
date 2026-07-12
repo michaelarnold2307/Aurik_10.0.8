@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
-# Aurik 9.15.0 — Startskript mit venv-Python (.venv_aurik, Python 3.10.12)
-# GPU-Modus: ROCm-venv auf ext4 (~/.local/share/aurik/venv_rocm) + /dev/kfd vorhanden
+# Aurik 10 — Startskript mit venv-Python (.venv_aurik, Python 3.10.12)
+# GPU-Modus: .venv_gpu (CUDA/ROCm) wird automatisch erkannt
 # Verwendung: ./run_aurik.sh [Argumente]
-#   AURIK_FORCE_CPU=1  ./run_aurik.sh  — erzwingt CPU-only (deaktiviert ROCm)
+#   AURIK_FORCE_CPU=1  ./run_aurik.sh  — erzwingt CPU-only
 #
-# Hinweis: Das ROCm-venv liegt absichtlich auf ext4 (~/.local/share/aurik/venv_rocm),
-# da ROCm GPU Code Objects per mmap() aus ELF-Sektionen geladen werden und
-# FUSE/fuseblk (NTFS) dieses mmap nicht unterstützt → hipErrorInvalidDeviceFunction.
+# GPU-Unterstützung:
+#   NVIDIA CUDA → .venv_gpu mit torch+cuda + onnxruntime-gpu
+#   AMD ROCm    → .venv_gpu mit torch+rocm + onnxruntime-rocm
+#   Kein GPU    → .venv_aurik (CPU-only)
+#   Windows/AMD → DirectML in .venv_aurik (kein separates venv nötig)
+#
+# Hinweis für ROCm: GPU-venv sollte auf ext4 liegen, da ROCm GPU Code Objects
+# per mmap() aus ELF-Sektionen geladen werden und FUSE/fuseblk (NTFS) dieses
+# mmap nicht unterstützt → hipErrorInvalidDeviceFunction.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# §v10.0.1: __pycache__ vor jedem Start löschen — garantiert aktuelle Code-Ausführung
+# §v10: __pycache__ vor jedem Start löschen
 find "$SCRIPT_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 VENV_CPU="$SCRIPT_DIR/.venv_aurik/bin/python"
-# ROCm-venv liegt auf ext4 (Home), nicht auf dem FUSE/NTFS-Workspace-Laufwerk
-VENV_ROCM="$HOME/.local/share/aurik/venv_rocm/bin/python"
-PIP_ROCM="$HOME/.local/share/aurik/venv_rocm/bin/pip"
+VENV_GPU="$SCRIPT_DIR/.venv_gpu/bin/python"
 PID_FILE="$SCRIPT_DIR/temp_repro/aurik_gui.pid"
 LOG_FILE="$SCRIPT_DIR/logs/aurik_frontend.out"
 
-# Release-Default: MIOpen meldet harmlose Workspace-Fallbacks sonst als WARNING
-# direkt auf stderr. Fehler bleiben sichtbar; AURIK_DEBUG kann die Stufe anheben.
+# Release-Default: MIOpen/ROCm-Logging auf Fehler beschränken
 export MIOPEN_LOG_LEVEL="${MIOPEN_LOG_LEVEL:-1}"
 
 check_rocm_torchaudio_abi() {
-    "$VENV_ROCM" - <<'PY'
+    "$VENV_GPU" - <<'PY'
 import sys
 
 try:
@@ -55,13 +58,13 @@ PY
 }
 
 repair_rocm_torchaudio() {
-    if [[ ! -x "$PIP_ROCM" ]]; then
-        echo "ROCM_STACK_ERR pip im ROCm-venv fehlt: $PIP_ROCM" >&2
+    if [[ ! -x "$PIP_GPU" ]]; then
+        echo "ROCM_STACK_ERR pip im ROCm-venv fehlt: $PIP_GPU" >&2
         return 1
     fi
 
     local torch_version rocm_tag
-    torch_version="$($VENV_ROCM - <<'PY'
+    torch_version="$($VENV_GPU - <<'PY'
 import torch
 print(getattr(torch, "__version__", ""))
 PY
@@ -74,17 +77,17 @@ PY
 
     rocm_tag="${torch_version#*+}"
     echo "ROCM_STACK_REPAIR installiere torchaudio==$torch_version via $rocm_tag ..."
-    "$PIP_ROCM" install --upgrade --index-url "https://download.pytorch.org/whl/$rocm_tag" \
+    "$PIP_GPU" install --upgrade --index-url "https://download.pytorch.org/whl/$rocm_tag" \
         "torchaudio==$torch_version"
 }
 
 # GPU-Erkennung: ROCm-venv (ext4) + KFD-Device vorhanden und nicht explizit deaktiviert
-if [[ "${AURIK_FORCE_CPU:-0}" != "1" && -x "$VENV_ROCM" && -e "/dev/kfd" ]]; then
-    VENV_PYTHON="$VENV_ROCM"
+if [[ "${AURIK_FORCE_CPU:-0}" != "1" && -x "$VENV_GPU" && -e "/dev/kfd" ]]; then
+    VENV_PYTHON="$VENV_GPU"
     _GPU_MODE="ROCm (AMD GPU)"
     # ORT's libonnxruntime_providers_rocm.so benötigt libhipblas.so.2, libhipfft.so etc.
     # Diese liegen im PyTorch-lib-Verzeichnis des ROCm-venv (ext4).
-    _TORCH_LIB="$HOME/.local/share/aurik/venv_rocm/lib/python3.10/site-packages/torch/lib"
+    _TORCH_LIB="$HOME/.local/share/aurik/venv_gpu/lib/python3.10/site-packages/torch/lib"
     if [[ -d "$_TORCH_LIB" ]]; then
         export LD_LIBRARY_PATH="${_TORCH_LIB}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi

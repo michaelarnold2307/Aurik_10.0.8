@@ -1,8 +1,8 @@
-"""Laufzeitumgebungs-Auswahl für Entwickler-Starts.
+"""Laufzeitumgebungs-Auswahl — Backend-agnostisch (CUDA + ROCm + CPU).
 
-Chooses the ROCm virtual environment only when the interpreter can actually
-provide both PyTorch ROCm and ONNX Runtime ROCm execution providers. Otherwise
-falls back to the standard CPU environment.
+Probes available virtual environments for GPU acceleration.
+Prefers GPU (.venv_gpu) over CPU (.venv_aurik).
+Supports: NVIDIA CUDA, AMD ROCm, CPU-only fallback.
 """
 
 from __future__ import annotations
@@ -19,35 +19,20 @@ logger = logging.getLogger(__name__)
 
 _PROBE_CODE = r"""
 import json
-import sys
-
-result = {
-    "torch_import": False,
-    "torch_cuda_available": False,
-    "torch_hip": None,
-    "onnxruntime_import": False,
-    "ort_providers": [],
-}
-
+result = {"torch_import": False, "torch_cuda_available": False, "torch_hip": None,
+          "torch_cuda_version": None, "onnxruntime_import": False, "ort_providers": []}
 try:
     import torch
-
     result["torch_import"] = True
     result["torch_cuda_available"] = bool(torch.cuda.is_available())
     result["torch_hip"] = getattr(getattr(torch, "version", None), "hip", None)
-except Exception as e:
-    logger.warning("runtime_env_selector.py::unknown fallback: %s", e)
-    pass
-
+    result["torch_cuda_version"] = getattr(getattr(torch, "version", None), "cuda", None)
+except Exception: pass
 try:
     import onnxruntime as ort
-
     result["onnxruntime_import"] = True
     result["ort_providers"] = list(ort.get_available_providers())
-except Exception as e:
-    logger.warning("runtime_env_selector.py::unknown fallback: %s", e)
-    pass
-
+except Exception: pass
 sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
 """
 
@@ -58,6 +43,7 @@ class RuntimeProbe:
     torch_import: bool
     torch_cuda_available: bool
     torch_hip: str | None
+    torch_cuda_version: str | None
     onnxruntime_import: bool
     ort_providers: tuple[str, ...]
 
@@ -71,13 +57,26 @@ class RuntimeProbe:
             and "ROCMExecutionProvider" in self.ort_providers
         )
 
+    @property
+    def has_cuda(self) -> bool:
+        return (
+            self.torch_import
+            and self.torch_cuda_available
+            and bool(self.torch_cuda_version)
+            and self.onnxruntime_import
+            and "CUDAExecutionProvider" in self.ort_providers
+        )
+
+    @property
+    def has_gpu(self) -> bool:
+        return self.has_cuda or self.has_rocm
+
 
 def _candidate_paths(repo_root: Path) -> list[Path]:
-    # Cross-platform venv interpreter candidates (Linux/macOS + Windows).
-    # Order matters: prefer ROCm environment when fully available.
+    """Backend-agnostic venv candidates. GPU first, CPU fallback."""
     return [
-        repo_root / ".venv_rocm" / "bin" / "python",
-        repo_root / ".venv_rocm" / "Scripts" / "python.exe",
+        repo_root / ".venv_gpu" / "bin" / "python",
+        repo_root / ".venv_gpu" / "Scripts" / "python.exe",
         repo_root / ".venv_aurik" / "bin" / "python",
         repo_root / ".venv_aurik" / "Scripts" / "python.exe",
     ]
@@ -86,7 +85,6 @@ def _candidate_paths(repo_root: Path) -> list[Path]:
 def probe_python_runtime(python_path: Path) -> RuntimeProbe | None:
     if not python_path.exists() or not os.access(python_path, os.X_OK):
         return None
-
     try:
         proc = subprocess.run(
             [str(python_path), "-c", _PROBE_CODE],
@@ -95,42 +93,43 @@ def probe_python_runtime(python_path: Path) -> RuntimeProbe | None:
             text=True,
             timeout=12,
         )
-    except Exception as e:
-        logger.warning("runtime_env_selector.py::probe_python_runtime fallback: %s", e)
+    except Exception:
         return None
-
     try:
         payload = json.loads(proc.stdout.strip() or "{}")
     except json.JSONDecodeError:
         return None
-
     return RuntimeProbe(
         python_path=python_path,
         torch_import=bool(payload.get("torch_import")),
         torch_cuda_available=bool(payload.get("torch_cuda_available")),
         torch_hip=payload.get("torch_hip"),
+        torch_cuda_version=payload.get("torch_cuda_version"),
         onnxruntime_import=bool(payload.get("onnxruntime_import")),
-        ort_providers=tuple(str(provider) for provider in (payload.get("ort_providers") or [])),
+        ort_providers=tuple(str(p) for p in (payload.get("ort_providers") or [])),
     )
 
 
 def select_runtime_python(repo_root: str | Path) -> Path:
     root = Path(repo_root).resolve()
     probes: list[RuntimeProbe] = []
-
     for candidate in _candidate_paths(root):
         probe = probe_python_runtime(candidate)
         if probe is not None:
             probes.append(probe)
 
+    # Prefer GPU (CUDA or ROCm)
     for probe in probes:
-        if probe.has_rocm:
+        if probe.has_gpu:
+            logger.info("runtime_env_selector: GPU venv selected — %s", probe.python_path)
             return probe.python_path
 
+    # Fallback: CPU venv
     for probe in probes:
         if probe.python_path.parent.parent.name == ".venv_aurik":
             return probe.python_path
 
+    # Ultimate fallback: current Python
     current = Path(sys.executable).resolve()
     if current.exists():
         return current

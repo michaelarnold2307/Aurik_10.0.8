@@ -9,7 +9,7 @@
 .venv_singmos/
 .venv/
 venv/
-.venv_rocm/
+.venv_gpu/
 
 # ── Python-Caches ────────────────────────────────────────────────────────────
 __pycache__/

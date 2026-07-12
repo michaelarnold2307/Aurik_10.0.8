@@ -48,11 +48,12 @@ logger = logging.getLogger(__name__)
 
 
 class GPUBackend(enum.Enum):
-    """GPU-Beschleunigungsbackend — ROCm (Linux), DirectML (Windows) oder CPU-Only (§GPU-Mixed-Mode)."""
+    """GPU-Beschleunigungsbackend — CUDA (NVIDIA), ROCm (AMD Linux), DirectML (AMD Windows) oder CPU-Only."""
 
-    ROCM = "rocm"  # Linux: ROCm 6.x via torch.cuda API (AMD GPU primary path)
-    DIRECTML = "directml"  # Windows: DirectML via onnxruntime-directml (AMD Windows)
-    NONE = "none"  # CPU-only (no AMD GPU or GPU suppressed)
+    CUDA = "cuda"  # NVIDIA GPU via CUDA (Linux & Windows)
+    ROCM = "rocm"  # AMD GPU via ROCm 6.x (Linux only)
+    DIRECTML = "directml"  # AMD GPU via DirectML (Windows only)
+    NONE = "none"  # CPU-only (no GPU or GPU suppressed)
 
 
 class AMDArchitecture(enum.Enum):
@@ -528,7 +529,7 @@ class MLDeviceManager:
     """Erkennt GPU backend and manages device assignment for ML plugins.
 
     Responsibilities:
-      1. Platform-aware GPU backend detection (ROCm / DirectML / None)
+      1. Platform-aware GPU backend detection (CUDA / ROCm / DirectML / None)
       2. Per-plugin device assignment (heavy plugins → GPU, rest → CPU)
       3. VRAM budget guard (analog to ml_memory_budget for system RAM)
       4. Transparent CPU fallback on any GPU failure or budget exhaustion
@@ -554,35 +555,55 @@ class MLDeviceManager:
     # ── Detection ────────────────────────────────────────────────────────
 
     def _detect_backend(self) -> None:
-        """Auto-detect available GPU backend. Silently falls back to CPU on error."""
+        """Auto-detect available GPU backend. Silently falls back to CPU on error.
+
+        Detection order (first match wins):
+          All platforms: CUDA (NVIDIA) or ROCm (AMD) via torch.cuda
+          Windows only:  DirectML (AMD) fallback
+        """
         try:
+            self._detect_cuda_or_rocm()
+            if self._gpu_available:
+                return
             if sys.platform == "win32":
                 self._detect_directml()
-            else:
-                self._detect_rocm()
         except Exception as exc:
             logger.debug("MLDeviceManager: backend detection error (CPU fallback): %s", exc)
+            self._gpu_available = False
+            self._backend = GPUBackend.NONE
 
         if self._gpu_available:
+            arch_str = (
+                self._gpu_architecture.value
+                if hasattr(self._gpu_architecture, "value")
+                else str(self._gpu_architecture)
+            )
             logger.info(
                 "MLDeviceManager: GPU backend=%s device=%s VRAM=%.1f GB gpu=%s arch=%s tier=%s",
                 self._backend.value,
                 self._torch_gpu_device,
                 self._vram_total_gb,
                 self._gpu_name,
-                self._gpu_architecture.value,
+                arch_str,
                 self._gpu_tier.name,
             )
         else:
-            logger.info("MLDeviceManager: no GPU backend — CPU-only mode (ROCm/DirectML not found or not installed)")
+            logger.info(
+                "MLDeviceManager: no GPU backend — CPU-only mode (CUDA/ROCm/DirectML not found or not installed)"
+            )
 
-    def _detect_rocm(self) -> None:
-        """Erkennt ROCm via torch.cuda (ROCm reuses the CUDA device namespace)."""
+    def _detect_cuda_or_rocm(self) -> None:
+        """Erkennt NVIDIA CUDA oder AMD ROCm via torch.cuda.
+
+        Beide Backends nutzen die gleiche torch.cuda API, unterscheiden sich aber in:
+          - AMD:  torch.version.hip ist gesetzt → ROCMExecutionProvider
+          - NVIDIA: torch.version.cuda ist gesetzt → CUDAExecutionProvider
+        """
         try:
             import torch  # type: ignore[import]
 
             if not torch.cuda.is_available():
-                logger.debug("MLDeviceManager: torch.cuda unavailable — checking ONNX ROCm fallback")
+                logger.debug("MLDeviceManager: torch.cuda unavailable — checking ONNX fallback")
                 self._detect_rocm_onnx_only()
                 return
 
@@ -590,21 +611,35 @@ class MLDeviceManager:
             props = torch.cuda.get_device_properties(0)
             total_vram = props.total_memory / (1024**3)
 
-            self._backend = GPUBackend.ROCM
-            self._torch_gpu_device = "cuda"  # ROCm exposes "cuda" device string
-            # ROCMExecutionProvider falls back to CPUExecutionProvider automatically.
-            self._ort_gpu_providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+            # Distinguish AMD ROCm vs NVIDIA CUDA
+            is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
+            is_cuda = hasattr(torch.version, "cuda") and torch.version.cuda is not None
+
+            if is_rocm:
+                self._backend = GPUBackend.ROCM
+                self._ort_gpu_providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+                self._gpu_architecture = _detect_amd_architecture(device_name)
+                logger.info("MLDeviceManager: AMD ROCm detected — HIP %s", torch.version.hip)
+            elif is_cuda:
+                self._backend = GPUBackend.CUDA
+                self._ort_gpu_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                self._gpu_architecture = AMDArchitecture.UNKNOWN
+                logger.info("MLDeviceManager: NVIDIA CUDA detected — CUDA %s", torch.version.cuda)
+            else:
+                # Fallback: assume ROCm (backward compatibility)
+                self._backend = GPUBackend.ROCM
+                self._ort_gpu_providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+                self._gpu_architecture = _detect_amd_architecture(device_name)
+
+            self._torch_gpu_device = "cuda"
             self._vram_total_gb = round(total_vram, 2)
-            self._vram_free_gb = self._query_vram_free_rocm()
+            self._vram_free_gb = self._query_vram_free()
             self._gpu_available = True
             self._gpu_name = device_name
-
-            # AMD architecture & tier detection
-            self._gpu_architecture = _detect_amd_architecture(device_name)
             self._gpu_tier = _compute_gpu_tier(self._gpu_architecture, self._vram_total_gb, self._backend)
 
         except Exception as exc:
-            logger.debug("MLDeviceManager: ROCm detection failed: %s — trying ONNX-only", exc)
+            logger.debug("MLDeviceManager: CUDA/ROCm detection failed: %s — trying ONNX-only", exc)
             self._detect_rocm_onnx_only()
 
     def _detect_rocm_onnx_only(self) -> None:
@@ -817,15 +852,18 @@ class MLDeviceManager:
             logger.warning("ml_device_manager.py::_query_gpu_name_windows fallback: %s", e)
         return ""
 
-    def _query_vram_free_rocm(self) -> float:
-        """Query free VRAM in GB via torch.cuda.mem_get_info(device=0)."""
+    def _query_vram_free(self) -> float:
+        """Query free VRAM in GB via torch.cuda.mem_get_info(device=0).
+
+        Works for both NVIDIA CUDA and AMD ROCm (ROCm exposes CUDA API).
+        """
         try:
             import torch  # type: ignore[import]
 
             free_bytes, _ = torch.cuda.mem_get_info(0)
             return round(free_bytes / (1024**3), 2)  # type: ignore[no-any-return]
         except Exception as e:
-            logger.warning("ml_device_manager.py::_query_vram_free_rocm fallback: %s", e)
+            logger.warning("ml_device_manager.py::_query_vram_free fallback: %s", e)
             return self._vram_total_gb  # assume empty on query failure
 
     def _query_vram_directml(self) -> float:
@@ -966,7 +1004,7 @@ class MLDeviceManager:
         """Gibt current estimated free VRAM in GB (refreshed on ROCm via HW query) zurück."""
         with self._lock:
             if self._backend == GPUBackend.ROCM:
-                self._vram_free_gb = self._query_vram_free_rocm()
+                self._vram_free_gb = self._query_vram_free()
             return self._vram_free_gb
 
     def try_allocate_vram(self, plugin_name: str, size_gb: float) -> bool:
@@ -986,7 +1024,7 @@ class MLDeviceManager:
 
             # Refresh VRAM free estimate before deciding.
             if self._backend == GPUBackend.ROCM:
-                self._vram_free_gb = self._query_vram_free_rocm()
+                self._vram_free_gb = self._query_vram_free()
 
             already_used = sum(v for k, v in self._vram_allocated.items())
             # Tier-adaptive VRAM budget parameters

@@ -1236,6 +1236,18 @@ class AurikDenker:
                 _mode_limit = min(_mode_limit, 6.0)
             return _rt() < _mode_limit * 0.90
 
+        # ── v10 Pipeline-Guard: Watchdog + CLP + Dynamics + Whisper ───────────
+        _guard: Any = None
+        _guard_report: dict[str, Any] = {}
+        try:
+            from backend.core.pipeline_guard import get_guard
+
+            _guard = get_guard()
+            _guard.pre_flight(aktuelles_audio, sr, material="unknown")
+            _guard.phase_start("orchestrierung")
+        except Exception as _g_exc:
+            logger.debug("AurikDenker: PipelineGuard init: %s", _g_exc)
+
         # ── Stufe 1: Tonträger-Erkennung ─────────────────────────────────────
         # Skip full TontraegerDenker run when the frontend has already analysed the
         # carrier (cached_medium_result from _carrier_bg / bridge cache) — avoids a
@@ -2732,6 +2744,21 @@ class AurikDenker:
             )
         _rest_metadata["improvement_opportunities"] = _improvement_opportunities
 
+        # ── v10 Post-Restore: Whisper-Blending + Dynamics-Auto-Recovery ─────
+        if _guard is not None:
+            try:
+                _guard.phase_end("orchestrierung", aktuelles_audio, sr)
+                aktuelles_audio, _guard_blend_report = _guard.post_restore(audio, aktuelles_audio, sr)
+                _guard_report = _guard.post_flight(aktuelles_audio, sr)
+                if _guard_blend_report.get("whisper_blended"):
+                    warnings.append("Whisper-Details: originale Leise-Passagen zurückgemischt")
+                if _guard_blend_report.get("dynamics_restored"):
+                    warnings.append(
+                        f"Dynamics-Auto-Recovery: {_guard_blend_report.get('dynamics_loss_db', 0):.1f}dB Verlust ausgeglichen"
+                    )
+            except Exception as _g_exc:
+                logger.debug("AurikDenker: PipelineGuard post-restore: %s", _g_exc)
+
         # Finale NaN/Inf-Bereinigung und Clip
         aktuelles_audio = _normalize_audio_output_layout(aktuelles_audio)
         aktuelles_audio = np.nan_to_num(aktuelles_audio.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
@@ -2808,7 +2835,8 @@ class AurikDenker:
             degradation_status=_degradation_status,
             fail_reason=_fail_reason,
             global_plan=_globalplan.as_dict() if _globalplan is not None else None,
-            metadata=_rest_metadata,
+            # §v10 Pipeline-Guard-Report in Metadaten integrieren
+            metadata={**_rest_metadata, "pipeline_guard": _guard_report} if _guard_report else _rest_metadata,
             # §S5: GAF-inapplicable Goals für UI/CLI-Reporting nach außen propagieren
             goal_applicability=dict(_goal_app_raw) if _goal_app_raw else {},
         )
