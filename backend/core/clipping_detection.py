@@ -491,15 +491,25 @@ def analyse_clipping(audio: np.ndarray, sr: int) -> ClippingAnalysisResult:
             )
 
     # --- Confidence: distance from both thresholds ---
-    flat_distance = abs(flat_pct - FLAT_TOPS_THRESHOLD_PCT) / max(flat_pct, FLAT_TOPS_THRESHOLD_PCT, 1e-6)
-    if thd_odd + thd_even < 1e-8:
-        thd_ratio_distance = 1.0
+    # When thd_odd==1.0 AND thd_even==1.0 with flat_tops near 0, the
+    # polyphonic estimator found no valid frames → no harmonic evidence.
+    # Confidence should reflect this near-zero certainty.
+    _no_harmonic_data = (abs(thd_odd - 1.0) < 0.001 and abs(thd_even - 1.0) < 0.001 and flat_pct < 0.01)
+    if _no_harmonic_data:
+        confidence = 0.0
+        logger.debug(
+            "ClippingDetector: no harmonic data available (polyphonic/no-clear-fundamental) — confidence=0.0"
+        )
     else:
-        thd_ratio = thd_odd / (thd_even * THD_ODD_DOMINANCE_FACTOR + 1e-12)
-        thd_ratio_distance = abs(math.log(max(thd_ratio, 1e-6)))
-        thd_ratio_distance = min(thd_ratio_distance / 2.0, 1.0)  # normalise to [0,1]
+        flat_distance = abs(flat_pct - FLAT_TOPS_THRESHOLD_PCT) / max(flat_pct, FLAT_TOPS_THRESHOLD_PCT, 1e-6)
+        if thd_odd + thd_even < 1e-8:
+            thd_ratio_distance = 1.0
+        else:
+            thd_ratio = thd_odd / (thd_even * THD_ODD_DOMINANCE_FACTOR + 1e-12)
+            thd_ratio_distance = abs(math.log(max(thd_ratio, 1e-6)))
+            thd_ratio_distance = min(thd_ratio_distance / 2.0, 1.0)  # normalise to [0,1]
 
-    confidence = float(np.clip(min(flat_distance, thd_ratio_distance + 0.1), 0.0, 1.0))
+        confidence = float(np.clip(min(flat_distance, thd_ratio_distance + 0.1), 0.0, 1.0))
 
     logger.info(
         "ClippingDetector: result=%s flat_tops=%.3f%% odd=%.3f even=%.3f confidence=%.2f",
