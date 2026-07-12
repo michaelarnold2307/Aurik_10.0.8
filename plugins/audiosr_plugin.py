@@ -289,6 +289,7 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
         _audiosr_t0: float = time.monotonic()
 
         zone_results: list[np.ndarray] = []
+        _ddim_failed_once = False  # After first failure, skip DDIM for remaining zones
         for z_idx, (z_start, z_end) in enumerate(zone_slices):
             # Wall-time-Budget prüfen: restliche Zonen per Passthrough abschließen
             if z_idx > 0 and (time.monotonic() - _audiosr_t0) > _AUDIOSR_WALL_BUDGET_S:
@@ -328,6 +329,11 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                 zone_mono_1d = np.nan_to_num(zone_mono_1d, nan=0.0, posinf=0.0, neginf=0.0)
                 # Zusätzlich: Clip auf [-1.0, 1.0] (Übersteuerung verhindert Instabilität in sosfiltfilt)
                 zone_mono_1d = np.clip(zone_mono_1d, -1.0, 1.0)
+                # Nach erstem DDIM-Fehler: alle restlichen Zonen direkt via SBR-DSP.
+                # DDIM produziert auf ROCm/CPU zuverlässig NaN im Vocoder —
+                # 23×25×3s = ~29 min CPU-Zeit ohne Mehrwert einsparen.
+                if _ddim_failed_once:
+                    raise RuntimeError("DDIM previously failed — skip to SBR-DSP")
                 try:
                     batch, _asr_duration = _make_batch_fn(input_file=None, waveform=zone_mono_1d)
                     # Modell ist vollständig auf CPU (ROCm: keine GPU-Mixed-Devices)
@@ -354,6 +360,7 @@ def _run_audiosr_ml(audio: np.ndarray, sr: int) -> np.ndarray | None:
                         zone_mono.shape[0] / max(1, sr),
                     )
                 except Exception as _direct_exc:
+                    _ddim_failed_once = True
                     logger.info(
                         "AudioSR DDIM→SBR-DSP (erwartet bei ROCm/CPU: Vocoder-Numerik)",
                     )
