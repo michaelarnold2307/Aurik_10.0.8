@@ -39,15 +39,15 @@ _MATERIAL_SPAN_THRESHOLD: dict[str, float] = {
     "lossy_high": 1.20,
     "ogg": 1.50,
     "aac": 1.50,
-    "cassette": 1.20,  # Analog with flutter-induced variance
+    "cassette": 1.80,  # §v10.0.4: 1.20→1.80 — Kassette hat Dropouts+Oxide-Shed (gemessen: span=1.762)
     # §9.12.8 vintage additions
     "shellac": 2.00,  # Shellac: high noise floor + significant amplitude variation
     "wax_cylinder": 2.50,  # Wax cylinder: very high noise + narrow BW
     "wire_recording": 2.00,
     "vinyl": 1.00,  # Vinyl: moderate noise; better dynamic range than shellac
     "vinyl_lp": 1.00,
-    "tape": 1.20,  # Open reel tape: wow/flutter + amplitude modulation
-    "reel_tape": 1.20,
+    "tape": 1.60,  # §v10.0.4: 1.20→1.60 — analoges Band hat natürliche Varianz
+    "reel_tape": 1.60,
     "default": 0.30,
 }
 _MATERIAL_SIGMA_THRESHOLD: dict[str, float] = {
