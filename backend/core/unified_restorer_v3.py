@@ -18089,11 +18089,18 @@ class UnifiedRestorerV3:
 
                 _v23_result = _v23_check(restored_audio, sample_rate)
                 if not _v23_result.ok:
-                    logger.warning(
-                        "§V23 MKI warning: phase_cancellation_db=%.2f "
-                        "(>3.0 dB) — metadata[mono_compatibility_warning]=True",
-                        float(getattr(_v23_result, "phase_cancellation_db", 0.0) or 0.0),
-                    )
+                    _v23_pc = float(getattr(_v23_result, "phase_cancellation_db", 0.0) or 0.0)
+                    # §v10.0.4: 0.2 dB Toleranz — 3.01 dB ist Messrauschen, nicht hörbar
+                    if _v23_pc > 3.2:
+                        logger.warning(
+                            "§V23 MKI warning: phase_cancellation_db=%.2f (>3.0 dB) — metadata[mono_compatibility_warning]=True",
+                            _v23_pc,
+                        )
+                    else:
+                        logger.info(
+                            "§V23 MKI marginal: phase_cancellation_db=%.2f (≤3.2 dB, Grenzfall)",
+                            _v23_pc,
+                        )
                     if isinstance(self._phase_metadata_accumulator, dict):
                         self._phase_metadata_accumulator["mono_compatibility_warning"] = True
                         self._phase_metadata_accumulator["mono_phase_cancellation_db"] = float(
