@@ -13891,14 +13891,19 @@ class UnifiedRestorerV3:
                 )
                 # §2.14 Quality-Gate→Action: Kritische Qualität signalisiert
                 # ExzellenzDenker, alle Post-Processing-Phasen zurückzurollen.
-                if _pqs_result.pqs_mos < 2.5:
+                # §v10.0.4 Material-adaptiver Rollback-Schwellwert
+                _MOS_ROLLBACK: dict[str, float] = {"cd_digital":3.0,"digital":3.0,"streaming":2.5,
+                    "mp3_high":2.5,"mp3_low":2.0,"vinyl":1.5,"tape":1.5,"reel_tape":1.5,
+                    "cassette":1.5,"shellac":1.0,"wax_cylinder":1.0,"wire_recording":1.5}
+                _mos_rb = _MOS_ROLLBACK.get(str(getattr(material_type,"value",str(material_type))).lower(),2.0)
+                if _pqs_result.pqs_mos < _mos_rb:
                     self._restoration_context["quality_gate_rollback"] = True
                     self._restoration_context.setdefault("quality_gate_reasons", []).append(
-                        f"PQS-MOS={_pqs_result.pqs_mos:.1f}<2.5 (critical)"
+                        f"PQS-MOS={_pqs_result.pqs_mos:.1f}<{_mos_rb} (critical)"
                     )
                     logger.warning(
-                        "§2.14 Quality-Gate→Action: PQS-MOS=%.1f < 2.5 — signaling rollback to ExzellenzDenker",
-                        _pqs_result.pqs_mos,
+                        "§2.14 Quality-Gate→Action: PQS-MOS=%.1f < %.1f — signaling rollback to ExzellenzDenker",
+                        _pqs_result.pqs_mos, _mos_rb,
                     )
         except Exception as _pqs_exc:
             logger.warning("PerceptualQualityScorer nicht verfügbar (PQS_UNAVAILABLE): %s", _pqs_exc)
