@@ -711,6 +711,20 @@ class SpectralRepair(PhaseInterface):
         # Get material-specific parameters
         stft_cfg = self.STFT_CONFIG.get(material, self.STFT_CONFIG[MaterialType.CD_DIGITAL])
         thresholds = self.DETECTION_THRESHOLDS.get(material, self.DETECTION_THRESHOLDS[MaterialType.CD_DIGITAL])
+
+        # §GEBOT-G55: Signal-adaptive Detection-Thresholds via Noise-Floor-Analyse
+        # Zwei Vinyl-Platten können unterschiedliche Rauschböden haben.
+        try:
+            from backend.core.adaptive_parameter_infrastructure import derive_noise_floor
+
+            _nf23 = derive_noise_floor(audio, sample_rate)
+            _energy_floor_adaptive = float(np.clip(_nf23["noise_floor_db"] + 6.0, -70.0, -35.0))
+            thresholds = dict(thresholds)
+            thresholds["energy_floor_db"] = _energy_floor_adaptive
+            logger.debug("Phase 23 adaptive: energy_floor=%.1f dB (noise_floor=%.1f)",
+                        _energy_floor_adaptive, _nf23["noise_floor_db"])
+        except Exception:
+            pass
         repair_strength = self.REPAIR_STRENGTH.get(material, 0.75)
         _material_meta_key23 = self._material_key(material)
 

@@ -469,6 +469,32 @@ class DenoisePhase(PhaseInterface):
         # Get material-specific parameters
         params = self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"])
 
+        # §GEBOT-G55: Signal-adaptive Band-Reduktion via Noise-Floor-Analyse
+        # Zwei verschiedene Kassetten können unterschiedliche Rauschprofile haben.
+        # Die Material-Parameter werden mit dem gemessenen Noise-Floor skaliert.
+        try:
+            from backend.core.adaptive_parameter_infrastructure import derive_noise_floor
+
+            _nf = derive_noise_floor(audio, sample_rate)
+            _bands_adaptive = dict(params.get("bands", {}))
+            for _bname, _bfactors in _nf.get("band_reduction_factors", {}).items():
+                if _bname in _bands_adaptive:
+                    # Adaptive Skalierung: mehr Reduktion wo Noise-Floor nah am Signal
+                    _orig = _bands_adaptive[_bname]["reduction"]
+                    _bands_adaptive[_bname]["reduction"] = float(np.clip(
+                        _orig * (0.7 + 0.3 * _bfactors), 0.05, 0.95
+                    ))
+            params = dict(params)
+            params["bands"] = _bands_adaptive
+            params["_noise_floor_db"] = _nf["noise_floor_db"]
+            params["_estimated_snr_db"] = _nf["estimated_snr_db"]
+            logger.debug(
+                "Phase 03 adaptive: noise_floor=%.1f dB snr=%.1f dB → band_reduction scaled",
+                _nf["noise_floor_db"], _nf["estimated_snr_db"],
+            )
+        except Exception as _nf_exc:
+            logger.debug("Phase 03 adaptive noise floor non-blocking: %s", _nf_exc)
+
         # PMGG passes strength via kwargs to control retry intensity (§2.29).
         # If not provided, fall back to material-specific default.
         effective_strength = kwargs.get("strength", params["strength"])
