@@ -137,7 +137,18 @@ def _estimate_interchannel_lag_multi_point(
     if arr.ndim != 2:
         return {"points": [], "median_lag": 0, "consistent": True, "max_spread": 0}
 
-    total_n = arr.shape[0]
+    # ── Orientierungs-Erkennung (wie in _estimate_interchannel_lag_samples) ──
+    if arr.shape[1] == 2 and arr.shape[0] > 2:
+        # Channels-last (N, 2) — Audio-Samples in Achse 0
+        total_n = arr.shape[0]
+        _get_lr = lambda a: (a[:, 0], a[:, 1])
+    elif arr.shape[0] == 2 and arr.shape[1] > 2:
+        # Channels-first (2, N) — Audio-Samples in Achse 1
+        total_n = arr.shape[1]
+        _get_lr = lambda a: (a[0], a[1])
+    else:
+        return {"points": [], "median_lag": 0, "consistent": True, "max_spread": 0}
+
     window_n = int(sr * window_s)
     lags: list[int] = []
 
@@ -152,10 +163,12 @@ def _estimate_interchannel_lag_multi_point(
         if end - start < max(1024, sr // 10):
             continue
 
-        chunk = arr[start:end]
-        # Channel-first: (samples, 2) → (2, samples) extrahieren
-        l_ch = chunk[:, 0] if chunk.shape[1] == 2 else chunk[0]
-        r_ch = chunk[:, 1] if chunk.shape[1] == 2 else chunk[1]
+        # Slice entlang der Sample-Achse
+        if arr.shape[0] == 2 and arr.shape[1] > 2:
+            chunk = arr[:, start:end]  # (2, window_n)
+        else:
+            chunk = arr[start:end]     # (window_n, 2)
+        l_ch, r_ch = _get_lr(chunk)
 
         # GCC-PHAT auf diesem Fenster
         n = len(l_ch)

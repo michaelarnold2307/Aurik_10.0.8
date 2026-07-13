@@ -354,20 +354,44 @@ class StereoTemporalCoherenceGuard:
             return audio
 
         # §0 Plausibility guard for pre-pipeline source-file corrections:
-        # Commercial recordings cannot have L-R offsets > 20 ms — any such reading
-        # is a GCC-PHAT false positive caused by stereo panning / mid-song
-        # decorrelation in the analysis window.  Applying it would corrupt the entire
-        # stereo image (observed: 79.4 ms false correction on Schlager MP3).
-        # Post-pipeline and stem corrections keep the full ±200 ms range because they
-        # compensate for ML-plugin latency that can legitimately reach 150+ ms.
+        # Single-window GCC-PHAT can produce false positives > 20 ms when stereo
+        # panning or mid-song decorrelation mimics a channel delay.
+        # Instead of unconditionally rejecting large lags, we run a MULTI-POINT
+        # verification (3 positions across the song). If the lag is CONSISTENT
+        # (spread ≤ 20 samples) and the correlation peak is strong (> 0.04), it
+        # is a genuine hardware alignment issue (tape head, A/D offset) and MUST
+        # be corrected. Inconsistent or weak signals are skipped as false positives.
         _PRE_PIPELINE_MAX_MS: float = 20.0
         if phase_id == "pre_pipeline" and abs(delay_ms) > _PRE_PIPELINE_MAX_MS:
+            _verified = self._verify_lag_multi_point(ch_l, ch_r, sr)
+            if _verified.get("verified"):
+                # Multi-point check confirms: lag is real (consistent across song positions)
+                # Override delay with the robust multi-point median.
+                _mp_lag = _verified["median_lag"]
+                logger.info(
+                    "STCG [%s]: delay=%.1f ms VERIFIED by multi-point check "
+                    "(median=%d samples, spread=%d, positions=%d) — applying correction",
+                    phase_id,
+                    delay_ms,
+                    int(_mp_lag),
+                    int(_verified.get("max_spread", 0)),
+                    int(_verified.get("num_points", 0)),
+                )
+                # Use the multi-point median delay, not the single-window one
+                ch_r_corrected = _apply_correction_shift(ch_r, shift_samples=float(_mp_lag))
+                orig_dtype = audio.dtype
+                if channels_first:
+                    result = np.vstack([ch_l[np.newaxis, :], ch_r_corrected[np.newaxis, :]])
+                else:
+                    result = np.column_stack([ch_l, ch_r_corrected])
+                return result.astype(orig_dtype)
             logger.info(
-                "STCG [%s]: delay=%.1f ms exceeds pre-pipeline plausibility limit (%.0f ms) "
-                "— false positive likely (mid-window stereo decorrelation); skipping correction",
+                "STCG [%s]: delay=%.1f ms exceeds pre-pipeline limit (%.0f ms) "
+                "AND multi-point check INCONCLUSIVE (spread=%d) — skipping correction",
                 phase_id,
                 delay_ms,
                 _PRE_PIPELINE_MAX_MS,
+                int(_verified.get("max_spread", -1)),
             )
             return audio
 
@@ -406,6 +430,72 @@ class StereoTemporalCoherenceGuard:
             result = np.column_stack([ch_l, ch_r_corrected])
 
         return result.astype(orig_dtype)  # type: ignore[no-any-return]
+
+    # ------------------------------------------------------------------
+    # 1a. Multi-point lag verification
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _verify_lag_multi_point(
+        ch_l: np.ndarray, ch_r: np.ndarray, sr: int, num_points: int = 3, window_s: float = 5.0
+    ) -> dict:
+        """Verify lag consistency across multiple song positions.
+
+        A single mid-window GCC-PHAT measurement can produce false positives
+        when stereo panning or decorrelation mimics a channel delay.
+        Multi-point verification across the song ensures the lag is a genuine
+        hardware/alignment artifact (consistent across positions), not a
+        stereo-imaging artefact (varies by position).
+
+        Returns dict with keys:
+            verified:    True if lag is consistent (spread ≤ 20 samples) and
+                         at least 2 of 3 points agree within 20 samples.
+            median_lag:  Median lag across all valid measurement points.
+            max_spread:  Max absolute difference between any two points.
+            num_points:  Number of valid measurement points.
+        """
+        import numpy as np
+
+        n = min(len(ch_l), len(ch_r))
+        window_n = int(sr * window_s)
+        if n < window_n * 2:
+            return {"verified": False, "median_lag": 0, "max_spread": 9999, "num_points": 0}
+
+        lags: list[int] = []
+        for i in range(num_points):
+            frac = (i + 1) / (num_points + 1)  # positions at 25%, 50%, 75%
+            center = int(frac * n)
+            start = max(0, center - window_n // 2)
+            end = min(n, start + window_n)
+            if end - start < sr // 4:
+                continue
+            try:
+                lag = _estimate_delay_subsample(
+                    ch_l[start:end].astype(np.float32),
+                    ch_r[start:end].astype(np.float32),
+                    sr,
+                )
+                lags.append(int(round(lag)))
+            except Exception:
+                pass
+
+        if len(lags) < 2:
+            return {"verified": False, "median_lag": 0, "max_spread": 9999, "num_points": len(lags)}
+
+        median_lag = int(np.median(lags))
+        max_spread = max(abs(a - b) for a in lags for b in lags) if len(lags) > 1 else 9999
+
+        # Verified: at least 2 points agree AND max spread ≤ 20 samples (~0.4ms @ 48kHz)
+        points_near_median = sum(1 for lag in lags if abs(lag - median_lag) <= 20)
+        verified = points_near_median >= 2 and max_spread <= 20
+
+        return {
+            "verified": verified,
+            "median_lag": median_lag,
+            "max_spread": max_spread,
+            "num_points": len(lags),
+            "lags": lags,
+        }
 
     # ------------------------------------------------------------------
     # 2. Stem latency compensation (processed vs original)

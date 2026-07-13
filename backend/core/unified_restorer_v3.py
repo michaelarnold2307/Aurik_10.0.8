@@ -30869,11 +30869,15 @@ class UnifiedRestorerV3:
         try:
             from backend.core.phase_names import (
                 phase_human_name,  # pylint: disable=import-outside-toplevel,redefined-outer-name
+                phase_human_name_with_icon,
             )
         except ImportError:
 
             def phase_human_name(phase_id: str) -> str:
                 return phase_id
+
+            def phase_human_name_with_icon(phase_id: str) -> str:
+                return phase_human_name(phase_id)
 
         # §Längen-Guard: Originalsamplelänge merken — Phasen dürfen die Länge nicht verändern.
         _input_n_samples: int = audio.shape[-1] if audio.ndim >= 2 else len(audio)
@@ -33495,9 +33499,8 @@ class UnifiedRestorerV3:
                 except ImportError:
                     logger.debug("psutil not available — pre-phase RAM check skipped")
                 logger.info(
-                    "▶ %s (%s) startet (%d/%d)",
-                    phase_id,
-                    phase_human_name(phase_id),
+                    "▶ %s (%d/%d)",
+                    phase_human_name_with_icon(phase_id),
                     len(executed) + 1,
                     len(selected_phases),
                 )
@@ -34473,8 +34476,8 @@ class UnifiedRestorerV3:
                                 except Exception as _exc:
                                     logger.debug("audio_update_callback (PMGG success) failed: %s", _exc)
                             logger.info(
-                                "✅ %s: PMGG action=%s strength=%.2f real_rollbacks=%d best_effort=%d",
-                                phase_id,
+                                "✅ %s — action=%s strength=%.2f rollbacks=%d best_effort=%d",
+                                phase_human_name_with_icon(phase_id),
                                 _pmgg_entry.action,
                                 _pmgg_entry.strength_used,
                                 int(getattr(_pmgg_gate, "_rollback_count", 0)),
