@@ -336,13 +336,37 @@ def inject_cd_noise_profile(
 
     result = np.clip(result, -1.0, 1.0)
 
-    # §G41: Onset verification
+    # §G41: Onset verification — auto-correct if needed
     onset = _compute_onset_strength(result.ravel(), sr)
     if onset > 0.1:
         logger.info(
-            "CD-Noise SOTA: onset=%.3f (target <0.1). Adaptive crossfade active.",
+            "CD-Noise SOTA: onset=%.3f exceeds 0.1 — widening crossfade (§G41, §V26).",
             onset,
         )
+        # Widen crossfade and recompute with longer fades
+        global _FORWARD_MASKING_MS, _BACKWARD_MASKING_MS
+        _orig_fwd, _orig_bwd = _FORWARD_MASKING_MS, _BACKWARD_MASKING_MS
+        try:
+            _FORWARD_MASKING_MS *= 2.0
+            _BACKWARD_MASKING_MS *= 2.0
+            envelope = _compute_masking_envelope(mono, sr)
+            active_samples = int(np.sum(envelope > 0.01))
+            # Re-apply noise with wider envelope
+            if is_stereo:
+                rl = left.astype(np.float64) + nl.astype(np.float64) * envelope
+                rr = right.astype(np.float64) + nr.astype(np.float64) * envelope
+                result = np.stack([rl, rr], axis=1)
+            else:
+                rm = left.astype(np.float64) + noise.astype(np.float64) * envelope
+                result = rm.reshape(orig_shape)
+            result = np.clip(result, -1.0, 1.0)
+            onset = _compute_onset_strength(result.ravel(), sr)
+            logger.info(
+                "CD-Noise SOTA: corrected onset=%.3f (target <0.1).",
+                onset,
+            )
+        finally:
+            _FORWARD_MASKING_MS, _BACKWARD_MASKING_MS = _orig_fwd, _orig_bwd
 
     # §G39: Monitoring
     snr_before = _compute_snr_db(arr)

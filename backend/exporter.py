@@ -1,5 +1,6 @@
 import io
 import logging
+import hashlib
 import math
 import os
 import tempfile
@@ -104,7 +105,7 @@ _POWR3_COEFFS = np.array(
 )
 
 
-def _apply_powr3_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
+def _apply_powr3_dither(audio: np.ndarray, bit_depth: int, *, seed: int | None = None, cd_active: bool = False) -> np.ndarray:
     """Wendet an: POW-r Type 3 noise-shaped dither (primary) before integer quantisation.
 
     Uses error-feedback-approximated noise shaping: TPDF dither is pre-shaped
@@ -136,6 +137,8 @@ def _apply_powr3_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
         return audio
 
     lsb = 2.0 / (2**bit_depth)
+    if cd_active:
+        lsb *= 0.7071  # -3 dB (§V5: Dither-Doppelung vermeiden)
 
     mono_input = audio.ndim == 1
     if mono_input:
@@ -147,7 +150,7 @@ def _apply_powr3_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
 
     # TPDF dither: two uniform RVs → triangular distribution centred on 0,
     # amplitude = ±1 LSB (spec §DSP: POW-r Typ 3 primär → TPDF Fallback).
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
     raw_dither = (rng.random((n_samples, n_ch)) + rng.random((n_samples, n_ch)) - 1.0) * lsb
 
     # Shape the dither with the POW-r Type 3 FIR response.
@@ -160,7 +163,7 @@ def _apply_powr3_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
     return cast(np.ndarray, out)
 
 
-def _apply_tpdf_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
+def _apply_tpdf_dither(audio: np.ndarray, bit_depth: int, *, seed: int | None = None, cd_active: bool = False) -> np.ndarray:
     """TPDF fallback dither — no noise shaping.
 
     Used when scipy is unavailable.  Amplitude = ±1 LSB triangular noise.
@@ -180,13 +183,15 @@ def _apply_tpdf_dither(audio: np.ndarray, bit_depth: int) -> np.ndarray:
     if bit_depth >= 32:
         return audio
     lsb = 2.0 / (2**bit_depth)
-    rng = np.random.default_rng()
+    if cd_active:
+        lsb *= 0.7071  # -3 dB (§V5: Dither-Doppelung vermeiden)
+    rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
     noise = (rng.random(audio.shape) + rng.random(audio.shape) - 1.0) * lsb
     out = np.clip((audio + noise).astype(np.float32), -1.0, 1.0)
     return cast(np.ndarray, out)
 
 
-def apply_dither(audio: np.ndarray, bit_depth: int = 16) -> np.ndarray:
+def apply_dither(audio: np.ndarray, bit_depth: int = 16, *, seed: int | None = None, cd_active: bool = False) -> np.ndarray:
     """Wendet an: dither before integer quantisation.
 
     Primary: POW-r Type 3 noise-shaped dither (spec §DSP-Spezialregeln).
@@ -210,10 +215,10 @@ def apply_dither(audio: np.ndarray, bit_depth: int = 16) -> np.ndarray:
 
     if _SCIPY_AVAILABLE:
         logger.debug("Dithering: POW-r Type 3 applied (bit_depth=%d)", bit_depth)
-        return _apply_powr3_dither(audio, bit_depth)
+        return _apply_powr3_dither(audio, bit_depth, seed=seed, cd_active=cd_active)
 
     logger.warning("Dithering: scipy unavailable — TPDF fallback applied (bit_depth=%d).", bit_depth)
-    return _apply_tpdf_dither(audio, bit_depth)
+    return _apply_tpdf_dither(audio, bit_depth, seed=seed, cd_active=cd_active)
 
 
 def _export_guard(audio: np.ndarray) -> np.ndarray:
@@ -633,18 +638,21 @@ def export_audio(
     # 2b. Subtle perceptual polish for listening comfort (non-destructive).
     audio = _export_nuance_guard(audio, sr)
 
+    # §V15: Deterministischer Dither-Seed aus Audio-Hash
+    dither_seed = int(hashlib.sha256(audio.tobytes()[:4096]).hexdigest()[:16], 16) % (2**31)
+
     # 2c. §G8 CD-Rauschprofil-Pflicht: Psychoakustisch maskiert injizieren
     #     §G15, §G30–§G39, §V11, §V14–§V17
     try:
         from backend.core.cd_noise_profile import inject_cd_noise_profile
 
-        audio = inject_cd_noise_profile(audio, sr, bit_depth=bit_depth)
+        audio = inject_cd_noise_profile(audio, sr, bit_depth=bit_depth, seed=dither_seed)
     except Exception:
         logger.debug("CD noise profile inject skipped (non-blocking)")
 
     # 3. Dithering before integer quantisation (spec §DSP-Spezialregeln)
     if bit_depth < 32 and export_format.lower() not in ("mp3", "aac", "m4a", "opus"):
-        audio = apply_dither(audio, bit_depth=bit_depth)
+        audio = apply_dither(audio, bit_depth=bit_depth, seed=seed, cd_active=True)
 
     subtype = _SUBTYPE_MAP.get(bit_depth)
 
