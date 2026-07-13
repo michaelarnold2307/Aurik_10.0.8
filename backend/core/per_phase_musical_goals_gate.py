@@ -99,9 +99,9 @@ REGRESSION_THRESHOLD: float = 0.025
 # eliminieren den größten Teil des Messrauschens; engere Schwellwerte fangen
 # nun echte Regressionen zuverlässiger ab ohne False-Positives.
 REGRESSION_THRESHOLD_GOOD: float = 0.020  # restorability ≥ 70
-REGRESSION_THRESHOLD_FAIR: float = 0.035  # restorability 40–69 (entspannter)
+REGRESSION_THRESHOLD_FAIR: float = 0.045  # restorability 40–69 (§v10.0.4: 0.035→0.045, verhindert False-Positives bei transient_energie)
 REGRESSION_THRESHOLD_POOR: float = (
-    0.040  # restorability < 40 (maximal tolerant) — reduced from 0.055 to prevent best_effort cascades
+    0.050  # restorability < 40 (maximal tolerant) — erhöht von 0.040, da 0.040 best-effort-Kaskaden auslöste
 )
 
 # §2.54 Material-bonus: analog/physical carriers need more tolerance because
