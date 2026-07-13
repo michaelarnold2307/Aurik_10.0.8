@@ -12332,19 +12332,64 @@ class UnifiedRestorerV3:
             transfer_chain=_bw_transfer_chain or None,
         )
 
-        # §2.60 STCG Post-Pipeline: Final inter-channel verification after all 64 phases.
-        # Some phases (phase_21, phase_07, phase_35) process M/S-domain — any residual
-        # implementation error could leave a net L-R offset. This guard catches and corrects
-        # it before FeedbackChain and HPI evaluate the audio. Non-blocking.
+        # §2.60 + §G14 STCG Post-Pipeline: Final inter-channel verification after all phases.
+        # Multi-Point-Verifikation + Retry-Loop (bis zu 3 Versuche, G14/G48/G49).
+        # Integriert StereoDriftState: akkumuliert Lag-Deltas über Chunk-basierte Phasen.
         if restored_audio.ndim == 2:
             try:
                 from backend.core.stereo_temporal_coherence_guard import (
                     get_stereo_temporal_coherence_guard as _get_stcg_post,
                 )
+                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                from backend.file_import import _estimate_interchannel_lag_multi_point as _multi_lag
 
-                restored_audio = _get_stcg_post().correct_interchannel_delay(
-                    restored_audio, sample_rate, phase_id="post_pipeline"
-                )
+                _MAX_RETRIES_G14 = 3
+                _RESIDUAL_THRESHOLD_SAMPLES = 50  # ~1 ms
+                _stcg = _get_stcg_post()
+
+                for _retry_g14 in range(_MAX_RETRIES_G14):
+                    # Multi-Point-Messung VOR Korrektur
+                    _lag_profile_pre = _multi_lag(restored_audio, sample_rate, num_points=3)
+                    _lag_pre = _lag_profile_pre["median_lag"]
+
+                    if abs(_lag_pre) <= _RESIDUAL_THRESHOLD_SAMPLES:
+                        logger.debug(
+                            "§G14 Post-Pipeline STCG: residual lag=%d samples (%.1f ms) — below threshold, skip",
+                            _lag_pre, _lag_pre / sample_rate * 1000,
+                        )
+                        break
+
+                    logger.info(
+                        "§G14 Post-Pipeline STCG retry %d/%d: pre-lag=%d samples (%.1f ms, spread=%d) — correcting",
+                        _retry_g14 + 1, _MAX_RETRIES_G14,
+                        _lag_pre, _lag_pre / sample_rate * 1000,
+                        _lag_profile_pre.get("max_spread", 0),
+                    )
+
+                    # STCG-Korrektur mit Sub-Sample-Präzision
+                    restored_audio = _stcg.correct_interchannel_delay(
+                        restored_audio, sample_rate, phase_id="post_pipeline"
+                    )
+
+                    # Multi-Point-Messung NACH Korrektur
+                    _lag_profile_post = _multi_lag(restored_audio, sample_rate, num_points=3)
+                    _lag_post = _lag_profile_post["median_lag"]
+
+                    logger.info(
+                        "§G14 Post-Pipeline STCG: post-lag=%d samples (%.1f ms, spread=%d)",
+                        _lag_post, _lag_post / sample_rate * 1000,
+                        _lag_profile_post.get("max_spread", 0),
+                    )
+
+                    if abs(_lag_post) <= _RESIDUAL_THRESHOLD_SAMPLES:
+                        break  # Erfolg
+
+                    if _retry_g14 == _MAX_RETRIES_G14 - 1:
+                        logger.warning(
+                            "§G14 Post-Pipeline STCG: %d retries exhausted — residual lag=%d samples (%.1f ms)",
+                            _MAX_RETRIES_G14, _lag_post, _lag_post / sample_rate * 1000,
+                        )
+
             except Exception as _stcg_post_exc:
                 logger.debug("§2.60 STCG post-pipeline fehlgeschlagen (non-blocking): %s", _stcg_post_exc)
 
