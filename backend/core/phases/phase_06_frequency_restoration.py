@@ -1101,10 +1101,13 @@ class FrequencyRestorationPhase(PhaseInterface):
                 # NVSR-Plug-in handhabt Energy-Bias jetzt intern (0/−3 dB statt −6/−9 dB).
                 # Keine externe Dämpfung mehr nötig — das Plugin kalibriert selbst.
                 _energy_bias = 0.0
+                # §Physik-Guard: target_hz nie > 2× Rolloff oder > 22 kHz (Hörgrenze)
+                _rolloff_raw = float(params.get("rolloff_hz", 16_000.0))
+                _target_hz = float(np.clip(_rolloff_raw * 1.35, 0.0, min(_rolloff_raw * 2.0, 22_050.0)))
                 _nvsr_result = _nvsr.process(
                     dsp_restored,
                     self.sample_rate,
-                    target_hz=float(params.get("rolloff_hz", 16_000.0)) * 1.35,
+                    target_hz=_target_hz,
                     strength=_nvsr_strength,
                     material_type=str(material_type),
                     energy_bias_db=_energy_bias,

@@ -224,3 +224,16 @@
 | Statische Transienten-Schwelle (3.0×) | Leise vs. perkussive Passagen unterschiedlich empfindlich | `clip(5 − std*2, 2, 5)` (§GEBOT-G04) |
 | Pauschale Strength-Multiplier (0.80×) | Bestraft alle Songs gleich, unabhängig vom Bedarf | Strength direkt aus `restoration_strength` |
 | Statische Blend-Ratios in additiven Phasen | Jeder Song hat andere Direkt/Bearbeitet-Balance | Blend aus Spektralanalyse + Restaurierungsziel ableiten |
+
+## Physikalische Grenzen missachten [NEU 2026-07-13]
+
+> **Prinzip**: Maximale Natürlichkeit erfordert Respekt vor physikalischen Grenzen.
+> Keine künstliche Erweiterung über das hinaus, was die Quelle hergibt.
+
+| Verbot | Begründung | Korrektur |
+|--------|-----------|-----------|
+| Bandbreiten-Erweiterung ohne Quellband-Energie-Prüfung | SBR aus leerem/rauschigem Quellband produziert unnatürliche Artefakte | `_src_band_energy < 1e-8 → Passthrough` (§Physik-Guard) |
+| target_hz > 2× detektierte Bandbreite | Maximal eine Oktave Erweiterung ist physikalisch plausibel; mehr klingt synthetisch | `target_hz ≤ min(rolloff*2.0, 22050)` (§Physik-Guard) |
+| HF-Synthese oberhalb 22 kHz | Menschliches Gehör endet bei ~20 kHz; Energie >22 kHz ist Verschwendung + potenzielle Aliasing-Quelle | `target_hz ≤ 22050` (§Physik-Guard) |
+| SBR bei Signal mit BW < 4 kHz | Unter 4 kHz gibt es kein gültiges Quellband für 8–16 kHz SBR → keine Information für natürliche Synthese | `if effective_target ≤ SBR_TARGET_LOW_HZ + 500: passthrough` |
+| Aufwärtssampling ohne Anti-Alias | Resampling ohne Tiefpass produziert Spiegel-Frequenzen → unnatürliche Höhen | `resample_poly` mit anti-alias (scipy default) |

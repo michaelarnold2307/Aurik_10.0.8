@@ -342,6 +342,17 @@ class NvsrPlugin:
                 channel_out = np.pad(channel_out, (0, n - len(channel_out)))
             return channel_out.astype(np.float32)  # type: ignore[no-any-return]
 
+        # §Physik-Guard: Quellband-Energie prüfen — leeres Quellband → Passthrough
+        # SBR braucht echte harmonische Information. Synthese aus Rauschen klingt unnatürlich.
+        _src_band_energy = float(np.mean(np.abs(Zxx[src_low_bin:src_high_bin + 1, :]) ** 2))
+        if _src_band_energy < 1e-8:
+            logger.debug("NvsrPlugin: Quellband ohne Energie → Passthrough")
+            _, channel_out = _sp_signal.istft(Zxx, fs=sr, nperseg=N_FFT, noverlap=N_FFT - HOP, boundary="even")
+            channel_out = channel_out[pad_len : pad_len + n]
+            if len(channel_out) < n:
+                channel_out = np.pad(channel_out, (0, n - len(channel_out)))
+            return channel_out.astype(np.float32)
+
         # SBR-Kern: Spektrale Einhüllende aus Quellband ableiten
         src_mag = np.abs(Zxx[src_low_bin : src_high_bin + 1, :])  # (src_bins, T)
         src_phase = np.angle(Zxx[src_low_bin : src_high_bin + 1, :])
