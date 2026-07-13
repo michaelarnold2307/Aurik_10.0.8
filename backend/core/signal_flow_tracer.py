@@ -384,12 +384,13 @@ class SignalFlowTracer:
                 self._phases.append(pt)
 
             if flags:
-                # LEVEL_COLLAPSE on phase-correction phases = expected for
-                # heavily misaligned stereo material (cassette, reel_tape).
+                # LEVEL_COLLAPSE on phase-correction/EQ phases = expected for
+                # heavily misaligned stereo material (cassette, reel_tape) or
+                # filter ring-in producing near-zero first samples.
                 _pc_collapse = (
                     "LEVEL_COLLAPSE" in " | ".join(flags)
                     and phase_id
-                    and any(p in str(phase_id) for p in ("phase_14", "phase_25", "azimuth", "phase_correction"))
+                    and any(p in str(phase_id) for p in ("phase_14", "phase_16", "phase_25", "azimuth", "phase_correction"))
                 )
                 if _pc_collapse:
                     logger.info("§SFT %s FLAGS: %s", phase_id, " | ".join(flags))
