@@ -9036,18 +9036,27 @@ class UnifiedRestorerV3:
                 #     Korrektur; Residuals < 50 samples gelten als STCG-behandelt.
                 _MIN_CORRECTABLE_LAG_SAMPLES = 50  # ~1 ms @ 48 kHz – darunter nicht korrigieren
                 if abs(_lp0b_lag) > _MIN_CORRECTABLE_LAG_SAMPLES:
-                    _lag_abs = abs(_lp0b_lag)
-                    if _lp0b_lag < 0:
-                        # Negativer Lag: R-Kanal hängt hinter L → R trimmen und alignen
-                        audio = audio[:, : audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
-                        audio[:, 1] = np.roll(audio[:, 1], _lag_abs)
-                    else:
-                        # Positiver Lag: L-Kanal hängt hinter R → L trimmen und alignen
-                        audio = audio[:, : audio.shape[1] - _lag_abs] if audio.shape[1] > _lag_abs else audio
-                        audio[:, 0] = np.roll(audio[:, 0], _lag_abs)
+                    # §G13/F1: STCG-basierte Sub-Sample-Korrektur (kein np.roll!).
+                    # np.roll ist eine ZIRKULÄRE Verschiebung – Samples vom Ende wrappen
+                    # an den Anfang und erzeugen hörbare Diskontinuitäten.
+                    # scipy.ndimage.shift mit cubic spline interpoliert korrekt und
+                    # padded mit Stille an den Rändern (keine Längenänderung).
+                    try:
+                        from backend.core.stereo_temporal_coherence_guard import (
+                            get_stereo_temporal_coherence_guard as _get_stcg_lagfix,
+                        )
+                        # STCG korrigiert mit Sub-Sample-Präzision via scipy.ndimage.shift
+                        audio = _get_stcg_lagfix().correct_interchannel_delay(
+                            audio, sample_rate, phase_id="lag_probe_0b"
+                        )
+                    except Exception as _stcg_lagfix_exc:
+                        logger.warning(
+                            "§G13 STCG-Lag-Korrektur fehlgeschlagen (non-blocking): %s",
+                            _stcg_lagfix_exc,
+                        )
                     logger.info(
                         "§G13 Interchannel-Lag-Korrektur: Median %d samples (%.1f ms) — "
-                        "Kanal-Alignment durchgeführt. Messpunkte: %s. "
+                        "Kanal-Alignment via STCG sub-sample shift. Messpunkte: %s. "
                         "STCG behandelt residuale per-Chunk-Variationen.",
                         _lp0b_lag,
                         _lp0b_lag / sample_rate * 1000,
