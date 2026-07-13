@@ -869,6 +869,25 @@ class CrackleRemovalPhase(PhaseInterface):
         # Get material-specific parameters
         params = dict(self.MATERIAL_PARAMS.get(material_type, self.MATERIAL_PARAMS["unknown"]))
 
+        # §GEBOT-G55: Adaptive Crackle-Schwelle via Transient-Analyse (Physik: Impuls-Charakter)
+        # Perkussives Material → höhere Schwelle (keine falschen Crackle-Detektionen)
+        # Glattes Material → niedrigere Schwelle (echte Knackser sicher erkennen)
+        try:
+            from backend.core.adaptive_parameter_infrastructure import derive_transient_sensitivity
+
+            _ts09 = derive_transient_sensitivity(audio, sample_rate)
+            _base_threshold = float(params.get("transient_threshold", 0.10))
+            # Adaptiv: onset_threshold (2–6) skaliert die Empfindlichkeit
+            # Hoher Wert = viele natürliche Transienten → Schwelle anheben
+            params["transient_threshold"] = float(np.clip(
+                _base_threshold * (_ts09["onset_threshold"] / 3.5),
+                0.01, 0.50
+            ))
+            logger.debug("Phase 09 adaptive: crackle_threshold=%.3f (crest=%.1f)",
+                        params["transient_threshold"], _ts09["crest_factor"])
+        except Exception:
+            pass
+
         # Locality-aware modulation from UV3.
         # Sparse crackle regions should be treated conservatively to preserve texture.
         phase_locality_factor = float(kwargs.get("phase_locality_factor", 1.0))
