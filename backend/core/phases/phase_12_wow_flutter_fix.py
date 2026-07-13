@@ -485,7 +485,7 @@ class WowFlutterFix(PhaseInterface):
             # zero-consensus failures (e.g. cassette with no polyphonic content).
             global _POLYPHONIC_CB_ACTIVE, _POLYPHONIC_CONSECUTIVE_ZERO_CONSENSUS
             if _POLYPHONIC_CB_ACTIVE:
-                logger.info(
+                logger.debug(
                     "Phase 12: Polyphoner Pfad per Circuit-Breaker deaktiviert "
                     "(nach %d konsekutiven Zero-Consensus-Chunks) — pYIN direkt",
                     _POLYPHONIC_CB_MAX_FAILURES,
