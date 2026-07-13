@@ -1,231 +1,153 @@
 """
-Aurik10/ui/ab_preview.py — A/B-Vorher/Nachher-Vorschau in der GUI.
+Aurik10/ui/ab_preview.py — Wellenform-Vorschau in der GUI.
 
-Zeigt vor der vollen Restaurierung eine schnelle Vorschau
-der ersten 30 Sekunden, damit der Nutzer hören kann,
-was Aurik mit seiner Aufnahme macht.
+Zeigt die geladene Wellenform vor der Restaurierung an.
+Minimalistisch — keine Buttons, keine Modus-Wahl, keine Status-Texte.
+Die Wellenform nutzt den gesamten verfügbaren Platz.
 
-Nutzt das vorhandene StreamingAudioPlayer-System für
-gapless A/B-Umschaltung.
+v10.0.8: Von A/B-Vorschau-Widget zu schlanker Wellenform-Anzeige vereinfacht.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 
 import numpy as np
-from PyQt5 import QtCore, QtWidgets
-
-from Aurik10.i18n import t
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 logger = logging.getLogger(__name__)
 
 
 class ABPreviewWidget(QtWidgets.QWidget):
-    """A/B-Vorher/Nachher-Vorschau-Widget."""
+    """Wellenform-Vorschau — zeigt das geladene Audio vor der Restaurierung."""
 
-    restoration_requested = QtCore.pyqtSignal(str)  # mode name
+    restoration_requested = QtCore.pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._original_audio: np.ndarray | None = None
-        self._preview_audio: np.ndarray | None = None
+        self._audio: np.ndarray | None = None
         self._sr: int = 48000
         self._file_path: str = ""
-        self._generating: bool = False
 
         self._build_ui()
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Header
-        header = QtWidgets.QLabel(t("ab_preview.title"))
-        header.setStyleSheet("font-size: 15pt; font-weight: bold;")
-        header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
-
-        desc = QtWidgets.QLabel(t("ab_preview.description"))
-        desc.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        # A/B Buttons
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(20)
-
-        self.btn_a = QtWidgets.QPushButton(t("ab_preview.btn_original"))
-        self.btn_a.setMinimumSize(200, 60)
-        self.btn_a.setStyleSheet(self._button_style("#FFB300"))
-        self.btn_a.clicked.connect(self._play_original)
-        self.btn_a.setEnabled(False)
-        btn_row.addWidget(self.btn_a)
-
-        self.btn_b = QtWidgets.QPushButton(t("ab_preview.btn_preview"))
-        self.btn_b.setMinimumSize(200, 60)
-        self.btn_b.setStyleSheet(self._button_style("#4CAF50"))
-        self.btn_b.clicked.connect(self._play_preview)
-        self.btn_b.setEnabled(False)
-        btn_row.addWidget(self.btn_b)
-
-        layout.addLayout(btn_row)
-
-        # Status
-        self.status_label = QtWidgets.QLabel(t("ab_preview.loading"))
-        self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
-
-        # Progress
-        self.progress = QtWidgets.QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.setVisible(False)
-        layout.addWidget(self.progress)
-
-        # Start button
-        self.btn_start = QtWidgets.QPushButton(t("ab_preview.start_full"))
-        self.btn_start.setMinimumHeight(45)
-        self.btn_start.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #667eea, stop:1 #5B9FE8);
-                color: white; border-radius: 8px; font-size: 12pt;
-                padding: 10px 30px; font-weight: bold;
-            }
-            QPushButton:hover { background: #7B9BEE; }
-        """)
-        self.btn_start.clicked.connect(self._on_start)
-        self.btn_start.setEnabled(False)
-        layout.addWidget(self.btn_start)
-
-        layout.addStretch()
-
-    @staticmethod
-    def _button_style(color: str) -> str:
-        return f"""
-            QPushButton {{
-                background: rgba(0,0,0,0.3);
-                color: {color};
-                border: 2px solid {color};
-                border-radius: 12px;
-                font-size: 14pt; font-weight: bold;
-                padding: 12px;
-            }}
-            QPushButton:hover {{
-                background: rgba(0,0,0,0.5);
-            }}
-            QPushButton:disabled {{
-                color: #666;
-                border-color: #444;
-            }}
-        """
+        # Wellenform-Zeichenfläche — nutzt den gesamten Platz
+        self._waveform = WaveformCanvas(self)
+        self._waveform.setMinimumHeight(120)
+        layout.addWidget(self._waveform, 1)
 
     def set_audio(self, audio: np.ndarray, sr: int, file_path: str):
-        """Audio für Vorschau setzen."""
-        self._original_audio = audio.astype(np.float32)
+        """Audio für Wellenform-Anzeige setzen."""
+        self._audio = audio.astype(np.float32)
         self._sr = sr
         self._file_path = file_path
-        self.btn_a.setEnabled(True)
-        self.status_label.setText(t("ab_preview.generating"))
-        self.progress.setVisible(True)
-        self._generate_preview()
+        self._waveform.set_audio(self._audio, self._sr)
+        self._waveform.update()
 
-    def _generate_preview(self):
-        """Erzeugt Vorschau in Hintergrund-Thread."""
-        if self._original_audio is None:
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._waveform.update()
+
+
+class WaveformCanvas(QtWidgets.QWidget):
+    """Zeichenfläche für die Wellenform-Darstellung."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._audio: np.ndarray | None = None
+        self._sr: int = 48000
+        self.setAutoFillBackground(True)
+        p = self.palette()
+        p.setColor(self.backgroundRole(), QtGui.QColor("#0d0d1f"))
+        self.setPalette(p)
+
+    def set_audio(self, audio: np.ndarray, sr: int):
+        self._audio = audio
+        self._sr = sr
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+
+        # Hintergrund
+        painter.fillRect(0, 0, w, h, QtGui.QColor("#0d0d1f"))
+
+        if self._audio is None or len(self._audio) == 0:
+            painter.setPen(QtGui.QColor("#555"))
+            painter.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
+                             "Kein Audio geladen")
             return
-        self._generating = True
 
-        def _work():
-            try:
-                preview_len = min(len(self._original_audio), int(30 * self._sr))
-                segment = self._original_audio[:preview_len].copy()
+        # Wellenform zeichnen
+        audio = self._audio
+        if audio.ndim == 2:
+            audio = audio.mean(axis=1) if audio.shape[1] < audio.shape[0] else audio.mean(axis=0)
+        audio = audio.ravel()
 
-                # Leichte, schnelle Vorverarbeitung
-                try:
-                    from backend.api.bridge import get_human_pleasantness_estimator as _hpe
-
-                    compute_pleasantness = _hpe()
-                    result = compute_pleasantness(segment, self._sr)
-                    logger.info("Preview HPE: %.2f", result.score)
-                except Exception:
-                    logger.warning("ab_preview.py::_work fallback", exc_info=True)
-
-                # Schnelle Vorverarbeitung: einfaches Gate + Soft-Knee
-                try:
-                    from backend.api.bridge import get_audio_utils_gain_envelope as _ge
-
-                    apply_musical_gain_envelope = _ge()
-                    segment = apply_musical_gain_envelope(segment, self._sr, gate_db=-30, knee_db=6, crossfade_ms=200)
-                except Exception:
-                    logger.warning("ab_preview.py::_work fallback", exc_info=True)
-
-                self._preview_audio = segment.astype(np.float32)
-            except Exception as e:
-                logger.warning("Preview generation failed: %s", e)
-                self._preview_audio = None
-            finally:
-                self._generating = False
-
-        t = threading.Thread(target=_work, daemon=True)
-        t.start()
-
-        # Poll for completion
-        self._poll_timer = QtCore.QTimer(self)
-        self._poll_timer.timeout.connect(self._check_preview_ready)
-        self._poll_timer.start(200)
-
-    def _check_preview_ready(self):
-        if self._generating:
+        n_samples = len(audio)
+        if n_samples == 0:
             return
-        self._poll_timer.stop()
-        self.progress.setVisible(False)
-        if self._preview_audio is not None:
-            self.btn_b.setEnabled(True)
-            self.btn_start.setEnabled(True)
-            self.status_label.setText(t("ab_preview.ready"))
-        else:
-            self.status_label.setText(t("ab_preview.unavailable"))
 
-    def _play_original(self):
-        if self._original_audio is None:
-            return
-        try:
-            import sounddevice as sd
+        # Downsample für Darstellung
+        target_points = min(w * 2, n_samples)
+        stride = max(1, n_samples // target_points)
+        points = target_points
 
-            sd.stop()
-            sd.play(self._original_audio[: min(len(self._original_audio), int(30 * self._sr))], self._sr)
-            self.btn_a.setStyleSheet(self._button_style("#FFD54F"))
-            self.btn_b.setStyleSheet(self._button_style("#4CAF50"))
-        except Exception as e:
-            logger.warning("Playback error: %s", e)
+        center_y = h // 2
+        max_amplitude = max(float(np.max(np.abs(audio))), 1e-6)
 
-    def _play_preview(self):
-        if self._preview_audio is None:
-            return
-        try:
-            import sounddevice as sd
+        # Mittellinie
+        painter.setPen(QtGui.QPen(QtGui.QColor("#333"), 1))
+        painter.drawLine(0, center_y, w, center_y)
 
-            sd.stop()
-            sd.play(self._preview_audio, self._sr)
-            self.btn_b.setStyleSheet(self._button_style("#81C784"))
-            self.btn_a.setStyleSheet(self._button_style("#FFB300"))
-        except Exception as e:
-            logger.warning("Playback error: %s", e)
+        # Wellenform (obere Hälfte grün, untere gespiegelt)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#4CAF50"), 1))
+        path = QtGui.QPainterPath()
+        first = True
 
-    def _on_start(self):
-        from PyQt5.QtWidgets import QMessageBox
+        for i in range(points):
+            idx = min(i * stride, n_samples - 1)
+            x = int(i * w / max(points - 1, 1))
+            val = float(audio[idx]) / max_amplitude
+            y = int(center_y - val * (center_y - 10))
 
-        reply = QMessageBox.question(
-            self,
-            t("ab_preview.mode_title"),
-            t("ab_preview.mode_question"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.restoration_requested.emit("RESTORATION")
-        else:
-            self.restoration_requested.emit("STUDIO_2026")
+            if first:
+                path.moveTo(x, y)
+                first = False
+            else:
+                path.lineTo(x, y)
+
+        painter.drawPath(path)
+
+        # Spiegelung (untere Hälfte, heller)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#81C784"), 1, QtCore.Qt.PenStyle.DotLine))
+        path2 = QtGui.QPainterPath()
+        first = True
+        for i in range(points):
+            idx = min(i * stride, n_samples - 1)
+            x = int(i * w / max(points - 1, 1))
+            val = float(audio[idx]) / max_amplitude
+            y = int(center_y + val * (center_y - 10))
+            if first:
+                path2.moveTo(x, y)
+                first = False
+            else:
+                path2.lineTo(x, y)
+        painter.drawPath(path2)
+
+        # Zeitachse
+        painter.setPen(QtGui.QColor("#667"))
+        duration_s = n_samples / self._sr
+        mins = int(duration_s // 60)
+        secs = int(duration_s % 60)
+        painter.drawText(10, h - 8, f"{mins}:{secs:02d}")
+
+        painter.end()
