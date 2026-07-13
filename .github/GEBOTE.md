@@ -1,6 +1,6 @@
 # Aurik 10 — GEBOTE & VERBOTE (Normativer Katalog)
 
-> **Status:** Normativ | **Version:** 10.0.6 | **Stand:** 13. Juli 2026
+> **Status:** Normativ | **Version:** 10.0.7 | **Stand:** 13. Juli 2026 (Update: Lag-Integrität)
 >
 > Dieser Katalog definiert alle unverhandelbaren GEBOTE (positiv, was Aurik TUN MUSS)
 > und VERBOTE (negativ, was Aurik NIEMALS tun darf). Jedes Gebot und Verbot ist mit
@@ -165,11 +165,41 @@ audio = _apply_cd_noise_profile(audio, sr, mask=erb_mask)
 
 ---
 
+## Kategorie VII — Stereo-Lag-Integrität (§G60–§G67)
+
+> **Alle Erkenntnisse aus der Lag-Root-Cause-Analyse vom 2026-07-13.**
+> 13 Commits, 8 Root Causes identifiziert und behoben.
+
+| ID | Regel | Beschreibung |
+|----|-------|-------------|
+| §G60 | **STCG Multi-Point-Primär** | STCG MUSS Multi-Point-GCC-PHAT (≥3 Song-Positionen, Median) als PRIMÄRE Messmethode verwenden. Single-Mid-Window nur als Fallback bei Audio < 30s. |
+| §G61 | **Chunk-Phasen-STCG-Pflicht** | Jede Chunk-basierte Phase (Phase 12, Phase 24 u.a.) MUSS für Lag-Erkennung und -Korrektur den zentralen STCG verwenden. Eigene Korrelations-Implementierungen (signal.correlate) sind VERBOTEN (§V27). |
+| §G62 | **Sub-Sample-Lag-Korrektur** | Lag-Korrektur MUSS `scipy.ndimage.shift` (cubic spline, Sub-Sample-Präzision) oder STCG direkt verwenden. `np.roll` (zirkulär), `np.concatenate` (ganzzahlig), und Audio-Trunkierung sind VERBOTEN (§V32). |
+| §G63 | **Lag-Messung-Orientierungsfrei** | Alle Lag-Messfunktionen MÜSSEN sowohl channels-first `(2, N)` als auch channels-last `(N, 2)` korrekt erkennen und messen. `arr.shape[0]` ohne Orientierungs-Check ist VERBOTEN (§V33). |
+| §G64 | **STCG-Singleton-Konsistenz** | Alle Lag-Korrekturen MÜSSEN den zentralen STCG-Singleton verwenden. Keine ad-hoc GCC-PHAT-Reimplementierung in einzelnen Phasen. |
+| §G65 | **Post-Chunk-Global-STCG** | Nach ABSCHLUSS aller Chunk-basierten Phasen MUSS ein globaler STCG-Check mit Multi-Point-Verifikation erfolgen. Per-Chunk-Korrekturen ohne globalen Abschluss sind VERBOTEN (§V28). |
+| §G66 | **Keine konkurrierenden Lag-Fixes** | Nach einer erfolgreichen STCG-Korrektur darf KEINE zweite, unabhängige Lag-"Korrektur" (Onset-Energy-Fallback, manuelle np.concat) durchgeführt werden (§V29). Nur bei STCG-Fehlschlag ist ein Fallback erlaubt. |
+| §G67 | **STFT-Input-Length-Guard** | Jeder Aufruf von `scipy.signal.stft` MUSS durch einen zentralen Längen-Guard geschützt sein, der `nperseg > input_length` abfängt. Der Guard ist in `backend/__init__.py` installiert. |
+
+## Kategorie VIII — Neue VERBOTE Stereo-Lag (§V27–§V33)
+
+| ID | Verbot | Beschreibung |
+|----|--------|-------------|
+| §V27 | **Kein signal.correlate für Lag** | Es ist VERBOTEN, `scipy.signal.correlate` (Standard-Kreuzkorrelation ohne PHAT-Whitening) für Stereo-Lag-Messung zu verwenden. Nur GCC-PHAT (via STCG) ist statthaft. |
+| §V28 | **Kein begrenzter Lag-Suchraum** | Es ist VERBOTEN, den Lag-Suchraum für Stereo-Messungen auf < ±200ms (±9600 samples @48kHz) zu begrenzen. Kleinere Limits (z.B. 960 samples = 20ms) verfehlen echte Kanalversätze. |
+| §V29 | **Keine konkurrierenden Lag-Korrekturen** | Es ist VERBOTEN, nach erfolgreicher STCG-Korrektur eine zweite Lag-"Korrektur" durchzuführen. Der Onset-Energy-Fallback in `_preserve_phase_loudness` ist NUR bei STCG-Exception aktiv. |
+| §V30 | **Kein Single-Window-Lag** | Es ist VERBOTEN, Stereo-Lag nur an EINER Song-Position (z.B. Mid-Window 10s) zu messen, wenn die Song-Dauer > 30s beträgt. Multi-Point (≥3 Positionen) ist Pflicht. |
+| §V31 | **Kein np.roll für Lag-Korrektur** | Es ist VERBOTEN, `np.roll` (zirkuläre Verschiebung mit Sample-Wrapping) für Stereo-Lag-Korrektur zu verwenden. Nur `scipy.ndimage.shift` (Zero-Padding, Sub-Sample) oder STCG sind statthaft. |
+| §V32 | **Kein Audio-Trunkieren für Lag** | Es ist VERBOTEN, Audio zu trunkieren (`audio[:, :N - lag]`), um Lag zu korrigieren. Die Korrektur MUSS die Originallänge durch Zero-Padding erhalten. |
+| §V33 | **Kein shape[0] ohne Orientierungs-Check** | Es ist VERBOTEN, `audio.shape[0]` als Sample-Anzahl zu interpretieren, ohne vorher zu prüfen ob `(2,N)` oder `(N,2)` vorliegt. Die Multi-Point-Funktion MUSS beide Orientierungen unterstützen. |
+
+---
+
 ## Änderungshistorie
 
 | Version | Datum | Änderung |
 |---------|-------|----------|
-| 10.0.7 | 2026-07-13 | §G46–§G59 (Metriken & Qualitätssicherung). Kategorie VI. |
-| 10.0.6 | 2026-07-13 | §G40–§G45 (Zeitpunkt, Übergänge, CD-Kohärenz, Maskierungs-Wissenschaft). §V25–§V26. Kategorie V. |
+| 10.0.7 | 2026-07-13 | §G60–§G67 + §V27–§V33. Lag-Integritäts-Architektur nach Root-Cause-Analyse (8 Bugs, 13 Commits). Kategorie VII + VIII. |
+| 10.0.6 | 2026-07-13 | §G46–§G59 (Metriken & Qualitätssicherung). Kategorie VI. |
 | 10.0.5 | 2026-07-13 | §G30–§G39 (CD-Rauschprofil & Export, ML-Device, Test-Assertion). §V16–§V24. |
 | 10.0.4 | 2026-07-13 | Initiale Formalisierung. CD-Rauschprofil (§G8, §G15–§G19, §V5, §V11–§V15). Kategorie I–III strukturiert. |

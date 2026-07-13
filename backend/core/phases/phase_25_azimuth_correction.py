@@ -696,49 +696,29 @@ class AzimuthCorrectionPhaseV2(PhaseInterface):
         """
         Correct azimuth error for a single band.
 
-        Uses fractional delay (linear interpolation) for sub-sample precision.
+        Uses scipy.ndimage.shift (cubic spline, zero-padding) for sub-sample
+        precision. Replaces np.roll + linear interpolation (§V31, §G62).
         """
         del sample_rate, band_index
         phase_shift = azimuth_error.phase_shift_samples
         confidence = azimuth_error.confidence
 
-        # Apply correction strength based on confidence
-        # Scale confidence: values > 5 get full correction
         confidence_scale = min(confidence / 5.0, 1.0)
         effective_shift = phase_shift * self.CORRECTION_STRENGTH * confidence_scale
 
-        if abs(effective_shift) < 0.1:  # Too small to correct
+        if abs(effective_shift) < 0.1:
             return band_audio
 
-        # Apply fractional delay to right channel
+        # scipy.ndimage.shift: cubic spline (order=3), zero-padding, sub-sample
+        from scipy.ndimage import shift as _ndimage_shift
         corrected = band_audio.copy()
-        shift_int = int(effective_shift)
-        shift_frac = effective_shift - shift_int
-
-        # Integer shift
-        # Note: phase_shift is negative if right is delayed → need to advance right (positive roll)
-        if shift_int != 0:
-            corrected[:, 1] = np.roll(corrected[:, 1], shift_int)  # Fixed: removed negative sign
-
-            # Zero out wrapped samples
-            if shift_int > 0:
-                corrected[:shift_int, 1] = 0  # Wrapped samples at start
-            else:
-                corrected[shift_int:, 1] = 0  # Wrapped samples at end
-
-        # Fractional shift (linear interpolation)
-        if abs(shift_frac) > 0.01:
-            right = corrected[:, 1]
-            right_shifted = (1 - abs(shift_frac)) * right
-
-            if shift_frac > 0:
-                # Shift forward (advance) → mix with previous sample
-                right_shifted[1:] += shift_frac * right[:-1]
-            else:
-                # Shift backward (delay) → mix with next sample
-                right_shifted[:-1] += abs(shift_frac) * right[1:]
-
-            corrected[:, 1] = right_shifted
+        corrected[:, 1] = _ndimage_shift(
+            corrected[:, 1].astype(np.float64),
+            shift=float(effective_shift),
+            mode="constant",
+            cval=0.0,
+            order=3,
+        ).astype(np.float32)
 
         return corrected
 
