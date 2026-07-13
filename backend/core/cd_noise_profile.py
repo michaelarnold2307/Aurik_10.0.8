@@ -309,6 +309,14 @@ def inject_cd_noise_profile(
 
     # Step 1: Time-domain masking envelope (§G44)
     envelope = _compute_masking_envelope(mono, sr)
+    # §G56: Noise floor continuity — enforce minimum floor even in loud sections.
+    # Without this, the noise floor jumps 204 dB between loud and quiet sections,
+    # creating audible "noise gate" artifacts. A -20 dB residual prevents this.
+    _NOISE_FLOOR_FLOOR_DB = 20.0  # -20 dB below CD noise = -116 dBFS at 16-bit
+    _min_env = 10.0 ** (-_NOISE_FLOOR_FLOOR_DB / 20.0)  # 0.1
+    envelope = np.maximum(envelope, _min_env)
+    # §G17: Re-apply digital black enforcement after minimum floor
+    envelope[np.abs(mono) < 1e-12] = 0.0
     active_samples = int(np.sum(envelope > 0.01))
 
     # Step 2: ERB band gain — per-frequency masking (§G15, §G44)
@@ -357,6 +365,8 @@ def inject_cd_noise_profile(
             _FORWARD_MASKING_MS *= 2.0
             _BACKWARD_MASKING_MS *= 2.0
             envelope = _compute_masking_envelope(mono, sr)
+            envelope = np.maximum(envelope, _min_env)  # §G56
+            envelope[np.abs(mono) < 1e-12] = 0.0  # §G17
             active_samples = int(np.sum(envelope > 0.01))
             # Re-apply noise with wider envelope
             if is_stereo:
