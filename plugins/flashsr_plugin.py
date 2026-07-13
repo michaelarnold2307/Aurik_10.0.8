@@ -300,15 +300,19 @@ class FlashSRPlugin:
         mono_in = audio.ndim == 1
 
         bw_hz = _detect_bandwidth(audio, sr)
-        needs_hf = bw_hz < self.BW_THRESHOLD
-        logger.debug("FlashSR: erkannte Bandbreite %.0f Hz (Schwelle %.0f Hz).", bw_hz, self.BW_THRESHOLD)
+        # §GEBOT-G05: Adaptiver BW-Threshold — song-individuell statt 15kHz pauschal
+        # Bei 48kHz: Schwellwert = max(8kHz, 48kHz*0.35) = 16.8kHz → aktiviert ML wenn < 16.8kHz
+        # Bei Material mit höherer nativer BW (z.B. 44.1kHz CD) passt sich der Wert automatisch an
+        _adaptive_bw_threshold = max(8_000.0, float(sr) * 0.35)
+        needs_hf = bw_hz < _adaptive_bw_threshold
+        logger.debug("FlashSR: erkannte Bandbreite %.0f Hz (adaptive Schwelle %.0f Hz).", bw_hz, _adaptive_bw_threshold)
 
         # ---- ML-Pfad (Primär) -----------------------------------------------
         if needs_hf and _FLASHSR_ONNX_PATH.exists():
             logger.info(
                 "FlashSR: ML-Bandbreitenerweiterung aktiviert (BW=%.0f Hz < %.0f Hz).",
                 bw_hz,
-                self.BW_THRESHOLD,
+                _adaptive_bw_threshold,
             )
             ml_result = _run_flashsr_onnx(audio, sr)
             if ml_result is not None:

@@ -208,3 +208,19 @@
 
 
 > Vollständige Linter-Implementierung: `scripts/aurik_verboten_linter.py`
+
+## Statische Annahmen ohne Signalbezug [NEU 2026-07-13]
+
+> **Prinzip**: Kein pauschaler Wert, der song-individuell variieren muss.
+> Jede Konstante MUSS entweder physikalisch begründet oder aus dem Signal abgeleitet sein.
+
+| Verbot | Begründung | Korrektur |
+|--------|-----------|-----------|
+| Statischer BW-Threshold (15 kHz) | Unterschiedliche Quellen haben unterschiedliche native Bandbreiten | `adaptive = max(8kHz, sr*0.35)` (§GEBOT-G05) |
+| Statischer HF-Rolloff `linspace(1.0, 0.50)` | Flache vs. steile Quellspektren brauchen unterschiedlichen Rolloff | Lineare Regression → `_rolloff_end = f(tilt)` (§GEBOT-G02) |
+| Statischer Energy-Bias (−6/−9 dB) | Moderne Aufnahmen gedämpft, historische übersteuert | `_bias = base + clip(hf_ratio+6, −3, +3)` (§GEBOT-G03) |
+| Statische Peak-Gewichtung (2.0×) | Rauschen vs. Harmonik brauchen unterschiedliche Betonung | `_peak_weight = 1 + clip(density*10, 0, 2)` (§GEBOT-G01) |
+| Statische Peak-Blend-Ratio (70/30) | Klavier vs. Orchester vs. Rock brauchen verschiedene Blends | `clip(0.5 + mean(density)*3, 0.5, 0.85)` (§GEBOT-G01) |
+| Statische Transienten-Schwelle (3.0×) | Leise vs. perkussive Passagen unterschiedlich empfindlich | `clip(5 − std*2, 2, 5)` (§GEBOT-G04) |
+| Pauschale Strength-Multiplier (0.80×) | Bestraft alle Songs gleich, unabhängig vom Bedarf | Strength direkt aus `restoration_strength` |
+| Statische Blend-Ratios in additiven Phasen | Jeder Song hat andere Direkt/Bearbeitet-Balance | Blend aus Spektralanalyse + Restaurierungsziel ableiten |

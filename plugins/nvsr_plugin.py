@@ -358,7 +358,11 @@ class NvsrPlugin:
         # Ein Frame ist transient, wenn die Energie > 3× des gleitenden Mittelwerts ist
         _frame_energy = np.sum(src_env_smooth, axis=0)  # (T,)
         _frame_energy_smooth = np.convolve(_frame_energy, np.ones(5)/5.0, mode='same')
-        _is_transient = _frame_energy > np.maximum(_frame_energy_smooth * 3.0, 1e-8)
+        # §GEBOT-G04: Adaptiver Transienten-Schwellwert — abhängig von spektraler Dynamik
+        # Ruhiges Material → niedrigere Schwelle, dynamisches Material → höhere Schwelle
+        _frame_energy_std = np.std(_frame_energy_smooth) / max(np.mean(_frame_energy_smooth), 1e-12)
+        _transient_mult = np.clip(5.0 - _frame_energy_std * 2.0, 2.0, 5.0)
+        _is_transient = _frame_energy > np.maximum(_frame_energy_smooth * _transient_mult, 1e-8)
 
         # Zielband-Energie via Harmonik-Ratio (Frequenz-Skalierung ×2)
         n_src_bins = src_high_bin - src_low_bin + 1
@@ -370,33 +374,57 @@ class NvsrPlugin:
         src_bins_norm = np.linspace(0.0, 1.0, n_src_bins)
         tgt_bins_norm = np.linspace(0.0, 1.0, n_tgt_bins)
         tgt_mag = np.zeros((n_tgt_bins, Zxx.shape[1]), dtype=np.float32)
+
+        # §GEBOT-G01: Harmonische Dichte pro Frame messen → adaptive Peak-Gewichtung
+        _harmonic_density = np.zeros(Zxx.shape[1], dtype=np.float32)
         for t_idx in range(Zxx.shape[1]):
             _src_frame = src_env_smooth[:, t_idx]
             # Harmonische Peak-Erkennung: lokale Maxima im Quellspektrum
             _peaks = np.zeros(n_src_bins, dtype=bool)
             _peaks[1:-1] = (_src_frame[1:-1] > _src_frame[:-2]) & (_src_frame[1:-1] > _src_frame[2:])
             _peaks &= _src_frame > np.mean(_src_frame) * 1.5  # nur signifikante Peaks
-            # Peak-Weighted Interpolation: Peaks werden mit 2× Gewichtung interpoliert
+            _harmonic_density[t_idx] = float(np.mean(_peaks))
+            # Adaptive Peak-Gewichtung: harmonik-reiches Material → stärkere Peak-Betonung
+            _peak_weight = 1.0 + np.clip(_harmonic_density[t_idx] * 10.0, 0.0, 2.0)
             _weights = np.ones(n_src_bins, dtype=np.float32)
-            _weights[_peaks] = 2.0  # harmonische Peaks doppelt gewichten
+            _weights[_peaks] = _peak_weight
             _interp_base = np.interp(tgt_bins_norm, src_bins_norm, _src_frame).astype(np.float32)
             _interp_peak = np.interp(tgt_bins_norm, src_bins_norm, _src_frame * _weights / np.mean(_weights)).astype(np.float32)
-            # Blend: 70% Peak-Weighted + 30% Base für natürliche Textur
-            tgt_mag[:, t_idx] = _interp_peak * 0.7 + _interp_base * 0.3
+            # Adaptive Blend: harmonik-reich → mehr Peak-Weighted, rauschig → mehr Base
+            _peak_blend = np.clip(0.5 + np.mean(_harmonic_density) * 3.0, 0.5, 0.85)
+            tgt_mag[:, t_idx] = _interp_peak * _peak_blend + _interp_base * (1.0 - _peak_blend)
 
-        # HF-Rolloff: Energie nimmt mit steigender Frequenz moderat ab (−3 dB/Oktave effektiv)
-        # Faustregel: natürliche Instrumente haben ~3–6 dB/Oktave HF-Abfall oberhalb 8 kHz
-        rolloff_slope = np.linspace(1.0, 0.50, n_tgt_bins, dtype=np.float32)
+        # §GEBOT-G02: Adaptiver HF-Rolloff — ableiten aus spektraler Neigung des Quellbands
+        # Miss Energiedecay über das Quellband (4–8 kHz) via lineare Regression
+        _src_freq_idx = np.arange(n_src_bins, dtype=np.float32)
+        _src_mean_mag = np.mean(src_env_smooth, axis=1)  # (src_bins,)
+        _src_mean_db = 20.0 * np.log10(np.maximum(_src_mean_mag, 1e-12))
+        # Lineare Regression: dB/Oktave im Quellband
+        if n_src_bins > 2:
+            _coeffs = np.polyfit(_src_freq_idx, _src_mean_db, 1)
+            _src_tilt_db_per_octave = _coeffs[0] * n_src_bins  # dB über gesamtes Quellband
+        else:
+            _src_tilt_db_per_octave = -6.0  # konservativer Default
+        # Mapping: steilere Quellneigung → steilere Zielneigung
+        # −3 dB/Oktave Quelle → 0.75 Endpoint, −9 dB/Oktave Quelle → 0.35 Endpoint
+        _rolloff_end = float(np.clip(0.75 + _src_tilt_db_per_octave / 24.0, 0.35, 0.75))
+        rolloff_slope = np.linspace(1.0, _rolloff_end, n_tgt_bins, dtype=np.float32)
         tgt_mag = tgt_mag * rolloff_slope[:, np.newaxis]
 
-        # Energy bias (§0j): natürliche HF-Energie ohne künstliche Dämpfung
-        # Gesang behält volle Energie, Instrumental −3 dB für natürlichen Abfall
+        # §GEBOT-G03: Adaptiver Energy-Bias — spektrale Balance des Quellbands respektieren
+        # Quelle mit viel HF-Energie → weniger Bias nötig (natürlich hell)
+        # Quelle mit wenig HF-Energie → mehr Bias (konservativ, kein Übersteuern)
+        _hf_ratio = float(np.mean(src_env_smooth[n_src_bins//2:]) / max(np.mean(src_env_smooth[:n_src_bins//2]), 1e-12))
+        _hf_ratio_db = 10.0 * np.log10(max(_hf_ratio, 1e-6))
         if panns_singing >= 0.4:
-            _bias = 0.0 + energy_bias_db  # Gesang: volle HF-Präsenz
+            _bias_base = 0.0  # Gesang: volle HF-Präsenz
         elif panns_singing >= 0.1:
-            _bias = -3.0 + energy_bias_db  # Mix: moderate Dämpfung
+            _bias_base = -1.5  # Mix: leichte Dämpfung
         else:
-            _bias = -3.0 + energy_bias_db  # Instrumental: natürlicher Abfall
+            _bias_base = -3.0  # Instrumental: natürlicher Abfall
+        # Adaptiv: HF-arme Quelle → konservativer, HF-reiche Quelle → weniger Dämpfung
+        _bias_adaptive = _bias_base + np.clip(_hf_ratio_db + 6.0, -3.0, 3.0)
+        _bias = _bias_adaptive + energy_bias_db
         bias_lin = 10.0 ** (_bias / 20.0)
         tgt_mag = tgt_mag * float(bias_lin)
 

@@ -88,3 +88,18 @@ Jede G-Regel kann durch einen Linter automatisiert geprüft werden:
 | **G23** | GPU-Modelle (PyTorch, ONNX mit CUDA/ROCm) dürfen NUR im Haupt-Thread oder in Threads geladen werden, die explizit via `ml_device_manager` GPU-initialisiert wurden. `ThreadPoolExecutor`-Worker haben KEINEN GPU-Kontext | CLAP-Loading im Pool-Thread: ROCm-Neuinitialisierung → 200+s. Restorability im Pool-Thread: 1s (weil CPU-only) | `_run_clap_chain` → Timeout |
 | **G24** | Jede Architektur-Änderung, die Threading-Modelle verschiebt, MUSS einen Integrationstest haben, der den VOLLSTÄNDIGEN Flow (nicht nur gemockte Komponenten) durchläuft | Era-Timeout wurde erst nach 15+ Runs sichtbar. Unit-Tests mit Mocks liefen alle durch | `run_pre_analysis` → Era async |
 | **G25** | Das Threading-Modell MUSS als Architektur-Diagramm dokumentiert sein: Welcher Thread hat GPU-Zugriff? Welche Threads teilen welche Singletons? Welche Threads dispatchen zur GUI? | 4× Threading-Refactoring (sequentiell → parallel → clap_chain → async) weil das Modell nicht explizit war | `_pre_analysis_bg`, Pool, Daemon |
+
+## Kategorie I: Song-individuelle Adaption (2026-07-13)
+
+> **Prinzip**: Aurik muss sich eigenständig auf jeden Song individuell optimal einstellen.
+> Statische Werte nur dort, wo sie bei JEDEM Song gültig sind (physikalische Konstanten).
+
+| ID | Gebot | Begründung | Fundstelle |
+|----|-------|-----------|------------|
+| **G26** | BW-Threshold für ML-Aktivierung MUSS song-individuell sein: `adaptive = max(8kHz, sr*0.35)`. KEIN statischer 15kHz-Wert | 15kHz pauschal ignoriert 14.9kHz-Material | `flashsr_plugin.py:process()` §GEBOT-G05 |
+| **G27** | HF-Rolloff MUSS aus Quellband-Spektralneigung via linearer Regression abgeleitet werden. KEIN statisches `linspace(1.0, 0.50)` | Flaches Quellspektrum braucht flacheren Rolloff | `nvsr_plugin.py:_process_channel_sbr()` §GEBOT-G02 |
+| **G28** | Energy-Bias MUSS spektrale Quellband-Balance respektieren: `_bias = _bias_base + clip(hf_ratio_db+6, -3, +3)`. KEIN pauschales −6/−9dB | Moderne Aufnahmen werden bestraft, dunkle übersteuert | `nvsr_plugin.py:_process_channel_sbr()` §GEBOT-G03 |
+| **G29** | Peak-Gewichtung MUSS aus harmonischer Dichte abgeleitet werden: `_peak_weight = 1 + clip(density*10, 0, 2)`. KEIN statischer 2.0× | Rauschen profitiert nicht von Peak-Betonung | `nvsr_plugin.py:_process_channel_sbr()` §GEBOT-G01 |
+| **G30** | Peak-Blend-Ratio MUSS adaptiv sein: `clip(0.5 + mean(density)*3, 0.5, 0.85)`. KEIN statischer 70/30 | Orchester vs. Solo-Klavier unterschiedlich | `nvsr_plugin.py:_process_channel_sbr()` §GEBOT-G01 |
+| **G31** | Transienten-Schwelle MUSS aus Dynamik abgeleitet werden: `clip(5 - std*2, 2, 5)`. KEIN statischer 3.0× | Leise Passagen vs. perkussive unterschiedlich | `nvsr_plugin.py:_process_channel_sbr()` §GEBOT-G04 |
+| **G32** | Jeder Frequenzband-/Schwellwert-/Blend-Parameter MUSS `_derive_from_signal()` haben. Statisch nur: Nyquist, STFT-COLA, Frequenzband-Grenzen (4/8/16kHz) | Kernversprechen = song-individuell | Architektur-Prüfung aller `phase_*.py` |
