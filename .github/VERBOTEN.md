@@ -237,3 +237,12 @@
 | HF-Synthese oberhalb 22 kHz | Menschliches Gehör endet bei ~20 kHz; Energie >22 kHz ist Verschwendung + potenzielle Aliasing-Quelle | `target_hz ≤ 22050` (§Physik-Guard) |
 | SBR bei Signal mit BW < 4 kHz | Unter 4 kHz gibt es kein gültiges Quellband für 8–16 kHz SBR → keine Information für natürliche Synthese | `if effective_target ≤ SBR_TARGET_LOW_HZ + 500: passthrough` |
 | Aufwärtssampling ohne Anti-Alias | Resampling ohne Tiefpass produziert Spiegel-Frequenzen → unnatürliche Höhen | `resample_poly` mit anti-alias (scipy default) |
+
+## Budget & Integrität [NEU 2026-07-13]
+
+| Verbot | Begründung | Korrektur |
+|--------|-----------|-----------|
+| Statisches Wall-Budget ohne Duration-Scaling | 600s-Song bekommt gleiches Budget wie 225s → Phasen-Überspringung | `base × max(1.0, duration/225)` |
+| Budget-Formel ohne reale Messwerte | 1200+2250=3450 war 4s zu knapp für gemessene 3454s | `overhead=1800, per_sec=15` |
+| Stereo-Lag nur detektieren, nicht korrigieren | LAG_PROBE zeigt -8900 samples → 183ms bleiben | Iterative Korrektur (3 Versuche) mit Verifikation |
+| Keine Post-Pipeline-Plausibilitätsprüfung | NaN/Clipping/Stille/Kanal-Drift erst beim Abhören bemerkt | Automatische Prüfung auf 6 Fehlerkategorien |

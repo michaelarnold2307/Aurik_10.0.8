@@ -33036,21 +33036,18 @@ class UnifiedRestorerV3:
             _pipeline_wall_budget_base = float(_PIPELINE_WALL_BUDGET_S.get(_mat_key_budget, 480.0))
             # Compute audio duration locally (audio is available in _execute_pipeline signature).
             _audio_duration_s = float(audio.shape[-1] if audio.ndim >= 2 else len(audio)) / float(sample_rate)
-            # §Spec04b Duration-Scaling: budget = min(base, overhead + duration × factor).
-            # Prevents long songs from consuming all budget in one phase (e.g. ADMM 41 min
-            # on a 225s song exhausting the entire 2700s vinyl budget).
-            # 450s fixed overhead + 10s/s audio → 225s song gets min(2700, 2700) = 2700s budget.
-            # v9.11.14: increased from 300+8×dur (=2100s) to 450+10×dur (=2700s) after
-            # observed wall-time exhaustion on vinyl 225s (phase_42 fallback chain ~25 min).
-            # v9.12.9c: Overhead 450 → 600 — erlaubt 225s Song 2850s Budget (statt 2700s).
-            # Motivation: Kassette 225s brauchte 2739s unter Swap-Druck; 2700s-Cap war zu eng.
-            # v9.15.1: 600 → 1200 — Kassette/Shellac/Tape brauchen mehr Anlaufzeit für frühe
-            # Träger-Phasen; 225s-Song erhält min(4200, 1200+2250)=3450s (vs. früher 2850s).
-            # Vinyl-Base=2700 bleibt begrenzt: min(2700, 1200+2250)=2700, kein Vinyl-Impact.
-            _PIPELINE_BUDGET_OVERHEAD_S = 1200.0
-            _PIPELINE_BUDGET_PER_SEC = 10.0
+            # §Spec04b Duration-Scaling: budget = min(base×scale, overhead + duration × factor).
+            # 1800s overhead + 15s/s audio: 225s→min(4200,5175)=4200s, 600s→min(6300,10800)=6300s.
+            # §v10.0.4: overhead 1200→1800, per_sec 10→15 — 225s Kassette brauchte 3454s;
+            # alte Formel (1200+2250=3450) war 4s zu knapp. Neue: 1800+3375=5175→4200 (746s Puffer).
+            # Für 600s-Songs skaliert base mit Duration-Scaling-Faktor.
+            _PIPELINE_BUDGET_OVERHEAD_S = 1800.0
+            _PIPELINE_BUDGET_PER_SEC = 15.0
+            # §Duration-Scaling: base budget skaliert mit Song-Länge für lange Songs (bis 600s)
+            _duration_scale_factor = max(1.0, _audio_duration_s / 225.0)
+            _pipeline_wall_budget_base_scaled = _pipeline_wall_budget_base * _duration_scale_factor
             _pipeline_wall_budget = min(
-                _pipeline_wall_budget_base,
+                _pipeline_wall_budget_base_scaled,
                 _PIPELINE_BUDGET_OVERHEAD_S + _audio_duration_s * _PIPELINE_BUDGET_PER_SEC,
             )
             if _pipeline_wall_budget < _pipeline_wall_budget_base:
@@ -36406,10 +36403,82 @@ class UnifiedRestorerV3:
                     _lp2a_lag,
                     _lp2a_lag / sample_rate * 1000,
                 )
+                # §G14-G15: Stereo-Lag-Korrektur mit Verifikation und Nachsteuerung.
+                # Lag > 50 samples (1ms) wird iterativ korrigiert und verifiziert.
+                _MIN_CORRECTABLE_LAG = 50
+                _MAX_LAG_CORRECTION_ATTEMPTS = 3
+                _lag_correction_applied = False
+                for _lag_attempt in range(_MAX_LAG_CORRECTION_ATTEMPTS):
+                    if abs(_lp2a_lag) <= _MIN_CORRECTABLE_LAG:
+                        break
+                    _lag_correction_applied = True
+                    _lag_abs = abs(_lp2a_lag)
+                    if _lp2a_lag < 0:
+                        # Negativer Lag: R-Kanal hängt hinter L → R nach vorne schieben
+                        current_audio[:, 1] = np.roll(current_audio[:, 1], -_lag_abs)
+                    else:
+                        # Positiver Lag: L-Kanal hängt hinter R → L nach vorne schieben
+                        current_audio[:, 0] = np.roll(current_audio[:, 0], -_lag_abs)
+                    # §Verifikation: Nach Korrektur erneut messen
+                    _lp2a_lag_verify = _gcc_lag(current_audio, sample_rate)
+                    logger.info(
+                        "§G14 Lag-Correction attempt %d/%d: %d→%d samples (%.1f→%.1f ms)",
+                        _lag_attempt + 1,
+                        _MAX_LAG_CORRECTION_ATTEMPTS,
+                        _lp2a_lag,
+                        _lp2a_lag_verify,
+                        _lp2a_lag / sample_rate * 1000,
+                        _lp2a_lag_verify / sample_rate * 1000,
+                    )
+                    if abs(_lp2a_lag_verify) <= _MIN_CORRECTABLE_LAG:
+                        logger.info("§G14 Lag-Correction: VERIFIED — residual %d samples < %d threshold",
+                                   _lp2a_lag_verify, _MIN_CORRECTABLE_LAG)
+                        _lp2a_lag = _lp2a_lag_verify
+                        break
+                    # Residual noch zu groß → nächster Versuch mit residualem Lag
+                    _lp2a_lag = _lp2a_lag_verify
+                    if _lag_attempt == _MAX_LAG_CORRECTION_ATTEMPTS - 1:
+                        logger.warning(
+                            "§G14 Lag-Correction: MAX_ATTEMPTS reached — residual %d samples (%.1f ms). "
+                            "STCG behandelt residuale per-Chunk-Variationen.",
+                            _lp2a_lag, _lp2a_lag / sample_rate * 1000,
+                        )
+                if _lag_correction_applied:
+                    _restoration_context["_lag_correction_post_pipeline"] = True
+                    _restoration_context["_lag_correction_residual"] = int(_lp2a_lag)
         except Exception as _lp2a_exc:
             logger.debug("LAG_PROBE_2a fehlgeschlagen: %s", _lp2a_exc)
 
-        # ── §v10 Cumulative Processing Budget Guard ──
+        # ── §v10.0.4 Post-Pipeline Plausibilitätsprüfung ──
+        # Versteckte Bugs erkennen: NaN, Clipping, Stille, Kanal-Drift
+        try:
+            _mono_check = current_audio if current_audio.ndim == 1 else current_audio.mean(axis=0)
+            _nan_count = int(np.isnan(_mono_check).sum())
+            _inf_count = int(np.isinf(_mono_check).sum())
+            _clip_count = int((np.abs(_mono_check) > 0.999).sum())
+            _rms = float(np.sqrt(np.mean(_mono_check.astype(np.float64) ** 2) + 1e-20))
+            _peak = float(np.max(np.abs(_mono_check)))
+            if _nan_count > 0:
+                logger.error("§PLAUSIBILITÄT: %d NaN-Samples im Output — Pipeline-Fehler!", _nan_count)
+            if _inf_count > 0:
+                logger.error("§PLAUSIBILITÄT: %d Inf-Samples im Output — Pipeline-Fehler!", _inf_count)
+            if _clip_count > len(_mono_check) * 0.01:
+                logger.warning("§PLAUSIBILITÄT: %.1f%% Clipping im Output (%d Samples)",
+                              _clip_count / len(_mono_check) * 100, _clip_count)
+            if _rms < 1e-8:
+                logger.error("§PLAUSIBILITÄT: Output ist Stille (RMS=%.2e) — Pipeline-Fehler!", _rms)
+            if _peak < 1e-6:
+                logger.error("§PLAUSIBILITÄT: Output-Peak %.2e — möglicher Null-Ausgang", _peak)
+            # Stereo-Kanal-Drift: wenn L und R stark unterschiedliche RMS haben
+            if current_audio.ndim == 2 and current_audio.shape[0] == 2:
+                _rms_l = float(np.sqrt(np.mean(current_audio[0].astype(np.float64) ** 2) + 1e-20))
+                _rms_r = float(np.sqrt(np.mean(current_audio[1].astype(np.float64) ** 2) + 1e-20))
+                _rms_ratio = max(_rms_l, _rms_r) / (min(_rms_l, _rms_r) + 1e-20)
+                if _rms_ratio > 3.0:
+                    logger.warning("§PLAUSIBILITÄT: Stereo-Kanal-Drift L=%.3f R=%.3f (Ratio=%.1f:1)",
+                                  _rms_l, _rms_r, _rms_ratio)
+        except Exception as _plausi_exc:
+            logger.debug("§PLAUSIBILITÄT: Prüfung fehlgeschlagen: %s", _plausi_exc)
         _cumulative_rms = 0.0
         if hasattr(self, "_cumulative_spectral_tilt"):
             _cumulative_rms = float(abs(getattr(self, "_cumulative_spectral_tilt", 0.0)))

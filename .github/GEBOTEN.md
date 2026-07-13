@@ -114,3 +114,12 @@ Jede G-Regel kann durch einen Linter automatisiert geprüft werden:
 | **G34** | Phase-07 Drive-Parameter MUSS aus Crest-Faktor (Peak/RMS) abgeleitet werden: `drive = 2.5 − crest * 0.15`. KEIN statischer Default 1.5 | Stark komprimiertes Material (Pop) vs. hochdynamisches (Klassik) brauchen unterschiedliche Sättigungs-Charakteristik | `phase_07_harmonic_restoration.py` §GEBOT-G07 |
 | **G35** | HF-Extender-Strength MUSS aus Bandbreiten-Defizit abgeleitet werden: `strength = base + deficit * factor`. KEINE statischen 0.4/0.25/0.3 | 8kHz-Quelle (Schellack) vs. 32kHz-Quelle (CD) brauchen fundamental unterschiedliche Stärke | `dsp/hf_extender.py` §GEBOT-G08 |
 | **G36** | Jede Restaurierungsphase MUSS einen `_derive_from_signal(audio, sr)`-Einstiegspunkt haben, der adaptive Parameter aus dem Eingangssignal berechnet. Statisch nur: FFT-Größen, COLA-Parameter, Frequenzband-Grenzen | Song-individuelle Optimierung erfordert Signalanalyse VOR Parameterfestlegung | Architektur-Prüfung aller `phase_*.py` |
+
+## Kategorie K: Budget & Integrität (2026-07-13)
+
+| ID | Gebot | Begründung | Fundstelle |
+|----|-------|-----------|------------|
+| **G37** | Pipeline-Wall-Budget MUSS mit Song-Länge skalieren: `base_scaled = base × max(1.0, duration/225)`. KEIN statischer Cap für alle Längen | 600s-Song mit 4200s-Budget = 11.7:1 Ratio → Phasen werden übersprungen | `unified_restorer_v3.py:_execute_pipeline` §Duration-Scaling |
+| **G38** | Overhead und Per-Second-Faktor MÜSSEN aus realen Runtime-Messungen kalibriert werden: `overhead=1800, per_sec=15` | 225s Kassette brauchte 3454s non-exempt; 1200+2250=3450 war 4s zu knapp | `unified_restorer_v3.py` §Spec04b |
+| **G39** | Stereo-Lag MUSS nach der Pipeline korrigiert, verifiziert und bei Bedarf nachgesteuert werden (bis zu 3 Versuche) | LAG_PROBE 0B: lag=0 → LAG_PROBE 2a: lag=-8777 → 183ms nie korrigiert | `unified_restorer_v3.py:LAG_PROBE_2a` §G14-G15 |
+| **G40** | Post-Pipeline MUSS eine strenge Plausibilitätsprüfung durchlaufen: NaN, Inf, Clipping, Stille, Kanal-Drift | Versteckte Pipeline-Fehler bleiben sonst unbemerkt bis zum Abhören | `unified_restorer_v3.py:§PLAUSIBILITÄT` |
