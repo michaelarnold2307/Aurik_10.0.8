@@ -214,7 +214,7 @@ def apply_dither(audio: np.ndarray, bit_depth: int = 16, *, seed: int | None = N
         return audio
 
     if _SCIPY_AVAILABLE:
-        logger.debug("Dithering: POW-r Type 3 applied (bit_depth=%d)", bit_depth)
+        logger.debug("💿 Dithering: POW-r Type 3 applied (bit_depth=%d)", bit_depth)
         return _apply_powr3_dither(audio, bit_depth, seed=seed, cd_active=cd_active)
 
     logger.warning("Dithering: scipy unavailable — TPDF fallback applied (bit_depth=%d).", bit_depth)
@@ -623,7 +623,7 @@ def export_audio(
         raise RuntimeError(f"Fehler beim Lesen der Audiodaten: {e}") from e
 
     logger.info(
-        "Export gestartet: path=%s, format=%s, bit_depth=%d, sr=%d, shape=%s, duration=%.1fs",
+        "💿 Export gestartet: path=%s, format=%s, bit_depth=%d, sr=%d, shape=%s, duration=%.1fs",
         export_path,
         export_format,
         bit_depth,

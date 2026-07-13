@@ -1372,7 +1372,7 @@ class UnifiedRestorerV3:
         no force-kill. Call this from the UI watchdog instead of terminate().
         """
         self._graceful_stop_event.set()
-        logger.info("UV3: §0c graceful stop requested — pipeline will export best checkpoint after current phase")
+        logger.info("🛡️ UV3: §0c graceful stop requested — pipeline will export best checkpoint after current phase")
 
     @staticmethod
     def _musical_gain_envelope(
@@ -7111,10 +7111,15 @@ class UnifiedRestorerV3:
             _denker_policy_input = {}
 
         def _cb(pct: float, phase: str) -> None:
-            """Sendet Progress-Update, falls Callback registriert."""
+            """Sendet Progress-Update mit Phasen-Icon, falls Callback registriert."""
+            try:
+                from backend.core.phase_icons import phase_icon as _picon
+                _icon = _picon(phase)
+            except Exception:
+                _icon = "🎵"
             if progress_callback is not None:
                 try:
-                    progress_callback(pct, phase, time.time() - start_time)
+                    progress_callback(pct, f"{_icon} {phase}", time.time() - start_time)
                 except Exception as _cb_exc:
                     logger.debug(
                         "Progress-Callback fehlgeschlagen (Ursache: %s). "
@@ -9198,10 +9203,10 @@ class UnifiedRestorerV3:
                 logger.debug("§2.25 ReferenceAnchor context set non-blocking: %s", _ra_ctx_exc)
 
         # Step 1: Defect Scanning (Cache-First — kein Mehrfach-Scan §9.4)
-        logger.info("Step 1/4: Defect Scanning...")
+        logger.info("🔍 Step 1/4: Defect Scanning...")
         if _cached_defect_kwarg is not None:
             defect_result = _cached_defect_kwarg
-            logger.info("Step 1/4: Verwende gecachten DefectScan (kein Mehrfach-Scan).")
+            logger.info("🔍 Step 1/4: Verwende gecachten DefectScan (kein Mehrfach-Scan).")
         else:
             # §2.31d: > 60 min → DefectScanner auf 3×60-s-Segmente (Anfang/Mitte/Ende).
             # Verhindert OOM bei sehr langen Dateien; 3 repr. Segmente reichen für
@@ -10579,7 +10584,7 @@ class UnifiedRestorerV3:
         if _pmgg_restorability_score > 80 and _input_snr_db > 40.0:
             self._metadata["high_restorability_gate"] = True  # type: ignore[attr-defined]  # basierend auf Defekten
         _cb(16, "Phasenauswahl…")
-        logger.info("Step 2/4: Phase Selection...")
+        logger.info("📋 Step 2/4: Phase Selection...")
         if _precomputed_phase_plan:
             # §PID: PhaseInteractionDenker hat Orchestrierung übernommen.
             # UV3 verwendet den extern berechneten Plan deterministisch.
@@ -11333,7 +11338,7 @@ class UnifiedRestorerV3:
             logger.debug("PhonemeTimeline nicht verfügbar: %s", _ptl_exc)
 
         # Step 4: Execute Phases — mit EnsembleProcessor-Konsens (§2.21)
-        logger.info("Step 3/4: Executing Restoration Pipeline (EnsembleProcessor)...")
+        logger.info("🔧 Step 3/4: Executing Restoration Pipeline (EnsembleProcessor)...")
         # §11.4 Stufen-Vorab-Meldung: Gesamtzahl der UV3-Phasen ans Frontend melden,
         # damit die Anzeige "Stufe X / Y" von Anfang an korrekt ist (kein Hochzählen).
         _cb(19, f"__total_uv3_phases__:{len(selected_phases)}")
@@ -16059,7 +16064,7 @@ class UnifiedRestorerV3:
             )
 
         # Step 5: Performance Report
-        logger.info("Step 4/4: Generating Report...")
+        logger.info("📊 Step 4/4: Generating Report...")
         try:
             perf_report = self.performance_guard.get_performance_report() if self.performance_guard else None
         except RuntimeError:

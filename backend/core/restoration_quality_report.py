@@ -185,7 +185,7 @@ def compute_quality_report(
     report.computation_time_s = time.time() - t0
 
     logger.info(
-        "Quality Report: overall=%.0f ready=%s time=%.1fs",
+        "📊 Quality Report: overall=%.0f ready=%s time=%.1fs",
         report.overall_score,
         report.blind_test_ready,
         report.computation_time_s,

@@ -415,7 +415,7 @@ def inject_cd_noise_profile(
     noise_peak_db = 20.0 * np.log10(max(diff_max, 1e-15))
 
     logger.info(
-        "CD-Noise SOTA [%s/%d-bit]: SNR %.1f -> %.1f dB | "
+        "💿 CD-Noise SOTA [%s/%d-bit]: SNR %.1f -> %.1f dB | "
         "active: %d/%d (%.1f%%) | peak: %.1f dBFS | onset: %.4f | seed=%d",
         mode, bit_depth, snr_before, snr_after,
         active_samples, len(mono), 100.0 * active_samples / max(len(mono), 1),
