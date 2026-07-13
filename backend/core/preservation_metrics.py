@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 # ── §G46 Harmonic Preservation ──────────────────────────────────────────
 
-
 def compute_harmonic_preservation_score(
     original: np.ndarray,
     processed: np.ndarray,
@@ -36,126 +35,181 @@ def compute_harmonic_preservation_score(
     *,
     f0_min: float = 80.0,
     f0_max: float = 1200.0,
-    n_harmonics: int = 12,
+    n_harmonics: int = 8,
 ) -> float:
-    """§G46: Vergleicht harmonische Struktur vor/nach Processing.
+    """§G46: Harmonic Preservation via Harmonic-to-Noise Ratio (HNR).
 
-    Algorithmus:
-    1. STFT auf beiden Signalen (2048-pt, 50% Overlap)
-    2. Für jeden Frame mit genug Energie: finde F0 via HPS (Harmonic Product Spectrum)
-    3. Extrahiere harmonische Peaks bei n·F0 für n=1..n_harmonics
-    4. Berechne Pearson-Korrelation der harmonischen Amplituden-Vektoren
-    5. Gewichteter Mittelwert über alle Frames
+    Compares HNR before/after processing across voiced frames.
+    HNR = energy at harmonic frequencies / energy between harmonics.
+    A significant HNR drop indicates harmonic structure damage.
 
-    Returns: float [0,1] — 1.0 = identische harmonische Struktur.
+    Algorithm:
+    1. Detect F0 per frame via autocorrelation
+    2. For voiced frames: measure harmonic energy (at n·F0 ± 5% bandwidth)
+       and inter-harmonic noise energy (between harmonics)
+    3. Compute HNR ratio: HNR_processed / HNR_original per frame
+    4. Weight by frame energy, average across frames
+    5. Score = weighted average of min(ratio, 1.0)
+
+    Sensitive to: over-smoothing, harmonic loss, excessive denoising,
+    over-compression, lowpass filtering, spectral flattening.
     """
-    mono_orig = _to_mono(original)
-    mono_proc = _to_mono(processed)
-    n_min = min(len(mono_orig), len(mono_proc))
-    if n_min < 4096:
+    orig = _to_mono(original)
+    proc = _to_mono(processed)
+    n = min(len(orig), len(proc))
+    if n < 4096:
         return 1.0
+    orig = orig[:n].astype(np.float64)
+    proc = proc[:n].astype(np.float64)
 
-    mono_orig = mono_orig[:n_min].astype(np.float64)
-    mono_proc = mono_proc[:n_min].astype(np.float64)
-
-    n_fft = 2048
-    hop = n_fft // 2
-    n_frames = (n_min - n_fft) // hop + 1
+    # Frame-based analysis
+    frame_len = int(0.050 * sr)  # 50ms frames
+    hop = frame_len // 2
+    n_frames = (n - frame_len) // hop + 1
     if n_frames < 3:
         return 1.0
 
-    win = np.hanning(n_fft)
-    scores = []
+    win = np.hanning(frame_len)
+    hnr_ratios = []
     weights = []
 
     for i in range(n_frames):
         start = i * hop
-        fo = mono_orig[start : start + n_fft] * win
-        fp = mono_proc[start : start + n_fft] * win
+        fo = orig[start : start + frame_len] * win
+        fp = proc[start : start + frame_len] * win
 
-        energy_o = float(np.sum(fo**2))
-        if energy_o < 1e-10:
+        # Frame energy
+        e_o = float(np.sum(fo**2))
+        if e_o < 1e-10:
             continue
 
-        spec_o = np.abs(np.fft.rfft(fo))
-        spec_p = np.abs(np.fft.rfft(fp))
-        freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
-
-        # Rough F0 estimation via HPS (harmonic product spectrum)
-        f0 = _estimate_f0_hps(spec_o, freqs, f0_min, f0_max)
+        # Detect F0
+        f0 = _detect_f0_autocorr(fo, sr, f0_min, f0_max)
         if f0 is None:
+            # Unvoiced: skip (harmonic preservation only matters in voiced frames)
             continue
 
-        # Extract harmonic amplitudes at n·F0
-        harm_amps_o = np.zeros(n_harmonics, dtype=np.float64)
-        harm_amps_p = np.zeros(n_harmonics, dtype=np.float64)
-        for h in range(1, n_harmonics + 1):
-            target_hz = f0 * h
-            if target_hz >= sr / 2:
-                break
-            idx = np.argmin(np.abs(freqs - target_hz))
-            # Use peak within ±1 bin
-            lo = max(0, idx - 1)
-            hi = min(len(freqs) - 1, idx + 2)
-            harm_amps_o[h - 1] = np.max(spec_o[lo:hi])
-            harm_amps_p[h - 1] = np.max(spec_p[lo:hi])
+        # Compute HNR for original and processed
+        hnr_o = _compute_hnr(fo, sr, f0, n_harmonics)
+        hnr_p = _compute_hnr(fp, sr, f0, n_harmonics)
 
-        # Normalize to fundamental
-        if harm_amps_o[0] > 0 and harm_amps_p[0] > 0:
-            harm_amps_o /= harm_amps_o[0]
-            harm_amps_p /= harm_amps_p[0]
+        if hnr_o is None or hnr_p is None or hnr_o < 1e-3:
+            continue
 
-        # Correlation of harmonic profiles
-        so = float(np.std(harm_amps_o))
-        sp = float(np.std(harm_amps_p))
-        if so < 1e-10 or sp < 1e-10:
-            score = 1.0 if np.allclose(harm_amps_o[:4], harm_amps_p[:4], atol=0.1) else 0.5
-        else:
-            corr = float(
-                np.dot(harm_amps_o - np.mean(harm_amps_o), harm_amps_p - np.mean(harm_amps_p))
-                / (len(harm_amps_o) * so * sp + 1e-12)
-            )
-            score = max(0.0, min(1.0, (corr + 1.0) / 2.0))
+        # HNR ratio: processed / original
+        # > 1.0 = processing ADDED harmonics (unlikely but possible)
+        # < 1.0 = processing LOST harmonics
+        ratio = hnr_p / hnr_o
 
-        scores.append(score)
-        weights.append(energy_o)
+        hnr_ratios.append(min(ratio, 1.0))  # Cap at 1.0 (no bonus for adding harmonics)
+        weights.append(e_o)
 
-    if not scores:
-        return 1.0
+    if not hnr_ratios:
+        # No voiced frames found: fall back to spectral flatness
+        return _harmonic_fallback_flatness(orig, proc, sr)
 
     weights = np.array(weights, dtype=np.float64)
     weights /= np.sum(weights) + 1e-10
-    return float(np.dot(scores, weights))
+    return float(np.dot(hnr_ratios, weights))
 
 
-def _estimate_f0_hps(
-    spec: np.ndarray, freqs: np.ndarray, f0_min: float, f0_max: float
+def _detect_f0_autocorr(
+    signal: np.ndarray, sr: int, f0_min: float, f0_max: float
 ) -> float | None:
-    """Grobe F0-Schätzung via Harmonic Product Spectrum."""
-    n_bins = len(spec)
-    max_harmonics = 4
-    hps = spec.copy()
-    for h in range(2, max_harmonics + 1):
-        downsampled = spec[::h]
-        hps[: len(downsampled)] *= downsampled
+    """Detect F0 via autocorrelation (robust, no FFT dependency)."""
+    max_lag = int(sr / f0_min)
+    min_lag = int(sr / f0_max)
+    if max_lag >= len(signal) or min_lag < 2:
+        return None
+    # Autocorrelation
+    s = signal - np.mean(signal)
+    corr = np.correlate(s, s, mode='full')
+    corr = corr[len(corr)//2:]  # Keep positive lags
+    corr[:min_lag] = 0.0
+    if len(corr) <= max_lag:
+        return None
+    peak_idx = int(np.argmax(corr[min_lag:max_lag])) + min_lag
+    # Confidence: peak height relative to zero-lag
+    confidence = corr[peak_idx] / max(corr[0], 1e-15)
+    if confidence < 0.15:
+        return None
+    return sr / peak_idx
 
-    i_min = np.searchsorted(freqs, f0_min)
-    i_max = np.searchsorted(freqs, f0_max)
-    i_min = max(0, min(i_min, n_bins - 1))
-    i_max = max(i_min + 1, min(i_max, n_bins))
 
-    if i_max <= i_min:
+def _compute_hnr(
+    signal: np.ndarray, sr: int, f0: float, n_harmonics: int
+) -> float | None:
+    """Compute Harmonic-to-Noise Ratio in dB."""
+    n_fft = 4096
+    if n_fft >= len(signal):
+        n_fft = 1
+        while n_fft < len(signal):
+            n_fft <<= 1
+    win = np.hanning(min(n_fft, len(signal)))
+    spec = np.abs(np.fft.rfft(signal[:n_fft] * win, n=n_fft))
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+
+    # Harmonic energy: narrow bands around n·F0 (±5% bandwidth)
+    harm_energy = 0.0
+    harm_mask = np.zeros(len(freqs), dtype=bool)
+    for k in range(1, n_harmonics + 1):
+        hz = f0 * k
+        if hz >= sr / 2:
+            break
+        bw = hz * 0.05  # ±5%
+        lo = int(np.searchsorted(freqs, hz - bw))
+        hi = int(np.searchsorted(freqs, hz + bw, side='right'))
+        lo = max(0, lo)
+        hi = min(len(freqs) - 1, hi)
+        if hi > lo:
+            harm_energy += float(np.sum(spec[lo:hi]**2))
+            harm_mask[lo:hi] = True
+
+    if harm_energy < 1e-20:
         return None
 
-    peak_idx = i_min + int(np.argmax(hps[i_min:i_max]))
-    peak_mag = hps[peak_idx]
-    mean_mag = np.mean(hps[i_min:i_max])
+    # Noise energy: everything outside harmonic bands (in voiced range)
+    voice_range = (freqs >= 80.0) & (freqs <= min(f0 * n_harmonics * 1.1, sr / 2))
+    noise_mask = voice_range & (~harm_mask)
+    if not np.any(noise_mask):
+        return 100.0  # Pure harmonics, no noise
 
-    if peak_mag < mean_mag * 3.0:
-        return None  # No clear F0
+    noise_energy = float(np.sum(spec[noise_mask]**2))
+    if noise_energy < 1e-20:
+        return 100.0
 
-    return float(freqs[peak_idx])
+    hnr = harm_energy / noise_energy
+    return float(hnr)
 
+
+def _harmonic_fallback_flatness(
+    orig: np.ndarray, proc: np.ndarray, sr: int
+) -> float:
+    """Fallback: compare spectral flatness in midrange."""
+    n_fft = 4096
+    if len(orig) < n_fft:
+        n_fft = 1
+        while n_fft < len(orig):
+            n_fft <<= 1
+    win = np.hanning(min(n_fft, len(orig)))
+    so = np.abs(np.fft.rfft(orig[:n_fft] * win, n=n_fft))
+    sp = np.abs(np.fft.rfft(proc[:n_fft] * win, n=n_fft))
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+    mask = (freqs >= 300) & (freqs <= 4000)
+    if not np.any(mask):
+        return 1.0
+    # Spectral flatness: geometric mean / arithmetic mean
+    def _flatness(x):
+        x = np.maximum(x, 1e-15)
+        return float(np.exp(np.mean(np.log(x))) / np.mean(x))
+    fo = _flatness(so[mask])
+    fp = _flatness(sp[mask])
+    # Flatter spectrum = less harmonic structure = damaged
+    # Ratio: fp/fo > 1 means processing flattened the spectrum
+    if fo < 1e-10:
+        return 1.0
+    ratio = min(fo, fp) / max(fo, fp)
+    return float(ratio)
 
 # ── §G47 Transient Preservation ─────────────────────────────────────────
 
