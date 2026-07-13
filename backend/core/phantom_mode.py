@@ -51,7 +51,7 @@ class PhantomDetector:
             "shellac": {"bw_hz": 5500, "noise_floor_db": -35, "typical_era": (1920, 1955)},
             "vinyl": {"bw_hz": 18000, "noise_floor_db": -55, "typical_era": (1950, 1990)},
             "tape": {"bw_hz": 14000, "noise_floor_db": -50, "typical_era": (1950, 1995)},
-            "cassette": {"bw_hz": 12000, "noise_floor_db": -45, "typical_era": (1970, 2005)},
+            "cassette": {"bw_hz": 14000, "noise_floor_db": -45, "typical_era": (1970, 2005)},  # §6.2c central definition
             "digital": {"bw_hz": 22000, "noise_floor_db": -80, "typical_era": (1985, 2026)},
         }
 

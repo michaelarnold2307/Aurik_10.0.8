@@ -1349,7 +1349,7 @@ _PHASE_STRENGTH_RANGES: dict[str, dict[str, tuple[float, float]]] = {
         # tape_analog biases differ significantly from vinyl (analog) — must NOT fall back
         # to default (0.05, 1.0) which would allow unrestricted processing on fragile medium.
         "phase_03_denoise": (0.15, 0.80),  # Tape hiss more severe than vinyl surface noise
-        "phase_06_frequency_restoration": (0.10, 0.55),  # BW ceiling: reel ≤14kHz, cassette ≤12kHz
+        "phase_06_frequency_restoration": (0.10, 0.55),  # BW ceiling: reel <=14kHz, cassette <=14kHz (§6.2c)
         "phase_07_harmonic_restoration": (0.10, 0.45),  # BW ceiling lower than vinyl
         "phase_09_crackle_removal": (0.05, 0.40),  # Tape has dropouts, not click crackle → low
         "phase_12_wow_flutter_fix": (0.15, 0.75),  # Tape W&F stronger than vinyl (IEC 0.2% WRMS)

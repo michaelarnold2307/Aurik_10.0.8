@@ -2609,8 +2609,8 @@ class UnifiedRestorerV3:
             "shellac": 5500,
             "wax_cylinder": 3500,
             "vinyl": 14000,
-            "tape": 12000,
-            "cassette": 12000,
+            "tape": 15000,  # §6.2c central definition
+            "cassette": 14000,  # §6.2c central definition
             "reel_tape": 15000,
             "wire_recording": 5000,
             "cd_digital": 20000,

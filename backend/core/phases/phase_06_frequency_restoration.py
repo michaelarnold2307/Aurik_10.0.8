@@ -700,7 +700,7 @@ class FrequencyRestorationPhase(PhaseInterface):
             "wax_cylinder": 3000.0,  # §ERA 1900-1925: max 3 kHz (v9.12.9)
             "vinyl": 16000.0,
             "reel_tape": 18000.0,
-            "cassette": 12000.0,  # V33/§6.2c: IEC 60094-1 Type I BW-Ceiling 12 kHz (fix: war 15 kHz)
+            "cassette": 14000.0,  # §6.2c delegated to central definition (carrier_transfer_characteristics)
         }
         _mat_key_06 = str(material_type).lower().replace(" ", "_").replace("-", "_")
         _bw_cap_hz = _BW_CEILING_HZ.get(_mat_key_06)

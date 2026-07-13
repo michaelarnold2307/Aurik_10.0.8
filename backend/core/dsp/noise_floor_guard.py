@@ -54,7 +54,7 @@ _MATERIAL_NOISE_CUTOFF_HZ: dict[str, float] = {
     "reel_tape": 16000.0,
     "tape": 16000.0,
     "vinyl": 18000.0,
-    "cassette": 12000.0,
+    "cassette": 14000.0,
 }
 
 

@@ -739,7 +739,7 @@ class HarmonicRestorationPhase(PhaseInterface):
             "wax_cylinder": 3000.0,  # §ERA 1900-1925 Sekundär-Guard (v9.12.9)
             "vinyl": 16000.0,
             "reel_tape": 15000.0,  # §6.2c Tape = 15 kHz (IEC)
-            "cassette": 12000.0,  # §6.2c Cassette = 12 kHz (IEC 60094-1 Type I)
+            "cassette": 14000.0,  # §6.2c Cassette = 14 kHz (central definition)
         }
         _mat_key_07 = str(material_type).lower().replace(" ", "_").replace("-", "_")
         _bw_cap_07 = _BW_CEILING_07.get(_mat_key_07)
@@ -788,7 +788,7 @@ class HarmonicRestorationPhase(PhaseInterface):
                 "wax_cylinder": 3000.0,  # §ERA 1900-1925 Sekundär-Guard (v9.12.9)
                 "vinyl": 16000.0,
                 "reel_tape": 15000.0,  # §6.2c Tape = 15 kHz (IEC)
-                "cassette": 12000.0,  # §6.2c Cassette = 12 kHz (IEC 60094-1 Type I)
+                "cassette": 14000.0,  # §6.2c Cassette = 14 kHz (central definition)
             }
             _bw_ceiling_07 = _BW_CEILINGS_07.get(str(material_type).lower().replace(" ", "_"))
             _hg_result07 = _check_hg07(

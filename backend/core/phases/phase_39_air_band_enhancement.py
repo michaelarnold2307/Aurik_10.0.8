@@ -132,9 +132,9 @@ class AirBandEnhancement(PhaseInterface):
             "exciter_mix": 0.28,  # v9.10.114: ↑0.20→0.28
             "saturation_drive": 0.20,  # v9.10.114: ↑0.15→0.20
         },
-        MaterialType.CASSETTE: {  # v9.12.9: §6.2c BW-Ceiling 12 kHz (IEC 60094-1 Type I) — konservativ
-            "shelf_gain_db": 3.0,  # ≤ 0.35 Stärke — kein HF über 12 kHz synthetisieren
-            "shelf_freq_hz": 10000,  # Unter 12-kHz-Ceiling bleiben
+        MaterialType.CASSETTE: {  # §6.2c BW-Ceiling 14 kHz (central definition) — konservativ
+            "shelf_gain_db": 3.0,  # ≤ 0.35 Stärke — kein HF über 14 kHz synthetisieren
+            "shelf_freq_hz": 10000,  # Unter 14-kHz-Ceiling bleiben
             "exciter_mix": 0.18,
             "saturation_drive": 0.15,
         },

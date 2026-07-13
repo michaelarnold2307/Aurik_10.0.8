@@ -48,7 +48,7 @@ _MATERIAL_BW_CEILING_HZ: dict[str, int] = {
     "vinyl": 20000,  # Vinyl-Pressungen — voller Bereich; keine Einschränkung
     "tape": 15000,  # Analogband, beste Bedingungen (DIN 45511)
     "reel_tape": 15000,  # Tonband/Spule (identisch)
-    "cassette": 12000,  # Kassette Type I IEC 60094-1 bei 4,75 cm/s
+    "cassette": 14000,  # §6.2c central definition
     "cd_digital": 22050,  # CD-Nyquist
     "dat": 22050,  # DAT-Nyquist
     "md": 20000,  # MiniDisc ATRAC

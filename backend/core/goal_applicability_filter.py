@@ -93,7 +93,7 @@ _MATERIAL_BW_CEILING_HZ: dict[str, float] = {
     "shellac": 8000.0,
     "acoustic_78": 8000.0,
     "lacquer_disc": 12000.0,
-    "cassette": 12000.0,  # IEC 60094-1 Type I default (unknown type → conservative)
+    "cassette": 14000.0,  # central definition default (unknown type → conservative)
     "tape": 15000.0,
     "reel_tape": 18000.0,
 }

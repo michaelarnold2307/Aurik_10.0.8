@@ -110,7 +110,7 @@ _MATERIAL_BW_CEILING_HZ: dict[str, float] = {
     "shellac": 8000.0,
     "lacquer_disc": 10000.0,
     "vinyl": 16000.0,
-    "cassette": 12000.0,  # IEC 60094-1 Type I default; Type II Chrome ≤ 15 kHz (unknown type → conservative)
+    "cassette": 14000.0,  # central definition default; Type II Chrome ≤ 15 kHz (unknown type → conservative)
     "reel_tape": 18000.0,
     "tape": 16000.0,
     "dat": 22000.0,

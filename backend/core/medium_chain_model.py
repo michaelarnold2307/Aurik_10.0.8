@@ -91,7 +91,7 @@ class PhysicalMediumChainModel:
 
     # Tape HF-Rolloff Profile (Rolloff-Frequenz bei -3dB, typisch bei Aufnahmen)
     TAPE_HF_ROLLOFF: dict[MaterialType, float] = {
-        MaterialType.TAPE: 12000.0,  # Kassette: ~12 kHz
+        MaterialType.TAPE: 15000.0,  # §6.2c central definition (tape = 15 kHz)
         MaterialType.REEL_TAPE: 18000.0,  # Profibandmaschine: ~18 kHz bei 15 ips
     }
 
