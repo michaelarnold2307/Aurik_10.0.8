@@ -11926,6 +11926,8 @@ class ModernMainWindow(QMainWindow):
         self._uv3: dict[str, Any] = {"active": False, "count": 0, "idx": 0, "started_at": 0.0, "pct": 0.0}
         self._uv3_lock = threading.Lock()
         self._watchdog_timer = None
+        self._watchdog_budget_timer = None
+        self._watchdog_dialog_count = 0
         self._last_item_progress_done: int = 0
         self._latest_experience_insights: dict[str, Any] = {}
         self._mos_anim_timer = None
@@ -18616,24 +18618,31 @@ class ModernMainWindow(QMainWindow):
         # Watchdog-Timer: feuert wenn Verarbeitung zu lange hängt (z. B. blockierender ONNX-Call).
         # Budget muss großzügiger sein als PerformanceGuard (LIMIT_MAXIMUM=32×, plus
         # Post-Pipeline-Analytik, FeedbackChain 5×5 Iterationen, PMGG-Retries).
-        # Formel: 32× Audiodauer + 30 Min Overhead, Minimum 90 Min (= MAX_ABSOLUTE_SECONDS).
+        # §v10.15: 36×RT + 10min Overhead, Minimum 90 Min. ROCm-ML braucht 30–35×RT.
         _audio_dur_s = 0.0
         _ww = getattr(self, "waveform_widget", None)
         if _ww is not None and getattr(_ww, "audio_data", None) is not None:
             _sr = max(1, getattr(_ww, "sample_rate", 48000))
             _audio_dur_s = _ww.audio_data.shape[0] / _sr
-        _per_file_ms = max(900_000, int(_audio_dur_s * 8_000) + 300_000)  # 8×RT + 5min overhead
+        _per_file_ms = max(1_800_000, int(_audio_dur_s * 36_000) + 600_000)  # 36×RT + 10min overhead
         _watchdog_ms = max(5_400_000, stats["pending"] * _per_file_ms)
         # ── §WATCHDOG-STARTUP-CHECK ──────────────────────────────────
         logger.info("Watchdog: W-PREANALYSIS-LIVENESS ✅ — 60s ohne _cb() → Force-Finalize")
         logger.info("Watchdog: W-PROGRESS-STALE ✅ — Bar-Step-Abweichung >15% → WARNING")
         logger.info("Watchdog: W-GATE-STUCK ✅ — 1-Flag >120s → Force-Finalize")
-        logger.info("Watchdog: W-WALL-CLOCK ✅ — Timeout: %.0fs", _watchdog_ms / 1000)
+        logger.info("Watchdog: W-WALL-CLOCK ✅ — Timeout: %.0fs (Dialog bei 75%%)", _watchdog_ms / 1000)
         if self._watchdog_timer is None:
             self._watchdog_timer = QTimer(self)
             self._watchdog_timer.setSingleShot(True)
             self._watchdog_timer.timeout.connect(self._on_watchdog_timeout)
+        if self._watchdog_budget_timer is None:
+            self._watchdog_budget_timer = QTimer(self)
+            self._watchdog_budget_timer.setSingleShot(True)
+            self._watchdog_budget_timer.timeout.connect(self._on_watchdog_budget_warning)
+        _budget_warning_ms = int(_watchdog_ms * 0.75)
         self._watchdog_timer.start(_watchdog_ms)
+        self._watchdog_budget_timer.start(_budget_warning_ms)
+        self._watchdog_dialog_count = 0
         logger.info(
             "Watchdog-Timer gestartet: %.0f s (Audio %.0f s, %d Dateien)",
             _watchdog_ms / 1000,
@@ -18663,7 +18672,7 @@ class ModernMainWindow(QMainWindow):
             return  # Watchdog nicht aktiv (Batch bereits abgeschlossen oder gestoppt)
         # Noch verbleibende ausstehende Dateien (aktuelle Datei + noch nicht gestartete)
         _pending = max(1, self.batch_queue.get_stats().get("pending", 1))
-        _per_file_ms = max(900_000, int(audio_duration_s * 8_000) + 300_000)
+        _per_file_ms = max(1_800_000, int(audio_duration_s * 36_000) + 600_000)  # 36×RT
         _watchdog_ms = max(5_400_000, _pending * _per_file_ms)
         self._watchdog_timer.start(_watchdog_ms)
         logger.debug(
@@ -18673,6 +18682,73 @@ class ModernMainWindow(QMainWindow):
             _pending,
         )
 
+
+    def _on_watchdog_budget_warning(self):
+        """§v10.15 Budget-Warnung: Dialog VOR dem harten Watchdog.
+
+        Zeigt einen Dialog mit drei Optionen, während die Pipeline weiterläuft.
+        Bei Abwesenheit des Nutzers (60s Timeout) → Vollqualität fortsetzen.
+        """
+        if not (self.batch_thread and self.batch_thread.isRunning()):
+            return
+        self._watchdog_dialog_count += 1
+        _elapsed = 0
+        if hasattr(self.batch_thread, "_start_ts"):
+            _elapsed = int((time.monotonic() - self.batch_thread._start_ts) / 60)
+        logger.info(
+            "§v10.15 Budget-Warnung #%d: Pipeline laeuft seit %d min",
+            self._watchdog_dialog_count, _elapsed,
+        )
+        _msg = QMessageBox(self)
+        _msg.setWindowTitle("Aurik – Zeitbudget")
+        _msg.setIcon(QMessageBox.Question)
+        _msg.setText(
+            "Die Restauration laeuft seit " + str(_elapsed) + " Minuten. "
+            "Die Pipeline arbeitet unveraendert weiter."
+        )
+        _msg.setInformativeText(
+            "Wie moechtest Du fortfahren?\n\n"
+            "  [Maximal weitermachen]  – beste Qualitaet, laengere Wartezeit\n"
+            "  [Phasen ueberspringen]  – etwas schneller fertig\n"
+            "  [Nochmal fragen]        – jetzt nicht entscheiden\n\n"
+            "Ohne Antwort in 60 s: Maximal weitermachen."
+        )
+        _btn_continue = _msg.addButton("Maximal weitermachen", QMessageBox.AcceptRole)
+        _btn_skip = _msg.addButton("Phasen ueberspringen", QMessageBox.DestructiveRole)
+        _btn_later = _msg.addButton("Nochmal fragen", QMessageBox.ResetRole)
+        _msg.setDefaultButton(_btn_continue)
+        _auto = QTimer(self)
+        _auto.setSingleShot(True)
+        def _on_auto():
+            try:
+                if not _msg.isHidden():
+                    _msg.done(0)
+            except Exception:
+                pass
+        _auto.timeout.connect(_on_auto)
+        _auto.start(60_000)
+        _msg.exec_()
+        _auto.stop()
+        _clicked = _msg.clickedButton()
+        if _clicked is _btn_skip:
+            logger.info("§v10.15 Nutzer: Phasen ueberspringen")
+            try:
+                _uv3 = _bridge_get_unified_restorer_v3_instance()
+                if _uv3 is not None:
+                    _uv3.request_graceful_stop()
+            except Exception as _exc:
+                logger.debug("UV3 signal failed: %s", _exc)
+            return
+        if _clicked is _btn_later:
+            _extend_ms = 15 * 60_000
+            self._watchdog_dialog_count -= 1
+        else:
+            _extend_ms = int(self._watchdog_timer.interval() * 0.50)
+            logger.info("§v10.15 Vollqualitaet fortsetzen (+%.0f min)", _extend_ms / 60_000)
+        _new = self._watchdog_timer.interval() + _extend_ms
+        self._watchdog_timer.start(_new)
+        self._watchdog_budget_timer.start(int(_new * 0.75))
+        self.title_bar.set_status("Maximale Qualitaet – laeuft weiter …", "#68A068")
     def _on_watchdog_timeout(self):
         """§0c Watchdog: Zeitlimit — graceful stop statt hartem Kill.
 
