@@ -20039,6 +20039,17 @@ class UnifiedRestorerV3:
 
         return result
 
+    def get_phase_progress(self) -> dict:
+        """§v10.15 Phase progress for Watchdog dialog enrichment."""
+        try:
+            from backend.core.pipeline_budget_controller import PipelineBudgetController
+        except ImportError:
+            return {"current": 0, "total": 0, "name": "", "elapsed_non_exempt_s": 0.0}
+        if not hasattr(self, "_pbc") or self._pbc is None:
+            return {"current": 0, "total": 0, "name": "", "elapsed_non_exempt_s": 0.0}
+        return self._pbc.get_progress()
+
+
     def restore_from_checkpoint(
         self,
         checkpoint: "RecoveryCheckpoint",
