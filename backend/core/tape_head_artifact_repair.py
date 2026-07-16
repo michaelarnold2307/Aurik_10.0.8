@@ -173,6 +173,20 @@ class TapeHeadArtifactRepair:
         if abs(mean_phase_diff) < np.radians(5):
             return result
 
+        # §v10.16 Coherence-Guard: Stereo-Panning erzeugt Phasendifferenzen
+        # die KEINE Azimuth-Fehler sind. Nur korrigieren, wenn die Kanäle
+        # tatsächlich das gleiche Signal enthalten (korreliert sind).
+        # Unkorreliertes Material → Phasenkorrektur = Kammfilter = zerstoerte Baesse.
+        _mean_corr_az = float(np.corrcoef(left[:min(n, sr*5)], right[:min(n, sr*5)]).flat[1])
+        _mean_corr_az = abs(_mean_corr_az) if np.isfinite(_mean_corr_az) else 1.0
+        if _mean_corr_az < 0.40:
+            logger.info(
+                "§AP Azimuth: inter-channel correlation=%.3f < 0.40 — "
+                "stereo panning, NOT azimuth error — skipping correction",
+                _mean_corr_az,
+            )
+            return result
+
         logger.info("§AP Azimuth correction: %.1f° phase shift", np.degrees(mean_phase_diff))
 
         # Phasen-Korrektur auf rechtem Kanal
