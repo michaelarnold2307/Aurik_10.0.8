@@ -1625,6 +1625,7 @@ class BatchProcessingThread(QThread):
     def run(self):
         """Verarbeitet all items in queue with visualization updates."""
         logger.info("BatchProcessingThread.run() START")
+        self._start_ts = time.monotonic()  # §v10.15 Watchdog-Dialog
         try:
             # P1: Core-Imports AUSSCHLIEßLICH über Bridge (§11 Spec 08)
             # Singleton-Accessor: sichert Single-Orchestrator Ownership pro Prozess
