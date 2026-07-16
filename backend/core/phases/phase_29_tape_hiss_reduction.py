@@ -433,6 +433,18 @@ class TapeHissReductionPhase(PhaseInterface):
         check_ml_model_ready("PANNs", phase_name="29")
         check_ml_model_ready("DeepFilterNetV3", phase_name="29")
         """
+        # §v10.15 Type-Guard: ensure audio is ndarray, not a tuple
+        if not isinstance(audio, np.ndarray):
+            if isinstance(audio, (tuple, list)):
+                logger.error("phase_29 received %s instead of ndarray — extracting first element", type(audio).__name__)
+                audio = audio[0] if len(audio) > 0 else np.zeros(1, dtype=np.float32)
+            audio = np.asarray(audio, dtype=np.float32)
+        # Normalize orientation
+        _p29_was_channels_first = False
+        if audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] > 2:
+            audio = np.ascontiguousarray(audio.T)
+            _p29_was_channels_first = True
+
         Verarbeitet audio to reduce tape hiss with ML-Hybrid support.
 
         Args:

@@ -855,6 +855,8 @@ class CrackleRemovalPhase(PhaseInterface):
         assert sample_rate == 48000, f"SR must be 48000 Hz, got: {sample_rate}"
         audio, _p09_transposed = to_channels_last(audio)
         start_time = time.time()
+        # §v10.15 Shape-Invariante: garantierte (N,2)-Orientierung für Stereo
+        _p09_stereo = audio.ndim == 2 and audio.shape[1] == 2
 
         # §4.6b: Pre-phase eviction — free previous phase models to prevent OOM
         try:
@@ -1116,18 +1118,30 @@ class CrackleRemovalPhase(PhaseInterface):
                 log_mode_decision("phase_09", False, reason)
 
         # DSP-based processing (fallback or FAST mode)
+        # §v10.15: Mono-Arbeitskopie — verhindert (2,) vs (N,) Broadcast-Fehler
+        _p09_work = np.mean(audio, axis=1).astype(np.float32) if _p09_stereo else np.asarray(audio, dtype=np.float32)
 
         transients_short, transients_medium, transients_long, crackle_regions = (
-            self._compute_crackle_regions_with_protection(audio, params)
+            self._compute_crackle_regions_with_protection(_p09_work, params)
         )
 
         # Step 3: Model Background Texture (if enabled)
         background_model = None
         if params["background_model"]:
-            background_model = self._model_background_texture(audio, crackle_regions)
+            background_model = self._model_background_texture(_p09_work, crackle_regions)
 
-        # Step 4: Spectral Interpolation with Texture Preservation
-        restored = self._remove_crackle_spectral(audio, crackle_regions, background_model, params)
+        # Step 4: Spectral Interpolation with Texture Preservation (mono-arbeitend)
+        _p09_restored_mono = self._remove_crackle_spectral(_p09_work, crackle_regions, background_model, params)
+        # §v10.15: Mono→Stereo via gain-ratio (kein Broadcast, kein Shape-Mismatch)
+        if _p09_stereo:
+            _p09_gain = np.divide(
+                _p09_restored_mono, _p09_work,
+                out=np.ones_like(_p09_work),
+                where=np.abs(_p09_work) > 1e-10,
+            )
+            restored = audio * _p09_gain[:, np.newaxis]
+        else:
+            restored = _p09_restored_mono
         if 0.0 < _effective_strength < 1.0:
             restored = self._apply_region_selective_strength_blend(
                 dry_audio=audio,

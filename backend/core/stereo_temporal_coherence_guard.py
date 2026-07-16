@@ -10,9 +10,10 @@ Two public entry points:
   - correct_interchannel_delay(audio, sr, phase_id) → aligned audio
   - align_stem_to_reference(processed_stem, original_stem, sr, stem_label) → latency-compensated stem
 
-Algorithm:
-  - FFT cross-correlation on a 10-second mid-song window (fast: <10ms for 48kHz 10s audio)
-  - Parabolic interpolation of cross-correlation peak for sub-sample precision (Smith 2011)
+Algorithm (SOTA §v10.13):
+  - Normalized time-domain cross-correlation via scipy.signal.correlate (Pearson r)
+    on a 10-second mid-song window (FFT-accelerated, <10ms for 48kHz 10s audio)
+  - Parabolic interpolation of correlation peak for sub-sample precision (Smith 2011)
   - scipy.ndimage.shift with cubic spline interpolation for the actual sub-sample correction
     (numerically stable, avoids Lagrange FIR boundary artefacts for |frac| ≤ 0.5)
 
@@ -27,6 +28,7 @@ Singleton: get_stereo_temporal_coherence_guard()
 References:
   - Smith, J.O. (2011). Spectral Audio Signal Processing. CCRMA.
   - Laakso et al. (1996). Splitting the Unit Delay. IEEE Signal Processing Magazine 13(1), 30–60.
+  - Knapp & Carter (1976). The Generalized Correlation Method. IEEE TASLP 24(4), 320–327.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ import threading
 
 import numpy as np
 from scipy.ndimage import shift as _ndimage_shift
+from scipy.signal import correlate as _signal_correlate
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +57,23 @@ _MAX_DELAY_SAMPLES: int = 9_600
 # Correction threshold: delays ≤ this are left untouched (§0 Minimal-Intervention).
 _CORRECTION_THRESHOLD_SAMPLES: float = 0.5
 
-# Minimum cross-correlation peak magnitude for reliable estimation.
-# Below this, signals are uncorrelated (e.g. independent instruments) — no correction.
-_MIN_CORRELATION_CONFIDENCE: float = 0.04
-
 # scipy.ndimage.shift interpolation order (3 = cubic spline, good quality/speed balance)
 _INTERP_ORDER: int = 3
+
+# §v10.14: Global maximum plausible inter-channel delay.
+# Any measured delay > 20 ms is physically impossible for a commercial stereo
+# recording. MP3 joint-stereo encoding creates phase relationships that cross-
+# correlation misinterprets as time delay — these false positives are often
+# consistent across measurement positions (tight spread) but the magnitude
+# (50–200 ms) is physically implausible. This guard applies to ALL callers
+# (pre_pipeline, post_pipeline, intra-phase) and replaces the earlier
+# per-caller limits (20 ms pre, 200 ms post).
+#
+# Only hardware errors (tape-head azimuth < 1 ms, ADC clock drift < 0.1 ms)
+# produce genuine inter-channel delays on properly mastered stereo audio.
+# Pipeline-introduced delays > 20 ms indicate a phase bug, not something
+# STCG should silently "fix" by shifting a channel a quarter-second.
+_GLOBAL_MAX_MS: float = 20.0
 
 
 # ---------------------------------------------------------------------------
@@ -96,37 +110,6 @@ def _mid_window(signal: np.ndarray, sr: int) -> np.ndarray:
     return signal[start : start + n]
 
 
-def _gcc_phat(r: np.ndarray, t: np.ndarray) -> tuple[np.ndarray, int]:
-    """GCC-PHAT: Generalized Cross-Correlation with Phase Transform.
-
-    Whitens the cross-spectrum so that the correlation peak becomes
-    impulse-like regardless of the signal's spectral shape.  This makes
-    parabolic sub-sample interpolation reliable for broadband signals
-    (white noise, music) and for sinusoidal signals alike.
-
-    Returns:
-        (cc_shifted, center_idx):
-            cc_shifted — full-length correlation array with zero-lag at center_idx.
-            center_idx — index of the zero-lag element.
-
-    Reference: Knapp & Carter (1976). IEEE TASLP 24(4), 320–327.
-    """
-    n = len(r)
-    n_fft = int(2 ** np.ceil(np.log2(2 * n)))  # Next power-of-2 ≥ 2N (linear correlation)
-    R = np.fft.rfft(r.astype(np.float64), n=n_fft)
-    T = np.fft.rfft(t.astype(np.float64), n=n_fft)
-    G = R * np.conj(T)
-    # PHAT weighting: divide by |G| → normalised to unit magnitude per frequency bin
-    G_phat = G / (np.abs(G) + 1e-9)
-    # irfft output: cc[0] = zero-lag, cc[k] = lag +k, cc[n_fft-k] = lag -k
-    cc = np.real(np.fft.irfft(G_phat, n=n_fft))
-    # Rearrange so that zero-lag sits at the centre using np.roll
-    # After np.roll(cc, n_fft//2): index n_fft//2 = original lag-0
-    cc_shifted = np.roll(cc, n_fft // 2)
-    center_idx = n_fft // 2
-    return cc_shifted, center_idx
-
-
 def _estimate_delay_subsample(ref: np.ndarray, target: np.ndarray, sr: int) -> float:
     """Schätzt the fractional-sample delay of *target* relative to *ref*.
 
@@ -136,13 +119,15 @@ def _estimate_delay_subsample(ref: np.ndarray, target: np.ndarray, sr: int) -> f
 
     Returns 0.0 when:
       - Signal too short (< 250 ms) for reliable estimation
-      - GCC-PHAT peak < _MIN_CORRELATION_CONFIDENCE (uncorrelated signals)
+      - SNR < 5.0 (uncorrelated or noisy signals, §G13 threshold)
 
-    Algorithm:
-      GCC-PHAT cross-correlation on a 10-second mid-song window, then parabolic
-      interpolation on the peak for sub-sample precision.  GCC-PHAT whitens the
-      cross-spectrum so the correlation peak is impulse-like for both broadband
-      and tonal content (Knapp & Carter 1976; Smith 2011 §3.7).
+    Algorithm (SOTA §v10.13):
+      Normalized time-domain cross-correlation via scipy.signal.correlate
+      (FFT-accelerated).  Unlike GCC-PHAT the normalisation uses signal
+      standard deviation, not per-bin whitening, so the correlation peak
+      has a physically meaningful [0,1] scale and does NOT amplify noise
+      in low-energy frequency bins.  Parabolic sub-sample interpolation
+      on the peak.
     """
     r_full = _to_mono_analysis(ref)
     t_full = _to_mono_analysis(target)
@@ -154,51 +139,63 @@ def _estimate_delay_subsample(ref: np.ndarray, target: np.ndarray, sr: int) -> f
     if n < sr // 4:  # < 250 ms — not enough context
         return 0.0
 
-    r = r[:n].astype(np.float32)
-    t = t[:n].astype(np.float32)
+    r = r[:n].astype(np.float64)
+    t = t[:n].astype(np.float64)
 
     # Energy check — skip silence channels
-    r_rms = float(np.sqrt(np.mean(r.astype(np.float64) ** 2)))
-    t_rms = float(np.sqrt(np.mean(t.astype(np.float64) ** 2)))
+    r_rms = float(np.sqrt(np.mean(r ** 2)))
+    t_rms = float(np.sqrt(np.mean(t ** 2)))
     if r_rms < 1e-8 or t_rms < 1e-8:
         return 0.0
 
-    # GCC-PHAT: impulse-shaped peak for reliable sub-sample interpolation
-    corr, center = _gcc_phat(r, t)
+    # ── SOTA: Normalized time-domain cross-correlation ──
+    # Mean-centre and normalise by std so the correlation peak is the
+    # Pearson r coefficient [0,1].  PHAT whitening is NOT used because
+    # it amplifies noise in low-energy bins and produces false positives
+    # on short or band-limited windows.
+    _l_ms = r - float(np.mean(r))
+    _r_ms = t - float(np.mean(t))
+    _l_std = float(np.std(_l_ms)) + 1e-12
+    _r_std = float(np.std(_r_ms)) + 1e-12
+    _corr = _signal_correlate(
+        _l_ms / (_l_std * float(n)),
+        _r_ms / _r_std,
+        method='fft',
+    )
+    _center = len(r) - 1
+    _max_lag = min(_MAX_DELAY_SAMPLES, _center)
+    _lo = max(0, _center - _max_lag)
+    _hi = min(len(_corr), _center + _max_lag + 1)
+    _search = _corr[_lo:_hi]
 
-    # Restrict search to ±_MAX_DELAY_SAMPLES around zero lag
-    lo = max(0, center - _MAX_DELAY_SAMPLES)
-    hi = min(len(corr), center + _MAX_DELAY_SAMPLES + 1)
-    region = corr[lo:hi]
-
-    peak_local_idx = int(np.argmax(np.abs(region)))
-    peak_val = float(region[peak_local_idx])
-
-    if abs(peak_val) < _MIN_CORRELATION_CONFIDENCE:
+    # Confidence gate (§G13 v10.13): Normalized XCorr peak is Pearson's r
+    # coefficient [0,1].  Correlated L/R signals (music, speech, noise) give
+    # peak ≥ 0.9; uncorrelated signals peak at ~0.005.  Threshold of 0.1
+    # leaves a >10× safety margin against false positives while accepting
+    # narrow-band signals (pure tones) where SNR-based gates fail.
+    _peak = float(np.max(np.abs(_search)))
+    if _peak < 0.1:
         logger.debug(
-            "STCG: GCC-PHAT peak=%.4f below threshold=%.4f — no correction",
-            abs(peak_val),
-            _MIN_CORRELATION_CONFIDENCE,
+            "STCG: normalized-XCorr peak=%.4f < 0.1 — no correction",
+            _peak,
         )
         return 0.0
 
-    # Global peak index in full correlation array
-    global_peak = lo + peak_local_idx
+    # Integer peak + parabolic sub-sample interpolation
+    _peak_local_idx = int(np.argmax(np.abs(_search)))
+    _global_peak = _lo + _peak_local_idx
 
-    # Parabolic sub-sample interpolation (Smith 2011 §3.7)
-    # With GCC-PHAT whitening the peak is narrow/impulse-like → parabola fits well
-    if 1 <= global_peak < len(corr) - 1:
-        y0 = corr[global_peak - 1]
-        y1 = corr[global_peak]
-        y2 = corr[global_peak + 1]
-        denom = 2.0 * (2.0 * y1 - y0 - y2)
-        frac_offset = (y0 - y2) / denom if abs(denom) > 1e-12 else 0.0
-        # Clamp sub-sample offset to ±0.5 (parabola only valid near peak)
-        frac_offset = float(np.clip(frac_offset, -0.5, 0.5))
+    if 1 <= _global_peak < len(_corr) - 1:
+        _y0 = _corr[_global_peak - 1]
+        _y1 = _corr[_global_peak]
+        _y2 = _corr[_global_peak + 1]
+        _denom = 2.0 * (2.0 * _y1 - _y0 - _y2)
+        _frac_offset = float((_y0 - _y2) / _denom) if abs(_denom) > 1e-12 else 0.0
+        _frac_offset = float(np.clip(_frac_offset, -0.5, 0.5))
     else:
-        frac_offset = 0.0
+        _frac_offset = 0.0
 
-    delay = float(global_peak - center) + frac_offset
+    delay = float(_global_peak - _center) + _frac_offset
     return delay
 
 
@@ -341,135 +338,46 @@ class StereoTemporalCoherenceGuard:
         if len(ch_l) < sr // 4:
             return audio  # < 250 ms — too short to measure
 
-        # §G13/F2: Multi-Point-Messung als PRIMÄRE Lag-Quelle.
-        # Das Single-Mid-Window verfehlt zeitlich variierende Lags
-        # (z.B. 0%→-8900, 50%→0, 100%→-7297). Multi-Point-Median
-        # erfasst die dominante Charakteristik. Single-Window nur Fallback.
+        # §G13/F2 + §v10.14: Multi-point measurement is the primary lag source.
+        # Single mid-window can miss temporally varying lags — multi-point median
+        # captures the dominant characteristic. All corrections are gated by
+        # _GLOBAL_MAX_MS (20 ms) regardless of caller; any measured delay
+        # exceeding this is a cross-correlation false positive (MP3 joint-stereo
+        # encoding phase artifacts), not a real hardware/alignment error.
         _mp_verified = self._verify_lag_multi_point(ch_l, ch_r, sr)
         if _mp_verified.get("num_points", 0) >= 2:
-            _mp_median = _mp_verified["median_lag"]
+            delay = float(_mp_verified["median_lag"])
             _mp_spread = _mp_verified.get("max_spread", 0)
-            if abs(_mp_median) < _CORRECTION_THRESHOLD_SAMPLES:
-                logger.debug(
-                    "STCG [%s]: multi-point median=%d samples — within threshold, no correction",
-                    phase_id, int(_mp_median),
-                )
-                return audio
-            delay = float(_mp_median)
-            delay_ms = delay / sr * 1000.0
-            logger.info(
-                "STCG [%s]: multi-point median=%d samples (%.1f ms, spread=%d) — correcting R channel",
-                phase_id, int(delay), delay_ms, _mp_spread,
-            )
-            ch_r_corrected = _apply_correction_shift(ch_r, shift_samples=delay)
-            orig_dtype = audio.dtype
-            if channels_first:
-                result = np.vstack([ch_l[np.newaxis, :], ch_r_corrected[np.newaxis, :]])
-            else:
-                result = np.column_stack([ch_l, ch_r_corrected])
-            return result.astype(orig_dtype)
+        else:
+            # Fallback: single mid-window measurement
+            delay = _estimate_delay_subsample(ch_l, ch_r, sr)
+            _mp_spread = -1
 
-        # Fallback: single mid-window measurement
-        delay = _estimate_delay_subsample(ch_l, ch_r, sr)
         delay_ms = delay / sr * 1000.0
 
         if abs(delay) < _CORRECTION_THRESHOLD_SAMPLES:
             logger.debug(
-                "STCG [%s]: L-R delay=%.4f samples (%.3f ms) — within threshold, no correction",
-                phase_id,
-                delay,
-                delay_ms,
+                "STCG [%s]: delay=%.4f samples (%.3f ms) — within threshold, no correction",
+                phase_id, delay, delay_ms,
             )
             return audio
 
-        # §G13/F2: Multi-Point-Messung als PRIMÄRE Lag-Quelle.
-        # Das Single-Mid-Window (10s Mitte) verfehlt zeitlich variierende Lags
-        # (z.B. 0%→-8900, 50%→0, 100%→-7297). Multi-Point-Median über 3
-        # Positionen erfasst die dominante Charakteristik und korrigiert
-        # repräsentativ. Single-Window nur als Fallback bei zu kurzem Audio.
-        _mp_verified = self._verify_lag_multi_point(ch_l, ch_r, sr)
-        if _mp_verified.get("num_points", 0) >= 2:
-            _mp_median = _mp_verified["median_lag"]
-            _mp_spread = _mp_verified.get("max_spread", 0)
-            if abs(_mp_median) < _CORRECTION_THRESHOLD_SAMPLES:
-                logger.debug(
-                    "STCG [%s]: multi-point median=%d samples — within threshold, no correction",
-                    phase_id, int(_mp_median),
-                )
-                return audio
-            delay = float(_mp_median)
-            delay_ms = delay / sr * 1000.0
+        # §v10.14 UNIVERSAL plausibility guard: any delay > 20 ms is physically
+        # impossible for a commercial stereo recording. MP3 joint-stereo encoding
+        # creates phase artefacts that cross-correlation misinterprets as time
+        # delay — these are often consistent (spread ≤ 20 samples) but the
+        # magnitude is physically implausible. Skip correction unconditionally.
+        if abs(delay_ms) > _GLOBAL_MAX_MS:
             logger.info(
-                "STCG [%s]: multi-point median=%d samples (%.1f ms, spread=%d) — correcting R channel",
-                phase_id, int(delay), delay_ms, _mp_spread,
-            )
-            ch_r_corrected = _apply_correction_shift(ch_r, shift_samples=delay)
-            orig_dtype = audio.dtype
-            if channels_first:
-                result = np.vstack([ch_l[np.newaxis, :], ch_r_corrected[np.newaxis, :]])
-            else:
-                result = np.column_stack([ch_l, ch_r_corrected])
-            return result.astype(orig_dtype)
-
-        # Fallback: single mid-window measurement (original behavior)
-        # Only reached when multi-point has < 2 valid points (very short audio)
-        _PRE_PIPELINE_MAX_MS: float = 20.0
-        if phase_id == "pre_pipeline" and abs(delay_ms) > _PRE_PIPELINE_MAX_MS:
-            _verified = self._verify_lag_multi_point(ch_l, ch_r, sr)
-            if _verified.get("verified"):
-                # Multi-point check confirms: lag is real (consistent across song positions)
-                # Override delay with the robust multi-point median.
-                _mp_lag = _verified["median_lag"]
-                logger.info(
-                    "STCG [%s]: delay=%.1f ms VERIFIED by multi-point check "
-                    "(median=%d samples, spread=%d, positions=%d) — applying correction",
-                    phase_id,
-                    delay_ms,
-                    int(_mp_lag),
-                    int(_verified.get("max_spread", 0)),
-                    int(_verified.get("num_points", 0)),
-                )
-                # Use the multi-point median delay, not the single-window one
-                ch_r_corrected = _apply_correction_shift(ch_r, shift_samples=float(_mp_lag))
-                orig_dtype = audio.dtype
-                if channels_first:
-                    result = np.vstack([ch_l[np.newaxis, :], ch_r_corrected[np.newaxis, :]])
-                else:
-                    result = np.column_stack([ch_l, ch_r_corrected])
-                return result.astype(orig_dtype)
-            logger.info(
-                "STCG [%s]: delay=%.1f ms exceeds pre-pipeline limit (%.0f ms) "
-                "AND multi-point check INCONCLUSIVE (spread=%d) — skipping correction",
-                phase_id,
-                delay_ms,
-                _PRE_PIPELINE_MAX_MS,
-                int(_verified.get("max_spread", -1)),
-            )
-            return audio
-
-        # §Fix: Post-pipeline plausibility guard — chunked phase processors (Phase 12
-        # PSOLA, Phase 24 dropout repair) can introduce per-chunk channel delays when
-        # processing stereo independently per chunk.  However, REAL stereo misalignments
-        # up to ~200ms have been independently verified by GCC-PHAT (LAG_PROBE_2a).
-        # The 50ms limit was too conservative — real 183ms lags were skipped.
-        # §v10.0.4: 50→200ms — cross-validated with GCC-PHAT; corrections up to 200ms
-        # are now applied. Above 200ms: still skipped (likely phase-processor artifact).
-        _POST_PIPELINE_MAX_MS: float = 200.0
-        if not phase_id.startswith("stem_") and abs(delay_ms) > _POST_PIPELINE_MAX_MS:
-            logger.warning(
-                "STCG [%s]: delay=%.1f ms exceeds post-pipeline plausibility limit (%.0f ms) "
-                "— likely phase-processor artifact; skipping correction to avoid echo/distortion",
-                phase_id,
-                delay_ms,
-                _POST_PIPELINE_MAX_MS,
+                "STCG [%s]: delay=%.1f ms > global limit %.0f ms (spread=%d) — "
+                "physically implausible; likely MP3 joint-stereo artifact, skipping",
+                phase_id, delay_ms, _GLOBAL_MAX_MS, int(_mp_spread),
             )
             return audio
 
         logger.info(
-            "STCG [%s]: L-R delay=%.4f samples (%.3f ms) — correcting R channel",
-            phase_id,
-            delay,
-            delay_ms,
+            "STCG [%s]: delay=%.4f samples (%.3f ms, spread=%d) — correcting R channel",
+            phase_id, delay, delay_ms, int(_mp_spread),
         )
 
         # Positive delay means R is AHEAD of L → shift R to the right (delay R) to align

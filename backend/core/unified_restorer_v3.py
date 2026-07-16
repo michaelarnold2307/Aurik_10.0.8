@@ -49,6 +49,7 @@ from backend.core.musical_goals.adaptive_goal_resolver import (
 from backend.core.performance_guard import DeploymentMode, PerformanceGuard, QualityMode
 from backend.core.phase_skipping import PhaseSkipper
 from backend.core.phases.phase_interface import PhaseInterface
+from backend.core.phase_contract_guard import guard_phase_input, guard_phase_output
 from backend.core.restoration_policy import (
     blend_denker_policy_goal_weights,
     get_effective_song_goal_weights,
@@ -440,8 +441,10 @@ def _estimate_interchannel_delay_ms(stereo_sc: np.ndarray, sr: int) -> float:
 
         local_idx = int(np.argmax(np.abs(corr[lo:hi])))
         peak_val = float(np.abs(corr[lo + local_idx]))
-        # Skip window if correlation confidence is too low (uncorrelated channels → not a real delay)
-        if peak_val < 0.04:
+        # Skip window if correlation confidence is too low (uncorrelated channels → not a real delay).
+        # Normalised XCorr peak: ~1.0 for identical delayed signals, ~0.0 for uncorrelated.
+        # Threshold 0.12: below this, correlation is essentially random (white noise gives ~0.02).
+        if peak_val < 0.12:
             continue
 
         best_lag = int((lo + local_idx) - center)
@@ -5751,7 +5754,7 @@ class UnifiedRestorerV3:
 
         _gen = int(transfer_generation_count) if isinstance(transfer_generation_count, (int, float)) else 1
         _gen = int(np.clip(_gen, 1, 8))
-        _gen_penalty = float(np.clip((_gen - 1) * 0.045, 0.0, 0.28))
+        _gen_penalty = float(np.clip((_gen - 1) * 0.030, 0.0, 0.24))  # v10.13: 0.045→0.030 — konservativere Penalty
 
         _hf_loss_db = getattr(source_material_baseline, "hf_loss_db", None)
         if isinstance(_hf_loss_db, (int, float)):
@@ -9074,29 +9077,36 @@ class UnifiedRestorerV3:
                 #   – GCC-PHAT misst den dominanten Lag im Gesamtsignal.
                 #   – Konsistente Lags (Tape-Head-Alignment, A/D-Versatz) werden global
                 #     korrigiert.  Zeitlich variierende Lags (Dropouts, Banddehnung)
-                #     überlässt man STCGs per-Chunk-Korrektur während Phase 12.
+                #     werden via interpolierter Zeitkurve aus Multi-Point-Daten korrigiert.
                 #   – Post-Check am Pipeline-Ende (LAG_PROBE 2a/3) verifiziert die
-                #     Korrektur; Residuals < 50 samples gelten als STCG-behandelt.
+                #     Korrektur; Residuals < 50 samples gelten als behandelt.
                 _MIN_CORRECTABLE_LAG_SAMPLES = 50  # ~1 ms @ 48 kHz – darunter nicht korrigieren
                 if abs(_lp0b_lag) > _MIN_CORRECTABLE_LAG_SAMPLES:
-                    # §G13/F1: STCG-basierte Sub-Sample-Korrektur (kein np.roll!).
-                    # np.roll ist eine ZIRKULÄRE Verschiebung – Samples vom Ende wrappen
-                    # an den Anfang und erzeugen hörbare Diskontinuitäten.
-                    # scipy.ndimage.shift mit cubic spline interpoliert korrekt und
-                    # padded mit Stille an den Rändern (keine Längenänderung).
-                    try:
-                        from backend.core.stereo_temporal_coherence_guard import (
-                            get_stereo_temporal_coherence_guard as _get_stcg_lagfix,
+                    # §G13/F4: Multi-point spread > 1000 samples (≈20 ms) means
+                    # measurements are totally inconsistent across the song —
+                    # this is a false positive (no physical mechanism produces
+                    # 185 ms lag variation across a single recording).
+                    if _lag_spread > 1000:
+                        logger.info(
+                            "§G13 LAG_PROBE_0B: spread=%d samples (%.0f ms) > 1000 limit — "
+                            "inconsistent measurements = FALSE POSITIVE, skipping correction",
+                            int(_lag_spread),
+                            _lag_spread / sample_rate * 1000,
                         )
-                        # STCG korrigiert mit Sub-Sample-Präzision via scipy.ndimage.shift
-                        audio = _get_stcg_lagfix().correct_interchannel_delay(
-                            audio, sample_rate, phase_id="lag_probe_0b"
-                        )
-                    except Exception as _stcg_lagfix_exc:
-                        logger.warning(
-                            "§G13 STCG-Lag-Korrektur fehlgeschlagen (non-blocking): %s",
-                            _stcg_lagfix_exc,
-                        )
+                    else:
+                        # Consistent lag or ≥2 points: apply correction via STCG
+                        try:
+                            from backend.core.stereo_temporal_coherence_guard import (
+                                get_stereo_temporal_coherence_guard as _get_stcg_lagfix,
+                            )
+                            audio = _get_stcg_lagfix().correct_interchannel_delay(
+                                audio, sample_rate, phase_id="lag_probe_0b"
+                            )
+                        except Exception as _stcg_lagfix_exc:
+                            logger.warning(
+                                "§G13 STCG-Lag-Korrektur fehlgeschlagen (non-blocking): %s",
+                                _stcg_lagfix_exc,
+                            )
                     logger.info(
                         "§G13 Interchannel-Lag-Korrektur: Median %d samples (%.1f ms) — "
                         "Kanal-Alignment via STCG sub-sample shift. Messpunkte: %s. "
@@ -10756,31 +10766,28 @@ class UnifiedRestorerV3:
                 _hard_spectral_need = max(_aliasing, _pre_echo, _compression, _spectral)
 
                 if not self.is_studio_mode() and _analog_like and _vocal_heavy:
-                    # Harmonik-Restoration erzeugt in vocal-heavy cassette/tape-Runs
-                    # häufig Echo-/Novelty-Artefakte. Lieber die vorhandenen BW-/EQ-
-                    # Phasen nutzen als spektral künstliche Obertöne injizieren.
+                    # §v10.13: Phasen nicht entfernen — ActiveIntervention findet
+                    # die optimale Stärke ohne pauschale Caps.  Die Phase läuft mit
+                    # reduzierter initialer Stärke (safe_start), ActiveIntervention
+                    # kann sie hochregeln wenn keine Regression auftritt.
+                    _risk_reduced_phases: list[str] = []
+
                     if "phase_07_harmonic_restoration" in _sel_set_prerisk:
-                        _sel_set_prerisk.remove("phase_07_harmonic_restoration")
-                        _removed_risk_phases.append("phase_07_harmonic_restoration")
+                        _risk_reduced_phases.append("phase_07_harmonic_restoration")
+                        if isinstance(getattr(self, "_conductor_strength_hints", None), dict):
+                            self._conductor_strength_hints["phase_07_harmonic_restoration"] = 0.25  # safe start
 
-                    # Loudness-Normalisierung: Phase 40 wurde in v9.20.3 für analoges
-                    # Vokalmaterial repariert (uniformer Gain statt Gate-Envelope,
-                    # ±8 dB statt ±1 dB Cap). Keine Jump-Artefakte mehr → nicht entfernen.
-                    # (Frühere Versionen entfernten Phase 40 hier — das ist obsolet.)
-
-                    # Mastering-Polish ist in diesem Kontext kein Restaurierungsdefekt-Fix,
-                    # sondern ein additiver Enhancement-Schritt. SFT zeigte für phase_17
-                    # NOVELTY_CRIT/HNR_DROP/ECHO bei vokalem Material; deshalb vorab entfernen.
                     if "phase_17_mastering_polish" in _sel_set_prerisk:
-                        _sel_set_prerisk.remove("phase_17_mastering_polish")
-                        _removed_risk_phases.append("phase_17_mastering_polish")
+                        _risk_reduced_phases.append("phase_17_mastering_polish")
+                        if isinstance(getattr(self, "_conductor_strength_hints", None), dict):
+                            self._conductor_strength_hints["phase_17_mastering_polish"] = 0.20  # safe start
 
-                    # Zweiter spektraler Pass ist auf vocal-heavy Analogmaterial in
-                    # Restoration zu riskant; dort bevorzugen wir die bereits
-                    # vorhandenen passiven/spektral konservativen Phasen.
                     if "phase_50_spectral_repair" in _sel_set_prerisk:
-                        _sel_set_prerisk.remove("phase_50_spectral_repair")
-                        _removed_risk_phases.append("phase_50_spectral_repair")
+                        _risk_reduced_phases.append("phase_50_spectral_repair")
+                        if isinstance(getattr(self, "_conductor_strength_hints", None), dict):
+                            self._conductor_strength_hints["phase_50_spectral_repair"] = 0.15  # safe start
+
+                    _removed_risk_phases = _risk_reduced_phases
 
                 if _removed_risk_phases:
                     selected_phases = [p for p in selected_phases if p in _sel_set_prerisk]
@@ -10796,10 +10803,11 @@ class UnifiedRestorerV3:
                         self._phase_metadata_accumulator["preflight_risk_guard"] = {
                             "panns_singing": round(_panns_prerisk, 3),
                             "material": _mat_key_prerisk,
-                            "removed_phases": list(_removed_risk_phases),
+                            "risk_reduced_phases": list(_risk_reduced_phases),
                             "spectral_evidence": round(_hard_spectral_need, 3),
                         }
-                    _rctx_prerisk["preflight_risk_removed_phases"] = list(_removed_risk_phases)
+                    _rctx_prerisk["preflight_risk_removed_phases"] = []  # v10.13: keine Phasen mehr entfernt
+                    _rctx_prerisk["preflight_risk_reduced_phases"] = list(_risk_reduced_phases)
         except Exception as _prerisk_exc:
             logger.debug("Preflight-Risk-Guard non-blocking: %s", _prerisk_exc)
 
@@ -12195,11 +12203,19 @@ class UnifiedRestorerV3:
 
         # ── STUFE 4: SPEKTRAL (Frequenzgang, Bandbreite) ──
         # §AJ AntiMufflingPass — Dumpfheit entfernen
+        # §v10.15: PostGate-verifiziert
         try:
             from backend.core.anti_muffling_pass import AntiMufflingPass
+            from backend.core.post_processing_gate import PostProcessingGate, get_post_processing_gate
 
-            _amp = AntiMufflingPass()
-            restored_audio = _amp.process(restored_audio, sample_rate)
+            _amp_result = get_post_processing_gate().apply(
+                lambda a, sr, strength=None: AntiMufflingPass().process(a, sr),
+                restored_audio, sample_rate, label="AntiMufflingPass",
+            )
+            if _amp_result.adopted:
+                restored_audio = _amp_result.audio
+            else:
+                logger.info("§v10.15 AntiMufflingPass SKIPPED: %s", _amp_result.skip_reason)
         except Exception:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
@@ -12243,11 +12259,19 @@ class UnifiedRestorerV3:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
         # §AH VocalClarityMax — Gesangs-Klarheit
+        # §v10.15: PostGate-verifiziert
         try:
             from backend.core.vocal_clarity_max import VocalClarityMax
+            from backend.core.post_processing_gate import PostProcessingGate, get_post_processing_gate
 
-            _vcm = VocalClarityMax()
-            restored_audio = _vcm.process(restored_audio, sample_rate)
+            _vcm_result = get_post_processing_gate().apply(
+                lambda a, sr, strength=None: VocalClarityMax().process(a, sr),
+                restored_audio, sample_rate, label="VocalClarityMax",
+            )
+            if _vcm_result.adopted:
+                restored_audio = _vcm_result.audio
+            else:
+                logger.info("§v10.15 VocalClarityMax SKIPPED: %s", _vcm_result.skip_reason)
         except Exception:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
@@ -12261,22 +12285,47 @@ class UnifiedRestorerV3:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
         # ── STUFE 8: AUSGABE (Humanization, ML-Hybrid, Listening-EQ, Export) ──
+        # §v10.17 OneTakeExport: Export-Qualität garantieren
+        try:
+            from backend.core.one_take_export import OneTakeExport
+            _ote = OneTakeExport.prepare(
+                restored_audio, sample_rate, is_studio_2026=self.is_studio_mode()
+            )
+            if _ote.passed or _ote.retries < 3:
+                restored_audio = _ote.audio
+                logger.info("OneTakeExport: %d retries, corrections=%s", _ote.retries, _ote.corrections)
+            else:
+                logger.warning("OneTakeExport FAIL: %s", _ote.quality_report.get("errors", []))
+        except Exception:
+            logger.debug("OneTakeExport not available", exc_info=True)
+
         # §T HumanizationPass — gegen Hörermüdigkeit (LETZTER DSP-Schritt)
         try:
             from backend.core.klang_guards import HumanizationPass
 
-            restored_audio = HumanizationPass.apply(restored_audio, sample_rate, strength=0.15)
+            # §v10.15: Adaptive Stärke statt hartcodiertem 0.15.
+            # calibrate_strength() analysiert Mikrodynamik und spektrale Varianz
+            # und wählt Stärke ∈ [0.05, 0.25] passend zum Material.
+            restored_audio = HumanizationPass.apply(restored_audio, sample_rate, strength=None, is_studio_2026=self.is_studio_mode())
         except Exception:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
         # §AQ PerceptualExportOptimizer — ML-Hybrid
+        # §v10.15: PostGate-verifiziert
         try:
             from backend.core.perceptual_export_optimizer import PerceptualExportOptimizer
+            from backend.core.post_processing_gate import PostProcessingGate, get_post_processing_gate
 
-            _peo = PerceptualExportOptimizer()
             _lm = str(kwargs.get("listening_mode", "headphones")).lower()
             _mat = str(getattr(self, "_restoration_context", {}).get("primary_material", "unknown"))
-            restored_audio = _peo.optimize(restored_audio, sample_rate, material=_mat, listening_mode=_lm)
+            _peo_result = get_post_processing_gate().apply(
+                lambda a, sr, strength=None: PerceptualExportOptimizer().optimize(a, sr, material=_mat, listening_mode=_lm),
+                restored_audio, sample_rate, label="PerceptualExportOptimizer",
+            )
+            if _peo_result.adopted:
+                restored_audio = _peo_result.audio
+            else:
+                logger.info("§v10.15 PerceptualExportOptimizer SKIPPED: %s", _peo_result.skip_reason)
         except Exception:
             logger.debug("restore: silent except suppressed", exc_info=True)
 
@@ -12293,29 +12342,18 @@ class UnifiedRestorerV3:
         _lm = str(kwargs.get("listening_mode", "")).lower()
         if _lm in ("headphones", "farfield", "car"):
             try:
-                import scipy.signal as _sp_sig
+                from backend.core.listening_mode_eq import apply_adaptive_eq
+                from backend.core.post_processing_gate import PostProcessingGate, get_post_processing_gate
 
-                _lm_eq = {
-                    "headphones": [("highshelf", 7000, 0.8, 0.7), ("lowshelf", 150, -0.5, 0.7)],
-                    "farfield": [("lowshelf", 200, 1.2, 0.7)],
-                    "car": [("lowshelf", 180, 1.5, 0.7), ("highshelf", 10000, 1.3, 0.5)],
-                }
-                for _ft, _fq, _gn, _q in _lm_eq.get(_lm, []):
-                    if _ft == "highshelf":
-                        _sos = _sp_sig.butter(2, _fq / (sample_rate / 2), btype="highshelf", output="sos")
-                    elif _ft == "lowshelf":
-                        _sos = _sp_sig.butter(2, _fq / (sample_rate / 2), btype="lowshelf", output="sos")
-                    else:
-                        continue
-                    _gain = 10 ** (_gn / 40.0)
-                    _sos[:, :3] *= _gain
-                    if restored_audio.ndim == 2:
-                        restored_audio[0] = _sp_sig.sosfilt(_sos, restored_audio[0])
-                        restored_audio[1] = _sp_sig.sosfilt(_sos, restored_audio[1])
-                    else:
-                        restored_audio = _sp_sig.sosfilt(_sos, restored_audio)
-                restored_audio = np.clip(restored_audio, -1.0, 1.0).astype(np.float32)
-                logger.info("§Q Listening-Mode EQ: %s", _lm)
+                _eq_result = get_post_processing_gate().apply(
+                    lambda a, sr: apply_adaptive_eq(a, sr, mode=_lm),
+                    restored_audio, sample_rate, label=f"ListeningEQ_{_lm}",
+                )
+                if _eq_result.adopted:
+                    restored_audio = _eq_result.audio
+                    logger.info("§Q Listening-Mode EQ (adaptiv): %s", _lm)
+                else:
+                    logger.info("§v10.15 ListeningEQ SKIPPED: %s", _eq_result.skip_reason)
             except Exception:
                 logger.debug("fallback in unified_restorer_v3.py", exc_info=True)
         # §Z: Batch-Intelligence speichern
@@ -12378,22 +12416,56 @@ class UnifiedRestorerV3:
         # §2.60 + §G14 STCG Post-Pipeline: Final inter-channel verification after all phases.
         # Multi-Point-Verifikation + Retry-Loop (bis zu 3 Versuche, G14/G48/G49).
         # Integriert StereoDriftState: akkumuliert Lag-Deltas über Chunk-basierte Phasen.
+        # §v10.15: Measurement uses STCG._verify_lag_multi_point (25%/50%/75% windows,
+        # ≥2 valid points required) — identical algorithm to correct_interchannel_delay
+        # for guaranteed measurement/correction consistency.
         if restored_audio.ndim == 2:
             try:
                 from backend.core.stereo_temporal_coherence_guard import (
                     get_stereo_temporal_coherence_guard as _get_stcg_post,
                 )
-                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
-                from backend.file_import import _estimate_interchannel_lag_multi_point as _multi_lag
 
                 _MAX_RETRIES_G14 = 3
                 _RESIDUAL_THRESHOLD_SAMPLES = 50  # ~1 ms
                 _stcg = _get_stcg_post()
 
+                # §v10.15 Unified measurement: use the STCG's own _verify_lag_multi_point
+                # (25%/50%/75% positions, ≥2 valid points required) instead of a
+                # re-implemented variant. This guarantees the correction and measurement
+                # use identical logic — the v10.13 comment was previously violated by
+                # having two different multi-point implementations.
+
+                def _measure_stereo_lag_via_stcg(restored_audio, sr):
+                    """Measure inter-channel lag via STCG's verify method."""
+                    arr = np.asarray(restored_audio, dtype=np.float32)
+                    if arr.ndim != 2:
+                        return {"median_lag": 0, "max_spread": 9999, "num_points": 0}
+                    # Normalize to channels-first for STCG
+                    if arr.shape[0] == 2 and arr.shape[1] > 2:
+                        ch_l, ch_r = arr[0], arr[1]
+                    elif arr.shape[1] == 2 and arr.shape[0] > 2:
+                        ch_l, ch_r = arr[:, 0], arr[:, 1]
+                    else:
+                        return {"median_lag": 0, "max_spread": 9999, "num_points": 0}
+                    return _stcg._verify_lag_multi_point(ch_l, ch_r, sr)
+
                 for _retry_g14 in range(_MAX_RETRIES_G14):
-                    # Multi-Point-Messung VOR Korrektur
-                    _lag_profile_pre = _multi_lag(restored_audio, sample_rate, num_points=3)
+                    # Multi-Point-Messung VOR Korrektur (SOTA normalisierte XCorr)
+                    _lag_profile_pre = _measure_stereo_lag_via_stcg(restored_audio, sample_rate)
                     _lag_pre = _lag_profile_pre["median_lag"]
+                    _lag_spread = _lag_profile_pre.get("max_spread", 0)
+
+                    # §G13/F4: Spread > 1000 samples (≈20 ms) = inconsistent
+                    # measurements = FALSE POSITIVE. No physical mechanism produces
+                    # 195 ms lag variation across a single recording.
+                    if _lag_spread > 1000:
+                        logger.info(
+                            "§G14 Post-Pipeline STCG: spread=%d samples (%.0f ms) > 1000 — "
+                            "FALSE POSITIVE, skipping correction",
+                            int(_lag_spread),
+                            _lag_spread / sample_rate * 1000,
+                        )
+                        break
 
                     if abs(_lag_pre) <= _RESIDUAL_THRESHOLD_SAMPLES:
                         logger.debug(
@@ -12409,13 +12481,13 @@ class UnifiedRestorerV3:
                         _lag_profile_pre.get("max_spread", 0),
                     )
 
-                    # STCG-Korrektur mit Sub-Sample-Präzision
+                    # STCG-Korrektur mit Sub-Sample-Präzision (SOTA normalisierte XCorr)
                     restored_audio = _stcg.correct_interchannel_delay(
                         restored_audio, sample_rate, phase_id="post_pipeline"
                     )
 
-                    # Multi-Point-Messung NACH Korrektur
-                    _lag_profile_post = _multi_lag(restored_audio, sample_rate, num_points=3)
+                    # Multi-Point-Messung NACH Korrektur (SOTA normalisierte XCorr)
+                    _lag_profile_post = _measure_stereo_lag_via_stcg(restored_audio, sample_rate)
                     _lag_post = _lag_profile_post["median_lag"]
 
                     logger.info(
@@ -12436,17 +12508,44 @@ class UnifiedRestorerV3:
             except Exception as _stcg_post_exc:
                 logger.debug("§2.60 STCG post-pipeline fehlgeschlagen (non-blocking): %s", _stcg_post_exc)
 
-        # §LAG_PROBE_3: nach STCG post-pipeline — GCC-PHAT O(n log n)
+        # §LAG_PROBE_3: nach STCG post-pipeline — SOTA normalisierte XCorr
         try:
             if restored_audio.ndim == 2:
-                from backend.file_import import _estimate_interchannel_lag_samples as _gcc_lag
+                from backend.core.stereo_temporal_coherence_guard import _estimate_delay_subsample as _sota_xcorr
 
-                _lp3_lag = _gcc_lag(restored_audio, sample_rate)
+                _lp3_lag = _sota_xcorr(restored_audio[0], restored_audio[1], sample_rate)
                 logger.info(
-                    "LAG_PROBE 3/after_stcg_post: lag=%d samples (%.1f ms)", _lp3_lag, _lp3_lag / sample_rate * 1000
+                    "LAG_PROBE 3/after_stcg_post: lag=%d samples (%.1f ms)",
+                    int(round(_lp3_lag)), _lp3_lag / sample_rate * 1000
                 )
         except Exception as _lp3_exc:
             logger.debug("LAG_PROBE_3 fehlgeschlagen: %s", _lp3_exc)
+
+        # §AIR-BAND v10.13: Subtle high-shelf after bandwidth reconstruction.
+        # If FlashSR ran and extended bandwidth, add 1–2 dB air-band for brilliance
+        # and presence without sounding artificial. Non-blocking.
+        try:
+            if restored_audio.ndim == 2:
+                _air_bw_hz = float(
+                    (getattr(self, "_restoration_context", {}) or {}).get("effective_bandwidth_hz", 20000)
+                )
+                if _air_bw_hz < 18000:
+                    from scipy.signal import butter, sosfilt
+                    _sos_air = butter(2, 12000, btype='high', fs=sample_rate, output='sos')
+                    _air_gain_db = 1.5  # subtle, natural
+                    _air_gain_lin = float(10.0 ** (_air_gain_db / 20.0))
+                    if restored_audio.shape[0] == 2 and restored_audio.shape[1] > 2:
+                        for _ch in range(restored_audio.shape[0]):
+                            _wet = sosfilt(_sos_air, restored_audio[_ch].astype(np.float64))
+                            restored_audio[_ch] = restored_audio[_ch] + (_air_gain_lin - 1.0) * (_wet - restored_audio[_ch])
+                    elif restored_audio.shape[1] == 2 and restored_audio.shape[0] > 2:
+                        for _ch in range(restored_audio.shape[1]):
+                            _wet = sosfilt(_sos_air, restored_audio[:, _ch].astype(np.float64))
+                            restored_audio[:, _ch] = restored_audio[:, _ch] + (_air_gain_lin - 1.0) * (_wet - restored_audio[:, _ch])
+                    restored_audio = np.clip(restored_audio, -1.0, 1.0)
+                    logger.debug("§AIR-BAND: +%.1f dB high-shelf at 12 kHz (bw=%.0f Hz)", _air_gain_db, _air_bw_hz)
+        except Exception as _air_exc:
+            logger.debug("§AIR-BAND skipped: %s", _air_exc)
 
         # §0c Graceful-Stop-Tag: wenn Watchdog die Pipeline beendet hat, Metadaten befüllen.
         # Die FeedbackChain und HPI laufen danach nicht (zu aufwändig), stattdessen direkter
@@ -13666,8 +13765,14 @@ class UnifiedRestorerV3:
                         _ex_presence = (
                             _ex_filtfilt(_ex_b, _ex_a, restored_audio) if _ex_n >= 15 else restored_audio * 0.0
                         )
-                        # Gain-Factor: 0.05 ≈ +0.4 dB Präsenz-Anhebung
-                        restored_audio = np.clip(restored_audio + 0.05 * _ex_presence, -1.0, 1.0)
+                        # §v10.15: Adaptive Präsenz-Blend aus Restorability.
+                        # Blend ∈ [0.03, 0.12] — saubere Tracks brauchen weniger Präsenz.
+                        try:
+                            _ex_rr = float(_pmgg_restorability_score)
+                        except Exception:
+                            _ex_rr = 65.0
+                        _ex_blend = float(np.clip((100.0 - _ex_rr) / 250.0, 0.03, 0.12))
+                        restored_audio = np.clip(restored_audio + _ex_blend * _ex_presence, -1.0, 1.0)
                     restored_audio = np.nan_to_num(restored_audio, nan=0.0, posinf=0.0, neginf=0.0)
                     logger.info("ExcellenceOptimizer DSP-Fallback: Präsenz-Auffrischung 3–8 kHz angewendet")
                 except Exception as _ex_fb_exc:
@@ -13745,9 +13850,21 @@ class UnifiedRestorerV3:
                     _hpg_mask, _hpg_href = _hpg.extract_harmonic_mask(
                         _hpg_ref_audio, sample_rate, instrument_tag=_hpg_instrument_tag
                     )
-                restored_audio = _hpg.apply_correction(restored_audio, _hpg_href, _hpg_mask, sample_rate)
-                restored_audio = np.clip(np.nan_to_num(restored_audio, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0)
-                logger.info("§2.28 HPG: Harmonische Energiekorrektur angewendet (tag=%s)", _hpg_instrument_tag)
+                # §v10.15: PostGate-verifiziert
+                from backend.core.post_processing_gate import PostProcessingGate, get_post_processing_gate
+
+                _hpg_result = get_post_processing_gate().apply(
+                    lambda a, sr: np.clip(np.nan_to_num(
+                        _hpg.apply_correction(a, _hpg_href, _hpg_mask, sr),
+                        nan=0.0, posinf=0.0, neginf=0.0,
+                    ), -1.0, 1.0),
+                    restored_audio, sample_rate, label="HarmonicPreservationGuard",
+                )
+                if _hpg_result.adopted:
+                    restored_audio = _hpg_result.audio
+                    logger.info("§2.28 HPG: Harmonische Energiekorrektur angewendet (tag=%s)", _hpg_instrument_tag)
+                else:
+                    logger.info("§v10.15 HPG SKIPPED: %s", _hpg_result.skip_reason)
             except Exception as _hpg_exc:
                 logger.debug("HarmonicPreservationGuard nicht verfügbar: %s", _hpg_exc)
         else:
@@ -28242,6 +28359,16 @@ class UnifiedRestorerV3:
             _exec_vcap_str = f"{float(_exec_vcap):.3f}" if _exec_vcap is not None else "None"
             _exec_cond = getattr(self, "_conductor_strength_hints", {}).get(phase_metadata.phase_id)
             _exec_cond_str = f"{float(_exec_cond):.3f}" if _exec_cond is not None else "None"
+            # §v10.13 Real-time PID: Conductor-Hint tatsächlich anwenden.
+            # Der PhaseConductor misst den Audio-Zustand NACH jeder Phase und
+            # empfiehlt eine optimierte Stärke für die NÄCHSTE Phase.
+            if _exec_cond is not None and isinstance(kwargs.get("strength"), (int, float)):
+                _cur = float(kwargs["strength"])
+                # Blend: 70% conductor, 30% original (ermöglicht Sanft-Übergänge)
+                _blended = float(np.clip(_cur * 0.30 + _exec_cond * 0.70, 0.0, 1.0))
+                if abs(_blended - _cur) > 0.01:
+                    kwargs["strength"] = _blended
+                    _exec_cond_str += f" → applied={_blended:.3f}"
             logger.info(
                 "📊 PHASE_EXEC phase=%s strength=%s explicit=%s vcap=%s conductor=%s songcal=%.3f",
                 phase_metadata.phase_id,
