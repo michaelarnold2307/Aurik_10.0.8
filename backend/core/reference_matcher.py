@@ -4,10 +4,13 @@ Nutzer gibt Referenz-Track → Aurik matched EQ, Dynamics, Stereo-Width.
 """
 
 from __future__ import annotations
+
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class MatchProfile:
@@ -16,20 +19,22 @@ class MatchProfile:
     target_stereo_width: float = 0.5
     target_spectral_centroid: float = 2000.0
 
+
 def analyze_reference(audio: np.ndarray, sr: int) -> MatchProfile:
     """Extrahiert EQ/Dynamics/Stereo-Profil aus Referenz-Track."""
     mono = np.mean(audio, axis=-1) if audio.ndim > 1 else np.asarray(audio, dtype=np.float32)
     n_fft = 4096
-    spec = np.abs(np.fft.rfft(mono[:n_fft*16], n=n_fft))
-    freqs = np.fft.rfftfreq(n_fft, d=1.0/sr)
+    spec = np.abs(np.fft.rfft(mono[: n_fft * 16], n=n_fft))
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
 
     # EQ-Kurve (langfristiges Spektrum)
-    n_frames = max(1, len(mono) // (n_fft//2))
-    long_spec = np.zeros(n_fft//2+1)
+    n_frames = max(1, len(mono) // (n_fft // 2))
+    long_spec = np.zeros(n_fft // 2 + 1)
     for i in range(n_frames):
-        start = i * n_fft//2
-        chunk = mono[start:start+n_fft]
-        if len(chunk) < n_fft: chunk = np.pad(chunk, (0, n_fft-len(chunk)))
+        start = i * n_fft // 2
+        chunk = mono[start : start + n_fft]
+        if len(chunk) < n_fft:
+            chunk = np.pad(chunk, (0, n_fft - len(chunk)))
         long_spec += np.abs(np.fft.rfft(chunk * np.hanning(n_fft)))
     long_spec /= max(n_frames, 1)
 
@@ -37,15 +42,16 @@ def analyze_reference(audio: np.ndarray, sr: int) -> MatchProfile:
     centroid = float(np.sum(freqs * long_spec) / max(np.sum(long_spec), 1e-10))
     stereo = 0.5
     if audio.ndim == 2:
-        l, r = audio[:,0], audio[:,1]
-        stereo = float(np.clip(1.0 - abs(np.corrcoef(l,r)[0,1]), 0.0, 1.0))
+        l, r = audio[:, 0], audio[:, 1]
+        stereo = float(np.clip(1.0 - abs(np.corrcoef(l, r)[0, 1]), 0.0, 1.0))
 
     return MatchProfile(
         target_eq_curve=long_spec.astype(np.float32),
-        target_rms_db=20*np.log10(rms),
+        target_rms_db=20 * np.log10(rms),
         target_stereo_width=stereo,
         target_spectral_centroid=centroid,
     )
+
 
 def apply_match(audio: np.ndarray, sr: int, target: MatchProfile) -> np.ndarray:
     """Wendet EQ-Matching an."""
@@ -53,12 +59,13 @@ def apply_match(audio: np.ndarray, sr: int, target: MatchProfile) -> np.ndarray:
     n_fft = 4096
 
     # Quell-EQ-Kurve
-    src_long = np.zeros(n_fft//2+1)
-    n_frames = max(1, len(mono)//(n_fft//2))
+    src_long = np.zeros(n_fft // 2 + 1)
+    n_frames = max(1, len(mono) // (n_fft // 2))
     for i in range(n_frames):
-        start = i * n_fft//2
-        chunk = mono[start:start+n_fft]
-        if len(chunk) < n_fft: chunk = np.pad(chunk, (0, n_fft-len(chunk)))
+        start = i * n_fft // 2
+        chunk = mono[start : start + n_fft]
+        if len(chunk) < n_fft:
+            chunk = np.pad(chunk, (0, n_fft - len(chunk)))
         src_long += np.abs(np.fft.rfft(chunk * np.hanning(n_fft)))
     src_long /= max(n_frames, 1)
 
@@ -70,14 +77,14 @@ def apply_match(audio: np.ndarray, sr: int, target: MatchProfile) -> np.ndarray:
     result = np.zeros_like(mono)
     hop = n_fft // 4
     for i in range(0, len(mono) - n_fft, hop):
-        chunk = mono[i:i+n_fft] * np.hanning(n_fft)
+        chunk = mono[i : i + n_fft] * np.hanning(n_fft)
         spec = np.fft.rfft(chunk)
-        spec *= eq_gain[:len(spec)]
-        result[i:i+n_fft] += np.fft.irfft(spec)[:n_fft]
+        spec *= eq_gain[: len(spec)]
+        result[i : i + n_fft] += np.fft.irfft(spec)[:n_fft]
 
     # RMS-Matching
     src_rms = float(np.sqrt(np.mean(mono**2))) + 1e-10
-    target_rms = 10**(target.target_rms_db/20)
+    target_rms = 10 ** (target.target_rms_db / 20)
     gain = target_rms / src_rms
     result = np.clip(result * gain, -1.0, 1.0)
 

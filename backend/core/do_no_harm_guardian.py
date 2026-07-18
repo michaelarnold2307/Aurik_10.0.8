@@ -165,29 +165,21 @@ class DoNoHarmGuardian:
         # 1. Spectral Brightness
         _brightness_drop = input_snap.spectral_brightness - output_snap.spectral_brightness
         if _brightness_drop > self._max_brightness_drop:
-            degraded.append(
-                f"brightness_drop={_brightness_drop:.3f} (>{self._max_brightness_drop})"
-            )
+            degraded.append(f"brightness_drop={_brightness_drop:.3f} (>{self._max_brightness_drop})")
 
         # 2. Naturalness
         _nat_drop = input_snap.naturalness_estimate - output_snap.naturalness_estimate
         if _nat_drop > self._max_naturalness_drop:
-            degraded.append(
-                f"naturalness_drop={_nat_drop:.3f} (>{self._max_naturalness_drop})"
-            )
+            degraded.append(f"naturalness_drop={_nat_drop:.3f} (>{self._max_naturalness_drop})")
 
         # 3. RMS Change
         _rms_change = abs(output_snap.rms_dbfs - input_snap.rms_dbfs)
         if _rms_change > self._max_rms_change_db:
-            degraded.append(
-                f"rms_change={_rms_change:.1f} dB (>{self._max_rms_change_db})"
-            )
+            degraded.append(f"rms_change={_rms_change:.1f} dB (>{self._max_rms_change_db})")
 
         # 4. Peak Integrity
         if output_snap.peak_dbfs > input_snap.peak_dbfs + self._min_peak_headroom_db:
-            degraded.append(
-                f"peak_degraded: output={output_snap.peak_dbfs:.1f} > input={input_snap.peak_dbfs:.1f}"
-            )
+            degraded.append(f"peak_degraded: output={output_snap.peak_dbfs:.1f} > input={input_snap.peak_dbfs:.1f}")
 
         # 5. Dynamic Range — darf nicht kollabieren
         _dr_change = input_snap.dynamic_range_db - output_snap.dynamic_range_db

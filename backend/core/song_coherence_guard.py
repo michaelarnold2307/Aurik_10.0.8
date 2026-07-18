@@ -211,9 +211,7 @@ class SongCoherenceGuard:
             fix_desc.append("stereo_align")
 
         severity = len(issues) / 4.0
-        self._fixes.append(
-            BoundaryFix(issue="+".join(issues), fix_applied="+".join(fix_desc), severity=severity)
-        )
+        self._fixes.append(BoundaryFix(issue="+".join(issues), fix_applied="+".join(fix_desc), severity=severity))
 
         logger.debug(
             "CoherenceGuard: smoothed segment (issues=%s, fixes=%s)",
@@ -222,9 +220,7 @@ class SongCoherenceGuard:
         )
         return np.clip(result, -1.0, 1.0).astype(np.float32)
 
-    def _adaptive_stitch(
-        self, segments: list[np.ndarray], profiles: list[CoherenceProfile], sr: int
-    ) -> np.ndarray:
+    def _adaptive_stitch(self, segments: list[np.ndarray], profiles: list[CoherenceProfile], sr: int) -> np.ndarray:
         """Sticht Segmente mit adaptiven Cross-Fades (länger bei Sprüngen)."""
         if len(segments) == 1:
             return segments[0]
@@ -253,7 +249,7 @@ class SongCoherenceGuard:
 
             overlap_start = max(0, len(result) - cf_samples)
             result[overlap_start:] *= fade_out
-            new_audio = np.concatenate([result, seg[: cf_samples] * fade_in + seg[cf_samples:]])
+            new_audio = np.concatenate([result, seg[:cf_samples] * fade_in + seg[cf_samples:]])
             result = new_audio
             pos = len(result)
 

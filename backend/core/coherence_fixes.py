@@ -37,9 +37,7 @@ def crossfade_blend(original: np.ndarray, processed: np.ndarray, sr: int, blend_
     return np.clip(result, -1.0, 1.0).astype(np.float32)
 
 
-def smooth_stereo_correction(
-    audio: np.ndarray, delay_samples: int, sr: int, smooth_s: float = 0.10
-) -> np.ndarray:
+def smooth_stereo_correction(audio: np.ndarray, delay_samples: int, sr: int, smooth_s: float = 0.10) -> np.ndarray:
     """STCG: Zeitliche Glättung der Kanal-Korrektur.
 
     Statt abrupter sample-genauer Shifts → graduelle Verschiebung.
@@ -68,7 +66,9 @@ def smooth_stereo_correction(
     return result
 
 
-def dropout_fade(original: np.ndarray, repaired: np.ndarray, dropout_start: int, dropout_end: int, sr: int) -> np.ndarray:
+def dropout_fade(
+    original: np.ndarray, repaired: np.ndarray, dropout_start: int, dropout_end: int, sr: int
+) -> np.ndarray:
     """Dropout-Repair: Ein-/Ausblendung an reparierten Stellen."""
     mono = np.mean(original, axis=-1) if original.ndim > 1 else np.asarray(original, dtype=np.float32)
     rep = np.mean(repaired, axis=-1) if repaired.ndim > 1 else np.asarray(repaired, dtype=np.float32)

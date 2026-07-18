@@ -28,20 +28,20 @@ def get_about_text() -> str:
     """Gibt formatierten Über-Dialog-Text zurück."""
     return f"""
 ╔══════════════════════════════════════════╗
-║             AURIK {AURIK_ABOUT['version']} — {AURIK_ABOUT['codename']}            ║
+║             AURIK {AURIK_ABOUT["version"]} — {AURIK_ABOUT["codename"]}            ║
 ╠══════════════════════════════════════════╣
 ║                                          ║
-║  Entwickler: {AURIK_ABOUT['developer']}                    ║
-║  E-Mail:     {AURIK_ABOUT['email']}  ║
-║  Jahr:       {AURIK_ABOUT['year']}                          ║
+║  Entwickler: {AURIK_ABOUT["developer"]}                    ║
+║  E-Mail:     {AURIK_ABOUT["email"]}  ║
+║  Jahr:       {AURIK_ABOUT["year"]}                          ║
 ║                                          ║
-║  {AURIK_ABOUT['description'][:40]}  ║
-║  {AURIK_ABOUT['description'][40:80]}   ║
-║  {AURIK_ABOUT['description'][80:120]}  ║
-║  {AURIK_ABOUT['description'][120:160]} ║
+║  {AURIK_ABOUT["description"][:40]}  ║
+║  {AURIK_ABOUT["description"][40:80]}   ║
+║  {AURIK_ABOUT["description"][80:120]}  ║
+║  {AURIK_ABOUT["description"][120:160]} ║
 ║                                          ║
-║  Lizenz: {AURIK_ABOUT['license'][:35]} ║
-║          {AURIK_ABOUT['license'][35:]}  ║
+║  Lizenz: {AURIK_ABOUT["license"][:35]} ║
+║          {AURIK_ABOUT["license"][35:]}  ║
 ║                                          ║
 ║  ❤️  Danke für Deine Unterstützung!     ║
 ╚══════════════════════════════════════════╝

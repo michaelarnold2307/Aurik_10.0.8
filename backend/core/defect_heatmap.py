@@ -29,18 +29,19 @@ def compute(audio: np.ndarray, sr: int, time_resolution_s: float = 1.0) -> dict[
 
     for seg in range(n_segments):
         start = seg * hop
-        chunk = mono[start:start + hop]
-        if len(chunk) < hop: chunk = np.pad(chunk, (0, hop - len(chunk)))
+        chunk = mono[start : start + hop]
+        if len(chunk) < hop:
+            chunk = np.pad(chunk, (0, hop - len(chunk)))
         spec = np.abs(np.fft.rfft(chunk * np.hanning(len(chunk)), n=n_fft))
 
         # 1. Clicks: hochfrequente Impulse
-        hf_energy = np.sum(spec[freqs >= 6000]**2)
+        hf_energy = np.sum(spec[freqs >= 6000] ** 2)
         total_energy = np.sum(spec**2) + 1e-10
         heatmap[seg, 0] = float(np.clip(hf_energy / total_energy * 2, 0, 1))
 
         # 2. Hum: 50/60Hz + Harmonische
         hum_bands = [(45, 65), (95, 125), (145, 165)]
-        hum_e = sum(np.sum(spec[(freqs >= lo) & (freqs <= hi)]**2) for lo, hi in hum_bands)
+        hum_e = sum(np.sum(spec[(freqs >= lo) & (freqs <= hi)] ** 2) for lo, hi in hum_bands)
         heatmap[seg, 1] = float(np.clip(hum_e / total_energy * 3, 0, 1))
 
         # 3. Hiss: Rauschflur über 8kHz
@@ -64,12 +65,16 @@ def compute(audio: np.ndarray, sr: int, time_resolution_s: float = 1.0) -> dict[
         "n_segments": n_segments,
         "defect_types": ["clicks", "hum", "hiss", "clipping", "dropouts", "crackle"],
         "heatmap": heatmap.tolist(),
-        "overall": {t: float(np.mean(heatmap[:, i])) for i, t in enumerate(["clicks", "hum", "hiss", "clipping", "dropouts", "crackle"])},
+        "overall": {
+            t: float(np.mean(heatmap[:, i]))
+            for i, t in enumerate(["clicks", "hum", "hiss", "clipping", "dropouts", "crackle"])
+        },
     }
 
 
 def to_json(heatmap: dict[str, Any], path: str | None = None) -> str:
     data = json.dumps(heatmap, indent=2)
     if path:
-        with open(path, "w") as f: f.write(data)
+        with open(path, "w") as f:
+            f.write(data)
     return data

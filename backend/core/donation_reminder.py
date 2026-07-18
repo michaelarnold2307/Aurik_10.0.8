@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 PAYPAL_URL = "https://www.paypal.com/donate?hosted_button_id=AURIKDONATE"
 PAYPAL_EMAIL = "michael.arnold2307@gmail.com"
-PAYPAL_FALLBACK = f"https://www.paypal.com/paypalme/aurikdev"
+PAYPAL_FALLBACK = "https://www.paypal.com/paypalme/aurikdev"
 
 _MESSAGES = [
     "🎵 Dein Song wurde erfolgreich restauriert!",

@@ -34,27 +34,33 @@ class SmartProfile:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "material": self.material, "era": self.era, "genre": self.genre,
-            "mode": self.mode, "best_strategies": self.best_strategies,
-            "avg_improvement": self.avg_improvement, "n_samples": self.n_samples,
+            "material": self.material,
+            "era": self.era,
+            "genre": self.genre,
+            "mode": self.mode,
+            "best_strategies": self.best_strategies,
+            "avg_improvement": self.avg_improvement,
+            "n_samples": self.n_samples,
             "confidence": self.confidence,
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SmartProfile":
-        return cls(**{k: d.get(k, "") for k in ["material", "genre", "mode"]},
-                   era=d.get("era", 0),
-                   best_strategies=d.get("best_strategies", []),
-                   avg_improvement=d.get("avg_improvement", 0.0),
-                   n_samples=d.get("n_samples", 0),
-                   confidence=d.get("confidence", 0.0))
+    def from_dict(cls, d: dict[str, Any]) -> SmartProfile:
+        return cls(
+            **{k: d.get(k, "") for k in ["material", "genre", "mode"]},
+            era=d.get("era", 0),
+            best_strategies=d.get("best_strategies", []),
+            avg_improvement=d.get("avg_improvement", 0.0),
+            n_samples=d.get("n_samples", 0),
+            confidence=d.get("confidence", 0.0),
+        )
 
 
 def build_profile(material: str, era: int = 0, genre: str = "", mode: str = "restoration") -> SmartProfile:
     """Extrahiert bestes Profil aus PhaseImpactRecorder-Daten."""
     try:
-        from backend.core.phase_impact_recorder import get_phase_impact_recorder
         from backend.core.phase_impact_predictor import get_phase_impact_predictor
+        from backend.core.phase_impact_recorder import get_phase_impact_recorder
 
         rec = get_phase_impact_recorder()
         pred = get_phase_impact_predictor()
@@ -71,10 +77,13 @@ def build_profile(material: str, era: int = 0, genre: str = "", mode: str = "res
         best_strategies = [s for s, d in best if d > 0][:3]
 
         profile = SmartProfile(
-            material=material, era=era, genre=genre, mode=mode,
+            material=material,
+            era=era,
+            genre=genre,
+            mode=mode,
             best_strategies=best_strategies,
             avg_improvement=sum(d for _, d in best) / max(len(best), 1),
-            n_samples=rec._session_impacts.__len__() if hasattr(rec, '_session_impacts') else 0,
+            n_samples=rec._session_impacts.__len__() if hasattr(rec, "_session_impacts") else 0,
             confidence=min(1.0, len(best_strategies) / 3.0),
         )
         return profile

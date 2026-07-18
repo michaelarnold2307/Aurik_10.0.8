@@ -5,13 +5,16 @@ Minimaler Eingriff, maximaler Erhalt.
 """
 
 from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 MIN_DELTA_THRESHOLD: float = 0.03
+
 
 @dataclass
 class MinimalPlan:
@@ -19,10 +22,12 @@ class MinimalPlan:
     expected_delta: float = 0.0
     total_phases: int = 0
 
+
 def compute_plan(material: str, era: int = 0, mode: str = "restoration") -> MinimalPlan:
     """Erstellt Minimal-Eingriffs-Plan: nur Strategien die sicher helfen."""
     try:
         from backend.core.phase_impact_predictor import get_phase_impact_predictor
+
         pred = get_phase_impact_predictor()
 
         all_strategies = ["passthrough", "light", "balanced", "deep", "full"]

@@ -52,7 +52,6 @@ import logging
 from typing import Any
 
 import numpy as np
-
 from backend.core.phase_interface import PhaseInterface, PhaseResult
 
 logger = logging.getLogger(__name__)
@@ -85,10 +84,17 @@ def _histogram_clip_threshold(audio: np.ndarray, material: str = "unknown") -> f
     is_hard_clip = p95_p99_ratio >= 2.5
 
     material_lower = material.lower()
-    is_analog = material_lower in ("vinil", "vinyl", "tape", "shellac", "cassette",
-                                    "reel_tape", "lacquer_disc", "wax_cylinder")
-    is_digital = material_lower in ("cd_digital", "dat", "mp3_low", "mp3_high",
-                                     "aac", "streaming", "minidisc")
+    is_analog = material_lower in (
+        "vinil",
+        "vinyl",
+        "tape",
+        "shellac",
+        "cassette",
+        "reel_tape",
+        "lacquer_disc",
+        "wax_cylinder",
+    )
+    is_digital = material_lower in ("cd_digital", "dat", "mp3_low", "mp3_high", "aac", "streaming", "minidisc")
 
     if is_hard_clip and is_digital:
         threshold = float(np.clip(p99, 0.85, 0.999))
@@ -100,9 +106,14 @@ def _histogram_clip_threshold(audio: np.ndarray, material: str = "unknown") -> f
         threshold = float(np.clip(p995, 0.88, 0.999))
 
     logger.info(
-        "Phase 07 self-cal: material=%s P95=%.4f P99=%.4f P995=%.4f ratio=%.2f "
-        "hard_clip=%s → threshold=%.4f",
-        material, p95, p99, p995, p95_p99_ratio, is_hard_clip, threshold,
+        "Phase 07 self-cal: material=%s P95=%.4f P99=%.4f P995=%.4f ratio=%.2f hard_clip=%s → threshold=%.4f",
+        material,
+        p95,
+        p99,
+        p995,
+        p95_p99_ratio,
+        is_hard_clip,
+        threshold,
     )
     return threshold
 
@@ -117,13 +128,13 @@ def _adaptive_crossfade_width(clip_fraction: float) -> int:
         Crossfade-Breite in Samples bei 48 kHz.
     """
     if clip_fraction < 0.001:
-        return 144   # 3 ms — kaum hörbar bei wenigen Clips
+        return 144  # 3 ms — kaum hörbar bei wenigen Clips
     elif clip_fraction < 0.005:
-        return 240   # 5 ms
+        return 240  # 5 ms
     elif clip_fraction < 0.01:
-        return 384   # 8 ms
+        return 384  # 8 ms
     else:
-        return 480   # 10 ms — musikalisch weich bei vielen Clips
+        return 480  # 10 ms — musikalisch weich bei vielen Clips
 
 
 def _declip_pchip(audio: np.ndarray, threshold: float) -> np.ndarray:
@@ -156,7 +167,8 @@ def _declip_pchip(audio: np.ndarray, threshold: float) -> np.ndarray:
         logger.warning(
             "Phase 07 declip: nur %d ungeclippte Samples von %d — "
             "Material ist nahezu vollständig übersteuert, PCHIP nicht anwendbar",
-            n_unclipped, n_total,
+            n_unclipped,
+            n_total,
         )
         return audio.copy()
 
@@ -181,15 +193,15 @@ def _declip_pchip(audio: np.ndarray, threshold: float) -> np.ndarray:
         # Für jede Clip-Grenze: Hanning-Fenster
         clip_edges = np.diff(clipped.astype(np.int8))
         clip_starts = np.where(clip_edges == 1)[0]  # 0→1 Übergang
-        clip_ends = np.where(clip_edges == -1)[0]    # 1→0 Übergang
+        clip_ends = np.where(clip_edges == -1)[0]  # 1→0 Übergang
 
         hanning_window = 0.5 * (1 - np.cos(np.pi * np.arange(crossfade_n) / crossfade_n))
 
         for start in clip_starts:
             fade_start = max(0, start - crossfade_n)
             fade_len = min(crossfade_n, n_total - fade_start)
-            blend[fade_start:fade_start + fade_len] = np.minimum(
-                blend[fade_start:fade_start + fade_len],
+            blend[fade_start : fade_start + fade_len] = np.minimum(
+                blend[fade_start : fade_start + fade_len],
                 hanning_window[:fade_len],
             )
 
@@ -197,8 +209,8 @@ def _declip_pchip(audio: np.ndarray, threshold: float) -> np.ndarray:
             fade_end = min(n_total, end + crossfade_n)
             fade_len = min(crossfade_n, n_total - end)
             rev_hanning = hanning_window[::-1]
-            blend[end:end + fade_len] = np.minimum(
-                blend[end:end + fade_len],
+            blend[end : end + fade_len] = np.minimum(
+                blend[end : end + fade_len],
                 rev_hanning[:fade_len],
             )
 
@@ -317,9 +329,7 @@ class DeclipperPhase(PhaseInterface):
             audio_out = audio_out.ravel()
 
         reduction_db = float(
-            20 * np.log10(
-                np.mean(np.abs(audio_in - audio_out)) / max(np.mean(np.abs(audio_in)), 1e-10) + 1e-10
-            )
+            20 * np.log10(np.mean(np.abs(audio_in - audio_out)) / max(np.mean(np.abs(audio_in)), 1e-10) + 1e-10)
         )
 
         logger.info(

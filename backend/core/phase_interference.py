@@ -5,6 +5,7 @@ Lernt aus PhaseImpactRecorder: „Phase 04+19 = −0.3 MOS".
 """
 
 from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -12,15 +13,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class InterferenceReport:
     problematic_pairs: list[tuple[str, str, float]] = field(default_factory=list)
     n_checked: int = 0
 
+
 def detect(material: str = "", era: int = 0) -> InterferenceReport:
     """Erkennt Phasen-Paare mit negativem Interaktionseffekt."""
     try:
         from backend.core.phase_impact_recorder import get_phase_impact_recorder
+
         rec = get_phase_impact_recorder()
         impacts = rec._session_impacts
 

@@ -25,6 +25,7 @@ def score_strategies(material: str, era: int = 0, mode: str = "restoration") -> 
     """Bewertet alle 5 Strategien mit Konfidenz-Scores."""
     try:
         from backend.core.phase_impact_predictor import get_phase_impact_predictor
+
         pred = get_phase_impact_predictor()
         results = []
         for strategy in ["passthrough", "light", "balanced", "deep", "full"]:
@@ -33,14 +34,22 @@ def score_strategies(material: str, era: int = 0, mode: str = "restoration") -> 
             delta = p.predicted_delta
             n = p.n_samples
 
-            if conf > 0.6 and delta > 0.05: rec = "strong_apply"
-            elif delta > 0: rec = "apply"
-            elif conf < 0.3: rec = "uncertain"
-            elif delta < -0.15: rec = "strong_skip"
-            else: rec = "skip"
+            if conf > 0.6 and delta > 0.05:
+                rec = "strong_apply"
+            elif delta > 0:
+                rec = "apply"
+            elif conf < 0.3:
+                rec = "uncertain"
+            elif delta < -0.15:
+                rec = "strong_skip"
+            else:
+                rec = "skip"
 
-            results.append(StrategyConfidence(strategy_name=strategy, confidence=conf,
-                                              predicted_delta=delta, n_samples=n, recommendation=rec))
+            results.append(
+                StrategyConfidence(
+                    strategy_name=strategy, confidence=conf, predicted_delta=delta, n_samples=n, recommendation=rec
+                )
+            )
         return results
     except Exception as e:
         logger.debug("score_strategies: %s", e)
