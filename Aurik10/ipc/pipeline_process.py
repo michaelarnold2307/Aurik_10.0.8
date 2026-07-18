@@ -335,8 +335,11 @@ def _load_audio_file(path: str) -> Tuple[Optional[np.ndarray], int]:
             audio = audio.astype(np.float32)
         elif audio.ndim == 2:
             audio = audio.astype(np.float32)
-        if np.max(np.abs(audio)) > 0:
-            audio = audio / np.max(np.abs(audio)) * 0.95
+        # §V08: np.percentile(99.9) statt np.max(abs()) — robust gegen
+        # einzelne Ausreißer-Samples (Clicks/Pops).
+        _peak = float(np.percentile(np.abs(audio), 99.9))
+        if _peak > 0:
+            audio = audio / _peak * 0.95
         return audio, int(sr)
     except Exception as e:
         logger.error("soundfile.read fehlgeschlagen: %s", e)

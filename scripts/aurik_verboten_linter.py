@@ -67,6 +67,7 @@ RULES: dict[str, dict] = {
             "test_",
             "exporter.py",
             "audio_exporter.py",
+            "file_import",
             "generate_dummy",
             "conftest",
             "audit/",

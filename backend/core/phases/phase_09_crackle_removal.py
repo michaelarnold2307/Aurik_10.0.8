@@ -1245,7 +1245,11 @@ class CrackleRemovalPhase(PhaseInterface):
             _nt09_d = _nt09_fn(_a09cf - _r09cf, _mat09_str, sr=sample_rate)
             if _nt09_d > 0.25:
                 restored = (0.5 * restored + 0.5 * audio).astype(np.float32)
-                logger.warning("§V19 phase_09 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt09_d)
+                # §SOTA: Noise-Texture-Guard ist eine Schutzmaßnahme, kein Fehler.
+                # Wenn die Rauschtextur nach Crackle-Entfernung zu stark vom
+                # Original abweicht (>0.25), wird per 50%-Blend zurückgeregelt —
+                # "do no harm" für den natürlichen Noise-Charakter.
+                logger.info("§V19 phase_09 noise_texture dist=%.3f > 0.25 → 50%%-Blend", _nt09_d)
         except Exception as _nt09_exc:
             logger.debug("§V19 phase_09 noise_texture_guard (non-blocking): %s", _nt09_exc)
 

@@ -727,9 +727,20 @@ class DeEsserPhase(PhaseInterface):
         _total_energy = float(np.sum(_spec**2)) + 1e-12
         _hf_energy = float(np.sum(_spec[_freqs >= 4000.0] ** 2))
         _hf_ratio = _hf_energy / _total_energy
-        # Adaptiver Schwellwert: 1 % für bandbreitenbegrenztes Material
+        # Adaptiver Schwellwert: material-adaptive Kalibrierung.
+        # Band/Dunkel-Material hat weniger HF — zu hoher Threshold
+        # würde Sibilanten als "kein HF" klassifizieren und De-Essing skippen.
         _bw_loss = kwargs.get("bandwidth_loss", 0.0)
         _hf_threshold = 0.01 if float(_bw_loss) > 0.5 else 0.05
+        _era_decade_th = int(kwargs.get("decade", 1980) or 1980)
+        _mat_str_th = str(getattr(material, "value", material) or "").lower()
+        if _mat_str_th in ("cassette", "reel_tape", "tape"):
+            _hf_threshold *= 0.6
+        elif _mat_str_th in ("vinyl", "lacquer_disc", "shellac"):
+            _hf_threshold *= 0.8
+        if _era_decade_th < 1970:
+            _hf_threshold *= 0.7
+        _hf_threshold = max(_hf_threshold, 0.005)  # nie unter 0.5%
         _signal_has_sibilant_content = _hf_ratio > _hf_threshold
         _signal_long_enough_for_aurik8 = len(audio_mono) >= int(sample_rate * 2.0)
         if not _signal_long_enough_for_aurik8:
@@ -895,6 +906,36 @@ class DeEsserPhase(PhaseInterface):
         # §2.20 Genre-adaptive de-essing cap: genre_profile.deessing_strength_cap
         # limits how aggressive de-essing can be (e.g. Schlager 0.45, Oper 0.35).
         _deessing_cap = kwargs.get("deessing_strength_cap")
+        # §SOTA: Selbstkalibrierung aus Era + Material + Genre wenn kein
+        # expliziter Cap vom Caller kommt. Verhindert Over-De-Essing
+        # (z.B. 15 Pre-Echo-Artefakte bei Schlager/1970/Kassette).
+        if _deessing_cap is None:
+            _era_decade = int(kwargs.get("decade", 1980) or 1980)
+            _mat_str = str(getattr(material, "value", material) or "").lower()
+            _genre_str = str(kwargs.get("genre", "") or "").lower()
+            # Basis-Cap aus Ära
+            if _era_decade < 1960:       _cap_era = 0.30
+            elif _era_decade < 1980:     _cap_era = 0.45
+            elif _era_decade < 2000:     _cap_era = 0.60
+            else:                        _cap_era = 0.70
+            # Material-Modifikator (Band = weniger HF = weniger De-Essing nötig)
+            if _mat_str in ("cassette", "reel_tape", "tape"):
+                _cap_mat = 0.85
+            elif _mat_str in ("vinyl", "lacquer_disc", "shellac"):
+                _cap_mat = 0.70
+            else:                        _cap_mat = 1.0
+            # Genre-Modifikator
+            if "schlager" in _genre_str or "volksmusik" in _genre_str:
+                _cap_genre = 0.70
+            elif "oper" in _genre_str or "klassik" in _genre_str:
+                _cap_genre = 0.55
+            elif "jazz" in _genre_str:   _cap_genre = 0.75
+            else:                        _cap_genre = 0.85
+            _deessing_cap = _cap_era * _cap_mat * _cap_genre
+            logger.info(
+                "§SOTA DeEsser-Kalibrierung: era=%d cap=%.2f mat=%s cap=%.2f genre=%s cap=%.2f → %.2f",
+                _era_decade, _cap_era, _mat_str, _cap_mat, _genre_str, _cap_genre, _deessing_cap,
+            )
         if _deessing_cap is not None:
             _cap_db = -12.0 * float(_deessing_cap)  # 0.45 → -5.4 dB max
             max_reduction_db = max(max_reduction_db, _cap_db)

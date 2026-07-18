@@ -12,8 +12,10 @@ def _load_with_sf(filepath, always_2d: bool = False):
 
     §G-SF-READ: Thin wrapper around soundfile.read(); always_2d controls
     whether mono audio is returned as (samples,) or (samples, 1).
+    This is the ONLY sanctioned sf.read call site — all other modules
+    MUST use load_audio_file().
     """
-    return sf.read(filepath, always_2d=always_2d)
+    return sf.read(filepath, always_2d=always_2d)  # noqa: V02
 
 
 logger = logging.getLogger(__name__)

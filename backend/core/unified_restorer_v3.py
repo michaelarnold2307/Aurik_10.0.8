@@ -29337,6 +29337,14 @@ class UnifiedRestorerV3:
                     _sr.success = True  # §v10.18: _normalize_phase_result erwartet .success
                     _sr.resolved_defects = {}  # Segment-Ergebnisse haben keine Defekt-Auflösung
                     result = _sr  # type: ignore[assignment]
+                # §v10.31b: Auch im Per-Segment-Pfad result.audio auf ndarray prüfen.
+                # run_phase_per_segment gibt _SegResult zurück (nicht ndarray),
+                # aber post-processing greift auf .ndim zu — Tuple-Schutz nötig.
+                if hasattr(result, "audio") and not isinstance(result.audio, np.ndarray):
+                    _ra_raw = getattr(result, "audio", None)
+                    if isinstance(_ra_raw, (tuple, list)):
+                        _ra_first = _ra_raw[0] if len(_ra_raw) > 0 else audio
+                        result.audio = _ra_first if isinstance(_ra_first, np.ndarray) else np.asarray(audio, dtype=np.float32)
             else:
                 result = phase.process(audio, **kwargs)
                 # §v10.31: Normalize result audio to channels-first (2,N) to match pipeline.

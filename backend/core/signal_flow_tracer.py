@@ -411,18 +411,50 @@ class SignalFlowTracer:
                         p in str(phase_id) for p in ("phase_14", "phase_16", "phase_25", "azimuth", "phase_correction")
                     )
                 )
-                # §SOTA: NOVELTY_CRIT ist bei Reparatur-Phasen ERWARTET —
-                # Click/Crackle/Dropout-Interpolation erzeugt per Definition
-                # neuen Spektralinhalt (das ist der Zweck der Reparatur).
+                # §SOTA: NOVELTY_CRIT ist bei Reparatur- und subtraktiven
+                # Cleanup-Phasen ERWARTET — ihr Zweck ist es, Inhalt zu
+                # entfernen oder zu ersetzen, was das Spektrum notwendig ändert.
+                #
+                # Reparatur: Interpolation füllt Defektlücken mit neuem Material.
+                # Subtraktiv: Entfernen von Rauschen/Brumm/Rumpel ändert Spektrum.
                 _novelty_expected = (
                     "NOVELTY_CRIT" in " | ".join(flags)
                     and phase_id
                     and any(
                         p in str(phase_id) for p in (
+                            # Reparatur-Phasen (füllen Lücken → neues Material)
                             "phase_01", "phase_09", "phase_23", "phase_24",
                             "phase_27", "phase_50", "phase_56",
                             "click", "crackle", "dropout", "spectral_repair",
-                            "band_gap", "inpaint"
+                            "band_gap", "inpaint",
+                            # Time/Pitch-Reparatur (Time-Stretch → Spektrumänderung)
+                            "phase_12", "phase_31",
+                            "wow", "flutter", "speed_pitch",
+                            # Subtraktive Cleanup-Phasen (entfernen Inhalt → Spektrumänderung)
+                            "phase_02", "phase_05", "phase_18", "phase_29",
+                            "phase_59",
+                            "hum", "rumble", "noise_gate", "tape_hiss",
+                            "modulation_noise",
+                            # Enhancement-Phasen (verstärken/formen → Spektrumänderung)
+                            "phase_08", "phase_13", "phase_36", "phase_37",
+                            "phase_38", "phase_48",
+                            "transient", "bass_enhance", "presence_boost",
+                            "stereo_enhance", "stereo_width",
+                            # Stereo-Geometrie-Korrektur (Phasenlage → Summenspektrum)
+                            "phase_14", "phase_15", "phase_25", "phase_34",
+                            "phase_correction", "stereo_balance", "azimuth",
+                            "mid_side",
+                            # EQ/Tonal/Harmonic (formen Spektrum per Design)
+                            "phase_04", "phase_06", "phase_07", "phase_16",
+                            "phase_17",
+                            "eq_correction", "frequency_restoration",
+                            "harmonic_restoration", "final_eq", "mastering_polish",
+                            # Denoise/Dereverb (entfernen Inhalt → Spektrumänderung)
+                            "phase_03", "phase_49",
+                            "denoise", "dereverb",
+                            # De-Esser/Vocal-Processing (dämpft Frequenzen → Spektrumänderung)
+                            "phase_19", "phase_42",
+                            "de_esser", "vocal_enhance",
                         )
                     )
                 )

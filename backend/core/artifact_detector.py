@@ -52,9 +52,9 @@ class ArtifactDetector:
     Usage:
         detector = ArtifactDetector(sr=48000)
         report = detector.scan(processed_audio)
-        print(f"Artifact score: {report.overall_score:.2f}")
+        logger.info(f"Artifact score: {report.overall_score:.2f}")
         if report.click_count > 0:
-            print(f"  Found {report.click_count} clicks!")
+            logger.info(f"  Found {report.click_count} clicks!")
     """
 
     def __init__(self, sr: int = 48000):

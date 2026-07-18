@@ -61,7 +61,7 @@ class BlindQualityEstimator:
     Usage:
         est = BlindQualityEstimator(sr=48000)
         score = est.estimate(processed_audio)
-        print(f"Reference-free quality: {score.overall:.0f}/100")
+        logger.info(f"Reference-free quality: {score.overall:.0f}/100")
     """
 
     def __init__(self, sr: int = 48000):

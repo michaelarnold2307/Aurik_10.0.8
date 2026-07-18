@@ -402,7 +402,7 @@ class FlashSRPlugin:
 
         # Hochpass > 4 kHz für harmonische Generierung
         sos = butter(4, 4000, btype="high", fs=sr, output="sos")
-        hf_source = sosfilt(sos, x.astype(np.float64)).astype(np.float32)
+        hf_source = sosfiltfilt(sos, x.astype(np.float64)).astype(np.float32)
 
         # Waveshaping für harmonische Obertöne
         shaped = np.tanh(hf_source * 2.0) * 0.3

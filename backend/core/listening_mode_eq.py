@@ -216,9 +216,9 @@ class AdaptiveListeningEQ:
             for sos in sos_list:
                 if result_audio.ndim == 2:
                     for ch in range(min(result_audio.shape[0], 2)):
-                        result_audio[ch] = sosfilt(sos, result_audio[ch])
+                        result_audio[ch] = sosfiltfilt(sos, result_audio[ch])
                 else:
-                    result_audio = sosfilt(sos, result_audio)
+                    result_audio = sosfiltfilt(sos, result_audio)
 
             result_audio = np.clip(np.nan_to_num(result_audio, nan=0.0, posinf=0.0, neginf=0.0), -1.0, 1.0).astype(
                 np.float32

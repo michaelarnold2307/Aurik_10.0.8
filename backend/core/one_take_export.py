@@ -147,9 +147,9 @@ class OneTakeExport:
                     sos[:, :3] *= 10.0 ** (_FATIGUE_HF_CUT_DB / 40.0)
                     if current.ndim == 2:
                         for ch in range(min(current.shape[0], 2)):
-                            current[ch] = sosfilt(sos, current[ch])
+                            current[ch] = sosfiltfilt(sos, current[ch])
                     else:
-                        current = sosfilt(sos, current)
+                        current = sosfiltfilt(sos, current)
                     corrections_this_round.append(
                         f"hf_cut({_FATIGUE_HF_CUT_DB:+.0f}dB@{_FATIGUE_HF_CUT_FREQ}Hz, fatigue={check.fatigue_score:.2f})"
                     )
