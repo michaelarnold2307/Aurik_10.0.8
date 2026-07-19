@@ -28630,7 +28630,10 @@ class UnifiedRestorerV3:
                 str(getattr(phase_metadata, "phase_id", "")).startswith(p)
                 for p in ("phase_01", "phase_02", "phase_09", "phase_24", "phase_27")
             )
-            _floor = 0.25 if _is_repair else 0.12  # v10.11: Mindest-Floor fuer ALLE Phasen
+            # §v10.11 Selbstkalibrierung: Kein harter Floor —
+            # die HPE-Gate-Selbstkalibrierung (v10.10) bestimmt dynamisch die Untergrenze.
+            # Repair-Phasen behalten konservativen Floor 0.25 als Sicherheitsnetz.
+            _floor = 0.25 if _is_repair else 0.0
             _effective_cap = max(_planned_strength_cap, _floor)
             if _runtime_strength > _effective_cap:
                 kwargs["strength"] = _effective_cap
@@ -28644,13 +28647,13 @@ class UnifiedRestorerV3:
                 )
 
         # §v10.0.5 Minimum-Effective-Strength-Guard: Wenn die finale Stärke
-        # unter 0.12 liegt, ist die Phasen-Wirkung vernachlässigbar. Phase
+        # unter 0.05 liegt (Selbstkalibrierung: HPE-Gate lernt dynamisch), ist die Phasen-Wirkung vernachlässigbar. Phase
         # als Passthrough überspringen — verhindert 270s NOVELTY_CRIT-Kaskaden
         # wie bei phase_36/37/38 auf Kassette mit planned cap 0.100.
         _final_strength = float(kwargs.get("strength", 1.0))
-        if _final_strength < 0.12 and _final_strength > 0.0:
+        if _final_strength < 0.05 and _final_strength > 0.0:
             logger.info(
-                "§v10.0.5 Min-Effective-Strength %s: strength=%.3f < 0.12 → phase skipped (negligible effect)",
+                "§v10.0.5 Min-Effective-Strength %s: strength=%.3f < 0.05 → phase skipped (negligible effect)",
                 phase_metadata.phase_id,
                 _final_strength,
             )
