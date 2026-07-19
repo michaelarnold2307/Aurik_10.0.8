@@ -28644,7 +28644,14 @@ class UnifiedRestorerV3:
                 phase_metadata.phase_id,
                 _final_strength,
             )
-            return audio
+            # §v10.11: Return proper result object — raw ndarray crasht post-processing
+            _skip_result = type('_SkipResult', (), {
+                'audio': audio,
+                'success': True,
+                'metadata': {'skipped': True, 'reason': 'strength_below_min'},
+                'warnings': [],
+            })()
+            return _skip_result
 
         try:
             _exec_strength = kwargs.get("strength")
@@ -31316,12 +31323,18 @@ class UnifiedRestorerV3:
                             # Restoration: §2.46e rollback bei hoher Novelty.
                             # §v10.35: NIEMALS wet=0.0 — selbst kritische Novelty behält min. 5% Phase-Output.
                             # Vollständiger Rollback entfernt legitime Verbesserungen (z.B. Dynamics).
+                            # §v10.11: Reparatur-Phasen (Click, Crackle, Dropout) brauchen höheren Min-Wet —
+                            # sie verändern das Signal PLANMÄSSIG. NOVELTY_CRIT hier = erwartet, nicht schädlich.
+                            _is_repair_phase = any(
+                                str(getattr(phase_metadata, "phase_id", "")).startswith(p)
+                                for p in ("phase_01", "phase_02", "phase_09", "phase_24", "phase_27")
+                            )
                             if _sft_novelty_val >= 0.40:
-                                _sft_wet = 0.05  # Minimaler Blend (war 0.0 — zu aggressiv)
+                                _sft_wet = 0.30 if _is_repair_phase else 0.05
                             elif _sft_novelty_val >= 0.25:
-                                _sft_wet = 0.10  # Konservativer Blend (>0.25)
+                                _sft_wet = 0.40 if _is_repair_phase else 0.10
                             else:
-                                _sft_wet = 0.20  # Moderate Dämpfung (0.15–0.25)
+                                _sft_wet = 0.50 if _is_repair_phase else 0.20
                         else:
                             _sft_wet = 0.30  # Studio 2026 oder ECHO_ARTIFACT
                         # Falls Temporal-Rescue schon lief, staerker am konservativen Ende bleiben.
