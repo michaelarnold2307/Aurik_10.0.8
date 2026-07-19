@@ -213,7 +213,7 @@ class ReferenceTrackCalibrator:
             from backend.core.calibration_matrix import get_material_floor as _gmf
             return dict(_gmf(material) or {})
         except Exception:
-            pass
+            pass  # Material floor lookup best-effort — non-critical
         return {"lufs": -20.0, "warmth": 0.55, "hpe": 0.60}
 
     def _get_material_ceiling(self, material: str) -> dict[str, float]:

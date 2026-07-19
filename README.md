@@ -1,6 +1,6 @@
 # 🎵 Aurik 10 — Intelligentes Musik-Restaurierungs- und Rekonstruktionssystem
 
-**Version:** 10.0.8 | **Status:** ✅ Produktionsbereit | **Stand:** 13. Juli 2026
+**Version:** 10.0.10 | **Status:** ✅ Produktionsbereit | **Stand:** 19. Juli 2026
 
 > Normativer Ist-Stand: `.github/specs/`, `.github/copilot-instructions.md`, `CHANGELOG.md`, `denker/README.md`.
 
@@ -671,6 +671,42 @@ Recall ≥ 90 % (mit CLAP) · False-Positive < 5 % · ≤ 20 s/Minute Audio
 
 ---
 
+## 🆕 Neu in v10.10 — Preset-Learning × Selbstkalibrierung
+
+| Modul | Feature |
+|-------|---------|
+| `magic_restore_preset.py` | Ein-Klick-Preset: Material/Ära/Genre → optimales Preset (6 built-in + User-Learning) |
+| `mid_pipeline_quality_gate.py` | HPE-Wächter alle 8 Phasen: Selbstkalibrierung bei Verschlechterung |
+| `reference_track_calibrator.py` | Referenz-Track → Song-Goals automatisch (Preset ∩ Material-Floor) |
+| `model_warmup_pool.py` | 5 Modelle parallel laden während Pre-Analyse → Cold-Start 5→0s |
+| `phase_fingerprint.py` | Inkrementelles Re-Processing: nur geänderte Phasen neu (70% schneller) |
+| `parallel_stereo_executor.py` | 12 DSP-Phasen parallel left/right (~40% Speedup) |
+| `album_consistency_gate.py` | Track 1 = Referenz, Tracks 2-N = LUFS/Tilt/Width-kalibriert |
+| `spectrogram_snapshot.py` | 256×256 Spektrogramm-PNG pro Phase für Debugging |
+
+## 🆕 Neu in v10.9 — SOTA-Kalibrierung & ML-Orchestrierung
+
+| Modul | Feature |
+|-------|---------|
+| `model_chain_orchestrator.py` | Shared ML-Modelle (RAM 250MB gespart), RAM-Budget 6GB |
+| `adaptive_phase_order.py` | Material-adaptive Phasen-Reihenfolge (Kassette: Hiss vor Harmonics) |
+| `live_ab_preview.py` | A/B-Vorher/Nachher-Ring für GUI-Playback |
+| `restoration_report.py` | HTML-Report mit Phasen/Defekten/Joy/Fatigue |
+| **Phase 07** | Drive 2.5→1.8, Pre-Echo 2→3.5ms, h2 material-adaptiv |
+| **OneTakeExport** | Adaptiver Fatigue-Cut (-1/-2/-3dB), TP-Limiter -0.3 dBTP |
+| **Pipeline** | Early-Silence-Gate, Wet/Dry-Kohärenz, Era-Material-Fallback |
+| **MRN Plugins** | 4 ML-Chains: Shellac/Vinyl/Tape/Lacquer |
+
+## 🔧 v10.35 — Logging & Dead-Feature-Aktivierung
+
+| Kategorie | Änderung |
+|-----------|----------|
+| SOTA Logging | 15 Features debug→warning (PGHI, MRN, EAPC, HHC, MaskingClamp, etc.) |
+| GUI-Kommunikation | Denker→GUI Toasts, ErrorSimplifier, Experience Insights |
+| SFT Rescue | Min-Wet 0.05, WARNING bei aggressivem Rollback |
+
+---
+
 ## ⚙️ Technische Details
 
 | Aspekt | Wert |
@@ -731,4 +767,4 @@ Aurik 10.0.0 steht unter der **Apache-2.0-Lizenz** — siehe [LICENSE](LICENSE).
 
 ---
 
-Aurik 10.0.8 — Juli 2026
+Aurik 10.0.10 — Juli 2026

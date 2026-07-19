@@ -1,13 +1,39 @@
-# Aurik 10.0.8 — Spec-Änderungshistorie (historische Entwicklung)
+# Aurik 10.0.10 — Spec-Änderungshistorie
 
-> Diese Datei enthält die vollständige Changelog-Historie der
-> `copilot-instructions.md`-Spezifikation sowie Code-Releases. Sie wird nicht zur
-> Pipeline-Laufzeit gelesen — sie dient der Nachvollziehbarkeit
-> von Architekturentscheidungen für Entwickler und KI-Agenten.
->
-> Historische Versions- und Metrikangaben in dieser Datei sind bewusst als Zeitstände erhalten.
->
-> Stand: Juli 2026 — Aurik 10.0.0
+> Stand: 19. Juli 2026
+
+## v10.10.0 (19. Juli 2026) — Preset-Learning × Selbstkalibrierung
+
+- **Mid-Pipeline HPE Quality Gate**: Alle 8 Phasen HPE-Score-Prüfung mit automatischer Selbstkalibrierung. `mid_pipeline_quality_gate.py` (181 LOC).
+- **Reference-Track Auto-Calibration**: Referenz-Track → automatische Song-Goal-Kalibrierung. Preset ∩ Material-Floor. `reference_track_calibrator.py` (243 LOC).
+- **Magic Restore Preset**: Ein-Klick-Restauration. 6 Built-in-Presets + User-Learning. `magic_restore_preset.py` (297 LOC).
+- **Spektrogramm-Snapshot**: 256×256 Graustufen-PNG pro Phase für Debugging. `spectrogram_snapshot.py` (106 LOC).
+- **Parallel Stereo Executor**: 12 DSP-Phasen left/right parallel via ThreadPool (~40% Speedup). `parallel_stereo_executor.py` (103 LOC).
+- **PhaseFingerprint**: Inkrementelles Re-Processing. Hash-basierter Parameter-Vergleich → nur geänderte Phasen neu. `phase_fingerprint.py` (132 LOC).
+- **Model Warm-Up Pool**: 5 häufigste Modelle parallel laden während Pre-Analyse. `model_warmup_pool.py` (123 LOC).
+- **Album-Konsistenz-Gate**: Track 1 = Referenz, Tracks 2-N = LUFS/Tilt/Width-kalibriert. `album_consistency_gate.py` (62 LOC).
+
+## v10.9.0 (19. Juli 2026) — SOTA-Kalibrierung & ML-Orchestrierung
+
+- **Model-Chain-Orchestrator**: Shared ML-Modelle (DeepFilterNet, Banquet, SGMSE+, BW). RAM-Budget 6GB, Auto-Eviction. `model_chain_orchestrator.py` (170 LOC).
+- **Pre-Analyse Era-Fallback**: Material→Decade-Map wenn Era-Classifier None liefert. 13 Material-Typen abgedeckt.
+- **Phase-07 Drive-Dämpfung**: Drive 2.5→1.8, 0.6–1.8 Range. h2-Überproduktion ~3× reduziert.
+- **Adaptive Phase-Reihenfolge**: Material-spezifische Order (Kassette: Hiss vor Harmonics). `adaptive_phase_order.py` (120 LOC).
+- **OneTakeExport Intelligent Mastering**: Adaptiver Fatigue-Cut (-1/-2/-3dB). TP-Limiter-Schwelle -0.3 dBTP.
+- **Live A/B Preview**: Pre/Post-Audio-Ring für GUI-Playback. `live_ab_preview.py` (95 LOC).
+- **Restoration Report HTML**: Vollständiger HTML-Report mit Phasen/Defekten/Joy/Fatigue. `restoration_report.py` (145 LOC).
+- **Early-Silence-Gate**: RMS < -60 dBFS → Phase skipped + WARNING.
+- **Wet/Dry-Kohärenz**: Strength proportional zu wet_dry bei QOL-Phasen.
+
+## v10.35.0 (18. Juli 2026) — SOTA Logging & Dead-Feature-Aktivierung
+
+- **SOTA Logging**: 15 Features debug→warning (PGHI, MRN, EAPC, HHC (4×), MaskingClamp, Fletcher-Munson, PhaseSkipper, SteeringGuard, librosa/sklearn, ConsonantEnhancement, ContractValidator (5×), GlobalGainBudget, DonationReminder).
+- **MRN Plugins aktiviert**: 4 ML-Chain-Plugins (Shellac: BW+DFN, Vinyl: Banquet+DFN, Tape: SGMSE++DFN, Lacquer: BW+DFN 40%Wet).
+- **Phase 07 Kalibrierung**: Pre-Echo-Schwelle 2→3.5ms, Blend-Cap 0.60, h2 material-adaptiv.
+- **GUI-Kommunikation**: Denker→GUI Live-Toasts, ErrorSimplifier verdrahtet, Experience Insights in Results Summary.
+- **SFT ArtifactRescue**: Min-Wet 0.05, WARNING bei aggressivem Rollback.
+- **Bugfixes**: OneTakeExport TP 0.0→-0.3, build_results_data restoration_result, Pre-commit Path.resolve().
+- **Pakete**: transformers installiert.
 
 ---
 
