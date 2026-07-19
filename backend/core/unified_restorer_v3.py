@@ -7271,6 +7271,27 @@ class UnifiedRestorerV3:
             ):
                 kwargs["cached_restorability_result"] = _pre_analysis.restorability
         _cached_era_kwarg = kwargs.pop("cached_era_result", None)
+        _cached_genre_kwarg = kwargs.pop("cached_genre_result", None)
+        _cached_defect_kwarg = kwargs.pop("cached_defect_result", None)
+        _cached_medium_kwarg = kwargs.pop("cached_medium_result", None)
+        _cached_restorability_kwarg = kwargs.pop("cached_restorability_result", None)
+        # §v10.9: Material→Decade-Fallback wenn Era-Classifier None liefert
+        if _cached_era_kwarg is None and _cached_medium_kwarg is not None:
+            _MATERIAL_TO_DECADE: dict[str, int] = {
+                "shellac": 1930, "vinyl": 1970, "cassette": 1985,
+                "tape": 1975, "reel_tape": 1965, "cd_digital": 1995,
+                "dat": 1995, "mp3_low": 2005, "mp3_high": 2010,
+                "lacquer_disc": 1940, "wax_cylinder": 1900,
+                "wire_recording": 1920, "minidisc": 2000,
+            }
+            _mat_str = str(getattr(_cached_medium_kwarg, "value", _cached_medium_kwarg) or "").lower()
+            _decade = _MATERIAL_TO_DECADE.get(_mat_str)
+            if _decade is not None:
+                _cached_era_kwarg = _decade
+                logger.info(
+                    "📅 Era-Fallback: Material=%s → Decade=%d (Pre-Analyse Era=None)",
+                    _mat_str, _decade,
+                )
         _input_path_for_ext = str(kwargs.get("input_path", "") or kwargs.get("file_path", "") or "")
         import os as _os_uv3
 
