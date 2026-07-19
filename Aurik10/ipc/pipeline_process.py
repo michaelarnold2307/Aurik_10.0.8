@@ -32,11 +32,11 @@ import signal
 import threading
 import time
 import traceback
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from collections.abc import Callable, Sequence
 
 import numpy as np
 

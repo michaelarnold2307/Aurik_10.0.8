@@ -6046,7 +6046,7 @@ class UnifiedRestorerV3:
                 _new_nov = float(np.clip(0.20 + (1.0 - _eff_rs / 100.0) * 0.40 + max(0, _depth - 1) * 0.03, 0.18, 0.65))
                 set_novelty_crit_threshold(_new_nov)
                 logger.info(
-                    "§RECALIB %s: rs %.1f→%.1f nat=%.3f → NOVELTY_CRIT=%.4f",
+                    "§RECALIB %s: rs %.1f→%.1f nat=%.3f → NOVELTY_KRIT=%.4f",
                     checkpoint_label,
                     _orig_rs,
                     _eff_rs,
@@ -10237,16 +10237,16 @@ class UnifiedRestorerV3:
 
                 calibrate_watchdog_thresholds(restorability_score=_rs, material_type=_mat_for_sft)
             except Exception as _wd_cal_exc:
-                logger.debug("§v10.46 Watchdog non-blocking: %s", _wd_cal_exc)
+                logger.debug("§v10.46 Watchdog nicht-blockierend: %s", _wd_cal_exc)
             # §v10.48 Cross-Phase-Coordinator
             try:
                 from denker.cross_phase_coordinator import calibrate_cross_phase_thresholds
 
                 calibrate_cross_phase_thresholds(restorability_score=_rs, material_type=_mat_for_sft)
             except Exception as _cpc_cal_exc:
-                logger.debug("§v10.48 CPC non-blocking: %s", _cpc_cal_exc)
+                logger.debug("§v10.48 CPC nicht-blockierend: %s", _cpc_cal_exc)
         except Exception as _novelty_cal_exc:
-            logger.debug("§v10.40 SFT-Adaptiv non-blocking: %s", _novelty_cal_exc)
+            logger.debug("§v10.40 SFT-Adaptiv nicht-blockierend: %s", _novelty_cal_exc)
 
         # ── §2.56 Song-Goal-Importance: Per-song goal weighting ──────────
         # Computed ONCE after all classifiers (Genre, Era, Material, Vocal)
@@ -10336,7 +10336,7 @@ class UnifiedRestorerV3:
                 _sgi_masked_ratio = float(_pa_result.masked_components_ratio)
                 _sgi_centroid_bark = float(_pa_result.perceptual_centroid_bark)
                 logger.debug(
-                    "§2.56 psychoacoustic features: rough=%.3f sharp=%.3f flat=%.3f "
+                    "§2.56 psychoacoustic features: rau=%.3f sharp=%.3f flat=%.3f "
                     "tonal=%.3f masked=%.3f centroid=%.1fBark",
                     _sgi_roughness,
                     _sgi_sharpness,
@@ -25840,7 +25840,7 @@ class UnifiedRestorerV3:
           1) Keep deterministic and safe phase ordering invariants.
           2) Boost high-confidence causal phases earlier in the chain.
           3) Preserve all selected phases (no phase removal in this step).
-          4) (Phase 2) Utility-scored re-ranking when enable_phase_utility_scoring=True.
+          4) (Phase 2) Utility-scored re-ranking when enable_phase_utility_scokling=True.
 
         Phase-2 Utility formula:
             utility(phase) = defect_severity_weight * expected_goal_impact / budget_cost_weight

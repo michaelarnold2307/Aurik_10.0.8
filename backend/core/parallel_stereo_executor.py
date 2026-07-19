@@ -20,20 +20,22 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Phasen die kanal-unabhängig sind (keine Stereo-Korrelation nötig)
-_PARALLEL_SAFE_PHASES: frozenset[str] = frozenset({
-    "phase_01_click_removal",
-    "phase_02_hum_removal",
-    "phase_03_denoise",
-    "phase_09_crackle_removal",
-    "phase_18_noise_gate",
-    "phase_27_click_pop_removal",
-    "phase_28_surface_noise_profiling",
-    "phase_29_tape_hiss_reduction",
-    "phase_45_dc_offset",
-    "phase_47_truepeak_limiter",
-    "phase_56_spectral_band_gap_repair",
-    "phase_59_modulation_noise_reduction",
-})
+_PARALLEL_SAFE_PHASES: frozenset[str] = frozenset(
+    {
+        "phase_01_click_removal",
+        "phase_02_hum_removal",
+        "phase_03_denoise",
+        "phase_09_crackle_removal",
+        "phase_18_noise_gate",
+        "phase_27_click_pop_removal",
+        "phase_28_surface_noise_profiling",
+        "phase_29_tape_hiss_reduction",
+        "phase_45_dc_offset",
+        "phase_47_truepeak_limiter",
+        "phase_56_spectral_band_gap_repair",
+        "phase_59_modulation_noise_reduction",
+    }
+)
 
 _MAX_WORKERS: int = 2  # max 2 Threads (left/right)
 
@@ -90,10 +92,13 @@ def run_phase_stereo_parallel(
 
         # Auf gleiche Länge trimmen
         _min_len = min(_out_left.shape[-1], _out_right.shape[-1])
-        _out = np.stack([
-            _out_left[..., :_min_len],
-            _out_right[..., :_min_len],
-        ], axis=0)
+        _out = np.stack(
+            [
+                _out_left[..., :_min_len],
+                _out_right[..., :_min_len],
+            ],
+            axis=0,
+        )
 
         logger.debug("⚡ Parallel-Stereo %s: left+right parallel ausgeführt", phase_id)
         return _out

@@ -119,7 +119,9 @@ def generate_report(
     _defect_rows = ""
     _defects = result_data.get("defects", {})
     if isinstance(_defects, dict):
-        for _name, _sev in sorted(_defects.items(), key=lambda x: -float(x[1]) if isinstance(x[1], (int, float)) else 0):
+        for _name, _sev in sorted(
+            _defects.items(), key=lambda x: -float(x[1]) if isinstance(x[1], (int, float)) else 0
+        ):
             _s = float(_sev) if isinstance(_sev, (int, float)) else 0.0
             _cls = "good" if _s < 0.3 else ("warn" if _s < 0.6 else "bad")
             _fixed = "✅ Behoben" if _s < 0.1 else ("⚠️ Teilweise" if _s < 0.4 else "❌ Nicht behoben")

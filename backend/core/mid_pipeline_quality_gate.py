@@ -37,8 +37,8 @@ class HpeGateDecision:
     hpe_after: float
     hpe_delta_pct: float
     passed: bool
-    severity: str = "ok"         # ok | warn | critical
-    calibrate: bool = False       # Selbstkalibrierung aktiv?
+    severity: str = "ok"  # ok | warn | critical
+    calibrate: bool = False  # Selbstkalibrierung aktiv?
     strength_scalar: float = 1.0  # Multiplikator für Folgephasen-Strength
     recommendation: str = ""
 
@@ -47,12 +47,12 @@ class HpeGateDecision:
 class HpeGateConfig:
     """Konfiguration des HPE Quality Gates — Preset-Seite."""
 
-    check_interval: int = 8          # Alle N Phasen prüfen
-    hpe_drop_warn_pct: float = 3.0   # WARNING ab -3%
+    check_interval: int = 8  # Alle N Phasen prüfen
+    hpe_drop_warn_pct: float = 3.0  # WARNING ab -3%
     hpe_drop_critical_pct: float = 7.0  # CRITICAL ab -7%
     max_strength_scalar: float = 0.60  # Maximale Strength-Reduktion bei Kalibrierung
-    min_consecutive_pass: int = 2     # Erst nach N aufeinanderfolgenden OKs Kalibrierung lösen
-    learning_rate: float = 0.15       # Wie stark Selbstkalibrierung von Ist-Werten lernt
+    min_consecutive_pass: int = 2  # Erst nach N aufeinanderfolgenden OKs Kalibrierung lösen
+    learning_rate: float = 0.15  # Wie stark Selbstkalibrierung von Ist-Werten lernt
 
 
 class HpeQualityGate:
@@ -101,9 +101,12 @@ class HpeQualityGate:
         # Nur an Check-Intervallen prüfen
         if phase_idx % self._cfg.check_interval != 0:
             return HpeGateDecision(
-                phase_id=phase_id, phase_idx=phase_idx,
-                hpe_before=hpe_before, hpe_after=hpe_after,
-                hpe_delta_pct=_delta_pct, passed=True,
+                phase_id=phase_id,
+                phase_idx=phase_idx,
+                hpe_before=hpe_before,
+                hpe_after=hpe_after,
+                hpe_delta_pct=_delta_pct,
+                passed=True,
             )
 
         # Prüfung
@@ -118,28 +121,25 @@ class HpeQualityGate:
             _calibrate = True
             _cumulative = abs(_delta_pct) / 100.0
             _scalar = float(np.clip(1.0 - _cumulative * 0.8, self._cfg.max_strength_scalar, 1.0))
-            _rec = (
-                f"HPE critical drop ({_delta_pct:+.1f}%) — "
-                f"Selbstkalibrierung: Folgephasen-Strength ×{_scalar:.2f}"
-            )
+            _rec = f"HPE critical drop ({_delta_pct:+.1f}%) — Selbstkalibrierung: Folgephasen-Strength ×{_scalar:.2f}"
             self._consecutive_ok = 0
         elif _delta_pct <= -self._cfg.hpe_drop_warn_pct:
             _severity = "warn"
             _calibrate = True
             _scalar = float(np.clip(1.0 - abs(_delta_pct) / 200.0, 0.80, 1.0))
-            _rec = (
-                f"HPE warning ({_delta_pct:+.1f}%) — "
-                f"leichte Selbstkalibrierung: ×{_scalar:.2f}"
-            )
+            _rec = f"HPE warning ({_delta_pct:+.1f}%) — leichte Selbstkalibrierung: ×{_scalar:.2f}"
             self._consecutive_ok = 0
         else:
             self._consecutive_ok += 1
             # Selbstkalibrierung lernt: nach N aufeinanderfolgenden OKs langsam zurück zur vollen Strength
             if self._consecutive_ok >= self._cfg.min_consecutive_pass:
-                self._active_calibration = float(np.clip(
-                    self._active_calibration + self._cfg.learning_rate,
-                    0.0, 1.0,
-                ))
+                self._active_calibration = float(
+                    np.clip(
+                        self._active_calibration + self._cfg.learning_rate,
+                        0.0,
+                        1.0,
+                    )
+                )
                 _scalar = self._active_calibration
                 if _scalar < 1.0:
                     _rec = f"HPE stabil — Selbstkalibrierung Recovery → ×{_scalar:.2f}"
@@ -151,16 +151,27 @@ class HpeQualityGate:
         _log_fn = logger.error if _severity == "critical" else logger.warning if _severity == "warn" else logger.info
         _log_fn(
             "🛡️ HPE-Gate %s [%d]: %.4f→%.4f (Δ=%+.1f%%) | %s | scalar=%.2f | cum_drop=%.1f%%",
-            phase_id, phase_idx, hpe_before, hpe_after, _delta_pct,
-            _severity, _scalar, self._cumulative_drop_pct,
+            phase_id,
+            phase_idx,
+            hpe_before,
+            hpe_after,
+            _delta_pct,
+            _severity,
+            _scalar,
+            self._cumulative_drop_pct,
         )
 
         return HpeGateDecision(
-            phase_id=phase_id, phase_idx=phase_idx,
-            hpe_before=hpe_before, hpe_after=hpe_after,
-            hpe_delta_pct=_delta_pct, passed=_passed,
-            severity=_severity, calibrate=_calibrate,
-            strength_scalar=_scalar, recommendation=_rec,
+            phase_id=phase_id,
+            phase_idx=phase_idx,
+            hpe_before=hpe_before,
+            hpe_after=hpe_after,
+            hpe_delta_pct=_delta_pct,
+            passed=_passed,
+            severity=_severity,
+            calibrate=_calibrate,
+            strength_scalar=_scalar,
+            recommendation=_rec,
         )
 
     def get_preset_snapshot(self) -> dict:
@@ -171,8 +182,8 @@ class HpeQualityGate:
             "consecutive_ok": self._consecutive_ok,
             "phase_count": len(self._hpe_history),
             "avg_hpe_delta": round(
-                float(np.mean([a - b for _, b, a in self._hpe_history]))
-                if self._hpe_history else 0.0, 4,
+                float(np.mean([a - b for _, b, a in self._hpe_history])) if self._hpe_history else 0.0,
+                4,
             ),
         }
 

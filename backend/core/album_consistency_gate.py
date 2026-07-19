@@ -1,6 +1,7 @@
 """Album-Konsistenz-Gate — berechnet Referenzwerte aus Track 1, kalibriert Tracks 2-N."""
 
 import logging
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,9 @@ class AlbumConsistencyGate:
         self._ref_tilt = track1_tilt
         self._ref_width = track1_width
         self._track_count = 1
-        logger.info("Album-Gate: Track 1 = Referenz (LUFS=%.1f, Tilt=%.1f, Width=%.2f)",
-                    track1_lufs, track1_tilt, track1_width)
+        logger.info(
+            "Album-Gate: Track 1 = Referenz (LUFS=%.1f, Tilt=%.1f, Width=%.2f)", track1_lufs, track1_tilt, track1_width
+        )
 
     def calibrate_track(self, track_lufs=-18.0, track_tilt=-4.0, track_width=0.65):
         if self._ref_lufs is None:
@@ -45,7 +47,12 @@ class AlbumConsistencyGate:
         self._track_count += 1
 
         if _gain_db or _tilt_corr or _width_adj:
-            logger.info("Album-Gate Track %d: Gain%+.1fdB Tilt%+.1f Width%+.2f",
-                       self._track_count, _gain_db, _tilt_corr, _width_adj)
+            logger.info(
+                "Album-Gate Track %d: Gain%+.1fdB Tilt%+.1f Width%+.2f",
+                self._track_count,
+                _gain_db,
+                _tilt_corr,
+                _width_adj,
+            )
 
         return {"gain_db": _gain_db, "tilt_correction": _tilt_corr, "width_adjust": _width_adj}

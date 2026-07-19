@@ -46,20 +46,50 @@ _FREQ_BANDS: dict[str, tuple[float, float]] = {
 
 # Pipeline-Stufen-Zuordnung
 _PHASE_GROUP_MAP: dict[str, str] = {
-    "01": "repair", "02": "repair", "03": "repair", "05": "repair",
-    "06": "restoration", "07": "restoration", "09": "repair",
-    "12": "transport", "14": "stereo", "16": "mastering",
-    "17": "mastering", "19": "vocal", "20": "spatial",
-    "23": "restoration", "24": "repair", "25": "transport",
-    "26": "dynamics", "29": "repair", "31": "transport",
-    "34": "stereo", "36": "dynamics", "37": "restoration",
-    "38": "restoration", "39": "restoration", "40": "mastering",
-    "42": "vocal", "43": "vocal", "47": "mastering",
-    "49": "spatial", "50": "restoration", "53": "analysis",
-    "54": "dynamics", "55": "restoration", "56": "restoration",
-    "57": "repair", "58": "vocal", "59": "repair",
-    "60": "repair", "61": "repair", "62": "stereo",
-    "63": "repair", "64": "repair", "65": "vocal", "66": "mastering",
+    "01": "repair",
+    "02": "repair",
+    "03": "repair",
+    "05": "repair",
+    "06": "restoration",
+    "07": "restoration",
+    "09": "repair",
+    "12": "transport",
+    "14": "stereo",
+    "16": "mastering",
+    "17": "mastering",
+    "19": "vocal",
+    "20": "spatial",
+    "23": "restoration",
+    "24": "repair",
+    "25": "transport",
+    "26": "dynamics",
+    "29": "repair",
+    "31": "transport",
+    "34": "stereo",
+    "36": "dynamics",
+    "37": "restoration",
+    "38": "restoration",
+    "39": "restoration",
+    "40": "mastering",
+    "42": "vocal",
+    "43": "vocal",
+    "47": "mastering",
+    "49": "spatial",
+    "50": "restoration",
+    "53": "analysis",
+    "54": "dynamics",
+    "55": "restoration",
+    "56": "restoration",
+    "57": "repair",
+    "58": "vocal",
+    "59": "repair",
+    "60": "repair",
+    "61": "repair",
+    "62": "stereo",
+    "63": "repair",
+    "64": "repair",
+    "65": "vocal",
+    "66": "mastering",
 }
 
 
@@ -140,7 +170,11 @@ class MetadataAggregator:
     # ── Feld 1: Per-Phase HPE Delta ─────────────────────────────────
 
     def record_phase_hpe(
-        self, phase_id: str, hpe_before: float, hpe_after: float, time_s: float = 0.0,
+        self,
+        phase_id: str,
+        hpe_before: float,
+        hpe_after: float,
+        time_s: float = 0.0,
     ) -> None:
         """Zeichnet HPE-Delta für eine Phase auf."""
         _num = phase_id.split("_")[1] if "_" in phase_id else "99"
@@ -148,18 +182,26 @@ class MetadataAggregator:
         _delta = hpe_after - hpe_before
 
         with self._lock:
-            self.phase_hpe_deltas.append(PhaseHpeRecord(
-                phase_id=phase_id, hpe_before=hpe_before,
-                hpe_after=hpe_after, delta=_delta,
-                time_s=time_s, group=_group,
-            ))
+            self.phase_hpe_deltas.append(
+                PhaseHpeRecord(
+                    phase_id=phase_id,
+                    hpe_before=hpe_before,
+                    hpe_after=hpe_after,
+                    delta=_delta,
+                    time_s=time_s,
+                    group=_group,
+                )
+            )
             self._phase_count += 1
 
             # Group-Quality kumulieren (Feld 3)
             if _group not in self.group_quality:
                 self.group_quality[_group] = {
-                    "hpe_sum": 0.0, "count": 0, "time_s": 0.0,
-                    "positive": 0, "negative": 0,
+                    "hpe_sum": 0.0,
+                    "count": 0,
+                    "time_s": 0.0,
+                    "positive": 0,
+                    "negative": 0,
                 }
             _gq = self.group_quality[_group]
             _gq["hpe_sum"] += _delta
@@ -173,8 +215,11 @@ class MetadataAggregator:
     # ── Feld 2: Calibration Drift ───────────────────────────────────
 
     def set_calibration_drift(
-        self, preset_name: str, strength_delta: float,
-        hpe_outcome: float, user_rating: int = 0,
+        self,
+        preset_name: str,
+        strength_delta: float,
+        hpe_outcome: float,
+        user_rating: int = 0,
     ) -> None:
         """Speichert die Abweichung vom Preset."""
         with self._lock:
@@ -200,7 +245,8 @@ class MetadataAggregator:
                     "total_time_s": round(data["time_s"], 1),
                     "positive_ratio": round(data["positive"] / _n, 3),
                     "quality_score": round(
-                        np.clip(0.5 + data["hpe_sum"] / max(_n, 1) * 5.0, 0.0, 1.0), 3,
+                        np.clip(0.5 + data["hpe_sum"] / max(_n, 1) * 5.0, 0.0, 1.0),
+                        3,
                     ),
                 }
             return result
@@ -208,20 +254,30 @@ class MetadataAggregator:
     # ── Feld 4: Model Loading Telemetry ─────────────────────────────
 
     def record_model_load(
-        self, model_name: str, load_ms: float, ram_gb: float = 0.0,
+        self,
+        model_name: str,
+        load_ms: float,
+        ram_gb: float = 0.0,
         first_inference_ms: float = 0.0,
     ) -> None:
         """Zeichnet Modell-Ladezeiten auf."""
         with self._lock:
-            self.model_telemetry.append(ModelTelemetry(
-                model_name=model_name, load_ms=load_ms,
-                ram_gb=ram_gb, first_inference_ms=first_inference_ms,
-            ))
+            self.model_telemetry.append(
+                ModelTelemetry(
+                    model_name=model_name,
+                    load_ms=load_ms,
+                    ram_gb=ram_gb,
+                    first_inference_ms=first_inference_ms,
+                )
+            )
 
     # ── Feld 5: Frequency Band Improvement ──────────────────────────
 
     def compute_freq_improvements(
-        self, audio_before: np.ndarray, audio_after: np.ndarray, sr: int,
+        self,
+        audio_before: np.ndarray,
+        audio_after: np.ndarray,
+        sr: int,
     ) -> None:
         """Berechnet SNR-Verbesserung pro Frequenzband."""
         try:
@@ -247,10 +303,14 @@ class MetadataAggregator:
                     _before_db = float(20.0 * np.log10(_before_energy + 1e-10))
                     _after_db = float(20.0 * np.log10(_after_energy + 1e-10))
                     _delta = _after_db - _before_db
-                    self.freq_improvements.append(FreqBandImprovement(
-                        band=band_name, before_snr_db=_before_db,
-                        after_snr_db=_after_db, delta_db=_delta,
-                    ))
+                    self.freq_improvements.append(
+                        FreqBandImprovement(
+                            band=band_name,
+                            before_snr_db=_before_db,
+                            after_snr_db=_after_db,
+                            delta_db=_delta,
+                        )
+                    )
         except Exception as exc:
             logger.debug("Freq improvement computation failed: %s", exc)
 
@@ -305,13 +365,9 @@ class MetadataAggregator:
 
     def compute_benchmark(self) -> dict[str, Any]:
         """Vergleicht mit historischen Restaurationen."""
-        _key = hashlib.md5(
-            f"{self.material}:{self.era or 0}".encode()
-        ).hexdigest()[:8]
+        _key = hashlib.md5(f"{self.material}:{self.era or 0}".encode()).hexdigest()[:8]
 
-        _this_hpe = self._final_hpe or (
-            self.phase_hpe_deltas[-1].hpe_after if self.phase_hpe_deltas else 0.7
-        )
+        _this_hpe = self._final_hpe or (self.phase_hpe_deltas[-1].hpe_after if self.phase_hpe_deltas else 0.7)
 
         # Historische Daten laden
         _history: list[float] = []
@@ -371,9 +427,14 @@ class MetadataAggregator:
         """Exportiert alle gesammelten Metadaten."""
         return {
             "per_phase_hpe_delta": [
-                {"phase_id": r.phase_id, "hpe_before": round(r.hpe_before, 4),
-                 "hpe_after": round(r.hpe_after, 4), "delta": round(r.delta, 4),
-                 "time_s": round(r.time_s, 2), "group": r.group}
+                {
+                    "phase_id": r.phase_id,
+                    "hpe_before": round(r.hpe_before, 4),
+                    "hpe_after": round(r.hpe_after, 4),
+                    "delta": round(r.delta, 4),
+                    "time_s": round(r.time_s, 2),
+                    "group": r.group,
+                }
                 for r in self.phase_hpe_deltas
             ],
             "calibration_drift": (
@@ -382,19 +443,27 @@ class MetadataAggregator:
                     "strength_delta": round(self.calibration_drift.strength_delta, 4),
                     "hpe_outcome": round(self.calibration_drift.hpe_outcome, 4),
                     "success": self.calibration_drift.success,
-                } if self.calibration_drift else None
+                }
+                if self.calibration_drift
+                else None
             ),
             "phase_group_quality": self.get_group_quality(),
             "model_loading_telemetry": [
-                {"model": m.model_name, "load_ms": round(m.load_ms, 0),
-                 "ram_gb": round(m.ram_gb, 3),
-                 "first_inference_ms": round(m.first_inference_ms, 0)}
+                {
+                    "model": m.model_name,
+                    "load_ms": round(m.load_ms, 0),
+                    "ram_gb": round(m.ram_gb, 3),
+                    "first_inference_ms": round(m.first_inference_ms, 0),
+                }
                 for m in self.model_telemetry
             ],
             "frequency_band_improvement": [
-                {"band": f.band, "before_snr_db": round(f.before_snr_db, 1),
-                 "after_snr_db": round(f.after_snr_db, 1),
-                 "delta_db": round(f.delta_db, 1)}
+                {
+                    "band": f.band,
+                    "before_snr_db": round(f.before_snr_db, 1),
+                    "after_snr_db": round(f.after_snr_db, 1),
+                    "delta_db": round(f.delta_db, 1),
+                }
                 for f in self.freq_improvements
             ],
             "processing_story": {

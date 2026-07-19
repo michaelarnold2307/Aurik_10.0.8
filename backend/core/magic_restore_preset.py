@@ -57,8 +57,8 @@ class MagicPreset:
 
     # Selbstkalibrierungs-Parameter
     hpe_tolerance_pct: float = 5.0
-    max_strength_boost: float = 0.20     # Max +20% durch Selbstkalibrierung
-    max_strength_cut: float = 0.35       # Max -35% durch Selbstkalibrierung
+    max_strength_boost: float = 0.20  # Max +20% durch Selbstkalibrierung
+    max_strength_cut: float = 0.35  # Max -35% durch Selbstkalibrierung
     calibration_learning_rate: float = 0.10
 
     # Meta
@@ -69,8 +69,10 @@ class MagicPreset:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "name": self.name, "material": self.material,
-            "era_range": list(self.era_range), "genre": self.genre,
+            "name": self.name,
+            "material": self.material,
+            "era_range": list(self.era_range),
+            "genre": self.genre,
             "mode": self.mode,
             "strength_overall": self.strength_overall,
             "denoise_strength": self.denoise_strength,
@@ -86,7 +88,7 @@ class MagicPreset:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "MagicPreset":
+    def from_dict(cls, d: dict[str, Any]) -> MagicPreset:
         return cls(
             name=str(d.get("name", "")),
             material=str(d.get("material", "")),
@@ -110,29 +112,77 @@ class MagicPreset:
 # ── Built-in Presets (Preset-Learning Basis) ──────────────────────────────
 
 _BUILTIN_PRESETS: list[MagicPreset] = [
-    MagicPreset("cassette_schlager", "cassette", (1970, 1995), "schlager",
-                strength_overall=0.48, denoise_strength=0.55, eq_strength=0.40,
-                harmonic_strength=0.35, dynamics_strength=0.50,
-                hpe_tolerance_pct=6.0, tags=["cassette", "schlager", "german"]),
-    MagicPreset("vinyl_jazz", "vinyl", (1950, 1980), "jazz",
-                strength_overall=0.42, denoise_strength=0.50, eq_strength=0.35,
-                harmonic_strength=0.30, stereo_strength=0.40,
-                hpe_tolerance_pct=4.0, tags=["vinyl", "jazz", "warm"]),
-    MagicPreset("shellac_classical", "shellac", (1900, 1950), "klassik",
-                strength_overall=0.60, denoise_strength=0.70, eq_strength=0.55,
-                harmonic_strength=0.45, stereo_strength=0.10,
-                hpe_tolerance_pct=8.0, tags=["shellac", "classical", "fragile"]),
-    MagicPreset("cd_pop", "cd_digital", (1985, 2025), "pop",
-                strength_overall=0.30, denoise_strength=0.25, eq_strength=0.30,
-                harmonic_strength=0.15, dynamics_strength=0.45, stereo_strength=0.50,
-                loudness_target_lufs=-12.0, mode="studio2026",
-                hpe_tolerance_pct=3.0, tags=["cd", "pop", "modern"]),
-    MagicPreset("reel_tape_rock", "reel_tape", (1960, 1990), "rock",
-                strength_overall=0.50, denoise_strength=0.55, eq_strength=0.45,
-                harmonic_strength=0.40, dynamics_strength=0.55,
-                hpe_tolerance_pct=5.0, tags=["reel_tape", "rock", "analog"]),
-    MagicPreset("default_restoration", "unknown", (1900, 2030), "default",
-                strength_overall=0.50, tags=["default", "fallback"]),
+    MagicPreset(
+        "cassette_schlager",
+        "cassette",
+        (1970, 1995),
+        "schlager",
+        strength_overall=0.48,
+        denoise_strength=0.55,
+        eq_strength=0.40,
+        harmonic_strength=0.35,
+        dynamics_strength=0.50,
+        hpe_tolerance_pct=6.0,
+        tags=["cassette", "schlager", "german"],
+    ),
+    MagicPreset(
+        "vinyl_jazz",
+        "vinyl",
+        (1950, 1980),
+        "jazz",
+        strength_overall=0.42,
+        denoise_strength=0.50,
+        eq_strength=0.35,
+        harmonic_strength=0.30,
+        stereo_strength=0.40,
+        hpe_tolerance_pct=4.0,
+        tags=["vinyl", "jazz", "warm"],
+    ),
+    MagicPreset(
+        "shellac_classical",
+        "shellac",
+        (1900, 1950),
+        "klassik",
+        strength_overall=0.60,
+        denoise_strength=0.70,
+        eq_strength=0.55,
+        harmonic_strength=0.45,
+        stereo_strength=0.10,
+        hpe_tolerance_pct=8.0,
+        tags=["shellac", "classical", "fragile"],
+    ),
+    MagicPreset(
+        "cd_pop",
+        "cd_digital",
+        (1985, 2025),
+        "pop",
+        strength_overall=0.30,
+        denoise_strength=0.25,
+        eq_strength=0.30,
+        harmonic_strength=0.15,
+        dynamics_strength=0.45,
+        stereo_strength=0.50,
+        loudness_target_lufs=-12.0,
+        mode="studio2026",
+        hpe_tolerance_pct=3.0,
+        tags=["cd", "pop", "modern"],
+    ),
+    MagicPreset(
+        "reel_tape_rock",
+        "reel_tape",
+        (1960, 1990),
+        "rock",
+        strength_overall=0.50,
+        denoise_strength=0.55,
+        eq_strength=0.45,
+        harmonic_strength=0.40,
+        dynamics_strength=0.55,
+        hpe_tolerance_pct=5.0,
+        tags=["reel_tape", "rock", "analog"],
+    ),
+    MagicPreset(
+        "default_restoration", "unknown", (1900, 2030), "default", strength_overall=0.50, tags=["default", "fallback"]
+    ),
 ]
 
 
@@ -218,16 +268,21 @@ class MagicRestorePreset:
 
         logger.info(
             "🎩 Magic Restore: %s → Preset '%s' (score=%.1f, usage=%d)",
-            f"{material}/{era_val}/{genre}", best.name,
-            scored[0][0], best.usage_count,
+            f"{material}/{era_val}/{genre}",
+            best.name,
+            scored[0][0],
+            best.usage_count,
         )
         return best
 
     def _self_calibrate_from_defects(
-        self, preset: MagicPreset, defects: dict[str, float],
+        self,
+        preset: MagicPreset,
+        defects: dict[str, float],
     ) -> MagicPreset:
         """Selbstkalibrierung: Passt Preset-Strengths an Defekt-Profil an."""
         import copy
+
         calibrated = copy.deepcopy(preset)
 
         hiss = float(defects.get("hiss", 0.0) or 0.0)
@@ -250,9 +305,7 @@ class MagicRestorePreset:
         if avg_defect < 0.3:
             calibrated.strength_overall = max(0.15, preset.strength_overall * 0.85)
 
-        calibrated.last_calibration_delta = (
-            calibrated.strength_overall - preset.strength_overall
-        )
+        calibrated.last_calibration_delta = calibrated.strength_overall - preset.strength_overall
         return calibrated
 
     def learn_from_result(
@@ -269,9 +322,7 @@ class MagicRestorePreset:
             preset.usage_count += 1
             # Gewichteter Running-Average für HPE
             n = preset.usage_count
-            preset.avg_result_hpe = (
-                preset.avg_result_hpe * (n - 1) / n + final_hpe / n
-            )
+            preset.avg_result_hpe = preset.avg_result_hpe * (n - 1) / n + final_hpe / n
             # User-Rating (1-5) beeinflusst Lernrate
             if user_rating >= 4:
                 preset.hpe_tolerance_pct = max(2.0, preset.hpe_tolerance_pct - 0.1)
@@ -279,8 +330,10 @@ class MagicRestorePreset:
                 preset.hpe_tolerance_pct = min(10.0, preset.hpe_tolerance_pct + 0.3)
             logger.info(
                 "🧠 Preset-Learning: '%s' usage=%d avg_hpe=%.3f tolerance=%.1f%%",
-                preset.name, preset.usage_count,
-                preset.avg_result_hpe, preset.hpe_tolerance_pct,
+                preset.name,
+                preset.usage_count,
+                preset.avg_result_hpe,
+                preset.hpe_tolerance_pct,
             )
             self._save_user_preset(preset)
 

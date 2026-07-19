@@ -20,23 +20,23 @@ logger = logging.getLogger(__name__)
 # Positive Priorität = Phase soll früher laufen, negativ = später
 _MATERIAL_PHASE_PRIORITY: dict[str, dict[str, int]] = {
     "cassette": {
-        "phase_29_tape_hiss_reduction": +5,    # Hiss VOR Harmonics
-        "phase_07_harmonic_restoration": -3,    # Harmonics NACH Hiss
-        "phase_22_tape_saturation": +2,          # Tape-Charakter früh
-        "phase_12_wow_flutter_fix": +4,          # Gleichlauf VOR allem
-        "phase_31_speed_pitch_correction": +3,   # Speed vor Restoration
+        "phase_29_tape_hiss_reduction": +5,  # Hiss VOR Harmonics
+        "phase_07_harmonic_restoration": -3,  # Harmonics NACH Hiss
+        "phase_22_tape_saturation": +2,  # Tape-Charakter früh
+        "phase_12_wow_flutter_fix": +4,  # Gleichlauf VOR allem
+        "phase_31_speed_pitch_correction": +3,  # Speed vor Restoration
     },
     "vinyl": {
-        "phase_01_click_removal": +6,           # Klicks ZUERST
-        "phase_09_crackle_removal": +5,          # Crackle vor Rauschen
-        "phase_03_denoise": -2,                  # Entrauschung NACH Klicks
+        "phase_01_click_removal": +6,  # Klicks ZUERST
+        "phase_09_crackle_removal": +5,  # Crackle vor Rauschen
+        "phase_03_denoise": -2,  # Entrauschung NACH Klicks
         "phase_60_inner_groove_distortion_repair": +4,
         "phase_61_groove_echo_cancellation": +3,
     },
     "shellac": {
         "phase_01_click_removal": +6,
         "phase_09_crackle_removal": +5,
-        "phase_04_eq_correction": +4,            # EQ VOR Restoration
+        "phase_04_eq_correction": +4,  # EQ VOR Restoration
         "phase_06_frequency_restoration": -2,
     },
     "reel_tape": {
@@ -47,7 +47,7 @@ _MATERIAL_PHASE_PRIORITY: dict[str, dict[str, int]] = {
         "phase_07_harmonic_restoration": -3,
     },
     "cd_digital": {
-        "phase_03_denoise": -5,                  # Kaum Rauschen → fast ganz hinten
+        "phase_03_denoise": -5,  # Kaum Rauschen → fast ganz hinten
         "phase_01_click_removal": -3,
     },
 }
@@ -84,7 +84,7 @@ def reorder_phases_for_material(
         _base = f"{_key[0]}_{_key[1]}" if len(_key) >= 2 else p
         _prio = 0
         for rule_key, rule_prio in rules.items():
-            if p == rule_key or p.startswith(rule_key[:20]) or _base == rule_key[:len(_base)]:
+            if p == rule_key or p.startswith(rule_key[:20]) or _base == rule_key[: len(_base)]:
                 _prio = rule_prio
                 break
         _priority[p] = _prio
@@ -100,7 +100,9 @@ def reorder_phases_for_material(
     if _moved:
         logger.info(
             "🔄 Adaptive Phase-Order (%s): %d Phasen umgeordnet — %s",
-            material, len(_moved), ", ".join(_moved[:5]),
+            material,
+            len(_moved),
+            ", ".join(_moved[:5]),
         )
 
     return _ordered

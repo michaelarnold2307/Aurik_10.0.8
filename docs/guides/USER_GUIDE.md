@@ -152,7 +152,7 @@ graph LR
     end
 
     DM --> PD[PhaseInteractionDenker]
-    
+
     subgraph DECIDE["Denker-Entscheidungen"]
         PD --> D1[Phase-Suppression<br/>unnötige Phasen skip]
         PD --> D2[Phase-Injection<br/>Material-kritisch erzwingen]
@@ -217,7 +217,7 @@ graph LR
 ```mermaid
 graph TB
     MCO[ModelChainOrchestrator<br/>Shared Instances, RAM-Budget 6GB]
-    
+
     subgraph MODELS["45 ONNX-Modelle"]
         M1[DeepFilterNet<br/>250 MB, Perceptual NR]
         M2[BanquetVinyl<br/>92 MB, Vinyl-Specialized]
@@ -232,7 +232,7 @@ graph TB
     end
 
     WARMUP[ModelWarmUpPool<br/>5 Modelle parallel laden<br/>Cold-Start 5→0s]
-    
+
     MRN[MRN-Plugins<br/>Shellac/Vinyl/Tape/Lacquer<br/>ML-Chains mit DSP-Fallback]
 
     MCO --> M1

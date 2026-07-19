@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 # Modelle die beim Warm-Up vorgeladen werden (nach Häufigkeit priorisiert)
 _WARMUP_MODELS: list[str] = [
-    "deepfilternet",    # Phase 03, MRN plugins — am häufigsten
+    "deepfilternet",  # Phase 03, MRN plugins — am häufigsten
     "bw_reconstructor",  # Phase 06, Shellac/Lacquer MRN
-    "rmvpe",             # Phase 56 pitch tracking
-    "beats",             # Phase 53 semantic audio
-    "demucs",            # Stem separation
+    "rmvpe",  # Phase 56 pitch tracking
+    "beats",  # Phase 53 semantic audio
+    "demucs",  # Stem separation
 ]
 
 _WARMUP_TIMEOUT: float = 20.0  # Max 20s für Warm-Up
@@ -56,6 +56,7 @@ class ModelWarmUpPool:
         """Worker-Thread: lädt Modelle sequentiell."""
         try:
             from backend.core.model_chain_orchestrator import get_model_chain
+
             _mco = get_model_chain()
 
             for _model in _WARMUP_MODELS:
@@ -91,7 +92,8 @@ class ModelWarmUpPool:
         }
         logger.info(
             "🔥 Warm-Up: %d/%d Modelle geladen (%.1fs)",
-            len(self._loaded), len(_WARMUP_MODELS),
+            len(self._loaded),
+            len(_WARMUP_MODELS),
             timeout if not _ready else 0,
         )
         return _status

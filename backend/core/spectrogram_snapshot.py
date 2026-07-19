@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 _SNAPSHOT_DIR = Path.home() / ".aurik" / "snapshots"
-_SNAPSHOT_SECONDS: float = 2.0    # 2s Ausschnitt (Mitte des Audios)
-_SNAPSHOT_SIZE: int = 256          # 256×256 Pixel
+_SNAPSHOT_SECONDS: float = 2.0  # 2s Ausschnitt (Mitte des Audios)
+_SNAPSHOT_SIZE: int = 256  # 256×256 Pixel
 _N_FFT: int = 2048
 _HOP: int = 512
 
@@ -46,13 +47,11 @@ class SpectrogramSnapshotter:
             _post_png = self._render_spectrogram(audio_post, sample_rate)
             _pre_png.save(self._run_dir / f"{phase_id}_pre.png", "PNG")
             _post_png.save(self._run_dir / f"{phase_id}_post.png", "PNG")
-            _diff = np.abs(
-                np.asarray(_pre_png, dtype=np.float32) -
-                np.asarray(_post_png, dtype=np.float32)
-            ).mean()
+            _diff = np.abs(np.asarray(_pre_png, dtype=np.float32) - np.asarray(_post_png, dtype=np.float32)).mean()
             logger.debug(
                 "📸 Spek-Snapshot %s: pre/post gespeichert (Diff=%.1f)",
-                phase_id, _diff,
+                phase_id,
+                _diff,
             )
         except Exception as exc:
             logger.debug("Spektrogramm-Snapshot fehlgeschlagen: %s", exc)
@@ -81,6 +80,7 @@ class SpectrogramSnapshotter:
         # STFT
         try:
             from scipy.signal import stft
+
             _f, _t, Zxx = stft(_segment.astype(np.float64), fs=sr, nperseg=_N_FFT, noverlap=_N_FFT - _HOP)
         except Exception:
             return _dummy_image()
@@ -101,6 +101,7 @@ def _dummy_image():
     """1×1 schwarzes Platzhalter-Bild."""
     try:
         from PIL import Image
+
         return Image.new("L", (1, 1), 0)
     except Exception:
         return None

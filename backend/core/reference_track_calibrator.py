@@ -105,8 +105,10 @@ class ReferenceTrackCalibrator:
         _ref_profile = self._analyze_reference(reference_audio, reference_sr)
         logger.info(
             "🎯 Reference Preset: LUFS=%.1f tilt=%.1f brill=%.2f warm=%.2f",
-            _ref_profile.integrated_lufs, _ref_profile.spectral_tilt_db_oct,
-            _ref_profile.brilliance, _ref_profile.warmth,
+            _ref_profile.integrated_lufs,
+            _ref_profile.spectral_tilt_db_oct,
+            _ref_profile.brilliance,
+            _ref_profile.warmth,
         )
 
         # Stufe 2: Selbstkalibrierung — Material-Floor aus Calibration-Matrix
@@ -128,10 +130,13 @@ class ReferenceTrackCalibrator:
         if self_calibrate:
             # Selbstkalibrierung: Preset-Ziele auf Material-Machbarkeit begrenzen
             goals.target_lufs = max(_ref_profile.integrated_lufs, _material_floor.get("lufs", -20.0))
-            goals.target_tilt = float(np.clip(
-                _ref_profile.spectral_tilt_db_oct,
-                -6.0, 0.0,
-            ))
+            goals.target_tilt = float(
+                np.clip(
+                    _ref_profile.spectral_tilt_db_oct,
+                    -6.0,
+                    0.0,
+                )
+            )
             goals.target_brilliance = min(
                 _ref_profile.brilliance,
                 _material_ceiling.get("brilliance", 0.60),
@@ -163,8 +168,10 @@ class ReferenceTrackCalibrator:
         logger.info(
             "🎯 Calibrated Goals (self=%s): LUFS=%.1f tilt=%.1f brill=%.2f warm=%.2f (conf=%.0f%%)",
             goals.self_calibration_applied,
-            goals.target_lufs, goals.target_tilt,
-            goals.target_brilliance, goals.target_warmth,
+            goals.target_lufs,
+            goals.target_tilt,
+            goals.target_brilliance,
+            goals.target_warmth,
             goals.confidence * 100,
         )
 
@@ -211,6 +218,7 @@ class ReferenceTrackCalibrator:
         """Selbstkalibrierung: Material-spezifische Qualitäts-Floors."""
         try:
             from backend.core.calibration_matrix import get_material_floor as _gmf
+
             return dict(_gmf(material) or {})
         except Exception:
             pass  # Material floor lookup best-effort — non-critical

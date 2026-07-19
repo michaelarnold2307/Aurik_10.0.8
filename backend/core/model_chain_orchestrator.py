@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 
 # RAM-Budget-Grenzen (§v10.9)
 _MIN_FREE_RAM_GB_FOR_ML: float = 2.0  # Minimum freies RAM vor ML-Load
-_MAX_TOTAL_ML_RAM_GB: float = 6.0     # Maximal insgesamt für ML-Modelle
+_MAX_TOTAL_ML_RAM_GB: float = 6.0  # Maximal insgesamt für ML-Modelle
 
 
 def _get_available_ram_gb() -> float:
     """Ermittelt verfügbares RAM in GB (cross-platform)."""
     try:
         import psutil
+
         return float(psutil.virtual_memory().available) / (1024**3)
     except Exception:
         return 8.0  # Konservativer Fallback
@@ -75,14 +76,18 @@ class ModelChainOrchestrator:
         if _avail_gb < _MIN_FREE_RAM_GB_FOR_ML:
             logger.warning(
                 "⚠️ MCO: %s nicht geladen — nur %.1f GB RAM frei (Minimum: %.1f GB)",
-                model_name, _avail_gb, _MIN_FREE_RAM_GB_FOR_ML,
+                model_name,
+                _avail_gb,
+                _MIN_FREE_RAM_GB_FOR_ML,
             )
             return None
 
         if self._ram_used_gb + _size_gb > _MAX_TOTAL_ML_RAM_GB:
             logger.warning(
                 "⚠️ MCO: %s nicht geladen — ML-Budget erschöpft (%.1f/%.1f GB)",
-                model_name, self._ram_used_gb, _MAX_TOTAL_ML_RAM_GB,
+                model_name,
+                self._ram_used_gb,
+                _MAX_TOTAL_ML_RAM_GB,
             )
             return None
 
@@ -91,8 +96,13 @@ class ModelChainOrchestrator:
             with self._lock:
                 self._instances[model_name] = instance
                 self._ram_used_gb += _size_gb
-            logger.info("✅ MCO: %s geladen (%.2f GB) — total ML: %.1f/%.1f GB",
-                        model_name, _size_gb, self._ram_used_gb, _MAX_TOTAL_ML_RAM_GB)
+            logger.info(
+                "✅ MCO: %s geladen (%.2f GB) — total ML: %.1f/%.1f GB",
+                model_name,
+                _size_gb,
+                self._ram_used_gb,
+                _MAX_TOTAL_ML_RAM_GB,
+            )
         return instance
 
     def _load_model(self, model_name: str) -> Any | None:
@@ -100,19 +110,24 @@ class ModelChainOrchestrator:
         try:
             if model_name == "deepfilternet":
                 from plugins.deepfilternet_v3_ii_plugin import enhance_audio
+
                 return enhance_audio
             elif model_name == "banquet_vinyl":
                 from plugins.banquet_vinyl_plugin import BanquetVinylPlugin
+
                 return BanquetVinylPlugin()
             elif model_name == "bw_reconstructor":
                 from plugins.bw_reconstructor_plugin import BWReconstructorPlugin
+
                 bw = BWReconstructorPlugin()
                 return bw if bw.available else None
             elif model_name == "sgmse":
                 from plugins.sgmse_plugin import SGMSEPlusPlugin
+
                 return SGMSEPlusPlugin()
             elif model_name == "demucs":
                 from plugins.demucs_v4_plugin import DemucsV4Plugin
+
                 return DemucsV4Plugin()
             else:
                 logger.debug("MCO: unknown model %s", model_name)

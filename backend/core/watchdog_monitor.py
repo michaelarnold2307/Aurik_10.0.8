@@ -78,9 +78,9 @@ HPE_TARGET_STUDIO: float = 0.70  # Ziel für Studio 2026
 def _cumulative_strength_thresholds(restorability_score: float) -> tuple[float, float]:
     """§v10.46 Kontinuierlich: WARN/CRIT aus Restorability ableiten.
 
-    rs=100 (perfekt): WARN=0.80, CRIT=1.10  (sehr konservativ)
-    rs=50  (mittel):  WARN=1.30, CRIT=1.70  (moderat)
-    rs=0   (kaputt):  WARN=1.80, CRIT=2.30  (viel Spielraum)
+    rs=100 (perfekt): WARN=0.80, KRIT=1.10  (sehr konservativ)
+    rs=50  (mittel):  WARN=1.30, KRIT=1.70  (moderat)
+    rs=0   (kaputt):  WARN=1.80, KRIT=2.30  (viel Spielraum)
     """
     _warn = 1.80 - (restorability_score / 100.0) * 1.00
     _crit = 2.30 - (restorability_score / 100.0) * 1.20
@@ -564,13 +564,13 @@ def calibrate_watchdog_thresholds(
     _warn, _crit = _cumulative_strength_thresholds(restorability_score)
     CUMULATIVE_STRENGTH_WARN = _warn
     CUMULATIVE_STRENGTH_CRITICAL = _crit
-    logger.info("§v10.46 Watchdog: rs=%.0f → cumul_strength WARN=%.2f CRIT=%.2f", restorability_score, _warn, _crit)
+    logger.info("§v10.46 Watchdog: rs=%.0f → kumul_stärke WARN=%.2f KRIT=%.2f", restorability_score, _warn, _crit)
 
     # RMS-Drop: Tape-Medien haben natürliche Pegel-Variation → höhere Toleranz
     _mat_lower = str(material_type).lower()
     _is_tape = any(t in _mat_lower for t in ("cassette", "reel_tape", "tape"))
     RMS_CRITICAL_DROP_DB = 16.0 if _is_tape else 12.0
-    logger.info("§v10.46 Watchdog: mat=%s → RMS_CRIT_DROP=%.0fdB", _mat_lower, RMS_CRITICAL_DROP_DB)
+    logger.info("§v10.46 Watchdog: mat=%s → RMS_KRIT_ABFALL=%.0fdB", _mat_lower, RMS_CRITICAL_DROP_DB)
 
     # Crest: komprimierte Quellen haben niedrigeren natürlichen Crest
     if "mp3" in _mat_lower or "aac" in _mat_lower:

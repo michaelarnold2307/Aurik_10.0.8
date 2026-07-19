@@ -241,7 +241,7 @@ class SignalFlowTracer:
                 if zones is not None:
                     self._silence_zones = list(zones)
         except Exception:  # pylint: disable=broad-except
-            logger.debug("SFT begin_session non-critical fallback, ignoring", exc_info=True)
+            logger.debug("SFT begin_session nicht-kritischer Fallback, ignoriert", exc_info=True)
 
     def capture_pre_phase(self, audio: np.ndarray) -> None:
         """Pre-Phase-Audio für record_phase vormerken (kein Copy — nur Referenz).
@@ -253,7 +253,7 @@ class SignalFlowTracer:
                 # Keine Kopie nötig — UV3 erstellt sowieso eine neue Array nach phase.process()
                 self._pre_audio_ref = audio
         except Exception:  # pylint: disable=broad-except
-            logger.debug("SFT capture_pre_phase non-critical, ignoring", exc_info=True)
+            logger.debug("SFT capture_pre_phase nicht-kritisch, ignoriert", exc_info=True)
 
     def record_phase(
         self,
@@ -1066,4 +1066,4 @@ def calibrate_sft_thresholds(
     else:
         _HNR_WARN_DB = 3.0
         _HNR_CRIT_DB = 6.0
-    logger.info("§v10.43 SFT-HNR: vocal=%.2f → WARN=%.0fdB CRIT=%.0fdB", vocal_confidence, _HNR_WARN_DB, _HNR_CRIT_DB)
+    logger.info("§v10.43 SFT-HNR: vocal=%.2f → WARN=%.0fdB KRIT=%.0fdB", vocal_confidence, _HNR_WARN_DB, _HNR_CRIT_DB)
