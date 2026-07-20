@@ -35948,7 +35948,22 @@ class UnifiedRestorerV3:
                         result = _normalize_phase_result(result)
                         _collect_guard_payload(_phase_for_exec, phase_id, result)
                         if result.success:
+                            # §v10.53: Robustes .audio-Unwrapping — verhindert tuple-ndim-Crash.
+                            # Manche Phasen/Steering-Pfade können .audio als tuple liefern.
                             _ra = result.audio
+                            if not isinstance(_ra, np.ndarray):
+                                # Versuche ndarray aus tuple/list zu extrahieren
+                                if isinstance(_ra, (tuple, list)):
+                                    _ra = next(
+                                        (x for x in _ra if isinstance(x, np.ndarray)),
+                                        current_audio,
+                                    )
+                                else:
+                                    _ra = current_audio
+                                logger.debug(
+                                    "_execute_pipeline: result.audio war %s → auf ndarray korrigiert",
+                                    type(result.audio).__name__,
+                                )
                             _245_skipped_dr = False
                             # §3.1 NaN-Guard: revert to pre-phase audio if NaN produced
                             if not np.any(np.isnan(_ra)):
@@ -36399,10 +36414,36 @@ class UnifiedRestorerV3:
                 except Exception as e:
                     _exc_msg = str(e)
                     if "'tuple' object has no attribute 'ndim'" in _exc_msg:
-                        logger.warning(
-                            "⚠️ %s tuple-ndim: Phase-Ausgabe auf Original zurückgesetzt (Post-Processing-Typfehler, Phase-Logik OK)",
-                            phase_id,
-                        )
+                        # §v10.53: Versuche Phasen-Audio zu retten statt auf Original zurückzusetzen.
+                        _rescued = False
+                        try:
+                            _res = locals().get("result", None)
+                            if _res is not None:
+                                _ra_raw = getattr(_res, "audio", None)
+                                if isinstance(_ra_raw, (tuple, list)):
+                                    _ra_extracted = next(
+                                        (x for x in _ra_raw if isinstance(x, np.ndarray)), None
+                                    )
+                                    if _ra_extracted is not None:
+                                        current_audio = _ra_extracted
+                                        _rescued = True
+                                        logger.info(
+                                            "🔧 %s tuple-ndim: Audio aus tuple gerettet "
+                                            "(shape=%s) — Phase-Ergebnis erhalten",
+                                            phase_id, current_audio.shape,
+                                        )
+                            if not _rescued:
+                                logger.warning(
+                                    "⚠️ %s tuple-ndim: Phase-Ausgabe auf Original zurückgesetzt "
+                                    "(Post-Processing-Typfehler, Phase-Logik OK)",
+                                    phase_id,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "⚠️ %s tuple-ndim: Phase-Ausgabe auf Original zurückgesetzt "
+                                "(Post-Processing-Typfehler, Phase-Logik OK)",
+                                phase_id,
+                            )
                         executed.append(phase_id)
                     else:
                         logger.error("❌ %s exception: %s", phase_id, e)
