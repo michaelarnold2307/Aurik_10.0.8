@@ -28026,6 +28026,38 @@ class UnifiedRestorerV3:
                 )
                 return 0.0
 
+        # ── Guard 4: EPG Denoiser-Cap — ML-Modelle vermeiden wenn DSP reicht ──
+        # Phase 03 hat internen DSP-Threshold: 0.10 + panns × 0.30.
+        # Wenn Strength darüber liegt und Vocals vorhanden sind, läuft erst
+        # der ML-Pfad (BS-RoFormer + Resemble, ~745s), dessen Ergebnis dann
+        # vom Energy-Guard verworfen wird → VQI-Rollback → DSP-only (~530s).
+        # Dieser Guard cappt Strength knapp UNTER den DSP-Threshold, sodass
+        # Phase 03 direkt den DSP-Pfad nimmt — ohne ML-Modell-Ladung.
+        if _pid == "phase_03_denoise":
+            # Selbe Formel wie Phase-03-intern (§DENKER-CONTROL, Zeile ~896)
+            _dsp_threshold = float(np.clip(0.10 + _panns * 0.30, 0.08, 0.30))
+
+            # Lern-Boost: Wenn letzter Lauf e_ratio < 0.20 hatte → ML wird wieder failen
+            _last_er = getattr(self, "_last_denoise_e_ratio", None)
+            if _last_er is not None and _last_er < 0.20:
+                # Letzter Lauf hat ML verworfen → DSP-only für diesen Song
+                logger.info(
+                    "🔮 Predictive EPG-Guard %s: last e_ratio=%.4f < 0.20 → DSP-only "
+                    "(Batch-Learning aus vorherigem Lauf)",
+                    _pid, _last_er,
+                )
+                return float(round(_dsp_threshold * 0.90, 3))
+
+            if _strength > _dsp_threshold and _panns >= 0.25:
+                # Knapp unter Threshold → DSP-only ohne ML-Ladung
+                _cap = float(round(_dsp_threshold * 0.95, 3))
+                logger.info(
+                    "🔮 Predictive EPG-Guard %s: strength=%.3f > dsp_threshold=%.3f "
+                    "(panns=%.2f) → capped to %.3f (DSP-only, ML übersprungen)",
+                    _pid, _strength, _dsp_threshold, _panns, _cap,
+                )
+                return _cap
+
         return None
 
     def _estimate_hf_ratio(self, audio: np.ndarray) -> float:
@@ -29814,6 +29846,26 @@ class UnifiedRestorerV3:
                 _pid_stft_track, _stft_count, self._cig_current_gdd_ms,
             )
         # ── Ende CIG-STFT-Tracking ────────────────────────────────
+
+        # ── §v10.53 EPG e_ratio-Tracking: Energieerhalt nach Phase 03 ──
+        # Speichert Input/Output-Energie-Ratio für Predictive EPG-Guard.
+        # Wenn letzter Lauf e_ratio < 0.20 hatte, wird Phase 03 beim
+        # nächsten Song direkt auf DSP-only gecappt (Guard #4).
+        if str(getattr(phase_metadata, "phase_id", "")) == "phase_03_denoise":
+            try:
+                _post_audio = getattr(result, "audio", None)
+                if isinstance(_post_audio, np.ndarray) and isinstance(audio, np.ndarray):
+                    _e_in = float(np.sum(audio.astype(np.float64) ** 2))
+                    _e_out = float(np.sum(_post_audio.astype(np.float64) ** 2))
+                    if _e_in > 1e-12:
+                        self._last_denoise_e_ratio = _e_out / _e_in
+                        logger.debug(
+                            "🔮 EPG-Track phase_03: e_ratio=%.4f (in=%.4g out=%.4g)",
+                            self._last_denoise_e_ratio, _e_in, _e_out,
+                        )
+            except Exception:
+                logger.debug("EPG-Track: silent except", exc_info=True)
+        # ── Ende EPG e_ratio-Tracking ────────────────────────────
 
         # §0h Quiet-Zone propagation: wenn phase_29 Stille-Zonen begrenzen musste,
         # wird ein risikobasiertes Reintroduction-Signal für nachfolgende Phasen gesetzt.
