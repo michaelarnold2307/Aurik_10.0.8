@@ -31727,7 +31727,8 @@ class UnifiedRestorerV3:
                             if _is_repair_phase:
                                 _sft_wet = float(np.clip(_wet_ceil_repair - _sft_novelty_val, 0.30, 0.75))
                             elif _is_enhancement_phase:
-                                _sft_wet = float(np.clip(_wet_ceil_nonrepair - _sft_novelty_val, 0.35, 0.70))
+                                # Enhancement nutzt Repair-Ceiling: Spektrumänderung ist Ziel, nicht Schaden
+                                _sft_wet = float(np.clip(_wet_ceil_repair - _sft_novelty_val, 0.35, 0.70))
                             else:
                                 _sft_wet = float(np.clip(_wet_ceil_nonrepair - _sft_novelty_val, 0.20, 0.65))
                         else:
