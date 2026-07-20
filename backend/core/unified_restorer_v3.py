@@ -27998,10 +27998,15 @@ class UnifiedRestorerV3:
         _mat = str(getattr(self, "_primary_material", "unknown") or "unknown").lower()
 
         # ── Guard 1: AFG Pre-Skip — DeEsser ohne Zischlaut-Material ──
-        if _pid == "phase_19_de_esser":
+        if _pid == "phase_19_de_esser" or _pid == "phase_43_ml_deesser":
             _hf_ratio = self._estimate_hf_ratio(audio)
             if _hf_ratio < 0.005:
-                return 0.0  # Kein Zischlaut → DeEsser würde nur Artefakte produzieren
+                logger.info(
+                    "🔮 Predictive AFG-Guard %s: hf_ratio=%.4f < 0.005 → Phase SKIP "
+                    "(kein Zischlaut-Material, DeEsser würde nur Artefakte produzieren)",
+                    _pid, _hf_ratio,
+                )
+                return 0.0
 
         # ── Guard 2: VQI Pre-Cap — Subtractive Cleanup auf analogem Vocal-Material ──
         _analog_mats = {"cassette", "vinyl", "reel_tape", "tape", "shellac"}
@@ -28073,7 +28078,14 @@ class UnifiedRestorerV3:
     def _estimate_hf_ratio(self, audio: np.ndarray) -> float:
         """Schätzt HF-Ratio für AFG Pre-Skip (leichtgewichtig)."""
         try:
-            _mono = audio.mean(axis=-1) if audio.ndim == 2 else audio
+            # Robustes Mono: axis=0 für (2,N) channel-first, axis=-1 für (N,2), ravel für (N,)
+            if audio.ndim == 2:
+                if audio.shape[0] <= 2:
+                    _mono = audio.mean(axis=0)  # (2,N) → (N,)
+                else:
+                    _mono = audio.mean(axis=-1)  # (N,2) → (N,)
+            else:
+                _mono = audio.ravel()
             _n = min(len(_mono), 48000)  # 1s max
             _seg = _mono[:_n]
             _spec = np.abs(np.fft.rfft(_seg))
@@ -28086,7 +28098,13 @@ class UnifiedRestorerV3:
     def _estimate_vqi_proxy(self, audio: np.ndarray) -> float:
         """Schätzt VQI-Proxy aus RMS-Stabilität (leichtgewichtig)."""
         try:
-            _mono = audio.mean(axis=-1) if audio.ndim == 2 else audio
+            if audio.ndim == 2:
+                if audio.shape[0] <= 2:
+                    _mono = audio.mean(axis=0)  # (2,N) → (N,)
+                else:
+                    _mono = audio.mean(axis=-1)  # (N,2) → (N,)
+            else:
+                _mono = audio.ravel()
             _rms = float(np.sqrt(np.mean(_mono**2)) + 1e-12)
             # Referenz-RMS aus restoration_context
             _ref_rms = float(getattr(self, "_vqi_ref_rms", _rms) or _rms)
