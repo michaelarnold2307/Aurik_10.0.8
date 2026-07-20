@@ -747,21 +747,36 @@ def _compute_spectral_novelty_fast(
     orig_psd: np.ndarray | None,
     orig_freqs: np.ndarray | None,
 ) -> float:
-    """Spektrale Neuheit von post vs. Original-PSD-Fingerabdruck.
+    """Spektrale Neuheit von post vs. Referenz-PSD-Fingerabdruck.
 
-    Misst den Anteil der Post-PSD, der das Original um > 3 dB übersteigt.
-    Schnell: O(N_fft) ohne ML. Gibt 0.0 bei fehlendem Original zurück.
+    Misst den Anteil der Post-PSD, der die Referenz um > 3 dB übersteigt.
+    Schnell: O(N_fft) ohne ML. Gibt 0.0 bei fehlender Referenz zurück.
+
+    §v10.55 FIX: Extrahiert das GLEICHE mittlere 10s-Segment aus post,
+    das _compute_psd_fingerprint fuer die Referenz verwendet.
+    Vorher wurde welch auf das GESAMTE post-Signal angewendet,
+    waehrend die Referenz-PSD nur aus den mittleren 10s stammte →
+    systematischer Segment-Bias erzeugte ~0.47 False-Positive bei
+    jedem Song mit nicht-stationaerem Spektrum (d.h. jedem echten Song).
     """
     if orig_psd is None or orig_freqs is None:
         return 0.0
     try:
         from scipy.signal import welch
 
-        nperseg = min(_ORIG_PSD_NPERSEG, len(post) // 4)
+        # §v10.55: Gleiches mittleres Segment wie _compute_psd_fingerprint verwenden
+        max_samples = int(_ORIG_PSD_MAXLEN_S * sr)
+        if len(post) > max_samples:
+            start = (len(post) - max_samples) // 2
+            post_seg = post[start : start + max_samples]
+        else:
+            post_seg = post
+
+        nperseg = min(_ORIG_PSD_NPERSEG, len(post_seg) // 4)
         if nperseg < 64:
             return 0.0
 
-        _, post_psd = welch(post, fs=sr, nperseg=nperseg)
+        _, post_psd = welch(post_seg, fs=sr, nperseg=nperseg)
 
         # Länge auf min beider PSDs angleichen
         n = min(len(orig_psd), len(post_psd))

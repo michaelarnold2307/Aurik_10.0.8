@@ -1,13 +1,21 @@
 """§PEP (V22) Pre-Echo-Prevention — Transient-Shift-Detektor.
 
 Prüft nach additiven ML-Phasen (phase_06, phase_07, phase_23), ob Transient-
-Onsets zeitlich verschoben wurden (Pre-Echo). Shift > ±2 ms → blend_reduction
+Onsets zeitlich verschoben wurden (Pre-Echo). Shift > ±3.5 ms → blend_reduction
 als Metadata-Flag; kein Rollback (non-blocking WARNING).
+
+Messmethode (§v10.53): Cross-Correlation an Onset-Positionen.
+- Onsets werden via Spektralfluss in pre detektiert (nur zur Lokalisierung).
+- Für jeden Onset wird ein ±10.7 ms Fenster aus pre und post extrahiert.
+- Normalisierte Cross-Correlation zwischen den Fenstern liefert den echten
+  Zeitversatz (Lag des XCorr-Peaks).
+- XCorr ist unempfindlich gegenüber spektralen Änderungen (EQ, Presence-Boost)
+  und misst ausschließlich Zeitbereichs-Verschiebungen.
 
 Kanonische Nutzung (UV3 post-phase hook):
     from backend.core.dsp.transient_guard import detect_transient_shifts, TransientShiftResult
     result = detect_transient_shifts(pre, post, sr)
-    # result.max_shift_ms > 2.0 → metadata["onset_shift_ms"] setzen
+    # result.max_shift_ms > 3.5 → metadata["onset_shift_ms"] setzen
 """
 
 from __future__ import annotations
@@ -34,8 +42,11 @@ TRANSIENT_SHIFT_THRESHOLD_MS = 3.5
 # 5ms Shift: 5/(3.5×5.0)=0.29→29% (vorher 71%)
 _BLEND_DIVISOR = 5.0
 _MAX_BLEND_REDUCTION = 0.60
-# Maximale Suchfenster-Breite für Onset-Matching
-_MATCH_WINDOW_MS = 30.0
+# §v10.53 XCorr-Fenster: ±512 Samples ≈ ±10.7 ms bei 48 kHz.
+# Groß genug für robuste Korrelation, klein genug um einzelne Transienten zu isolieren.
+_XCORR_HALF_WINDOW: int = 512
+# Minimale RMS-Energie im Fenster für valide Cross-Correlation.
+_MIN_WINDOW_RMS: float = 1e-6
 
 
 @dataclass
@@ -57,7 +68,13 @@ class TransientShiftResult:
 
 
 def _detect_onsets_simple(audio_mono: np.ndarray, sr: int, hop: int = 256) -> np.ndarray:
-    """Einfache Onset-Detektion via Spektralflussnorm (ohne librosa-Dependency als Pflicht)."""
+    """Onset-Detektion via Spektralfluss — nur zur Lokalisierung von Messpunkten.
+
+    Die erkannten Positionen dienen als Kandidaten für die Cross-Correlation-Messung.
+    Falsch-positive oder falsch-negative Onsets sind unkritisch:
+    - Falsch-positive: XCorr zeigt trotzdem ≈0 ms Shift (kein Schaden).
+    - Falsch-negative: Weniger Messpunkte, aber die echten Transienten werden erfasst.
+    """
     try:
         if librosa is None:
             raise RuntimeError("librosa nicht verfügbar")
@@ -80,12 +97,63 @@ def _detect_onsets_simple(audio_mono: np.ndarray, sr: int, hop: int = 256) -> np
     return (onset_frames * frame_len).astype(np.int64)  # type: ignore[no-any-return]
 
 
+def _xcorr_shift_at(
+    pre_mono: np.ndarray,
+    post_mono: np.ndarray,
+    center_sample: int,
+    half_window: int,
+    sr: int,
+) -> float | None:
+    """Cross-Correlation-Shift an einer Onset-Position.
+
+    Extrahiert ein Fenster (±half_window) um center_sample aus pre und post,
+    normalisiert beide und berechnet die Cross-Correlation. Der Lag des
+    XCorr-Peaks ist der echte Zeitversatz in ms.
+
+    Returns:
+        Shift in ms (positiv = post später als pre), oder None bei ungültigem Fenster.
+    """
+    start = center_sample - half_window
+    end = center_sample + half_window
+    n = len(pre_mono)
+    if start < 0 or end > n:
+        return None
+
+    pre_win = pre_mono[start:end].astype(np.float64)
+    post_win = post_mono[start:end].astype(np.float64)
+
+    # Minimum-Energie-Check: stille Fenster liefern keine sinnvolle Korrelation
+    rms = float(np.sqrt(np.mean(pre_win**2) + 1e-12))
+    if rms < _MIN_WINDOW_RMS:
+        return None
+
+    # Normalisierung (zero-mean, unit-variance)
+    eps = 1e-12
+    pre_norm = (pre_win - pre_win.mean()) / (pre_win.std() + eps)
+    post_norm = (post_win - post_win.mean()) / (post_win.std() + eps)
+
+    # Cross-Correlation: np.correlate(post, pre, 'full') → Peak-Position relativ zur Mitte
+    xcorr = np.correlate(post_norm, pre_norm, mode="full")
+    lag_samples = int(np.argmax(xcorr)) - (len(pre_win) - 1)
+
+    return float(lag_samples) / sr * 1000.0
+
+
 def detect_transient_shifts(
     pre: np.ndarray,
     post: np.ndarray,
     sr: int,
 ) -> TransientShiftResult:
-    """Erkennt zeitliche Verschiebungen von Transient-Onsets zwischen pre und post.
+    """Erkennt zeitliche Verschiebungen von Transient-Onsets via Cross-Correlation.
+
+    Methode (§v10.53):
+    1. Onsets in pre via Spektralfluss detektieren (nur zur Positionsbestimmung).
+    2. Für jeden Onset: ±10.7 ms Fenster aus pre und post extrahieren.
+    3. Normalisierte Cross-Correlation → Lag des Peaks = echter Zeitversatz.
+    4. Maximalen |Shift| über alle Onsets reporten.
+
+    XCorr ist unempfindlich gegenüber spektralen Änderungen (EQ, Presence-Boost,
+    Harmonic-Restauration) und misst ausschließlich Zeitbereichs-Verschiebungen.
 
     Args:
         pre: Audio vor der Phase. Shape [N] oder [2, N].
@@ -93,7 +161,7 @@ def detect_transient_shifts(
         sr: Sample-Rate (muss 48000 sein).
 
     Returns:
-        TransientShiftResult. ok=False wenn max_shift_ms > 2.0 ms.
+        TransientShiftResult. ok=False wenn max_shift_ms > 3.5 ms.
     """
     assert sr == 48000
     _fallback = TransientShiftResult(max_shift_ms=0.0, onset_count=0, ok=True, blend_reduction=0.0)
@@ -109,27 +177,18 @@ def detect_transient_shifts(
             return _fallback
 
         hop = 256
+        # Onsets nur in pre — sie dienen als Messpunkte für die XCorr
         pre_onsets = _detect_onsets_simple(pre_mono, sr, hop)
-        post_onsets = _detect_onsets_simple(post_mono, sr, hop)
 
         if len(pre_onsets) == 0:
             return _fallback
 
-        match_window_samples = int(_MATCH_WINDOW_MS / 1000.0 * sr)
         shifts_ms: list[float] = []
 
         for onset_pre in pre_onsets:
-            # Nächsten Onset in post innerhalb Suchfenster finden
-            candidates = post_onsets[
-                (post_onsets >= onset_pre - match_window_samples) & (post_onsets <= onset_pre + match_window_samples)
-            ]
-            if len(candidates) == 0:
-                continue
-            # Nächsten Kandidaten wählen
-            nearest = candidates[int(np.argmin(np.abs(candidates - onset_pre)))]
-            shift_samples = int(nearest) - int(onset_pre)
-            shift_ms = float(shift_samples) / sr * 1000.0
-            shifts_ms.append(shift_ms)
+            shift = _xcorr_shift_at(pre_mono, post_mono, int(onset_pre), _XCORR_HALF_WINDOW, sr)
+            if shift is not None:
+                shifts_ms.append(shift)
 
         if not shifts_ms:
             return _fallback
@@ -140,9 +199,11 @@ def detect_transient_shifts(
         # Blend-Reduktion: proportional zur Überschreitung
         blend_reduction = 0.0
         if not ok:
-            blend_reduction = float(np.clip(max_shift / (TRANSIENT_SHIFT_THRESHOLD_MS * _BLEND_DIVISOR), 0.0, _MAX_BLEND_REDUCTION))
+            blend_reduction = float(
+                np.clip(max_shift / (TRANSIENT_SHIFT_THRESHOLD_MS * _BLEND_DIVISOR), 0.0, _MAX_BLEND_REDUCTION)
+            )
             logger.info(
-                "§V22 Pre-Echo: max_shift=%.2f ms > %.0f ms → blend_reduction=%.2f",
+                "§V22 Pre-Echo (XCorr): max_shift=%.2f ms > %.0f ms → blend_reduction=%.2f",
                 max_shift,
                 TRANSIENT_SHIFT_THRESHOLD_MS,
                 blend_reduction,
