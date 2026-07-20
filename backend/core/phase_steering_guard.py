@@ -22,6 +22,7 @@ Ref: §v10 Pleasantness-First, §3.0 Cross-Phase Consensus, §2.64 FeedbackChain
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -274,7 +275,7 @@ def install_steering() -> PhaseSteeringEngine:
     """Installiert HPE-Steering in UnifiedRestorerV3 als Default-Workflow.
 
     Wrapped _profiled_phase_call, sodass jede Phase HPE-gemessen
-    und gesteuert wird. Immer aktiv — kein opt-in mehr.
+    und gesteuert wird. Aktiv nur mit AURIK_STEERING=1 (opt-in).
 
     Returns:
         PhaseSteeringEngine (globaler Singleton)
@@ -285,6 +286,14 @@ def install_steering() -> PhaseSteeringEngine:
         return _engine
 
     _engine = PhaseSteeringEngine()
+
+    # §v10.53: Nur aktiv wenn AURIK_STEERING=1 gesetzt ist.
+    # Ohne Env-Variable: Steering-Engine existiert, aber _profiled_phase_call
+    # wird NICHT monkeypatched → keine Test-Pollution, inspect.getsource bleibt intakt.
+    if os.environ.get("AURIK_STEERING", "") != "1":
+        _engine._enabled = False
+        logger.debug("PhaseSteeringGuard: deaktiviert (AURIK_STEERING != 1)")
+        return _engine
 
     try:
         from backend.core.unified_restorer_v3 import UnifiedRestorerV3 as _UV3
