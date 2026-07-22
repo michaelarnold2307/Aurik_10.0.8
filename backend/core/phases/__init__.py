@@ -9,7 +9,7 @@ Usage:
     from backend.core.phases import PhaseInterface, PhaseCategory, PhaseMetadata
 
 Author: Aurik 10.0 Development Team
-Version: 10.0.8
+Version: 10.0.15
 Date: 2026-07-11
 """
 

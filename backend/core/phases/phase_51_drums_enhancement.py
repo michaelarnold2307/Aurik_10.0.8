@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 51: Drums/Percussion Enhancement v1.0 - Tier 1 ML-Hybrid.
 Professional drums and percussion processing for instrumental restoration.
 

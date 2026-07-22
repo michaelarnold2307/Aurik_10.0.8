@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 63 — Intermodulation Distortion Reduction.
 
 IMD creates sum/difference frequency products (f1±f2) from nonlinear

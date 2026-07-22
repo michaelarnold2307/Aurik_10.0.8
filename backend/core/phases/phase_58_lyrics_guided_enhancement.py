@@ -7,7 +7,6 @@ NOT ML-deterministic in the PMGG sense — excluded from PMGG delta-checks.
 Privacy invariant: lyrics text MUST NEVER appear in any log, metadata field,
 or RestorationResult. Only phoneme-class labels (fricative/plosive/…) are kept.
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 
 from __future__ import annotations
 

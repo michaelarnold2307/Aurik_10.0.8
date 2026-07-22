@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase Interface — Basisklassen für alle Aurik-Verarbeitungsphasen (§7.1).
 
 Definiert:

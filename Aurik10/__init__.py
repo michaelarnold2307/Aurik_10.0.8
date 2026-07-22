@@ -3,5 +3,5 @@ Aurik 10 — Weltklasse-Audio-Restaurierung
 Weltweit führendes kognitiv-perceptuelles Audio-Restaurierungssystem mit chirurgischer Präzision.
 """
 
-__version__ = "10.0.8"
+__version__ = "10.0.15"
 __author__ = "Aurik Team"

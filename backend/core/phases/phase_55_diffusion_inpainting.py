@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 55: Diffusion-Inpainting v1.0 — Masked Spectral Reconstruction
 ======================================================================
 

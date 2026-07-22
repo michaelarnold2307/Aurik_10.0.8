@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 61 — Groove Echo Cancellation.
 
 Groove echo (pre-echo) occurs when a loud passage deforms the adjacent groove

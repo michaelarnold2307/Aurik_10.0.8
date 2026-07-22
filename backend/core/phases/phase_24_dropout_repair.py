@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 24: Professional Dropout Repair - Aurik 10.0.0
 ==================================================
 

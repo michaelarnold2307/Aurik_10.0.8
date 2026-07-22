@@ -1,6 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates. STFT-Auflösung auf Gammatone-ERB-Bandbreiten abgestimmt.
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 56: Spectral Band Gap Repair — Aurik 10.0.0
 ================================================
 

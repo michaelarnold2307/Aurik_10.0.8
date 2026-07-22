@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 13: Stereo Enhancement v2.0 (Professional).
 Multi-band correlation-based stereo imaging with psychoacoustic width control.
 

@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 48: Stereo Width Enhancer v2.1 — Frequenzabhängige M/S-Breite + IACC-Guard
 ==================================================================================
 

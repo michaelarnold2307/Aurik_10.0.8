@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 37: Bass Enhancement v2.0 - Professional
 Harmonic bass synthesis and sub-bass generation.
 

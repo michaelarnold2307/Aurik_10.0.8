@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 66 — Stem-Targeted NR (Vokal + Begleitung, getrennte Restaurierung).
 
 Spec §7.11 [RELEASE_MUST] (v10.0.0)

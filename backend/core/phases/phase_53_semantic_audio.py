@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 53: Semantic Audio Analysis v3.0 — ML Tier-1 + DSP Baseline
 ==================================================================
 

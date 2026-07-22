@@ -83,7 +83,6 @@ def _goal_risk_threshold_from_signal(
 ) -> float:
     """Leitet eine signal-/restorability-adaptive Goal-Risk-Schwelle ab.
 
-    §v10.101: Zusätzlich zu technischen Signal-Signaturen fließen perzeptuelle
     Faktoren ein (JND-Dichte, Bark-Energie-Verteilung), wenn verfügbar.
     """
     threshold = float(_GOAL_RISK_THRESHOLD)

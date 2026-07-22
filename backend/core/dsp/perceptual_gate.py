@@ -1,5 +1,4 @@
 """
-§v10.101 PerceptualGate — Universelles JND-Gate für alle Phasen
 ===============================================================
 
 Prüft vor jeder DSP-Operation: "Ist der Unterschied hörbar?"
@@ -93,7 +92,6 @@ def should_skip_phase(
 ) -> bool:
     """Prüft, ob eine Phase hörbare Änderungen bewirkt hat.
 
-    §v10.101: Direkter LUFS-Vergleich pro Bark-Band ohne Spread-Masking.
     Spread-Masking ist für Codec-Design („kann ich Rauschen verstecken?"),
     nicht für Restaurations-Validierung („hat die Phase etwas geändert?").
 

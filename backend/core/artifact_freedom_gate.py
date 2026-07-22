@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Artifact-Schwelle auf 0.90 gesenkt (perzeptuell kalibriert).
 IAD-Detektion durch Pipeline-Gates (JND + Perceptual-Blend) ergänzt.
 Aurik 10.0.0 — ArtifaktFreiheitsGate §2.49 [RELEASE_MUST]
 ======================================================

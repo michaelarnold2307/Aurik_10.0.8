@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 27: Click/Pop Removal v3.0 — AR-Residual + Consistent Wiener
 ====================================================================
 Advanced impulse noise detection and removal with AR-residual detection.

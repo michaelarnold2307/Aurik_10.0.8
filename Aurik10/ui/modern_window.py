@@ -16685,7 +16685,7 @@ class ModernMainWindow(QMainWindow):
         # Export-Dialog jetzt MODAL und BLOCKIEREND vor jeglicher Verarbeitung
         logger.debug("_on_file_loaded: opening ExportConfigDialog (modal)")
 
-        # v10.0.8: Export-Presets (WhatsApp/Handy/Email) entfernt —
+        # v10.0.15: Export-Presets (WhatsApp/Handy/Email) entfernt —
         # Aurik exportiert standardmäßig in professioneller CD-Qualität.
         # Direkt zum ExportConfigDialog.
 

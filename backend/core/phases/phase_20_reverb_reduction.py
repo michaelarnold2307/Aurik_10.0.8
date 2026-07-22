@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 20: Professional Reverb Reduction v3.0 — OMLSA/IMCRA
 ===========================================================
 

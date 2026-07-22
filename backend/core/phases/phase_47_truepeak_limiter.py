@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 47: TruePeak Limiter v2.0 — ITU-R BS.1770 / AES17 konform
 ================================================================
 

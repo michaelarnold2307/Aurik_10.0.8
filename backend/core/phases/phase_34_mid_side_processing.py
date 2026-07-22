@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 34: Mid/Side Processing v2.0 - Professional.
 Multi-band M/S dynamics processing with independent control over Mid and Side signals.
 

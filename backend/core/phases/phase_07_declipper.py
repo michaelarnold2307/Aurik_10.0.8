@@ -1,6 +1,5 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
-Phase 07: Selbstkalibrierender Declipper — Aurik 10.0.8
+Phase 07: Selbstkalibrierender Declipper — Aurik 10.0.15
 ========================================================
 
 Entfernt hörbare Clipping-Verzerrungen (Hard Clipping, Soft Saturation,

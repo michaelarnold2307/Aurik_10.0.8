@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 65 — DSP-Vocal-Naturalness-Restaurierung (KORREKTIV, §0a Restoration-only).
 
 Spec §7.10 [RELEASE_MUST] (Spec 06, v10.0.0)

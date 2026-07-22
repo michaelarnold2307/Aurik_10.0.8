@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 9: Professional Crackle Removal - Aurik 10.0.0.
 =================================================
 

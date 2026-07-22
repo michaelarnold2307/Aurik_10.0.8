@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 23: Spectral Repair v3.0 — IMCRA Adaptive Noise-Floor + Vectorized Inpainting
 
 Algorithm (v3.0 — Über-SOTA):

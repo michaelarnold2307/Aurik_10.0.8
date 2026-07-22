@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 33: Stereo Width Limiter v2.0 (Professional).
 Psychoacoustic width control with transient-aware limiting.
 

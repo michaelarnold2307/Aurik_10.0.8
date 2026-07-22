@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 §v10 GlueStagePhase — Vorletzte Phase: subtile Bus-Kompression für kohärenten Mix.
 
 Die Glue-Stage läuft in ALLEN Modi als vorletzte Phase (nach TruePeak, vor Dithering/

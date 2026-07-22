@@ -5,7 +5,7 @@ Zeigt die geladene Wellenform vor der Restaurierung an.
 Minimalistisch — keine Buttons, keine Modus-Wahl, keine Status-Texte.
 Die Wellenform nutzt den gesamten verfügbaren Platz.
 
-v10.0.8: Von A/B-Vorschau-Widget zu schlanker Wellenform-Anzeige vereinfacht.
+v10.0.15: Von A/B-Vorschau-Widget zu schlanker Wellenform-Anzeige vereinfacht.
 """
 
 from __future__ import annotations

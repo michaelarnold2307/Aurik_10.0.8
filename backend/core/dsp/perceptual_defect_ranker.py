@@ -1,5 +1,4 @@
 """
-§v10.101 Perceptual Defect Ranker — Hörbarkeitsbasierte Defekt-Priorisierung
 =============================================================================
 
 Re-rankt technisch erkannte Defekte nach ihrer tatsächlichen Hörbarkeit.

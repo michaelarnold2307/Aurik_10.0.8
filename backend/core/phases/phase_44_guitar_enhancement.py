@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 44: Guitar Enhancement v2.0 — Transient Boost + Harmonic Exciter + Presence EQ
 ======================================================================================
 

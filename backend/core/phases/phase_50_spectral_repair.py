@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 50: Spectral Repair v2.0 — STFT Inpainting
 ==================================================
 

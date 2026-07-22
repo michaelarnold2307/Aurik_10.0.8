@@ -1,5 +1,4 @@
 """
-§v10.101 Perceptual Blend — Psychoakustische Maskierung im Wet/Dry-Mix
 ======================================================================
 
 Ersetzt den skalaren Wet/Dry-Blend durch ein frequenzabhängiges,

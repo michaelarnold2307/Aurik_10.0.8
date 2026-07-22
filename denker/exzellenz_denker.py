@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Denker-Entscheidungen durch Pipeline-Gates (JND + Perceptual-Blend) perzeptuell validiert.
 denker/exzellenz_denker.py — Exzellenz-Denker für Aurik 10.0.0
 ==========================================================
 

@@ -1,5 +1,4 @@
 """
-§v10.101 Bark/LUFS/Gammatone Utility — Kritische Bänder + Cochlea-Modell + Lautheit
 ===================================================================================
 
 Stellt Bark/ERB-Band-Aufteilung, Gammatone-Cochlea-Filterbank und

@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: Denker-Entscheidungen durch Pipeline-Gates (JND + Perceptual-Blend) perzeptuell validiert.
 denker/perceptual_council.py — PerceptualQualityCouncil
 ========================================================
 

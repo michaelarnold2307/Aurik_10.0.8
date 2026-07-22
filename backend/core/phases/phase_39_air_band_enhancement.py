@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 39: Air Band Enhancement v2.0 - Professional
 High-frequency shimmer and "air" enhancement (12-20 kHz).
 

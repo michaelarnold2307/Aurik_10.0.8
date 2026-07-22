@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 30: DC Offset Removal v2.0 - Professional
 Advanced DC offset and subsonic rumble removal with adaptive filtering.
 

@@ -519,7 +519,6 @@ class QualityAnalyzer:
         """
         Calculate overall quality score (0-100) — perzeptuell gewichtet.
 
-        §v10.101: Das menschliche Ohr priorisiert Natürlichkeit, Wärme und Klarheit
         über technische Messwerte. SNR und THD sind unterhalb der Hörschwelle irrelevant.
         Wenn ein MUSHRA/OQS-Perceptual-Score verfügbar ist, wird dieser als
         direktes Hörer-Modell mit 35% gewichtet.

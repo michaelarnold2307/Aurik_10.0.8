@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 21: Harmonic Exciter v2.0 - Professional
 Multi-band harmonic synthesis for enhanced presence, brilliance, and "air".
 

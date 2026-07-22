@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-§v10.101 SOTA: Perzeptuell geschützt durch Pipeline-Gates (JND + Perceptual-Blend).
 Phase 42: Vocal Enhancement v2.0 - Professional.
 Comprehensive vocal processing chain for clarity, presence, and polish.
 

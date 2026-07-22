@@ -1,5 +1,4 @@
 """
-§v10.101 SOTA: SFT-Entscheidungen durch JND-Gate perzeptuell validiert.
 Signal Flow Tracer (§SFT v10.0.0) — lückenlose Per-Phase-Audioverfolgung.
 
 Schreibt pro Restaurierung eine JSON-Trace-Datei:

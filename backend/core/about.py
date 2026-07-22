@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 AURIK_ABOUT = {
     "name": "Aurik",
-    "version": "10.0.8",
+    "version": "10.0.15",
     "codename": "Weltspitze",
     "developer": "Michael Arnold",
     "email": "michael.arnold2307@gmail.com",

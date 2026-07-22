@@ -383,7 +383,6 @@ class MultibandCompressionPhase(PhaseInterface):
 
     def _split_bands(self, audio: np.ndarray, sample_rate: int) -> list:
         """
-        §v10.101: Teilt Audio in 4 perzeptuelle Bark-Gruppen (24→4 Bänder).
         Nutzt `split_into_bark_bands()` für psychoakustisch korrekte Frequenzaufteilung.
         Jede Gruppe fasst mehrere kritische Bänder zu einem Kompressor-Band zusammen.
         """
