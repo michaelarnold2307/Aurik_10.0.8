@@ -37,14 +37,15 @@ logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Konstanten — konservativ kalibriert (Fehlalarm-Rate < 1%)
+# §v10.101: Sicherheitsschwellen technisch, Qualitätsschwellen Bark/JND-adaptiv.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# RMS-Schwellen: Unterschreitung deutet auf Signalkollaps
+# RMS-Schwellen: Unterschreitung deutet auf Signalkollaps (SICHERHEIT)
 RMS_COLLAPSE_THRESHOLD_DBFS: float = -80.0  # dBFS
 RMS_CRITICAL_DROP_DB: float = 12.0  # dB Abfall zwischen Phasen
 
-# Crest-Faktor: zu niedrig = überkomprimiert, zu hoch = unverarbeitete Spikes
-CREST_MIN_NATURAL: float = 6.0  # dB
+# Crest-Faktor: §v10.101 Bark-adaptiv — Basiswerte, pro Material kalibriert
+CREST_MIN_NATURAL: float = 5.0  # dB (von 6.0 gesenkt — Bass-lastiges Material)
 CREST_MAX_NATURAL: float = 30.0  # dB
 
 # DC-Offset: > 0.001 deutet auf fehlerhafte DSP
@@ -67,8 +68,8 @@ PHASE_TIMEOUTS: dict[str, float] = {
     "exzellenz": 600.0,
 }
 
-# Pleasantness-Mindestwerte (HPE-kalibriert)
-HPE_MIN_ACCEPTABLE: float = 0.35  # Unter 0.35 = anstrengend
+# Pleasantness-Mindestwerte (HPE-kalibriert, §v10.101 JND-adaptiv)
+HPE_MIN_ACCEPTABLE: float = 0.30  # Unter 0.30 = anstrengend (von 0.35 gesenkt — JND-basierte Neukalibrierung)
 HPE_TARGET_QUALITY: float = 0.50  # Ziel für Restoration-Mode
 HPE_TARGET_STUDIO: float = 0.70  # Ziel für Studio 2026
 

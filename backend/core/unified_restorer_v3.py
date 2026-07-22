@@ -5949,59 +5949,68 @@ class UnifiedRestorerV3:
                 _new_fam[family] = _new_val
                 _changes[family] = round(_new_val - _old, 4)
 
+        # §v10.101 JND-Calibration: only adjust when deficit exceeds perceptual threshold.
+        # Sub-JND deficits are inaudible — adjusting would add risk without benefit.
+        def _jnd_adj(family: str, factor: float, deficit: float, goal_name: str) -> None:
+            from backend.core.per_phase_musical_goals_gate import JND_MIN_DELTA
+            _jnd = float(JND_MIN_DELTA.get(goal_name, 0.015))
+            if deficit < _jnd:
+                return  # Defizit unter JND → unhörbar, keine Anpassung
+            _adj(family, factor)
+
         # Brillanz (HF crest-factor proxy): low after denoise → SBR / reconstruction needs more
         _brillanz = current_scores.get("brillanz")
         if _brillanz is not None and float(_brillanz) < 0.74:
             _deficit = 0.74 - float(_brillanz)
-            _adj("reconstruction", 1.0 + min(0.12, _deficit * 0.5))
+            _jnd_adj("reconstruction", 1.0 + min(0.12, _deficit * 0.5), _deficit, "brillanz")
 
         # Micro-dynamics: low → transient shaping + dynamics/EQ need stronger application
         _micro = current_scores.get("micro_dynamics")
         if _micro is not None and float(_micro) < 0.82:
             _deficit = 0.82 - float(_micro)
-            _adj("transient", 1.0 + min(0.10, _deficit * 0.4))
-            _adj("dynamics_eq", 1.0 + min(0.08, _deficit * 0.3))
+            _jnd_adj("transient", 1.0 + min(0.10, _deficit * 0.4), _deficit, "micro_dynamics")
+            _jnd_adj("dynamics_eq", 1.0 + min(0.08, _deficit * 0.3), _deficit, "micro_dynamics")
 
         # Tonal center (K-S proxy): regression after denoise/reverb → reconstruction needs care
         _tonal = current_scores.get("tonal_center")
         if _tonal is not None and float(_tonal) < 0.91:
             _deficit = 0.91 - float(_tonal)
-            _adj("reconstruction", 1.0 + min(0.08, _deficit * 0.4))
-            _adj("time_pitch_transport", 1.0 + min(0.06, _deficit * 0.3))
+            _jnd_adj("reconstruction", 1.0 + min(0.08, _deficit * 0.4), _deficit, "tonal_center")
+            _jnd_adj("time_pitch_transport", 1.0 + min(0.06, _deficit * 0.3), _deficit, "tonal_center")
             # Minor de-boost on dynamics_eq to avoid over-EQ causing further key drift
-            _adj("dynamics_eq", 1.0 - min(0.05, _deficit * 0.25))
+            _jnd_adj("dynamics_eq", 1.0 - min(0.05, _deficit * 0.25), _deficit, "tonal_center")
 
         # Groove: low → rhythm-preserving timing/EQ + transient integrity protection needed
         _groove = current_scores.get("groove")
         if _groove is not None and float(_groove) < 0.78:
             _deficit = 0.78 - float(_groove)
-            _adj("time_pitch_transport", 1.0 + min(0.07, _deficit * 0.35))
-            _adj("dynamics_eq", 1.0 + min(0.08, _deficit * 0.4))
-            _adj("transient", 1.0 + min(0.06, _deficit * 0.3))
+            _jnd_adj("time_pitch_transport", 1.0 + min(0.07, _deficit * 0.35), _deficit, "groove")
+            _jnd_adj("dynamics_eq", 1.0 + min(0.08, _deficit * 0.4), _deficit, "groove")
+            _jnd_adj("transient", 1.0 + min(0.06, _deficit * 0.3), _deficit, "groove")
 
         # Separation fidelity: low → instrument / stem separation needs more strength
         _sep = current_scores.get("separation_fidelity")
         if _sep is not None and float(_sep) < 0.74:
             _deficit = 0.74 - float(_sep)
-            _adj("instrument", 1.0 + min(0.10, _deficit * 0.5))
+            _jnd_adj("instrument", 1.0 + min(0.10, _deficit * 0.5), _deficit, "separation_fidelity")
 
         # Spatial depth: low → stereo / spatial enhancement needed
         _raum = current_scores.get("spatial_depth") or current_scores.get("raumtiefe")
         if _raum is not None and float(_raum) < 0.65:
             _deficit = 0.65 - float(_raum)
-            _adj("instrument", 1.0 + min(0.08, _deficit * 0.4))
+            _jnd_adj("instrument", 1.0 + min(0.08, _deficit * 0.4), _deficit, "spatial_depth")
 
         # Artikulation: low → vocal precision / clarity enhancement needed
         _artik = current_scores.get("artikulation")
         if _artik is not None and float(_artik) < 0.80:
             _deficit = 0.80 - float(_artik)
-            _adj("vocal", 1.0 + min(0.12, _deficit * 0.5))
+            _jnd_adj("vocal", 1.0 + min(0.12, _deficit * 0.5), _deficit, "artikulation")
 
         # Bass kraft: low → low-end dynamics EQ boost needed
         _bass = current_scores.get("bass_kraft")
         if _bass is not None and float(_bass) < 0.74:
             _deficit = 0.74 - float(_bass)
-            _adj("dynamics_eq", 1.0 + min(0.06, _deficit * 0.3))
+            _jnd_adj("dynamics_eq", 1.0 + min(0.06, _deficit * 0.3), _deficit, "bass_kraft")
 
         # Produktions-Nachbesserung (psychoakustisch): falls Artefaktfreiheit bereits
         # im laufenden Pipeline-Verlauf sinkt oder Fatigue-/Harshness-Proxys kippen,
@@ -6009,9 +6018,9 @@ class UnifiedRestorerV3:
         if artifact_floor is not None and float(artifact_floor) < 0.98:
             _af_def = min(0.20, 0.98 - float(artifact_floor))
             _deboost = 1.0 - min(0.12, _af_def * 0.8)
-            _adj("reconstruction", _deboost)
-            _adj("time_pitch_transport", 1.0 - min(0.10, _af_def * 0.7))
-            _adj("transient", _deboost)
+            _jnd_adj("reconstruction", _deboost, _af_def, "artifact_freedom")
+            _jnd_adj("time_pitch_transport", 1.0 - min(0.10, _af_def * 0.7), _af_def, "artifact_freedom")
+            _jnd_adj("transient", _deboost, _af_def, "artifact_freedom")
             _adj("vocal", 1.0 - min(0.10, _af_def * 0.7))
             _adj("instrument", 1.0 - min(0.08, _af_def * 0.6))
 
